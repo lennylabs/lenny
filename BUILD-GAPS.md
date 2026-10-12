@@ -1474,6 +1474,34 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 **Gap:** The specified flag does not exist.
 **Suggested resolution:** Add the flag and its environment variable in `cmd/lenny-gateway`. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-4.6.26 — A pre-running terminal reclaims the claim by pod name while `/start` on another replica holds a live binding, and deletes a shared per-pod claim without releasing the slot [High] — OPEN
+
+**Spec:** §4.6 Pod Lifecycle Controllers, §6.2 Pod State Machine, and §5.2 Pool Configuration and Execution Modes (slot accounting).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:582-600`; `pkg/gateway/sessionserver/start.go:88-89, :114-117`; `pkg/gateway/podlifecycle/podsession/reclaim.go:76-84`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-18 (bucket B; source findings B: p1#1, p1#13, p1#27, p1#47, p1#78; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6: hook step 6 restates terminalReclaimPreRunning.
+**Gap:** A pre-running terminal (REST, admin, or READY_TIMEOUT) reclaims the claim by pod name while /start on another replica holds a live binding, and on a slot pool deletes the shared per-pod claim without releasing the slot.
+**Suggested resolution:** Make the pre-running reclaim owner-checked (claim names this session) and slot-aware, and skip it while REG-COORDLEASE is held by a start in flight. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.27 — Finalize failure paths reclaim by pod name before the slot or service short-circuit [High] — OPEN
+
+**Spec:** §4.6 Pod Lifecycle Controllers, §7.1 Normal Flow, and §5.2 Pool Configuration and Execution Modes.
+**Evidence:** `pkg/gateway/sessionserver/finalize.go:227-237, :397, :471-476`; `pkg/gateway/podlifecycle/podsession/reclaim.go:51-60, :76-99`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-19 (bucket B; source findings B: p1#8, p1#9, p2#7, p7#9; C: p10#5; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6: 0092 adds podReclaimed and routes these through hook step 6.
+**Gap:** Finalize failure paths reclaim by pod name before the slot or service short-circuit, including on a live ready session and over a successor's claim.
+**Suggested resolution:** Route finalize failures through one owner-checked, slot-aware reclaim that runs only when the guarded failFinalizing write applied. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.28 — The created sweeper hard-deletes and reclaims by name with no state predicate [High] — OPEN
+
+**Spec:** §4.6 Pod Lifecycle Controllers, §11.3 Timeouts and Cancellation, and §5.2 Pool Configuration and Execution Modes.
+**Evidence:** `pkg/gateway/session/createdsweeper/createdsweeper.go:184-197, :209-215`; `cmd/lenny-gateway/worker_seams.go:102-103`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-20 (bucket C; source findings C: p1#56, p1#57, p3#41; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The created sweeper hard-deletes and reclaims by name with no state predicate, races the watchdog created-timeout, and drains a shared slot pod under live siblings.
+**Suggested resolution:** Retire the created sweeper's delete in favour of the watchdog's guarded created-timeout write, with a slot-aware reclaim. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.29 — A process exit between the terminal commit and the in-process release leaks credential-lease slots and concurrent-workspace slots [Medium] — OPEN
+
+**Spec:** §4.6.1 Warm Pool Controller (Pod Lifecycle) (the claim-orphan GC), §4.9 Credential Leasing Service, and §5.2 Pool Configuration and Execution Modes.
+**Evidence:** `pkg/gateway/sessionserver/usage.go:448`; `pkg/gateway/credentials/credassign/credassign.go:400-421`; `pkg/controller/warmpool/gc.go:233-241`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-21 (bucket B; source findings B: p3#2, p3#35, p3#55, p7#52; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6 and D6: 0092's accepted gap misstates this as GC-covered.
+**Gap:** A process exit between the terminal commit and the in-process release leaks credential-lease slots and concurrent-workspace slots, because peers skip terminal rows and the claim-orphan GC skips a pod with a live sibling.
+**Suggested resolution:** Persist a pending-release marker with the terminal write and let the Sweeper or the GC complete it. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
@@ -3533,6 +3561,48 @@ Key file paths:
 
 ---
 
+### - [ ] F-4.9.30 — The chart renders no Token Service tenant, so every `RevokeCredentials` call fails and no terminal release frees a Token Service slot [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (**Revocation granularity.** and lease release on session end).
+**Evidence:** `charts/lenny/templates/gateway-deployment.yaml:478-486` (no tenant flag); `cmd/lenny-gateway/flags.go:879`; `pkg/gateway/credentials/credassign/client.go:304-320`; `pkg/tokenservice/grpc.go:194-196`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-69 (bucket C; source findings C: p4#46; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** In chart deployments the Token Service tenant is unset, so every RevokeCredentials call fails and Client.Release swallows the error, so no terminal release frees a Token Service slot.
+**Suggested resolution:** Render `--token-service-tenant` (or its env var) in the chart and fail startup when it is empty with a Token Service configured. Direct BUILD-GAPS fix under existing spec text, scheduled now, in parallel with proposal 0092's review (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.31 — `classifyTokenServiceError` counts `ResourceExhausted` against the Token Service circuit breaker [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (the Token Service circuit breaker, which trips on unavailability).
+**Evidence:** `pkg/gateway/credentials/credassign/client.go:253-268`; `pkg/tokenservice/grpc.go:91-94`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-70 (bucket C; source findings C: p6#34; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** classifyTokenServiceError counts ResourceExhausted against the breaker, so an exhausted pool opens the breaker and fires the extension cap on healthy pools.
+**Suggested resolution:** Classify ResourceExhausted as a user-class error, as the comment intends. Direct BUILD-GAPS fix under existing spec text, scheduled now, in parallel with proposal 0092's review (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.32 — Credential leases of a hard-deleted live session are never released and are re-minted at each renewal [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (**Renewal loop design:**).
+**Evidence:** `pkg/gateway/credentials/credentialpoolstore/pgstore/pgstore.go:250-264`; `pkg/gateway/credentials/credrenewal/credrenewal.go:225`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-71 (bucket C; source findings C: p1#65; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Credential leases of a hard-deleted live session are never released and are re-minted at each renewal.
+**Suggested resolution:** Have the renewal worker check session liveness and release leases whose session row is gone. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.33 — The credential-fallback exhaustion path is unwired [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (**Fallback chain**).
+**Evidence:** `pkg/gateway/llmproxy/llmproxy/fallback.go:132-137`; `pkg/gateway/credentials/credfallback/controller.go:42-60, :129-160`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-72 (bucket C; source findings C: p1#70, p2#53, p3#46; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-4.9.9 (closed; covered the wiring).
+**Gap:** The credential-fallback exhaustion path is unwired: chain exhaustion writes no terminal row, the trigger fires on the first fault, and the rotation counter is replica-local.
+**Suggested resolution:** Wire the FallbackTerminator, seed the chain from policy, and persist the rotation count on the session. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.34 — A lease release against an unreachable Token Service is logged and dropped with no retry [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service.
+**Evidence:** `pkg/gateway/credentials/credassign/client.go:306-320`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-73 (bucket C; source findings C: p1#67; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A lease release against an unreachable Token Service is logged and dropped, and the local lease is removed, so the slot leaks with no retry.
+**Suggested resolution:** Keep a durable revoke-retry record for a failed RevokeCredentials. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.35 — `revokeFinalizeLease` ignores `REG-COORDLEASE`, so a finalize failure path can revoke a started session's lease [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/sessionserver/finalize.go:455-466, :515-519`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-74 (bucket B; source findings B: p13#5; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: 0092 restages failFinalizing and finalizeReadyWriteFailed under the hook.
+**Gap:** revokeFinalizeLease ignores REG-COORDLEASE, so a finalize failure path can revoke a started session's lease before its holder's Shutdown.
+**Suggested resolution:** Revoke the finalize lease only through the owner-checked finalize reclaim, after the guarded failFinalizing write applied. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §5.1 Runtime <a id="5.1"></a>
 ### Summary
 
@@ -4316,6 +4386,27 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Evidence:** When a sidecar runtime on a pod serving concurrent sessions stops answering, every open slot stream on the pod fails, and the coordinating replica counts each failed slot toward the trigger. Below the threshold, each failed slot is released under the §5.2 per-slot cleanup disposition. A pod whose last slot releases cleanly takes the pool's occupancy-zero path, where `ReportPodScrub` reports a hung runtime whose connection is open as live, so the pod serves again. Failures that fall outside the trigger's rolling window do not accumulate. Recorded by proposal 0091, which accepts the outcome (0091 spec changes, **Hung runtime on a pod serving concurrent sessions.**), filed 2026-10-07.
 **Gap:** At a low session arrival rate, a pod whose runtime hung keeps serving new sessions, and each one fails on its first turn.
 **Suggested resolution:** Owned by proposal 0087 part 1, whose periodic `CH-SUPERVISE` liveness ping marks a pod whose runtime stops answering as not live.
+
+### - [ ] F-5.2.47 — A failed occupancy-zero recycle patch on a concurrent pool skips `ShutdownRecycle`, so the pod is reused without the whole-pod scrub [High] — OPEN
+
+**Spec:** §5.2 Pool Configuration and Execution Modes (**Lenny scrub procedure** and the occupancy-zero recycle boundary).
+**Evidence:** `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:418-462, :874-878`; `pkg/gateway/podlifecycle/podsession/slotbinder.go:793-795`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-16 (bucket B; source findings B: p9#23; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-5.2.46 (adjacent).
+**Gap:** A failed occupancy-zero recycle patch on a concurrent pool skips ShutdownRecycle, so the pod is reused without the whole-pod scrub.
+**Suggested resolution:** Fail closed: retire the pod when the recycle patch fails at occupancy zero. Owned by the recycling follow-up proposal (`gateway-runtime-comms-remediation.md` §10.2 Phase 3). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.48 — `ClaimSlot` places a new session on a pod whose per-pod claim is recycling, during the whole-pod scrub [High] — OPEN
+
+**Spec:** §5.2 Pool Configuration and Execution Modes (the whole-pod scrub at the occupancy-zero recycle boundary).
+**Evidence:** `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:423, :450, :460`; `pkg/sandboxclaim/state/state.go:38, :67`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-17 (bucket C; source findings C: p11#25; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-5.2.37.
+**Gap:** ClaimSlot Pass 1 places a new session on a pod whose per-pod claim is recycling, during the whole-pod scrub.
+**Suggested resolution:** Treat a recycling per-pod claim as unavailable in ClaimSlot and ReserveSlotOnPod. Owned by the recycling follow-up proposal (`gateway-runtime-comms-remediation.md` §10.2 Phase 3). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.49 — A slot release that fails after the unbind leaves the slot counted, and nothing retries it [Medium] — OPEN
+
+**Spec:** §5.2 Pool Configuration and Execution Modes (slot accounting).
+**Evidence:** `pkg/gateway/session/executor/pod.go:257-265`; `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:854-856`; `pkg/gateway/sessionserver/failure.go:237-239, :285-287`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-22 (bucket B; source findings B: p8#43, p9#1; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6 and D6 restate this release.
+**Gap:** A slot release that fails after the unbind (counter error) leaves the slot counted, and nothing retries it.
+**Suggested resolution:** Make the slot release idempotent and retried from a durable record, or decrement before the unbind. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
@@ -5238,6 +5329,13 @@ Secondary risk: the `lenny-sandboxclaim-guard` webhook's PATCH/PUT rule is pinne
 **Evidence:** The WarmPoolController drains idle pods on other triggers too, including the pinned-idle drain proposal 0079 adds (stated in §5.2 **Pinned idle inventory.**). Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
 **Gap:** The edge's trigger list is incomplete.
 **Suggested resolution:** List every trigger on the edge or point to the §5.2 home. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-6.2.28 — `sweepMaxAge` expires paused rows (`suspended`, `resume_pending`, `awaiting_client_action`) [High] — OPEN
+
+**Spec:** §6.2 Pod State Machine (`maxSessionAgeSeconds` counts only active time) and §11.3 Timeouts and Cancellation.
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:1074-1091`; `spec/06_warm-pod-model.md` (maxSessionAgeSeconds pauses). Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-38 (bucket B; source findings B: p10#10, p6#12; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Idle suspension: CODE-1 item 4 restates sweepMaxAge, and 0092's own C1.2 conflicts with SPEC-5g (0092-A10).
+**Gap:** sweepMaxAge lists every non-terminal row by wall-clock age, so it expires paused rows (suspended, resume_pending, awaiting_client_action), which §6.2 forbids.
+**Suggested resolution:** Restrict the age sweep to counting states and measure active time. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §6.3 Startup Latency Analysis <a id="6.3"></a>
 Spec section: `spec/06_warm-pod-model.md` lines 315–372 (subsection 6.3).
@@ -6611,6 +6709,69 @@ fidelity** (no real copy, no advisory lock, no DERIVE_SNAPSHOT_UNAVAILABLE).
 
 ---
 
+### - [ ] F-7.1.21 — The terminal funnel runs on the writer's request context, so a client disconnect aborts the seal, cascade, drain, and release part-way [High] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**) and §11.3 Timeouts and Cancellation.
+**Evidence:** `pkg/gateway/sessionserver/session_transitions.go:51, :101` (recordSessionCompleted(r.Context(), ...)); `pkg/gateway/sessionserver/seal.go:119, :151, :212-225`; `pkg/gateway/sessionserver/usage.go:392-394, :447-448, :784`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-1 (bucket B; source findings B: p1#0, p1#11, p1#81, p1#10, p1#60; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 hook: the hook runs H3 to H7 on this context, and 0092 detaches only H7.
+**Gap:** The terminal funnel (seal, relabel, cascade, drain, and release) runs on the writer's request context, so a client disconnect aborts it part-way.
+**Suggested resolution:** Run the funnel on context.WithoutCancel of the writer's context, bounded by the seal window plus a release allowance, as ReportAttachStreamFailure already does. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.22 — A concurrent unbind during the terminal seal makes `Seal` return nil, so an unsealed workspace is reported as sealed [High] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**).
+**Evidence:** `pkg/gateway/checkpoint/checkpointer/checkpointer.go:396-400`; `pkg/gateway/sessionserver/seal.go:126`; `pkg/gateway/coordination/coordination/coordination.go:355-361`; `pkg/gateway/environment/translator/openai_chat.go:484-491`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-3 (bucket B; source findings B: p9#42, p5#31; C: p5#21, p6#21; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H3 and D6: the Sweeper eviction and D6 release race the hook's seal.
+**Gap:** A concurrent unbind during the terminal seal (Sweeper dead-connection eviction, releaseSingleShot, or another release) makes Seal return nil, so the workspace export is reported as sealed.
+**Suggested resolution:** Treat ErrNoBinding during a terminal seal as a seal failure, and make the eviction and single-shot releasers defer to an open terminal seal. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.23 — A `Send` after the hook ends the `Attach` stream reopens it, so a turn can change the workspace during the seal export [High] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**) and §7.2 Interactive Session Model.
+**Evidence:** `pkg/gateway/session/executor/pod.go:142-161`; `pkg/gateway/sessionserver/messages_delivery.go:147`; `pkg/gateway/sessionserver/usage.go:392, :448`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-4 (bucket B; source findings B: p6#26, p6#46; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H3 and held-message delivery: deliverBuffered and path-2 Sends race the seal.
+**Gap:** After H3 ends the Attach stream, a later Send reopens it over the still-published binding, so a turn can change the workspace during the seal export.
+**Suggested resolution:** Mark the binding sealing under the delivery lock before the export and refuse Send on a sealing binding. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.24 — A binding left after a hard delete keeps the Checkpointer exporting the deleted session's workspace [High] — OPEN
+
+**Spec:** §7.1 Normal Flow and §12.8 Compliance Interfaces (**Data erasure (GDPR).**).
+**Evidence:** `pkg/gateway/checkpoint/checkpointer/checkpointer.go:338-343, :599-606`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-5 (bucket B; source findings B: p11#41, p14#33; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D6: 0092 records this case as an accepted gap of D6.
+**Gap:** A binding left after a hard delete keeps the Checkpointer exporting the deleted (or erased) session's workspace.
+**Suggested resolution:** Treat ErrNotFound on the session row as a terminal signal: stop the export and release the binding. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.25 — `failFinalizing` runs on the cancelled `/finalize` request context, so a disconnect leaves the row `finalizing` with its pod and lease held [Medium] — OPEN
+
+**Spec:** §7.1 Normal Flow and §11.3 Timeouts and Cancellation.
+**Evidence:** `pkg/gateway/sessionserver/finalize.go:418, :460, :471-477`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-7 (bucket B; source findings B: p11#6; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** failFinalizing runs on the cancelled /finalize request context, so a client disconnect leaves the row finalizing with its pod and lease held.
+**Suggested resolution:** Run failFinalizing and its reclaim on a detached, bounded context. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.26 — A seal relabel store error returns the input row, so the hook reports a clean end and recycles the pod [Medium] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**) and §5.2 Pool Configuration and Execution Modes (pod retirement policy).
+**Evidence:** `pkg/gateway/sessionserver/seal.go:212-225`; `pkg/gateway/sessionserver/usage.go:392-394, :448`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-8 (bucket B; source findings B: p2#13; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 hook: H3 relabel feeds H5 and H6.
+**Gap:** The seal relabel is lossy: a relabel store error returns the input row so H5 reports a clean end and H6 recycles the pod.
+**Suggested resolution:** Retry the relabel on the primary and, when it cannot be written, release with the failed disposition rather than the row's clean one. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.27 — A seal timeout on a concurrent-workspace slot session releases only the slot and leaves the pod running [Medium] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**) and §5.2 Pool Configuration and Execution Modes.
+**Evidence:** `pkg/gateway/session/executor/pod.go:263-265`; `spec/07_session-lifecycle.md` (seal timeout). Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-9 (bucket B; source findings B: p13#8; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6 restates this release.
+**Gap:** A seal timeout on a concurrent-workspace slot session releases only the slot and leaves the pod running, against §7.1's terminate-anyway rule.
+**Suggested resolution:** On a seal failure for a slot session, scrub or retire the slot's workspace per the spec rather than a plain ReleaseSlot. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.28 — Retention GC can delete artifacts and clear the sealed snapshot before the funnel's retention roll [Medium] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Final sealed workspace.**) and §12.8 Compliance Interfaces.
+**Evidence:** `pkg/gateway/sessionserver/lifecycle.go:282, :455`; `pkg/gateway/storage/retentiongc/retentiongc.go:143-149, :231-270`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-10 (bucket B; source findings B: p10#44; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: the hook keeps the seal-then-roll order.
+**Gap:** Retention GC can delete artifacts and clear the sealed snapshot before the funnel's retention roll.
+**Suggested resolution:** Roll RetentionExpiresAt inside the terminal write rather than after the seal. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.1.29 — A responses `DELETE` during the hook makes the seal retry for the whole window and record a false seal failure [Medium] — OPEN
+
+**Spec:** §7.1 Normal Flow (**Seal-and-export invariant:**) and §15.1 REST API.
+**Evidence:** `pkg/gateway/sessionserver/seal.go:62-69, :124-158`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-13 (bucket C; source findings C: p12#38; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H3.
+**Gap:** A responses DELETE during the hook makes H3 retry the seal for the whole window and record a false seal failure.
+**Suggested resolution:** Treat ErrNotFound as permanent in isPermanentSealError. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §7.2 Interactive Session Model <a id="7.2"></a>
 Spec source: `spec/07_session-lifecycle.md` lines 114–373.
 
@@ -7054,6 +7215,69 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Gap:** An interrupted session on the embedded transport cannot resume on its held pod, and its resume is counted as a runtime crash.
 **Suggested resolution:** Make the embedded interrupt pause the loop rather than end it, or relaunch the loop on the `suspended → running` edge. Add a tier-1 adapter test that a session interrupted on an `InProcessRuntime` answers a later message, and a tier-4 test of the same edge through the gateway.
 
+### - [ ] F-7.2.29 — A terminal or recovering-edge `Update` that applies but returns an error skips the post-commit tail [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model and §7.3 Retry and Resume.
+**Evidence:** `pkg/gateway/sessionserver/session_transitions.go:35-51`; `pkg/gateway/sessionserver/failure.go:234-239, :429-440`; `pkg/gateway/sessionserver/stream_failure.go:41-42`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-28 (bucket B; source findings B: p1#80, p10#0; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: 0092 records this as an accepted gap and restages the funnel (item 22).
+**Gap:** A terminal or recovering-edge Update that applies but returns an error skips the post-commit tail (cascade, signals, drain, billing, slot accounting, release).
+**Suggested resolution:** Classify an ambiguous write by a primary re-read keyed on a write token, and run the tail when it applied. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.30 — `POST /terminate` in the recovery states answers 409 during an automatic restore and writes `completed` from `resume_pending` [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (the terminal transitions from the recovery states) and §15.1 REST API.
+**Evidence:** `pkg/api/v1/session/session.go:297-305`; `pkg/gateway/sessionserver/session_transitions.go:121-123`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-34 (bucket B; source findings B: p2#0, p2#3; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: automatic restores make `resuming` routine.
+**Gap:** POST /terminate in recovery states diverges from §7.2: it answers 409 with the internal state `resuming` during an automatic restore, and writes `completed` from resume_pending where §7.2 names `cancelled`.
+**Suggested resolution:** Admit terminate from resuming and write the §7.2 state per source state. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.31 — ForceTerminate, orphan cleanup, and the budget terminator write terminal states on edges §7.2 does not list [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (the state edges) and §6.2 Pod State Machine.
+**Evidence:** `cmd/lenny-gateway/session_budget.go:66-78`; `cmd/lenny-gateway/session_admin.go:48-63`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:208-212`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-46 (bucket C; source findings C: p1#68, p6#16; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver and idle suspension: these are the states 0092 drives.
+**Gap:** ForceTerminate, orphan cleanup, and the budget terminator write terminal states from resume_pending, resuming, suspended, and awaiting_client_action on edges §7.2 does not list.
+**Suggested resolution:** Either add the edges to §7.2 or restrict each writer's mutator to listed edges. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.32 — DLQ and durable-inbox writes can land after the terminal drain, and the keys carry no TTL [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (the delivery paths and held messages).
+**Evidence:** `pkg/gateway/session/sessioninbox/dlq.go:67-78, :87-114`; `pkg/gateway/session/sessioninbox/sessioninbox.go:171-178`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:373-385`; `pkg/gateway/sessionserver/failure.go:331, :361`; `pkg/gateway/runtime/watchdog/watchdog.go:684-705`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-81 (bucket B; source findings B: p1#61, p6#32, p8#47, p10#29, p5#34; C: p14#40; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Held-message delivery: 0092 restages holdMessage (CODE-4 item 7) and the resume_pending migration.
+**Gap:** Writes to the DLQ or durable inbox can land after the terminal drain (enqueue racing a terminal write, an enqueue error before the re-read, an enqueuer exit, inbox-to-DLQ migration after a resume_pending commit), and the keys carry no TTL, so the entries persist with no outcome.
+**Suggested resolution:** Re-read the row after every enqueue and drain on terminal, and give the expiry sweep terminal and deleted sessions so no key outlives its session. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.33 — A failed or ambiguous terminal drain loses DLQ members or leaves them with no retry owner and no `message_expired` [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (the delivery paths and held messages).
+**Evidence:** `pkg/gateway/sessionserver/messaging.go:77-79`; `pkg/gateway/session/sessioninbox/dlq.go:123-135`; `pkg/gateway/session/sessioninbox/coordinator.go:203-208`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-82 (bucket B; source findings B: p2#42, p10#18; C: p4#42; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Held-message delivery: hook step H4 is this drain.
+**Gap:** A failed or ambiguous terminal drain (DrainAll error, decode error after the DEL, full_revoke drain error) loses the DLQ members or leaves them with no retry owner and no message_expired.
+**Suggested resolution:** Decode before the DEL, and leave entries for a sweep to retry when the drain fails. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.34 — A DLQ eviction is reported only through the enqueue script's reply [Low] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (the delivery paths and held messages).
+**Evidence:** `pkg/gateway/session/sessioninbox/dlq.go:68-78, :96-110`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-83 (bucket B; source findings B: p13#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Held-message delivery.
+**Gap:** A DLQ eviction is reported only through the enqueue script's reply, so an evicted member gets no outcome when the reply is lost.
+**Suggested resolution:** Record evictions durably (an outcome key or event) rather than only in the reply. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.35 — Writers with nil or no terminal signals skip the retention roll, `callbackSecret` clear, cascade, and DLQ drain [High] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (terminal transitions), §7.1 Normal Flow, and §8.10 Delegation Tree Recovery (the `cascadeOnFailure` policy).
+**Evidence:** `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:607-618`; `pkg/gateway/sessionserver/lifecycle.go:282`; `pkg/gateway/sessionserver/usage.go:210-235, :473`; `pkg/gateway/environment/translator/openai_chat.go:284-287`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-84 (bucket C; source findings C: p3#24, p4#23, p14#38, p10#20; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: 0092 runs the hook with nil signals for these writers.
+**Gap:** Writers with nil or no terminal signals (cancel_session, cancelSubtree, full_revoke, the translators) skip the retention roll, callbackSecret clear, cascade, and DLQ drain.
+**Suggested resolution:** Give every terminal writer the same terminal-signal set, so the tail is not writer-specific. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.36 — Post-commit emitters do not re-check for a terminal write, so session-stream events can follow the terminal events [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model.
+**Evidence:** `pkg/gateway/sessionserver/create_and_start.go:87-96, :529-536`; `pkg/gateway/sessionserver/start.go:114-124`; `pkg/gateway/sessionserver/interrupt.go:85-97`; `pkg/gateway/sessionserver/bind_registration.go:59-82`; `pkg/gateway/sessionserver/messages_delivery.go:147, :159, :355-363`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-85 (bucket B; source findings B: p1#48, p1#76, p11#23, p9#46, p5#50; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Held-message delivery and idle suspension: deliverBuffered and interrupt suspension emit on the same stream.
+**Gap:** Post-commit emitters do not re-check for a terminal write: start's status_change(running), interrupt's status_change(suspended), workspace_plan_warning frames, and a path-2 turn's response can follow the terminal events.
+**Suggested resolution:** Emit session-stream events through one gate that re-reads the row (or holds the delivery lock) and drops events after a terminal. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.37 — The input-wait forget runs only on the writing replica, while the `one_shot` `request_input` counter lives on the serving replica [Low] — OPEN
+
+**Spec:** §7.2 Interactive Session Model and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/session/inputwait/inputwait.go:114-123`; `pkg/gateway/sessionserver/usage.go:492`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-90 (bucket C; source findings C: p9#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The input-wait forget runs only on the writing replica, while the one_shot request_input counter lives on the serving replica.
+**Suggested resolution:** Forget on every replica from the Sweeper's terminal branch, or share the registry. Owned by remediation step R20 (message-plane durability and cross-replica input wait), which builds the shared input-wait store this fix needs (`gateway-runtime-comms-remediation.md` §10.1). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §7.3 Retry and Resume <a id="7.3"></a>
 Spec: `spec/07_session-lifecycle.md` lines 375–427.
 
@@ -7423,6 +7647,27 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 **Evidence:** `RetryModeClientOnly` in `pkg/api/v1/session/retry_policy.go` disables automatic retry so that every failure surfaces to the client, and the `retryPolicy.mode` enum in `pkg/gateway/externalapi/openapi/openapi.json` publishes `auto_then_client` and `client_only`. Filed by proposal 0091, 2026-10-07.
 **Gap:** The public API accepts a retry mode whose behavior the specification does not state, so a client cannot rely on it and a reviewer cannot verify it.
 **Suggested resolution:** Specify `retryPolicy.mode` and both values in §7.3 through the proposal pipeline, or remove the field from the API and the code.
+
+### - [ ] F-7.3.32 — The post-resume partial-manifest cleanup deletes a terminal seal's in-progress intent row [Medium] — OPEN
+
+**Spec:** §7.3 Retry and Resume and §10.1.8 Rolling Updates and the CheckpointBarrier Protocol (partial-manifest cleanup).
+**Evidence:** `pkg/gateway/sessionserver/resume.go:153`; `pkg/gateway/checkpoint/checkpointer/partialcleanup.go:487-500`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-11 (bucket B; source findings B: p10#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: the cleanup sits in 0092's post-commit tail.
+**Gap:** The post-resume partial-manifest cleanup deletes a terminal seal's in-progress intent row.
+**Suggested resolution:** Scope the cleanup to the attempt's own manifests, excluding a seal intent. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.3.33 — The failure funnel's non-terminal-edge release ignores an open terminal claim and races the hook's seal and release [High] — OPEN
+
+**Spec:** §7.3 Retry and Resume and §7.1 Normal Flow (**Seal-and-export invariant:**).
+**Evidence:** `pkg/gateway/sessionserver/failure.go:205-213, :234-239, :276-287`; `pkg/gateway/sessionserver/usage.go:392`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-27 (bucket B; source findings B: p9#0; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 claim: the funnel releases under the hook.
+**Gap:** The funnel's non-terminal-edge release ignores an open terminal claim and races the hook's seal and release.
+**Suggested resolution:** Have releaseReportedBinding defer to an open terminal claim on this replica. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.3.34 — The resume binder's failure compensation is incomplete when the resume attempt is cancelled [Medium] — OPEN
+
+**Spec:** §7.3 Retry and Resume and §5.2 Pool Configuration and Execution Modes (slot accounting).
+**Evidence:** `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:737-747`; `pkg/gateway/podlifecycle/podsession/resume.go:142-145`; `pkg/gateway/podlifecycle/podsession/reclaim.go:28-35, :51-60`; `pkg/gateway/sessionserver/resume_rebind.go:46`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-30 (bucket B; source findings B: p7#2, p7#32; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: H1 cancels these attempts.
+**Gap:** The resume binder's failure compensation is incomplete under an H1 cancel: reserveResumeSlot's rollback runs on the cancelled context, and a rebuild-branch Bind failure drains with no pod-side reclaim.
+**Suggested resolution:** Run binder compensation on a detached context and send ShutdownReclaim before draining on every Bind failure. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §7.4 Upload Safety <a id="7.4"></a>
 Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload handler, archive extraction, mid-session uploads, uploadToken auth, storage-quota integration, audit/observability hooks.
@@ -8823,6 +9068,13 @@ The pure state machine (`Submitted → Running → {Completed,Failed,Cancelled,E
 
 ---
 
+### - [ ] F-8.2.30 — The delegated child materializer's rollback runs on the `delegate_task` request context [Medium] — OPEN
+
+**Spec:** §8.2 Delegation Mechanism and §11.3 Timeouts and Cancellation.
+**Evidence:** `pkg/gateway/sessionserver/delegated_child_materialize.go:135-138, :152-154, :184-187`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-32 (bucket B; source findings B: p11#24, p14#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 hook: item 21 edits this function.
+**Gap:** The materializer's rollback (rollbackClaim, rollbackBinding) runs on the delegate_task request context, which the parent's teardown can cancel.
+**Suggested resolution:** Run the rollback on a detached, bounded context. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §8.3 Delegation Policy and Lease <a id="8.3"></a>
 Audit of `spec/08_recursive-delegation.md` §8.3 (lines 131-513) against the
 implementation. Method: enumerate normative requirements, grep for the
@@ -9406,6 +9658,41 @@ events) are the load-bearing gaps the rest of the section
 transitively depends on.
 
 ---
+
+### - [ ] F-8.3.1 — `perChildMaxAge` is stored nowhere and no writer enforces it [Medium] — OPEN
+
+**Spec:** §8.3 Delegation Policy and Lease (Delegation Lease).
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go` (effectiveAgeCap; no PerChildMaxAge read); `pkg/gateway/mcpfabric/delegation/service.go:367-379`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-43 (bucket B; source findings B: p1#72; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: 8.3-M7 (partial). 0092-adjacent: Idle suspension: the suspended lifetime sweep is where 0092 drops the wall-clock bound.
+**Gap:** perChildMaxAge is stored nowhere and no writer enforces it, yet 0092 restates it as an expiry trigger.
+**Suggested resolution:** Persist perChildMaxAge on the child and read it in the age cap, or record the bound as absent. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.3.2 — The MCP cancel paths never return the cancelled nodes' tree budget [High] — OPEN
+
+**Spec:** §8.3 Delegation Policy and Lease (budget reservation and return) and §8.10 Delegation Tree Recovery.
+**Evidence:** `pkg/gateway/mcpfabric/mcptools/mcptools.go:2283`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:607-618`; `pkg/gateway/sessionserver/usage.go:650`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-50 (bucket B; source findings B: p12#17; C: p2#26; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The MCP cancel paths (cancel_child, cancel_session) never return the cancelled nodes' tree budget.
+**Suggested resolution:** Return tree budget from the shared child-terminal path that every cancel writer reaches. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.3.3 — Tree budget keys lose their TTL on return, and the tokens sentinel is never created for a tree with no token slice [Medium] — OPEN
+
+**Spec:** §8.3 Delegation Policy and Lease (budget reservation and the per-tree budget keys).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/treebudget/treebudget.go:174-184, :203-213`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-58 (bucket C; source findings C: p1#71, p5#43, p13#28; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Tree budget key lifecycle: the return script re-creates expired keys with no TTL and clamps away a TTL, and the tokens sentinel is never created for a tree with no token slice.
+**Suggested resolution:** Create every tree key with its TTL at tree creation and make the return script skip missing keys. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.3.4 — The child-terminal budget return never credits unused tokens to the parent [Medium] — OPEN
+
+**Spec:** §8.3 Delegation Policy and Lease (budget return) and §8.10 Delegation Tree Recovery (**Detached orphan cascade and budget semantics:**).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:660-669`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-59 (bucket C; source findings C: p13#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The child-terminal budget return never credits unused tokens to the parent.
+**Suggested resolution:** Return the unused token slice with the memory and slot returns. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.3.5 — When a parent read fails in `treeRoot`, the child's budget returns to the wrong root's keys [Low] — OPEN
+
+**Spec:** §8.3 Delegation Policy and Lease (budget return).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:869-881`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-65 (bucket C; source findings C: p13#35; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** When a parent read fails in treeRoot, the child's budget returns to the wrong root's keys.
+**Suggested resolution:** Fail the return (and retry) on a parent read error rather than using the deepest node. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §8.4 Approval Modes <a id="8.4"></a>
 **Spec scope.** §8.4 of `spec/08_recursive-delegation.md` (lines 515–521) is a single normative table defining the closed enum `approvalMode` carried on the `delegation lease` (referenced by the example at §8.3 line 265 `"approvalMode": "policy"`). The table defines three legal values:
@@ -10410,6 +10697,34 @@ The §8.6 surface in v1 has the pure decision kernel and the in-memory race-safe
 
 ---
 
+### - [ ] F-8.6.24 — The `MemoryBudgetSource` is per process, so a tree-registration miss writes the budget terminal with no extension attempt [High] — OPEN
+
+**Spec:** §8.6 Lease Extension and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/leasecontrol/budgetextension.go:115-118`; `pkg/gateway/mcpfabric/delegationtree/leasecontrol/membudget.go:478-485`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-52 (bucket C; source findings C: p9#34; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The MemoryBudgetSource is per process, so a tree-registration miss on the proxying replica writes the budget terminal with no extension attempt.
+**Suggested resolution:** Back the budget source with shared state, or treat a miss as unknown rather than terminal. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.6.25 — Budget-extension paths apply grants and dispatches to sessions that are already terminal [Medium] — OPEN
+
+**Spec:** §8.6 Lease Extension (Lease Extension Approval Modes).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/leasecontrol/leasecontrol.go:806-913`; `pkg/gateway/mcpfabric/delegationtree/leasecontrol/budgetextension.go:575-604`; `cmd/lenny-gateway/lease_elicit.go:66-95`; `pkg/gateway/session/sessionbudget/sessionbudget.go:271-281`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-63 (bucket C; source findings C: p6#36, p1#69, p4#48, p12#16; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** §8.6 budget-extension paths apply grants, resolutions, and elicitation dispatches to sessions that are already terminal, and a deferred grant clears the deny flag while a terminate is in flight.
+**Suggested resolution:** Check the session's terminal state under the grant and dispatch, and do not clear deny while a terminate is pending. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.6.26 — Batched consent terminates every waiting sibling when the driving session ends [Medium] — OPEN
+
+**Spec:** §8.6 Lease Extension (Lease Extension Approval Modes).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/leasecontrol/elicitation.go:135-150, :174-183`; `cmd/lenny-gateway/lease_elicit.go:94, :107-135`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-64 (bucket C; source findings C: p5#39, p7#44; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Batched consent couples siblings to the driving session: when the driver ends, the batched error (or the poll timeout) terminates every waiting sibling.
+**Suggested resolution:** Re-drive the prompt for the remaining waiters when the driver ends rather than propagating its error. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.6.27 — Per-tree and per-child lease-extension state is never reclaimed [Low] — OPEN
+
+**Spec:** §8.6 Lease Extension.
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/leasecontrol/membudget.go:307, :338-369, :540-592`; `pkg/gateway/mcpfabric/delegationtree/leasecontrol/elicitation.go:196-199`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-67 (bucket C; source findings C: p5#42, p6#38; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** §8.6 per-tree and per-child state (budget source maps, consent coordinator) is never reclaimed.
+**Suggested resolution:** Forget per-child entries at the child's terminal and per-tree entries when the tree settles. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §8.7 File Export Model <a id="8.7"></a>
 **Spec ref:** `spec/08_recursive-delegation.md` §8.7 (lines 745–802), with cross-cutting normative rules in §8.3 (rules 1–5, lines 159–181) and §4.8 phase-payload row for `PreExportMaterialization` (lines 1038, 1050).
 
@@ -10826,6 +11141,34 @@ Section §8.8 defines two top-level wire schemas — `TaskRecord` and `TaskResul
 
 ---
 
+### - [ ] F-8.8.17 — `DEADLOCK_TIMEOUT` never fires when the await edge and the `request_input` wait sit on different replicas [High] — OPEN
+
+**Spec:** §8.8 TaskRecord and TaskResult Schema (**Subtree deadlock detection (heuristic).**).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go:159-175`; `cmd/lenny-gateway/reconciler_workers.go:125-160`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-51 (bucket C; source findings C: p2#25; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-8.8.6 (closed, single-replica case).
+**Gap:** DEADLOCK_TIMEOUT never fires when the await edge and the request_input wait sit on different replicas.
+**Suggested resolution:** Build the detector snapshot from shared state (plan step R20's cross-replica input wait). Owned by remediation step R20 (message-plane durability and cross-replica input wait), which builds the shared input-wait store this fix needs (`gateway-runtime-comms-remediation.md` §10.1). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.8.18 — The deadlock closure fails any non-terminal row, including tasks whose `request_input` was answered [Medium] — OPEN
+
+**Spec:** §8.8 TaskRecord and TaskResult Schema (**Subtree deadlock detection (heuristic).**).
+**Evidence:** `cmd/lenny-gateway/reconciler_workers.go:134-157`; `pkg/gateway/session/inputwait/inputwait.go:142-146`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-62 (bucket C; source findings C: p1#24, p4#16, p7#17; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The deadlock closure fails any non-terminal row, so it fails tasks whose request_input was answered or whose stale wait survived a pod loss.
+**Suggested resolution:** Re-check the blocked condition (the live wait) inside the guarded write and drop waits on pod loss. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.8.19 — The deadlock Manager records `timeout` and drops the subtree before the guarded write runs [Low] — OPEN
+
+**Spec:** §8.8 TaskRecord and TaskResult Schema (**Subtree deadlock detection (heuristic).**).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/deadlock/manager.go:104-114, :226-234`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-66 (bucket C; source findings C: p12#12; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The deadlock Manager records `timeout` and drops the subtree before the guarded write runs.
+**Suggested resolution:** Count and drop only after the write applies. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.8.20 — The deadlock write stamps `deadlock_timeout`, so `TaskResult` and `child_failed` never carry `DEADLOCK_TIMEOUT` [Medium] — OPEN
+
+**Spec:** §8.8 TaskRecord and TaskResult Schema (**Subtree deadlock detection (heuristic).**) and the §15.1 REST API error code table.
+**Evidence:** `pkg/api/v1/session/retry_policy.go:285-288`; `cmd/lenny-gateway/reconciler_workers.go:143`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-89 (bucket C; source findings C: p4#17; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-8.8.6 (closed).
+**Gap:** The deadlock write stamps deadlock_timeout, so TaskResult and child_failed never carry DEADLOCK_TIMEOUT.
+**Suggested resolution:** Map the reason to the catalog code. Direct BUILD-GAPS fix under existing spec text, scheduled now, in parallel with proposal 0092's review (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §8.9 Task Tree <a id="8.9"></a>
 **Spec file:** `spec/08_recursive-delegation.md` (lines 999–1011)
 **Reviewed:** 2026-05-22
@@ -10985,6 +11328,13 @@ rejection (siblings scope vs. non-full visibility) is wired under F-13.5.8.
 **Resolution:** Verify-closed per the finding's own conclusion ("None directly visible at v1 fan-out scales"). The spec does not require linearizable cancellation; the redesign lands with F-8.9.6 (per-tree atomic counter). No v1 code change.
 
 ---
+
+### - [ ] F-8.9.13 — Derive and replay set `ParentSessionID` and inherit `root_session_id`, so derived and replayed sessions are treated as delegated children [High] — OPEN
+
+**Spec:** §8.9 Task Tree, §8.10 Delegation Tree Recovery, and §15.1 REST API (derive and replay).
+**Evidence:** `pkg/gateway/sessionserver/derive.go:398`; `pkg/gateway/sessionserver/replay.go:177`; `pkg/gateway/session/sessionstore/pgstore/pgstore.go:201-209`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:192-212`; `pkg/gateway/mcpfabric/mcptools/mcptools.go:2163-2207`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-47 (bucket B; source findings B: p7#5, p8#2; C: p4#15, p5#17, p6#19; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: 0092 moves tree recovery into the post-commit tail.
+**Gap:** Derive and replay set ParentSessionID (and inherit root_session_id) to the source, so orphan cleanup, the cascade, cancel_child, and tree recovery treat derived and replayed sessions as delegated children.
+**Suggested resolution:** Record the derive or replay source in its own column and keep ParentSessionID and root_session_id for delegation only. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §8.10 Delegation Tree Recovery <a id="8.10"></a>
 **Spec source:** `spec/08_recursive-delegation.md` lines 1012–1110.
@@ -11675,6 +12025,76 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
   `cmd/lenny-gateway/main.go:1573–1587`
 
 ---
+
+### - [ ] F-8.10.17 — A `delegate_task` admitted before the parent's terminal write creates or starts a child that nothing cancels [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (the `cascadeOnFailure` policy) and §8.2 Delegation Mechanism.
+**Evidence:** `pkg/gateway/mcpfabric/delegation/service.go:929-937`; `pkg/gateway/sessionserver/delegated_child_materialize.go:79, :206-208`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:2627-2638`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-31 (bucket B; source findings B: p1#18, p6#25; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 hook: item 21 adds the terminal re-check at the materializer's running commit.
+**Gap:** A delegate_task admitted before the parent's terminal write creates or starts a child that nothing cancels, because the parent is checked only at admission and the materializer does not re-read after its running commit.
+**Suggested resolution:** Re-read the parent under the child's running commit and cancel the child when the parent is terminal. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.18 — Tree recovery selects every node outside the local registry, so it fails healthy children that run on a peer [High] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/sessionserver/treerecovery.go:72-77`; `pkg/delegation/recovery/recovery.go:177-191`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-48 (bucket B; source findings B: p2#4, p11#3; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: item 11 routes ReattachNode through DriveResume.
+**Gap:** Tree recovery selects every node outside the local registry, so it expires or fails healthy children that run on a peer, including one that entered resume_pending mid-traversal.
+**Suggested resolution:** Select nodes by row state and lease holder rather than by local registry absence. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.19 — Tree recovery computes a node's resume deadline from `CreatedAt` and fails an elapsed node instead of expiring it [High] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (**Interaction with `maxResumeWindowSeconds`:**) and §7.3 Retry and Resume.
+**Evidence:** `pkg/gateway/sessionserver/create.go:261`; `pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go:189, :259-269`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-49 (bucket C; source findings C: p5#2, p12#4; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. BUILD-GAPS note from the run: none (BUILD-GAPS documents the as-built anchor). 0092-adjacent: Resume driver.
+**Gap:** Tree recovery computes the node's resume deadline from CreatedAt, and fails a node whose window already elapsed on a deadline instead of expiring it.
+**Suggested resolution:** Anchor ResumeEligibleUntil on resume_pending entry and route an elapsed window to expireSession. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.20 — Tree recovery's `FailNode` writes `failed` or `expired` over a `resuming` node [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery and §7.2 Interactive Session Model (the state edges).
+**Evidence:** `pkg/gateway/sessionserver/treerecovery.go:55-61`; `pkg/gateway/sessionserver/session_terminal.go:18-21, :36-39`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-53 (bucket B; source findings B: p1#7; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver.
+**Gap:** Tree recovery's FailNode writes failed or expired over a resuming node.
+**Suggested resolution:** Guard expireSession and failSession against resuming (or define the edge). Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.21 — Tree recovery fails unrecovered nodes only after the whole traversal [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (`maxLevelRecoverySeconds`).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go:196-214`; `pkg/delegation/recovery/recovery.go:159-211`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-54 (bucket C; source findings C: p12#3; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver.
+**Gap:** Tree recovery fails unrecovered nodes only after the whole traversal, so a parent resumes before its failed children are recorded.
+**Suggested resolution:** Fail each level's unrecovered nodes before reattaching the level above. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.22 — The cascade is a one-shot snapshot traversal with no retry [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (the `cascadeOnFailure` policy).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:784-791, :806-815, :826-833`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-55 (bucket C; source findings C: p4#9, p5#8, p6#8; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The cascade is a one-shot snapshot traversal: a failed List or Update, a node settled without cascading, or a grandchild created after the List leaves the subtree running with no retry.
+**Suggested resolution:** Make the cascade convergent: re-list from the primary until no cancel_all descendant is live, and give failures a retry owner. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.23 — `cancelSubtree` walks a pre-cancel snapshot and returns on the first `Update` error [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (the `cascadeOnFailure` policy) and §8.5 Delegation Tools (`lenny/cancel_child`).
+**Evidence:** `pkg/gateway/mcpfabric/mcptools/mcptools.go:2216-2240`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:746, :763-766`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-56 (bucket C; source findings C: p1#38, p1#39, p4#21, p6#18; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** cancelSubtree walks a pre-cancel ListByRoot snapshot and returns on the first Update error, so the rest of a cancel_all subtree keeps running unarchived and unreleased.
+**Suggested resolution:** Continue past per-node errors, re-list children per node, and archive and release what was cancelled. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.24 — The unguarded cascade overwrites a node `cancelSubtree` already cancelled, so its tree budget is returned twice [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery and §8.3 Delegation Policy and Lease (budget return).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:620-651, :806-813`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-57 (bucket C; source findings C: p11#16; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The unguarded cascade overwrites a node cancelSubtree already cancelled, so its tree budget is returned twice.
+**Suggested resolution:** Guard the cascade mutator on a non-terminal state and make the archive-and-return atomic. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.25 — Orphan cleanup never bounds `await_completion` or `detach` children of a non-root parent, or children whose root row was hard-deleted [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (**Orphan cleanup:** and `cascadeTimeoutSeconds`).
+**Evidence:** `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:193-200, :246-257`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-60 (bucket C; source findings C: p7#19, p11#14; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-8.10.3 (closed, different aspect).
+**Gap:** Orphan cleanup never bounds await_completion or detach children of a non-root parent, or children whose root row was hard-deleted.
+**Suggested resolution:** Select orphans by the liveness of their direct parent rather than of the tree root. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.10.26 — A detach descendant that the cascade cancels never gets the `maxOrphanTasksPerTenant` fallback [Medium] — OPEN
+
+**Spec:** §8.10 Delegation Tree Recovery (**Orphan cleanup:**).
+**Evidence:** `pkg/gateway/sessionserver/usage.go:770, :831`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-61 (bucket C; source findings C: p5#9; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A detach descendant that the cascade cancels never gets the maxOrphanTasksPerTenant fallback.
+**Suggested resolution:** Apply the orphan-cap fallback per traversed node. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §9.1 Where MCP Is Used <a id="9.1"></a>
 **Spec file:** `spec/09_mcp-integration.md` (lines 3-41)
@@ -13274,9 +13694,9 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 ### - [ ] F-10.1.21 — A pod release on a replica that does not hold the session's in-memory binding is a no-op [High] — OPEN
 
 **Spec:** §10.1.1 (one coordinating replica per session) and the §6.2 release of a session's pod on every terminal transition.
-**Evidence:** `PodExecutor.Release` (`pkg/gateway/session/executor/pod.go`) returns nil without calling the binder when `unbind` finds no binding in the replica's own registry. The watchdog's idle and max-age sweeps and a terminate can run on any replica, so a release issued away from the coordinating replica neither drains the pod nor releases the slot. F-7.3.27 recorded the watchdog case. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **A release on a replica that does not hold the in-memory binding is a no-op.**), filed 2026-10-07. Proposal 0091 forwards no release between replicas; a binding that a peer has taken over is evicted by the coordination Sweeper.
+**Evidence:** `PodExecutor.Release` (`pkg/gateway/session/executor/pod.go`) returns nil without calling the binder when `unbind` finds no binding in the replica's own registry. The watchdog's idle and max-age sweeps and a terminate can run on any replica, so a release issued away from the coordinating replica neither drains the pod nor releases the slot. F-7.3.27 recorded the watchdog case. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **A release on a replica that does not hold the in-memory binding is a no-op.**), filed 2026-10-07. Proposal 0091 forwards no release between replicas; a binding that a peer has taken over is evicted by the coordination Sweeper. The terminal-transition table run on proposal 0092 recorded the same defect as TT-14 (bucket B; source findings B: p2#21, p5#22, p5#28, p5#32; C: p4#25, p9#38; `scratchpad/terminal-transition/distinct-defects.md`), 2026-10-12, and adds three cases in which nothing releases the pod, slot, or credential leases: after the Sweeper's dead-connection eviction, after the coordinator is lost, and after a failed readopt. Its evidence, re-confirmed against the tree at `319b80091`: `pkg/gateway/session/executor/pod.go:257-262`; `pkg/gateway/coordination/coordination/coordination.go:308-315, :355-361`; `cmd/lenny-gateway/coordination_seams.go:209-252`; `pkg/gateway/sessionserver/usage.go:447-448`. TT-14 is 0092-adjacent: it is the case that 0092's D6 binding reclamation and its readopt exit leave open.
 **Gap:** A session that ends on a replica other than its coordinator keeps its pod or slot, claim, and workspace until the coordinating replica's own release, or indefinitely when that replica holds no binding either.
-**Suggested resolution:** Forward a release to the replica that holds the binding, or release from the persisted pod assignment when no local binding exists, and add a tier-4 test with two replicas in which the watchdog on the non-coordinating replica ends a session and the pod is released.
+**Suggested resolution:** Forward a release to the replica that holds the binding, or release from the persisted pod assignment when no local binding exists, and add a tier-4 test with two replicas in which the watchdog on the non-coordinating replica ends a session and the pod is released. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092, which closes this finding with one durable releaser per binding keyed by session and generation, so a writer that does not hold the binding records the release for the holder or the claim-orphan path rather than returning nil (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ### - [ ] F-10.1.22 — No `coordination_generation` stamp or check on `CH-ATTACH` frames [High] — OPEN
 
@@ -13320,6 +13740,62 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Evidence:** The coordination Sweeper adopts a lapsed lease only for a `running` or `input_required` session with a pod assignment (`isRunningPod` in `pkg/gateway/coordination/coordination/coordination.go`). The `isRunningPod` doc comment treats a `suspended` row as never bound, although §6.2 lets a `suspended` session keep its pod. Recorded by proposal 0091 (owner-delegate answer, 2026-10-06), which writes no lease, filed 2026-10-07.
 **Gap:** A `starting` session, or a `suspended` session that still holds its pod, whose coordinating replica dies is coordinated by no replica, and its pod stays held until the watchdog.
 **Suggested resolution:** Owned by the session suspend-and-resume proposal in §10.2 of `gateway-runtime-comms-remediation.md`. Extend adoption to these states with a handoff that re-adopts the held pod, and add a tier-8 test that kills the coordinating replica of a `suspended` session with a held pod.
+
+### - [ ] F-10.1.27 — A gateway SIGTERM exits after `--shutdown-timeout` without waiting for open terminal hooks or D6 releases [High] — OPEN
+
+**Spec:** §10.1.7 preStop Hook Drain and §7.1 Normal Flow (**Seal-and-export invariant:**).
+**Evidence:** `cmd/lenny-gateway/runserver.go:212-226`; `cmd/lenny-gateway/flags.go:549`; `pkg/gateway/coordination/coordination/coordination.go:308-315`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-6 (bucket B; source findings B: p11#28; C: p4#63; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.21. 0092-adjacent: D7 hook and D6: planned shutdown cuts both.
+**Gap:** A gateway SIGTERM exits after --shutdown-timeout (5 s) without waiting for open terminal hooks or D6 releases.
+**Suggested resolution:** Track open terminal work and drain it (bounded) before closing the store pool; persist anything left for a peer. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.28 — A superseded coordinator or the `cancel_child` handler releases a local binding without checking the coordination generation [High] — OPEN
+
+**Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination, §10.1.2 Coordinator Handoff Protocol, and §10.1.5 Stale Replica Behavior.
+**Evidence:** `pkg/gateway/sessionserver/usage.go:392, :447-448`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:775-779`; `pkg/gateway/session/executor/pod.go:257-271`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-15 (bucket B; source findings B: p1#77; C: p4#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.22. 0092-adjacent: Takeover/readopt and D6: the stale release races the adopter.
+**Gap:** A superseded coordinator, or the cancel_child handler, releases through a local binding without checking the coordination generation, so it seals and releases a pod a peer adopted.
+**Suggested resolution:** Fence executor.Release and Seal on the row's coordination generation. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.29 — The Sweeper's dead-connection and D6 evict branches drop the adapter gRPC connection without closing it [Medium] — OPEN
+
+**Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination and §10.1.5 Stale Replica Behavior.
+**Evidence:** `pkg/gateway/sessionserver/stream_failure.go:129-137`; `cmd/lenny-gateway/coordination_seams.go:81-88`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-23 (bucket B; source findings B: p3#31, p11#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D6: the evict branch is 0092's.
+**Gap:** The Sweeper's dead-connection and D6 evict branches drop the BindResult without closing the adapter gRPC connection.
+**Suggested resolution:** Close the adapter client on every eviction. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because D6 adds the evict branch (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.30 — An ambiguous `RecordHandoff` error raises the generation with no adopter, and the old holder re-acquires at the old stamp [Medium] — OPEN
+
+**Spec:** §10.1.2 Coordinator Handoff Protocol.
+**Evidence:** `pkg/gateway/coordination/coordination/coordination.go:524-540, :428-455`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-24 (bucket B; source findings B: p11#48; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.22. 0092-adjacent: Takeover/readopt (CODE-5 item 2b).
+**Gap:** An ambiguous RecordHandoff error raises the generation with no adopter, and the old holder re-acquires at the old stamp.
+**Suggested resolution:** Re-read the generation after an ambiguous RecordHandoff and adopt or abandon on the read value. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.31 — The Sweeper's adoption-backoff map entry is never removed once the session is terminal or hard-deleted [Low] — OPEN
+
+**Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/coordination/coordination/coordination.go:562-569, :575-588`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-25 (bucket B; source findings B: p12#46, p14#23; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Takeover/readopt (CODE-5 edits the Sweeper).
+**Gap:** The Sweeper's adoption-backoff map entry is never removed once the session is terminal or hard-deleted.
+**Suggested resolution:** Clear backoffUntil when a listed row is terminal or absent. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because CODE-5 edits the Sweeper (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.32 — The active-source failure funnel compares only the state, so a stale replica writes the failure edge after a takeover [High] — OPEN
+
+**Spec:** §10.1.2 Coordinator Handoff Protocol, §10.1.5 Stale Replica Behavior, and §7.3 Retry and Resume.
+**Evidence:** `pkg/gateway/sessionserver/failure.go:239, :331, :374, :418`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-26 (bucket B; source findings B: p1#2; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.22. 0092-adjacent: Takeover and resume driver: 0092 adds the generation check for resuming only.
+**Gap:** The active-source failure funnel compares only the state, so a stale replica writes the failure edge after a takeover.
+**Suggested resolution:** Add the coordination generation to the funnel's guard for every source state. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.33 — Off-holder terminate and delete write the terminal state locally [High] — OPEN
+
+**Spec:** §29.3 Interactive message send (**Off-holder matrix.**), §29.4 Interrupt, terminate, and delete, and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/sessionserver/session_transitions.go:15-40, :59-110`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:607-611`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-29 (bucket B; source findings B: p14#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.25 and F-10.1.21. 0092-adjacent: D7 hook: 0092 edits the §29.3 off-holder row for these writers and keeps the local terminal write.
+**Gap:** Off-holder terminate and delete write the terminal state locally, which the §29.3 off-holder matrix forbids.
+**Suggested resolution:** Forward off-holder terminal requests to the coordinator per §29.3, or record the local write as a spec departure with the holder-side release. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-10.1.34 — Terminal sweeps run unelected on every replica, so two replicas claim one expiry [Medium] — OPEN
+
+**Spec:** §10.1.4 Coordinator-Loss Detection and Hold State (**Orphan session reconciliation:**) and §11.3 Timeouts and Cancellation.
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:613-633, :1021-1043`; `cmd/lenny-gateway/workers.go:66`; `cmd/lenny-gateway/reconciler_workers.go:84-112`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:209-233`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-40 (bucket B; source findings B: p1#20, p1#79; C: p1#14, p1#26, p11#15, p14#12; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.5 (closed with this design). 0092-adjacent: Idle suspension: SuspendIdle runs from sweepIdle.
+**Gap:** Sweeps run unelected on every replica, and their nil-returning post-check cannot tell their own write, so two replicas claim one expiry (idle, pre-running, orphan cleanup, orphan-session reconciler).
+**Suggested resolution:** Leader-gate the terminal sweeps (§10.1 already makes the reconciler leader-only) and classify the applied write by a token. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
@@ -17334,6 +17810,27 @@ Net assessment: the §11.2 budgets / quotas surface is at proof-of-concept level
 
 ---
 
+### - [ ] F-11.2.30 — The budget terminator runs the terminal write and funnel on a one-shot, process-local goroutine with a 30 s deadline [High] — OPEN
+
+**Spec:** §11.2 Budgets and Quotas and §7.1 Normal Flow (**Seal-and-export invariant:**).
+**Evidence:** `cmd/lenny-gateway/session_budget.go:18, :47-51, :59-62, :80-83`; `pkg/gateway/credentials/credrenewal/credrenewal.go:321`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-2 (bucket B; source findings B: p1#34; C: p3#20, p2#28, p2#48, p13#13, p14#15; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 hook: H3's seal runs inside this 30 s context.
+**Gap:** The budget terminator runs the terminal write and funnel on a one-shot, process-local goroutine with a 30 s deadline, so the seal times out inside its 300 s window and a failed or interrupted terminate is never retried.
+**Suggested resolution:** Make the budget and extension-cap terminate a guarded write whose funnel runs detached, and keep the deny decision until the write is confirmed, retrying from durable state. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.2.31 — Per-session budget enforcer and recorder state is process-local and forgotten only in the writer's funnel tail [Medium] — OPEN
+
+**Spec:** §11.2 Budgets and Quotas and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `pkg/gateway/sessionserver/usage.go:500-501`; `pkg/gateway/session/sessionbudget/sessionbudget.go:216-225`; `cmd/lenny-gateway/llmproxy_usage.go:169-173`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-68 (bucket C; source findings C: p3#45, p12#35, p4#24, p2#52; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Per-session budget enforcer and recorder state is process-local and forgotten only in the writer's funnel tail, so other replicas, hook-less writers, and late requests leak or re-create it.
+**Suggested resolution:** Key the enforcer on a session generation and expire entries on a terminal read rather than a single forget call. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.2.32 — A budget expiry's `dev.lenny.session_expired` callback reports `expiryReason` `max_session_age` [Medium] — OPEN
+
+**Spec:** §14 Workspace Plan Schema (the `dev.lenny.session_expired` callback event) and §11.2 Budgets and Quotas.
+**Evidence:** `pkg/gateway/sessionserver/usage.go:265-270`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-88 (bucket C; source findings C: p3#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A budget expiry's §14 callback reports expiryReason max_session_age.
+**Suggested resolution:** Map expired:budget (and every reason) explicitly. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §11.3 Timeouts and Cancellation <a id="11.3"></a>
 Scope: spec/11_policy-and-controls.md lines 191-242. The section is a single canonical timeout table (lines 193-234), the single-line "Cancellation is first-class" sentence (line 236), the `maxRequestInputWait` paragraph (line 238), the session expiry warning paragraph (line 240), and a Note (line 242).
 
@@ -17697,6 +18194,55 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 **Gap:** Operators read a default and a reason that the gateway does not use.
 **Suggested resolution:** Owned by the session suspend-and-resume proposal, which redefines idle (no turn in flight and no traffic in either direction) and changes the default and the outcome to suspend. That proposal renames the flag to match `maxClientIdleSeconds` and corrects the help text in the same change.
 
+### - [ ] F-11.3.37 — The ready timeout can fail a session whose client called `/start` in time [Medium] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation and §7.1 Normal Flow.
+**Evidence:** `pkg/gateway/sessionserver/session_transitions.go:113-115`; `pkg/gateway/sessionserver/start.go:70, :114`; `pkg/gateway/runtime/watchdog/watchdog.go:598-618`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-33 (bucket B; source findings B: p9#5; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The ready timeout can fail a session whose client called /start in time, because no write records `starting` before the launch.
+**Suggested resolution:** Record the start (a starting state or a start timestamp) before the launch and anchor the ready timeout on it. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.38 — Expiry stamps and post-checks depend on an empty `FailureReason`, which a recovered session keeps [High] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation and §6.2 Pod State Machine.
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:927, :1029-1037, :1096`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:217-219`; `pkg/gateway/sessionserver/seal.go:215`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-37 (bucket B; source findings B: p1#16, p1#19, p2#19, p2#14; C: p1#15, p2#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-8.8.8 (closed; missed this case). 0092-adjacent: Idle suspension: CODE-6 item 5 rewrites sweepIdle's write.
+**Gap:** Expiry stamps and post-checks depend on an empty FailureReason, which a recovered session keeps, so idle expiry runs no hook and expiry writes keep a stale reason (watchdog, orphan cleanup, seal relabel).
+**Suggested resolution:** Stamp the terminal reason unconditionally on every terminal write and post-check on a write token rather than the reason. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.39 — The idle expiry fires on a running session whose runtime is waiting in `lenny/request_input` [High] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation and §6.2 Pod State Machine (the idle clock).
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:968-972, :1013-1031`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:1178`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-39 (bucket B; source findings B: p6#11; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Idle suspension: the idle definition counts waiting on input as activity.
+**Gap:** The idle expiry fires on a running row whose runtime is waiting in lenny/request_input, because nothing records the wait as activity.
+**Suggested resolution:** Count an open request_input wait as activity in the idle clock. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.40 — Sweep guards re-check only the state of a stale listing [Medium] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation (**Session expiry warning:**) and §6.2 Pod State Machine.
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:918, :1021`; `pkg/gateway/runtime/watchdog/watchdog.go:1142, :1149, :1165`; `pkg/gateway/sessionserver/expiry_warning.go:37, :57, :66`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-41 (bucket B; source findings B: p2#12, p2#17, p12#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Proposal 0092 records this defect as RECORDS-1 7(k). 0092-adjacent: Idle suspension: CODE-6 item 5 edits sweepIdle.
+**Gap:** Sweep guards re-check only the state of a stale listing, so they expire an incarnation that re-entered or became active after the listing, and emit session_expiring_soon after a terminal write.
+**Suggested resolution:** Re-evaluate the sweep's deadline inside the locked-row mutator from the locked row rather than from the listing. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.41 — Per-state deadlines are anchored on `UpdatedAt`, which unrelated writes advance [Medium] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation, §6.2 Pod State Machine, and §7.3 Retry and Resume (the resume window).
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:609, :727, :914`; `pkg/gateway/sessionserver/retention.go:52-55, :84-87`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:205`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-42 (bucket B; source findings B: p11#4, p4#6; C: p6#9, p1#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-11.3.26 (closed, related). 0092-adjacent: Resume driver: the resume_pending window bounds the driver.
+**Gap:** Deadlines are anchored on UpdatedAt, which unrelated writes (extend-retention, no-op writes) advance: pre-running timeouts, the resume_pending window, the awaiting_client_action deadline, and the orphan cleanup window.
+**Suggested resolution:** Add a state-entry timestamp written only on a state change and anchor every per-state deadline on it. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.42 — Sweeps run each terminal hook inline in the serial pass, so one seal window stalls every later sweep in the pass [Medium] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation and §7.1 Normal Flow (**Seal-and-export invariant:**).
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:633, :949, :1043, :1113`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:233`; `pkg/gateway/session/orphansession/orphansession.go:368`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-44 (bucket B; source findings B: p3#14; C: p2#23; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver and idle suspension: 0092 adds DriveResume and SuspendIdle to the Tick.
+**Gap:** Sweeps run each terminal hook inline in the serial Tick or pass, so one 300 s seal window stalls every later sweep and terminal in that pass.
+**Suggested resolution:** Run each claimed row's hook on a bounded worker pool off the sweep loop. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.3.43 — Sweep loops abort on the first per-row error [Medium] — OPEN
+
+**Spec:** §11.3 Timeouts and Cancellation and §8.10 Delegation Tree Recovery (**Orphan cleanup:**).
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:625`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:163-168, :220-221`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-45 (bucket C; source findings C: p2#11, p2#44, p3#19; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Sweep loops abort on the first per-row error, so one row's Update error (including ErrNotFound) skips the rest of the Tick or the orphan-cleanup pass, and an applied pre-running failure runs no hook.
+**Suggested resolution:** Log and continue per row, and re-read the row after an ambiguous error. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §11.4 User Invalidation <a id="11.4"></a>
 **Spec location:** `spec/11_policy-and-controls.md` lines 244-264
 
@@ -17878,6 +18424,48 @@ This is a wording inconsistency, not a functional gap — the propagation semant
 The remaining items are smaller — synchronous-vs-async wording mismatch (F5), wiring fragility around the cross-replica deny list (F6), session-lookup scalability (F7), audit OCSF mapping specificity (F8), and "in Redis" wording (F9).
 
 ---
+
+### - [ ] F-11.4.10 — full_revoke's `RevokeUserLeases` revokes the wrong set of credential leases [High] — OPEN
+
+**Spec:** §11.4 User Invalidation (**Full revoke propagation mechanism:**) and §4.9 Credential Leasing Service (**Revocation granularity.**).
+**Evidence:** `cmd/lenny-gateway/user_revocation.go:184-190`; `pkg/credential/lease.go:286-291`; `pkg/gateway/externalapi/admin/users.go:452-454`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-75 (bucket C; source findings C: p1#30, p1#31, p5#20; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-11.4.6 (closed, related).
+**Gap:** full_revoke's RevokeUserLeases revokes the wrong set: it deletes lease rows without returning the credential slot, deny-lists a shared pool credential for every user, and skips sessions another writer made terminal.
+**Suggested resolution:** Revoke the user's leases by user, return each slot through the Assigner, and deny-list only user-scoped credentials. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.11 — full_revoke's `terminateLocal` fan-out sends an unfenced, unordered `Shutdown` to every matching binding [High] — OPEN
+
+**Spec:** §11.4 User Invalidation (**Full revoke propagation mechanism:**) and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `cmd/lenny-gateway/user_revocation.go:120-138`; `pkg/gateway/externalapi/admin/users.go:457-469`; `pkg/gateway/podlifecycle/podsession/slotbinder.go:762-777`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-76 (bucket B; source findings B: p1#33, p1#44, p13#12, p10#17, p9#15; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.22. 0092-adjacent: D6: the fan-out and D6 both release the same binding.
+**Gap:** terminateLocal's fan-out sends an unfenced, unordered Shutdown to every matching binding, which can hit another writer's seal, race D6's recycle, and remove the slot so a later ReleaseSlot reads ABSENT as a clean exit.
+**Suggested resolution:** Replace the raw Shutdown fan-out with the binder's release path for sessions this revoke cancelled, after their hook. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.12 — The full_revoke continuation runs on the request context [High] — OPEN
+
+**Spec:** §11.4 User Invalidation (**Full revoke propagation mechanism:**).
+**Evidence:** `pkg/gateway/externalapi/admin/users.go:536, :546, :548`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-77 (bucket B; source findings B: p3#27; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The full_revoke continuation (fan-out, token revoke, elicitation dismissal) runs on the request context.
+**Suggested resolution:** Run the continuation on a detached, bounded context. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.13 — A per-session store error aborts full_revoke with no counts [Medium] — OPEN
+
+**Spec:** §11.4 User Invalidation (**Full revoke propagation mechanism:**).
+**Evidence:** `pkg/gateway/externalapi/admin/users.go:463-466, :536-541`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-78 (bucket B; source findings B: p2#32, p2#64; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A per-session store error aborts full_revoke, which answers 500 with no counts and drops sessions whose write applied.
+**Suggested resolution:** Continue past per-session errors and report them. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.14 — full_revoke lists sessions once from the read pool [Medium] — OPEN
+
+**Spec:** §11.4 User Invalidation (**Full revoke propagation mechanism:**).
+**Evidence:** `pkg/gateway/externalapi/admin/users.go:448`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-79 (bucket C; source findings C: p2#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** full_revoke lists once from the read pool, so a session inserted concurrently or not yet replicated escapes.
+**Suggested resolution:** List from the primary after setting the revocation marker, and gate creation on the marker. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.15 — A pre-running session cancelled by full_revoke keeps its pod, slot reservation, and finalize lease until the claim-orphan GC [Medium] — OPEN
+
+**Spec:** §11.4 User Invalidation and §4.6 Pod Lifecycle Controllers.
+**Evidence:** `pkg/gateway/externalapi/admin/users.go:457-467`; `cmd/lenny-gateway/user_revocation.go:122-128`; `pkg/gateway/sessionserver/pod_claim.go:158-159`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-80 (bucket C; source findings C: p1#32, p5#24; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A pre-running session cancelled by full_revoke keeps its pod, slot reservation, and finalize lease until the claim-orphan GC.
+**Suggested resolution:** Run the pre-running reclaim for each session full_revoke cancels. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §11.5 Idempotency <a id="11.5"></a>
 Scope: `spec/11_policy-and-controls.md` lines 266-279. The section enumerates six "critical operations" that support idempotency keys (CreateSession, FinalizeWorkspace, StartSession, SpawnChild, Approve/DenyDelegation, Resume), a "**Mechanism.**" paragraph that fixes the wire surface (header for REST, `idempotencyKey` field for MCP), the key bound (≤128 characters, UUIDs recommended), the Postgres storage primitives (table `idempotency_keys` keyed by `(tenant_id, idempotency_key)`, 24h TTL), the replay contract ("same HTTP status and body" within the window), the reuse-detection contract (SHA-256 body hash; `422 IDEMPOTENCY_KEY_REUSED` on mismatch), garbage collection after the window, tenant-scoping, and the closing statement "Prevents duplicate sessions or children during gateway failover or client retries."
@@ -19545,6 +20133,13 @@ pgaudit, retention pruning, the canonical hash-chain input, the
 audit-recovery admin endpoints, and the audit-event schema registry.
 
 ---
+
+### - [ ] F-11.7.22 — The admin audit rows `session.force_terminated` and `tenant.suspended` are written on the request context after a long synchronous hook or drain [Medium] — OPEN
+
+**Spec:** §11.7 Audit Logging.
+**Evidence:** `pkg/gateway/externalapi/admin/sessions.go:140, :162`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-87 (bucket C; source findings C: p3#18; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The admin audit rows (session.force_terminated, tenant.suspended) are written on the request context after a long synchronous hook or drain.
+**Suggested resolution:** Append the audit row before the hook, or on a detached context. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §11.8 Security Incident Response <a id="11.8"></a>
 ### Summary
@@ -23438,6 +24033,62 @@ This makes the gaps in F2 (artifact legal-hold endpoint), F5 (pg-backed billing 
 - `BUILD-PROGRESS.md` (Phase 13 row explicitly defers several controls)
 
 ---
+
+### - [ ] F-12.8.26 — The erasure processing restriction is not enforced on session creation or delegation [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Processing restriction during erasure (GDPR Article 18).**).
+**Evidence:** `pkg/gateway/externalapi/admin/erasure.go:192-196, :202`; `pkg/gateway/sessionserver/user_gate.go:43-64`; `pkg/gateway/sessionserver/create.go:88, :332, :389`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-95 (bucket C; source findings C: p9#33, p10#31; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-12.8.10.
+**Gap:** The erasure processing restriction is not enforced: its write error is discarded, it is checked outside the insert in create, create-and-start, derive, and replay, and delegation admission never checks it.
+**Suggested resolution:** Fail the erasure request when the restriction write fails, and check it inside the session INSERT for every create path. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.27 — The erasure listing reads the read replica and lists once [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**User-level erasure invocation.** and **Data erasure (GDPR).**).
+**Evidence:** `cmd/lenny-gateway/adminrouter.go:596-609`; `pkg/gateway/storage/erasure/erasure.go:97-112`; `pkg/gateway/mcpfabric/delegation/service.go:1352-1357`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-96 (bucket C; source findings C: p8#34, p7#42; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-12.2.18 (closed).
+**Gap:** The erasure listing is incomplete: it reads the read replica and lists once, so an unlisted live session or a delegated child created after the listing is hard-deleted live or escapes the erasers.
+**Suggested resolution:** List from the primary after the restriction is durable and gate delegation admission on it. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.28 — Erasure does not quiesce live sessions before the erasers run [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Data erasure (GDPR).**).
+**Evidence:** `migrations/0100_session_tree_archive.up.sql:35`; `cmd/lenny-gateway/adminrouter.go:506-517, :563`; `pkg/gateway/sessionserver/usage.go:480-531`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-97 (bucket C; source findings C: p1#66, p10#30; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Erasure does not quiesce live sessions: a session that writes between erasure steps hits the tree-archive FK or leaves data, and the terminal tail after erasure writes billing, artifact, and quota data back.
+**Suggested resolution:** Terminate and wait for the user's sessions' terminal hooks before the erasers run, and make FT skip an erased user. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.29 — The tenant Phase 4 session delete fails on the `session_tree_archive` foreign key [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Tenant deletion lifecycle.**, Phase 4).
+**Evidence:** `migrations/0100_session_tree_archive.up.sql:35`; `cmd/lenny-gateway/adminrouter.go:740-775`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-98 (bucket C; source findings C: p1#63; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The tenant Phase 4 session delete fails on the session_tree_archive foreign key, which no tenant eraser clears.
+**Suggested resolution:** Add a session_tree_archive tenant eraser ahead of the sessions eraser. Direct BUILD-GAPS fix under existing spec text, scheduled now, in parallel with proposal 0092's review (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.30 — Tenant deletion Phase 3 credential-lease invalidation is unwired [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Tenant deletion lifecycle.**, Phase 3).
+**Evidence:** `pkg/controller/tenantdeletion/controller.go:397-405`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-99 (bucket C; source findings C: p4#47; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Tenant deletion Phase 3 credential-lease invalidation is unwired: Reconciler.Revoker is never assigned.
+**Suggested resolution:** Implement and wire RevokeTenantCredentials. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.31 — The tenant-deletion Phase 1 gate is a plain read checked only by create-and-start [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Tenant deletion lifecycle.**, Phase 1).
+**Evidence:** `pkg/gateway/sessionserver/quota.go:109-138`; `pkg/gateway/sessionserver/create_and_start.go:124`; `pkg/gateway/sessionserver/create.go:88-91`; `pkg/gateway/sessionserver/derive.go:140-144`; `pkg/gateway/sessionserver/replay.go:65-69`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-100 (bucket C; source findings C: p9#32, p11#32; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The tenant-deletion Phase 1 gate is a plain read checked only by create-and-start, so sessions created during deletion (create, derive, replay, delegation) escape Phases 2 and 4.
+**Suggested resolution:** Check the tenant state inside the INSERT for every create path. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.32 — Hard delete of a live session runs no release of the coordination mirror row or the slot [Medium] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Data erasure (GDPR).**) and §5.2 Pool Configuration and Execution Modes (slot accounting).
+**Evidence:** `pkg/gateway/storage/leasestore/leasestore.go:219-224`; `pkg/gateway/coordination/coordination/coordination.go:313`; `cmd/lenny-controller/main.go:181`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-103 (bucket C; source findings C: p1#64, p2#50; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Hard delete of a live session runs no release: the coordination mirror row stays held and an erased slot session's slot is never reclaimed while siblings live.
+**Suggested resolution:** Release the mirror and slot as part of the delete, or delete only terminal rows. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-12.8.33 — The tenant Phase 4 leases eraser deletes coordination lease keys while sessions still run [Medium] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (**Tenant deletion lifecycle.**, Phase 4) and §10.1.1 Stateless Replicas and Per-Session Coordination.
+**Evidence:** `cmd/lenny-gateway/adminrouter.go:746-747`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-104 (bucket C; source findings C: p2#49; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The tenant Phase 4 leases eraser deletes coordination lease keys while sessions still run, forcing coordinator takeovers.
+**Suggested resolution:** Order the leases eraser after the sessions are drained. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §12.9 Data Classification <a id="12.9"></a>
 Spec source: `spec/12_storage-architecture.md` lines 995–1057.
@@ -27969,6 +28620,76 @@ in the MCP Management Server inventory.
 **Evidence:** `handleResume` passes the claim error to `holdOrFailOnResumeError` and answers with the retryable 503 (`pkg/gateway/sessionserver/resume.go`); for an error `isTransientPodClaimError` does not list, `failSession` writes `failed` (`session_terminal.go`). Proposal 0079's bounded pin read adds a path to this outcome. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
 **Gap:** A retryable answer leaves a terminal row.
 **Suggested resolution:** Reclassify resume claim errors in `isTransientPodClaimError` so the row stays in `awaiting_client_action`. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.42 — A derive of a `completed` source during the seal window copies the pre-seal checkpoint [Medium] — OPEN
+
+**Spec:** §15.1 REST API (`POST /v1/sessions/{id}/derive`) and §7.1 Normal Flow (**Final sealed workspace.**).
+**Evidence:** `pkg/gateway/sessionserver/derive.go:184-247`; `pkg/gateway/checkpoint/checkpointer/checkpointer.go:420-445`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-12 (bucket C; source findings C: p10#47; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** A derive of a completed source during the seal window copies the pre-seal checkpoint.
+**Suggested resolution:** Refuse or wait on derive until the source's seal outcome is recorded. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.43 — Interrupt answers 409 `INTERRUPT_BUSY` against an already-terminal row [Medium] — OPEN
+
+**Spec:** §15.1 REST API (`POST /v1/sessions/{id}/interrupt` and the error code table).
+**Evidence:** `pkg/gateway/sessionserver/interrupt.go:46-75, :85`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-35 (bucket B; source findings B: p9#40, p11#44; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Idle suspension: 0092 edits handleInterrupt (CODE-6 item 1).
+**Gap:** Interrupt answers 409 INTERRUPT_BUSY against an already-terminal row, because the adapter call and BUSY return precede any locked-row check.
+**Suggested resolution:** Check the row's state before driving the adapter and answer the terminal-state error. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because CODE-6 item 1 edits `handleInterrupt` (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.44 — `persistDeriveFailure`'s generation fence is a separate read outside the INSERT transaction and records `error` for an INSERT that committed [Medium] — OPEN
+
+**Spec:** §15.1 REST API (`POST /v1/sessions/{id}/derive`).
+**Evidence:** `pkg/gateway/sessionserver/derive.go:329-338, :615-646`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-36 (bucket B; source findings B: p1#45; C: p4#29, p13#15; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-15.1.14 (closed, related).
+**Gap:** persistDeriveFailure's generation fence is a separate read outside the INSERT transaction, runs on the request context, and records `error` for an INSERT that committed.
+**Suggested resolution:** Fence inside the INSERT transaction on a detached context and classify the outcome by re-read. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.45 — Terminal responses and readers return the pre-relabel row [Medium] — OPEN
+
+**Spec:** §15.1 REST API (terminate, `DELETE`, and admin force-terminate) and §8.5 Delegation Tools (`lenny/await_children`).
+**Evidence:** `pkg/gateway/sessionserver/session_transitions.go:51-52, :101-109`; `cmd/lenny-gateway/session_admin.go:68-74`; `pkg/gateway/mcpfabric/mcptools/mcptools.go:1920-1960`; `pkg/gateway/sessionserver/children_reattached.go:91-100`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-86 (bucket B; source findings B: p1#12; C: p2#24, p14#46; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: the hook's relabel produces the divergent row.
+**Gap:** Terminal responses and readers return the pre-relabel row: REST terminate and DELETE, admin force-terminate, lenny/await_children, and children_reattached.
+**Suggested resolution:** Return the hook's final row from the writers, and have readers report a sealing child as pending. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.46 — The translator completion write is unguarded and unchecked [High] — OPEN
+
+**Spec:** §15.1 REST API (the single-shot built-in adapter) and §7.2 Interactive Session Model (terminal transitions).
+**Evidence:** `pkg/gateway/environment/translator/openai_chat.go:284-288`; `pkg/gateway/environment/translator/open_responses.go:342-353`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-91 (bucket B; source findings B: p7#24; C: p1#40, p2#31, p1#42, p2#33, p8#17; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: DriveResume widens the window for a completion over resume_pending.
+**Gap:** The translator completion write is unguarded and unchecked: it overwrites another writer's terminal state or a crash-recovery row, is not generation-scoped, runs on the request context, discards its error, and still answers 200 and releases as completed.
+**Suggested resolution:** Make the completion a guarded running-to-completed write on the generation, on a detached context, and derive the answer and disposition from its outcome. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.47 — Translator early exits write no terminal state, so the row stays `running` and counts against quotas [High] — OPEN
+
+**Spec:** §15.1 REST API (the single-shot built-in adapter) and §11.2 Budgets and Quotas.
+**Evidence:** `pkg/gateway/environment/translator/open_responses.go:286-339`; `pkg/gateway/environment/translator/openai_chat.go:273-278`; `pkg/gateway/sessionserver/quota.go:187-205`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-92 (bucket C; source findings C: p1#43, p8#18, p10#35; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Translator early exits (input and continuation errors after BindSingleShot, and Send failures) write no terminal state, so the row stays running and counts against quotas.
+**Suggested resolution:** Write `failed` on every exit after the bind, or validate before binding. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.48 — `DELETE /v1/responses/{id}` hard-deletes any session in the tenant with no kind, state, or user check and no terminal handling [High] — OPEN
+
+**Spec:** §15.1 REST API (`DELETE /v1/responses/{id}`).
+**Evidence:** `pkg/gateway/environment/translator/open_responses.go:466-479`; `migrations/0001_initial_schema.up.sql:85`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-93 (bucket C; source findings C: p1#75, p2#56, p6#40, p1#74, p9#39; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** DELETE /v1/responses/{id} hard-deletes any session in the tenant with no kind, state, or user check and no terminal handling, which detaches children, leaks the slot and mirror row, and strands held messages.
+**Suggested resolution:** Restrict the delete to the caller's terminal single-shot response sessions, and route a live one through the terminal path first. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.49 — The single-shot pod and lease release runs after a streamed response is delivered [Medium] — OPEN
+
+**Spec:** §15.1 REST API (the single-shot built-in adapter).
+**Evidence:** `pkg/gateway/environment/translator/openai_chat.go:261, :376-377`; `pkg/gateway/environment/translator/open_responses.go:304`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-94 (bucket C; source findings C: p1#41; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The single-shot pod and lease release runs after a streamed response is delivered.
+**Suggested resolution:** Release before the final flush, or bound the post-flush release. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.50 — The tenant-suspend drain is a one-shot, serial loop on the request context [High] — OPEN
+
+**Spec:** §15.1 REST API (tenant suspension) and §11.7 Audit Logging.
+**Evidence:** `pkg/gateway/externalapi/admin/tenant_suspend.go:85, :112-120, :179-203`; `cmd/lenny-gateway/session_admin.go:42`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-101 (bucket C; source findings C: p1#58, p7#35, p6#30, p2#47, p2#45, p9#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** The tenant-suspend drain is a one-shot, serial loop on the request context: it stops at the first error, reads from the replica, cannot be re-run once the marker is set, answers 200 with a partial count, and loses its audit event on disconnect.
+**Suggested resolution:** Run the drain as a re-runnable background job that lists from the primary, continues past errors, and reports progress. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-15.1.51 — Sessions created around the tenant-suspension marker escape the drain [High] — OPEN
+
+**Spec:** §15.1 REST API (tenant suspension).
+**Evidence:** `pkg/gateway/sessionserver/create_and_start.go:124, :500`; `pkg/gateway/externalapi/admin/tenant_suspend.go:112`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-102 (bucket C; source findings C: p1#59, p2#46; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
+**Gap:** Sessions created around the suspension marker escape the drain, because only create-and-start checks the marker and does not re-check it at commit.
+**Suggested resolution:** Check the marker inside the INSERT for every create path and re-list after the marker is durable. Owned by proposal P5 (data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and the responses `DELETE`), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).

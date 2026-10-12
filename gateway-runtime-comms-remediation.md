@@ -2286,7 +2286,12 @@ it, and name the commit or merge.
 - [ ] **R17.** Not started.
 - [ ] **R18.** Not started. The claim register carries rows deferred to it.
 - [ ] **R19.** Not started. The claim register carries rows deferred to it.
-- [ ] **R20.** Not started. The claim register carries rows deferred to it.
+- [ ] **R20.** Not started. The claim register carries rows deferred to it. It also closes two defects
+  from the terminal-transition table run (owner decision, 2026-10-12), each of which needs the shared
+  input-wait store R20 builds: BUILD-GAPS F-8.8.17 (TT-51, `DEADLOCK_TIMEOUT` never fires when the await
+  edge and the `request_input` wait sit on different replicas) and F-7.2.37 (TT-90, the input-wait forget
+  runs only on the writing replica while the `one_shot` `request_input` counter lives on the serving
+  replica). Its tests follow the expansive-test instruction in section 10.2.
 - [ ] **R21.** Not started.
 - [ ] **R22.** Not started.
 - [ ] **R23.** Not started. The claim register carries rows deferred to it.
@@ -2398,7 +2403,8 @@ The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec
 other while their code proceeds in parallel.
 
 - [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out, scope
-  widened to every sidecar pod per section 10.3), approved, and implemented. It defines `CH-SUPERVISE` as
+  widened to every sidecar pod per section 10.3), approved, and implemented, after proposals P1 and P5 of
+  the terminal-transition follow-ups below (owner decision, 2026-10-12). It defines `CH-SUPERVISE` as
   JSON Lines and adds no proto field, requires `command` on every sidecar Runtime including through the
   admin registration API, designs supervision for `preConnect` and service-mode runtimes, and carries the
   gVisor implementation conditions and the conformance check recorded in section 10.3.
@@ -2501,8 +2507,9 @@ other while their code proceeds in parallel.
 - [ ] Session suspend-and-resume proposal (proposal 0092, in review), after proposal 0091 and before
   proposal 0087 part 1 (owner decision, 2026-10-06). It stays one proposal (owner decision, 2026-10-10).
   After it is implemented, the next steps are R4, then a BUILD-GAPS fix for the credential fail-open that
-  proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails),
-  then proposal 0087 part 1 (owner decision, 2026-10-11). It is a release prerequisite: without a resume driver, the failure
+  proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails)
+  (owner decision, 2026-10-11), then proposals P1 and P5 of the terminal-transition follow-ups below, then
+  proposal 0087 part 1 (owner decision, 2026-10-12). It is a release prerequisite: without a resume driver, the failure
   handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
   session holds its pod or slot for up to two hours before it ends for good.
   - **Resume driver.** Nothing in the tree moves a session from `resume_pending` to `resuming`, claims a
@@ -2549,6 +2556,190 @@ other while their code proceeds in parallel.
     copies the sealed workspace and can place the old transcript in it as a file. It does not carry the
     runtime's conversation state or connector tokens. Derive continues the work, and suspension
     preserves the conversation.
+  - **Terminal-transition table attempt (context, 2026-10-12).** The review of 0092's D6 (binding
+    reclamation) and D7 (the terminal claim and hook) stopped repeatedly on the paths that write or race a
+    terminal state, so the mechanism-table-converge workflow was run on them. It built a table of every
+    terminal path in the tree by the session-end effects and ran 14 review passes, which confirmed 626
+    findings. The run did not converge: from pass 3 onward at least half of each pass's findings were
+    defects in the table text and the review rules the fixer had added (`R1` to `R50`). 0092's own staging
+    converged early, at 20 distinct defects (`0092-A1` to `0092-A20`), and pre-existing tree defects kept
+    arriving because the scope had no fixed size; they merge into 104 distinct defects (`TT-1` to
+    `TT-104`). `scratchpad/terminal-transition/lessons.md` records the causes and the drafting rules that
+    follow from them, `distinct-defects.md` in the same directory lists every defect with its evidence, and
+    `grouping-and-timing.md` groups the tree defects into the follow-ups below.
+  - **Remaining work before approval (owner decision, 2026-10-12).** 0092 fixes its own 20 staging defects
+    (`0092-A1` to `0092-A20`, in the bucket A table of `distinct-defects.md`). It replaces the table's
+    lease-return rule R16 (terminal lease return by session ID, gated on `REG-COORDLEASE`) with one rule:
+    only the releaser of a binding returns its credential leases. It settles three 0092-adjacent tree
+    defects in the text it already edits, or records each as a departure with a named fallback: TT-29
+    (BUILD-GAPS F-10.1.33, off-holder terminate and delete write the terminal state locally; fallback
+    owner P2, with plan steps R10, R19, and R21), TT-38 (F-6.2.28, `sweepMaxAge` expires paused rows;
+    settling 0092-A10 settles the `suspended` case, and the `resume_pending` and `awaiting_client_action`
+    cases fall to P3), and TT-48 (F-8.10.18, tree recovery fails peer-bound nodes; fallback owner P4). The
+    next confirming sweep also re-checks the two unconfirmed 0092-adjacent defects that
+    `late-pass-classification.md` lists (a crash report dropped on a terminal row, and the
+    sibling-triggered full-tree recovery). Then 0092 takes a confirming review, approval, and
+    implementation.
+
+**Terminal-transition follow-ups (owner decision, 2026-10-12)**
+
+The 104 pre-existing tree defects of the terminal-transition table run are filed in BUILD-GAPS: TT-14
+merges into F-10.1.21, and each other defect has its own finding.
+`scratchpad/terminal-transition/tt-to-buildgaps.md` maps each `TT-n` to its finding, owner, and severity.
+The owner approved the grouping and order in `scratchpad/terminal-transition/grouping-and-timing.md`. Each
+group has one subsystem boundary and one owner per resource. The order is: the four direct fixes marked
+"now" in parallel with 0092's review; 0092 itself; R4 and the credential fail-open fix; P1 and P5 with the
+three post-0092 direct fixes; proposal 0087 part 1; P2 and P3; and P4. Two further defects go to the
+recycling follow-up proposal in Phase 3 and two to plan step R20 (section 10.1).
+
+**Test instruction for every step in this block (owner, 2026-10-12).** Tests are expansive rather than
+narrow, because the owner expects more unknown code bugs in this area. Each step covers every path and
+state in table-driven tests, runs randomized interleavings under `-race`, injects a fault at each step of
+each path, checks invariants for leaked pods, slots, credential leases, and queue entries, and includes
+multi-replica scenarios. The instruction also applies to 0092, the recycling follow-up's two additions, and
+R20's two additions.
+
+**Drafting rules for P1 to P5** (from `scratchpad/terminal-transition/lessons.md`):
+
+- Open the draft with its member defect list, derived from the code and re-confirmed against the tree at
+  drafting time with updated `file:line` evidence. A defect that is gone is dropped with the reason.
+- Keep the scope to one subsystem boundary. A pre-existing defect found outside it goes to BUILD-GAPS or to
+  the group that owns it, and the draft does not design its remedy.
+- Write a resource-to-owner table first: each pod, slot, claim, credential lease, Redis key, and per-state
+  deadline, with the one component that releases or enforces it.
+- Add no new per-replica state unless the spec requires it. Prefer state on the session row or in a store
+  with a TTL; an in-memory set must be safe to lose, and the draft names the durable backstop for its loss.
+- Record a residual gap as a departure with a fallback that bounds its impact (for example, the
+  claim-orphan GC, lease expiry, or a key TTL) and a claim-register row, rather than adding a rule.
+- State tests as intents with tiers, with the expansive coverage above.
+- Track the share of each review pass's findings that lie in the draft's own new text. When it exceeds
+  half for two consecutive passes, stop adding rules and reframe the decision that generates them.
+
+Direct BUILD-GAPS fixes, now, in parallel with 0092's review (none touches a function 0092 edits):
+
+- [ ] F-4.9.30 (TT-69): render the Token Service tenant flag in the gateway chart, and fail startup when it
+  is empty while a Token Service is configured.
+- [ ] F-4.9.31 (TT-70): classify `ResourceExhausted` as a user-class error in `classifyTokenServiceError`.
+- [ ] F-12.8.29 (TT-98): add a `session_tree_archive` tenant eraser ahead of the `sessions` eraser.
+- [ ] F-8.8.20 (TT-89): map `deadlock_timeout` to the `DEADLOCK_TIMEOUT` code.
+
+Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 edits:
+
+- [ ] F-15.1.43 (TT-35): check the row state before driving the adapter interrupt (0092's CODE-6 item 1
+  edits `handleInterrupt`).
+- [ ] F-10.1.29 (TT-23): close the adapter client on every Sweeper and D6 eviction (D6 adds the evict
+  branch).
+- [ ] F-10.1.31 (TT-25): clear `backoffUntil` for a terminal or absent row (0092's CODE-5 edits the
+  Sweeper).
+
+Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
+
+- [ ] **P1. Release ownership for pods, slots, and credential leases** (not yet written).
+  - **Scope.** Every path that releases a pod, a concurrent-workspace slot, a per-pod claim, or a
+    credential lease at or after a terminal write. One rule: exactly one releaser owns each binding (the
+    binding replica's binder release, D6, or `ReleaseUncommitted`); a writer that does not hold the binding
+    records the release durably rather than returning nil; credential leases are returned only by the
+    binding's releaser or, for a session with no binding, by one named reclaimer. The pre-running,
+    finalize, and created-sweeper reclaims become owner-checked and slot-aware. §11.4 gains the revocation
+    set for pool credentials.
+  - **Members.** F-4.6.26 to F-4.6.29 (TT-18 to TT-21), F-4.9.32 to F-4.9.35 (TT-71 to TT-74), F-5.2.49
+    (TT-22), F-7.3.33 (TT-27), F-7.3.34 (TT-30), F-10.1.21 (TT-14), F-10.1.28 (TT-15), F-10.1.30 (TT-24),
+    F-10.1.32 (TT-26), F-11.4.10 (TT-75), F-11.4.11 (TT-76), and F-11.4.15 (TT-80). Eleven are High.
+  - **Dependencies.** After 0092, because it builds on D6, hook step H6, and `ReleaseUncommitted`. The
+    credential fail-open fix lands first, because it touches `resolveCredentialPools` next to TT-72.
+    F-10.1.22 (the generation on `CH-ATTACH` frames) is related through TT-15 and TT-26. P1's full_revoke
+    edits land before P5's, serialized on `cmd/lenny-gateway/user_revocation.go` and
+    `pkg/gateway/externalapi/admin/users.go`.
+  - **Overlapping plan steps.** R21 (the off-holder eviction leg consumes the release record P1 defines),
+    R12 (hold state on connection loss changes the dead-connection eviction behind TT-14), R22
+    (concurrent-slot resume and restore touches the slot release and the resume binder, TT-22 and TT-30),
+    and R13 (bind-time coordinator resolution, beside TT-15).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+- [ ] **P5. Data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and
+  `DELETE /v1/responses/{id}`** (not yet written; its opening defect list is drafted now, during 0092's
+  review).
+  - **Scope.** Removal and fencing of a user's or tenant's data: the erasure gate and listing, quiescing
+    live sessions before the erasers run, the tenant-deletion phases, tenant suspension's drain and its
+    creation race, the full_revoke session loop and listing, and the responses `DELETE`. P5 decides when
+    and for which sessions a release runs, and P1 decides how. §12.8 gains the statement that erasure
+    terminates the user's sessions and waits for their terminal hooks before the erasers run.
+  - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
+    F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101), and
+    F-15.1.51 (TT-102). Nine are High.
+  - **Dependencies.** Its implementation lands after 0092's, because 0092 edits the erasure job (item 17)
+    and the full_revoke handler (item 2a). Its full_revoke edits follow P1's. Direct fix F-12.8.29 (TT-98)
+    lands before it.
+  - **Overlapping plan steps.** None; no plan step owns erasure, tenant deletion, or tenant suspension.
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposal 0087 part 1 (Phase 2 above) follows P1 and P5.
+
+Proposals, second wave:
+
+- [ ] **P2. Terminal pipeline completeness** (not yet written), after P1.
+  - **Scope.** What happens between a terminal write and the end of its hook: the context the pipeline
+    runs on, the seal and its relabel, the held-message drain and the lifetime of DLQ and inbox keys, the
+    ordering of session-stream events after a terminal, the row returned to the caller, one terminal-signal
+    set for every writer, ambiguous terminal writes, and the single-shot translators, which become ordinary
+    terminal writers. The owner is the D7 hook and the funnel tail. The spec gains a statement that a
+    caller's disconnect or short deadline does not bound the seal or the release, the drain or expiry of a
+    terminal or deleted session's DLQ and inbox keys, the `expiryReason` for a budget expiry, and the
+    off-holder handling of TT-29 if 0092 records it as a departure.
+  - **Members.** F-7.1.21 to F-7.1.29 (TT-1, TT-3 to TT-5, TT-7 to TT-10, and TT-13), F-7.2.29 (TT-28),
+    F-7.2.30 (TT-34), F-7.2.32 to F-7.2.36 (TT-81 to TT-85), F-7.3.32 (TT-11), F-10.1.27 (TT-6), F-11.2.30
+    (TT-2), F-11.2.32 (TT-88), F-11.7.22 (TT-87), F-15.1.42 (TT-12), F-15.1.44 to F-15.1.47 (TT-36, TT-86,
+    TT-91, and TT-92), and F-15.1.49 (TT-94), plus F-10.1.33 (TT-29) if 0092 records it as a departure.
+    Ten are High, counting TT-29.
+  - **Split seam.** If the opening defect list exceeds what one proposal can converge on, split into P2a
+    (seal and writer context: TT-1 to TT-13, TT-28, TT-29, TT-34, TT-36, and TT-87) and P2b (held messages,
+    emission, and translators: TT-81 to TT-86, TT-88, TT-91, TT-92, and TT-94). P2b depends on P2a's
+    writer-context rule.
+  - **Dependencies.** After 0092's D7 hook lands and after P1, because TT-3, TT-5, and TT-6 need P1's
+    release owner. Draft P2b after proposal 0071 is re-derived, because 0071 touches the event path behind
+    TT-85.
+  - **Overlapping plan steps.** R10 (the REST terminate route, beside TT-1, TT-29, and TT-34), R19 (the DLQ
+    custody rule for an unreachable coordinator, beside TT-81), R20 (the durable-inbox trimmer and
+    `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
+    gateway shutdown of TT-6, which stays in P2).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+- [ ] **P3. Session timers and sweep ownership** (not yet written), beside P2.
+  - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
+    deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
+    sweep re-checks its listed row, how a sweep runs the hooks of the rows it ends, and which states each
+    writer may end. The owner is the watchdog, leader-gated. The spec gains a state-entry timestamp as the
+    anchor of every per-state deadline, the edges (or the refusal) for terminal writes from the paused and
+    recovering states, and where `perChildMaxAge` is stored.
+  - **Members.** F-7.2.31 (TT-46), F-8.3.1 (TT-43), F-10.1.34 (TT-40), and F-11.3.37 to F-11.3.43 (TT-33,
+    TT-37, TT-39, TT-41, TT-42, TT-44, and TT-45), plus the `resume_pending` and `awaiting_client_action`
+    cases of F-6.2.28 (TT-38) that 0092 does not settle. Three are High, counting TT-38.
+  - **Dependencies.** After 0092, because its CODE-1 (active-time age) and CODE-6 (idle suspension,
+    `sweepSuspended`) rewrite the sweeps behind TT-37 to TT-41; re-derive those against the landed 0092
+    first. TT-44 needs P2's bounded hook context. Run it in parallel with P2 when the watchdog files are not
+    in flight.
+  - **Overlapping plan steps.** R20 (the cross-replica input wait TT-39 needs).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposals, third wave:
+
+- [ ] **P4. Delegation tree and budget lifecycle** (not yet written), after P2.
+  - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
+    after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
+    local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
+    extension, and the per-session LLM budget enforcer. The owner is the delegation tree service and its
+    budget source. The spec gains a lineage field for derive and replay distinct from `parentSessionId`.
+  - **Members.** F-8.2.30 (TT-32), F-8.3.2 to F-8.3.5 (TT-50, TT-58, TT-59, and TT-65), F-8.6.24 to
+    F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
+    F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
+    (TT-68), plus F-8.10.18 (TT-48) if 0092 records it as a departure. Five are High, counting TT-48.
+  - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
+    recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
+    the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
+    TT-67, and TT-68).
+  - **Dependencies.** After 0092's item 11 for the tree-recovery members (TT-48, TT-49, TT-53, and TT-54),
+    and after P2 for the cascade and budget-return members, which run in the terminal tail. TT-47 (High,
+    derive and replay lineage) is pulled forward as its own small proposal if P4 slips.
+  - **Overlapping plan steps.** R20 (cross-replica input wait, for TT-62; TT-51 itself is R20's).
+  - **Drafting.** Under the drafting rules and the test instruction above.
 
 **Phase 3: after proposal 0087 part 1**
 
@@ -2567,7 +2758,12 @@ other while their code proceeds in parallel.
   deletes its claim on a failed tenant stamp; the unused `ClaimPod` implementations read the pin or are
   deleted), F-4.6.24 (`WarmPoolOversized` corrected and evaluated), F-4.6.25 (the
   `podClaimFallbackMaxMirrorLagSeconds` gateway flag), F-6.2.27 (the §6.2 `idle → draining` trigger list),
-  and F-15.1.41 (a failed resume claim leaves the row in `awaiting_client_action`). It can start right
+  and F-15.1.41 (a failed resume claim leaves the row in `awaiting_client_action`). It also closes two
+  whole-pod scrub defects from the terminal-transition table run (owner decision, 2026-10-12): F-5.2.47
+  (TT-16, a failed occupancy-zero recycle patch on a concurrent pool skips `ShutdownRecycle`, so the pod is
+  reused without the whole-pod scrub; the fix retires the pod when the patch fails) and F-5.2.48 (TT-17,
+  `ClaimSlot` places a new session on a pod whose per-pod claim is recycling). Both sit next to F-5.2.37 and
+  F-5.2.46, and their tests follow the expansive-test instruction above. It can start right
   after proposal 0079. It edits §5.2, §4.6.1, and the warm-pool controller like the pinned-idle proposal,
   so the two are drafted together or one immediately after the other, with their spec steps serialized.
 - [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)
