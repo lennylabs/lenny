@@ -4,13 +4,13 @@ Every step lands after proposal 0091 is implemented. Every step fixes or files e
 
 - [ ] **S1 · spec** — SPEC-1. Lands every SPEC-1 edit.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands every SPEC-2 edit.
+- [ ] **S2 · spec** — SPEC-2. Lands every SPEC-2 edit. Its tier-11 run is red for `TestOffHolderMatrixRowsStateTheirOutcome` and `TestOffHolderMatrixPreambleMatchesForwardingRows` from S2 until S7.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands every SPEC-3 edit.
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S4 · spec** — SPEC-4. Lands every SPEC-4 edit.
       Tiers 0, 11. Depends on: —
-- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit, with the SPEC-5u sweep last.
+- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit, with the SPEC-5u sweep last. Its tier-11 run is red for the `inter-replica link` subtest of `TestSection28RegisterWritersMatchTheSpec_spec_28_3` from S5 until S7, and for `TestFrameIdentifierAgreesAcrossSchemaSpecAndReference` from S5 until S8.
       Tiers 0, 11. Depends on: S1, S2, S3, S4
 - [ ] **S6 · spec** — SPEC-6. Lands every SPEC-6 edit.
       Tiers 0, 11. Depends on: S3, S5
