@@ -411,7 +411,6 @@ sessionPolicy:                            # session mode only
     allowCrossTenantReuse: false          # requires isolationProfile: microvm; never permitted when maxConcurrentSessions > 1
   cleanupCommands: []                     # deployer cleanup executed before the whole-pod scrub
   cleanupTimeoutSeconds: 60
-  maxSessionRetries: 1                    # crash re-dispatch attempts (default: 1, giving 2 total attempts; 0 disables retries)
   maxSessionAgeSeconds: 7200              # wall-clock session age cap (default: 7200)
   maxClientIdleSeconds: 7200              # client-inactivity bound; defaults to the effective maxSessionAgeSeconds (see Section 6.2)
   slotRetries: 1                          # retries for failed slots when maxConcurrentSessions > 1 (default: 1)

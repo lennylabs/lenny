@@ -1357,8 +1357,8 @@ stamp, and the pod rejects a stale one ([§10.1](10_gateway-internals.md#101-hor
    pod before the fence closes the window in which RPCs carrying the prior generation are still accepted
    ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1 `CH-FENCE`, §28.6).
 
-10. When the prior coordinator resumes and receives a generation-stale rejection for the session, from the
-    pod or from a failed compare-and-swap on the session row: `replica A`, `internal`. It cancels every
+10. When the prior coordinator resumes and receives a generation-stale rejection for the session from the
+    pod: `replica A`, `internal`. It cancels every
     in-flight RPC for the session without retrying, discards its cached in-memory streams, pending tool calls, and
     buffered events for the session, and, while it still holds an unexpired lease it believes entitles it
     to re-acquire coordination, backs off with a jittered exponential delay from an initial 500 milliseconds

@@ -263,10 +263,10 @@ connection.
   session"), and on a pod serving concurrent sessions only the session's slot is released, which counts toward
   the whole-pod replacement trigger as the
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Failure isolation:**
-  bullet states. A session the classifier moves to `resume_pending` is re-attached on a replacement pod
-  from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, and reaches
-  `awaiting_client_action` when that window elapses
-  ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+  bullet states. A session the classifier moves to `resume_pending` is restored onto a replacement pod by
+  the resume driver, or reaches `awaiting_client_action` when its `maxResumeWindowSeconds` cap elapses
+  ([§6.2](06_warm-pod-model.md#62-pod-state-machine) **`resume_pending` wall-clock cap:**,
+  [§7.2](07_session-lifecycle.md#72-interactive-session-model),
   [§7.3](07_session-lifecycle.md#73-retry-and-resume)). A stream that ends with `UNAVAILABLE`
   produces no stream-failure report, and the replica discards the cached stream. The specification does not
   state how the gateway distinguishes a lost pod from a partitioned one on this channel, so a single stream's
