@@ -4,28 +4,31 @@
 // matrix is the normative statement of what a gateway replica does with a
 // session-scoped client route when it is not the replica holding that
 // session's pod control stream `CH-ATTACH`, so every row it carries must
-// state a required outcome. Two rows recorded the outcome as unstated
-// instead: the four tool-use and elicitation resolution routes, and the
-// `Accept: application/json` form of the session events route. Both now
-// require a forward to the session's coordinating replica and fail closed
-// when that replica is unreachable, and the matrix preamble lists both among
-// the forwarding rows.
+// state a required outcome. The four tool-use and elicitation resolution
+// routes require a forward to the session's coordinating replica and fail
+// closed when that replica is unreachable. The `Accept: application/json`
+// form of the session events route is served on the serving replica from the
+// backlog it reads from the shared session-event relay `CH-EVENTRELAY`, the
+// same source as the streaming form, so it requires no forward.
 //
 // The non-happy path this guards is a matrix row that defers its own
 // off-holder outcome. A reader arriving at the matrix for one of those routes
 // gets no requirement, and an implementor is free to resolve a blocked call
-// or answer an events page from a replica that holds neither the pending
-// request nor the session's replay buffer.
+// from a replica that does not hold the pending request, or to answer an
+// events page from a source other than the relay.
 //
-// The events streaming row's "does not state" clause is about relay absence
-// rather than about the off-holder outcome, so this test scopes its deferral
-// check to the two rows the matrix owns the outcome for.
+// Each events row ends with a clause stating that what a reader receives when
+// the relay or the requested entry is absent is unstated. That clause is
+// about relay absence rather than about the off-holder outcome, so the
+// deferral check on the events JSON row covers only the part of the row
+// before its relay-absence clause.
 //
 // The test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
 //
-// spec: 29.3 (off-holder matrix), 10.4 (gateway reliability, event replay
-// buffer), 15.1 (REST API), 15.2.1 (REST/MCP consistency contract).
+// spec: 29.3 (Interactive message send, off-holder matrix), 28.5.7
+// (shared session-event relay), 15.1 (REST API), 15.2.1 (REST/MCP
+// consistency contract).
 
 package tier11_docs_test
 
@@ -44,17 +47,19 @@ var deferralPhrases = []string{
 	"whether it forwards the request to the coordinator",
 }
 
-// spec: 29.3, 15.2.1, 10.4
+// spec: 29.3, 15.2.1, 28.5.7
 // diagnosis: A §29.3 off-holder matrix row that the matrix owns the outcome
 //
 //	for records that outcome as unstated. The matrix is the normative
 //	statement of off-holder behaviour for the session-scoped client routes it
 //	names, because the client-to-gateway session REST surface is not a channel
 //	in the §28 register and no §28 card owns it. A failure here means the
-//	tool-use and elicitation resolution row, or the events `Accept:
-//	application/json` row, reverted to deferring its outcome, or dropped the
-//	forward-to-coordinator requirement or the fail-closed rule for an
-//	unreachable coordinator. Restore the required outcome in the row.
+//	tool-use and elicitation resolution row reverted to deferring its outcome
+//	or dropped the forward-to-coordinator requirement or the fail-closed rule
+//	for an unreachable coordinator, or the events `Accept: application/json`
+//	row no longer serves its envelope from `CH-EVENTRELAY` on the serving
+//	replica, or defers its off-holder outcome ahead of its relay-absence
+//	clause. Restore the required outcome in the row.
 func TestOffHolderMatrixRowsStateTheirOutcome(t *testing.T) {
 	root := repoRoot(t)
 	scenarios := filepath.Join(root, "spec", "29_communication-scenarios.md")
@@ -74,16 +79,20 @@ func TestOffHolderMatrixRowsStateTheirOutcome(t *testing.T) {
 	})
 	requireNoneContain(t, "§29.3 interaction-resolution row", resolution, deferralPhrases)
 
-	// The events JSON form reads the per-session replay buffer §15.1 fixes as
-	// its source, and only the coordinating replica holds that buffer.
+	// The events JSON form serves its envelope from the backlog the serving
+	// replica reads from the shared session-event relay, which every replica
+	// reads, so it requires no forward. The deferral check applies only to
+	// the outcome, which precedes the relay-absence clause.
 	eventsJSON := requireLine(t, s293, "`Accept: application/json` form |")
 	requireAllContain(t, "§29.3 events JSON row", eventsJSON, []string{
-		"Forward the request to the coordinator",
-		"serves the envelope from the buffer it holds",
-		"does not answer the request from its own buffer",
-		"On an unreachable coordinator it fails closed",
+		"Serve the paginated list envelope `{items, cursor, hasMore}`",
+		"from the backlog the serving replica reads from the shared session-event relay `CH-EVENTRELAY`",
+		"so no forwarding to the coordinator is required",
 	})
-	requireNoneContain(t, "§29.3 events JSON row", eventsJSON, deferralPhrases)
+	requireNoneContain(t, "§29.3 events JSON row", eventsJSON, []string{
+		"Forward the request to the coordinator",
+	})
+	requireNoneContain(t, "§29.3 events JSON row outcome", outcomeBeforeRelayAbsence(t, eventsJSON), deferralPhrases)
 
 	// The streaming events row keeps its relay-absence clause, which is a
 	// different condition from the off-holder outcome. Its outcome is stated.
@@ -93,16 +102,20 @@ func TestOffHolderMatrixRowsStateTheirOutcome(t *testing.T) {
 	})
 }
 
-// spec: 29.3
+// spec: 29.3, 28.5.7
 // diagnosis: The §29.3 matrix preamble and the matrix rows disagree about
 //
 //	which rows forward to the coordinator. The preamble states the two
 //	requirements that govern every forwarding row, including the fail-closed
 //	`TARGET_NOT_READY` outcome for an unreachable coordinator, and it
 //	separately lists the rows whose outcome is not a forward. A failure here
-//	means the interaction-resolution row or the events JSON row is missing
-//	from the forwarding enumeration, or is still narrated as a row that
-//	records no outcome, so the preamble contradicts the row it describes.
+//	means the forwarding enumeration is not exactly the interrupt, terminate,
+//	delete, resume, interaction-resolution, and upload rows, for example
+//	because it lists the events JSON row that the matrix serves from
+//	`CH-EVENTRELAY`, or the preamble no longer names the events rows among
+//	those served from the shared session-event relay, or it still narrates a
+//	row as recording no outcome, so the preamble contradicts the row it
+//	describes.
 func TestOffHolderMatrixPreambleMatchesForwardingRows(t *testing.T) {
 	root := repoRoot(t)
 	scenarios := filepath.Join(root, "spec", "29_communication-scenarios.md")
@@ -120,16 +133,38 @@ func TestOffHolderMatrixPreambleMatchesForwardingRows(t *testing.T) {
 	if end < 0 {
 		t.Fatalf("§29.3 forwarding preamble is not delimited by a blank line")
 	}
-	preamble := rest[:end]
+	preamble := collapseWhitespace(rest[:end])
 
 	requireAllContain(t, "§29.3 off-holder forwarding preamble", preamble, []string{
-		// The two rows this change moved into the forwarding set are named there.
-		"the interrupt, terminate, delete, resume, interaction-resolution, upload, and events JSON rows below",
+		// The rows whose forwarded request is not a message send, named whole.
+		"which are the interrupt, terminate, delete, resume, interaction-resolution, and upload rows below,",
 		// The fail-closed rule that governs every forwarding row other than a message send.
 		"fails closed with `TARGET_NOT_READY`, HTTP 409",
+		// Both events rows are among the rows whose outcome is not a forward.
+		"the events streaming and `Accept: application/json` rows are served from the shared session-event relay",
 	})
 	requireNoneContain(t, "§29.3 off-holder forwarding preamble", preamble, []string{
+		// The forwarding list that still carried the events JSON row.
+		"upload, and events JSON rows below",
 		// The narration that recorded the two rows as carrying no outcome.
 		"the events JSON row and the interaction-resolution row record that the specification does not state",
 	})
+}
+
+// relayAbsenceClause opens the sentence of an events row that states the
+// reader's outcome when the relay or the requested entry is absent.
+const relayAbsenceClause = "The relay is absent"
+
+// outcomeBeforeRelayAbsence returns the part of an events matrix row that
+// precedes its relay-absence clause, which is the part stating the
+// off-holder outcome. It fails the test when the row carries no such clause,
+// so a reworded clause surfaces here rather than silently widening the
+// deferral check to the whole row.
+func outcomeBeforeRelayAbsence(t *testing.T, row string) string {
+	t.Helper()
+	idx := strings.Index(row, relayAbsenceClause)
+	if idx < 0 {
+		t.Fatalf("§29.3 events row carries no relay-absence clause %q (reworded or removed?)", relayAbsenceClause)
+	}
+	return row[:idx]
 }
