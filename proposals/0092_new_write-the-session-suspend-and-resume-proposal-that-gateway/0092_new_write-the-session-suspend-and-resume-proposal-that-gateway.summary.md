@@ -130,7 +130,7 @@
 
 ## Open decisions for human to make
 
-- **OD-X5 (2026-10-13). Interrupt-acknowledged suspension in the X5 test table.** Question: the expansive lifecycle test X5 enumerates the edges into and out of `suspended` and runs each one against every combination of held or released pod, pool kind, serving replica, held message, and runtime `busy` value. The §6.2 state machine has two edges by which an interrupt suspends a session, `running → suspended (interrupt_request + interrupt_acknowledged)` and `running → suspended (interrupt_request timeout)`, and both enter the same interrupt suspension with the same pod hold. Should X5 cover both edges, or only the timeout edge? Option A, staged: X5 lists only the interrupt-timeout edge, together with the edges SPEC-5a inserts or replaces, the `perChildMaxAge` edge, the `ReleaseSuspendedPod` release, and the gateway leader's backlog re-check. Option B: add the `interrupt_request + interrupt_acknowledged` edge to the X5 edge list, which adds one edge's worth of cells across every other X5 dimension. Ground from the review log: the non-spec round that rewrote the X5 edge list as citations kept the enumeration as the intended scope and declined to widen it to further `suspended` edges without owner instruction; it recorded this edge as an owner or scope question and did not settle it. The review loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
