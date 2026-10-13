@@ -1119,14 +1119,14 @@ var (
 	ErrAlreadyExists = errors.New("sessionstore: session already exists")
 )
 
-// sessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.
+// SessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.
 // The timer runs in starting (as a secondary bound behind the starting
 // watchdog), running, and input_required. It is paused in suspended and in
 // the recovery states (resume_pending, resuming, awaiting_client_action),
 // does not run in the pre-running states created, finalizing, and ready, and
 // is stopped in the terminal states.
 // spec: §6.2 (maxSessionAge timer behavior across states).
-func sessionAgeCounts(st session.State) bool {
+func SessionAgeCounts(st session.State) bool {
 	switch st {
 	case session.StateStarting, session.StateRunning, session.StateInputRequired:
 		return true
@@ -1151,7 +1151,7 @@ func sessionAgeCounts(st session.State) bool {
 // the interval up to the transition and nothing after it.
 // spec: §6.2 (maxSessionAge timer behavior across states).
 func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session, now time.Time) {
-	if !sessionAgeCounts(prev) || !now.After(prevUpdatedAt) {
+	if !SessionAgeCounts(prev) || !now.After(prevUpdatedAt) {
 		return
 	}
 	row.AccumulatedSessionAgeSeconds += now.Sub(prevUpdatedAt).Seconds()
@@ -1166,7 +1166,7 @@ func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session,
 // spec: §6.2 (maxSessionAge timer behavior across states).
 func ActiveAge(row Session, now time.Time) time.Duration {
 	age := time.Duration(row.AccumulatedSessionAgeSeconds * float64(time.Second))
-	if sessionAgeCounts(row.State) && now.After(row.UpdatedAt) {
+	if SessionAgeCounts(row.State) && now.After(row.UpdatedAt) {
 		age += now.Sub(row.UpdatedAt)
 	}
 	return age

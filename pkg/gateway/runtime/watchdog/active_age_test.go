@@ -261,6 +261,108 @@ func TestExpiryWarningUsesActiveAge_spec_6_2(t *testing.T) {
 	}
 }
 
+// spec: 6.2 (maxSessionAge timer behavior across states), 11.3 (session
+// expiry warning)
+//
+// The expiry warning fires only for a row whose age timer is running. A row
+// in a state where the timer is paused or not yet started, whose frozen
+// active age sits inside the warning band, is not warned: no age cap expires
+// a suspended row, and a paused row's remaining time does not count down.
+func TestExpiryWarningSkipsPausedAgeTimer_spec_6_2(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	paused := []session.State{
+		session.StateSuspended,
+		session.StateResumePending,
+		session.StateResuming,
+		session.StateAwaitingClientAction,
+		session.StateCreated,
+		session.StateReady,
+		session.StateFinalizing,
+	}
+	for _, st := range paused {
+		t.Run(string(st), func(t *testing.T) {
+			store := memstore.New()
+			// Frozen active age 6900s under a 7200s cap: inside the band.
+			mustCreate(t, store, sessionstore.Session{
+				ID: "sess_paused", TenantID: "acme", State: st,
+				CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-time.Minute),
+				LastAgentActivityAt:          now.Add(-time.Minute),
+				AccumulatedSessionAgeSeconds: 6900,
+			})
+			hook := &captureExpiryWarning{}
+			w := watchdog.New(store, watchdog.StaticTenants{"acme"}, ageCfg(7200), nil).WithTerminalHook(hook)
+			res, err := w.Tick(context.Background(), now)
+			if err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if res.ExpiryWarnings != 0 || len(hook.warnings) != 0 {
+				t.Fatalf("paused row in %s warned: ExpiryWarnings=%d warnings=%+v", st, res.ExpiryWarnings, hook.warnings)
+			}
+		})
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states), 11.3 (session
+// expiry warning)
+//
+// A session suspended with its active age inside the warning band is not
+// warned while suspended, so the dedup entry is not spent. After it returns
+// to running and its active age approaches the cap, the warning fires exactly
+// once, ahead of the maxSessionAge expiry.
+func TestExpiryWarningFiresAfterResumeNotWhileSuspended_spec_6_2(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clock }
+	store := memstore.NewWithClock(now)
+	mustCreate(t, store, sessionstore.Session{
+		ID: "sess_s", TenantID: "acme", State: session.StateSuspended,
+		CreatedAt: clock.Add(-2 * time.Hour), UpdatedAt: clock,
+		LastAgentActivityAt:          clock,
+		AccumulatedSessionAgeSeconds: 6900,
+	})
+	hook := &captureExpiryWarning{}
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, ageCfg(7200), now).WithTerminalHook(hook)
+	tick := func() {
+		t.Helper()
+		if _, err := w.Tick(ctx, clock); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+
+	tick()
+	clock = clock.Add(72 * time.Hour)
+	tick()
+	if len(hook.warnings) != 0 {
+		t.Fatalf("suspended session warned: %+v", hook.warnings)
+	}
+
+	if _, err := store.Update(ctx, "acme", "sess_s", func(r *sessionstore.Session) error {
+		r.State = session.StateRunning
+		r.LastAgentActivityAt = clock
+		return nil
+	}); err != nil {
+		t.Fatalf("Update to running: %v", err)
+	}
+	clock = clock.Add(30 * time.Second)
+	tick()
+	if len(hook.warnings) != 1 || hook.warnings[0].sessionID != "sess_s" {
+		t.Fatalf("after resume: warnings = %+v, want one for sess_s", hook.warnings)
+	}
+	if got := hook.warnings[0].remainingSeconds; got != 270 {
+		t.Fatalf("remaining = %ds, want 270", got)
+	}
+	clock = clock.Add(60 * time.Second)
+	tick()
+	if len(hook.warnings) != 1 {
+		t.Fatalf("re-warned: warnings = %+v, want exactly one", hook.warnings)
+	}
+	clock = clock.Add(250 * time.Second)
+	tick()
+	if row := mustGet(t, store, "sess_s"); row.State != session.StateExpired {
+		t.Fatalf("past the cap: state %q, want expired", row.State)
+	}
+}
+
 // spec: 27.6 (Session lifecycle and cleanup), 6.2 (maxSessionAge timer
 // behavior across states)
 //

@@ -1176,7 +1176,11 @@ func maxAgeExpirable(st session.State) bool {
 // per-runtime / per-session tighter cap warns at the right moment and time
 // spent paused does not move the warning earlier.
 //
-// spec: §11.3; §15. F-11.3.5.
+// Only a row whose age timer is running (sessionstore.SessionAgeCounts) is
+// warned; a paused row reaches the band only after it re-enters a counting
+// state.
+//
+// spec: §11.3; §6.2 (maxSessionAge timer behavior across states); §15. F-11.3.5.
 func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	notifier, ok := w.terminal.(ExpiryWarningNotifier)
 	if !ok {
@@ -1192,6 +1196,15 @@ func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now ti
 		if session.IsTerminal(row.State) {
 			// Prune so the dedup set tracks only live sessions.
 			w.forgetWarned(row.ID)
+			continue
+		}
+		if !sessionstore.SessionAgeCounts(row.State) {
+			// The age timer is paused or not yet started (suspended, the
+			// recovery states, and the pre-running states), so the deadline is
+			// not approaching: no age cap expires a suspended row, and a paused
+			// row's remaining time does not count down. Skipping it here keeps
+			// the single dedup entry for the warning that precedes the real
+			// expiry once the row re-enters a counting state.
 			continue
 		}
 		cap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
