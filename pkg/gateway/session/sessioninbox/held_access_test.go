@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // TestInboxPeekAndAckRemoveOnlyTheAcknowledgedEntry_spec_7_2 asserts, for the
@@ -91,6 +93,28 @@ func TestDLQPeekOldestAndRemoveActOnOneEntry_spec_7_2(t *testing.T) {
 	}
 	if m, err := DLQMember(young); err != nil || m == "" {
 		t.Errorf("DLQMember = %q %v", m, err)
+	}
+}
+
+// TestDLQPeekOldestUndecodableHeadIsAFailedPeek_spec_7_2 asserts that a DLQ
+// head member whose envelope does not decode is returned as an error with ok
+// false and no member, and that the member stays in the DLQ, so a caller
+// cannot treat the failed peek as an entry and remove it.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func TestDLQPeekOldestUndecodableHeadIsAFailedPeek_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	rc := newRedisT(t)
+	d := NewDLQ(rc, 10)
+	if err := rc.ZAdd(ctx, dlqKey("acme", "s"), redis.Z{Score: 1, Member: "{not an envelope"}).Err(); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, member, ok, err := d.PeekOldest(ctx, "acme", "s")
+	if err == nil || ok || member != "" || got.MessageID != "" {
+		t.Fatalf("PeekOldest = %+v %q ok %v err %v, want a failed peek with no entry", got, member, ok, err)
+	}
+	if n, _ := d.Len(ctx, "acme", "s"); n != 1 {
+		t.Errorf("Len = %d, want the undecodable member left in place", n)
 	}
 }
 

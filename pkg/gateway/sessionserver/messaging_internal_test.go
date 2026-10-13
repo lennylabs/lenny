@@ -108,18 +108,6 @@ func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 	}
 }
 
-// recordingCleared captures inbox_cleared emissions for assertion.
-type recordingCleared struct {
-	events  []sessioninbox.InboxClearedEvent
-	targets []string
-}
-
-func (r *recordingCleared) MessageExpired(string, string, sessioninbox.MessageExpiredEvent) {}
-func (r *recordingCleared) InboxCleared(_, target string, ev sessioninbox.InboxClearedEvent) {
-	r.events = append(r.events, ev)
-	r.targets = append(r.targets, target)
-}
-
 // A terminal transition or resume with no messaging coordinator wired must
 // not panic (the dev / no-Redis posture).
 func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {

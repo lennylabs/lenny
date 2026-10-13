@@ -1596,6 +1596,7 @@
       "tests": [
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestResumeFailureReasonSetupCommand_spec_7_3",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestResumeAttemptExitCellsOnPostgres_spec_7_3",
+        "tests/tier1_unit/lifecycle/resume_exits_test.go::TestResumeAttemptExitCells_spec_7_3",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRandomInterleavings_spec_7_3",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2",
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestDrainLedgerCountsARepeatedSlotOnce_spec_5_2",
@@ -1868,7 +1869,9 @@
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
+        "tests/tier1_unit/lifecycle/terminal_writers_test.go::TestTerminalWriterCells_spec_7_2",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRandomInterleavings_spec_7_3",
+        "tests/tier1_unit/lifecycle/lifecycle_state_machine_test.go::TestLifecycleStateMachine_spec_7_2",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRequiredPairs_spec_7_3",
         "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestLifecycleFaultInjection_spec_10_1_2",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
@@ -1955,6 +1958,8 @@
         "tests/tier3_contract/rest_pools/session_retries_removed_wire_test.go::TestAdminPoolAcceptsAndDropsMaxSessionRetries",
         "tests/tier2_component/stores/credleasestore_advance_test.go::TestCredLeaseStoreRoundTripsCoordinationGeneration_spec_7_3",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestResumeAttemptExitCellsOnPostgres_spec_7_3",
+        "tests/tier1_unit/lifecycle/resume_exits_test.go::TestResumeAttemptExitCells_spec_7_3",
+        "pkg/gateway/sessionserver/resume_claimless_test.go::TestServiceModeSuspendedSessionResumesToRunning_spec_7_3",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRandomInterleavings_spec_7_3",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRequiredPairs_spec_7_3",
         "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestLifecycleFaultInjection_spec_10_1_2",
@@ -2212,6 +2217,7 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
+        "tests/tier1_unit/lifecycle/terminal_writers_test.go::TestTerminalWriterCells_spec_7_2",
         "pkg/session/state/state_test.go::TestMCPProtocolStateSessionMapping_spec_8_8_871",
         "pkg/session/state/state_test.go::TestMCPProtocolStateUnknownStateReturnsEmpty_spec_8_8_871",
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
@@ -2614,6 +2620,7 @@
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
+        "tests/tier1_unit/lifecycle/terminal_writers_test.go::TestTerminalWriterCells_spec_7_2",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go::TestLifecycleRequiredPairs_spec_7_3",
         "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",

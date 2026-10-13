@@ -66,6 +66,7 @@ type heldFixture struct {
 	coord *sessioninbox.Coordinator
 	inbox sessioninbox.Inbox
 	dlq   *sessioninbox.DLQ
+	rc    *redis.Client
 }
 
 func newHeldFixture(t *testing.T, durable bool) *heldFixture {
@@ -88,7 +89,7 @@ func newHeldFixture(t *testing.T, durable bool) *heldFixture {
 	exec := &heldExecutor{}
 	srv := New(store, Options{Executor: exec, Messaging: coord})
 	t.Cleanup(srv.Close)
-	return &heldFixture{srv: srv, store: store, exec: exec, coord: coord, inbox: inbox, dlq: dlq}
+	return &heldFixture{srv: srv, store: store, exec: exec, coord: coord, inbox: inbox, dlq: dlq, rc: rc}
 }
 
 func heldPayload(t *testing.T, id, role, text string) []byte {
@@ -185,8 +186,9 @@ func TestDeliverBufferedDeliversHeldEntriesInOrder_spec_7_2(t *testing.T) {
 
 // TestDeliverBufferedKeepsDeliveryExactlyOnce_spec_7_2 asserts the failure
 // behavior of deliverBuffered: a failed Send leaves that entry and the later
-// ones in place for a later call; an undecodable head is removed; a missing
-// messaging coordinator is a no-op; a caller cancelled mid-turn lets the turn
+// ones in place for a later call; a head whose payload does not decode is
+// removed; a DLQ head whose envelope does not decode stops the loop and stays
+// in place; a missing messaging coordinator is a no-op; a caller cancelled mid-turn lets the turn
 // complete and removes only that entry; and a row that reads terminal before
 // an entry stops the loop with that entry in place.
 //
@@ -223,6 +225,28 @@ func TestDeliverBufferedKeepsDeliveryExactlyOnce_spec_7_2(t *testing.T) {
 		}
 		if n := f.remaining(t); n != 0 {
 			t.Errorf("held entries = %d, want 0", n)
+		}
+	})
+	t.Run("undecodable DLQ head stops the loop and stays", func(t *testing.T) {
+		// A DLQ member whose envelope does not decode is a failed peek: the
+		// loop stops with nothing removed, as for an inbox Peek error.
+		f := newHeldFixture(t, false)
+		if err := f.rc.ZAdd(context.Background(), "t:acme:session:s:dlq",
+			redis.Z{Score: 1, Member: "{not an envelope"}).Err(); err != nil {
+			t.Fatalf("seed undecodable DLQ member: %v", err)
+		}
+		f.holdInbox(t, "m2", base, heldPayload(t, "m2", "", "b"))
+		if err := f.srv.deliverBuffered(context.Background(), f.row(t)); err != nil {
+			t.Fatalf("deliverBuffered = %v, want nil after a failed peek", err)
+		}
+		if got := f.exec.ids(); len(got) != 0 {
+			t.Errorf("delivered %v, want nothing after a failed DLQ peek", got)
+		}
+		if n, err := f.dlq.Len(context.Background(), "acme", "s"); err != nil || n != 1 {
+			t.Errorf("DLQ len = %d %v, want the undecodable member left in place", n, err)
+		}
+		if n := f.remaining(t); n != 2 {
+			t.Errorf("held entries = %d, want both left", n)
 		}
 	})
 	t.Run("no messaging coordinator", func(t *testing.T) {

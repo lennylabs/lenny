@@ -82,9 +82,10 @@ type Harness struct {
 	Inbox      sessioninbox.Inbox
 	Cluster    *Cluster
 	Replicas   []*Replica
-	// RelaxOrphanClaims applies the crash relaxation of I1: a bound claim
-	// whose pod no non-terminal row names and no surviving replica binds is
-	// accepted, because the claim-orphan GC reclaims it.
+	// RelaxOrphanClaims applies the crash relaxation of the pods-and-claims
+	// invariant: a bound claim whose pod no non-terminal row names and no
+	// surviving replica binds is accepted, because the claim-orphan GC
+	// reclaims it (§4.6.1 Orphaned SandboxClaim detection, §7.3).
 	RelaxOrphanClaims bool
 
 	mu       sync.Mutex

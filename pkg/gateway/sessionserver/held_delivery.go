@@ -94,14 +94,12 @@ func (s *Server) oldestHeld(ctx context.Context, row sessionstore.Session) (held
 	if err != nil {
 		return heldEntry{}, false, fmt.Errorf("peek inbox: %w", err)
 	}
+	// spec: §7.2 (path 6) — a PeekOldest error, including a DLQ head whose
+	// envelope does not decode, stops the delivery like a Peek error. Only a
+	// decoded entry whose payload does not decode is removed undelivered.
 	dlqMsg, dlqMember, dlqOK, err := s.messaging.PeekOldest(ctx, row.TenantID, row.ID)
-	if err != nil && !dlqOK {
-		return heldEntry{}, false, fmt.Errorf("peek DLQ: %w", err)
-	}
 	if err != nil {
-		// The DLQ head does not decode; hand it to the delivery, which logs
-		// and removes it.
-		dlqMsg = sessioninbox.Message{EnqueuedAt: time.Time{}}
+		return heldEntry{}, false, fmt.Errorf("peek DLQ: %w", err)
 	}
 	switch {
 	case inOK && (!dlqOK || !dlqMsg.EnqueuedAt.Before(inMsg.EnqueuedAt)):

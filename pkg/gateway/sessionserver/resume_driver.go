@@ -126,7 +126,8 @@ func (s *Server) CancelResumeAttempt(sessionID string) {
 // through the binder with the entry-write hook. A failure before the hook
 // writes and records nothing; a hook error stops with nothing written; a
 // failure after the hook is reported once at the attempt's generation G; a
-// restore that reached its pod is committed.
+// restore that reached its pod is committed. A claimless restore, which never
+// calls the hook, writes the entry before its commit.
 //
 // spec: §7.3 (Resume driver; Retry and Resume)
 func (s *Server) attemptResume(ctx context.Context, cancel context.CancelFunc, listed sessionstore.Session) {
@@ -150,6 +151,8 @@ func (s *Server) attemptResume(ctx context.Context, cancel context.CancelFunc, l
 	gen := row.CoordinationGeneration + 1
 	out, err := s.releaseThenResumeOnPod(ctx, row, resumeBind{onClaimed: entry.run, generation: gen})
 	switch {
+	case err == nil && !entry.ran():
+		exit = s.completeClaimlessResume(ctx, row, gen, entry, out)
 	case err == nil:
 		exit = s.completeResume(row, gen, out)
 	case !entry.ran():
@@ -165,6 +168,23 @@ func (s *Server) attemptResume(ctx context.Context, cancel context.CancelFunc, l
 	default:
 		exit = s.reportResumeFailure(row, gen, err)
 	}
+}
+
+// completeClaimlessResume commits a restore that returned without claiming a
+// pod, a service-mode session (§5.2), whose binder never called the
+// post-claim hook. It writes the entry itself, so the resuming incarnation at
+// G exists and the commit guard can match it, and then commits. When the
+// entry write does not apply or fails, nothing is committed and no
+// resume-attempts count is recorded, because no entry write took effect.
+//
+// spec: §7.3 (Resume driver), §5.2 (Pool Configuration and Execution Modes)
+func (s *Server) completeClaimlessResume(ctx context.Context, row sessionstore.Session, gen int64, entry *entryHook, out resumeOutcome) resumeExit {
+	if err := entry.run(ctx); err != nil {
+		slog.Info("sessionserver: claimless resume entry write did not apply",
+			"session_id", row.ID, "error", err)
+		return resumeExitUncounted
+	}
+	return s.completeResume(row, gen, out)
 }
 
 // readResumable reads the row from the primary and reports whether the

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -171,8 +172,10 @@ func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now 
 
 // PeekOldest returns the DLQ's lowest-scored entry without removing it,
 // decoded, together with its raw member for Remove. ok is false when the DLQ
-// is empty. It ignores the entry's score, so an entry past its expiry is
-// still returned. Every DLQ enqueue scores EnqueuedAt plus the default TTL,
+// is empty or the call returns an error, including a head member whose
+// envelope does not decode, so a failed peek is never mistaken for an entry.
+// It ignores the entry's score, so an entry past its expiry is still
+// returned. Every DLQ enqueue scores EnqueuedAt plus the default TTL,
 // so the lowest score is the earliest accepted entry.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
@@ -186,7 +189,7 @@ func (d *DLQ) PeekOldest(ctx context.Context, tenantID, sessionID string) (Messa
 	}
 	var msg Message
 	if err := json.Unmarshal([]byte(raw[0]), &msg); err != nil {
-		return Message{}, raw[0], true, err
+		return Message{}, "", false, fmt.Errorf("decode DLQ head of session %s: %w", sessionID, err)
 	}
 	return msg, raw[0], true, nil
 }

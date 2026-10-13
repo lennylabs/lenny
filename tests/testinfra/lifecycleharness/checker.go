@@ -138,14 +138,25 @@ func (h *Harness) fingerprint() string {
 }
 
 // noLeaseStates are the states in which a session holds no credential lease
-// (I3); a podless suspended row is checked separately.
+// (§6.1 per-session credential lease lifecycle, §7.3 credential leases on the
+// replacement pod); a podless suspended row is checked separately.
 var noLeaseStates = map[session.State]bool{
 	session.StateCreated:              true,
 	session.StateResumePending:        true,
 	session.StateAwaitingClientAction: true,
 }
 
-// Invariants evaluates I1, I3, I4, I5, I6, and I7 for the tracked sessions.
+// Invariants evaluates the lifecycle invariants for the tracked sessions:
+// every bound claim's pod is named by a non-terminal row (pods and claims);
+// a session in a lease-free state holds no credential lease (credential
+// leases); at most one surviving replica binds a session (one coordinator);
+// no surviving replica binds a terminal session (replica records); a
+// terminal session's inbox and DLQ are empty (queues); and RetryCount stays
+// at or under the retry cap (retries).
+//
+// spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §10.1.1
+// (one coordinating replica per session), §6.1 (per-session credential lease
+// lifecycle)
 func (h *Harness) Invariants() []Invariant {
 	ctx := context.Background()
 	ids := h.Sessions()
@@ -160,9 +171,9 @@ func (h *Harness) Invariants() []Invariant {
 		}
 	}
 	var out []Invariant
-	i1 := Invariant{Name: "I1 pods and claims"}
+	podsClaims := Invariant{Name: "pods and claims"}
 	if claims, err := h.Cluster.BoundClaims(ctx); err != nil {
-		i1.Violations = append(i1.Violations, "list claims: "+err.Error())
+		podsClaims.Violations = append(podsClaims.Violations, "list claims: "+err.Error())
 	} else {
 		bound := map[string]bool{}
 		for _, r := range h.Surviving() {
@@ -171,59 +182,61 @@ func (h *Harness) Invariants() []Invariant {
 			}
 		}
 		for _, pod := range claims {
-			// spec: the crash relaxation of I1 — a claim a crash left is
-			// accepted when no non-terminal row names its pod and no
-			// surviving replica binds it; the claim-orphan GC reclaims it.
+			// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3 — the
+			// crash relaxation of the pods-and-claims invariant: a claim a
+			// crash left is accepted when no non-terminal row names its pod
+			// and no surviving replica binds it; the claim-orphan GC
+			// reclaims it.
 			if !held[pod] && h.RelaxOrphanClaims && !bound[pod] {
 				continue
 			}
 			if !held[pod] {
-				i1.Violations = append(i1.Violations, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))
+				podsClaims.Violations = append(podsClaims.Violations, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))
 			}
 		}
 	}
-	out = append(out, i1)
+	out = append(out, podsClaims)
 	for _, id := range ids {
 		row := rows[id]
 		if row.err != nil {
 			out = append(out, Invariant{Name: "read " + id, Violations: []string{row.err.Error()}})
 			continue
 		}
-		i3 := Invariant{Name: "I3 credential leases " + id}
+		leases := Invariant{Name: "credential leases " + id}
 		podless := row.state == session.StateSuspended && row.pod == ""
 		if session.IsTerminal(row.state) || noLeaseStates[row.state] || podless {
 			if n := len(h.CredLeases.LeasesBySession([]string{id})); n != 0 {
-				i3.Violations = append(i3.Violations, fmt.Sprintf("%s session holds %d credential leases, want none", row.state, n))
+				leases.Violations = append(leases.Violations, fmt.Sprintf("%s session holds %d credential leases, want none", row.state, n))
 			}
 		}
-		i4 := Invariant{Name: "I4 one coordinator " + id}
-		i5 := Invariant{Name: "I5 replica records " + id}
+		coordinator := Invariant{Name: "one coordinator " + id}
+		records := Invariant{Name: "replica records " + id}
 		binders := 0
 		for _, r := range h.Surviving() {
 			if _, ok := r.Registry.Get(id); ok {
 				binders++
 				if session.IsTerminal(row.state) {
-					i5.Violations = append(i5.Violations, fmt.Sprintf("replica %s binds the %s session", r.ID, row.state))
+					records.Violations = append(records.Violations, fmt.Sprintf("replica %s binds the %s session", r.ID, row.state))
 				}
 			}
 		}
 		if binders > 1 {
-			i4.Violations = append(i4.Violations, fmt.Sprintf("%d surviving replicas bind the session, want at most one", binders))
+			coordinator.Violations = append(coordinator.Violations, fmt.Sprintf("%d surviving replicas bind the session, want at most one", binders))
 		}
-		i6 := Invariant{Name: "I6 queues " + id}
+		queues := Invariant{Name: "queues " + id}
 		if session.IsTerminal(row.state) {
 			if n, _ := h.DLQ.Len(ctx, Tenant, id); n != 0 {
-				i6.Violations = append(i6.Violations, fmt.Sprintf("DLQ holds %d entries for the %s session", n, row.state))
+				queues.Violations = append(queues.Violations, fmt.Sprintf("DLQ holds %d entries for the %s session", n, row.state))
 			}
 			if n, _ := h.Inbox.Len(ctx, Tenant, id); n != 0 {
-				i6.Violations = append(i6.Violations, fmt.Sprintf("inbox holds %d entries for the %s session", n, row.state))
+				queues.Violations = append(queues.Violations, fmt.Sprintf("inbox holds %d entries for the %s session", n, row.state))
 			}
 		}
-		i7 := Invariant{Name: "I7 retries " + id}
+		retries := Invariant{Name: "retries " + id}
 		if row.retries > MaxRetries {
-			i7.Violations = append(i7.Violations, fmt.Sprintf("RetryCount = %d, want at most %d", row.retries, MaxRetries))
+			retries.Violations = append(retries.Violations, fmt.Sprintf("RetryCount = %d, want at most %d", row.retries, MaxRetries))
 		}
-		out = append(out, i3, i4, i5, i6, i7)
+		out = append(out, leases, coordinator, records, queues, retries)
 	}
 	return out
 }
