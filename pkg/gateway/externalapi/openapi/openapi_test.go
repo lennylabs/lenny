@@ -680,8 +680,8 @@ func TestSessionIsolationLevelCarriesConversationContinuity_spec_7_1(t *testing.
 
 // TestRuntimeSessionPolicyStructure_spec_5_2 asserts the Runtime schema
 // carries the §5.2 sessionPolicy block (replacing the removed taskPolicy)
-// with the recycle sub-object, the renamed scrubProfile/onScrubFailure/
-// maxSessionRetries knobs, and the relocated concurrency knobs, so the
+// with the recycle sub-object, the renamed scrubProfile and onScrubFailure
+// knobs, and the relocated concurrency knobs, so the
 // external API surface mirrors the §5.2 configuration the CRD admits.
 // spec: §5.2 (sessionPolicy block); §15.1.
 func TestRuntimeSessionPolicyStructure_spec_5_2(t *testing.T) {
@@ -698,12 +698,17 @@ func TestRuntimeSessionPolicyStructure_spec_5_2(t *testing.T) {
 	for _, field := range []string{
 		"maxConcurrentSessions", "acknowledgeProcessLevelIsolation",
 		"recycle", "cleanupCommands", "cleanupTimeoutSeconds",
-		"maxSessionRetries", "maxSessionAgeSeconds", "maxClientIdleSeconds",
+		"maxSessionAgeSeconds", "maxClientIdleSeconds",
 		"slotRetries", "onPoolExhausted", "maxQueueWaitSeconds",
 	} {
 		if _, ok := spProps[field]; !ok {
 			t.Errorf("sessionPolicy missing relocated knob %q", field)
 		}
+	}
+	// spec: §7.3 (Retry and Resume) — retryPolicy.maxRetries is the one
+	// retry budget, so the retired per-runtime budget is not in the schema.
+	if _, ok := spProps["maxSessionRetries"]; ok {
+		t.Error("sessionPolicy must not carry the deleted maxSessionRetries")
 	}
 	// The removed task-mode knob must not survive at the top level.
 	if _, ok := spProps["maxTasksPerPod"]; ok {

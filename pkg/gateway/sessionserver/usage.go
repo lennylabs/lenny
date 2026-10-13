@@ -329,10 +329,10 @@ func (s *Server) OnSessionEnteredAwaitingClientAction(ctx context.Context, sess 
 // OnSessionRetryAttempt is the watchdog's resuming → resume_pending
 // retry hook (§6.2). The watchdog fires it after the row
 // update so the §16.1 lenny_session_retry_total counter and the §11.7
-// / §16.7 session.retry_attempted audit row see the watchdog-initiated
-// retry alongside the gateway-initiated retries the
-// bumpRecoveryGeneration path already covers.
-// spec: §6.2;
+// / §16.7 session.retry_attempted audit row count the watchdog's spend
+// edge. The other spend edge, a reported failure into resume_pending,
+// fires the same pair from transitionToResumePending (failure.go).
+// spec: §6.2; §7.3 (Retry and Resume) "Retry accounting.";
 // §16.1 lenny_session_retry_total; §11.7 / §16.7 session.retry_attempted.
 // F-6.2.14.
 func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session) {

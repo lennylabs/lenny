@@ -346,11 +346,11 @@ type AwaitingClientActionEntryNotifier interface {
 // implementations. The watchdog invokes it whenever the resuming sweep
 // drives a `resuming → resume_pending` retry, so the §16.1
 // lenny_session_retry_total counter and the §11.7 / §16.7
-// session.retry_attempted audit row see the watchdog-initiated retry
-// in addition to the gateway-initiated retries the
-// `bumpRecoveryGeneration` path already covers.
+// session.retry_attempted audit row count the watchdog's spend edge.
+// The session server fires the same pair on the other spend edge, a
+// reported failure into resume_pending (transitionToResumePending).
 //
-// spec: §6.2;
+// spec: §6.2; §7.3 (Retry and Resume) "Retry accounting.";
 // §16.1 lenny_session_retry_total; §11.7 / §16.7 session.retry_attempted.
 // F-6.2.14.
 type RetryAttemptNotifier interface {
@@ -824,9 +824,10 @@ func (w *Watchdog) notifyAwaitingClientActionEntered(ctx context.Context, sess s
 // when one is wired. Best-effort: a nil hook or a hook that does not
 // implement the optional notifier silently no-ops. The watchdog's
 // resuming → resume_pending retry path flows through here so the §16.1
-// lenny_session_retry_total counter and §11.7 audit row track the
-// watchdog-initiated retry alongside the gateway-initiated retries the
-// bumpRecoveryGeneration path already covers.
+// lenny_session_retry_total counter and §11.7 audit row count the
+// watchdog's spend edge. The session server's transitionToResumePending
+// fires the same pair on the reported-failure spend edge.
+// spec: §7.3 (Retry and Resume) "Retry accounting.".
 func (w *Watchdog) notifyRetryAttempt(ctx context.Context, sess sessionstore.Session) {
 	if w.terminal == nil {
 		return

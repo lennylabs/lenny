@@ -1046,10 +1046,6 @@ type SessionPolicy struct {
 	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// MaxSessionRetries is the §5.2 / §6.2 crash re-dispatch budget. A nil
-	// value takes the §6.2 default of 1; an explicit 0 disables retries.
-	MaxSessionRetries *int `json:"maxSessionRetries,omitempty"`
-
 	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero
 	// declares no per-runtime cap and falls back to the platform default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
@@ -1141,10 +1137,6 @@ func (p *SessionPolicy) Clone() *SessionPolicy {
 	cp := *p
 	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
 	cp.Recycle = p.Recycle.Clone()
-	if p.MaxSessionRetries != nil {
-		n := *p.MaxSessionRetries
-		cp.MaxSessionRetries = &n
-	}
 	if p.SlotRetries != nil {
 		n := *p.SlotRetries
 		cp.SlotRetries = &n

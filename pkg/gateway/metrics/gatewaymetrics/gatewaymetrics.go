@@ -498,8 +498,10 @@ func (m *Metrics) RecordSDKDemotion(pool string, teardownSeconds float64) {
 
 // IncSessionRetry increments the §16.1 / §7.3
 // `lenny_session_retry_total{failure_class}` counter for one retry of
-// a logical session. Each successful pod recovery (the v1 retry path,
-// fired by sessionserver.bumpRecoveryGeneration) bumps it once. The
+// a logical session. Each spend edge bumps it once: a reported failure
+// into resume_pending (sessionserver transitionToResumePending) and the
+// resuming watchdog's resuming → resume_pending write. A successful
+// restore does not bump it. The
 // failure_class label echoes the session's §7.1 FailureClass at retry
 // time; the caller supplies "unknown" for a session with no recorded
 // class so the label cardinality stays bounded by the §7.1 closed

@@ -54,25 +54,18 @@ func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, 
 // only advances; the in-memory Registry already holds the new BindResult
 // on success.
 //
-// A pod recovery is also a §4.2 retry — the Session Manager
-// is responsible for both counters, and a recovery onto a fresh pod
-// is the v1 retry path. retry_count is bumped in the same
-// transaction; the store enforces monotonicity on both columns.
+// The bump spends no retry. A successful restore does not advance
+// retry_count, and the §16.1 lenny_session_retry_total counter and the
+// §11.7 / §16.7 session.retry_attempted audit row fire only on the
+// failure edges into resume_pending that spend one:
+// transitionToResumePending (failure.go) and the resuming watchdog's
+// notifyRetryAttempt.
 //
-// On a successful bump, the §16.1 lenny_session_retry_total counter is
-// incremented with the row's FailureClass as the label (or "unknown"
-// when no class is recorded), and the §11.7 / §16.7
-// session.retry_attempted audit row is appended. Both side effects are
-// best-effort and gated on their respective hooks being wired.
-//
-// spec: §4.2 — "incremented on each pod recovery".
-// spec: §4.2 — "Retry counters and policy enforcement".
-// spec: §16.1 catalog — lenny_session_retry_total. F-7.3.10.
-// spec: §11.7 / §16.7 — session.retry_attempted audit. F-7.3.18.
+// spec: §4.2 (Session Manager) — recovery_generation "incremented on each pod recovery".
+// spec: §7.3 (Retry and Resume) — "Retry accounting.": a successful restore does not advance retryCount.
 func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID, podAssignment string) {
-	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.RecoveryGeneration++
-		row.RetryCount++
 		if podAssignment != "" {
 			row.PodAssignment = podAssignment
 		}
@@ -80,9 +73,7 @@ func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID
 	})
 	if err != nil {
 		log.Printf("sessionserver: bump recovery_generation for session %s: %v", sessionID, err)
-		return
 	}
-	s.recordSessionRetry(ctx, updated)
 }
 
 // recordSessionRetry fires the §16.1 lenny_session_retry_total metric

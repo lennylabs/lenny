@@ -64,7 +64,16 @@ type Transition struct {
 }
 
 // ValidTransitions returns every legal edge per spec §7.2. The list is the
-// authoritative contract; the IsValid function below reads it.
+// authoritative contract; the IsValid function below reads it. It holds
+// every edge of the §7.2 session state machine block, including the
+// retries-exhausted failure edges into awaiting_client_action from
+// running, input_required, and a held-pod suspended session, the
+// retryable input_required → resume_pending edge, and the
+// resuming → resume_pending edge that a retryable restore failure or the
+// resuming watchdog writes. The pre-running edges (created, finalizing,
+// ready) come from the §6.2 pod state machine.
+//
+// spec: §7.2 (Interactive Session Model), §6.2 (Pod State Machine)
 func ValidTransitions() []Transition {
 	return []Transition{
 		// derive failure path (only when gateway.persistDeriveFailureRows is true)
@@ -82,6 +91,7 @@ func ValidTransitions() []Transition {
 		{Running, Suspended},
 		{Running, Completed},
 		{Running, ResumePending},
+		{Running, AwaitingClientAction},
 		{Running, Failed},
 		{Running, Cancelled},
 		{Running, Expired},
@@ -90,6 +100,8 @@ func ValidTransitions() []Transition {
 		{InputRequired, Cancelled},
 		{InputRequired, Expired},
 		{InputRequired, Failed},
+		{InputRequired, ResumePending},
+		{InputRequired, AwaitingClientAction},
 		// suspended exits
 		{Suspended, Running},
 		{Suspended, ResumePending},
@@ -97,12 +109,14 @@ func ValidTransitions() []Transition {
 		{Suspended, Cancelled},
 		{Suspended, Expired},
 		{Suspended, Failed},
+		{Suspended, AwaitingClientAction},
 		// resume path
 		{ResumePending, Resuming},
 		{ResumePending, AwaitingClientAction},
 		{ResumePending, Cancelled},
 		{ResumePending, Completed},
 		{Resuming, Running},
+		{Resuming, ResumePending},
 		{Resuming, AwaitingClientAction},
 		{Resuming, Cancelled},
 		{Resuming, Completed},
