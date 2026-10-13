@@ -21,9 +21,14 @@
 //
 // The watchdog applies the §11.3 session-lifetime controls. The
 // per-state budgets above bound a session stuck in a pre-running state
-// and transition it to `failed`. The maxSessionAge cap bounds the
-// total lifetime of any non-terminal session, measured from its
-// creation, and transitions an over-age session to `expired`. The
+// and transition it to `failed`. The maxSessionAge cap bounds a
+// session's active age: the time it has spent in `starting`, `running`,
+// and `input_required`, accumulated across every pause. The timer is
+// paused in `suspended` and in the recovery states (`resume_pending`,
+// `resuming`, and `awaiting_client_action`), so time in those states
+// does not count, and the watchdog never expires a `suspended` session
+// on age. An over-age session in an accruing state transitions to
+// `expired` (§6.2 maxSessionAge timer behavior across states). The
 // maxAwaitingClientAction deadline bounds the awaiting_client_action
 // state and likewise transitions an over-deadline session to
 // `expired`. The watchdog never operates on terminal sessions.
@@ -390,7 +395,7 @@ type SessionExpiryNotifier interface {
 // (default 300s), so the gateway emits the §11.3 session_expiring_soon
 // SSE event to the client and dispatches the DEADLINE_APPROACHING CH-RUNTIMEOPS signal to the running pod. maxSessionAgeSeconds is the session's
 // resolved deadline (for the SSE payload) and remainingSeconds is the
-// wall-clock left before it.
+// active time left before it, the cap minus the session's active age.
 //
 // The notification is best-effort and fires at most once per session per
 // gateway process: a watchdog restart inside the window may re-warn, which
@@ -909,9 +914,12 @@ func effectiveMaxRetries(row sessionstore.Session, deployerDefault int) int {
 // deadline is per-entry or cumulative; the gateway implements the
 // per-entry interpretation because §7.3 frames the deadline as the
 // inactivity timeout on a single client-action cycle rather than as a
-// total-time budget. The platform-wide maxSessionAge cap (§11.3, default 7200s) bounds the cumulative case from above and runs
-// in the same sweep, so a misbehaving client cannot indefinitely
-// re-arm the inner budget.
+// total-time budget. The maxSessionAge cap does not bound the cumulative
+// wait, because its timer is paused in awaiting_client_action (§6.2
+// maxSessionAge timer behavior across states). Each re-entry requires the
+// client to resume the session out of the state, and only the active time
+// the session then spends in running between entries accrues toward
+// maxSessionAge.
 func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateAwaitingClientAction})
@@ -1033,8 +1041,8 @@ func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, 
 				}
 				r.State = session.StateExpired
 				// spec: §8.8 — the open-ended `expired:*` prefix
-				// distinguishes idle reclamation from the wall-clock
-				// `maxSessionAge` deadline (`expired:deadline`). F-11.3.7.
+				// distinguishes idle reclamation from the active-time
+				// `maxSessionAge` cap (`expired:deadline`). F-11.3.7.
 				if r.FailureReason == "" {
 					r.FailureReason = string(session.FailureExpiredIdle)
 				}

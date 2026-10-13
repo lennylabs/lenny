@@ -241,9 +241,9 @@ const (
 
 	// FailureExpiredDeadline marks a session driven to `expired` by a
 	// §11.3 / §7.3 deadline sweep — the platform-wide `maxSessionAge`
-	// cap, the `awaiting_client_action` inactivity deadline, the orphan
-	// cleanup window, and any other watchdog edge whose proximate cause
-	// is wall-clock elapsed time. The §8.8 MCP adapter surfaces this as
+	// cap on active session age (§6.2), the `awaiting_client_action`
+	// inactivity deadline, the orphan cleanup window, and any other
+	// watchdog edge whose proximate cause is elapsed time. The §8.8 MCP adapter surfaces this as
 	// `failed` with error code `expired:deadline` so external clients
 	// can distinguish time-driven expiry from budget/lease expiry.
 	// spec: §8.8.
@@ -266,8 +266,8 @@ const (
 	// its effective `maxIdleTimeSeconds`. The §8.8 MCP adapter surfaces
 	// this as `failed` with error code `expired:idle` (the open-ended
 	// `expired:*` prefix per §8.8) so external clients can
-	// distinguish idle reclamation from the wall-clock `maxSessionAge`
-	// deadline (`expired:deadline`). spec: §6.2; §11.3; §8.8.
+	// distinguish idle reclamation from the active-time `maxSessionAge`
+	// cap (`expired:deadline`). spec: §6.2; §11.3; §8.8.
 	FailureExpiredIdle FailureReason = "expired:idle"
 
 	// FailureOrphanPodTerminated marks a non-terminal session whose
