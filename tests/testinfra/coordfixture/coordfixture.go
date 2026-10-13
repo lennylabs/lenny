@@ -179,19 +179,32 @@ func (p *Pod) StaleRPCRejected(ctx context.Context, sessionID string, gen int64)
 
 // Bindings is a concurrency-safe coordination.BindingRegistry standing in for a
 // replica's per-replica podsession registry. A takeover publish flips the
-// session bound (modeling the production podRegistry.Put that holds the
-// re-established connection open); KillConn models a dead held gateway-to-pod
-// channel so a test can exercise the dead-connection eviction path.
+// session bound and stamps the binding with the generation it was published at
+// (modeling the production podRegistry.Put that holds the re-established
+// connection open); KillConn models a dead held gateway-to-pod channel so a
+// test can exercise the dead-connection eviction path.
 type Bindings struct {
 	mu      sync.Mutex
 	bound   map[string]bool
 	dead    map[string]bool
+	gen     map[string]int64
 	evicted map[string]int
 }
 
 // NewBindings returns an empty binding registry.
 func NewBindings() *Bindings {
-	return &Bindings{bound: map[string]bool{}, dead: map[string]bool{}, evicted: map[string]int{}}
+	return &Bindings{bound: map[string]bool{}, dead: map[string]bool{}, gen: map[string]int64{}, evicted: map[string]int{}}
+}
+
+// BindingGeneration returns the generation stamped on the session's binding,
+// or 0 when the session is unbound. spec: §10.1.5 (Stale Replica Behavior).
+func (b *Bindings) BindingGeneration(id string) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.bound[id] {
+		return 0
+	}
+	return b.gen[id]
 }
 
 // Bound reports whether this replica holds a live binding for the session.
@@ -217,16 +230,19 @@ func (b *Bindings) EvictBinding(id string) {
 	defer b.mu.Unlock()
 	delete(b.bound, id)
 	delete(b.dead, id)
+	delete(b.gen, id)
 	b.evicted[id]++
 }
 
-// Publish marks the session bound with a live channel, modeling the
-// post-fence podRegistry.Put.
-func (b *Bindings) Publish(id string) {
+// Publish marks the session bound with a live channel and stamps the binding
+// at generation, modeling the post-fence podRegistry.Put of a binding stamped
+// with the generation this replica holds the lease at.
+func (b *Bindings) Publish(id string, generation int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.bound[id] = true
 	b.dead[id] = false
+	b.gen[id] = generation
 }
 
 // KillConn marks the held channel of a bound session dead.
@@ -298,7 +314,7 @@ func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionI
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: pod rejected fence for session %s at generation %d", sessionID, generation)
 	}
-	return func() { r.Bindings.Publish(sessionID) }, nil
+	return func() { r.Bindings.Publish(sessionID, generation) }, nil
 }
 
 // FenceResult returns the CoordinatorFenceResponse the pod returned for the
@@ -370,13 +386,19 @@ type Replica struct {
 // session store, lease store, and pod. The sessions named in bind are published
 // on the replica's binding registry so a coordinating replica holds the binding
 // the §4.6.1 co-location invariant requires, and its sweep renews (rather than
-// adopts) those leases. ttl is the lease lifetime; a short ttl on a coordinating
-// replica lets a test inject a crash as a genuine Redis lease lapse once the
-// replica stops sweeping.
+// adopts) those leases. Each bound session's binding is stamped with the
+// session row's current coordination_generation, as an at-bind publish stamps
+// it; a session with no row is stamped 0. ttl is the lease lifetime; a short
+// ttl on a coordinating replica lets a test inject a crash as a genuine Redis
+// lease lapse once the replica stops sweeping.
 func NewReplica(id, tenantID string, pod *Pod, sessions sessionstore.Store, leases leasestore.LeaseStore, ttl time.Duration, bind ...string) *Replica {
 	bindings := NewBindings()
 	for _, s := range bind {
-		bindings.Publish(s)
+		var generation int64
+		if row, err := sessions.Get(context.Background(), tenantID, s); err == nil {
+			generation = row.CoordinationGeneration
+		}
+		bindings.Publish(s, generation)
 	}
 	readopter := &FenceReadopter{Pod: pod, Bindings: bindings, Leases: leases, ReplicaID: id, TenantID: tenantID}
 	sw := coordination.NewSweeper(Tenants{tenantID}, sessions, leases, coordination.Options{

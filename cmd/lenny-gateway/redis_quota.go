@@ -236,7 +236,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// podRegistry plus the executor's cached Attach stream), evicts without
 		// any lease write a bound session a peer replica has taken over (the
 		// lease is held elsewhere and coordination_generation has advanced past
-		// the generation this replica last renewed at; spec: §10.1.1, §10.1.5),
+		// the generation stamped on the binding; spec: §10.1.1, §10.1.5),
 		// and on the
 		// crash-takeover edge re-adopts the still-running pod through a
 		// fence-first re-adopt (Readopter over the Binder's ReadoptConnect entry
@@ -244,7 +244,8 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// read their collaborators (podRegistry, the executor, the Binder, the
 		// coordFencer) lazily at sweep time because they are constructed in
 		// later build steps; the Sweeper's Run loop starts only after the whole
-		// composition root is wired.
+		// composition root is wired. HeldDeliverer and TerminalReleaser stay
+		// unset until the session server implements them.
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
 			coordination.Options{
