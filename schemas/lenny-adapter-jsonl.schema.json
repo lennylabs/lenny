@@ -90,23 +90,40 @@
 
     "heartbeat": {
       "title": "heartbeat",
-      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter ends the session's stream; the runtime process receives no signal. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
+      "description": "Inbound liveness ping from adapter. The adapter writes one heartbeat per interval for each session, from the write of the session's session_start until it writes the session's session_end or removes the session's registry entry, whether or not an Attach stream for the session is open, and names that session in sessionId. Agent must respond with heartbeat_ack within 10s or the runtime is treated as hung for the session the heartbeat names: the adapter ends the session's Attach stream when one is open and refuses each later Attach for the session until its registry entry is removed, and the runtime process receives no signal. A protocol-level frame outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3; its sessionId attributes a busy report as the Outbound: heartbeat_ack block of that section states.",
       "type": "object",
       "required": ["type", "ts"],
       "properties": {
         "type": { "const": "heartbeat" },
-        "ts": { "type": "integer", "minimum": 0, "description": "Unix epoch seconds." }
+        "ts": { "type": "integer", "minimum": 0, "description": "Unix epoch seconds." },
+        "sessionId": {
+          "type": "string",
+          "description": "The session whose liveness the heartbeat probes. The runtime answers with a heartbeat_ack that carries this sessionId when it reports busy for the session."
+        }
       }
     },
 
     "heartbeat_ack": {
       "title": "heartbeat_ack",
-      "description": "Outbound acknowledgement of an inbound heartbeat. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
+      "description": "Outbound acknowledgement of an inbound heartbeat. A runtime MUST report busy: true for a session while it does any work for that session: while it handles a message for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. A heartbeat_ack that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod. A protocol-level frame outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3; its sessionId attributes a busy report as the Outbound: heartbeat_ack block of that section states.",
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "const": "heartbeat_ack" }
-      }
+        "type": { "const": "heartbeat_ack" },
+        "sessionId": {
+          "type": "string",
+          "description": "The sessionId of the heartbeat the frame answers. Required when busy is true."
+        },
+        "busy": {
+          "type": "boolean",
+          "description": "True while the runtime does work for the named session. False or absent otherwise."
+        }
+      },
+      "if": {
+        "properties": { "busy": { "const": true } },
+        "required": ["busy"]
+      },
+      "then": { "required": ["sessionId"] }
     },
 
     "session_start": {

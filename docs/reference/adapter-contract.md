@@ -255,10 +255,10 @@ Delivered when a tool call you emitted has been executed by the adapter.
 #### `heartbeat` --- Liveness Ping
 
 ```json
-{ "type": "heartbeat", "ts": 1717430400 }
+{ "type": "heartbeat", "ts": 1717430400, "sessionId": "sess_abc" }
 ```
 
-Your runtime MUST respond with a `heartbeat_ack` within 10 seconds. If no ack is received, the adapter treats the process as hung and ends that session's stream to the gateway, and the runtime process receives no signal. The gateway handles the session as a runtime crash under the session's retry policy.
+The adapter writes one `heartbeat` per interval for each session, from the write of the session's `session_start` until it writes the session's `session_end` or releases the session, whether or not the gateway has a stream open for the session, and names that session in `sessionId`. Your runtime MUST respond with a `heartbeat_ack` within 10 seconds. If no ack is received, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under the session's retry policy.
 
 #### `session_end` --- Release a Session
 
@@ -374,10 +374,18 @@ All paths are confined to `/workspace`. The adapter rejects any path resolving o
 #### `heartbeat_ack` --- Heartbeat Response
 
 ```json
-{ "type": "heartbeat_ack" }
+{ "type": "heartbeat_ack", "sessionId": "sess_abc", "busy": true }
 ```
 
-Must be sent in response to every inbound `heartbeat`. No other fields.
+Must be sent in response to every inbound `heartbeat`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"heartbeat_ack"`. |
+| `sessionId` | `string` | When `busy` is true | The `sessionId` of the `heartbeat` the frame answers. |
+| `busy` | `boolean` | No | True while the runtime does work for the named session, as the rule below states. False or absent otherwise. |
+
+A runtime MUST report `busy: true` for a session while it does any work for that session: while it handles a `message` for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. The adapter counts a `heartbeat_ack` that carries `busy: true` and names a session as activity for that session when it decides whether the session is idle; an ack that names no session, or carries `busy` false or absent, is activity for no session. A `heartbeat_ack` that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod.
 
 #### `session_started` --- Acknowledge a Session Start
 
@@ -703,7 +711,7 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 6. Adapter reads line from stdout, delivers response to gateway.
 
 7. [Heartbeat interval] Adapter writes:
-   {"type":"heartbeat","ts":1717430410}
+   {"type":"heartbeat","ts":1717430410,"sessionId":"sess_abc"}
 
 8. Agent writes:
    {"type":"heartbeat_ack"}
@@ -740,10 +748,10 @@ Adapter may respond in any order:
 {"type":"tool_result","id":"tc_002","sessionId":"sess_abc","content":[{"type":"text","inline":"module example.com/myapp\ngo 1.22"}],"isError":false}
 
 A heartbeat may arrive between tool results:
-{"type":"heartbeat","ts":1717430420}
+{"type":"heartbeat","ts":1717430420,"sessionId":"sess_abc"}
 
 Agent acks immediately:
-{"type":"heartbeat_ack"}
+{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}
 
 Then the other result arrives:
 {"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
