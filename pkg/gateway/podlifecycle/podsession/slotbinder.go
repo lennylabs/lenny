@@ -107,6 +107,13 @@ type SlotBindRequest struct {
 	// spec: §5.2 (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// OnClaimed is the post-claim hook. The binder calls it once per binder
+	// call, after the pod claim and any slot reservation and before the first
+	// RPC to the pod, so a resume writes `resuming` only once it holds a pod.
+	// A hook error releases the claim and is returned unwrapped. Nil is a
+	// no-op, which is the create and start paths. spec: §7.3 (Retry and
+	// Resume).
+	OnClaimed func(context.Context) error
 }
 
 // BindSlot places a session on a §5.2 concurrent-session pod slot.
@@ -626,10 +633,12 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	return minted, cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
-// connectSlot reserves a concurrent-session slot from the pool, resolves
-// the slot's pod adapter address, dials it, and runs the §15.5 version
-// handshake. On success the caller owns cl and must close it once the
-// session ends or on any later failure.
+// connectSlot reserves a concurrent-session slot from the pool, runs the
+// request's post-claim hook, resolves the slot's pod adapter address, dials
+// it, and runs the §15.5 version handshake. On success the caller owns cl and
+// must close it once the session ends or on any later failure. A hook error
+// releases the reservation and is returned unwrapped; a later failure is a
+// *SlotBindError whose reservation the caller releases.
 //
 // A podclaim.ErrNoConcurrentSlot or podclaim.ErrTenantMismatch from the
 // SlotClaimer is returned unwrapped so the gateway's session-creation
@@ -665,6 +674,20 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	}
 	sandboxName = res.SandboxName
 	slotID = res.SlotID
+
+	// spec: §7.3 (Retry and Resume) — the post-claim hook runs after the
+	// reservation and before any RPC reaches the pod. A hook error releases
+	// the reservation here with a clean disposition, because the adapter holds
+	// nothing for the slot, and returns the hook's error outside any
+	// *SlotBindError, so the §5.2 retry policy neither releases it a second
+	// time nor retries it.
+	if herr := runOnClaimed(ctx, req.OnClaimed); herr != nil {
+		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID, false); relErr != nil {
+			log.Printf("podsession: release reserved slot %s on pod %s after a post-claim hook error for session %s: %v",
+				slotID, sandboxName, req.SessionID, relErr)
+		}
+		return "", "", "", "", nil, herr
+	}
 
 	// Past this point a slot is reserved on sandboxName. Any failure is
 	// wrapped in a SlotBindError so the caller can release the reservation,
@@ -729,7 +752,7 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 // spec: §7.1 (normal flow); §5.2 (slot retry releases the reservation);
 // §4.7 (recycle disposition); §6.2 (leaked slot remains counted).
 func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), slotCleanupFloor)
+	rctx, cancel := detachedReleaseContext(ctx)
 	defer cancel()
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	// recycle=false: a released reservation after a failed bind is a slot-count

@@ -26,7 +26,7 @@ import (
 type sessionNodeReattacher struct{ s *Server }
 
 func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionstore.Session) error {
-	if _, err := a.s.resumeOnPod(ctx, node); err != nil {
+	if _, err := a.s.resumeOnPod(ctx, node, nil); err != nil {
 		return err
 	}
 	// The node lost its pod while non-terminal; resumeOnPod claimed a

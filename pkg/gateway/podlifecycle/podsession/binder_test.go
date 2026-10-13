@@ -2861,9 +2861,10 @@ func resumeFailureBinder(t *testing.T, a *stageAdapter) (*podsession.Binder, cli
 // releases the resume slot with the reclaim's disposition, releases no
 // gateway-side credential lease, and returns a *SlotBindError at stage
 // "resume" whose Leaked is that disposition. An unclean reclaim keeps the
-// slot counted; on an exclusive pool the error carries no slot identifier.
+// slot counted; on an exclusive pool the error carries no slot identifier
+// and the release deletes the per-pod claim.
 //
-// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// spec: §7.1 (normal flow); §7.3 (Retry and Resume); §5.2 (pool configuration and execution modes);
 // §6.2 (pod state machine)
 func TestResumeFailureCompensatesWithItsOwnToken_spec_7_1(t *testing.T) {
 	cases := []struct {
@@ -2876,7 +2877,9 @@ func TestResumeFailureCompensatesWithItsOwnToken_spec_7_1(t *testing.T) {
 	}{
 		{"concurrent_clean", 4, false, false, false, "sess-1"},
 		{"concurrent_unclean", 4, true, true, true, "sess-1"},
-		{"exclusive", 1, false, false, true, ""},
+		// spec: 7.3 (Retry and Resume) — a failed exclusive resume deletes
+		// its claim rather than leaving it to the orphan-claim GC.
+		{"exclusive", 1, false, false, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

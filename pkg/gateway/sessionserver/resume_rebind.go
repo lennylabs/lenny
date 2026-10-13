@@ -33,8 +33,13 @@ import (
 // still letting the adapter signal a stronger classification when it
 // has one. F-7.3.22.
 //
+// onClaimed is the binder's post-claim hook. It runs once the replacement pod
+// is claimed and before any RPC reaches it, on the checkpoint restore and on
+// the snapshotless rebuild alike. Nil runs no hook. spec: §7.3 (Retry and
+// Resume).
+//
 // spec: §4.4, §7.2, §10.1 partial-manifest path.
-func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
+func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session, onClaimed func(context.Context) error) (string, error) {
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		plan, err := storedWorkspacePlan(row)
 		if err != nil {
@@ -43,7 +48,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// spec: §7.3 (snapshotless resume-rebuild) — the resume path holds no
 		// create-time claim or credential resolution (it claims a fresh pod via
 		// the whole-sequence Bind), so startOnPod resolves credentials itself.
-		result, err := s.startOnPod(ctx, row, plan, nil)
+		result, err := s.startOnPod(ctx, row, plan, nil, onClaimed)
 		if err != nil {
 			return "", err
 		}
@@ -99,7 +104,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	// last successful full checkpoint; an unresolvable manifest (dev mode,
 	// a checkpoint predating the chunked model) leaves the chunk set empty.
 	chunks := s.resolveResumeChunks(ctx, row)
-	result, err := s.podBinder.Resume(ctx, checkpointResumeRequest(row, match, agentInterface, minPlatformVersion, expectedBytes, chunks))
+	result, err := s.podBinder.Resume(ctx, checkpointResumeRequest(row, match, agentInterface, minPlatformVersion, expectedBytes, chunks, onClaimed))
 	if err != nil {
 		accountResumeSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement,
 			s.slotLeakGauge, match, err)
@@ -146,7 +151,9 @@ func (s *Server) releaseThenResumeOnPod(ctx context.Context, row sessionstore.Se
 	if err := s.releaseEarlierBinding(ctx, row); err != nil {
 		return "", err
 	}
-	return s.resumeOnPod(ctx, row)
+	// handleResume writes `resuming` before it calls here, so the rebind
+	// runs no post-claim hook.
+	return s.resumeOnPod(ctx, row, nil)
 }
 
 // releaseEarlierBinding releases, with the failed disposition, any binding
@@ -204,8 +211,9 @@ func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Cli
 // checkpointResumeRequest assembles the §7.1 ResumeRequest that restores row
 // from its checkpoint onto a pod of the resolved pool match. KeepsRuntime is
 // copied from the pool match so the resume's claim applies the §5.2
-// process-reuse rule the session's pool configuration resolves to.
-func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant) podsession.ResumeRequest {
+// process-reuse rule the session's pool configuration resolves to. onClaimed
+// is the binder's post-claim hook (§7.3 (Retry and Resume)); nil runs none.
+func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant, onClaimed func(context.Context) error) podsession.ResumeRequest {
 	return podsession.ResumeRequest{
 		Pool:                    match.Pool,
 		SessionID:               row.ID,
@@ -242,5 +250,6 @@ func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatc
 		CleanupCommands:       match.CleanupCommands,
 		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
 		Chunks:                chunks,
+		OnClaimed:             onClaimed,
 	}
 }

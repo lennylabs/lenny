@@ -38,6 +38,16 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		// (Gap 2) — holds before the first launch RPC runs. ReclaimClaimed
 		// revokes the lease (keyed by sessionID) and deletes the per-pod claim.
 		// spec: §4.6 (proposal), §7.1 step 23 (lease release).
+		//
+		// An attempt-scoped request releases only the leases its own Prepare
+		// minted and then deletes the claim, so a lease another attempt minted
+		// for the same session stays live. spec: §7.3 (Retry and Resume), §4.9
+		// (Credential Leasing Service).
+		if req.attemptScoped {
+			b.releaseAttemptCredentials(req.mintedLeaseIDs)
+			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
+			return nil, err
+		}
 		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
 			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
 		}
@@ -50,8 +60,21 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// Launch issues ConfigureWorkspace or StartSession, neither of which
 	// carries a bind attempt token, so the only refusal it can meet is the
 	// already-started one. spec: §4.7.1 (role and gateway RPC contract).
+	//
+	// An attempt-scoped request releases only the leases its own Prepare
+	// minted, and only when the cause is not a slot-bind refusal, which means
+	// the pod serves the session; the reclaim then drains with no
+	// session-wide revoke. spec: §7.3 (Retry and Resume), §4.9 (Credential
+	// Leasing Service).
 	reclaim := func(cause error) {
-		b.reclaimOnFailure(ctx, sb, cl, true, req.SessionID, cause)
+		if !req.attemptScoped {
+			b.reclaimOnFailure(ctx, sb, cl, true, req.SessionID, cause)
+			return
+		}
+		if !adapterclient.IsSlotBindRefusal(cause) {
+			b.releaseAttemptCredentials(req.mintedLeaseIDs)
+		}
+		b.reclaimOnFailure(ctx, sb, cl, false, req.SessionID, cause)
 	}
 
 	phaseStart := time.Now()

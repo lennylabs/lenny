@@ -131,7 +131,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		// §6.3 binder and launch against the claimed pod. On failure release the
 		// create-time claim (unless the binder already owns its release) and
 		// return the typed sentinel; the row stays StateCreated, so no pod leaks.
-		bound, err = s.startOnPod(ctx, row, plan, startCtx)
+		bound, err = s.startOnPod(ctx, row, plan, startCtx, nil)
 		if err != nil {
 			if createClaimNeedsRollback(createClaim, err) {
 				s.rollbackClaim(ctx, createClaim, row.ID)

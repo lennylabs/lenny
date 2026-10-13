@@ -98,6 +98,13 @@ type ResumeRequest struct {
 	//
 	// spec: §10.1.7 — reassembly on resume.
 	Chunks []adapterclient.ChunkGrant
+	// OnClaimed is the post-claim hook. The binder calls it once per binder
+	// call, after the pod claim and any slot reservation and before the first
+	// RPC to the pod, so a resume writes `resuming` only once it holds a pod.
+	// A hook error releases the claim and is returned unwrapped. Nil is a
+	// no-op, which is the create and start paths. spec: §7.3 (Retry and
+	// Resume).
+	OnClaimed func(context.Context) error
 }
 
 // ResumeResult is what Binder.Resume returns alongside the BindResult:
@@ -122,26 +129,50 @@ type ResumeResult struct {
 // must be rebuilt on a replacement pod. Any failure after the claim is
 // returned so the gateway can retry on a fresh pod.
 //
+// The order is claim, slot reservation, post-claim hook, handshake, adapter
+// Resume. A failure of the claim or of the reservation releases nothing,
+// because neither leaves anything to release. A hook error, and a resolve,
+// dial, or handshake failure after the reservation, release the claim
+// through releaseResumeSlot with a clean disposition and send no
+// compensation, because no entry-touching RPC has run. A hook error is
+// returned as the hook returned it.
+//
 // The returned ResumeResult carries the standard claim-and-handshake
 // BindResult plus the §4.4 / §7.2 mode the adapter reported and the
 // echoed §4.2 recovery_generation. F-7.3.22.
+//
+// spec: §7.3 (Retry and Resume); §5.2 (atomic slot reservation).
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
-	sb, cl, neg, err := b.connect(ctx, podclaim.ClaimRequest{
+	sandboxName, err := b.claimPod(ctx, podclaim.ClaimRequest{
 		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: req.KeepsRuntime,
 	})
 	if err != nil {
 		return ResumeResult{}, err
 	}
 	// spec: §5.2; §6.4 — every session is bound to a slot, so a resume onto
-	// a concurrent-workspace pool reserves one counted slot on the pod
-	// connect already claimed. Without it the resumed session holds a
-	// whole-pod claim and no slot, so it has no slot tree to restore into
-	// and the pod's occupancy ledger under-counts it. The reservation runs
-	// on the pod connect resolved rather than through a pool scan, which
-	// would increment a different pod's counter.
-	slotID, err := b.reserveResumeSlot(ctx, sb.Name, req)
+	// a concurrent-workspace pool reserves one counted slot on the pod the
+	// claim took. Without it the resumed session holds a whole-pod claim and
+	// no slot, so it has no slot tree to restore into and the pod's occupancy
+	// ledger under-counts it. The reservation runs on the claimed pod rather
+	// than through a pool scan, which would increment a different pod's
+	// counter.
+	slotID, err := b.reserveResumeSlot(ctx, sandboxName, req)
 	if err != nil {
-		cl.Close()
+		return ResumeResult{}, err
+	}
+	// spec: §7.3 (Retry and Resume) — the hook runs after the claim and the
+	// reservation and before any RPC reaches the pod.
+	// A failure from here to the adapter Resume releases with a clean
+	// disposition: no entry-touching RPC has run, so the adapter holds
+	// nothing for the session. releaseResumeSlot logs a release error, and
+	// the §4.6.1 orphan-claim GC collects what it could not release.
+	if err := runOnClaimed(ctx, req.OnClaimed); err != nil {
+		_ = b.releaseResumeSlot(ctx, sandboxName, slotID, false)
+		return ResumeResult{}, err
+	}
+	sb, cl, neg, err := b.handshake(ctx, sandboxName, req.Pool)
+	if err != nil {
+		_ = b.releaseResumeSlot(ctx, sandboxName, slotID, false)
 		return ResumeResult{}, err
 	}
 	// spec: §4.7.1 (role and gateway RPC contract) — the Resume is the first
@@ -202,7 +233,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 }
 
 // reserveResumeSlot reserves the resumed session's counted slot on the pod
-// connect already claimed, on the pools the start path reserves one on
+// the resume's claim took, on the pools the start path reserves one on
 // (sessionPolicy.maxConcurrentSessions greater than one). It returns the
 // reserved slot's identifier, which is the session's own identifier, and
 // the empty string on an exclusive pool, which keeps no per-pod ledger.
@@ -230,7 +261,7 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 	if err != nil {
 		// ErrNoConcurrentSlot is returned unwrapped: a concurrent start for
 		// the same tenant can fill the pod's bound in the window between
-		// connect's claim CREATE and this reservation, and the caller
+		// the claim CREATE and this reservation, and the caller
 		// retries the resume on a fresh pod under Resume's existing
 		// contract. No increment landed, so nothing is released.
 		if errors.Is(err, podclaim.ErrNoConcurrentSlot) {
@@ -244,18 +275,20 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 // failResume compensates a failed adapter Resume. It sends the compensating
 // Shutdown naming the resume's own bind attempt on the still-open connection,
 // forwards the outcome to the compensation counter, closes the connection,
-// and then releases the resume's slot reservation carrying the reclaim's
-// disposition. A resume whose response was lost therefore tears down the
-// orphan entry it created, and a stale compensation from another attempt at
+// and then releases what the resume holds on the pod (releaseResumeSlot): the
+// slot reservation carrying the reclaim's disposition on a
+// concurrent-workspace pool, or the per-pod claim on an exclusive pool. A
+// resume whose response was lost therefore tears down the orphan entry it
+// created, and a stale compensation from another attempt at
 // the same session is answered superseded rather than destroying the live
 // resumed session.
 //
-// The reservation is the resume's own, so its release is too: the adapter
-// Resume RPC is the one failure that follows a completed reservation, and
-// leaving the increment behind would compound per retry on the retryable
-// restore path. Every earlier failure returns out of connect or out of the
-// reservation itself with no increment landed, so no other error path
-// releases.
+// The reservation and the claim are the resume's own, so their release is
+// too: leaving the increment behind would compound per retry on the
+// retryable restore path, and leaving the exclusive claim would hold the pod
+// until the orphan-claim GC. A failure before the adapter Resume releases
+// through releaseResumeSlot with a clean disposition and sends no
+// compensation.
 //
 // It releases no §4.9 credential lease. Binder.Resume mints none and its §7.3
 // retry re-mints none, while the session may still hold the leases its
@@ -266,7 +299,8 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 // is the reclaim's disposition or a failed release, so the caller's slot
 // accounting reads the disposition off the chain. SlotBindError unwraps to
 // the Resume error, so the chain's gRPC classification is unchanged. On an
-// exclusive pool the slot identifier is empty and no accounting runs.
+// exclusive pool the slot identifier is empty, the release deletes the
+// claim, and the caller's slot accounting skips the error.
 //
 // spec: §7.1 (normal flow); §7.2 (interactive session model); §7.3 (retry and
 // resume); §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration
@@ -282,14 +316,23 @@ func (b *Binder) failResume(ctx context.Context, cl *adapterclient.Client, sandb
 	return fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, sbe)
 }
 
-// releaseResumeSlot rolls back the resume's slot reservation after the
-// adapter Resume RPC failed, carrying the compensating reclaim's disposition,
-// and returns the release error so the caller books a failed release as a
-// leak. It is a no-op on an exclusive pool, which reserved nothing:
-// ReleaseSlotReservation decrements unconditionally, so a release for an
-// increment that never landed would under-count the pod.
+// releaseResumeSlot releases what a failed resume holds on its pod and
+// returns the release error, so the caller books a failed release as a leak.
+// On a concurrent-workspace pool it rolls back the resume's slot reservation
+// carrying the caller's disposition; SlotClaimer.ReleaseSlot deletes the
+// per-pod claim only at occupancy zero, so a sibling slot keeps the pod
+// claimed. On an exclusive pool, where slotID is empty and no reservation was
+// made, it deletes the per-pod claim the resume made. Both run on a detached
+// context, so a release reached after the request context ended still lands.
+//
+// spec: §7.3 (Retry and Resume); §5.2 (slot retry releases the reservation);
+// §4.6.1 (occupancy projection on claim DELETE).
 func (b *Binder) releaseResumeSlot(ctx context.Context, sandboxName, slotID string, leaked bool) error {
 	if slotID == "" {
+		if err := b.deleteClaimDetached(ctx, sandboxName); err != nil {
+			log.Printf("podsession: delete resume claim on pod %s: %v", sandboxName, err)
+			return err
+		}
 		return nil
 	}
 	if err := b.ReleaseSlotReservation(ctx, sandboxName, slotID, leaked); err != nil {

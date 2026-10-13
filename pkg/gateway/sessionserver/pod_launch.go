@@ -95,9 +95,14 @@ type startContext struct {
 // remaining callers consume them: the combined create-and-start path runs
 // the prepare barrier (which assigns the lease), and the resume-rebuild path
 // runs the whole Claim → Prepare → Launch sequence.
+//
+// onClaimed is the binder's post-claim hook, threaded into both the exclusive
+// bind request and the concurrent slot request, so a snapshotless resume
+// rebuild runs it after its claim on either pool. It is nil on the create and
+// start paths. spec: §7.3 (Retry and Resume).
 // spec: §4.1, §4.4, §5 (proposal); §4.2 — "Pod-to-session binding";
 // §7.1 — atomic-creation rollback.
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext, onClaimed func(context.Context) error) (*podsession.BindResult, error) {
 	// spec: §4.9 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
@@ -166,9 +171,11 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		slotReq.OnClaimed = onClaimed
 		return s.bindConcurrentSlot(ctx, row, match, slotReq)
 	}
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+	bindReq.OnClaimed = onClaimed
 	// spec: §4.7, §7.1 steps 4-13 (proposal) — the combined one-call
 	// `POST /v1/sessions/start` path (claimed is non-nil) claimed the pod in
 	// the same call but never went through /finalize, so it reconnects to the

@@ -425,6 +425,7 @@
       "title": "Warm Pool Controller \u2014 Pod Lifecycle",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier2_component/postclaimrelease/postclaim_release_test.go",
         "pkg/sandboxclaim/state/state_test.go::TestStatesAndTerminals",
         "pkg/sandboxclaim/state/state_test.go::TestIsValidCanonicalTransitions",
         "pkg/sandboxclaim/state/state_test.go::TestIsValidIllegalTransitionsRejected",
@@ -1924,6 +1925,8 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier2_component/postclaimrelease/postclaim_release_test.go",
+        "tests/tier9_security/slot_credential_reclaim_fence_test.go",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestResumeFailureReachesTheSlotAccounting_spec_5_2",

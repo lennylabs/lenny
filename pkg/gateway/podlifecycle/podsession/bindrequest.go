@@ -3,6 +3,7 @@
 package podsession
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -124,6 +125,24 @@ type BindRequest struct {
 	// (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// OnClaimed is the post-claim hook. The binder calls it once per binder
+	// call, after the pod claim and any slot reservation and before the first
+	// RPC to the pod, so a resume writes `resuming` only once it holds a pod.
+	// A hook error releases the claim and is returned unwrapped. Nil is a
+	// no-op, which is the create and start paths. spec: §7.3 (Retry and
+	// Resume).
+	OnClaimed func(context.Context) error
+	// attemptScoped marks a request Bind built for one whole-sequence bind
+	// attempt. On it a Prepare or Launch failure releases only the §4.9
+	// leases the attempt minted (mintedLeaseIDs) and deletes the claim,
+	// rather than revoking every lease the session holds, which would strip
+	// a lease another attempt for the same session minted. The decomposed
+	// /finalize and /start path never sets it. spec: §7.3 (Retry and Resume),
+	// §4.9 (Credential Leasing Service).
+	attemptScoped bool
+	// mintedLeaseIDs carries the lease identifiers this attempt's Prepare
+	// minted into its Launch, on an attemptScoped request only.
+	mintedLeaseIDs []string
 }
 
 // BindResult reports the pod a session was bound to.
