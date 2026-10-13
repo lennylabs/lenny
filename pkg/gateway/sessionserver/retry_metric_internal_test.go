@@ -88,10 +88,13 @@ func TestRecordSessionRetryDefaultsFailureClassToUnknown_F_7_3_10(t *testing.T) 
 	}
 }
 
-// Nil hooks degrade to a no-op so the failure-edge write that spends the
-// retry, transitionToResumePending's guarded write into resume_pending
-// (failure.go), never has to guard. spec: §7.3 (Retry and Resume)
-// "Retry accounting.".
+// Nil hooks make recordSessionRetry a no-op, so neither of its callers has
+// to guard. Both callers are the edges that spend a retry: the guarded write
+// into resume_pending in transitionToResumePending (failure.go), and the
+// resuming watchdog's resuming → resume_pending write, which reaches
+// recordSessionRetry through the watchdog's notifyRetryAttempt and
+// OnSessionRetryAttempt (usage.go).
+// spec: §7.3 (Retry and Resume) "Retry accounting."
 func TestRecordSessionRetryWithoutHooksIsNoOp_F_7_3_10_F_7_3_18(t *testing.T) {
 	srv := New(memstore.New(), Options{})
 	srv.recordSessionRetry(context.Background(), sessionstore.Session{
