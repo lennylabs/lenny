@@ -203,7 +203,7 @@ The `correction_reason_code` enum is extensible via the admin API (`POST /v1/adm
 | Upload timeout                            | 300s    | `gateway.uploadTimeoutSeconds`                    | Yes                | [§7.1](07_session-lifecycle.md#71-normal-flow)           |
 | Setup command timeout                     | 300s    | `runtime.setupTimeoutSeconds`                     | Yes (per runtime)  | [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)           |
 | Max session age                           | 7200s   | `runtime.maxSessionAgeSeconds`                    | Yes (deployer cap) | [§6.2](06_warm-pod-model.md#62-pod-state-machine)           |
-| Max client idle time                      | Effective `maxSessionAgeSeconds` (7200s default) | `sessionPolicy.maxClientIdleSeconds`     | Yes (per pool)     | [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
+| Max client idle time                      | 900s    | `sessionPolicy.maxClientIdleSeconds`               | Yes (per pool)     | [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
 | Max resume window                         | 900s    | `runtime.maxResumeWindowSeconds`                  | Yes                | [§7.3](07_session-lifecycle.md#73-retry-and-resume)           |
 | Max awaiting client action                | 900s    | `runtime.maxAwaitingClientActionSeconds`           | Yes                | [§7.3](07_session-lifecycle.md#73-retry-and-resume)           |
 | Max elicitation wait                      | 600s    | `runtime.maxElicitationWaitSeconds`               | Yes (per pool)     | [§9.1](09_mcp-integration.md#91-where-mcp-is-used)           |
@@ -237,7 +237,9 @@ The `correction_reason_code` enum is extensible via the admin API (`POST /v1/adm
 | Billing stream TTL                        | 3600s   | `billing.streamTTLSeconds`                          | Yes                | [§11.2.1](#1121-billing-event-stream)        |
 | Legal hold checkpoint reconciler interval | 900s    | (hard-coded; not configurable in v1)              | No                 | [§12.8](12_storage-architecture.md#128-compliance-interfaces)          |
 | Max suspended pod hold                    | 900s    | `gateway.maxSuspendedPodHoldSeconds`               | Yes (deploy + tenant, most restrictive wins) | [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
-| Delegation budget key TTL                 | 259200s | `delegation.budgetKeyTTLSeconds`                   | Yes                | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)           |
+| Max suspended session lifetime            | 604800s | `gateway.maxSuspendedSessionSeconds`               | Yes                | [§6.2](06_warm-pod-model.md#62-pod-state-machine) |
+| Suspended backlog re-check interval       | 300s    | `gateway.suspendedBacklogRecheckSeconds`           | Yes (minimum 30s)  | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| Delegation budget key TTL                 | 691200s | `delegation.budgetKeyTTLSeconds`                   | Yes (must exceed `gateway.maxSuspendedSessionSeconds`) | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)           |
 
 Cancellation is first-class: clients and parent agents can cancel sessions/tasks cleanly.
 

@@ -10,8 +10,8 @@ fixes the notation every trace uses. The scenario traces follow in the subsectio
 This section also carries the off-holder matrix, keyed by session-scoped client route, stating what happens
 when the replica serving that route is not the replica holding the session's pod control stream
 `CH-ATTACH`. The client-to-gateway session REST surface is not a channel in the §28 register, so no §28
-card owns it, and the matrix is the normative statement of off-holder behaviour for that surface. Its `delivery: immediate`
-resume rows are the exception: they restate the forwarding and inbox-buffering requirement §7.2 states and
+card owns it, and the matrix is the normative statement of off-holder behaviour for that surface. Its `suspended`
+message-send rows are the exception: they apply the requirement §7.2 states and
 cite §7.2 as the section that owns it.
 
 This section also carries §29.10, the co-tenancy analysis of the concurrent-session pod, which states
@@ -416,9 +416,9 @@ reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
    replica the call lands on is selected by the load balancer, and sticky routing is an optimization
    rather than a guarantee: a client can reach any replica
    ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). When the replica serving the call is not the
-   session's coordinating replica and the message carries `delivery: "immediate"` against a `suspended`
-   session, §7.2 requires the serving replica to forward the message to the coordinator and states the
-   inbox-buffering fallback when the coordinator is unreachable
+   session's coordinating replica and the message targets a `suspended`
+   session, the serving replica holds the message in the session's DLQ when delivery path 6 **Admission.** admits it, and forwards nothing, as §7.2
+   delivery path 6 states
    ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
 2. `gateway`, `internal`. The gateway authenticates the caller and authorizes the operation against the
@@ -547,8 +547,9 @@ specification states no inter-replica
 conversation that carries the request (§28.3, §28.5.4), so those rows require the forward and the
 coordinator-performed effect without naming a carrier for them. A serving replica never reports a successful outcome for an effect that
 did not reach the pod, and never writes a session state transition that depends on an effect at the pod it
-did not perform. When the coordinator is unreachable on one of those rows, a message send falls back to
-inbox buffering with a `queued` delivery receipt so the message is not dropped, and every other forwarding
+did not perform. When the coordinator is unreachable on one of those rows, a message send to a `running` or
+`input_required` session falls back to inbox buffering with a `queued` delivery receipt so the message is
+not dropped, and every other forwarding
 row fails closed with `TARGET_NOT_READY`, HTTP 409, and the typed refusal carries the identity of the
 session's coordinating replica. This section states that code for the condition of an
 unreachable coordinator; the pre-running condition §15.1 states for the same code is a separate condition.
@@ -566,7 +567,7 @@ forward, and the store-only row requires no forwarding at all.
 |:--|:--|:--|:--|
 | `POST /v1/sessions/{id}/messages`, no matching `inReplyTo` | `running` | Forward to the coordinator, which evaluates the §7.2 delivery paths and produces the receipt. On an unreachable coordinator the serving replica buffers the message in the session inbox and answers `queued` | §29 |
 | `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. On an unreachable coordinator it buffers the message and answers `queued` | §29 |
-| `POST /v1/sessions/{id}/messages` carrying `delivery: immediate` | `suspended` | Forward to the coordinator, which performs the atomic resume-and-deliver when the pod is still held and the `suspended` to `resume_pending` transition when the pod has been released. On an unreachable coordinator the serving replica falls back to inbox buffering with a `queued` receipt. The serving replica writes no state transition of its own | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| `POST /v1/sessions/{id}/messages`, any `delivery` value | `suspended` | No forwarding is required; the serving replica takes [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6, which states each outcome by whether the serving replica coordinates the session and whether the session holds a pod | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 | `POST /v1/sessions/{id}/interrupt` | `running` | Forward to the coordinator, which issues the interrupt to the adapter. The serving replica does not write `suspended` and does not report an interrupt acknowledgement. On an unreachable coordinator it fails closed | §29 |
 | `POST /v1/sessions/{id}/terminate` | `starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while the session row names a pod, the states this route accepts in which the session holds `REG-COORDLEASE` ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination), §28.3) | Forward to the coordinator, which performs the termination sequence [§15.1](15_external-api-surface.md#151-rest-api) states for the session's current state and writes `completed`. The serving replica does not write the terminal state itself and does not report a termination outcome for a sequence it did not perform. On an unreachable coordinator it fails closed. In `created`, `finalizing`, and `ready`, the non-terminal states the route accepts other than those above and a `suspended` session whose row names no pod, the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the specification establishes no coordinating replica for those states and no off-holder condition arises there. A `suspended` session whose row names no pod holds no `REG-COORDLEASE` and has no coordinating replica ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination)), so the serving replica performs the termination itself: no pod is bound, and the terminal transition runs the DLQ drain [§7.3](07_session-lifecycle.md#73-retry-and-resume) states | §29 |
 | `DELETE /v1/sessions/{id}` | The same states as `POST /v1/sessions/{id}/terminate` | The same requirement as `POST /v1/sessions/{id}/terminate`, with the terminal state `cancelled` | §29 |
@@ -581,7 +582,7 @@ forward, and the store-only row requires no forwarding at all.
 | `GET /v1/sessions/{id}/events`, `Accept: application/json` form | Any non-terminal state | Serve the paginated list envelope `{items, cursor, hasMore}` ([§15.1](15_external-api-surface.md#151-rest-api)) from the backlog the serving replica reads from the shared session-event relay `CH-EVENTRELAY`, as the streaming row states, so no forwarding to the coordinator is required (§28.5.7, [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The relay is absent only in single-replica dev mode, where the serving replica is the only replica. What a reader receives when the requested entry is absent from the relay stream is a condition the specification does not state (§28.5.7, §28.8) | §29 |
 | `GET /v1/sessions/{id}/logs`, streaming form | Any non-terminal state | Serve from the Postgres `EventStore` ([§12.2](12_storage-architecture.md#122-storage-roles)), which every replica reads, so no forwarding to the coordinator is required | §29 |
 | `POST /v1/chat/completions` and `POST /v1/responses` | No pre-existing session is addressed | No forwarding is required. Each call runs an implicit single-shot session that the serving replica creates, claims a warm pod for, dispatches, and releases within the call ([§15](15_external-api-surface.md#15-external-api-surface)), so the serving replica is the coordinating replica by construction and no off-holder condition arises. A creation or claim failure fails closed as `SESSION_CREATION_FAILED` or `CREDENTIAL_POOL_EXHAUSTED`, HTTP 503 ([§15.1](15_external-api-surface.md#151-rest-api)), rendered into the adapter's native error envelope (§15); no inbox buffering and no `queued` receipt applies | §29 |
-| The MCP tool surface, `lenny/send_message` carrying `delivery: immediate` | `suspended` | The same requirement as the `suspended` message-send row, which §7.2 states for both of its message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| The MCP tool surface, `lenny/send_message`, any `delivery` value | `suspended` | No forwarding is required; the serving replica takes [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6, which states both message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 | The MCP tool surface, every other session-addressed tool call | Any non-terminal state | The requirement stated for the REST route the tool maps onto ([§15.2](15_external-api-surface.md#152-mcp-api)) | §29 |
 | Every session-scoped route that reads or writes the `SessionStore`, the `ArtifactStore`, or the `EventStore` alone ([§12.2](12_storage-architecture.md#122-storage-roles)) | Any state | No forwarding is required, because the route touches neither the pod control stream `CH-ATTACH` nor the session inbox and every replica reads the same stores | §29 |
 
@@ -692,7 +693,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
    session REST surface. The gateway returns the session in `suspended`
    ([§15.1](15_external-api-surface.md#151-rest-api)). The pod is held and the workspace is preserved
    while the session is suspended; the pod is released when `maxSuspendedPodHoldSeconds` fires, after
-   which the session stays `suspended` without a pod until the client acts
+   which the session stays `suspended` without a pod until a message or a resume call resumes it ([§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6), or the session ends
    ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
 
 10. On `POST /v1/sessions/{id}/terminate` or `DELETE /v1/sessions/{id}`: `client` → `gateway`, no register

@@ -143,7 +143,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
   - `dev.lenny.session_failed`: `{ "session_id", "status": "failed", "error": { "code": "<error_code>", "message": "<string>" }, "usage": { "inputTokens": N, "outputTokens": N } }`
   - `dev.lenny.session_terminated` (admin or system termination; the session's external state is `completed` — this event type distinguishes operator-initiated completion from agent-initiated): `{ "session_id", "reason": "<string>", "terminatedBy": "<admin|system>" }`
   - `dev.lenny.session_cancelled` (user/runtime cancelled; the session's external state is `cancelled`): `{ "session_id", "reason": "<string>" }`
-  - `dev.lenny.session_expired` (maxSessionAge or maxClientIdleSeconds): `{ "session_id", "expiryReason": "max_session_age|max_idle_time" }`
+  - `dev.lenny.session_expired` (maxSessionAge, maxClientIdleSeconds for a session that cannot be idle-suspended, or the suspended-session lifetime maxSuspendedSessionSeconds): `{ "session_id", "expiryReason": "max_session_age|max_idle_time" }`
   - `dev.lenny.session_awaiting_action`: `{ "session_id", "actionRequired": "<string>", "resumeUrl": "<string>" }`
   - `dev.lenny.delegation_completed`: `{ "parent_session_id", "childSessionId": "<id>", "status": "completed|failed|cancelled|expired", "usage": { "inputTokens": N, "outputTokens": N } }`
 

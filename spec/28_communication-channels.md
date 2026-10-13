@@ -233,12 +233,15 @@ connection.
   ([§4.7](04_system-components.md#47-runtime-adapter)). Its streaming messages are bidirectional and are
   declared in the published protobuf service definition
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not state
-  the individual message names of the stream in prose.
+  the individual message names of the stream in prose. The unary `SealSession` and `UnsealSession` RPCs
+  seal a session against `message` delivery on this channel and lift the seal, as
+  [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) **Session seal.** states.
 - **Preconditions.** The pod validates the `coordination_generation` stamp on every gateway-to-pod RPC and
   rejects a stale one, and a replica that has just acquired coordination completes the
   [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it sends any
   operational RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
-- **Timing.** The specification states no deadline for `Attach`. The gateway holds one `Attach` stream for a
+- **Timing.** The specification states no deadline for `Attach`. `SealSession` and `UnsealSession` each have a
+  5s deadline ([§4.7](04_system-components.md#47-runtime-adapter)). The gateway holds one `Attach` stream for a
   session from its first message delivery until it releases the session's binding. The end of the client
   request that delivered a message does not end the stream. The connection carrying it uses gRPC
   keepalive probes at a 10s interval with a 5s timeout
@@ -574,7 +577,7 @@ the connection it runs on. The runtime is the dialling participant on every chan
   messages and tool-call instructions and receives responses, and the agent cannot initiate an arbitrary
   request to the adapter ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Timing.** The adapter sends a periodic `heartbeat`, and a runtime that does not answer with
-  `heartbeat_ack` within 10 seconds is treated as hung: the adapter ends that session's stream, and the runtime process receives no signal ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")
+  `heartbeat_ack` within 10 seconds is treated as hung for the session the heartbeat names: the adapter ends the session's `Attach` stream when one is open and refuses each later `Attach` for the session until its registry entry is removed, and the runtime process receives no signal ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not
   state the heartbeat interval. A runtime that keeps per-session context or has opened `CH-RUNTIMEOPS` answers `session_start` with `session_started` (**Outbound: `session_started`** rule 1), and the adapter's wait for that answer is bounded as **Outbound: `session_started`** states. `session_end` is not acknowledged and carries no deadline. `session_start` and `session_end` each travel in order ahead of or behind the session's other frames on the same connection or loop. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
   is sent SIGTERM and then SIGKILL 10 seconds later
@@ -605,7 +608,7 @@ envelope those messages carry. Both are stated below.
 
 **Message schemas**
 
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbeat`, and `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Runtimes ignore a frame whose type they do not recognize. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod.
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbeat`, and `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Runtimes ignore a frame whose type they do not recognize. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod, other than `heartbeat_ack`, whose `sessionId` **Outbound: `heartbeat_ack`** governs.
 
 **Inbound: `message`**
 
@@ -626,10 +629,10 @@ Basic-level: read `type`, `id`, `input`, and `sessionId`. Ignore all other field
 **Inbound: `heartbeat`**
 
 ```json
-{ "type": "heartbeat", "ts": 1717430400 }
+{ "type": "heartbeat", "ts": 1717430400, "sessionId": "sess_abc123" }
 ```
 
-Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and escalates as the `CH-MSGSOCK` **Timing.** bullet states.
+The adapter writes one `heartbeat` per interval for each session, from the write of the session's `session_start` until the adapter writes the session's `session_end` or its registry entry is removed ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), whether or not an `Attach` stream for the session is open, and names that session in `sessionId`. Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and escalates as the `CH-MSGSOCK` **Timing.** bullet states.
 
 **Inbound: `session_start`**
 
@@ -867,8 +870,16 @@ All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined t
 **Outbound: `heartbeat_ack`**
 
 ```json
-{ "type": "heartbeat_ack" }
+{ "type": "heartbeat_ack", "sessionId": "sess_abc123", "busy": true }
 ```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"heartbeat_ack"`. |
+| `sessionId` | `string` | When `busy` is true | The `sessionId` of the `heartbeat` the frame answers. |
+| `busy` | `boolean` | No | True while the runtime does work for the named session, as the rule below states. False or absent otherwise. |
+
+A runtime MUST report `busy: true` for a session while it does any work for that session: while it handles a `message` for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. The adapter attributes and counts a `busy: true` acknowledgement as [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) **Session seal.** states. A `heartbeat_ack` that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod.
 
 **Outbound: `session_started`**
 
@@ -942,8 +953,9 @@ The frame is available at all integration levels.
 
 **Addressing.** The adapter resolves the frame against the Attach stream that delivered it. This rule
 governs the session-scoped frame types alone, `message`, `tool_result`, `response`, `tool_call`,
-`set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which carry no
-per-session identifier. It does not reach `session_start`, `session_end`, or `session_started`, which the
+`set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which are
+protocol-level frames outside this rule; their `sessionId` attributes a `busy` report as
+**Outbound: `heartbeat_ack`** states. It does not reach `session_start`, `session_end`, or `session_started`, which the
 adapter writes or consumes itself and no Attach stream delivers. A stream is bound to a session and to
 that session's slot, on every pod. The adapter handles a session-scoped frame if and only if both of the
 following hold.
@@ -1010,7 +1022,7 @@ Any non-zero exit during an active session causes the gateway to report a sessio
    {"type": "response", "sessionId": "sess_abc123", "output": [{"type": "text", "inline": "Echo: Hello"}]}
 6. Adapter reads line from stdout, delivers response to gateway.
 7. [Heartbeat interval] Adapter writes:
-   {"type": "heartbeat", "ts": 1717430410}
+   {"type": "heartbeat", "ts": 1717430410, "sessionId": "sess_abc123"}
 8. Agent writes:
    {"type": "heartbeat_ack"}
 9. The session ends. Adapter writes:
@@ -1206,7 +1218,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   | `checkpoint_complete`       | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                        | Confirms snapshot upload result; the named session's work may resume.       |
   | `interrupt_request`         | Adapter → Runtime  | `type`, `sessionId` (string), `interruptId` (string), `deadlineMs` (integer)                                                                                       | Requests the named session's work reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
   | `credentials_rotated`       | Adapter → Runtime  | `type`, `sessionId` (string), `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/slots/{sessionId}/credentials.json`), `leaseId` (string) | New credentials written for the named session; runtime must rebind that session and reply with `credentials_acknowledged`. |
-  | `deadline_approaching`      | Adapter → Runtime  | `type`, `sessionId` (string), `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)        | Advance warning before the named session's forced termination. Runtime should wrap up that session's work. A runtime writes no `response` for the session in reply to this frame when no `message` for the session is in flight. |
+  | `deadline_approaching`      | Adapter → Runtime  | `type`, `sessionId` (string), `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"`)        | Advance warning before the named session's forced termination. Runtime should wrap up that session's work. A runtime writes no `response` for the session in reply to this frame when no `message` for the session is in flight. |
   | `files_updated`             | Adapter → Runtime  | `type`, `sessionId` (string)                                                                                                                                       | A mid-session upload has promoted new files into the named session's workspace ([§7.4](07_session-lifecycle.md#74-upload-safety)). Sent after the atomic overlay completes; one-way, with no acknowledgement. |
   | `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
   | `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
@@ -1407,14 +1419,10 @@ the address that connection is reached at (§28.3).
 ```
 
 The conversation the connection carries is the internal gRPC `ForwardMessage` RPC used for cross-replica
-message routing. A message carrying `delivery: immediate` that lands on a replica that is not the
-session's coordinator is forwarded to that session's coordinator, which is identified through the
-coordination lease. The coordinator executes the atomic resume-and-deliver sequence when the session
-still holds its pod, and the `suspended` to `resume_pending` transition with the message held in the
-session inbox when the pod has been released. When the coordinator is
-unreachable the forwarding replica falls back to inbox buffering with a `queued` delivery receipt status
-rather than dropping the message ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
-[§10.1](10_gateway-internals.md#101-horizontal-scaling)). §28.3 records that this cross-replica message
+message routing. A replica that is not the session's coordinator forwards a message to the coordinator, which it
+identifies through the coordination lease, over this connection in the cases the off-holder matrix of
+[§29.3](29_communication-scenarios.md#293-interactive-message-send) states, with the fallback each row
+states when the coordinator is unreachable. §28.3 records that this cross-replica message
 routing is not implemented and that the status is carried as an `ABSENT` claim-register row per §28.4.
 This subsection gains a card at the point the §28.3 channel register places a channel on this boundary.
 

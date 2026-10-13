@@ -412,7 +412,7 @@ sessionPolicy:                            # session mode only
   cleanupCommands: []                     # deployer cleanup executed before the whole-pod scrub
   cleanupTimeoutSeconds: 60
   maxSessionAgeSeconds: 7200              # active-time session age cap; paused in suspended and the recovery states (see Section 6.2) (default: 7200)
-  maxClientIdleSeconds: 7200              # client-inactivity bound; defaults to the effective maxSessionAgeSeconds (see Section 6.2)
+  maxClientIdleSeconds: 900               # inactivity bound before idle suspension or expiry (default: 900; see Section 6.2)
   slotRetries: 1                          # retries for failed slots when maxConcurrentSessions > 1 (default: 1)
   onPoolExhausted: reject                 # reject | queue — see below
   maxQueueWaitSeconds: 30                 # queue wait bound when onPoolExhausted: queue
@@ -435,7 +435,7 @@ Acknowledgments, tenant pinning, `residualStateWarning`, and the scaling factors
 - Tenant pinning is required when `maxConcurrentSessions > 1` or `recycle.enabled: true` (see tenant pinning below).
 - `capabilities.preConnect: true` is admitted only when `maxConcurrentSessions` is 1, and service-mode pools reject it ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).
 
-**`maxClientIdleSeconds`** terminates a session after continuous client inactivity. It is the single platform idle bound; the activity definition and the per-state pause table are specified in [Section 6.2](06_warm-pod-model.md#62-pod-state-machine). The default is the pool's effective `maxSessionAgeSeconds`, so the bound binds before the age cap only when a deployer lowers it or when the session accrues idle time in a state where `maxSessionAge` is paused but the idle clock runs.
+**`maxClientIdleSeconds`** is the platform idle bound. Its default, the activity definition, the per-state clock table, and the idle suspension it triggers are specified in [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).
 
 **`onPoolExhausted`** parameterizes the per-pool claim queue ([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). `reject` keeps the bounded claim-path wait and the Postgres fallback before returning `WARM_POOL_EXHAUSTED`. `queue` holds the request in the same per-pool FIFO for up to `maxQueueWaitSeconds` after the claim-path timeout and the Postgres fallback are exhausted, re-entering acquisition as pods free; a queued request holds no pod, slot, or claim, and the client receives a `session_id` only on success. On timeout the gateway returns `WARM_POOL_EXHAUSTED` with a `Retry-After` header.
 
