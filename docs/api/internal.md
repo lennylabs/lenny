@@ -194,14 +194,14 @@ message AttachMessage {
 
 **Heartbeat protocol:**
 
-- The adapter sends a periodic `heartbeat` frame to the runtime, and the runtime must answer with `heartbeat_ack` within **10 seconds**.
-- When the runtime misses the acknowledgment, the adapter ends that session's Attach stream with `DEADLINE_EXCEEDED`, and the runtime process receives no signal.
+- The adapter sends a periodic `heartbeat` frame to the runtime for each session, from the session's `session_start`, whether or not an Attach stream for the session is open. The runtime must answer with `heartbeat_ack` within **10 seconds**.
+- When the runtime misses the acknowledgment for a session, the adapter ends that session's Attach stream with `DEADLINE_EXCEEDED` when one is open and refuses each later Attach for the session with `DEADLINE_EXCEEDED` until the adapter releases the session, and the runtime process receives no signal.
 - Heartbeat interval is configurable (default: 30 seconds).
 
 **Stream end:**
 
 - A stream the gateway did not end that ends with `DEADLINE_EXCEEDED` or `INTERNAL` is a stream failure. The gateway reports it as a runtime crash whether or not a message is outstanding, releases the session's binding, and moves the session to the state its retry policy selects: `resume_pending` while retries remain, `awaiting_client_action` when they are exhausted, or `failed` for a non-retryable failure.
-- A session in `resume_pending` is re-attached on a replacement pod from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, and enters `awaiting_client_action` when that window elapses.
+- A session in `resume_pending` is restored onto a replacement pod by the gateway's resume driver, from its last checkpoint or, when it has neither a checkpoint nor a minimal state record, by rebuilding its workspace from the session's workspace plan with no carried conversation state, and enters `awaiting_client_action` when its `maxResumeWindowSeconds` resume window elapses.
 - A stream that ends with `UNAVAILABLE` is discarded without a failure report, and a later message delivery opens a new stream only while the gateway replica still holds the session's binding.
 - A stream that closes when the runtime's output ends, or that ends with any other status, is discarded without a report. A runtime that has exited is reported when the next message delivery's Attach ends with `INTERNAL`.
 - A stream the gateway ends itself, when it releases the session's binding or discards its cached streams, is not a failure. The gateway does not redial Attach against the same pod after a stream failure.

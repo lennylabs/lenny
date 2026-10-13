@@ -1850,6 +1850,7 @@
       "title": "Interactive Session Model",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3",
         "pkg/session/state/...",
         "pkg/gateway/sessionserver/messages_test.go",
@@ -1923,6 +1924,7 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestResumeFailureReachesTheSlotAccounting_spec_5_2",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3",
@@ -2949,6 +2951,7 @@
       "title": "Admission and Fairness",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier2_component/ratelimit/...",
         "tests/tier5_e2e_kind/gateway_probe_test.go",
         "tests/testinfra/sessiondriver/sessiondriver_test.go",
@@ -3949,6 +3952,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
@@ -4030,6 +4034,7 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go",
         "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go",
@@ -6150,6 +6155,7 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
         "tests/tier7a_load_local/message_session_start_order_race_test.go",
         "pkg/adapter/manifest_test.go",
@@ -6194,6 +6200,8 @@
         "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestSessionScopedFramesRejectUnusableSessionAddress",
         "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestAdapterPopulatedFramesRequireSessionAddress",
         "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestUnaddressedFramesValidateByLeg",
+        "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestHeartbeatFramesDeclareOptionalSessionAttribution",
+        "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestHeartbeatAckBusyRequiresSessionID",
         "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestSessionStartFramesRequireStartAndSessionIdentifiers",
         "tests/tier3_contract/adapter_artifact_scope/scope_test.go::TestRuntimeOpsArtifactRequiresSessionIDOnSessionScopedFrames",
         "tests/tier3_contract/adapter_artifact_scope/scope_test.go",
