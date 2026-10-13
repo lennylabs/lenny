@@ -371,6 +371,15 @@ type Session struct {
 	// spec: §6.2; §11.3. F-11.3.7.
 	LastAgentActivityAt time.Time
 
+	// AccumulatedSessionAgeSeconds is the §6.2 accumulated_session_age_seconds
+	// column: the active time, in seconds, the session spent in a state whose
+	// maxSessionAge timer runs (starting, running, input_required) up to the
+	// row's last write. Both stores accrue it inside Update through
+	// AccrueSessionAge, so no caller writes it directly; ActiveAge adds the
+	// interval since the last write when the row is still in a counting state.
+	// spec: §6.2 (maxSessionAge timer behavior across states).
+	AccumulatedSessionAgeSeconds float64
+
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
 	// this session — regardless of trigger (periodic, eviction,
@@ -1109,3 +1118,56 @@ var (
 	ErrNotFound      = errors.New("sessionstore: session not found")
 	ErrAlreadyExists = errors.New("sessionstore: session already exists")
 )
+
+// sessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.
+// The timer runs in starting (as a secondary bound behind the starting
+// watchdog), running, and input_required. It is paused in suspended and in
+// the recovery states (resume_pending, resuming, awaiting_client_action),
+// does not run in the pre-running states created, finalizing, and ready, and
+// is stopped in the terminal states.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func sessionAgeCounts(st session.State) bool {
+	switch st {
+	case session.StateStarting, session.StateRunning, session.StateInputRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+// AccrueSessionAge adds to row.AccumulatedSessionAgeSeconds the active time
+// between the previous write and now, when the row was in a counting state
+// (starting, running, or input_required) at the previous write. prev and
+// prevUpdatedAt are the state and UpdatedAt the row carried before the write;
+// now is the instant the write stamps as the new UpdatedAt. A now at or before
+// prevUpdatedAt accrues nothing.
+//
+// Both stores call it inside Update, after the mutator returns and before the
+// UpdatedAt stamp, with the same now the stamp uses. Because UpdatedAt
+// strictly advances on every write, the column then sums exactly the
+// intervals the row spent in a counting state. A write that leaves the row in
+// a counting state still accrues, because the row stayed in that state across
+// the interval; a write that moves the row out of a counting state accrues
+// the interval up to the transition and nothing after it.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session, now time.Time) {
+	if !sessionAgeCounts(prev) || !now.After(prevUpdatedAt) {
+		return
+	}
+	row.AccumulatedSessionAgeSeconds += now.Sub(prevUpdatedAt).Seconds()
+}
+
+// ActiveAge returns the §6.2 active session age of row at now: the
+// accumulated value plus, when the row is in a counting state, the time
+// elapsed since its last write. The elapsed part is clamped at zero, so a now
+// that precedes the row's UpdatedAt (a sweep instant taken before a
+// concurrent write) adds nothing. This is the value the maxSessionAge timer
+// compares with the effective cap, periodically and on entry to running.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func ActiveAge(row Session, now time.Time) time.Duration {
+	age := time.Duration(row.AccumulatedSessionAgeSeconds * float64(time.Second))
+	if sessionAgeCounts(row.State) && now.After(row.UpdatedAt) {
+		age += now.Sub(row.UpdatedAt)
+	}
+	return age
+}

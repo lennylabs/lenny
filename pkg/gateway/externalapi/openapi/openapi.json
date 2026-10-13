@@ -160,7 +160,7 @@
           "maxRetries": { "type": "integer", "minimum": 0, "description": "auto-retry budget." },
           "retryableFailures": { "type": "array", "items": { "type": "string" }, "description": "retryable failure class advisory list." },
           "nonRetryableFailures": { "type": "array", "items": { "type": "string" }, "description": "non-retryable failure class advisory list." },
-          "maxSessionAgeSeconds": { "type": "integer", "minimum": 0, "description": "per-session total-lifetime cap, clamped against the deployer cap." },
+          "maxSessionAgeSeconds": { "type": "integer", "minimum": 0, "description": "per-session active-time session age cap, clamped against the deployer cap; time counts while the session is starting, running, or input_required and is paused while it is suspended, resume_pending, resuming, or awaiting_client_action." },
           "maxResumeWindowSeconds": { "type": "integer", "minimum": 0, "description": "resume-window timer, clamped against the deployer cap." }
         }
       },
@@ -401,7 +401,7 @@
               },
               "cleanupCommands":                  { "type": "array", "items": { "type": "string" }, "description": "§5.2 deployer cleanup executed before the whole-pod scrub." },
               "cleanupTimeoutSeconds":            { "type": "integer" },
-              "maxSessionAgeSeconds":             { "type": "integer", "description": "§5.2 wall-clock session-age cap." },
+              "maxSessionAgeSeconds":             { "type": "integer", "description": "§5.2 active-time session age cap; paused in suspended and the recovery states." },
               "maxClientIdleSeconds":             { "type": "integer", "description": "§5.2 / §6.2 client-inactivity bound; defaults to the effective maxSessionAgeSeconds." },
               "slotRetries":                      { "type": "integer", "description": "§5.2 per-slot retry budget when maxConcurrentSessions > 1 (default 1)." },
               "onPoolExhausted":                  { "type": "string", "enum": ["reject","queue"], "description": "§5.2 pool-exhaustion disposition (default reject)." },

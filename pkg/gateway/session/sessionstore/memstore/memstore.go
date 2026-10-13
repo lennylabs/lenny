@@ -32,13 +32,29 @@ type Store struct {
 	// Postgres backend serializes it under a per-pod advisory xact lock.
 	podLockMu sync.Mutex
 	podLocks  map[string]*sync.Mutex
+
+	// now is the clock Update stamps UpdatedAt from and accrues the §6.2
+	// active session age against. New wires the wall clock; NewWithClock
+	// lets a test step it.
+	now func() time.Time
 }
 
-// New returns an empty in-memory store.
+// New returns an empty in-memory store on the wall clock.
 func New() *Store {
+	return NewWithClock(nil)
+}
+
+// NewWithClock returns an empty in-memory store whose Update reads now for
+// the UpdatedAt stamp and the §6.2 active-age accrual, so a test can advance
+// a session's active age deterministically. A nil now selects the wall clock.
+func NewWithClock(now func() time.Time) *Store {
+	if now == nil {
+		now = time.Now
+	}
 	return &Store{
 		sessions: make(map[string]sessionstore.Session),
 		podLocks: make(map[string]*sync.Mutex),
+		now:      now,
 	}
 }
 
@@ -50,7 +66,7 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 		return sessionstore.ErrAlreadyExists
 	}
 	if sess.CreatedAt.IsZero() {
-		sess.CreatedAt = time.Now().UTC()
+		sess.CreatedAt = s.now().UTC()
 	}
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
@@ -132,6 +148,8 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
 	prevUpdatedAt := row.UpdatedAt
+	prevState := row.State
+	prevAge := row.AccumulatedSessionAgeSeconds
 	prevRecoveryGen := row.RecoveryGeneration
 	prevCoordGen := row.CoordinationGeneration
 	prevRetryCount := row.RetryCount
@@ -164,7 +182,14 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	if row.SchemaVersion == 0 {
 		row.SchemaVersion = 1
 	}
-	row.UpdatedAt = monotonicNext(prevUpdatedAt, time.Now().UTC())
+	now := monotonicNext(prevUpdatedAt, s.now().UTC())
+	// spec: §6.2 (maxSessionAge timer behavior across states) — the store is
+	// the only writer of the accumulated active age: discard any value the
+	// mutator set, then accrue the active age the row gained since its
+	// previous write, against the same instant the UpdatedAt stamp records.
+	row.AccumulatedSessionAgeSeconds = prevAge
+	sessionstore.AccrueSessionAge(prevState, prevUpdatedAt, &row, now)
+	row.UpdatedAt = now
 	s.sessions[id] = row
 	return row, nil
 }

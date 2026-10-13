@@ -32,6 +32,7 @@ package watchdog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -102,13 +103,15 @@ const (
 	// for the `starting` pre-running state: 120s.
 	DefaultMaxStartingStateSeconds = 120
 
-	// DefaultMaxSessionAgeSeconds is the §11.3 / §6.2 platform-wide total session lifetime cap: 7200s (2h). The
-	// per-runtime `runtime.maxSessionAgeSeconds` (§5.1 limits) caps a
-	// runtime's session lifetime below this default; when unset, the
-	// platform default applies to every session of that runtime, so
-	// this constant is the source-of-truth for the deployer-visible
-	// upper bound on a session that does not opt into a tighter
-	// per-runtime limit.
+	// DefaultMaxSessionAgeSeconds is the §11.3 / §6.2 platform-wide
+	// active-time session age cap: 7200s (2h). Age counts only while the
+	// session is in starting, running, or input_required, and is paused in
+	// suspended and the recovery states (§6.2 maxSessionAge timer behavior
+	// across states). The per-runtime `runtime.maxSessionAgeSeconds` (§5.1
+	// limits) caps a runtime's session age below this default; when unset,
+	// the platform default applies to every session of that runtime, so this
+	// constant is the source-of-truth for the deployer-visible upper bound on
+	// a session that does not opt into a tighter per-runtime limit.
 	DefaultMaxSessionAgeSeconds = 7200
 
 	// DefaultMaxAwaitingClientActionSeconds is the §11.3
@@ -179,9 +182,11 @@ type Config struct {
 	MaxFinalizingSeconds int
 	MaxReadySeconds      int
 	MaxStartingSeconds   int
-	// MaxSessionAgeSeconds is the §11.3 total-lifetime cap: a
-	// non-terminal session alive longer than this, measured from its
-	// creation, is expired regardless of its current state.
+	// MaxSessionAgeSeconds is the §11.3 / §6.2 active-time session age
+	// cap: a session whose active age (sessionstore.ActiveAge, the time spent
+	// in starting, running, and input_required) exceeds this is expired. Time
+	// in suspended and the recovery states does not count, and no age cap
+	// expires a suspended session.
 	MaxSessionAgeSeconds int
 	// MaxAwaitingClientActionSeconds is the §11.3 deadline for the
 	// awaiting_client_action state: a session that has waited this
@@ -714,8 +719,11 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, res *Resul
 // Reset semantics: a session that traverses resume_pending → resuming →
 // resume_pending (one retry round-trip) gets a fresh budget on
 // re-entry because UpdatedAt advances on the resume_pending write. The
-// platform-wide maxSessionAge cap bounds the cumulative case so a
-// misbehaving recovery cannot indefinitely re-arm the inner budget.
+// maxSessionAge cap does not bound the cumulative case, because its timer is
+// paused in resume_pending and resuming (§6.2 maxSessionAge timer behavior
+// across states); the retry budget does, since each re-entry from resuming
+// spends a retry and an exhausted budget moves the session to
+// awaiting_client_action.
 func (w *Watchdog) sweepResumePending(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant,
 		sessionstore.ListFilter{State: session.StateResumePending})
@@ -980,9 +988,9 @@ var idleClockRunningStates = []session.State{
 // `expired:idle`.
 //
 // The clock has its own pause table, distinct from the `maxSessionAge` pause
-// table: `maxSessionAge` is paused in `awaiting_client_action` while this
-// clock runs there, so the default-equal idle bound is the reclaimer for an
-// abandoned `awaiting_client_action` wait. The sweep enforces the pause table
+// table: the active-time `maxSessionAge` timer is paused in
+// `awaiting_client_action` while this clock runs there, so the default-equal
+// idle bound is the reclaimer for an abandoned `awaiting_client_action` wait. The sweep enforces the pause table
 // by listing only the running states; the paused states (`suspended`,
 // `resume_pending`, `resuming`, `finalizing`, terminal) are never listed.
 //
@@ -1061,17 +1069,41 @@ func isIdleClockRunning(st session.State) bool {
 	return false
 }
 
-// sweepMaxAge expires every non-terminal session for the tenant whose
-// total lifetime, measured from CreatedAt, exceeds the effective
-// maxSessionAge cap. The §11.3 platform-wide cap (w.cfg.MaxSessionAgeSeconds)
-// is the upper bound; a session whose §7.3 retryPolicy.maxSessionAgeSeconds
-// is tighter expires earlier (the clamp at gateway admission already
-// ensures the per-session value can never exceed the platform cap, so
-// this sweep applies the per-session value when it is smaller — F-7.3.24).
+// errMaxAgeSuperseded is the sentinel the sweepMaxAge mutator returns when the
+// locked row no longer qualifies for expiry: it is terminal, it is suspended,
+// or its active age recomputed on the locked row is at or under the cap.
+// Returning an error aborts the Update, so the row is not rewritten, its
+// UpdatedAt does not advance, and the sweep runs no expiry side effect for it.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+var errMaxAgeSuperseded = errors.New("watchdog: maxSessionAge expiry superseded on the locked row")
+
+// sweepMaxAge expires every non-terminal session for the tenant whose active
+// session age exceeds its effective maxSessionAge cap. Active age is
+// sessionstore.ActiveAge: the accumulated_session_age_seconds the store
+// accrues on every write, plus the time since the last write while the row is
+// in a counting state (starting, running, input_required). Time in suspended,
+// resume_pending, resuming, and awaiting_client_action does not count, so a
+// session older than the cap by wall clock and under it by active time
+// survives.
 //
-// The pre-running per-state budgets are tighter and run first, so this
-// sweep effectively bounds the long-lived states (running, suspended,
-// resume_pending, awaiting_client_action).
+// The cap is EffectiveAgeCap: the platform cap (w.cfg.MaxSessionAgeSeconds),
+// tightened by the per-runtime / per-pool resolver and by the per-session
+// retryPolicy.maxSessionAgeSeconds (F-7.3.24).
+//
+// A suspended row is never listed for expiry, because no age cap expires a
+// suspended session; its timer is paused and its own suspended lifetime bounds
+// it. The listed row comes from a read-pool listing and only selects the row:
+// the mutator re-checks the locked row, recomputes its active age with the
+// sweep's now, and returns errMaxAgeSuperseded when the locked row is
+// terminal, suspended, or at or under the cap. On that sentinel the sweep
+// writes nothing, runs no side effect, and goes on to the next row. Any other
+// Update error ends the tick.
+//
+// An over-cap resume_pending or awaiting_client_action row is still expired
+// here: its age stopped accruing when it left a counting state, so it is over
+// the cap only when it left that state already past it.
+//
+// spec: §6.2 (maxSessionAge timer behavior across states); §11.3.
 func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
@@ -1079,16 +1111,16 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 	}
 	platformCap := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
 	for _, row := range rows {
-		if session.IsTerminal(row.State) {
+		if !maxAgeExpirable(row.State) {
 			continue
 		}
-		if now.Sub(row.CreatedAt) <= w.effectiveAgeCap(ctx, row, platformCap) {
+		ageCap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
+		if sessionstore.ActiveAge(row, now) <= ageCap {
 			continue
 		}
 		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if session.IsTerminal(r.State) {
-				// Concurrent transition — leave the new state alone.
-				return nil
+			if !maxAgeExpirable(r.State) || sessionstore.ActiveAge(*r, now) <= ageCap {
+				return errMaxAgeSuperseded
 			}
 			r.State = session.StateExpired
 			// spec: §8.8 — stamp the `expired:deadline` prefix
@@ -1099,22 +1131,30 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 			}
 			return nil
 		})
+		if errors.Is(err, errMaxAgeSuperseded) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		if updated.State == session.StateExpired {
-			res.Expirations++
-			// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
-			// `max_session_age` reason on the session_expiry counter.
-			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
-			// spec: §4.6 — row.State is the pre-terminal state. sweepMaxAge can
-			// force a running/resuming session to expired; passing the true
-			// pre-terminal state keeps its teardown on the §6.2 executor recycle
-			// path rather than the pre-running by-name reclaim.
-			w.recordCompleted(ctx, row.State, updated)
-		}
+		res.Expirations++
+		// spec: §16.1.1 — the maxSessionAge age-cap expiry stamps the
+		// `max_session_age` reason on the session_expiry counter.
+		w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxSessionAge)
+		// spec: §4.6 — row.State is the pre-terminal state. sweepMaxAge can
+		// force a running/resuming session to expired; passing the true
+		// pre-terminal state keeps its teardown on the §6.2 executor recycle
+		// path rather than the pre-running by-name reclaim.
+		w.recordCompleted(ctx, row.State, updated)
 	}
 	return nil
+}
+
+// maxAgeExpirable reports whether sweepMaxAge may expire a row in st: any
+// non-terminal state other than suspended, which no age cap expires.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func maxAgeExpirable(st session.State) bool {
+	return !session.IsTerminal(st) && st != session.StateSuspended
 }
 
 // sweepExpiryWarning implements the §11.3 session-expiry warning:
@@ -1131,8 +1171,10 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 //
 // The warning fires while the session is still non-terminal; the actual
 // expiry is the later sweepMaxAge transition. The deadline is the same
-// most-restrictive-wins effectiveAgeCap the maxSessionAge sweep applies, so a
-// per-runtime / per-session tighter cap warns at the right moment.
+// most-restrictive-wins EffectiveAgeCap the maxSessionAge sweep applies,
+// compared with the same active age (sessionstore.ActiveAge), so a
+// per-runtime / per-session tighter cap warns at the right moment and time
+// spent paused does not move the warning earlier.
 //
 // spec: §11.3; §15. F-11.3.5.
 func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now time.Time, res *Result) error {
@@ -1152,8 +1194,8 @@ func (w *Watchdog) sweepExpiryWarning(ctx context.Context, tenant string, now ti
 			w.forgetWarned(row.ID)
 			continue
 		}
-		cap := w.effectiveAgeCap(ctx, row, platformCap)
-		remaining := cap - now.Sub(row.CreatedAt)
+		cap := EffectiveAgeCap(ctx, w.ageResolver, platformCap, row)
+		remaining := cap - sessionstore.ActiveAge(row, now)
 		// Only warn inside the [deadline-window, deadline) band. A session
 		// already past its deadline is left for sweepMaxAge; one further than
 		// the window away is not yet eligible.
@@ -1193,22 +1235,26 @@ func (w *Watchdog) forgetWarned(sessionID string) {
 	delete(w.warned, sessionID)
 }
 
-// effectiveAgeCap resolves the §11.3 maxSessionAge deadline for one row,
-// applying the most-restrictive-wins precedence: the platform default
-// (w.cfg.MaxSessionAgeSeconds) is the outer bound; the §5.1 per-runtime
-// `limits.maxSessionAgeSeconds` / §5.2 per-pool `maxSessionAgeSeconds`
-// (via the SessionAgeResolver) clamps below it; and the §7.3 per-session
+// EffectiveAgeCap resolves the §11.3 maxSessionAge cap for one row, applying
+// the most-restrictive-wins precedence: platformCap (the gateway's
+// --max-session-age-seconds) is the outer bound; the §5.1 per-runtime
+// `limits.maxSessionAgeSeconds` / §5.2 per-pool `maxSessionAgeSeconds` (via
+// resolver) clamps below it; and the §7.3 per-session
 // `retryPolicy.maxSessionAgeSeconds` clamps below that. A nil resolver or a
-// zero resolver result leaves the platform cap in place, so the prior
-// single-default behaviour is preserved when no per-runtime/pool tuning is
-// configured.
+// zero resolver result leaves platformCap in place.
 //
-// spec: §11.3 — deployer cap tuned per runtime; §5.1 limits;
-// §5.2 pool. F-11.3.3.
-func (w *Watchdog) effectiveAgeCap(ctx context.Context, row sessionstore.Session, platformCap time.Duration) time.Duration {
+// The cap bounds the row's active age (sessionstore.ActiveAge). It is the one
+// resolver of the min-wins logic: the maxSessionAge and expiry-warning sweeps
+// call it, and so does any other site that evaluates the timer, such as the
+// check on entry to running, so every site compares against the same value
+// for the same row.
+//
+// spec: §11.3 — deployer cap tuned per runtime; §5.1 limits; §5.2 pool;
+// §6.2 (maxSessionAge timer behavior across states). F-11.3.3.
+func EffectiveAgeCap(ctx context.Context, resolver SessionAgeResolver, platformCap time.Duration, row sessionstore.Session) time.Duration {
 	cap := platformCap
-	if w.ageResolver != nil {
-		if secs := w.ageResolver.EffectiveMaxSessionAgeSeconds(ctx, row); secs > 0 {
+	if resolver != nil {
+		if secs := resolver.EffectiveMaxSessionAgeSeconds(ctx, row); secs > 0 {
 			d := time.Duration(secs) * time.Second
 			if cap <= 0 || d < cap {
 				cap = d

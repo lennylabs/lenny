@@ -51,8 +51,10 @@ type RetryPolicy struct {
 	// An empty slice selects the §7.3 platform default.
 	NonRetryableFailures []string `json:"nonRetryableFailures,omitempty"`
 
-	// MaxSessionAgeSeconds is the §7.3 per-session total-lifetime cap.
-	// The gateway clamps the value against the deployer's matching cap
+	// MaxSessionAgeSeconds is the §7.3 per-session active-time session
+	// age cap: time counts while the session is starting, running, or
+	// input_required and is paused in suspended and the recovery states
+	// (§6.2 maxSessionAge timer behavior across states). The gateway clamps the value against the deployer's matching cap
 	// (typically the watchdog's MaxSessionAgeSeconds) so the platform
 	// bound is the upper limit. Zero selects the deployer default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`

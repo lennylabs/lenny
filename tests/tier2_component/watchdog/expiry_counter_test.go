@@ -65,16 +65,20 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 	tick := time.Now().UTC().Truncate(time.Microsecond)
 
 	// idleBorn places the running idle row past the 600s idle cap but under the
-	// 3600s age cap, so the idle sweep wins; ageBorn places the suspended row
-	// past the 3600s age cap. The two birth times must straddle the age cap
-	// because Tick runs sweepMaxAge before sweepIdle: a running row born past
-	// both caps would age-expire first and never reach the idle sweep. F-11.3.7.
+	// 3600s age cap, so the idle sweep wins. The two rows must straddle the age
+	// cap because Tick runs sweepMaxAge before sweepIdle: a running row whose
+	// active age is past both caps would age-expire first and never reach the
+	// idle sweep. F-11.3.7.
 	idleBorn := tick.Add(-700 * time.Second)
 	ageBorn := tick.Add(-2 * time.Hour)
 
-	// idleRow runs the idle clock (running) with a tight idle cap; ageRow is
-	// suspended (idle clock paused) so only the maxSessionAge cap can expire
-	// it. Each carries a distinct pool so the counter's pool label is checked.
+	// idleRow runs the idle clock (running) with a tight idle cap. ageRow is
+	// resume_pending, where the idle clock and the maxSessionAge timer are both
+	// paused, and carries an accumulated active age past the 3600s cap, so only
+	// the maxSessionAge cap can expire it. maxSessionAge counts active time, so
+	// a paused row expires only on the age it accrued before it paused (§6.2
+	// maxSessionAge timer behavior across states). Each row carries a distinct
+	// pool so the counter's pool label is checked.
 	idleID := newUUID(t)
 	ageID := newUUID(t)
 	if err := store.Create(ctx, sessionstore.Session{
@@ -84,16 +88,17 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 		t.Fatalf("create idle row: %v", err)
 	}
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: ageID, TenantID: tenant, State: session.StateSuspended,
-		RuntimeRef: "echo", PoolRef: "pool-age", CreatedAt: ageBorn, UpdatedAt: ageBorn,
+		ID: ageID, TenantID: tenant, State: session.StateResumePending,
+		RuntimeRef: "echo", PoolRef: "pool-age", CreatedAt: ageBorn, UpdatedAt: tick.Add(-time.Minute),
+		AccumulatedSessionAgeSeconds: (90 * time.Minute).Seconds(),
 	}); err != nil {
 		t.Fatalf("create age row: %v", err)
 	}
 
 	// A 600s idle cap and a 3600s age cap, with the other recovery/awaiting
 	// sweeps disabled so the two rows take distinct expiry edges: the running
-	// row idle-expires (max_idle_time), the suspended row age-expires
-	// (max_session_age) once it crosses the 3600s cap.
+	// row idle-expires (max_idle_time), the resume_pending row age-expires
+	// (max_session_age) on its accrued active age.
 	huge := watchdog.DefaultMaxSessionAgeSeconds * 100
 	w := watchdog.New(store, watchdog.StaticTenants{tenant}, watchdog.Config{
 		MaxIdleSeconds:                 600,
@@ -106,8 +111,9 @@ func TestWatchdogSessionExpiryCounter_spec_16_1(t *testing.T) {
 	}, nil).WithTerminalHook(expiryTerminalHook{inc: m.IncSessionExpiry})
 
 	// At the tick: the running row is past the 600s idle cap (born tick-700s)
-	// yet under the 3600s age cap, so the idle sweep claims it; the suspended
-	// row is past the 3600s age cap (born tick-2h), so the age sweep claims it.
+	// yet under the 3600s age cap, so the idle sweep claims it; the
+	// resume_pending row's accrued active age is past the 3600s cap, so the age
+	// sweep claims it.
 	res, err := w.Tick(ctx, tick)
 	if err != nil {
 		t.Fatalf("Tick: %v", err)

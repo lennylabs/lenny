@@ -631,8 +631,10 @@ func (p *SetupPolicy) Clone() *SetupPolicy {
 // lenny/request_input wait timeout. A zero field declares no per-runtime
 // cap for that dimension; the gateway falls back to its platform default.
 type Limits struct {
-	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
-	// declares no per-runtime session-age cap.
+	// MaxSessionAgeSeconds caps a session's active-time age in seconds:
+	// time counts while the session is starting, running, or input_required
+	// and is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
 	// MaxUploadSizeBytes caps a single client upload in bytes. Zero
@@ -1046,8 +1048,11 @@ type SessionPolicy struct {
 	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero
-	// declares no per-runtime cap and falls back to the platform default.
+	// MaxSessionAgeSeconds is the §5.2 active-time session age cap: time
+	// counts while the session is starting, running, or input_required and
+	// is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap and
+	// falls back to the platform default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
 	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound.

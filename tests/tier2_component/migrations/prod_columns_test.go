@@ -6,8 +6,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
@@ -590,6 +593,11 @@ var prodMigrationSchema = []struct {
 	// and the SQL surface is asserted directly in
 	// TestCoordinationGenerationBaselineMigration_spec_4_2. spec: §4.2, §10.1.
 	{migration: "0181", table: "sessions"},
+	// 0182 adds sessions.accumulated_session_age_seconds, the §6.2 active
+	// session age the session store accrues on every row write. Its CHECK
+	// and default are asserted directly in
+	// TestAccumulatedSessionAgeMigration_spec_6_2. spec: §6.2.
+	{migration: "0182", table: "sessions", columns: []string{"accumulated_session_age_seconds"}},
 }
 
 // spec: 12.2, 18.5
@@ -662,6 +670,78 @@ func TestCredentialSecretEnvelopeColumn(t *testing.T) {
 	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "text" {
 		t.Errorf("credentials.secret type after 0039 rollback: got %q, want text", got)
 	}
+}
+
+// accumulatedAgePriorVersion is the schema version immediately below the
+// accumulated active-age migration.
+const accumulatedAgePriorVersion = 181
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: migration 0182 did not add sessions.accumulated_session_age_seconds
+//
+//	as a double precision NOT NULL column defaulting to 0 with a CHECK that
+//	rejects a negative value, or its .down.sql did not drop it. Without the
+//	column the session store cannot persist the active age the maxSessionAge
+//	timer evaluates, so the watchdog has no active-time value to compare with
+//	the cap. Without the CHECK a corrupt write could carry a negative age and
+//	extend a session past its cap.
+func TestAccumulatedSessionAgeMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "double precision" {
+		t.Errorf("accumulated_session_age_seconds type = %q, want double precision", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "0" {
+		t.Errorf("accumulated_session_age_seconds default = %q, want \"0\"", got)
+	}
+
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const (
+		defaulted = "11111111-1111-4111-8111-111111111111"
+		negative  = "22222222-2222-4222-8222-222222222222"
+		positive  = "33333333-3333-4333-8333-333333333333"
+	)
+	// A row that does not name the column, as an older binary's insert does
+	// not, reads back at the 0 default.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, defaulted); err != nil {
+		t.Fatalf("insert without the column: %v", err)
+	}
+	var age float64
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT accumulated_session_age_seconds FROM sessions WHERE id = $1::uuid`, defaulted).Scan(&age); err != nil {
+		t.Fatalf("read defaulted age: %v", err)
+	}
+	if age != 0 {
+		t.Errorf("defaulted accumulated_session_age_seconds = %v, want 0", age)
+	}
+
+	const insertAged = `INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, accumulated_session_age_seconds)
+		VALUES ($1, 'acme', 'running', 'echo', $1, $2)`
+	err := execTenant(ctx, pg, "acme", insertAged, negative, -0.5)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("insert of a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+	if err := execTenant(ctx, pg, "acme", insertAged, positive, 12.25); err != nil {
+		t.Fatalf("insert of a positive fractional age: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET accumulated_session_age_seconds = -1 WHERE id = $1::uuid`, positive); !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("update to a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion+1)
+	mustHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
 }
 
 // --- helpers -------------------------------------------------------------

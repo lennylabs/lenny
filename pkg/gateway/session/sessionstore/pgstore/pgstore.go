@@ -129,7 +129,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	legal_hold_set_by, legal_hold_set_at, legal_hold_note,
 	last_agent_activity_at,
 	COALESCE(credential_origin_session_id::text, ''),
-	credential_deny`
+	credential_deny,
+	accumulated_session_age_seconds`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -194,7 +195,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		env, request_envelope,
 		last_agent_activity_at,
 		credential_origin_session_id,
-		credential_deny
+		credential_deny,
+		accumulated_session_age_seconds
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -237,7 +239,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		-- cannot express (an independent child and a deny child are both
 		-- self-origin). A plain BOOLEAN NOT NULL DEFAULT false; invariant
 		-- after creation, so it is absent from updateSQL.
-		$58
+		$58,
+		-- §6.2 accumulated_session_age_seconds; zero for a new row.
+		$59
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -339,7 +343,10 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// (identical to an independent child), so this bit is the
 			// only signal. Invariant after creation, so it is absent
 			// from updateSQL.
-			sess.CredentialDeny)
+			sess.CredentialDeny,
+			// $59 — §6.2 accumulated_session_age_seconds, the active age
+			// Update accrues on every later write. Zero for a new row.
+			sess.AccumulatedSessionAgeSeconds)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -453,7 +460,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		legal_hold_set_at = $47,
 		legal_hold_note = $48,
 		last_agent_activity_at = $49,
-		workspace_plan = $55::jsonb
+		workspace_plan = $55::jsonb,
+		accumulated_session_age_seconds = $56
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -466,6 +474,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			return err
 		}
 		prevUpdated := sess.UpdatedAt
+		prevState := sess.State
+		prevAge := sess.AccumulatedSessionAgeSeconds
 		prevRecoveryGen := sess.RecoveryGeneration
 		prevCoordGen := sess.CoordinationGeneration
 		prevRetryCount := sess.RetryCount
@@ -496,7 +506,15 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if sess.LastSeq < prevLastSeq {
 			sess.LastSeq = prevLastSeq
 		}
-		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
+		now := pgtenant.MonotonicNext(prevUpdated, time.Now())
+		// spec: §6.2 (maxSessionAge timer behavior across states) — the
+		// store is the only writer of the accumulated active age: discard
+		// any value the mutator set, then accrue the active age the locked
+		// row gained since its previous write, against the same instant
+		// the updated_at stamp records.
+		sess.AccumulatedSessionAgeSeconds = prevAge
+		sessionstore.AccrueSessionAge(prevState, prevUpdated, &sess, now)
+		sess.UpdatedAt = now
 		ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 		schemaVersion := sess.SchemaVersion
@@ -560,6 +578,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// field alone rewrites the same document.
 			// spec: §7.1; §15.1 (finalize precondition).
 			jsonbArg(sess.WorkspacePlan),
+			// $56 — §6.2 accumulated_session_age_seconds, accrued above.
+			sess.AccumulatedSessionAgeSeconds,
 		); err != nil {
 			return err
 		}
@@ -1115,6 +1135,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// engine fails a deny child (and an inherit hop whose origin row
 		// is deny) closed at credential assignment.
 		&s.CredentialDeny,
+		// §6.2 — accumulated_session_age_seconds from migration 0182, the
+		// active age up to the row's last write.
+		&s.AccumulatedSessionAgeSeconds,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

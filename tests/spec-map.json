@@ -1667,7 +1667,15 @@
         "tests/tier7a_load_local/stream_failure_report_race_test.go::TestStreamFailureReportRacesWatchdogReleaseAndSend_spec_28_5_1",
         "tests/tier5_e2e_kind/stream_failure_kind_test.go::TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5_1",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestAccumulatedSessionAgeMigration_spec_6_2",
+        "tests/tier2_component/stores/sessionstore_test.go::TestSessionStoreAccruesActiveAge_spec_6_2",
+        "tests/tier2_component/stores/sessionstore_test.go::TestSessionStoreAgeAccruesAcrossTransitions_spec_6_2",
+        "tests/tier2_component/watchdog/active_age_test.go::TestWatchdogMaxAgeUsesActiveAge_spec_6_2",
+        "pkg/gateway/session/sessionstore/session_age_test.go::TestAccrueSessionAgeCountsOnlyActiveStates_spec_6_2",
+        "pkg/gateway/session/sessionstore/memstore/session_age_test.go::TestUpdateAccrualMatchesModelOverRandomHistories_spec_6_2",
+        "pkg/gateway/runtime/watchdog/active_age_test.go::TestSweepMaxAgeUsesActiveAge_spec_6_2",
+        "pkg/gateway/runtime/watchdog/active_age_test.go::TestSweepMaxAgeRechecksLockedRow_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -6016,7 +6024,8 @@
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "pkg/gateway/runtime/watchdog/active_age_test.go::TestPlaygroundCapCountsActiveTime_spec_27_6"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
