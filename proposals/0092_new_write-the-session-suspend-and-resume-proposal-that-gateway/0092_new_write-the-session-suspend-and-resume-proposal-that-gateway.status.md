@@ -2,13 +2,13 @@
 proposal: 0092_new_write-the-session-suspend-and-resume-proposal-that-gateway
 title: Session suspend, idle suspension, and resume driver
 kind: new
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-06
 drafted-by: change-proposal
 reviewed-date: 2026-10-13
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-13
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
