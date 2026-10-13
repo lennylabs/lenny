@@ -33,6 +33,7 @@ SPEC-6 states in §11.1 that a `suspended` session, whether or not it holds its 
 - **Off-holder terminate and delete.** In the states where the session holds `REG-COORDLEASE`, the serving replica writes the terminal state itself, which departs from the §29.3 forward. The coordinating replica's D6 release performs the pod release within the bound that non-spec Design D6 states. The summary **Defects** entry records the departure, and F-10.1.33 (owner P2) tracks it.
 - **A message held in a session's DLQ.** SPEC-5i delivery path 6 and SPEC-5z state its outcomes.
 - **A failed inbox migration at the suspension release, or a terminal transition racing it.** SPEC-5z item 11 states the outcome.
+- **A stream failure that a release closes before the gateway classifies it.** §28.5.1 counts a stream that the gateway ends at a release as no failure, so the release keeps its disposition. SPEC-5b step 2 states the outcome for the suspension release.
 - **A held message whose `resume_pending` write does not follow.** SPEC-5i **Backlog resume.** bounds it by the gateway leader's re-check interval.
 - **A resume at a full concurrent-session cap.** SPEC-6a **Resume admission.** and SPEC-5i **Admission.** state the outcome. A session that a failure edge moves out of `suspended` re-enters the count unchecked, and SPEC-6a **Concurrent admissions.** states the overshoot.
 - **A credential rejection that recurs on every attempt.** **Resume driver.** item 3 states its outcome after the claim, and item 1 states it before the claim.
@@ -44,7 +45,7 @@ Proposal 0091 lands before this proposal and edits several of the passages below
 
 ### SPEC-1 · spec/07_session-lifecycle.md § 7.1, § 7.2, § 7.3; spec/06_warm-pod-model.md § 6.2; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/04_system-components.md § 4.2, § 4.9; spec/10_gateway-internals.md § 10.1.1, § 10.1.5; spec/29_communication-scenarios.md § 29.8; spec/16_observability.md § 16.1; spec/28_communication-channels.md § 28.5.1
 
-**SPEC-1a. §7.3 Retry and Resume, **Resume flow after pod failure:**, steps 3b and 3e.** Replace the line
+**SPEC-1a. §7.3 Retry and Resume, **Resume flow after pod failure:**, steps 3b, 3c, and 3e.** Replace the line
 
 ```
    b. Allocate new warm pod (may wait if pool is temporarily exhausted)
@@ -55,6 +56,8 @@ with
 ```
    b. The resume driver allocates a new warm pod (may wait if pool is temporarily exhausted)
 ```
+
+In step 3c, replace "If `maxResumeWindowSeconds` fires before pod is allocated" with "If `maxResumeWindowSeconds` fires while the session is in `resume_pending` ([§6.2](06_warm-pod-model.md#62-pod-state-machine) **`resume_pending` wall-clock cap:**)".
 
 Replace the line
 
@@ -72,7 +75,7 @@ with
       conversation state, and steps 3f and 3g do not apply
 ```
 
-**SPEC-1a2. §28.5.1 Gateway-to-pod, the `CH-ATTACH` **Degradation.** bullet.** Match with line breaks ignored and keep the hard wrapping. Replace "is re-attached on a replacement pod from its last checkpoint when" with "is restored onto a replacement pod by the resume driver when".
+**SPEC-1a2. §28.5.1 Gateway-to-pod, the `CH-ATTACH` **Degradation.** bullet.** Match with line breaks ignored and keep the hard wrapping. Replace "is re-attached on a replacement pod from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, and reaches `awaiting_client_action` when that window elapses (" with "is restored onto a replacement pod by the resume driver, or reaches `awaiting_client_action` when its `maxResumeWindowSeconds` cap elapses ([§6.2](06_warm-pod-model.md#62-pod-state-machine) **`resume_pending` wall-clock cap:**, ".
 
 **SPEC-1b. §7.3, after the paragraph that begins "A step in this flow that fails after the gateway has issued its first pod-side RPC".** Insert
 
@@ -103,6 +106,8 @@ Delete the **maxSessionRetries** bullet, which after 0091 SPEC-1c reads
 
 In **`resuming` failure transitions:**, replace the bullet label "**Pod crash or unrecoverable gRPC error during `resuming`:**" with "**Retryable failure during `resuming`** ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) classifier):", and in the **Non-retryable errors during `resuming`** bullet replace "(e.g., workspace checkpoint corrupt, policy rejection)" with "(e.g., a setup-command failure during a snapshotless rebuild, or a credential lease assignment the credential service refuses as [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Credential leases on the replacement pod.** states)".
 
+**SPEC-1c2. §6.2, the `maxSessionAge` timer-table `resume_pending` row and the **`resume_pending` wall-clock cap:** paragraph.** In the table row, replace "; if it fires before a pod is allocated, the session transitions to `awaiting_client_action`." with " (see **`resume_pending` wall-clock cap:** below)." and keep the row one physical line. In the paragraph, replace "If a pod is allocated before the timer fires, the timer is cancelled and the session proceeds to `resuming`." with "The timer stops when the session leaves `resume_pending`, which a restore does by the resume driver's `resume_pending → resuming` write ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**)."
+
 **SPEC-1d. §5.2 Pool Configuration and Execution Modes, the `sessionPolicy` YAML block.** Delete the line
 
 ```
@@ -121,6 +126,8 @@ In **`resuming` failure transitions:**, replace the bullet label "**Pod crash or
    resuming → resume_pending              (retryable failure or resuming watchdog fires, retryCount < maxRetries — see [§6.2](06_warm-pod-model.md#62-pod-state-machine) "`resuming` failure transitions")
    ```
 6. In the `resuming → awaiting_client_action` line, replace "(re-attach fails after retries exhausted, resuming watchdog fires, or non-retryable error" with "(retryable failure or resuming watchdog fires after retries exhausted, or non-retryable error".
+7. In the `resume_pending → resuming` line, replace "(pod allocated within maxResumeWindowSeconds)" with "(resume driver's entry write within maxResumeWindowSeconds)".
+8. In the `resume_pending → awaiting_client_action` line, replace "(maxResumeWindowSeconds elapsed, no pod available)" with "(maxResumeWindowSeconds elapsed)".
 
 **SPEC-1f. The `coordination_generation` increment on entry to `resuming`, and the statements that read the counter, in §4.2, §7.1, §10.1.1, §10.1.5, §16.1, and §29.8.**
 
@@ -183,7 +190,7 @@ with
       "credential_rejected"
     ],
 
-In the **Entry paths:** bullet, replace "in two ways:" with "in these ways:", replace "; or (b) `resume_pending` timeout" with "; (b) `resume_pending` timeout", and replace "(pool exhaustion or scheduling delay). In both cases," with "(pool exhaustion or scheduling delay); (c) a non-retryable failure during `resuming` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) **`resuming` failure transitions**); or (d) the root session of a delegation tree whose budget state cannot be reconstructed after a Redis recovery ([Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas) **Irrecoverable trees:**). In each case,".
+In the **Entry paths:** bullet, replace "in two ways:" with "in these ways:", replace "; or (b) `resume_pending` timeout" with "; (b) `resume_pending` timeout", replace "elapsed while waiting for a pod to become available" with "elapsed before the session left `resume_pending`", and replace "(pool exhaustion or scheduling delay). In both cases," with "(pool exhaustion or scheduling delay); (c) a non-retryable failure during `resuming` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) **`resuming` failure transitions**); or (d) the root session of a delegation tree whose budget state cannot be reconstructed after a Redis recovery ([Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas) **Irrecoverable trees:**). In each case,".
 
 ### SPEC-2 · spec/10_gateway-internals.md § 10.1.1 **Per-session coordination:** and § 10.1.2; spec/28_communication-channels.md § 28.5.1, § 28.6, § 28.8; spec/29_communication-scenarios.md § 29.3, § 29.4, § 29.5, § 29.8; spec/04_system-components.md § 4.7.1; spec/15_external-api-surface.md § 15.1
 
@@ -380,7 +387,7 @@ then applies the
    ([§15.1](15_external-api-surface.md#151-rest-api)).
 ```
 
-**SPEC-3n. §29.6, step 3.** After "the API reports the whole sequence as `resume_pending → running` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), [§15.1](15_external-api-surface.md#151-rest-api))." append, keeping the step's wrapping
+**SPEC-3n. §29.6, step 3.** Matching with line breaks ignored and keeping the step's wrapping, replace "moves on to the internal `resuming` state when a pod is allocated within `maxResumeWindowSeconds`, and returns to `awaiting_client_action` when that window elapses with no pod available" with "moves on to the internal `resuming` state or returns to `awaiting_client_action`". Then, after "the API reports the whole sequence as `resume_pending → running` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), [§15.1](15_external-api-surface.md#151-rest-api))." append, keeping the step's wrapping
 
 ```
 The serving replica answers the call with `200` and the row in `resume_pending`.
@@ -468,7 +475,7 @@ The gateway records on the session row why a session entered `suspended`: `Inter
 Replace step 2 with
 
 ```
-2. **If checkpoint succeeds:** the gateway clears the session's pod binding with a write conditioned on the session still being in the same entry to `suspended` with that pod bound, moves the entries of the session inbox to its DLQ as the [§7.2](07_session-lifecycle.md#72-interactive-session-model) inbox-to-DLQ migration states, then releases the pod, and emits a `session.pod_released_during_suspension` structured event. The release takes the pool's normal session-end disposition: a pod on a recycling pool recycles unless its `CH-ATTACH` stream ended in a stream failure, which retires it, and any other pod drains ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On a pod with `maxConcurrentSessions > 1`, the release frees only the session's slot, and the pod's other sessions keep running. The session remains in `suspended` — no state change. The hold timer stops (it has served its purpose). When the condition fails, because the session left that suspension during the checkpoint, the gateway releases nothing.
+2. **If checkpoint succeeds:** the gateway clears the session's pod binding with a write conditioned on the session still being in the same entry to `suspended` with that pod bound, moves the entries of the session inbox to its DLQ as the [§7.2](07_session-lifecycle.md#72-interactive-session-model) inbox-to-DLQ migration states, then releases the pod, and emits a `session.pod_released_during_suspension` structured event. The release takes the pool's normal session-end disposition. A pod with `maxConcurrentSessions: 1` on a recycling pool recycles unless the gateway classified the end of the session's `CH-ATTACH` stream as a stream failure before the release closed that stream, which retires it. A stream that the release closes before the gateway has classified its end ends by the release, which [Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod) does not count as a stream failure, so the pod recycles and the whole-pod scrub decides whether it is reused. A pod with `maxConcurrentSessions: 1` on any other pool drains ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On a pod with `maxConcurrentSessions > 1`, the release frees only the session's slot, and the pod's other sessions keep running. The session remains in `suspended` — no state change. The hold timer stops (it has served its purpose). When the condition fails, because the session left that suspension during the checkpoint, the gateway releases nothing.
 ```
 
 Step 3 is unchanged.
@@ -880,7 +887,7 @@ The step numbering does not change. The erasure scope table row and the Phase 4 
 
 - `spec/04_system-components.md` (SPEC-1f, SPEC-1g2, SPEC-1g3, SPEC-2c, SPEC-3g, SPEC-5ab)
 - `spec/05_runtime-registry-and-pool-model.md` (SPEC-1d, SPEC-3h, SPEC-4a, SPEC-5m)
-- `spec/06_warm-pod-model.md` (SPEC-1c, SPEC-5a to SPEC-5g, SPEC-5d2)
+- `spec/06_warm-pod-model.md` (SPEC-1c, SPEC-1c2, SPEC-5a to SPEC-5g, SPEC-5d2)
 - `spec/07_session-lifecycle.md` (SPEC-1a, SPEC-1b, SPEC-1e, SPEC-1f, SPEC-1g, SPEC-1h, SPEC-3f, SPEC-5h, SPEC-5i, SPEC-5i2, SPEC-5z)
 - `spec/08_recursive-delegation.md` (SPEC-5o, SPEC-5w, SPEC-6c)
 - `spec/09_mcp-integration.md` (SPEC-5p, SPEC-5p2)
