@@ -106,18 +106,28 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 // newMCPForArchive builds the MCP server with a §8.10 tree archive and
 // returns the archive so the cancel_child archiving test can read it.
 func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store) {
+	srv, store, archive, _ := newMCPForArchiveHook(t)
+	return srv, store, archive
+}
+
+// newMCPForArchiveHook builds the archive server with a post-terminal hook
+// fake wired and returns the fake, whose waitSettled waits for the hooks a
+// cancel runs on goroutines.
+func newMCPForArchiveHook(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store, *hookTerminal) {
 	t.Helper()
 	store := memstore.New()
 	archive := treearchive.NewMemory()
+	hook := newHookTerminal(nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Store:       store,
 		TreeArchive: archive,
+		Terminal:    hook,
 		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:      func() string { return "sess_mcp" },
 		TenantID:    "acme",
 	})
-	return srv, store, archive
+	return srv, store, archive, hook
 }
 
 // newMCPForElicitation builds the MCP server with a §9.2 interaction

@@ -105,7 +105,7 @@ type materializeLeaseCounter struct {
 	failPool string
 }
 
-func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID string) (*adapterv1.CredentialLease, error) {
+func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if pool == a.failPool {
@@ -119,6 +119,10 @@ func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID strin
 }
 
 func (a *materializeLeaseCounter) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (a *materializeLeaseCounter) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.

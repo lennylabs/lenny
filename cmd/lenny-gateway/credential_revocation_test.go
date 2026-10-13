@@ -264,7 +264,7 @@ func TestRevocationRotateThroughPropagatorPicksDifferentCredential(t *testing.T)
 	})
 
 	// Seed a direct-mode lease against key-1, the way a session start would.
-	seed, err := svc.Assign("claude-prod", "s_1", "", "")
+	seed, err := svc.Assign("claude-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("seed Assign: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRevocationRotateThroughPropagatorPicksDifferentCredential(t *testing.T)
 		rotate: func(l credential.Lease, nextPool string, trigger credential.RotationTrigger) {
 			// The production rotate is proxyFallbackRotator.Rotate, which
 			// mints from nextPool via the same Assign path used here.
-			next, aerr := svc.Assign(nextPool, l.SessionID, "", "")
+			next, aerr := svc.Assign(nextPool, l.SessionID, "", "", 0)
 			if aerr != nil {
 				t.Errorf("replacement Assign: %v", aerr)
 				return

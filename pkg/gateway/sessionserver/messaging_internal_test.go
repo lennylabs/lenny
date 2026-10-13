@@ -51,11 +51,12 @@ func seedMsg(id, sender string) sessioninbox.Message {
 	}
 }
 
-// spec: §7.2 / §7.3 — a terminal transition drains the
-// session's DLQ and emits message_expired(target_terminated) to each
-// registered sender. Exercises emitTerminalLifecycle →
-// drainMessagingOnTerminal → Coordinator.DrainOnTerminal. F-7.3.12.
-func TestEmitTerminalLifecycleDrainsDLQ_spec_7_3_12(t *testing.T) {
+// spec: §7.2 / §7.3 — a terminal transition drains the session's DLQ and
+// emits message_expired(target_terminated) to each registered sender. The
+// drain is a step of the post-terminal hook (AfterTerminalWrite), so it runs
+// once per terminal write; emitTerminalLifecycle, the hook's signal step,
+// drains nothing. F-7.3.12.
+func TestPostTerminalHookDrainsDLQ_spec_7_3_12(t *testing.T) {
 	em := &recordingExpiry{}
 	coord, _, dlq := testMessaging(t, em)
 	ctx := context.Background()
@@ -64,9 +65,12 @@ func TestEmitTerminalLifecycleDrainsDLQ_spec_7_3_12(t *testing.T) {
 	}
 
 	srv := New(memstore.New(), Options{Messaging: coord, Clock: msgTestClock})
-	srv.emitTerminalLifecycle(ctx, sessionstore.Session{
-		ID: "sess-t", TenantID: "acme", State: session.StateCompleted,
-	})
+	row := sessionstore.Session{ID: "sess-t", TenantID: "acme", State: session.StateCompleted}
+	srv.emitTerminalLifecycle(ctx, row)
+	if len(em.events) != 0 {
+		t.Fatalf("emitTerminalLifecycle drained %d entries, want none: the hook owns the drain", len(em.events))
+	}
+	srv.AfterTerminalWrite(ctx, session.StateRunning, row, nil)
 
 	if len(em.events) != 1 {
 		t.Fatalf("message_expired emissions = %d, want 1", len(em.events))
@@ -116,37 +120,6 @@ func (r *recordingCleared) InboxCleared(_, target string, ev sessioninbox.InboxC
 	r.targets = append(r.targets, target)
 }
 
-// spec: §7.2 — re-acquiring a recovering session on resume emits
-// inbox_cleared on the target's own stream with messagesPreservedInDLQ set
-// to the DLQ depth. Exercises clearInboxOnResume → ClearInboxOnAcquire.
-// F-7.2.12.
-func TestClearInboxOnResumeWiring_spec_7_2_284(t *testing.T) {
-	em := &recordingCleared{}
-	coord, _, dlq := testMessaging(t, em)
-	ctx := context.Background()
-	if _, err := dlq.Enqueue(ctx, "acme", "sess-c", seedMsg("m1", "snd-a"), time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dlq.Enqueue(ctx, "acme", "sess-c", seedMsg("m2", "snd-b"), time.Hour); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := New(memstore.New(), Options{Messaging: coord, Clock: msgTestClock})
-	srv.clearInboxOnResume(ctx, sessionstore.Session{
-		ID: "sess-c", TenantID: "acme", State: session.StateRunning,
-	})
-
-	if len(em.events) != 1 {
-		t.Fatalf("inbox_cleared emissions = %d, want 1", len(em.events))
-	}
-	if em.targets[0] != "sess-c" {
-		t.Fatalf("inbox_cleared published to %q, want the target's own stream sess-c", em.targets[0])
-	}
-	if em.events[0].MessagesPreservedInDLQ != 2 || em.events[0].SessionID != "sess-c" {
-		t.Fatalf("event = %+v, want session sess-c / preserved 2", em.events[0])
-	}
-}
-
 // A terminal transition or resume with no messaging coordinator wired must
 // not panic (the dev / no-Redis posture).
 func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
@@ -157,9 +130,11 @@ func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
 	srv.migrateInboxOnResumePending(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateResumePending,
 	})
-	srv.clearInboxOnResume(context.Background(), sessionstore.Session{
+	if err := srv.deliverBuffered(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
-	})
+	}); err != nil {
+		t.Fatalf("deliverBuffered with no messaging coordinator = %v, want nil", err)
+	}
 }
 
 // spec: §7.2 — NewBusEmitter publishes inbox_cleared onto the

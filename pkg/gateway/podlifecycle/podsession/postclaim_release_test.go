@@ -462,7 +462,7 @@ func TestBindReleasesOnlyItsOwnAttemptsLeases_spec_7_3(t *testing.T) {
 	// would, before the Bind under test runs, and returns its identifier.
 	otherAttemptLease := func(t *testing.T, e *postClaimEnv) string {
 		t.Helper()
-		l, err := e.assigner.AssignProto("claude-prod", "sess-1", "", "acme")
+		l, err := e.assigner.AssignProto("claude-prod", "sess-1", "", "acme", 0)
 		if err != nil {
 			t.Fatalf("mint the other attempt's lease: %v", err)
 		}

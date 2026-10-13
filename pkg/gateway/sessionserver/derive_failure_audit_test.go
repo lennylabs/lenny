@@ -49,6 +49,12 @@ func (f *fenceStore) Get(ctx context.Context, tenantID, id string) (sessionstore
 	return row, err
 }
 
+// GetPrimary is the persist's primary re-read; it observes the handoff as Get
+// does.
+func (f *fenceStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return f.Get(ctx, tenantID, id)
+}
+
 // captureCounter records the §16.1 derive-failure audit outcomes.
 type captureCounter struct{ outcomes []string }
 
@@ -175,5 +181,56 @@ func TestDeriveFailureCASFenceSkipsWrite_spec_7_1_derive_rule_2(t *testing.T) {
 	// No orphan failed row became visible.
 	if got := sessionRequest(t, h, http.MethodGet, "/v1/sessions/sess_df"); got.Code != http.StatusNotFound {
 		t.Errorf("GET sess_df after fence: got %d, want 404 (no orphan row)", got.Code)
+	}
+}
+
+// resumingSourceStore moves the source row from resume_pending to resuming,
+// as the resume driver's entry write does, after the derive's admission read
+// and before its failure write's primary re-read.
+type resumingSourceStore struct {
+	sessionstore.Store
+	target string
+	moved  bool
+}
+
+func (r *resumingSourceStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if id == r.target && !r.moved {
+		r.moved = true
+		if _, err := r.Update(ctx, tenantID, id, func(s *sessionstore.Session) error {
+			s.State = session.StateResuming
+			s.CoordinationGeneration++
+			return nil
+		}); err != nil {
+			return sessionstore.Session{}, err
+		}
+	}
+	return r.Get(ctx, tenantID, id)
+}
+
+// spec: §7.1 (Normal Flow) derive rule 2, §7.3 (Resume driver) — a stale
+// derive admitted from a resume_pending source whose row enters resuming
+// before the derive-failure write persists no row and counts the fenced
+// outcome, because the entry write advanced the source's generation.
+func TestDeriveFailureFencedByAResumeEntry_spec_7_1(t *testing.T) {
+	base := memstore.New()
+	newSourceSession(t, base, func(r *sessionstore.Session) { r.State = session.StateResumePending })
+	store := &resumingSourceStore{Store: base, target: "sess_source"}
+	ctr := &captureCounter{}
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                   func() string { return "sess_df" },
+		Blobs:                    newFailingBlobs(),
+		PersistDeriveFailureRows: true,
+		IncDeriveFailureAudit:    ctr.inc,
+	})
+	h := srv.Handler()
+	rr := deriveRequest(t, h, sessionserver.DeriveRequest{AllowStale: true})
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("derive status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(ctr.outcomes) != 1 || ctr.outcomes[0] != "fenced" {
+		t.Fatalf("audit outcomes: got %v, want [fenced]", ctr.outcomes)
+	}
+	if got := sessionRequest(t, h, http.MethodGet, "/v1/sessions/sess_df"); got.Code != http.StatusNotFound {
+		t.Errorf("GET sess_df after the fence: got %d, want 404", got.Code)
 	}
 }

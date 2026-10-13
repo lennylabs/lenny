@@ -90,32 +90,22 @@ func NewCoordinator(cfg Config) *Coordinator {
 // on a `resume_pending` transition.
 //
 // In the default (in-memory) mode it reads every inbox message in FIFO
-// order and writes each to the DLQ with the resume-window TTL, then
-// returns the count preserved. A DLQ write failure increments
+// order and writes each to the DLQ with the default TTL, keeping each
+// message's original EnqueuedAt so the DLQ's score order stays acceptance
+// order, then returns the count preserved. A DLQ write failure increments
 // `lenny_inbox_drain_failure_total` and returns the error; the caller
 // still commits the `resume_pending` transition (pod failure is
 // non-negotiable) but logs the loss.
 //
 // In durable mode the inbox is already persisted in Redis and survives
-// coordinator crashes, so this applies an EXPIRE to the inbox key
-// (recovery-window cleanup) instead of draining, and returns 0.
+// coordinator crashes, so it is left in place with no TTL and the call
+// returns 0. A durable inbox entry stays until the delivery of held
+// messages delivers it, the maxInboxSize overflow drops it, or the
+// terminal drain removes it.
 //
-// spec: §7.2.
+// spec: §7.2 (Interactive Session Model).
 func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID, pool string) (preserved int, err error) {
-	if c == nil {
-		return 0, nil
-	}
-	if c.durable {
-		// Durable inbox: leave messages in Redis for the new coordinator
-		// to recover; bound staleness with an EXPIRE on the inbox key.
-		if e, ok := c.inbox.(interface {
-			Expire(context.Context, string, string, time.Duration) error
-		}); ok {
-			if eerr := e.Expire(ctx, tenantID, sessionID, DefaultDLQTTL); eerr != nil {
-				c.recordDrainFailure(pool)
-				return 0, eerr
-			}
-		}
+	if c == nil || c.durable {
 		return 0, nil
 	}
 	msgs, derr := c.inbox.Drain(ctx, tenantID, sessionID)
@@ -133,6 +123,44 @@ func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID
 		preserved++
 	}
 	return preserved, nil
+}
+
+// Peek returns the session inbox's oldest entry and its handle without
+// removing it. A nil Coordinator returns an empty result and nil.
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Peek(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	if c == nil {
+		return Message{}, "", false, nil
+	}
+	return c.inbox.Peek(ctx, tenantID, sessionID)
+}
+
+// Ack removes the inbox entry handle names. A nil Coordinator returns false
+// and nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Ack(ctx context.Context, tenantID, sessionID, handle string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	return c.inbox.Ack(ctx, tenantID, sessionID, handle)
+}
+
+// PeekOldest returns the session DLQ's lowest-scored entry and its raw
+// member without removing it. A nil Coordinator returns an empty result and
+// nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) PeekOldest(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	if c == nil {
+		return Message{}, "", false, nil
+	}
+	return c.dlq.PeekOldest(ctx, tenantID, sessionID)
+}
+
+// Remove removes the DLQ entry member names. A nil Coordinator returns false
+// and nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Remove(ctx context.Context, tenantID, sessionID, member string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	return c.dlq.Remove(ctx, tenantID, sessionID, member)
 }
 
 // EnqueueInbox buffers an incoming message in the session's inbox per

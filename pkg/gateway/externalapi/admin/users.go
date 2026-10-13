@@ -430,16 +430,36 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// terminateUserSessions transitions every non-terminal session owned
-// by the user to `cancelled` — the §11.4 full_revoke SessionStore
-// step. It returns the IDs of the sessions it transitioned. An
-// already-terminal session is left untouched, and a concurrent terminal
-// transition is honored. The forced transition mirrors the §8.10
-// orphan-cleanup sweep: an administrative termination overrides the
-// normal state machine. The returned IDs are the input to the §11.4
-// pod-RPC `Terminate` fan-out and the credential-lease revocation: a
-// session this step cancelled was non-terminal, so its pod may still be
-// running and its leases may still be live.
+// RevokeHook receives each session the §11.4 full_revoke step cancelled,
+// right after the write that cancelled it. The session server satisfies it:
+// it cancels a same-replica resume attempt and drains the session's inbox and
+// DLQ. spec: §7.3 (Retry and Resume), §11.4 (User Invalidation).
+type RevokeHook interface {
+	AfterRevokeWrite(ctx context.Context, row sessionstore.Session)
+}
+
+// WithRevokeHook wires the full_revoke per-session hook. Nil leaves it unset.
+func (r *Router) WithRevokeHook(h RevokeHook) *Router {
+	r.revoked = h
+	return r
+}
+
+// terminateUserSessions transitions every non-terminal session owned by the
+// user to `cancelled` — the §11.4 full_revoke SessionStore step. It returns
+// the IDs of the sessions it transitioned. Each write applies only over a
+// non-terminal locked row and records the Terminated fact; a session another
+// writer already ended is left out of the IDs. Right after each write that
+// cancelled a session, the revoke hook cancels the session's same-replica
+// resume attempt and drains its inbox and DLQ. This writer runs no
+// post-terminal hook: the handler sends Shutdown to the pod of each cancelled
+// session right after the writes, so a seal would race the shutdown.
+//
+// The returned IDs are the input to the §11.4 pod-RPC `Terminate` fan-out and
+// the credential-lease revocation. On a store error it returns the IDs
+// written so far with the error, and the handler runs the fan-out for them
+// before it answers the error.
+//
+// spec: §11.4 (User Invalidation); §7.2 (Interactive Session Model).
 func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
 	// spec: §11.4 — narrow the SessionStore lookup to the
 	// invalidation subject. The Postgres-backed store pushes the filter
@@ -454,18 +474,25 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 		if session.IsTerminal(row.State) {
 			continue
 		}
+		now := r.clock()
 		updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {
 			if session.IsTerminal(s.State) {
-				return nil
+				return sessionstore.ErrSuperseded
 			}
+			from := s.State
 			s.State = session.StateCancelled
+			sessionstore.MarkTerminated(s, from, now)
 			return nil
 		})
+		if errors.Is(err, sessionstore.ErrSuperseded) {
+			continue
+		}
 		if err != nil {
 			return terminated, err
 		}
-		if updated.State == session.StateCancelled {
-			terminated = append(terminated, row.ID)
+		terminated = append(terminated, row.ID)
+		if r.revoked != nil {
+			r.revoked.AfterRevokeWrite(ctx, updated)
 		}
 	}
 	return terminated, nil
@@ -535,6 +562,10 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		if r.sessions != nil {
 			liveSessions, err = r.terminateUserSessions(req.Context(), tenant, subject)
 			if err != nil {
+				// spec: §11.4 — the sessions already cancelled still get
+				// their pod Terminate, lease revocation, and cached-auth
+				// invalidation before the error is answered.
+				r.runFullRevokeFanOut(req.Context(), tenant, subject, body.Reason, liveSessions)
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 					"session termination failed: "+err.Error(), nil)
 				return

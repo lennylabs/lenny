@@ -156,15 +156,17 @@ func TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3(t *testing.T) {
 			t.Fatalf("%s: disposition = %q/%d, want %q/%d", step, disp.To, disp.RetryCount, wantTo, wantRetries)
 		}
 	}
+	// restore commits the resume_pending row to running through the
+	// resume driver's commit (the binderless path, which claims no pod).
 	restore := func() sessionstore.Session {
 		t.Helper()
-		if _, err := store.Update(ctx, "acme", "sess_spend", func(r *sessionstore.Session) error {
-			r.State = session.StateRunning
-			return nil
-		}); err != nil {
-			t.Fatalf("restore write: %v", err)
+		row, err := store.Get(ctx, "acme", "sess_spend")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
 		}
-		srv.bumpRecoveryGeneration(ctx, "acme", "sess_spend", "pod-replacement")
+		if exit := srv.completeResume(row, 0, resumeOutcome{}); exit != resumeExitCommitLanded {
+			t.Fatalf("commit exit = %v, want a landed commit", exit)
+		}
 		got, err := store.Get(ctx, "acme", "sess_spend")
 		if err != nil {
 			t.Fatalf("Get: %v", err)
@@ -184,9 +186,6 @@ func TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3(t *testing.T) {
 	if got.RecoveryGeneration != 1 {
 		t.Errorf("RecoveryGeneration after a restore = %d, want 1", got.RecoveryGeneration)
 	}
-	if got.PodAssignment != "pod-replacement" {
-		t.Errorf("PodAssignment = %q, want pod-replacement", got.PodAssignment)
-	}
 	if len(counter.classes) != 1 || audit.retryAttemptCount() != 1 {
 		t.Errorf("after restore: metric=%d audit=%d, want 1/1 (a restore fires neither)", len(counter.classes), audit.retryAttemptCount())
 	}
@@ -194,19 +193,5 @@ func TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3(t *testing.T) {
 	fail("second failure", session.StateResumePending, 2)
 	if len(counter.classes) != 2 || audit.retryAttemptCount() != 2 {
 		t.Errorf("after second failure: metric=%d audit=%d, want 2/2", len(counter.classes), audit.retryAttemptCount())
-	}
-}
-
-// TestBumpRecoveryGenerationStoreErrorWritesNothing_spec_4_2 covers the
-// bump's error path: a missing row logs and returns without firing the
-// retry metric.
-//
-// spec: §4.2 (Session Manager), §7.3 (Retry and Resume) "Retry accounting."
-func TestBumpRecoveryGenerationStoreErrorWritesNothing_spec_4_2(t *testing.T) {
-	counter := &recordedRetry{}
-	srv := New(memstore.New(), Options{IncSessionRetry: counter.record})
-	srv.bumpRecoveryGeneration(context.Background(), "acme", "sess_missing", "pod-x")
-	if len(counter.classes) != 0 {
-		t.Errorf("metric labels = %v, want none", counter.classes)
 	}
 }

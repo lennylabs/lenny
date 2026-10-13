@@ -114,6 +114,11 @@ type SlotBindRequest struct {
 	// no-op, which is the create and start paths. spec: §7.3 (Retry and
 	// Resume).
 	OnClaimed func(context.Context) error
+	// CoordinationGeneration is the session's coordination_generation the
+	// binding attempt holds, recorded on every lease the attempt mints. The
+	// resume driver sets it to its entry generation; every other caller
+	// leaves it 0. spec: §7.3 (Credential leases on the replacement pod).
+	CoordinationGeneration int64
 }
 
 // BindSlot places a session on a §5.2 concurrent-session pod slot.
@@ -302,6 +307,12 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	bindAttempt := newBindAttempt()
 	res, minted, err := b.materializeSlotStages(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl, bindAttempt)
 	if err == nil {
+		// spec: §7.3 (Resume driver) — an uncommitted restore reclaims the
+		// entry under this attempt's token and returns exactly its leases.
+		res.BindAttempt = bindAttempt
+		res.Pool = req.Pool
+		res.MaxConcurrentSessions = req.MaxConcurrentSessions
+		res.MintedLeaseIDs = minted
 		return res, nil
 	}
 	// spec: §7.1 (normal flow). Every stage is post-connection, so the reclaim
@@ -604,7 +615,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	var minted []string
 	if hasPool {
 		for provider, pool := range req.CredentialPools {
-			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
+			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID, req.CoordinationGeneration)
 			if err != nil {
 				// §4.9 pre-claim race: surface a typed error so the
 				// caller can release the slot and emit the mismatch metric.
@@ -619,7 +630,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 		// spec: §4.9 — per-slot user-source leases mirror
 		// the per-slot pool leases: each slot holds its own user lease.
 		for _, provider := range req.UserCredentialProviders {
-			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
+			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider, req.CoordinationGeneration)
 			if err != nil {
 				return minted, &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
 			}
@@ -803,10 +814,11 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		leaked = err != nil || !cleanly
 		defer result.Adapter.Close()
 	}
-	// spec: §7.1 — release the slot session's §4.9
-	// credential leases back to the pool, the same teardown session-mode
-	// Release runs. The pod and its sibling slots stay live.
-	b.releaseCredentials(result.SessionID)
+	// spec: §7.3 (Credential leases on the replacement pod) — return the
+	// binding's minted leases and the session's leases at or below its
+	// stamp, the same teardown session-mode Release runs. The pod and its
+	// sibling slots stay live.
+	b.releasePodCredentials(result)
 	claimer := &podclaim.SlotClaimer{
 		Client:    b.Client,
 		Namespace: b.Namespace,

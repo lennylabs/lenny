@@ -166,10 +166,14 @@ var ErrProxyUnavailable = errors.New("usercreds: LLM proxy URL is not configured
 // pod. It is the user-source analogue of credassign.AssignProto.
 //
 // The minted lease is SPIFFE-bound to the issuing pod (spiffeURI) for the
-// §4.9 proxy-mode binding check, exactly as a pool proxy lease is.
+// §4.9 proxy-mode binding check, exactly as a pool proxy lease is. It
+// records generation, the session's coordination_generation the minting
+// attempt holds, so a pod release returns only the leases at or below its
+// binding's stamp. When the wire conversion fails, MintProto removes the
+// lease it stored before it returns the error.
 //
-// spec: §4.9.
-func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string) (*adapterv1.CredentialLease, error) {
+// spec: §4.9; §7.3 (Credential leases on the replacement pod).
+func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string, generation int64) (*adapterv1.CredentialLease, error) {
 	if m.proxyURL == "" {
 		return nil, ErrProxyUnavailable
 	}
@@ -204,6 +208,7 @@ func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionI
 	if err != nil {
 		return nil, err
 	}
+	lease.CoordinationGeneration = generation
 	if err := m.leases.Put(lease); err != nil {
 		return nil, err
 	}
@@ -215,7 +220,14 @@ func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionI
 	// spec: §4.9 — last_used_at is updated on each
 	// successful resolution.
 	_ = m.store.MarkUsed(ctx, tenantID, cred.Ref, m.now())
-	return credassign.ProtoLease(lease)
+	wire, err := credassign.ProtoLease(lease)
+	if err != nil {
+		// spec: §4.9 (Credential Leasing Service) — no attempt holds the
+		// identifier of a lease whose wire form failed, so remove it.
+		m.leases.Remove(lease.LeaseID)
+		return nil, err
+	}
+	return wire, nil
 }
 
 // RotateUser re-caches the credential's current secret for every active

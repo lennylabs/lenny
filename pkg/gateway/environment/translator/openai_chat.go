@@ -281,8 +281,14 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// Mark the session completed — the translator runs a single
 	// request/response cycle and does not maintain conversation
 	// state across calls.
+	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
+	// own write. It runs no post-terminal hook: the handler's deferred
+	// single-shot release releases the executor.
+	completedAt := h.clock()
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+		from := s.State
 		s.State = session.StateCompleted
+		sessionstore.MarkTerminated(s, from, completedAt)
 		return nil
 	})
 	disp = executor.DispositionCompleted

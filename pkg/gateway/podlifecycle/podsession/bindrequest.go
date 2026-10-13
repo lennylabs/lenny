@@ -5,6 +5,7 @@ package podsession
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -143,6 +144,12 @@ type BindRequest struct {
 	// mintedLeaseIDs carries the lease identifiers this attempt's Prepare
 	// minted into its Launch, on an attemptScoped request only.
 	mintedLeaseIDs []string
+	// CoordinationGeneration is the session's coordination_generation the
+	// binding attempt holds. The binder records it on every lease the
+	// attempt mints. The resume driver sets it to its entry generation on a
+	// snapshotless rebuild; create, finalize, start, and a delegated child
+	// leave it 0. spec: §7.3 (Credential leases on the replacement pod).
+	CoordinationGeneration int64
 }
 
 // BindResult reports the pod a session was bound to.
@@ -223,7 +230,40 @@ type BindResult struct {
 	// trail on the session row so it is visible through §15.1
 	// GET /v1/sessions/{id} and the §11.7 audit log. F-7.5.4 / F-7.5.11.
 	SetupOutputs []*adapterv1.SetupCommandOutput
+	// BindAttempt is the §4.7.1 token of the attempt that created the
+	// adapter's registry entry for this binding. ReleaseUncommitted names
+	// it on the reclaim of a restore whose commit did not land, so the
+	// reclaim removes only the entry this attempt created. Bind sets it
+	// from the token Prepare minted, materializeSlot and Resume from their
+	// own. spec: §4.7.1 (Role and Gateway RPC Contract), §7.3 (Resume
+	// driver).
+	BindAttempt string
+	// Pool and MaxConcurrentSessions are the pool the binding was claimed
+	// from and its per-pod session bound (1 on an exclusive pool). They
+	// bound and label an uncommitted restore's compensation reclaim.
+	Pool                  string
+	MaxConcurrentSessions int32
+	// MintedLeaseIDs are the §4.9 leases the binding attempt minted. A
+	// pod release returns them with the session's leases at or below the
+	// binding's CoordinationGeneration, and an uncommitted restore returns
+	// exactly these. spec: §7.3 (Credential leases on the replacement pod).
+	MintedLeaseIDs []string
+	// crashed records that the binding's CH-ATTACH stream ended in a
+	// reported stream failure before the release unbound it. A release
+	// whose unbind follows that end retires a pod that serves one session
+	// whatever disposition it passes. No site clears it: a later binding
+	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
+	// and Execution Modes), §28.5.1 (Gateway-to-pod).
+	crashed atomic.Bool
 }
+
+// MarkCrashed records that the binding's attach stream ended in a reported
+// stream failure, so a later Release retires the pod. spec: §28.5.1
+// (Gateway-to-pod).
+func (r *BindResult) MarkCrashed() { r.crashed.Store(true) }
+
+// Crashed reports whether MarkCrashed was called on the binding.
+func (r *BindResult) Crashed() bool { return r.crashed.Load() }
 
 // SetupCommandFailure wraps a §7.5 setup-command failure with the partial
 // captured output the adapter returned before the abort. The gateway

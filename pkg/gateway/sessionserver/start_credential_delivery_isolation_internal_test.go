@@ -216,7 +216,7 @@ func TestStartOnPodRejectsForbiddenDeliveryModeMultiTenant(t *testing.T) {
 	_, err := s.startOnPod(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code",
 		IsolationProfile: isolation.ProfileStandard,
-	}, workspaceplan.Plan{}, nil, nil)
+	}, workspaceplan.Plan{}, nil, resumeBind{})
 	var iso *CredentialDeliveryIsolationError
 	if !errors.As(err, &iso) {
 		t.Fatalf("startOnPod = %v, want CredentialDeliveryIsolationError (gate fires before bind)", err)
@@ -236,7 +236,7 @@ func TestStartOnPodAdmitsForbiddenDeliveryModeSingleTenant(t *testing.T) {
 	_, err := s.startOnPod(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code",
 		IsolationProfile: isolation.ProfileStandard,
-	}, workspaceplan.Plan{}, nil, nil)
+	}, workspaceplan.Plan{}, nil, resumeBind{})
 	var iso *CredentialDeliveryIsolationError
 	if errors.As(err, &iso) {
 		t.Fatalf("startOnPod (single-tenant) = %v, want non-delivery error (gate admits outside multi-tenant)", err)

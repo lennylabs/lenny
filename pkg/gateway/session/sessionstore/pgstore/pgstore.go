@@ -65,7 +65,10 @@ func New(pool *pgxpool.Pool, opts ...Option) *Store {
 	return s
 }
 
-var _ sessionstore.Store = (*Store)(nil)
+var (
+	_ sessionstore.Store         = (*Store)(nil)
+	_ sessionstore.PrimaryReader = (*Store)(nil)
+)
 
 // selectList is the column projection for reads. UUID columns are
 // rendered as text so they scan into the Session struct's string
@@ -362,6 +365,30 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 	var out sessionstore.Session
 	// spec: §12.3 — session-status read routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			id, tenantID)
+		sess, err := scanSession(row)
+		if err != nil {
+			return err
+		}
+		out = sess
+		return nil
+	})
+	if err != nil {
+		return sessionstore.Session{}, normalizeMiss(err)
+	}
+	return out, nil
+}
+
+// GetPrimary returns the session row keyed by (tenantID, id) as the primary
+// holds it. It reads the write pool with a plain SELECT, which takes no row
+// lock, so it never blocks a concurrent Update. sessionstore.ReadPrimary uses
+// it for a one-shot decision that the lagging read pool must not decide.
+// spec: §12.3 (Postgres HA Requirements)
+func (s *Store) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	var out sessionstore.Session
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
 			id, tenantID)

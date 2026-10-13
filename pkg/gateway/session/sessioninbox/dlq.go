@@ -88,7 +88,7 @@ func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Messa
 	if ttl <= 0 {
 		ttl = DefaultDLQTTL
 	}
-	payload, err := json.Marshal(msg)
+	payload, err := DLQMember(msg)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +111,13 @@ func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Messa
 		return nil, err
 	}
 	return &dropped, nil
+}
+
+// DLQMember returns the sorted-set member Enqueue stores for msg, so a caller
+// that enqueued msg can Remove exactly that entry.
+func DLQMember(msg Message) (string, error) {
+	b, err := json.Marshal(msg)
+	return string(b), err
 }
 
 // DrainAll reads every DLQ entry in FIFO (ascending-score) order and
@@ -160,6 +167,37 @@ func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now 
 		return nil, err
 	}
 	return decodeRaw(res)
+}
+
+// PeekOldest returns the DLQ's lowest-scored entry without removing it,
+// decoded, together with its raw member for Remove. ok is false when the DLQ
+// is empty. It ignores the entry's score, so an entry past its expiry is
+// still returned. Every DLQ enqueue scores EnqueuedAt plus the default TTL,
+// so the lowest score is the earliest accepted entry.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (d *DLQ) PeekOldest(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	raw, err := d.client.ZRange(ctx, dlqKey(tenantID, sessionID), 0, 0).Result()
+	if err != nil {
+		return Message{}, "", false, err
+	}
+	if len(raw) == 0 {
+		return Message{}, "", false, nil
+	}
+	var msg Message
+	if err := json.Unmarshal([]byte(raw[0]), &msg); err != nil {
+		return Message{}, raw[0], true, err
+	}
+	return msg, raw[0], true, nil
+}
+
+// Remove removes the one DLQ entry member names and reports whether it found
+// it. A missing member is not an error.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (bool, error) {
+	n, err := d.client.ZRem(ctx, dlqKey(tenantID, sessionID), member).Result()
+	return n > 0, err
 }
 
 // Len reports the DLQ entry count.

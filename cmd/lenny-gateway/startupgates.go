@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -179,6 +180,10 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
 	}
 
+	if err := validatePrimaryReadTimeout(*f.sessionPrimaryReadTimeout); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
 	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
 	// this check; failing at startup keeps a misconfigured deploy
@@ -223,4 +228,15 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
 			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
 	}
+}
+
+// validatePrimaryReadTimeout rejects a non-positive
+// --session-primary-read-timeout: every primary session-row read carries a
+// deadline, so a non-positive bound is a configuration error rather than an
+// unbounded read. spec: §12.3 (Postgres HA Requirements).
+func validatePrimaryReadTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
 }

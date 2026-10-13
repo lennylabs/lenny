@@ -606,20 +606,24 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // because none ever existed.
 //
 // The write is guarded by a §10.1 coordinator-handoff CAS fence: the
-// source's `coordination_generation` is re-read and compared against the
-// stamp captured at derive admission (the generation on the `source` row
-// the handler already holds). If a replacement coordinator has
-// incremented it (replica crash or Postgres failover mid-copy), the
-// stale replica skips the write so no orphan `failed` row becomes
-// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1. F-15.1.14.
+// source's `coordination_generation` is re-read from the primary and
+// compared against the stamp captured at derive admission (the generation on
+// the `source` row the handler already holds). The fence skips the write
+// whenever the source's coordination_generation has advanced since
+// admission: a replacement coordinator's handoff (replica crash or Postgres
+// failover mid-copy), and a resume_pending → resuming write that started a
+// new resuming incarnation of the source. The row records the Terminated
+// fact in its own Create. spec: §7.1 (Normal Flow) derive rule 2 (CAS-fenced
+// INSERT); §15.1. F-15.1.14.
 func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
 	if !s.persistDeriveFailureRows {
 		return
 	}
-	// CAS fence: re-read the source and confirm the coordinator that
-	// admitted this derive is still authoritative. A changed generation
-	// means a handoff occurred; the stale replica must not write.
-	cur, err := s.store.Get(ctx, source.TenantID, source.ID)
+	// spec: §7.1 (Normal Flow) — CAS fence on the primary row: the write is
+	// skipped whenever the source's coordination_generation has advanced
+	// since admission, so a stale replica, or an admission an entry write
+	// overtook, persists no row.
+	cur, err := s.readPrimary(ctx, source.TenantID, source.ID)
 	if err != nil || cur.CoordinationGeneration != source.CoordinationGeneration {
 		s.recordDeriveFailureAudit("fenced")
 		return
@@ -638,6 +642,7 @@ func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.S
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	sessionstore.MarkTerminated(&row, "", now)
 	if err := s.store.Create(ctx, row); err != nil {
 		s.recordDeriveFailureAudit("error")
 		return

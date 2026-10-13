@@ -19,7 +19,7 @@ import (
 //	  "mode": "auto_then_client",
 //	  "maxRetries": 2,
 //	  "retryableFailures": ["pod_evicted", "node_lost", "runtime_crash"],
-//	  "nonRetryableFailures": ["workspace_validation_failed", "setup_command_failed"],
+//	  "nonRetryableFailures": ["workspace_validation_failed", "setup_command_failed", "credential_rejected"],
 //	  "maxSessionAgeSeconds": 7200,
 //	  "maxResumeWindowSeconds": 900
 //	}
@@ -238,6 +238,14 @@ const (
 	// FailureSetupCommandFailed is the §7.3 default-non-
 	// retryable label for a non-zero exit from a §7.5 setup command.
 	FailureSetupCommandFailed FailureReason = "setup_command_failed"
+	// FailureCredentialRejected is the §7.3 default-non-retryable label
+	// for a restore whose credential assignment on the replacement pod the
+	// credential service refused for a reason that recurs on every attempt
+	// (a missing pool or user credential, an unconfigured LLM proxy, or an
+	// invalid, unauthorized, or failed-precondition answer). A rejection
+	// that recurs spends no retry under the default policy. spec: §7.3
+	// (Resume driver; Credential leases on the replacement pod).
+	FailureCredentialRejected FailureReason = "credential_rejected"
 
 	// FailureExpiredDeadline marks a session driven to `expired` by a
 	// §11.3 / §7.3 deadline sweep — the platform-wide `maxSessionAge`
@@ -309,6 +317,7 @@ func DefaultNonRetryableFailures() []string {
 	return []string{
 		string(FailureWorkspaceValidationFailed),
 		string(FailureSetupCommandFailed),
+		string(FailureCredentialRejected),
 	}
 }
 

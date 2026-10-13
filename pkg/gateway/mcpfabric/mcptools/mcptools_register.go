@@ -355,12 +355,17 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			(deps.InputWaits != nil && len(deps.InputWaits.PendingForSession(row.ID)) > 0)
 		decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
 		if decision.Action == messagerouting.ActionBufferInbox || decision.Action == messagerouting.ActionBufferDLQ {
-			// spec: §15.4 (MessageEnvelope.input) — buffer the §15.4 union
-			// content in its wire form (a bare string stays a JSON string, a
-			// part array stays an array) so the deferred redelivery path
-			// re-delivers the original multipart envelope rather than a
-			// text-flattened copy. F-MS5.
-			payload, mErr := json.Marshal(in.Message)
+			// spec: §15.4 (MessageEnvelope.input); §7.2 (Message delivery
+			// routing — seven paths, path 6) — the inbox and the DLQ hold one
+			// encoding, the session server's message payload, so the delivery
+			// of held messages decodes an MCP-buffered message as it decodes a
+			// REST one. The §15.4 union content keeps its wire form (a bare
+			// string stays a JSON string, a part array stays an array).
+			payload, mErr := json.Marshal(sessionserver.MessagePayload{
+				ID:      messageID,
+				Role:    "user",
+				Content: in.Message,
+			})
 			if mErr != nil {
 				return mcp.ToolResult{}, fmt.Errorf("marshal buffered message content: %w", mErr)
 			}
@@ -477,7 +482,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// session binding and no fromSessionId) defers to the executor's
 		// default gateway-client identity. F-13.5.11.
 		resp, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
-			{Role: "user", Content: messageBody, From: senderFrom(senderID)},
+			{Role: "user", Content: messageBody, From: executor.SenderFrom(senderID)},
 		})
 		if err != nil {
 			return mcp.ToolResult{}, err
@@ -604,12 +609,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			}
 			return mcp.ToolResult{}, errPrecondition(perr)
 		}
-		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
-			// spec: §15.1 — cancel marks the session cancelled.
-			row.State = session.StateCancelled
-			return nil
-		})
+		updated, err := cancelSession(ctx, deps, tenant, in.SessionID, clock)
 		if err != nil {
+			var pe *session.PreconditionError
+			if errors.As(err, &pe) {
+				if bestEffort {
+					return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"state":%q,"reason":%q}`, in.SessionID, pe.CurrentState, in.Reason)), nil
+				}
+				return mcp.ToolResult{}, errPrecondition(err)
+			}
 			return mcp.ToolResult{}, err
 		}
 		if in.Reason != "" {
@@ -617,6 +625,50 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		}
 		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, updated.ID, updated.State)), nil
 	})
+}
+
+// cancelSession is the lenny/cancel_session terminal write, a hook-path
+// writer: it opens the session's terminal claim, writes cancelled only over a
+// non-terminal locked row with the Terminated fact recorded in the write, and
+// on a write that applied runs the post-terminal hook with a nil signal tail
+// on a detached context, so the hook completes after the request context is
+// cancelled. It returns the row the hook returned, so a seal relabel is
+// answered failed. A locked row already terminal answers the §15.1
+// precondition error with the locked state, as a pre-read refusal does.
+//
+// spec: §7.2 (Interactive Session Model), §15.1 (REST API)
+func cancelSession(ctx context.Context, deps Deps, tenant, sessionID string, clock func() time.Time) (sessionstore.Session, error) {
+	end := func() {}
+	if deps.Terminal != nil {
+		end = deps.Terminal.BeginTerminal(sessionID)
+	}
+	defer end()
+	var from session.State
+	now := clock()
+	updated, err := deps.Store.Update(ctx, tenant, sessionID, func(row *sessionstore.Session) error {
+		from = row.State
+		if session.IsTerminal(row.State) {
+			return sessionstore.ErrSuperseded
+		}
+		// spec: §15.1 — cancel marks the session cancelled.
+		row.State = session.StateCancelled
+		sessionstore.MarkTerminated(row, from, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return sessionstore.Session{}, &session.PreconditionError{
+			Endpoint:      session.EndpointDelete,
+			CurrentState:  from,
+			AllowedStates: session.AllowedStates(session.EndpointDelete, nil),
+		}
+	}
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	if deps.Terminal == nil {
+		return updated, nil
+	}
+	return deps.Terminal.AfterTerminalWrite(context.WithoutCancel(ctx), from, updated, nil), nil
 }
 
 // registerTaskTreeTools installs the §8.5/§8.9 delegation-tree tools:
@@ -760,29 +812,21 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
 				fmt.Sprintf("child session %s is already terminal (%s)", in.ChildSessionID, child.State), nil)
 		}
-		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all)
-		if err != nil {
-			return mcp.ToolResult{}, err
-		}
-		// spec: §11.3 / §11.4 — a cancel must drain each
-		// cancelled runtime's pod, not merely flip its row. Without this the
-		// child agents keep running, holding tokens, executing tool calls, and
-		// charging their credential leases until the watchdog's maxSessionAge
-		// clock fires hours later. ReleaseSession records the §6.2 cancelled
-		// disposition and triggers the adapter's graceful shutdown; it no-ops
-		// on a nil executor (the in-memory dev posture). Best-effort per id.
+		// spec: §11.3 / §11.4; §8.10 — each cancel runs the post-terminal
+		// hook, which drains the cancelled runtime's pod with the cancelled
+		// disposition, and its signal tail archives the node to the
+		// session_tree_archive so a resumed parent can replay its result.
 		// F-11.3.1.
-		if deps.Executor != nil {
-			for _, id := range cancelled {
-				_ = executor.ReleaseSession(ctx, deps.Executor, id, executor.DispositionCancelled)
+		var signals func(context.Context, sessionstore.Session)
+		if deps.TreeArchive != nil {
+			root := treeRoot(child, all)
+			signals = func(sctx context.Context, row sessionstore.Session) {
+				archiveCancelled(sctx, deps.TreeArchive, root, row, clock())
 			}
 		}
-		// §8.10: a child reaching a terminal state is archived to the
-		// session_tree_archive so a resumed parent can replay its
-		// result. Archiving is best-effort observability — the
-		// cancellation itself has already committed.
-		if deps.TreeArchive != nil {
-			archiveCancelled(ctx, deps.TreeArchive, tenant, treeRoot(child, all), cancelled, all, clock())
+		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all, deps.Terminal, signals, clock)
+		if err != nil {
+			return mcp.ToolResult{}, err
 		}
 		body, _ := json.Marshal(struct {
 			Cancelled []string `json:"cancelled"`

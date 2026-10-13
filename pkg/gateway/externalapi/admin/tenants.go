@@ -222,6 +222,9 @@ type Router struct {
 	// spec: §11.2.1. F-11.2.14.
 	approverNotifier ApproverNotifier
 	sessions         sessionstore.Store
+	// revoked receives each session the full_revoke step cancelled, right
+	// after its write. spec: §11.4 (User Invalidation).
+	revoked RevokeHook
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
 	// them unregistered. spec: §24.11.

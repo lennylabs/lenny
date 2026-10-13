@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // decodeErrorBody unpacks the §15.2 error envelope into its inner body
@@ -221,9 +221,9 @@ func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
 // spec: §7.1 / §15.1 — a claim failure that is
 // neither exhaustion nor warming surfaces as a retryable 503 carrying
 // the caller-named fallback code (SESSION_CREATION_FAILED for atomic
-// create / start, STARTING_FAILED for the two-step start, RESUME_FAILED
-// for resume) plus a Retry-After header so clients back off with a
-// deterministic budget.
+// create / start, STARTING_FAILED for the two-step start) plus a
+// Retry-After header so clients back off with a deterministic budget. A
+// resume claims no pod, so it has no fallback code.
 func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 	cases := []struct {
 		name string
@@ -231,7 +231,6 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 	}{
 		{"create_and_start", "SESSION_CREATION_FAILED"},
 		{"two_step_start", "STARTING_FAILED"},
-		{"resume", "RESUME_FAILED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,9 +253,9 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 }
 
 // setupFailWith wraps a gRPC status code in the *podsession.SetupCommandFailure
-// the binder produces, so the writePodClaimError / isTransientPodClaimError
-// branch can be exercised at the gRPC-code boundary that governs both the
-// wire envelope and the /resume row-state demotion.
+// the binder produces, so the writePodClaimError branch and the resume
+// driver's failure-reason classification can be exercised at the gRPC-code
+// boundary that governs both.
 func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
 	return &podsession.SetupCommandFailure{
 		Pod:   "sbx-1",
@@ -319,7 +318,7 @@ func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
 		}{
 			{"unavailable_crashed_pod", codes.Unavailable, "SESSION_CREATION_FAILED"},
 			{"deadline_exceeded", codes.DeadlineExceeded, "STARTING_FAILED"},
-			{"unknown_wrapped_cause", codes.Unknown, "RESUME_FAILED"},
+			{"unknown_wrapped_cause", codes.Unknown, "STARTING_FAILED"},
 			{"internal", codes.Internal, "SESSION_CREATION_FAILED"},
 		}
 		for _, tc := range cases {
@@ -349,36 +348,38 @@ func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
 	})
 }
 
-// spec: §7.3 (awaiting_client_action holding state for a retryable resume
-// failure), §6.2 (transient setup failure retried on a fresh pod) — the
-// /resume row-state demotion and the wire envelope share one boundary:
-// isTransientPodClaimError treats a SetupCommandFailure whose Cause is any
-// code other than codes.FailedPrecondition as transient (row stays
-// awaiting_client_action), and the deterministic FailedPrecondition exit as
-// non-transient (row demotes to failed). A non-status / wrapped cause reports
-// codes.Unknown and is treated as transient.
-func TestIsTransientPodClaimErrorSetupCommand_spec_7_3(t *testing.T) {
+// TestResumeFailureReasonSetupCommand_spec_7_3 asserts the resume driver's
+// classification of a failure after its entry write: a setup-command failure
+// whose cause is the deterministic codes.FailedPrecondition exit is reported
+// as setup_command_failed, which the default policy treats as non-retryable,
+// and every other setup-window cause (Unavailable, DeadlineExceeded,
+// Internal, or a non-status cause that reports codes.Unknown) is reported as
+// runtime_crash, which spends one retry and re-enters resume_pending. The
+// same codes.FailedPrecondition boundary governs the wire envelope.
+//
+// spec: §7.3 (Resume driver; Retry and Resume), §6.2 (Pod State Machine).
+func TestResumeFailureReasonSetupCommand_spec_7_3(t *testing.T) {
 	cases := []struct {
-		name        string
-		err         error
-		wantTransit bool
+		name string
+		err  error
+		want session.FailureReason
 	}{
-		{"failed_precondition_deterministic", setupFailWith(codes.FailedPrecondition), false},
-		{"unavailable_transient", setupFailWith(codes.Unavailable), true},
-		{"deadline_exceeded_transient", setupFailWith(codes.DeadlineExceeded), true},
-		{"internal_transient", setupFailWith(codes.Internal), true},
+		{"failed_precondition_deterministic", setupFailWith(codes.FailedPrecondition), session.FailureSetupCommandFailed},
+		{"unavailable_transient", setupFailWith(codes.Unavailable), session.FailureRuntimeCrash},
+		{"deadline_exceeded_transient", setupFailWith(codes.DeadlineExceeded), session.FailureRuntimeCrash},
+		{"internal_transient", setupFailWith(codes.Internal), session.FailureRuntimeCrash},
 		{
 			"non_status_cause_is_unknown_transient",
 			&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: errors.New("wrapped non-status boom")},
-			true,
+			session.FailureRuntimeCrash,
 		},
-		{"wrapped_failed_precondition_demotes", fmt.Errorf("resume: %w", setupFailWith(codes.FailedPrecondition)), false},
-		{"wrapped_unavailable_resumable", fmt.Errorf("resume: %w", setupFailWith(codes.Unavailable)), true},
+		{"wrapped_failed_precondition", fmt.Errorf("resume: %w", setupFailWith(codes.FailedPrecondition)), session.FailureSetupCommandFailed},
+		{"wrapped_unavailable", fmt.Errorf("resume: %w", setupFailWith(codes.Unavailable)), session.FailureRuntimeCrash},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isTransientPodClaimError(tc.err); got != tc.wantTransit {
-				t.Errorf("isTransientPodClaimError = %v, want %v", got, tc.wantTransit)
+			if got := resumeFailureReason(tc.err); got != string(tc.want) {
+				t.Errorf("resumeFailureReason = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -436,44 +437,5 @@ func TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2(t *testing.T) {
 				t.Errorf("details.retryable = %v, want false", details["retryable"])
 			}
 		})
-	}
-}
-
-// spec: §29.3 (Interactive message send), §29.6 (Restore and resume), §7.3
-// (Retry and Resume), §15.1 (REST API)
-// A resume whose bind meets another replica's coordination lease is a
-// transient failure: the row holds in awaiting_client_action, and the answer
-// is the retryable 503 RESUME_FAILED with Retry-After and no replica named in
-// the body. A failure means the row is demoted to terminal `failed` under a
-// retryable answer, so the client's retry is rejected against a terminal row.
-func TestResumeOnForeignLeaseIsTransient_spec_29_6(t *testing.T) {
-	for _, err := range []error{
-		leasestore.ErrHeld,
-		fmt.Errorf("sessionserver: acquire coordination lease: %w", leasestore.ErrHeld),
-	} {
-		if !isTransientPodClaimError(err) {
-			t.Errorf("isTransientPodClaimError(%v) = false, want true", err)
-		}
-		s := New(memstore.New(), Options{})
-		w := httptest.NewRecorder()
-		s.writePodClaimError(w, err, "RESUME_FAILED", "could not resume the session on a warm pod")
-		if w.Code != 503 {
-			t.Errorf("status = %d, want 503", w.Code)
-		}
-		body := decodeErrorBody(t, w.Body.Bytes())
-		if body["code"] != "RESUME_FAILED" {
-			t.Errorf("code = %v, want RESUME_FAILED", body["code"])
-		}
-		if body["retryable"] != true {
-			t.Errorf("retryable = %v, want true", body["retryable"])
-		}
-		if ra := w.Header().Get("Retry-After"); ra != "5" {
-			t.Errorf("Retry-After = %q, want 5", ra)
-		}
-		if d, ok := body["details"].(map[string]any); ok {
-			if _, named := d["coordinatingReplica"]; named {
-				t.Errorf("details name the coordinating replica: %v", d)
-			}
-		}
 	}
 }

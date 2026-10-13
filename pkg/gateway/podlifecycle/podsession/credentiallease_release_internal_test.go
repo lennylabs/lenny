@@ -20,11 +20,19 @@ type failingReleaser struct {
 	leaseReleases   []string
 }
 
-func (f *failingReleaser) AssignProto(string, string, string, string) (*adapterv1.CredentialLease, error) {
+func (f *failingReleaser) AssignProto(string, string, string, string, int64) (*adapterv1.CredentialLease, error) {
 	return nil, errors.New("not used")
 }
 
 func (f *failingReleaser) ReleaseSession(sessionID string) error {
+	f.sessionReleases = append(f.sessionReleases, sessionID)
+	return f.err
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (f *failingReleaser) ReleaseThrough(sessionID string, _ int64) error {
 	f.sessionReleases = append(f.sessionReleases, sessionID)
 	return f.err
 }

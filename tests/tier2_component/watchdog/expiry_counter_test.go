@@ -34,6 +34,9 @@ type expiryTerminalHook struct {
 	inc func(pool, reason string)
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (expiryTerminalHook) BeginTerminal(string) func() { return func() {} }
+
 func (h expiryTerminalHook) OnSessionTerminal(context.Context, session.State, sessionstore.Session) {}
 
 func (h expiryTerminalHook) OnSessionExpired(_ context.Context, sess sessionstore.Session, reason string) {

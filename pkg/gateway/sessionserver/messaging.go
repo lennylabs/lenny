@@ -79,34 +79,14 @@ func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore
 	}
 }
 
-// clearInboxOnResume emits the §7.2 event on
-// sess's own event stream when the gateway re-acquires coordination of a
-// recovering session via POST /resume. In the default in-memory mode the
-// prior coordinator's inbox is gone, so the target client learns its inbox
-// was cleared and how many messages survived in the DLQ
-// (`messagesPreservedInDLQ`); in durable mode the Redis inbox survives and
-// no event is emitted. Best-effort: an error is logged and dropped so a
-// transient Redis blip does not fail the resume. No-op when messaging is
-// not wired.
-//
-// spec: §7.2. F-7.2.12.
-func (s *Server) clearInboxOnResume(ctx context.Context, sess sessionstore.Session) {
-	if s.messaging == nil {
-		return
-	}
-	if _, err := s.messaging.ClearInboxOnAcquire(ctx, sess.TenantID, sess.ID); err != nil {
-		log.Printf("lenny-gateway: §7.2 inbox_cleared on resume session=%s: %v", sess.ID, err)
-	}
-}
-
 // migrateInboxOnResumePending runs the §7.2 atomic inbox
 // drain to the DLQ when sess enters resume_pending. In the default
-// in-memory mode the buffered inbox messages are written to the DLQ
-// (scored by the resume-window TTL) so they survive a coordinator crash
-// during recovery; in durable mode the Redis inbox is left in place with
-// an EXPIRE. A drain failure still commits the resume_pending transition
-// (pod failure is non-negotiable) and is logged. No-op when messaging is
-// not wired.
+// in-memory mode the buffered inbox messages are written to the DLQ, keeping
+// their acceptance order, so they survive a coordinator crash during
+// recovery; in durable mode the Redis inbox is left in place with no TTL and
+// is delivered from there. A drain failure still commits the resume_pending
+// transition (pod failure is non-negotiable) and is logged. No-op when
+// messaging is not wired.
 //
 // spec: §7.2. F-7.2.4.
 func (s *Server) migrateInboxOnResumePending(ctx context.Context, sess sessionstore.Session) {

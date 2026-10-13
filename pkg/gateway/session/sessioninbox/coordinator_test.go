@@ -57,8 +57,10 @@ func TestCoordinator_MigrateInboxToDLQ_InMemory_spec_7_2_305(t *testing.T) {
 	}
 }
 
-// spec: §7.2 — in durable mode the Redis inbox is left in place
-// with an EXPIRE rather than drained to the DLQ.
+// spec: §7.2 (Interactive Session Model) — in durable mode the Redis
+// inbox is left in place with no TTL rather than drained to the DLQ, so an
+// entry stays until it is delivered, dropped on overflow, or drained at the
+// terminal transition.
 func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	rc := newRedisT(t)
 	c := NewCoordinator(Config{
@@ -80,8 +82,12 @@ func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	if n, _ := c.dlq.Len(ctx, "acme", "s"); n != 0 {
 		t.Fatalf("dlq len = %d, want 0 (no drain in durable mode)", n)
 	}
-	if ttl, _ := rc.TTL(ctx, inboxKey("acme", "s")).Result(); ttl <= 0 {
-		t.Fatalf("durable inbox key TTL = %v, want > 0 (EXPIRE applied)", ttl)
+	ttl, err := rc.TTL(ctx, inboxKey("acme", "s")).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl != -1 {
+		t.Fatalf("durable inbox key TTL = %v, want -1 (no TTL on the durable inbox)", ttl)
 	}
 }
 

@@ -29,3 +29,18 @@ func TestResolveFromBlockAgent_spec_15_4_1(t *testing.T) {
 		t.Errorf("attributed message must carry the sending session under kind agent; got %+v", got)
 	}
 }
+
+// TestSenderFromNamesTheSendingAgent_spec_15_4_1 asserts that SenderFrom
+// attributes a message to the sending session as an agent, and that an empty
+// sender leaves the attribution to the executor's default.
+//
+// spec: §15.4 (MessageEnvelope from), §7.2 (Message delivery routing — seven
+// paths, path 6)
+func TestSenderFromNamesTheSendingAgent_spec_15_4_1(t *testing.T) {
+	if got := SenderFrom("sess-a"); got != (MessageFrom{Kind: "agent", ID: "sess-a"}) {
+		t.Errorf("SenderFrom(sess-a) = %+v, want agent sess-a", got)
+	}
+	if got := SenderFrom(""); got != (MessageFrom{}) {
+		t.Errorf("SenderFrom(\"\") = %+v, want the zero value", got)
+	}
+}

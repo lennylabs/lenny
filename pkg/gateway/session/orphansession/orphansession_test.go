@@ -69,6 +69,9 @@ func (f *fakeFallback) PodPhase(_ context.Context, _, podID, _ string) (string, 
 
 type fakeTerminal struct{ called []string }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminal) BeginTerminal(string) func() { return func() {} }
+
 func (f *fakeTerminal) OnSessionTerminal(_ context.Context, _ session.State, s sessionstore.Session) {
 	f.called = append(f.called, s.ID)
 }

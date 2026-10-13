@@ -329,7 +329,11 @@ func (w *gatewayWiring) buildAdminRouter(
 		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
 		WithSessions(w.sessions).
-		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal}).
+		// spec: §11.4 — the full_revoke step cancels each session's
+		// same-replica resume attempt and drains its inbox and DLQ right
+		// after the write that cancelled it.
+		WithRevokeHook(sessionSrv).
+		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}).
 		WithInteractions(w.interactions).
 		WithExperiments(w.experiments).
 		WithStickyFlusher(adminStickyFlusher).

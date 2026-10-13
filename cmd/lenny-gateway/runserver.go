@@ -216,6 +216,12 @@ func (w *gatewayWiring) runServers() {
 	// Flush buffered spans before the process exits (§16.3 batch processor).
 	_ = w.traceShutdown(ctx)
 	_ = w.httpSrv.Shutdown(ctx)
+	// spec: §7.3 (Resume driver) — end the session server's lifetime
+	// context so in-flight resume attempts, commit tails, takeover
+	// deliveries, and terminal binding releases stop at their next check.
+	if w.sessionSrv != nil {
+		w.sessionSrv.Close()
+	}
 	if w.llmProxySrv != nil {
 		_ = w.llmProxySrv.Shutdown(ctx)
 	}

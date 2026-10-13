@@ -303,7 +303,9 @@ var preconditionTable = map[Endpoint]endpointRule{
 			StateAwaitingClientAction,
 		},
 	},
-	EndpointResume: {baseStates: []State{StateAwaitingClientAction}},
+	// spec: §15.1 — POST /resume admits awaiting_client_action and
+	// suspended, held-pod or podless.
+	EndpointResume: {baseStates: []State{StateAwaitingClientAction, StateSuspended}},
 	EndpointMessages: {
 		// §15.1 says "any non-terminal state". The terminal-state
 		// rejection is left to AllowedStates / Validate; the rule

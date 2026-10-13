@@ -161,8 +161,8 @@ func (c *Client) OnAssigned(fn func(LeaseAssignment)) {
 // gateway's local lease store and credential cache so the §4.9 LLM
 // proxy and the renewal worker have everything they need without
 // another round-trip.
-func (c *Client) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
-	lease, observer, err := c.assign(poolName, sessionID, spiffeURI, tenantID)
+func (c *Client) Assign(poolName, sessionID, spiffeURI, tenantID string, generation int64) (credential.Lease, error) {
+	lease, observer, err := c.assign(poolName, sessionID, spiffeURI, tenantID, generation)
 	if err != nil {
 		return credential.Lease{}, err
 	}
@@ -172,7 +172,7 @@ func (c *Client) Assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 	return lease, nil
 }
 
-func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, func(LeaseAssignment), error) {
+func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string, generation int64) (credential.Lease, func(LeaseAssignment), error) {
 	parent, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 	var (
@@ -233,6 +233,10 @@ func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 	if err != nil {
 		return credential.Lease{}, nil, err
 	}
+	// spec: §7.3 (Credential leases on the replacement pod) — the Token
+	// Service mints at generation 0; the gateway records the minting
+	// attempt's generation on its own copy before it is stored.
+	lease.CoordinationGeneration = generation
 	if err := c.recordAssignedLease(lease, protoLease, poolName); err != nil {
 		return credential.Lease{}, nil, err
 	}
@@ -294,13 +298,21 @@ func countsAgainstBreaker(code codes.Code) bool {
 
 // AssignProto mirrors Service.AssignProto: it issues AssignCredentials
 // over the wire, mirrors the response into local state, and returns the
-// gateway → pod adapter wire form of the lease.
-func (c *Client) AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error) {
-	lease, err := c.Assign(poolName, sessionID, spiffeURI, tenantID)
+// gateway → pod adapter wire form of the lease. When the wire conversion
+// fails it releases the lease it recorded before it returns the error.
+//
+// spec: §4.9 (Credential Leasing Service)
+func (c *Client) AssignProto(poolName, sessionID, spiffeURI, tenantID string, generation int64) (*adapterv1.CredentialLease, error) {
+	lease, err := c.Assign(poolName, sessionID, spiffeURI, tenantID, generation)
 	if err != nil {
 		return nil, err
 	}
-	return ProtoLease(lease)
+	wire, err := ProtoLease(lease)
+	if err != nil {
+		_ = c.Release(lease.LeaseID)
+		return nil, err
+	}
+	return wire, nil
 }
 
 // ProtoLeaseByID mirrors Service.ProtoLeaseByID for the gateway-side
@@ -400,21 +412,47 @@ func (c *Client) revoke(lease credential.Lease) error {
 
 // ReleaseSession releases every §4.9 credential lease the client holds
 // for the session: it issues a RevokeCredentials RPC for each and drops
-// the local lease entry, returning the session's pool slots. It is the
-// §7.1 step 23 session-teardown lease release the gateway runs when a
-// session reaches a terminal state. A session with no leases is a no-op.
-// Every lease is attempted even when an earlier one fails, and the
-// failures are returned joined so the caller sees each one.
+// the local lease entry, returning the session's pool slots. Its callers
+// are the releasers of a pre-running claim binding (Binder.ReclaimClaimed
+// and the failed-phase reclaim) and the finalize-lease revocation; a pod
+// release calls ReleaseThrough instead. A session with no leases is a
+// no-op. Every lease is attempted even when an earlier one fails, and the
+// failures are returned joined so the caller sees each one. The leases
+// are listed again after the first list is released, and the second list
+// is released too, so a lease recorded during the release is revoked.
 //
-// spec: §7.1 (Normal Flow, step 23).
+// spec: §7.1 (Normal Flow, step 23); §4.9 (Proactive Lease Renewal).
 func (c *Client) ReleaseSession(sessionID string) error {
+	return c.releaseMatching(sessionID, func(credential.Lease) bool { return true })
+}
+
+// ReleaseThrough releases each of the session's leases whose recorded
+// coordination generation is at or below generation and keeps every
+// later one, listing the session's leases twice as ReleaseSession does.
+//
+// spec: §7.3 (Credential leases on the replacement pod), §10.1.5 (Stale
+// Replica Behavior).
+func (c *Client) ReleaseThrough(sessionID string, generation int64) error {
+	return c.releaseMatching(sessionID, func(l credential.Lease) bool {
+		return l.CoordinationGeneration <= generation
+	})
+}
+
+// releaseMatching releases, in two listings, the session's leases for
+// which match reports true, and joins every release failure.
+func (c *Client) releaseMatching(sessionID string, match func(credential.Lease) bool) error {
 	if sessionID == "" {
 		return nil
 	}
 	var errs []error
-	for _, lease := range c.leases.LeasesBySession([]string{sessionID}) {
-		if err := c.Release(lease.LeaseID); err != nil {
-			errs = append(errs, err)
+	for pass := 0; pass < 2; pass++ {
+		for _, lease := range c.leases.LeasesBySession([]string{sessionID}) {
+			if !match(lease) {
+				continue
+			}
+			if err := c.Release(lease.LeaseID); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	return errors.Join(errs...)

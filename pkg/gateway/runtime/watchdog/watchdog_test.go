@@ -481,6 +481,9 @@ type fakeTerminalHook struct {
 	fromStates []session.State
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminalHook) BeginTerminal(string) func() { return func() {} }
+
 func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, fromState session.State, sess sessionstore.Session) {
 	f.calls = append(f.calls, sess)
 	f.fromStates = append(f.fromStates, fromState)

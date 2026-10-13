@@ -306,12 +306,12 @@ func (s *Sweeper) bindingGeneration(sessionID string) int64 {
 	return s.bindings.BindingGeneration(sessionID)
 }
 
-// podHeld reports whether the row's state keeps a pod bound to the session
+// PodHeld reports whether the row's state keeps a pod bound to the session
 // and the row names that pod: running, input_required, or suspended with a
 // non-empty PodAssignment. A takeover of such a row re-adopts and re-fences
 // the pod. spec: §10.1.1 (Stateless Replicas and Per-Session Coordination),
 // §10.1.2 (Coordinator Handoff Protocol).
-func podHeld(row sessionstore.Session) bool {
+func PodHeld(row sessionstore.Session) bool {
 	switch row.State {
 	case session.StateRunning, session.StateInputRequired, session.StateSuspended:
 		return row.PodAssignment != ""
@@ -337,7 +337,7 @@ func adoptedState(row sessionstore.Session) bool {
 	case session.StateResumePending, session.StateAwaitingClientAction:
 		return true
 	default:
-		return podHeld(row)
+		return PodHeld(row)
 	}
 }
 
@@ -583,7 +583,7 @@ func (s *Sweeper) deliverHeld(tenantID, sessionID string, generation int64) {
 // coordination_generation by one when the locked row's generation equals
 // expected (the generation the caller's listing read) and the locked row is
 // in an adopted state. It returns the new generation and whether the locked
-// row holds a pod (podHeld), which decides whether the takeover re-adopts and
+// row holds a pod (PodHeld), which decides whether the takeover re-adopts and
 // fences a pod.
 //
 // It returns 0 and false when the compare-and-swap misses: the generation
@@ -602,7 +602,7 @@ func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string,
 			return errHandoffRefused
 		}
 		row.CoordinationGeneration++
-		holdsPod = podHeld(*row)
+		holdsPod = PodHeld(*row)
 		return nil
 	})
 	if err != nil {

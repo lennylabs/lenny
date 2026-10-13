@@ -62,6 +62,11 @@ type attachConn struct {
 	tenantID    string
 	sessionID   string
 	sandboxName string
+	// bind is the binding the stream was opened for, read under e.mu by
+	// streamFor. endConn marks it crashed on a reported stream failure, so a
+	// release whose unbind follows the end retires the pod. spec: §28.5.1
+	// (Gateway-to-pod).
+	bind *podsession.BindResult
 
 	// stream and openErr are written by the open goroutine before ready is
 	// closed and only read after it.
@@ -102,6 +107,7 @@ func newAttachConn(ctx context.Context, bind *podsession.BindResult) *attachConn
 		tenantID:    bind.TenantID,
 		sessionID:   bind.SessionID,
 		sandboxName: bind.SandboxName,
+		bind:        bind,
 		ready:       make(chan struct{}),
 		token:       make(chan struct{}, 1),
 		done:        make(chan struct{}),
@@ -326,7 +332,17 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 // closedByGateway is read under e.mu because EvictStream sets it under e.mu:
 // an end that races an eviction is attributed to the eviction.
 //
-// spec: §28.5.1 (CH-ATTACH Timing. and Degradation.).
+// A reported stream failure marks the conn's binding crashed in the same hold
+// of e.mu, whether or not a handler is wired. Every release that can pass a
+// disposition other than failed unbinds under e.mu, so exactly one of the two
+// runs first: when endConn does, the release reads the mark and retires the
+// pod; when the unbind does, it evicts the conn and sets closedByGateway, so
+// endConn sets no mark, and the release, having ended the stream itself,
+// keeps its disposition. A gateway-caused end and an unreported status code
+// set nothing.
+//
+// spec: §28.5.1 (CH-ATTACH Timing. and Degradation.); §5.2 (Pool
+// Configuration and Execution Modes).
 func (e *PodExecutor) endConn(c *attachConn, err error) {
 	e.mu.Lock()
 	if c.closedByGateway.Load() {
@@ -336,6 +352,9 @@ func (e *PodExecutor) endConn(c *attachConn, err error) {
 	}
 	if e.streams[c.sessionID] == c {
 		delete(e.streams, c.sessionID)
+	}
+	if c.bind != nil && isReportedStreamFailure(err) {
+		c.bind.MarkCrashed()
 	}
 	e.mu.Unlock()
 

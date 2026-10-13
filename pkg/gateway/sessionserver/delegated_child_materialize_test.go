@@ -126,10 +126,14 @@ func materializeFakeScheme(t *testing.T) *runtime.Scheme {
 // pool resolves) yet the lease mint fails in the assignment window.
 type failingAssigner struct{}
 
-func (failingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (failingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
 func (failingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (failingAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
@@ -140,11 +144,19 @@ func (failingAssigner) Release(string) error { return nil }
 // rollback.
 type recordingAssigner struct{ released []string }
 
-func (a *recordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return &adapterv1.CredentialLease{}, nil
 }
 
 func (a *recordingAssigner) ReleaseSession(sessionID string) error {
+	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
 	a.released = append(a.released, sessionID)
 	return nil
 }

@@ -68,7 +68,7 @@ func TestResumeEmitsSessionResumedFullByDefault(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	seedAwaitingParent(t, store, "sess_resumed_full")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_resumed_full/resume")
+	rr := resumeAndDrive(t, srv, "sess_resumed_full")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -99,7 +99,7 @@ func TestResumeEmitsConversationOnlyWhenEvictionStatePresent(t *testing.T) {
 	})
 	seedAwaitingParent(t, store, "sess_evicted")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_evicted/resume")
+	rr := resumeAndDrive(t, srv, "sess_evicted")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestResumeEmitsPartialWorkspaceWhenPartialManifestPresent(t *testing.T) {
 	})
 	seedAwaitingParent(t, store, "sess_partial")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_partial/resume")
+	rr := resumeAndDrive(t, srv, "sess_partial")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -153,7 +153,7 @@ func TestResumeEmitsFullWhenLookupErrorsAreNonFatal(t *testing.T) {
 	})
 	seedAwaitingParent(t, store, "sess_lookup_err")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_lookup_err/resume")
+	rr := resumeAndDrive(t, srv, "sess_lookup_err")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestResumeEmitsResumedBeforeChildrenReattached(t *testing.T) {
 	seedAwaitingParent(t, store, "sess_parent_order")
 	seedTreeSession(t, store, "sess_child_order", "sess_parent_order")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent_order/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent_order")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -225,7 +225,7 @@ func TestResumeEmitsResumedEvenWithoutSnapshot(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_resumed_cold/resume")
+	rr := resumeAndDrive(t, srv, "sess_resumed_cold")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}

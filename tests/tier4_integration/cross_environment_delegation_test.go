@@ -508,7 +508,7 @@ type poolRecordingAssigner struct {
 	pools []string
 }
 
-func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.pools = append(a.pools, pool)
 	a.mu.Unlock()
@@ -521,6 +521,10 @@ func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 }
 
 func (a *poolRecordingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (a *poolRecordingAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.

@@ -183,6 +183,16 @@ type Lease struct {
 	// Empty when SPIFFE-binding is disabled (single-tenant or
 	// development deployments only).
 	SpiffeURI string
+	// CoordinationGeneration is the session's coordination_generation the
+	// minting attempt held: the resume driver's entry generation for a
+	// restore, the spent lease's value for a renewal or rotation, and 0 for
+	// create, finalize, start, and a delegated child. A pod release returns
+	// the session's leases at or below its binding's stamp, so a lease a
+	// later restore minted survives a stale replica's release.
+	//
+	// spec: §7.3 (Credential leases on the replacement pod), §10.1.5 (Stale
+	// Replica Behavior).
+	CoordinationGeneration int64 `json:"coordinationGeneration,omitempty"`
 }
 
 // LeaseError captures Lease.Validate failures.

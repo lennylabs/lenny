@@ -339,8 +339,14 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	}
 	out := sendResp.Parts
 
+	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
+	// own write. It runs no post-terminal hook: the handler's deferred
+	// single-shot release releases the executor.
+	completedAt := h.clock()
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+		from := s.State
 		s.State = session.StateCompleted
+		sessionstore.MarkTerminated(s, from, completedAt)
 		// Persist the continuation lineage only for a continuation; chain-root
 		// rows stay clean so GET echoes an empty previous_response_id.
 		// spec: §15 built-in adapter single-shot compute model.

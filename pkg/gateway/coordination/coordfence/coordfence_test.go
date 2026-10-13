@@ -182,3 +182,43 @@ func TestFenceZeroGenerationFencesAtBaseline(t *testing.T) {
 		t.Errorf("fenced at gen %d, want baseline 1", fc.lastGens[0])
 	}
 }
+
+// TestFenceAtRelinquishesOnStaleWithoutRereading_spec_10_1_2 asserts that
+// FenceAt fences at the generation it is given, reads no generation, and on
+// a stale rejection relinquishes without retrying at a higher re-read value,
+// even when the stored generation advanced; an accepted fence records exactly
+// that generation.
+//
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica
+// Behavior)
+func TestFenceAtRelinquishesOnStaleWithoutRereading_spec_10_1_2(t *testing.T) {
+	t.Run("accepted at the given generation", func(t *testing.T) {
+		fc := &fakeFenceClient{results: []adapterclient.CoordinatorFenceResult{{Accepted: true}}}
+		gens := &genReader{gens: []int64{99}}
+		f := New(gens, &fakeReleaser{}, "replica-a", &fakeMetrics{}, Options{})
+		relinquished, err := f.loop(context.Background(), fc, "acme", "s1", 7, false)
+		if err != nil || relinquished {
+			t.Fatalf("FenceAt = %v, %v; want accepted", relinquished, err)
+		}
+		if len(fc.lastGens) != 1 || fc.lastGens[0] != 7 || gens.idx != 0 {
+			t.Errorf("fenced at %v with %d generation reads, want one fence at 7 and no read", fc.lastGens, gens.idx)
+		}
+	})
+	t.Run("stale rejection relinquishes at once", func(t *testing.T) {
+		fc := &fakeFenceClient{errs: []error{staleErr(), nil}, results: []adapterclient.CoordinatorFenceResult{{}, {Accepted: true}}}
+		gens := &genReader{gens: []int64{9}}
+		rel := &fakeReleaser{}
+		m := &fakeMetrics{}
+		f := New(gens, rel, "replica-a", m, Options{})
+		relinquished, err := f.loop(context.Background(), fc, "acme", "s1", 7, false)
+		if !relinquished || !errors.Is(err, ErrRelinquished) {
+			t.Fatalf("FenceAt = %v, %v; want relinquished", relinquished, err)
+		}
+		if fc.calls != 1 || gens.idx != 0 {
+			t.Errorf("calls = %d, generation reads = %d; want one call and no re-read", fc.calls, gens.idx)
+		}
+		if m.stale != 1 || m.retry != 0 || m.relinquish != 1 || rel.released != 1 {
+			t.Errorf("stale=%d retry=%d relinquish=%d released=%d, want 1/0/1/1", m.stale, m.retry, m.relinquish, rel.released)
+		}
+	})
+}

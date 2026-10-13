@@ -17,14 +17,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 
-// seedResumingRow inserts a row in the §7.2 internal `resuming` transient
-// that the resume failure-handling block reconciles, mirroring the state
-// handleResume writes before calling resumeOnPod.
-func seedResumingRow(t *testing.T, store *memstore.Store, id string) {
+// seedResumingRow inserts a row in the §7.2 internal `resuming` transient, as
+// the resume driver's entry write leaves it, and returns the stored row with
+// its coordination generation, the attempt's G.
+func seedResumingRow(t *testing.T, store *memstore.Store, id string) sessionstore.Session {
 	t.Helper()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID:         id,
@@ -35,85 +34,78 @@ func seedResumingRow(t *testing.T, store *memstore.Store, id string) {
 	}); err != nil {
 		t.Fatalf("seed resuming row: %v", err)
 	}
+	row, err := store.Get(context.Background(), "acme", id)
+	if err != nil {
+		t.Fatalf("read seeded row: %v", err)
+	}
+	return row
 }
 
-// spec: §7.3 (awaiting_client_action holding state for a retryable resume
-// failure), §15.1 (SETUP_COMMAND_FAILED), §6.2 (transient setup failure
-// retried on a fresh pod), §7.2.
-// diagnosis: on a /resume failure the gateway must demote the row to terminal
-// `failed` exactly when the cause is the deterministic codes.FailedPrecondition
-// setup-command exit (the non-retryable 422 SETUP_COMMAND_FAILED), and hold the
-// row in resumable `awaiting_client_action` for every other setup-time cause
-// (the retryable RESUME_FAILED envelope). A failure here means a recoverable
-// session was abandoned in terminal `failed` under a retryable envelope (the
-// explicit resume retry, valid only from awaiting_client_action, would be
-// rejected against the terminal row), or a deterministic failure was left
-// resumable so the client retries a setup script that fails identically.
-func TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3(t *testing.T) {
+// spec: §7.3 (Resume driver; Retry and Resume), §15.1 (SETUP_COMMAND_FAILED),
+// §6.2 (Pod State Machine).
+// diagnosis: a failure after the resume driver's entry write is reported once
+// through the failure funnel at the attempt's generation. The deterministic
+// codes.FailedPrecondition setup-command exit is reported as
+// setup_command_failed, which the default policy treats as non-retryable, so
+// the row leaves resuming for awaiting_client_action with RetryCount
+// unchanged; every other setup-time cause is reported as runtime_crash, which
+// spends one retry and re-enters resume_pending. No cause demotes the row to
+// failed. A failure here means a recoverable session was abandoned, or a
+// deterministic setup failure was retried on every attempt.
+func TestReportResumeFailureSetupCommand_spec_7_3(t *testing.T) {
 	cases := []struct {
-		name      string
-		cause     error
-		wantState session.State
+		name       string
+		cause      error
+		wantState  session.State
+		wantReason session.FailureReason
+		wantRetry  int64
 	}{
 		{
-			"deterministic FailedPrecondition demotes to failed",
+			"deterministic FailedPrecondition is non-retryable",
 			status.Error(codes.FailedPrecondition, "run setup commands: exit 3"),
-			session.StateFailed,
+			session.StateAwaitingClientAction, session.FailureSetupCommandFailed, 0,
 		},
 		{
-			"transient Unavailable stays resumable (crashed pod)",
+			"transient Unavailable re-enters resume_pending",
 			status.Error(codes.Unavailable, "pod unreachable"),
-			session.StateAwaitingClientAction,
+			session.StateResumePending, session.FailureRuntimeCrash, 1,
 		},
 		{
-			"transient DeadlineExceeded stays resumable",
+			"transient DeadlineExceeded re-enters resume_pending",
 			status.Error(codes.DeadlineExceeded, "setup timed out"),
-			session.StateAwaitingClientAction,
+			session.StateResumePending, session.FailureRuntimeCrash, 1,
 		},
 		{
-			"transient Internal stays resumable",
+			"transient Internal re-enters resume_pending",
 			status.Error(codes.Internal, "adapter internal error"),
-			session.StateAwaitingClientAction,
+			session.StateResumePending, session.FailureRuntimeCrash, 1,
 		},
 		{
-			"non-status cause is Unknown and stays resumable",
+			"non-status cause re-enters resume_pending",
 			errors.New("wrapped non-status transport boom"),
-			session.StateAwaitingClientAction,
+			session.StateResumePending, session.FailureRuntimeCrash, 1,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			s := New(store, Options{})
-			id := "sess-resume-demote"
-			seedResumingRow(t, store, id)
-
-			// The binder wraps every RunSetup/RunSetupSlot error, deterministic
-			// or transient, as *SetupCommandFailure; the resume path passes the
-			// wrapped error to holdOrFailOnResumeError just as handleResume does.
+			row := seedResumingRow(t, store, "sess-resume-report")
 			err := fmt.Errorf("podsession: resume: %w",
 				&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: tc.cause})
-			s.holdOrFailOnResumeError(context.Background(), "acme", id, err)
-
-			row, gerr := store.Get(context.Background(), "acme", id)
+			if exit := s.reportResumeFailure(row, row.CoordinationGeneration, err); exit != resumeExitReported {
+				t.Fatalf("exit = %v, want resumeExitReported", exit)
+			}
+			got, gerr := store.Get(context.Background(), "acme", row.ID)
 			if gerr != nil {
 				t.Fatalf("get session: %v", gerr)
 			}
-			if row.State != tc.wantState {
-				t.Errorf("state = %q, want %q", row.State, tc.wantState)
+			if got.State != tc.wantState || got.FailureReason != string(tc.wantReason) || got.RetryCount != tc.wantRetry {
+				t.Errorf("row = %q/%q/retry %d, want %q/%q/retry %d",
+					got.State, got.FailureReason, got.RetryCount, tc.wantState, tc.wantReason, tc.wantRetry)
 			}
-
-			// spec: §7.2 / §15.1 — a row held in awaiting_client_action remains
-			// a valid resume precondition (the retry can succeed), while a
-			// demoted-to-failed row is terminal and rejects a further resume.
-			resumable := session.Validate(session.PreconditionRequest{
-				Endpoint:     session.EndpointResume,
-				CurrentState: row.State,
-			}) == nil
-			wantResumable := tc.wantState == session.StateAwaitingClientAction
-			if resumable != wantResumable {
-				t.Errorf("resume precondition from %q = %v, want %v (a retryable failure must stay resumable)",
-					row.State, resumable, wantResumable)
+			if got.CoordinationGeneration != row.CoordinationGeneration {
+				t.Errorf("coordination_generation = %d, want %d unchanged by the exit", got.CoordinationGeneration, row.CoordinationGeneration)
 			}
 		})
 	}
@@ -126,15 +118,16 @@ func resumeSlotBindErr(cause error) error {
 		&podsession.SlotBindError{Pod: "sbx-1", SlotID: "sess-1", Stage: "resume", Err: cause})
 }
 
-// spec: §7.3 (retry and resume); §4.7.1 (role and gateway RPC contract);
-// §5.2 (pool configuration and execution modes); §6.2 (pod state machine).
-// diagnosis: a failure means a resume that met the §5.2 reclaim hold or a
-// §4.7.1 slot-bind refusal demoted the row to terminal `failed` while the wire
-// answered the retryable RESUME_FAILED, so the client's explicit resume retry
-// is rejected against a terminal row. The setup-command case fails when the
-// refusal arms sit after the setupFail case, which demotes any
-// FailedPrecondition cause first.
-func TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3(t *testing.T) {
+// spec: §7.3 (Resume driver; Retry and Resume); §4.7.1 (role and gateway RPC
+// contract); §5.2 (pool configuration and execution modes); §6.2 (pod state
+// machine).
+// diagnosis: a resume whose bind met the §5.2 reclaim hold or a §4.7.1
+// slot-bind refusal after its entry write is reported as runtime_crash, so the
+// row re-enters resume_pending and the driver retries on a fresh pod; it is
+// never demoted to failed. A failure means a refusal that succeeds on a fresh
+// attempt ended the session, or a refusal wrapped in a setup failure was
+// treated as a deterministic setup exit.
+func TestReportResumeFailureSlotRefusals_spec_7_3(t *testing.T) {
 	hold := func() error { return status.Error(codes.Aborted, "slot_reclaim_in_progress") }
 	cases := []struct {
 		name string
@@ -145,46 +138,37 @@ func TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3(t *testing.T) {
 		{"reclaim hold in a SlotBindError", resumeSlotBindErr(hold())},
 		{"superseded refusal in a SlotBindError", resumeSlotBindErr(supersededRefusal())},
 		{"started-session refusal in a SlotBindError", resumeSlotBindErr(startedRefusal())},
-		{
-			"started-session refusal as a setup-command cause",
-			fmt.Errorf("podsession: resume: %w",
-				&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: startedRefusal()}),
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			s := New(store, Options{})
-			id := "sess-resume-refusal"
-			seedResumingRow(t, store, id)
-			s.holdOrFailOnResumeError(context.Background(), "acme", id, tc.err)
-			row, err := store.Get(context.Background(), "acme", id)
+			row := seedResumingRow(t, store, "sess-resume-refusal")
+			s.reportResumeFailure(row, row.CoordinationGeneration, tc.err)
+			got, err := store.Get(context.Background(), "acme", row.ID)
 			if err != nil {
 				t.Fatalf("get session: %v", err)
 			}
-			if row.State != session.StateAwaitingClientAction {
-				t.Fatalf("state = %q, want %q", row.State, session.StateAwaitingClientAction)
-			}
-			if verr := session.Validate(session.PreconditionRequest{
-				Endpoint:     session.EndpointResume,
-				CurrentState: row.State,
-			}); verr != nil {
-				t.Errorf("resume precondition from %q rejected: %v", row.State, verr)
+			if got.State != session.StateResumePending || got.RetryCount != 1 {
+				t.Fatalf("row = %q/retry %d, want resume_pending/retry 1", got.State, got.RetryCount)
 			}
 		})
 	}
 }
 
-// spec: §7.3 (retry and resume); §4.7.1 (role and gateway RPC contract).
-// diagnosis: a failure means the resume classifier holds a row on any
-// FailedPrecondition rather than on the §4.7.1 started-session sentinel,
-// which reclassifies causes this change does not own.
-func TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3(t *testing.T) {
-	if isTransientPodClaimError(status.Error(codes.FailedPrecondition, "workspace root mismatch")) {
-		t.Error("a bare FailedPrecondition that is not the started-session refusal classified transient")
-	}
-	if isTransientPodClaimError(resumeSlotBindErr(status.Error(codes.FailedPrecondition, "workspace root mismatch"))) {
-		t.Error("a wrapped FailedPrecondition that is not the started-session refusal classified transient")
+// spec: §7.3 (Resume driver); §4.7.1 (role and gateway RPC contract).
+// diagnosis: only a setup-command failure whose cause is FailedPrecondition is
+// reported as setup_command_failed; a bare or wrapped FailedPrecondition that
+// is not a setup failure is a runtime_crash that spends a retry. A failure
+// means a resume error this change does not classify was made non-retryable.
+func TestResumeFailureReasonIgnoresPlainFailedPrecondition_spec_7_3(t *testing.T) {
+	for _, err := range []error{
+		status.Error(codes.FailedPrecondition, "workspace root mismatch"),
+		resumeSlotBindErr(status.Error(codes.FailedPrecondition, "workspace root mismatch")),
+	} {
+		if got := resumeFailureReason(err); got != string(session.FailureRuntimeCrash) {
+			t.Errorf("resumeFailureReason(%v) = %q, want runtime_crash", err, got)
+		}
 	}
 }
 
@@ -238,36 +222,45 @@ func TestResumeFailureReachesTheSlotAccounting_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §7.3 (Retry and Resume), §7.2 (Interactive Session Model)
-// diagnosis: the resume hold writes awaiting_client_action only over a row the
-// store still holds in `resuming`. A row a concurrent resume committed to
-// `running`, or a concurrent DELETE moved to a terminal state on a §7.2
-// mid-resume terminal-collapse edge, keeps its state. A failure means a failed
-// resume overwrites a newer state, so a running session is parked or a
-// cancelled session is revived.
-func TestHoldOrFailOnResumeErrorKeepsNewerState_spec_7_3(t *testing.T) {
+// spec: §7.3 (Resume driver), §7.2 (Interactive Session Model)
+// diagnosis: a resume attempt's failure report writes only over the resuming
+// incarnation it belongs to. A row a later incarnation committed to running,
+// a row a DELETE cancelled, and a resuming row at a later generation keep
+// their state. A failure means a failed attempt overwrote a newer state, so a
+// running session is parked or a cancelled session is revived.
+func TestReportResumeFailureKeepsNewerState_spec_7_3(t *testing.T) {
 	for _, tc := range []struct {
+		name  string
 		state session.State
-		err   error
+		bump  bool
 	}{
-		{session.StateRunning, leasestore.ErrHeld},
-		{session.StateCancelled, podclaim.ErrNoIdlePod},
+		{"running", session.StateRunning, false},
+		{"cancelled", session.StateCancelled, false},
+		{"later resuming incarnation", session.StateResuming, true},
 	} {
-		t.Run(string(tc.state), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			s := New(store, Options{})
-			if err := store.Create(context.Background(), sessionstore.Session{
-				ID: "sess-newer", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
+			row := seedResumingRow(t, store, "sess-newer")
+			gen := row.CoordinationGeneration
+			if _, err := store.Update(context.Background(), "acme", row.ID, func(r *sessionstore.Session) error {
+				r.State = tc.state
+				if tc.bump {
+					r.CoordinationGeneration++
+				}
+				return nil
 			}); err != nil {
-				t.Fatalf("seed: %v", err)
+				t.Fatalf("move row: %v", err)
 			}
-			s.holdOrFailOnResumeError(context.Background(), "acme", "sess-newer", tc.err)
-			row, err := store.Get(context.Background(), "acme", "sess-newer")
+			before, _ := store.Get(context.Background(), "acme", row.ID)
+			s.reportResumeFailure(row, gen, podclaim.ErrNoIdlePod)
+			got, err := store.Get(context.Background(), "acme", row.ID)
 			if err != nil {
 				t.Fatalf("get: %v", err)
 			}
-			if row.State != tc.state {
-				t.Errorf("state = %q, want %q unchanged", row.State, tc.state)
+			if got.State != tc.state || !got.UpdatedAt.Equal(before.UpdatedAt) || got.RetryCount != before.RetryCount {
+				t.Errorf("row = %q (updated %v, retry %d), want %q unchanged (updated %v, retry %d)",
+					got.State, got.UpdatedAt, got.RetryCount, tc.state, before.UpdatedAt, before.RetryCount)
 			}
 		})
 	}

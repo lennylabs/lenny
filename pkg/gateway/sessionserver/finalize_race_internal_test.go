@@ -38,19 +38,25 @@ func rowState(t *testing.T, store sessionstore.Store, id string) session.State {
 	return row.State
 }
 
-// failSession's non-finalize callers (the /start path and tree recovery) keep
-// its unconditional write: a failSession on a terminal row still writes
-// `failed`. Only the finalize handler's failFinalizing is guarded.
-// spec: 7.2 (terminal states), 15.1 (finalize row)
-func TestFailSessionStaysUnconditional_spec_7_2(t *testing.T) {
+// failSession is a hook-path terminal writer whose guard admits only a
+// non-terminal locked row: a failSession on a row another writer already made
+// terminal writes nothing, keeps the row's UpdatedAt, and runs no hook.
+// spec: 7.2 (Interactive Session Model)
+func TestFailSessionWritesNothingOverATerminalRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedState(t, store, "s", session.StateCancelled)
-	srv := New(store, Options{})
-
+	before, _ := store.Get(context.Background(), "acme", "s")
+	bus := sessionevents.NewBus(16)
+	srv := New(store, Options{Events: bus})
 	srv.failSession(context.Background(), "acme", "s")
 
-	if got := rowState(t, store, "s"); got != session.StateFailed {
-		t.Errorf("state after failSession on a cancelled row = %q, want failed", got)
+	after, _ := store.Get(context.Background(), "acme", "s")
+	if after.State != session.StateCancelled || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("row after failSession on a cancelled row = %q (updated %v), want cancelled unchanged (updated %v)",
+			after.State, after.UpdatedAt, before.UpdatedAt)
+	}
+	if evs := bus.History("s", 0); len(evs) != 0 {
+		t.Errorf("events = %+v, want none: the guard refused the write, so no hook ran", evs)
 	}
 }
 
@@ -105,7 +111,7 @@ func TestFailFinalizingCommitsAndEmitsTerminalTail_spec_7_2(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
 
-	if err := srv.failFinalizing(context.Background(), "acme", "s"); err != nil {
+	if err := srv.failFinalizing(context.Background(), "acme", "s", false); err != nil {
 		t.Fatalf("failFinalizing = %v, want nil", err)
 	}
 	if got := rowState(t, store, "s"); got != session.StateFailed {
@@ -133,7 +139,7 @@ func TestFailFinalizingLosesToTerminalWriter_spec_15_1(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
 
-	err := srv.failFinalizing(context.Background(), "acme", "s")
+	err := srv.failFinalizing(context.Background(), "acme", "s", false)
 	var pe *session.PreconditionError
 	if !errors.As(err, &pe) || pe.CurrentState != session.StateCancelled {
 		t.Fatalf("failFinalizing = %v, want *session.PreconditionError with currentState cancelled", err)

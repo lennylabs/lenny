@@ -45,6 +45,9 @@ type PrepareResult struct {
 	// the session holds. spec: §7.3 (Retry and Resume), §4.9 (Credential
 	// Leasing Service).
 	MintedLeaseIDs []string
+	// BindAttempt is the §4.7.1 token Prepare minted and carried on every
+	// entry-touching RPC. Bind copies it onto its BindResult.
+	BindAttempt string
 }
 
 // Prepare runs the §4.3 finalize-time preparation barrier against the pod
@@ -202,5 +205,6 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		SetupOutputs:          setupOutputs,
 		Timings:               t,
 		MintedLeaseIDs:        minted,
+		BindAttempt:           bindAttempt,
 	}, nil
 }

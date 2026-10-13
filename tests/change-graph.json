@@ -348,6 +348,11 @@
       "component": ["tests/tier2_component/alerting/..."],
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
+    "tests/testinfra/lifecycleharness": {
+      "unit": ["tests/tier1_unit/lifecycle/..."],
+      "component": ["tests/tier2_component/lifecycle/..."],
+      "chaos": ["tests/tier8_chaos/lifecycle_fault_injection_test.go"]
+    },
     "tests/testinfra/rotationgate": {
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]

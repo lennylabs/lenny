@@ -281,7 +281,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		// spec: §8.8 (TaskRecord and TaskResult Schema) — resolve
 		// retriesExhausted against the deployer retry caps the session
 		// server's failure path enforces.
-		RetryBudget:        sessionSrv,
+		RetryBudget: sessionSrv,
+		// spec: §7.2 (Interactive Session Model) — the cancel tools open
+		// the session server's terminal claim and run its post-terminal
+		// hook, so an MCP cancel seals, drains, emits the terminal events,
+		// and releases the pod as every other terminal writer does.
+		Terminal:           sessionSrv,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
 		ElicitationMetrics: gwMetrics,

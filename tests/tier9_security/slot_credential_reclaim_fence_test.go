@@ -366,7 +366,7 @@ func TestFailedAttemptLeaseReleaseStripsNoSuccessorLease_spec_4_7_1(t *testing.T
 	f := newFenceFixture(t, credential.DeliveryProxy)
 	// A successor attempt for the same session already holds a lease, minted
 	// on another replica's attempt.
-	successor, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme")
+	successor, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("successor lease: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestFailedAttemptLeaseReleaseStripsNoSuccessorLease_spec_4_7_1(t *testing.T
 // credential's active-session slot leaked.
 func TestFailedBindLeavesAnotherAttemptsLeaseLive_spec_7_3(t *testing.T) {
 	f := newFenceFixture(t, credential.DeliveryProxy)
-	other, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme")
+	other, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("other attempt's lease: %v", err)
 	}

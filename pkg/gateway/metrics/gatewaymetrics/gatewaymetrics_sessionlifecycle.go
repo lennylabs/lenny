@@ -64,10 +64,12 @@ type sessionLifecycleMetrics struct {
 	// per §7.1 derive rule 2 opt-in derive_failure audit-row write, labelled
 	// by outcome (persisted | fenced | error). F-15.1.14.
 	deriveFailureAudit *prometheus.CounterVec
-	// sessionResumeAttempts counts the §16.1 / §7.3
-	// `lenny_session_resume_attempts_total{pool, outcome}` counter:
-	// every POST /v1/sessions/{id}/resume that passes the precondition
-	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
+	// sessionResumeAttempts is the
+	// `lenny_session_resume_attempts_total{pool, outcome}` counter: one
+	// bump per resume attempt whose entry write the resume driver saw take
+	// effect, "success" for a commit that landed and "failure" for a
+	// failure after the entry write or a commit that did not land.
+	// spec: §16.1 (Metrics), §7.3 (Resume driver).
 	sessionResumeAttempts *prometheus.CounterVec
 	// sessionExpiry counts the §16.1
 	// `lenny_session_expiry_total{pool, reason}` counter: a session
@@ -211,10 +213,11 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §7.3 — `lenny_session_resume_attempts_total{pool, outcome}`
-	// counts every POST /v1/sessions/{id}/resume call that passes the
-	// precondition gate. Outcome is "success" when the row transitions
-	// to running or "failure" when the pod-claim step fails. F-7.3.10.
+	// spec: §16.1 (Metrics), §7.3 (Resume driver) —
+	// `lenny_session_resume_attempts_total{pool, outcome}` counts each
+	// resume attempt whose entry write the resume driver saw take effect,
+	// "success" for a commit that landed and "failure" for a failure after
+	// the entry write or a commit that did not land.
 	sessionResumeAttempts, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_session_resume_attempts_total",
 		Help: "Session resume attempts by outcome (§7.3, §16.1).",

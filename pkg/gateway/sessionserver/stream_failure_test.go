@@ -78,6 +78,12 @@ func (g *getHookStore) Get(ctx context.Context, tenantID, id string) (sessionsto
 	return row, err
 }
 
+// GetPrimary is the primary read the report's peer-takeover check makes; the
+// hooks apply to it as to Get.
+func (g *getHookStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return g.Get(ctx, tenantID, id)
+}
+
 // streamFixture is a funnel fixture whose executor has the stream-eviction
 // seam.
 type streamFixture struct {

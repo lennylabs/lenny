@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -55,54 +56,6 @@ func dispositionForState(st session.State) executor.Disposition {
 	default:
 		return ""
 	}
-}
-
-// terminatedReasonForState maps a session's terminal §6.2 state to the coded
-// reason stamped on the session row's TerminatedReason field. It returns "" for
-// a non-terminal state, which stampTerminatedCondition treats as "no fact to
-// record". spec: §7.2 / §8.8 (Terminated session-condition fact).
-func terminatedReasonForState(st session.State) string {
-	switch st {
-	case session.StateCompleted:
-		return "Completed"
-	case session.StateFailed:
-		return "Failed"
-	case session.StateCancelled:
-		return "Cancelled"
-	case session.StateExpired:
-		return "Expired"
-	default:
-		return ""
-	}
-}
-
-// stampTerminatedCondition records the §7.2 / §8.8 Terminated session-condition
-// fact (TerminatedAt + TerminatedReason) on the session row when the row has
-// reached a terminal state and the fact has not already been stamped. The
-// gateway writes no Sandbox.status field for the terminal disposition (§4.6.3);
-// the fact lives on the session row and is read through the session API (§7.2). The write is best-effort and idempotent: a row already carrying a
-// TerminatedAt is returned unchanged so a re-entrant terminal funnel does not
-// churn the stamp, and a store error is logged but never rolls back the
-// terminal transition. spec: §7.2; §8.8.
-func (s *Server) stampTerminatedCondition(ctx context.Context, sess sessionstore.Session) sessionstore.Session {
-	reason := terminatedReasonForState(sess.State)
-	if reason == "" || !sess.TerminatedAt.IsZero() {
-		return sess
-	}
-	now := s.clock()
-	updated, err := s.store.Update(ctx, sess.TenantID, sess.ID, func(r *sessionstore.Session) error {
-		if !r.TerminatedAt.IsZero() {
-			return nil
-		}
-		r.TerminatedAt = now
-		r.TerminatedReason = reason
-		return nil
-	})
-	if err != nil {
-		log.Printf("lenny-gateway: stamp terminated condition session=%s: %v", sess.ID, err)
-		return sess
-	}
-	return updated
 }
 
 // handleUsage implements GET /v1/usage per §15.1 — the aggregated
@@ -355,44 +308,37 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 	}
 }
 
-// recordSessionCompleted runs the side effects of a session reaching a
-// terminal state: it takes the §7.1 final workspace snapshot, releases
-// the session's executor state — for a pod-backed session this shuts
-// the runtime down and reclaims the pod — and emits the §11.2.1
-// `session.completed` billing event. All are best-effort: a failure
-// never fails the transition that triggered it.
+// recordSessionCompleted is the terminal funnel of the funnel-path terminal
+// writers. It runs the post-terminal hook (AfterTerminalWrite) first, with
+// terminalSignals as the hook's signal tail, and then, on the row the hook
+// returned, the session-log close hook, the input-wait and budget forget, the
+// quota checkpoint, and the billing event. The seal precedes every terminal
+// signal, and the pod release follows the operational event, the callback,
+// the terminal lifecycle signals, and the archive, child-failed, watermark,
+// and cascade steps. All are best-effort: a failure never fails the
+// transition that triggered it.
 //
-// fromState is the session's pre-terminal state, captured by the caller
-// before it overwrote the row with the terminal value. The terminal
-// pod-release path keys off it: a session that was created/finalizing/ready
-// before termination never launched and holds only a §4.6 claim, so its pod
-// is reclaimed by name; a running/resuming session holds a live BindResult
-// and is released through the executor path so the §6.2 recycle disposition
-// is preserved (§4.6). spec: §15.1; §4.6.
+// fromState is the session's pre-terminal state, read by the caller on the
+// locked row it overwrote. The terminal pod-release path keys off it: a
+// session that was created/finalizing/ready before termination never
+// launched and holds only a §4.6 claim, so its pod is reclaimed by name; a
+// running/resuming session holds a live BindResult and is released through
+// the executor path so the §6.2 recycle disposition is preserved (§4.6).
+//
+// spec: §15.1; §4.6; §7.1 (Normal Flow); §29.4 (Interrupt, terminate, and
+// delete).
 func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
-	// spec: §7.2 / §8.8 — record the Terminated session-condition fact on the
-	// Postgres session row (the gateway is not a Sandbox.status writer, §4.6.3,
-	// so the terminal disposition is a session-row field rather than a
-	// Sandbox.status.conditions entry). recordSessionCompleted is the single
-	// terminal funnel, so stamping here covers every terminal path (REST
-	// terminate, watchdog force-terminate, cascade). Best-effort and
-	// idempotent: a row already carrying the fact is left unchanged, and a
-	// failed stamp never rolls back the terminal transition. F-6.2.12.
-	sess = s.stampTerminatedCondition(ctx, sess)
-	// §7.1 seal-and-export (steps 20-23): export the final workspace
-	// before the pod is released and before the client- and audit-visible
-	// terminal signals fire below. The seal runs with the §7.1
-	// bounded exponential backoff; when the retry window is exhausted the
-	// session is re-labeled failed/workspace_seal_timeout so the
-	// session_complete event and audit row report the true outcome rather
-	// than a clean completion that silently lost its workspace. The pod is
-	// still torn down by the executor release below ("terminates the pod
-	// anyway"). The Sealer no-ops for a session that never ran on a pod.
-	if s.sealer != nil {
-		if err := s.sealWorkspace(ctx, sess); err != nil {
-			sess = s.failWorkspaceSeal(ctx, sess, err)
-		}
-	}
+	sess = s.AfterTerminalWrite(ctx, fromState, sess, s.terminalSignals)
+	s.afterTerminalRelease(ctx, sess)
+}
+
+// terminalSignals is the funnel writers' terminal-signal tail, which the
+// post-terminal hook runs after the terminal events and before the pod
+// release, in today's order: the §16.6 operational event, the §14 callback,
+// the lifecycle audit and retention roll, the §8.10 archive, the child_failed
+// event, the §8.3 watermark, and the cascadeOnFailure evaluation of §29.4
+// step 15. spec: §7.2; §29.4 (Interrupt, terminate, and delete).
+func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session) {
 	// §16.6 / §25.3: a session reaching a terminal state emits the
 	// matching session lifecycle operational event so an ops agent
 	// observes it through the event buffer. Best-effort — a nil emitter
@@ -422,40 +368,9 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	// off the transition path and clears the sealed secret when the
 	// delivery settles. F-14.1.11.
 	s.enqueueTerminalCallback(sess)
-	// §7.2 / §11.7 / §7.1: the client- and
-	// audit-visible terminal signals (status_change, session_complete,
-	// the lifecycle audit event, and the retention-window roll). Shared
-	// with failSession so the start-path failure emits the same signals.
+	// §7.2 / §11.7 / §7.1: the audit-visible terminal signals (the
+	// lifecycle audit event and the retention-window roll).
 	s.emitTerminalLifecycle(ctx, sess)
-	// spec: §15.1, §4.6 (durable
-	// binding), §6.2 (pre-attached disposition), §7.1 step 23 (lease release)
-	// — a session terminated before it ever launched (created/finalizing/ready)
-	// holds a pod claimed at /create but registered no live BindResult, so the
-	// executor release below keys off the empty registry and returns early
-	// (PodExecutor.Release no-op), leaking both the claim and any lease the
-	// finalize barrier assigned. Reclaim the claimed pod and revoke the lease
-	// from the persisted binding instead, the same claimless reclaim the §4.5
-	// created-expiry sweeper runs. A running/resuming session is released through
-	// the executor path so its pod follows the §6.2 recycle disposition that
-	// the binder's Release applies; the by-name reclaim is scoped to the
-	// pre-running states (§4.6) by gating on fromState rather than on the mere
-	// absence of a local BindResult, because a coordinator-handed-off running
-	// session also lacks a local BindResult yet must not be reclaimed by name.
-	// terminalReclaimPreRunning reports true only when it ran the reclaim, so the
-	// executor release (the no-bind no-op for a pre-running session) is skipped
-	// in that case.
-	if !s.terminalReclaimPreRunning(ctx, fromState, sess) && s.executor != nil {
-		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
-			// recordSessionCompleted is best-effort by design (a failed
-			// teardown does not unwind the terminal-state transition), but
-			// silently dropping the error has bitten us: a 403 on
-			// SandboxClaim Delete or an SSA conflict on the
-			// activeSlots decrement leaves a slot stuck and the pool
-			// drains its capacity unobserved. Logging makes the failure
-			// surface in the gateway log so an operator notices.
-			log.Printf("lenny-gateway: executor.Close session=%s: %v", sess.ID, err)
-		}
-	}
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.
 	s.archiveSettledChild(ctx, sess)
@@ -471,6 +386,12 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	// §8.10: apply the cascadeOnFailure policy to this session's
 	// children now that it has reached a terminal state.
 	s.cascadeToChildren(ctx, sess)
+}
+
+// afterTerminalRelease runs the funnel's steps that follow the pod release:
+// the session-log close hook, the input-wait and budget forget, the quota
+// checkpoint, and the billing event. spec: §4.4; §8.8; §11.2; §10.6.
+func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
 	// captures the buffered runtime stderr and persists it as the
 	// `/{tenant_id}/sessions/{session_id}/stderr.log` artifact. A
@@ -493,10 +414,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	}
 	// spec: §11.2 — drop the settled session's mid-session token-budget
 	// accounting from the §4.9 LLM-proxy enforcer so the per-session map
-	// does not retain an entry for a session whose row is gone. Runs for
-	// every terminal (natural completion, failure, budget expiry, force
-	// terminate) since recordSessionCompleted is the single terminal
-	// funnel.
+	// does not retain an entry for a session whose row is gone.
 	if s.budgetForget != nil {
 		s.budgetForget(sess.ID)
 	}
@@ -548,6 +466,15 @@ func isPreRunningClaimState(st session.State) bool {
 	return false
 }
 
+// lookupBinding reads this replica's binding for the session, reporting none
+// when no pod registry is wired.
+func (s *Server) lookupBinding(sessionID string) (*podsession.BindResult, bool) {
+	if s.podRegistry == nil {
+		return nil, false
+	}
+	return s.podRegistry.Get(sessionID)
+}
+
 // terminalReclaimPreRunning releases the pod a session claimed at /create
 // and revokes any lease the finalize barrier assigned when the session
 // reaches a terminal state before it ever launched (created/finalizing/ready).
@@ -569,7 +496,7 @@ func isPreRunningClaimState(st session.State) bool {
 // disposition and the adapter scrub the binder's Release performs. Gating on
 // fromState keeps the running-session teardown on the executor path (§10.1
 // handoff coverage, the binder's Release). When the gateway runs without a pod
-// binder or registry (in-memory mode) or the row carries no pod binding, the
+// binder (in-memory mode) or the row carries no pod binding, the
 // reclaim cannot apply and it reports false so the caller falls through to the
 // executor path. The lease revoke inside ReclaimClaimed is a no-op for a
 // created session that never assigned one and mandatory for a finalizing/ready
@@ -583,10 +510,12 @@ func (s *Server) terminalReclaimPreRunning(ctx context.Context, fromState sessio
 	if !isPreRunningClaimState(fromState) {
 		return false
 	}
-	if s.podBinder == nil || s.podRegistry == nil || sess.PodAssignment == "" {
+	if s.podBinder == nil || sess.PodAssignment == "" {
 		return false
 	}
-	if _, bound := s.podRegistry.Get(sess.ID); bound {
+	// With no pod registry wired this replica holds no binding, so the
+	// claim is reclaimed by name.
+	if _, bound := s.lookupBinding(sess.ID); bound {
 		// A created/finalizing/ready session that nonetheless holds a live
 		// BindResult on this replica (an SDK-warm preConnect pod attached at
 		// finalize, for example) is released through the executor path so its
@@ -779,8 +708,10 @@ func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session)
 // per §8.10: when the tenant is already over maxOrphanTasksPerTenant
 // the gateway falls back to `cancel_all` so orphans cannot accumulate
 // without bound. Each cancelled descendant is itself governed by its
-// own cascade policy, so a `detach` child shields its own subtree.
-// Best-effort: a failure never fails the transition that triggered it.
+// own cascade policy, so a `detach` child shields its own subtree. Each
+// cancel is a hook-path terminal write whose post-terminal hook releases the
+// descendant's pod. Best-effort: a failure never fails the transition that
+// triggered it.
 func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Session) {
 	originalPolicy := sess.CascadeOnFailure.Resolve()
 	policy := originalPolicy
@@ -825,27 +756,25 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 			// Already settled — its own cascade ran when it settled.
 			continue
 		}
-		updated, err := s.store.Update(ctx, sess.TenantID, cur.ID, func(row *sessionstore.Session) error {
-			row.State = session.StateCancelled
-			return nil
-		})
+		// spec: §7.2, §8.10 — a hook-path terminal writer per descendant: the
+		// claim opens before the Update, the write applies only over a
+		// non-terminal locked row and records the Terminated fact, and the
+		// post-terminal hook (cancel, seal, drain, the terminal events, the
+		// archive, and the pod release with the cancelled disposition) runs
+		// on a goroutine on a detached context, so one descendant's seal
+		// window does not delay the next. A descendant another writer
+		// already ended is skipped with none of its children queued.
+		end := s.BeginTerminal(cur.ID)
+		from, updated, err := s.writeTerminal(ctx, sess.TenantID, cur.ID, session.StateCancelled, nonTerminalGuard)
 		if err != nil {
+			end()
 			continue
 		}
-		s.archiveSettledChild(ctx, updated)
-		// spec: §11.3 / §11.4 — a cascaded cancel must
-		// drain the descendant's pod, not merely flip its row. Releasing the
-		// executor records the §6.2 cancelled disposition and triggers the
-		// adapter's graceful shutdown so the descendant runtime stops holding
-		// tokens, executing tool calls, and charging its credential lease.
-		// Without this the only sink for a cascaded cancel is the watchdog's
-		// maxSessionAge clock (hours later) and every descendant pod leaks.
-		// Best-effort: a teardown failure never unwinds the cancel. F-11.3.9.
-		if s.executor != nil {
-			if err := releaseExecutor(ctx, s.executor, cur.ID, executor.DispositionCancelled); err != nil {
-				log.Printf("lenny-gateway: cascade executor release session=%s: %v", cur.ID, err)
-			}
-		}
+		hctx := context.WithoutCancel(ctx)
+		go func() {
+			defer end()
+			s.AfterTerminalWrite(hctx, from, updated, s.archiveSettledChild)
+		}()
 		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
 			queue = append(queue, byParent[cur.ID]...)
 		}

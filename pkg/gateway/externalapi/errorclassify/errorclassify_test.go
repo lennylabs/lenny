@@ -164,8 +164,8 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 // TestClassifySessionLifecycleFallbackCodes asserts the W2 / F-CS6
 // session-lifecycle codes resolve to their authoritative §15.1 catalog
 // (category, retryable) pair instead of a per-call-site hardcoded value
-// or the unknown-code (TRANSIENT, true) fallback. The four generic
-// fallbacks and the signer-unavailable code are TRANSIENT and retryable;
+// or the unknown-code (TRANSIENT, true) fallback. The generic fallbacks
+// and the signer-unavailable code are TRANSIENT and retryable;
 // the confirmation-flag and deterministic setup-command codes are
 // PERMANENT and not retryable. Because REST writeError and MCP
 // handleToolCall both classify through this one table, a correct entry
@@ -181,7 +181,6 @@ func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
 	}{
 		{"SESSION_CREATION_FAILED", CategoryTransient, true}, // spec: 15:1101
 		{"STARTING_FAILED", CategoryTransient, true},         // spec: 15:1102
-		{"RESUME_FAILED", CategoryTransient, true},           // spec: 15:1103
 		{"KMS_SIGNING_UNAVAILABLE", CategoryTransient, true}, // spec: 15:1104
 		{"CONFIRMATION_REQUIRED", CategoryPermanent, false},  // spec: 15:1105
 		{"SETUP_COMMAND_FAILED", CategoryPermanent, false},   // spec: 15:1106
@@ -204,6 +203,23 @@ func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
 				t.Errorf("%s fell through to the (TRANSIENT, true) fallback", c.code)
 			}
 		})
+	}
+}
+
+// TestResumeFailedIsNotAClassifiedCode asserts that RESUME_FAILED has left the
+// §15.1 catalog: POST /resume is a store write that claims no pod, so no
+// producer of the code remains, and the classifier treats the string as an
+// unknown code rather than a catalog entry.
+//
+// spec: §15.1 (REST API), §7.3 (Retry and Resume).
+func TestResumeFailedIsNotAClassifiedCode(t *testing.T) {
+	if Known("RESUME_FAILED") {
+		t.Fatal("RESUME_FAILED is still a known catalog code; the resume fallback was removed")
+	}
+	cat, retr := Classify("RESUME_FAILED")
+	ucat, uretr := Classify("UNDEFINED_FUTURE_CODE")
+	if cat != ucat || retr != uretr {
+		t.Errorf("Classify(RESUME_FAILED) = (%q, %v), want the unknown-code fallback (%q, %v)", cat, retr, ucat, uretr)
 	}
 }
 

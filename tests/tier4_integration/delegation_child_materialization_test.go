@@ -130,10 +130,14 @@ func (r *materializeRespondingRuntime) Close(context.Context, string) error     
 // sentinel.
 type materializeRaceAssigner struct{}
 
-func (materializeRaceAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (materializeRaceAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
 func (materializeRaceAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (materializeRaceAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.

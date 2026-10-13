@@ -368,7 +368,19 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	// The cascade runs each cancelled child's post-terminal hook, which
+	// archives it, on a goroutine.
+	var (
+		got treearchive.ArchivedNode
+		err error
+	)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got, err = archive.GetByNode(context.Background(), "acme", "sess_child"); err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("cascade-cancelled child was not archived: %v", err)
 	}
@@ -387,7 +399,7 @@ func TestResumeEmitsChildrenReattached(t *testing.T) {
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent") // running
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -413,7 +425,7 @@ func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 		t.Fatalf("seed child: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -428,7 +440,7 @@ func TestResumeSkipsChildrenReattachedWhenNoChildren(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
 	seedAwaitingParent(t, store, "sess_solo")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_solo/resume")
+	rr := resumeAndDrive(t, srv, "sess_solo")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -470,7 +482,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 		t.Fatalf("Register: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -511,7 +523,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *
 		t.Fatalf("Put: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -557,7 +569,7 @@ func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d", rr.Code)
 	}
@@ -579,7 +591,7 @@ func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d", rr.Code)
 	}

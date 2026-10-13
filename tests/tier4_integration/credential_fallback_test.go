@@ -78,7 +78,7 @@ type rotateRecord struct {
 }
 
 func (r *mintingRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
-	lease, err := r.assign.Assign(nextPool, faulted.SessionID, "", faulted.TenantID)
+	lease, err := r.assign.Assign(nextPool, faulted.SessionID, "", faulted.TenantID, 0)
 	rec := rotateRecord{faultedPool: faulted.PoolID, nextPool: nextPool, trigger: trigger}
 	if err == nil && lease.Proxy != nil {
 		rec.newToken = lease.Proxy.LeaseToken
@@ -197,7 +197,7 @@ func startFallbackFixture(t *testing.T, maxRotations int, cooldown time.Duration
 // returns the pod-facing lease token.
 func (f *fallbackFixture) mint(t *testing.T, pool string) string {
 	t.Helper()
-	lease, err := f.assign.Assign(pool, fbSession, "", fbTenant)
+	lease, err := f.assign.Assign(pool, fbSession, "", fbTenant, 0)
 	if err != nil {
 		t.Fatalf("mint lease from %s: %v", pool, err)
 	}

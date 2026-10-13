@@ -238,8 +238,11 @@ func (c *Client) Terminate(ctx context.Context, id string, opts ...RequestOption
 	return c.transition(ctx, http.MethodPost, id, "terminate", opts...)
 }
 
-// Resume calls POST /v1/sessions/{id}/resume, transitioning a
-// session awaiting client action back to running.
+// Resume calls POST /v1/sessions/{id}/resume on a session in
+// awaiting_client_action or suspended. The call returns the session in its
+// new state, resume_pending when the session waits for a restore, or running
+// when a suspended session resumed on the pod it holds; the restore's outcome
+// arrives on the session's event stream.
 func (c *Client) Resume(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
 	return c.transition(ctx, http.MethodPost, id, "resume", opts...)
 }

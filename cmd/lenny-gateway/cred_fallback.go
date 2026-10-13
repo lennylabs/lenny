@@ -45,7 +45,10 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	// The SPIFFE-binding identity is re-derived from the lease record at
 	// proxy-request time, so the fault mint does not need it here (the
 	// renewal path mints the same way).
-	wire, err := r.assign.AssignProto(nextPool, faulted.SessionID, "", faulted.TenantID)
+	// spec: §7.3 (Credential leases on the replacement pod) — the
+	// replacement records the faulted lease's coordination generation, so
+	// the session's pod release scopes it as it scoped the faulted lease.
+	wire, err := r.assign.AssignProto(nextPool, faulted.SessionID, "", faulted.TenantID, faulted.CoordinationGeneration)
 	if err != nil {
 		log.Printf("lenny-gateway: §4.9 fallback: mint replacement for session %s from pool %s: %v",
 			faulted.SessionID, nextPool, err)

@@ -19,6 +19,12 @@ import (
 // spec: §10.1, §11.3.
 type CoordinationFencer interface {
 	Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error)
+	// FenceAt fences at the given generation and relinquishes on a stale
+	// rejection without retrying at a re-read value, so the generation the
+	// pod accepted is the one the caller committed at. The resume driver
+	// fences its commit through it. spec: §10.1.2 (Coordinator Handoff
+	// Protocol), §10.1.5 (Stale Replica Behavior).
+	FenceAt(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string, generation int64) (relinquished bool, err error)
 }
 
 // DualStoreGate reports whether this replica currently observes the

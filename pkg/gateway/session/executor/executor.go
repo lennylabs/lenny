@@ -70,6 +70,22 @@ type MessageFrom struct {
 	ID   string
 }
 
+// SenderFrom builds the §15.4 from-object for a message an inter-session
+// sender sent: an authenticated sender is attributed as kind `agent` with its
+// session id, and an unattributed send (no sender session) returns the zero
+// value so the executor stamps its default gateway-client identity. The
+// gateway always sets `from` — a caller cannot. The MCP send path and the
+// delivery of held messages both use it, so a held message keeps the sender
+// attribution it was accepted with.
+//
+// spec: §15.4 (Runtime Adapter Specification); §13.5 mitigation 6.
+func SenderFrom(senderID string) MessageFrom {
+	if senderID == "" {
+		return MessageFrom{}
+	}
+	return MessageFrom{Kind: "agent", ID: senderID}
+}
+
 // MessagePart is the §28.5.3 outbound response envelope.
 type MessagePart struct {
 	// Type is the §28.5.3 content type: `text`, `tool_call`,

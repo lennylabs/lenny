@@ -54,7 +54,9 @@ func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, sandboxName stri
 		log.Info("sessionserver: attach stream failure belongs to a superseded binding; not reported")
 		return
 	}
-	row, err := s.store.Get(ctx, tenantID, sessionID)
+	// spec: §12.3 (Postgres HA Requirements) — the peer-takeover check reads
+	// the primary row, so a lagging read-pool row does not hide a takeover.
+	row, err := s.readPrimary(ctx, tenantID, sessionID)
 	if err != nil {
 		log.Warn("sessionserver: read session for attach stream failure; not reported", "error", err)
 		return
@@ -96,16 +98,17 @@ func (s *Server) reportedStreamBinding(sessionID, sandboxName string) *podsessio
 
 // reportSupersededByPeer reports whether a peer replica has taken the session
 // over since this replica published bind. RecordHandoff bumps the row's
-// coordination_generation on every takeover, so a row generation above the
-// binding's means another replica coordinates the session; a zero binding
-// generation counts as superseded, so a publish site that never stamped its
-// binding fails closed.
+// coordination_generation on every takeover, and the generation also
+// advances on every resume_pending → resuming write, so a row generation
+// above the binding's means another replica coordinates the session or a
+// later incarnation owns it; a zero binding generation counts as superseded,
+// so a publish site that never stamped its binding fails closed. A resume
+// commit stamps its binding at the generation it committed at, so a stream
+// failure on that binding is reported rather than dropped.
 //
 // Only the states ReportSessionFailure acts on are checked. In any other
-// state the report is a no-op there, and the binding stays: handleResume
-// bumps the generation on its failure exit after it may have published a
-// binding, and leaves the row in awaiting_client_action or failed, where that
-// binding waits for the next resume's release or the terminal release.
+// state the report is a no-op there, and the binding stays for the next
+// resume's release or the terminal binding release.
 //
 // spec: §10.1.1 (one coordinating replica per session); §10.1.5 (a replica
 // that is no longer the coordinator stops its RPCs).

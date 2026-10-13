@@ -93,7 +93,8 @@ func renewalProxyPool(name, credID string) credassign.Pool {
 // is renewed by the worker, and the replacement credential is pushed to
 // the session's pod via the §4.7 RotateCredentials RPC.
 func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
-	assign := credassign.New(credleasestore.New(), credcache.New())
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
 
 	// The session's pod is bound on this replica with a live adapter
@@ -102,7 +103,7 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 	registry := podsession.NewRegistry()
 	registry.Put(&podsession.BindResult{SessionID: "run_a", Adapter: dialRecorder(t, rec)})
 
-	wiring := newCredRenewalWiring(assign, registry, nil, nil, nil)
+	wiring := newCredRenewalWiring(assign, registry, nil, leases, nil)
 	if wiring == nil {
 		t.Fatal("newCredRenewalWiring returned nil for a wired credential service")
 	}
@@ -116,7 +117,7 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 
 	// Mint and assign the session's first lease. OnAssigned tracks it
 	// for renewal.
-	lease, err := assign.Assign("claude-prod", "run_a", "", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -156,17 +157,18 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 // the worker tracks the fresh lease, and there is simply no local pod
 // to push the rotation to.
 func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
-	assign := credassign.New(credleasestore.New(), credcache.New())
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
 
 	// An empty registry: the session's pod is bound on another replica.
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, leases, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -188,8 +190,9 @@ func TestNewCredRenewalWiringNilWithoutService(t *testing.T) {
 // it never recorded a pool binding for: without the originating pool it
 // cannot re-mint, and the worker falls through to fault rotation.
 func TestRenewWithoutPoolBindingFails(t *testing.T) {
-	assign := credassign.New(credleasestore.New(), credcache.New())
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, leases, nil)
 
 	_, err := wiring.Renew(context.Background(), credrenewal.Lease{LeaseID: "untracked"})
 	if err == nil {
@@ -217,15 +220,16 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 
-	assign := credassign.New(credleasestore.New(), credcache.New())
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, nil, nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, leases, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -274,15 +278,16 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 
-	assign := credassign.New(credleasestore.New(), credcache.New())
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, nil, nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, leases, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnExhausted: wiring.onExhausted})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -317,9 +322,10 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 // spec §4.0: a renewal wired without an emitter is a no-op for the
 // event side; the rotation lifecycle continues normally.
 func TestRenewalNoEmitterIsSilent(t *testing.T) {
-	assign := credassign.New(credleasestore.New(), credcache.New())
+	leases := credleasestore.New()
+	assign := credassign.New(leases, credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, leases, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{
 		OnRenewed:   wiring.onRenewed,
 		OnExhausted: wiring.onExhausted,
@@ -328,7 +334,7 @@ func TestRenewalNoEmitterIsSilent(t *testing.T) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
 	})
 
-	lease, err := assign.Assign("claude-prod", "run_a", "", "")
+	lease, err := assign.Assign("claude-prod", "run_a", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}

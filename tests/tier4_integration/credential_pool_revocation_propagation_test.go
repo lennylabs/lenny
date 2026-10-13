@@ -174,7 +174,7 @@ func TestPoolCredentialEmergencyRevocationPropagatesAcrossReplicas(t *testing.T)
 			{ID: revCredID, APIKey: revUpstream, Healthy: true},
 		},
 	})
-	lease, err := assign.Assign(revPool, revSession, "", revTenant)
+	lease, err := assign.Assign(revPool, revSession, "", revTenant, 0)
 	if err != nil {
 		t.Fatalf("assign pool lease: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestPoolCredentialEmergencyRevocationDeniesRetainedLeaseSharedStore(t *test
 			{ID: revCredID, APIKey: revUpstream, Healthy: true},
 		},
 	})
-	lease, err := assign.Assign(revPool, revSession, "", revTenant)
+	lease, err := assign.Assign(revPool, revSession, "", revTenant, 0)
 	if err != nil {
 		t.Fatalf("assign pool lease: %v", err)
 	}

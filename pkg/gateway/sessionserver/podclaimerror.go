@@ -12,13 +12,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/upload"
 )
 
@@ -267,10 +265,7 @@ func (s *Server) recordPodClaimFailure(err error) {
 // DeadlineExceeded, a wrapped or non-status cause that status.Code reports
 // as Unknown, and Internal/Aborted/ResourceExhausted) is a transient
 // setup-window transport failure that §6.2 recovers on a fresh pod, so it
-// keeps the retryable 503 fallback + Retry-After. The same
-// codes.FailedPrecondition-versus-complement boundary governs the /resume
-// row-state demotion in isTransientPodClaimError, so the wire envelope and
-// the row state cannot disagree.
+// keeps the retryable 503 fallback + Retry-After.
 // spec: §7.3 (setup_command_failed non-retryable), §15.1 (SETUP_COMMAND_FAILED),
 // §6.2 (transient setup failure retried on a fresh pod).
 func (s *Server) writeSetupCommandError(
@@ -418,95 +413,6 @@ func (s *Server) writeTokenServiceUnavailable(w http.ResponseWriter, cause error
 		msg = msg + ": " + cause.Error()
 	}
 	s.writeError(w, http.StatusServiceUnavailable, "TOKEN_SERVICE_UNAVAILABLE", msg, nil)
-}
-
-// isTransientPodClaimError reports whether err is a known §5.2 / §4.9
-// pool/credential exhaustion or a §4.3 Token Service outage — failures
-// that the spec catalogues as retryable. The §7.3 `awaiting_client_action`
-// holding state is preserved across these so the explicit client retry
-// (`POST /v1/sessions/{id}/resume`) can succeed once the pool frees up.
-//
-// A setup-time failure is split on the same codes.FailedPrecondition
-// boundary as the wire envelope (writeSetupCommandError): only the
-// deterministic codes.FailedPrecondition setup-command exit (the
-// non-retryable 422 SETUP_COMMAND_FAILED) demotes the row to terminal
-// `failed`. Every other setup-window cause (a crashed pod surfaced as
-// codes.Unavailable / codes.DeadlineExceeded, a wrapped or non-status
-// cause that status.Code reports as codes.Unknown, and the remaining
-// transient codes) is the retryable RESUME_FAILED envelope, so the row
-// stays in `awaiting_client_action` and the explicit resume retry can
-// succeed once the condition clears. Both decisions read
-// status.Code(setupFail.Cause) and branch on codes.FailedPrecondition,
-// so the wire retryability and the row state share one predicate and
-// cannot drift. Both §4.7.1 slot-bind refusals are checked ahead of that
-// predicate, in this function and in writePodClaimError alike, so a refusal
-// wrapped in a *SetupCommandFailure holds the row rather than demoting it. A workspace_validation_failed or runtime-registry error
-// is still non-retryable and demotes the row to failed. F-7.3.23.
-//
-// spec: §5.2, §4.9
-// (CREDENTIAL_POOL_EXHAUSTED), §4.3,
-// §5.2,
-// §7.3 (awaiting_client_action holding state for a retryable resume failure),
-// §6.2 (transient setup failure retried on a fresh pod).
-func isTransientPodClaimError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if status.Code(err) == codes.Aborted {
-		// spec: §15.4 (runtime adapter specification); §5.2 (pool configuration
-		// and execution modes). ABORTED is the adapter's transient wire
-		// classification for a bind it refused rather than failed. It covers
-		// the §5.2 reclaim-hold refusal, the identity gate's
-		// SLOT_BIND_ATTEMPT_SUPERSEDED, and the start-confirmation rollback the
-		// adapter answers on a failed start or resume. All three succeed on a
-		// fresh attempt, so the row holds in awaiting_client_action for the
-		// client's explicit resume retry rather than going terminal.
-		return true
-	}
-	if errors.Is(err, adapterclient.ErrSlotBindAlreadyStarted) {
-		// spec: §4.7.1 (role and gateway RPC contract), rule 6; §7.3 (retry and
-		// resume). The refusal is a fact about this pod rather than the session,
-		// and a resume retry makes a new claim.
-		return true
-	}
-	var warming *podsession.PoolWarmingError
-	var credAssign *podsession.CredentialAssignmentError
-	var setupFail *podsession.SetupCommandFailure
-	switch {
-	case errors.As(err, &warming):
-		return true
-	case errors.As(err, &credAssign):
-		return true
-	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
-		return true
-	case errors.Is(err, credrouter.ErrNoCredentialAvailable):
-		return true
-	case errors.Is(err, podclaim.ErrNoIdlePod):
-		return true
-	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
-		return true
-	case errors.Is(err, leasestore.ErrHeld):
-		// spec: §29.3 (Interactive message send, Off-holder matrix), §29.6
-		// (Restore and resume), §7.3 (Retry and Resume) — the resume's bind met
-		// another replica's coordination lease. resumeOnPod has already rolled
-		// the claimed pod back and published no binding. The holder still
-		// coordinates the session, so the row holds in awaiting_client_action
-		// and the retryable RESUME_FAILED answer stands: a retry succeeds once
-		// it reaches the holder or the holder's lease lapses.
-		return true
-	case errors.Is(err, coordfence.ErrRelinquished):
-		// spec: §11.3 — the coordinator relinquished the session
-		// after its fence retries; another replica owns it. Hold the row
-		// in awaiting_client_action so the client's `POST /resume` retry
-		// routes to the rightful coordinator rather than failing the row.
-		return true
-	case errors.As(err, &setupFail):
-		// spec: §6.2 / §7.3 — only the deterministic codes.FailedPrecondition
-		// setup exit demotes to failed; every other setup-window cause stays
-		// resumable, the exact complement of the non-retryable wire envelope.
-		return status.Code(setupFail.Cause) != codes.FailedPrecondition
-	}
-	return false
 }
 
 // recordSetupCommandFailed emits the §7.5 / §7.3 audit event

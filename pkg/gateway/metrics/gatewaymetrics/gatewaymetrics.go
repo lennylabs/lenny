@@ -525,13 +525,13 @@ func (m *Metrics) IncDeriveFailureAudit(outcome string) {
 	m.deriveFailureAudit.WithLabelValues(outcome).Inc()
 }
 
-// IncSessionResumeAttempt increments the §16.1 / §7.3
-// `lenny_session_resume_attempts_total{pool, outcome}` counter for one
-// POST /v1/sessions/{id}/resume call. Outcome is "success" when the
-// row transitions to running or "failure" when the pod-claim step
-// fails. The pool label echoes the session's §5.2 PoolRef at resume
-// time (empty for a session whose pool was never resolved). spec:
-// §7.3, §16.1. F-7.3.10.
+// IncSessionResumeAttempt increments the
+// `lenny_session_resume_attempts_total{pool, outcome}` counter once for each
+// resume attempt whose entry write the resume driver saw take effect:
+// "success" for a commit that landed, "failure" for a failure after the entry
+// write or a commit that did not land. The pool label echoes the session's
+// §5.2 PoolRef at attempt time (empty for a session whose pool was never
+// resolved). spec: §16.1 (Metrics), §7.3 (Resume driver).
 func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 	if m == nil {
 		return

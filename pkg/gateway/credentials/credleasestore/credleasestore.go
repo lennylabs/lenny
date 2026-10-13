@@ -56,6 +56,21 @@ type LeaseStore interface {
 	// spec: §4.9 — the startup rebuild seeds a deny-list
 	// entry only for a revoked credential that still has an active lease.
 	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
+	// Lookup resolves a lease by its lease ID and distinguishes a missing
+	// record from a failed read: ok is false with a nil error only when
+	// the store holds no record of the lease, and any other failure is
+	// returned as an error. The §4.9 renewal reads it so a released lease
+	// is never re-minted and a transient read failure is retried.
+	//
+	// spec: §4.9 (Proactive Lease Renewal).
+	Lookup(leaseID string) (lease credential.Lease, ok bool, err error)
+	// Advance moves an existing lease record's ExpiresAt and RenewBefore
+	// to the values lease carries and inserts no record. It reports false
+	// with a nil error when the store holds no record of the lease, so an
+	// extension of a released lease writes nothing.
+	//
+	// spec: §4.9 (Proactive Lease Renewal).
+	Advance(lease credential.Lease) (bool, error)
 }
 
 // Store indexes issued credential leases by lease ID and, for
@@ -119,6 +134,30 @@ func (s *Store) GetByID(leaseID string) (lease credential.Lease, ok bool) {
 	defer s.mu.RUnlock()
 	lease, ok = s.byID[leaseID]
 	return lease, ok
+}
+
+// Lookup resolves a lease by its lease ID. The in-memory store always
+// answers, so the error is nil and ok is false only for a lease it holds no
+// record of. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Lookup(leaseID string) (credential.Lease, bool, error) {
+	lease, ok := s.GetByID(leaseID)
+	return lease, ok, nil
+}
+
+// Advance moves an existing record's ExpiresAt and RenewBefore to lease's
+// values and reports whether a record existed. It inserts nothing for an
+// unknown lease. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Advance(lease credential.Lease) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.byID[lease.LeaseID]
+	if !ok {
+		return false, nil
+	}
+	cur.ExpiresAt = lease.ExpiresAt
+	cur.RenewBefore = lease.RenewBefore
+	s.byID[lease.LeaseID] = cur
+	return true, nil
 }
 
 // Remove drops the lease with the given ID and its token index. It is

@@ -118,6 +118,12 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 	return row, nil
 }
 
+// GetPrimary implements sessionstore.PrimaryReader. The in-memory store has
+// no read pool, so it is Get. spec: §12.3 (Postgres HA Requirements).
+func (s *Store) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return s.Get(ctx, tenantID, id)
+}
+
 // GetByID returns the session row whose ID equals id regardless of
 // tenant, backing the §24.11 platform-admin session-investigation
 // surface. spec: §24.11.

@@ -10,51 +10,96 @@ import (
 )
 
 // expireSession transitions a session to the §7.3 terminal `expired`
-// state and runs the same archive / terminal-lifecycle teardown as
-// failSession. The §8.10 tree-recovery driver uses it for a node whose
-// individual `maxResumeWindowSeconds` elapsed before recovery reached
-// it (spec: §8.10 — "that node transitions to `expired`").
+// state. The §8.10 tree-recovery driver uses it for a node whose individual
+// `maxResumeWindowSeconds` elapsed before recovery reached it (spec: §8.10 —
+// "that node transitions to `expired`"). It is a hook-path terminal writer:
+// it opens its terminal claim before its Update, writes only over a
+// non-terminal locked row, records the Terminated fact in the write, and on a
+// write that applied runs the post-terminal hook with fromState from the
+// locked row. A row already terminal is not applied (sessionstore.
+// ErrSuperseded) and nothing more runs; a store error is ignored, because its
+// one caller, FailNode, returns nothing.
+//
+// spec: §7.2 (Interactive Session Model), §8.10 (Delegation Tree Recovery)
 func (s *Server) expireSession(ctx context.Context, tenantID, sessionID string) {
-	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-		row.State = session.StateExpired
-		return nil
-	})
-	if err == nil {
-		s.archiveSettledChild(ctx, updated)
-		s.emitTerminalLifecycle(ctx, updated)
+	end := s.BeginTerminal(sessionID)
+	defer end()
+	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateExpired, nonTerminalGuard)
+	if err != nil {
+		return
 	}
+	s.AfterTerminalWrite(ctx, from, updated, s.settledChildSignals)
 }
 
-// failSession marks a session row failed after a start-path error. The
-// update is best-effort: the start handler has already chosen the HTTP
-// error it returns to the client, so a store failure here cannot change
-// the reply. The write is unconditional, because its callers (the /start
-// path and tree recovery) serialize through their own mechanisms; the
-// finalize handler uses failFinalizing instead, which admits only a
-// `finalizing` row.
+// failSession marks a session row failed. Its caller is §8.10 tree recovery,
+// which fails a node whose level or tree budget elapsed, including an
+// awaiting_client_action node. It is a hook-path terminal writer with the
+// guard expireSession applies: it writes only over a non-terminal locked
+// row, records the Terminated fact in the write, and on a write that applied
+// runs the post-terminal hook through afterFailed with fromState from the
+// locked row. A row already terminal is not applied and nothing more runs; a
+// store error is ignored.
+//
+// spec: §7.2 (Interactive Session Model), §8.10 (Delegation Tree Recovery)
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
-	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-		row.State = session.StateFailed
-		return nil
-	})
-	if err == nil {
-		s.afterFailed(ctx, updated)
+	end := s.BeginTerminal(sessionID)
+	defer end()
+	from, updated, err := s.writeTerminal(ctx, tenantID, sessionID, session.StateFailed, nonTerminalGuard)
+	if err != nil {
+		return
 	}
+	s.afterFailed(ctx, from, updated)
 }
 
-// afterFailed runs the terminal tail of a `failed` write: it archives a
-// settled child to the §8.10 session_tree_archive so a resumed parent can
-// replay the outcome, and emits the terminal lifecycle. A failed session is
-// a terminal transition, so it emits the same status_change and
-// session_complete SSE events, the session.failed audit event, and the
-// retention-window roll as any other terminal path. The heavier
-// seal/executor-close teardown stays in recordSessionCompleted, because a
-// start-path or finalize failure never bound a workspace to seal.
-// failSession and failFinalizing share it.
+// nonTerminalGuard is the hook writers' locked-row guard that admits any
+// non-terminal state. A row another writer already made terminal is refused,
+// so no session runs a second post-terminal hook.
+func nonTerminalGuard(r *sessionstore.Session) error {
+	if session.IsTerminal(r.State) {
+		return sessionstore.ErrSuperseded
+	}
+	return nil
+}
+
+// writeTerminal is the one Update a hook-path terminal writer makes: it
+// applies guard to the locked row, captures the locked row's state as the
+// pre-terminal state, writes to, and records the Terminated fact in the same
+// write. It returns the pre-terminal state and the written row, or the
+// guard's sentinel or the store error.
+func (s *Server) writeTerminal(ctx context.Context, tenantID, sessionID string, to session.State,
+	guard func(*sessionstore.Session) error,
+) (session.State, sessionstore.Session, error) {
+	var from session.State
+	now := s.clock()
+	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		if err := guard(row); err != nil {
+			return err
+		}
+		from = row.State
+		row.State = to
+		sessionstore.MarkTerminated(row, from, now)
+		return nil
+	})
+	return from, updated, err
+}
+
+// afterFailed runs the post-terminal hook of a `failed` write made by
+// failSession or failFinalizing, with the signal tail of a settled child: the
+// §8.10 archive and the terminal lifecycle signals. The hook seals, drains,
+// emits the terminal status_change and session_complete, and releases the
+// pod: a pre-running fromState reclaims a claimed pod by name, any other
+// state releases the executor's binding. fromState is the pre-terminal state
+// the writer read on the locked row.
 // spec: §7.2, §11.7, §7.1
-func (s *Server) afterFailed(ctx context.Context, updated sessionstore.Session) {
-	s.archiveSettledChild(ctx, updated)
-	s.emitTerminalLifecycle(ctx, updated)
+func (s *Server) afterFailed(ctx context.Context, fromState session.State, updated sessionstore.Session) {
+	s.AfterTerminalWrite(ctx, fromState, updated, s.settledChildSignals)
+}
+
+// settledChildSignals is the signal tail of expireSession and afterFailed:
+// the §8.10 archive of a settled child, then the terminal lifecycle signals.
+func (s *Server) settledChildSignals(ctx context.Context, sess sessionstore.Session) {
+	s.archiveSettledChild(ctx, sess)
+	s.emitTerminalLifecycle(ctx, sess)
 }
 
 // finalizingPrecondition refuses a finalize exit write unless the locked row
@@ -79,21 +124,27 @@ func finalizingPrecondition(row *sessionstore.Session) error {
 
 // failFinalizing marks a finalizing session failed, but only while the locked
 // row is still `finalizing`. A lost write returns *session.PreconditionError
-// and emits nothing, so a terminal state another writer committed is kept and
-// no second terminal lifecycle is emitted. Any other store error is returned
-// unchanged, and the caller decides the response.
+// and runs nothing, so a terminal state another writer committed is kept and
+// no second post-terminal hook runs. Any other store error is returned
+// unchanged, and the caller decides the response; no hook ran.
+//
+// It is a hook-path terminal writer. On a write that applied, the
+// post-terminal hook runs with fromState finalizing, which is pre-running, so
+// the hook reclaims a claimed pod by name. podReclaimed reports that the
+// caller's failing step already reclaimed the pod, or that no pod was
+// prepared; failFinalizing then passes session.StateFailed as fromState, so
+// the hook does not delete the claim by name a second time.
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states)
-func (s *Server) failFinalizing(ctx context.Context, tenantID, id string) error {
-	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
-		if err := finalizingPrecondition(row); err != nil {
-			return err
-		}
-		row.State = session.StateFailed
-		return nil
-	})
+func (s *Server) failFinalizing(ctx context.Context, tenantID, id string, podReclaimed bool) error {
+	end := s.BeginTerminal(id)
+	defer end()
+	from, updated, err := s.writeTerminal(ctx, tenantID, id, session.StateFailed, finalizingPrecondition)
 	if err != nil {
 		return err
 	}
-	s.afterFailed(ctx, updated)
+	if podReclaimed {
+		from = session.StateFailed
+	}
+	s.afterFailed(ctx, from, updated)
 	return nil
 }

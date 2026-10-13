@@ -112,6 +112,12 @@ type Session struct {
 	// this session to (the SandboxClaim/Sandbox name). Empty on a
 	// service-mode session, which is claimless (§5.2).
 	PodAssignment string `json:"podAssignment,omitempty"`
+
+	// RetryCount and RecoveryGeneration are the §4.2 retry counter and
+	// pod-recovery counter, so a test observes a failure edge that spent a
+	// retry and a restore that committed after the row left the edge.
+	RetryCount         int64 `json:"retryCount"`
+	RecoveryGeneration int64 `json:"recoveryGeneration"`
 }
 
 // MessageResponse is the parsed §15.1 POST /v1/sessions/{id}/messages

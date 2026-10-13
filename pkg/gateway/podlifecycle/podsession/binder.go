@@ -260,5 +260,12 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	res.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
 	res.SetupOutputs = prep.SetupOutputs
 	res.WorkspaceBase = prep.WorkspaceBase
+	// spec: §7.3 (Resume driver) — the token Prepare minted created the
+	// adapter's entry, so an uncommitted restore reclaims under it and
+	// returns exactly the leases this attempt minted.
+	res.BindAttempt = prep.BindAttempt
+	res.Pool = req.Pool
+	res.MaxConcurrentSessions = 1
+	res.MintedLeaseIDs = prep.MintedLeaseIDs
 	return res, nil
 }

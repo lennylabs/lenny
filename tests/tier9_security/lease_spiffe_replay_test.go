@@ -90,7 +90,7 @@ func TestLeaseSpiffeReplayRejectedOverMTLS(t *testing.T) {
 			{ID: "cred-1", APIKey: "sk-upstream-real-secret-do-not-leak", Healthy: true},
 		},
 	})
-	lease, err := assign.Assign(poolName, "s-spiffe-replay", podASpiffeURI, "acme")
+	lease, err := assign.Assign(poolName, "s-spiffe-replay", podASpiffeURI, "acme", 0)
 	if err != nil {
 		t.Fatalf("mint proxy lease: %v", err)
 	}
