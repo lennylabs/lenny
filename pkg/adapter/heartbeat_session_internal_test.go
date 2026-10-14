@@ -245,3 +245,54 @@ func TestHeartbeatHangEndsEveryAttachForTheEntry_spec_28_5_3(t *testing.T) {
 		_ = json.Unmarshal(last, &probe)
 	})
 }
+
+// spec: §28.5.3 (CH-MSGSOCK), §4.7.1 (Role and Gateway RPC Contract)
+// Every entry whose session_start is written and whose session_end is not
+// holds exactly one running monitor, including an entry that survives its
+// session_end and has its session_start written again. A monitor stopped by
+// session_end is replaced at the next session_start write; a hung monitor is
+// kept, so the entry's hang stays visible until the entry is removed.
+//
+// Discriminates: a start site that only starts a monitor when the entry has
+// none, which leaves a re-started entry with a stopped monitor and no probe.
+func TestHeartbeatRestartsOnSessionStartRewrittenOnSameEntry_spec_28_5_3(t *testing.T) {
+	t.Run("stopped monitor is replaced", func(t *testing.T) {
+		s, rt := heartbeatServer(t, 2*time.Millisecond, time.Minute, "sess-a")
+		entry := entryOf(t, s, "sess-a")
+		waitFor(t, "a heartbeat", func() bool { return rt.heartbeatsFor("sess-a") >= 1 })
+		s.writeSessionEnd("sess-a", entry)
+		old := entry.hb
+		<-old.done
+		s.markSessionStartWritten("sess-a", entry, true)
+		s.mu.Lock()
+		fresh := entry.hb
+		s.mu.Unlock()
+		if fresh == old {
+			t.Fatal("the stopped monitor was kept; the re-started session has no running monitor")
+		}
+		select {
+		case <-fresh.done:
+			t.Fatal("the replacement monitor is not running")
+		default:
+		}
+		before := rt.heartbeatsFor("sess-a")
+		waitFor(t, "a heartbeat from the replacement monitor", func() bool {
+			return rt.heartbeatsFor("sess-a") > before
+		})
+		s.writeSessionEnd("sess-a", entry)
+	})
+	t.Run("hung monitor is kept", func(t *testing.T) {
+		s, _ := heartbeatServer(t, 2*time.Millisecond, 10*time.Millisecond, "sess-a")
+		entry := entryOf(t, s, "sess-a")
+		hungMon := entry.hb
+		<-hungMon.hung
+		<-hungMon.done
+		s.markSessionStartWritten("sess-a", entry, true)
+		s.mu.Lock()
+		got := entry.hb
+		s.mu.Unlock()
+		if got != hungMon {
+			t.Fatal("a hung monitor was replaced, hiding the entry's hang")
+		}
+	})
+}
