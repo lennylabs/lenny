@@ -16,8 +16,5 @@ import (
 // spec: §7.3 (Resume driver), §7.3 (Credential leases on the replacement pod),
 // §6.2 (Pod State Machine)
 func TestResumeAttemptExitCells_spec_7_3(t *testing.T) {
-	if testing.Short() {
-		t.Skip("lifecycle cells run in the full tier-1 run")
-	}
 	lifecycleharness.RunResumeExitCells(t, nil)
 }

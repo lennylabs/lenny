@@ -21,8 +21,5 @@ import (
 // spec: §7.2 (Interactive Session Model), §8.8 (TaskRecord and TaskResult
 // Schema), §10.1.5 (Stale Replica Behavior)
 func TestTerminalWriterCells_spec_7_2(t *testing.T) {
-	if testing.Short() {
-		t.Skip("lifecycle cells run in the full tier-1 run")
-	}
 	lifecycleharness.RunTerminalWriterCells(t, nil)
 }

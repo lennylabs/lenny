@@ -61,9 +61,6 @@ func lifecycleOps() []lifecycleOp {
 // spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §6.2 (Pod
 // State Machine)
 func TestLifecycleStateMachine_spec_7_2(t *testing.T) {
-	if testing.Short() {
-		t.Skip("the lifecycle state machine runs in the full tier-1 run")
-	}
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 64, CredentialPool: true})
 	ops := lifecycleOps()
 	rapid.Check(t, func(rt *rapid.T) {
