@@ -5846,6 +5846,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd",
+        "tests/tier8_chaos/serving_endpoints_test.go::TestServingEndpointCountTreatsADrainingServingPodAsReachable",
         "tests/tier8_chaos/ops_down_audit_survives_test.go::TestGatewayAuditSurvivesOpsOutage",
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
