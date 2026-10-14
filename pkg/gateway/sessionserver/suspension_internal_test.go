@@ -92,15 +92,27 @@ func (f *fakeSuspensionCheckpointer) count() int {
 	return f.calls
 }
 
-// releasingExecutor records each Release.
+// releasingExecutor records each Release and each Send; sendErr, when set,
+// answers a Send.
 type releasingExecutor struct {
 	mu       sync.Mutex
 	released []string
+	sends    int
+	sendErr  func() error
 	order    *[]string
 }
 
-func (*releasingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
-	return executor.Response{}, nil
+func (e *releasingExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	e.mu.Lock()
+	e.sends++
+	fn := e.sendErr
+	e.mu.Unlock()
+	if fn != nil {
+		if err := fn(); err != nil {
+			return executor.Response{}, err
+		}
+	}
+	return executor.Response{Parts: []executor.MessagePart{{Type: "text", Text: "ok"}}}, nil
 }
 
 func (*releasingExecutor) Close(context.Context, string) error { return nil }

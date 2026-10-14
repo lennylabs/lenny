@@ -130,9 +130,21 @@ func TestHeartbeatAckReportsBusy_spec_28_5_3(t *testing.T) {
 		if f := l.next(3 * time.Second); errorCode(f) != "RUNTIME_ERROR" {
 			t.Fatalf("frame = %v, want the error response", f)
 		}
-		assertAck(t, l.heartbeatAckFor("sess_a"), "sess_a", false)
-		l.send(msgFrame("sess_a", "stream", "x"))
+		// The message stops counting once its handling returned, which is
+		// just after the error response is written; poll until idle.
 		deadline := time.Now().Add(3 * time.Second)
+		for {
+			ack := l.heartbeatAckFor("sess_a")
+			if _, busy := ack["busy"]; !busy {
+				assertAck(t, ack, "sess_a", false)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("an error response left the session busy")
+			}
+		}
+		l.send(msgFrame("sess_a", "stream", "x"))
+		deadline = time.Now().Add(3 * time.Second)
 		for {
 			ack := l.heartbeatAckFor("sess_a")
 			if _, busy := ack["busy"]; !busy {

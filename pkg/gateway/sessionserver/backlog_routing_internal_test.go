@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+)
+
+// postMessage sends one REST message and returns the receipt status.
+func postMessage(t *testing.T, s *Server, id string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/messages",
+		strings.NewReader(`{"messages":[{"role":"user","content":"x"}]}`))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST messages = %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp MessageResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return string(resp.DeliveryReceipt.Status)
+}
+
+func (r *suspensionRig) seedPodless(t *testing.T, id string) sessionstore.Session {
+	t.Helper()
+	since := r.now.Add(-time.Hour)
+	row := sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateSuspended, SuspendedAt: since,
+		SuspendedReason: sessionstore.SuspendedReasonIdle, CreatedAt: since, UpdatedAt: since,
+	}
+	if err := r.store.Create(context.Background(), row); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	stored, _ := r.store.Get(context.Background(), "acme", id)
+	return stored
+}
+
+func (r *suspensionRig) dlqLen(t *testing.T, id string) int {
+	t.Helper()
+	n, err := r.coord.HeldLen(context.Background(), "acme", id, false, time.Time{})
+	if err != nil {
+		t.Fatalf("HeldLen: %v", err)
+	}
+	return n
+}
+
+// TestPodlessSuspendedMessageHoldsAndResumes_spec_7_2 pins §7.2 path 6 on a
+// podless suspended REST target: the message is held in the DLQ, answered
+// queued, and the session moves to resume_pending; the exported MCP seam
+// holds the same way.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestPodlessSuspendedMessageHoldsAndResumes_spec_7_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	r.seedPodless(t, "s1")
+	if got := postMessage(t, r.srv, "s1"); got != string(session.DeliveryStatusQueued) {
+		t.Fatalf("receipt = %q, want queued", got)
+	}
+	if r.dlqLen(t, "s1") != 1 || r.get(t, "s1").State != session.StateResumePending {
+		t.Fatalf("DLQ %d state %q, want 1 and resume_pending", r.dlqLen(t, "s1"), r.get(t, "s1").State)
+	}
+
+	row := r.seedPodless(t, "s2")
+	outcome, _, err := r.srv.HoldMessage(context.Background(), "acme", "s2", sessioninbox.Message{MessageID: "m", Payload: []byte(`{}`), EnqueuedAt: r.now})
+	if err != nil || outcome != HoldQueued || r.dlqLen(t, "s2") != 1 {
+		t.Fatalf("HoldMessage = %v, %v; DLQ %d", outcome, err, r.dlqLen(t, "s2"))
+	}
+	if err := r.srv.ResumeSuspended(context.Background(), row); err != nil {
+		t.Fatalf("ResumeSuspended: %v", err)
+	}
+	if got := r.get(t, "s2").State; got != session.StateResumePending {
+		t.Fatalf("state after ResumeSuspended = %q, want resume_pending", got)
+	}
+	unlock, err := r.srv.LockDelivery(context.Background(), "s2")
+	if err != nil {
+		t.Fatalf("LockDelivery: %v", err)
+	}
+	unlock()
+}
+
+// TestSealedRefusalReroutesRESTMessage_spec_7_2 pins that a REST batch the
+// adapter refuses as sealed, on a row the idle suspension moved to podless
+// suspended, is held in the DLQ and answered queued rather than failed.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6), 6.2 (Pod State
+// Machine)
+func TestSealedRefusalReroutesRESTMessage_spec_7_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	r.seedRunning(t, "s1")
+	r.exec.sendErr = func() error {
+		_, _ = r.store.Update(context.Background(), "acme", "s1", func(s *sessionstore.Session) error {
+			s.State = session.StateSuspended
+			s.SuspendedReason = sessionstore.SuspendedReasonIdle
+			s.SuspendedAt = r.now
+			s.PodAssignment = ""
+			return nil
+		})
+		return &executor.SealedError{}
+	}
+	if got := postMessage(t, r.srv, "s1"); got != string(session.DeliveryStatusQueued) {
+		t.Fatalf("receipt = %q, want queued", got)
+	}
+	if r.dlqLen(t, "s1") != 1 {
+		t.Fatalf("DLQ = %d, want 1", r.dlqLen(t, "s1"))
+	}
+	if got := r.get(t, "s1").State; got != session.StateResumePending {
+		t.Fatalf("state = %q, want resume_pending", got)
+	}
+}
+
+// TestResumeBacklogResumesAHeldPodSession_spec_7_2 pins the backlog resume:
+// with a message accepted after the suspension, ResumeBacklog answers true and
+// resumes the session on its pod off the caller, delivering the message; with
+// no held message, or no local binding, it answers false.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestResumeBacklogResumesAHeldPodSession_spec_7_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	row := r.seedSuspended(t, "s1", r.now.Add(-time.Hour))
+	if r.srv.ResumeBacklog(context.Background(), row) {
+		t.Fatal("ResumeBacklog answered true with no held message")
+	}
+	if _, err := r.coord.EnqueueDLQ(context.Background(), "acme", "s1", sessioninbox.Message{
+		MessageID: "m1", Payload: []byte(`{"role":"user","content":"x"}`), EnqueuedAt: r.now,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !r.srv.ResumeBacklog(context.Background(), row) {
+		t.Fatal("ResumeBacklog answered false with a held message")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for r.srv.backlogResumes.has("s1") {
+		if time.Now().After(deadline) {
+			t.Fatal("backlog resume did not finish")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := r.get(t, "s1").State; got != session.StateRunning {
+		t.Fatalf("state = %q, want running", got)
+	}
+	r.registry.Remove("s1")
+	if r.srv.ResumeBacklog(context.Background(), row) {
+		t.Fatal("ResumeBacklog answered true with no local binding")
+	}
+}
+
+// TestResumeAfterPodReleasedMovesToResumePending_spec_7_2 pins the POST
+// /resume race: a request that read the row holding its pod, whose pod a
+// suspension release cleared before the resume, answers 200 with
+// resume_pending.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestResumeAfterPodReleasedMovesToResumePending_spec_7_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	row := r.seedSuspended(t, "s1", r.now.Add(-time.Hour))
+	_, _ = r.store.Update(context.Background(), "acme", "s1", func(s *sessionstore.Session) error {
+		s.PodAssignment = ""
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	r.srv.resumeHeldPodRequest(rec, httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/resume", nil), row)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), string(session.StateResumePending)) {
+		t.Fatalf("resume = %d %s, want 200 resume_pending", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBacklogRecheckerRunPassesAtStart_spec_7_2 pins that Run passes once
+// before its first interval and stops with its context.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestBacklogRecheckerRunPassesAtStart_spec_7_2(t *testing.T) {
+	calls := make(chan struct{}, 4)
+	rc := &BacklogRechecker{
+		Server: New(nil, Options{}),
+		Tenants: func(context.Context) ([]string, error) {
+			calls <- struct{}{}
+			return nil, nil
+		},
+		Interval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { rc.Run(ctx); close(done) }()
+	select {
+	case <-calls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not pass at start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop with its context")
+	}
+}
