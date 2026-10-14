@@ -64,6 +64,20 @@ const TOOL = {
         items: { type: "string" },
         description: 'Line ranges to return verbatim, such as "spec/07_session-lifecycle.md:430-446". Use in place of sed.',
       },
+      related: {
+        type: "array",
+        description:
+          "Before or after editing a passage: find other passages that state, restate, or rely on what the edit changes, so they can be updated too. Searches by section links, identifiers, and meaning, then a judge model ranks each candidate. Use scope [\"spec\", \"docs\", \"proposals\"] with paths narrowed to the proposal directory.",
+        items: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "The passage being changed, verbatim, or the new text being written." },
+            change: { type: "string", description: "What the edit does. Recall falls by about half without it." },
+            at: { type: "string", description: 'Location of the passage, such as "spec/07_session-lifecycle.md:430", so the whole passage is used and excluded from results.' },
+          },
+          required: ["text"],
+        },
+      },
       scope: {
         type: "array",
         items: { type: "string", enum: ["spec", "docs", "proposals", "pkg", "cmd", "sdks", "charts", "schemas", "tests"] },

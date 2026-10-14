@@ -15,7 +15,7 @@
 //   lookup.mjs --json '<request>'        or        lookup.mjs < request.json
 //   lookup.mjs --warm [scope ...]        embed every passage in the scopes (default: spec)
 //
-// Request (every field optional except that one of exact, meaning, sections, lines is given):
+// Request (every field optional except that one of exact, meaning, sections, lines, related is given):
 //   {
 //     "scope":    ["spec"],             // any of: spec docs pkg cmd sdks charts schemas tests proposals
 //     "paths":    ["spec/07_session-lifecycle.md"],   // narrows the scope to these files or directories
@@ -23,6 +23,10 @@
 //     "meaning":  [{"query": "an idle session is terminated", "context": "checking for restatements"}],
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
 //     "lines":    ["spec/07_session-lifecycle.md:430-446"],   // line ranges to return verbatim
+//     "related":  [{"text": "the passage being changed", "change": "what the edit does",
+//                   "at": "spec/07_session-lifecycle.md:430"}],   // passages that state or depend
+//                                       // on the changed text; candidates by links, terms, and
+//                                       // meaning ("via" narrows them), judged by Jev
 //     "context":  "what the caller is trying to establish",   // narrows which exact hits print in full
 //     "maxChars": 24000,                // output budget, capped at 26000
 //     "exhaustive": true,               // meaning: judge every passage in scope. Default: only when the
@@ -439,6 +443,193 @@ function contextQuestion(term, context) {
   };
 }
 
+// ---- related: passages that state or depend on what a changed passage says ----
+//
+// A fix that changes one statement leaves every other statement of the same fact
+// wrong, and the review loop found those one round at a time. "related" takes the
+// changed text and collects candidates three ways, each of which can be switched
+// off for measurement: by links (the sections the text cites, the section it sits
+// in, and every passage that cites one of those), by terms (the distinctive
+// identifiers in the text), and by meaning (the word-overlap and embedding
+// shortlists). Jev then judges each candidate against the changed text.
+
+// Measured on the same set: 0.75 kept 16 of 21 results labelled needed and 12
+// of 148 labelled noise; 0.7 kept 18 and 31.
+const RELATED_MIN = Number(process.env.LOOKUP_RELATED_MIN) || 0.75;
+// Each meaning shortlist contributes this many candidates. Smaller than SHORTLIST,
+// because related search is judged for precision as well as recall.
+const RELATED_SHORTLIST = Number(process.env.LOOKUP_RELATED_SHORTLIST) || 80;
+// A term in more passages than this names a common concept rather than the
+// changed statement, and is dropped from the term source.
+const TERM_MAX_PASSAGES = Number(process.env.LOOKUP_TERM_MAX_PASSAGES) || 40;
+const RELATED_MAX_CANDIDATES = 400;
+
+const sectionNumber = (heading) => (/^§?\s*(\d+(?:\.\d+)*)\.?\s/.exec(heading || "") || [])[1] || null;
+const slug = (h) =>
+  h
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-");
+const LABEL_ID = /\b[A-Z]{2,}-\d+[a-z]?\d*\b/g;
+
+// Per markdown block: the numbered section it sits in, and the sections and
+// labelled items it cites. Built once per call over every block in scope.
+function linkIndex(blocksOf) {
+  const bySlug = new Map();
+  for (const bl of blocksOf.values()) for (const b of bl) if (b.isHeading) bySlug.set(slug(b.heading), b.heading);
+  for (const bl of blocksOf.values()) {
+    const stack = [];
+    for (const b of bl) {
+      if (b.isHeading) {
+        while (stack.length && stack[stack.length - 1].level >= b.level) stack.pop();
+        stack.push(b);
+      }
+      // The section a block belongs to: the nearest numbered heading above it, or,
+      // for a proposal's staged edit, the sections its heading names ("§ 7.2").
+      const numbered = [...stack].reverse().find((h) => sectionNumber(h.heading) || /§\s?\d/.test(h.heading));
+      b.sections = new Set();
+      if (numbered) {
+        const n = sectionNumber(numbered.heading);
+        if (n) b.sections.add(n);
+        else for (const m of numbered.heading.matchAll(/§\s?(\d+(?:\.\d+)*)/g)) b.sections.add(m[1]);
+      }
+      b.labelHead = (stack.map((h) => h.heading.match(LABEL_ID)).filter(Boolean).pop() || [])[0] || null;
+      b.cites = citesOf(b.text, bySlug);
+    }
+  }
+  return bySlug;
+}
+
+function citesOf(text, bySlug) {
+  const sections = new Set();
+  for (const m of text.matchAll(/§\s?(\d+(?:\.\d+)*)/g)) sections.add(m[1].replace(/\.$/, ""));
+  for (const m of text.matchAll(/\]\(([^)\s]*?)#([\w%-]+)\)/g)) {
+    const h = bySlug.get(m[2].toLowerCase());
+    const n = h && sectionNumber(h);
+    if (n) sections.add(n);
+  }
+  return { sections, labels: new Set(text.match(LABEL_ID) || []) };
+}
+
+const within = (n, target) => n === target || n.startsWith(target + ".");
+
+function identifiers(text) {
+  const out = new Set();
+  for (const m of text.matchAll(/`([^`\n]{3,60})`/g)) out.add(m[1].trim());
+  for (const m of text.matchAll(/\b([A-Za-z]+(?:[A-Z][a-z0-9]+){1,}[A-Za-z0-9]*)\b/g)) if (/[a-z][A-Z]/.test(m[1])) out.add(m[1]);
+  for (const m of text.matchAll(/\b([a-z][a-z0-9]*(?:[_.][a-z0-9]+)+)\b/g)) out.add(m[1]);
+  return [...out].filter((t) => t.length >= 3);
+}
+
+async function relatedSearch(r, ctx) {
+  const { all, blocksOf, bySlug, key, root } = ctx;
+  const via = new Set(Array.isArray(r.via) && r.via.length ? r.via : ["links", "terms", "meaning"]);
+  const text = String(r.text || "");
+  const change = String(r.change || "");
+  // The passage the changed text sits in: named by "at", or found by its text.
+  let home = null;
+  if (r.at) {
+    const m = /^(.+?):(\d+)/.exec(r.at);
+    if (m) home = (blocksOf.get(m[1]) || []).find((b) => !b.isHeading && Number(m[2]) >= b.from && Number(m[2]) <= b.to) || null;
+  }
+  const probe = text.replace(/\s+/g, " ").slice(0, 80);
+  if (!home && probe.length >= 40) home = all.find((b) => b.text.replace(/\s+/g, " ").includes(probe)) || null;
+  // Search with the whole changed passage: a caller often quotes only the clause
+  // it changes, and the clause alone shares too little with the passages that
+  // restate it.
+  const passage = home && home.text.length > text.length ? home.text : text;
+  const cands = new Map();
+  const add = (b, src) => {
+    if (b === home || b.isHeading) return;
+    if (!cands.has(b)) cands.set(b, new Set());
+    cands.get(b).add(src);
+  };
+  const notes = [];
+
+  if (via.has("links")) {
+    const own = citesOf(passage, bySlug);
+    const targets = new Set(own.sections);
+    const labels = new Set(own.labels);
+    if (home) {
+      for (const n of home.sections) targets.add(n);
+      if (home.labelHead) labels.add(home.labelHead);
+    }
+    // Passages that cite a target section or labelled item, and the passages of a
+    // cited section that share the most words with the changed text.
+    for (const b of all) {
+      if ([...b.cites.sections].some((n) => [...targets].some((t) => within(n, t)))) add(b, "links");
+      else if ([...b.cites.labels].some((l) => labels.has(l)) && b.labelHead !== (home && home.labelHead)) add(b, "links");
+    }
+    for (const n of own.sections) {
+      const inSection = all.filter((b) => [...b.sections].some((x) => within(x, n)));
+      for (const b of shortlist(inSection, passage, 10)) add(b, "links");
+    }
+    notes.push(`links: sections ${[...targets].join(", ") || "none"}; labels ${[...labels].join(", ") || "none"}`);
+  }
+
+  if (via.has("terms")) {
+    const used = [];
+    for (const t of identifiers(passage)) {
+      const hits = all.filter((b) => b.text.includes(t));
+      if (!hits.length || hits.length > TERM_MAX_PASSAGES) continue;
+      used.push(t);
+      for (const b of hits) add(b, "terms");
+    }
+    notes.push(`terms: ${used.join(", ") || "none"}`);
+  }
+
+  if (via.has("meaning")) {
+    const q = passage + (change ? " " + change : "");
+    for (const b of shortlist(all, q, RELATED_SHORTLIST)) add(b, "meaning");
+    const emb = embedShortlist(all, [q], RELATED_SHORTLIST);
+    if (emb.reason) notes.push(`embedding shortlist unavailable (${emb.reason})`);
+    else for (const { block } of emb.lists[0]) add(block, "meaning");
+  }
+
+  let list = [...cands].map(([block, src]) => ({ block, via: [...src].sort() }));
+  if (list.length > RELATED_MAX_CANDIDATES) {
+    notes.push(`${list.length} candidates; the ${list.length - RELATED_MAX_CANDIDATES} with the least word overlap were not judged`);
+    const keep = new Set(shortlist(list.map((c) => c.block), passage + " " + change, RELATED_MAX_CANDIDATES));
+    list = list.filter((c) => keep.has(c.block));
+  }
+  let failed = 0;
+  if (key && list.length) {
+    // For tuning, "format": "json" also asks the question without the change.
+    const questions = { q: relatedQuestion(passage, change, text) };
+    if (ctx.tune && change) questions.q0 = relatedQuestion(passage, "", text);
+    const { answers, failed: f } = await judgeMany(key, list.map((c) => ({ block: c.block, questions })));
+    failed = f;
+    list.forEach((c, i) => {
+      c.p = answers[i] ? answers[i].q : null;
+      if (questions.q0) c.p0 = answers[i] ? answers[i].q0 : null;
+    });
+  }
+  return { home, list, notes, failed, judged: Boolean(key) };
+}
+
+// The wording was chosen by comparing three on 141 known targets and 279
+// blind-labelled results: asking whether an editor making the change must also
+// read the passage kept 57% of targets at 0.75 with 12 of 148 noise results,
+// against 45% at 0.7 with 14 for "states or depends on the same fact" and 43%
+// with 14 for "same subject and condition".
+function relatedQuestion(text, change, part) {
+  const instructions = { changed_text: text.slice(0, 6000) };
+  if (part && part.length < text.length) instructions.changed_part = part.slice(0, 2000);
+  if (change) instructions.change = change.slice(0, 3000);
+  instructions.question = change
+    ? "An editor is about to make `change` to `changed_text`. To keep the documents consistent, must the editor also read `passage`, because it states, restates, or relies on something `change` alters?"
+    : "An editor is about to change `changed_text`. To keep the documents consistent, must the editor also read `passage`, because it states, restates, or relies on what `changed_text` says?";
+  return {
+    type: "noul",
+    instructions,
+    criteria: {
+      true: "`passage` states, restates, or relies on a fact, rule, value, outcome, or identifier that the change alters, so it may now be wrong or inconsistent.",
+      false: "`passage` is about something the change does not alter, even if it is about the same mechanism or shares words.",
+    },
+  };
+}
+
 const loc = (b) => `${b.file}:${b.from}${b.to > b.from ? "-" + b.to : ""}`;
 const where = (b) => (b.heading ? `${loc(b)}  [${b.heading}]` : loc(b));
 
@@ -447,8 +638,10 @@ async function main() {
   const exact = Array.isArray(req.exact) ? req.exact : [];
   const meaning = (Array.isArray(req.meaning) ? req.meaning : []).map((m) => (typeof m === "string" ? { query: m } : m));
   const sections = Array.isArray(req.sections) ? req.sections.map(String) : [];
-  if (!req.warm && !exact.length && !meaning.length && !sections.length && !(Array.isArray(req.lines) && req.lines.length))
-    usage("give at least one of exact, meaning, sections, lines");
+  const related = (Array.isArray(req.related) ? req.related : []).map((r) => (typeof r === "string" ? { text: r } : r));
+  for (const r of related) if (!r || typeof r.text !== "string" || r.text.trim().length < 20) usage("each related entry needs a text of at least 20 characters");
+  if (!req.warm && !exact.length && !meaning.length && !sections.length && !related.length && !(Array.isArray(req.lines) && req.lines.length))
+    usage("give at least one of exact, meaning, sections, lines, related");
   const key = typesafeKey();
   const lineReqs = Array.isArray(req.lines) ? req.lines.map(String) : [];
   // The harness that runs this tool for an agent saves any output past roughly
@@ -494,7 +687,7 @@ async function main() {
   // A requested section prints first and whole while the budget lasts. The rest
   // is shared evenly: each search may spend its share plus whatever earlier
   // searches left, so the first term cannot starve the others.
-  const lookups = exact.length + meaning.length || 1;
+  const lookups = exact.length + meaning.length + related.length || 1;
   let done = 0;
   let base = 0;
   const fits = (s) => used + s.length < base + ((budget - base) * (done + 1)) / lookups;
@@ -693,9 +886,49 @@ async function main() {
     }
   }
 
+  const relatedRecords = [];
+  if (related.length) {
+    const all = [];
+    for (const bl of blocksOf.values()) for (const b of bl) if (!b.isHeading && b.text.trim().length > 40) all.push(b);
+    const bySlug = linkIndex(blocksOf);
+    const ctx = { all, blocksOf, bySlug, key, root, tune: req.format === "json" };
+    for (const r of related) {
+      const res = await relatedSearch(r, ctx);
+      relatedRecords.push({
+        text: r.text,
+        change: r.change || "",
+        home: res.home ? { file: res.home.file, from: res.home.from, to: res.home.to } : null,
+        notes: res.notes,
+        candidates: res.list.map((c) => ({ file: c.block.file, from: c.block.from, to: c.block.to, heading: c.block.heading, via: c.via, p: c.p ?? null, p0: c.p0 ?? null, text: c.block.text })),
+      });
+      emit(`\n## related: ${r.text.replace(/\s+/g, " ").slice(0, 120)}${r.text.length > 120 ? " [...]" : ""}`);
+      if (res.home) emit(`Changed passage: ${where(res.home)}`);
+      emit(`Candidates by ${res.notes.join("; ")}.`);
+      if (!res.judged) {
+        emit(`No TypeSafe key is set, so these ${res.list.length} candidates are unjudged.`);
+        for (const c of res.list.slice(0, 30)) emit(`- ${where(c.block)}  (via ${c.via.join("+")})`);
+        done++;
+        continue;
+      }
+      const ranked = res.list.filter((c) => c.p !== null && c.p >= RELATED_MIN).sort((a, b) => b.p - a.p);
+      emit(`Jev judged ${res.list.length} candidate(s); ${ranked.length} state or depend on the changed text.${res.failed ? ` ${res.failed} could not be judged.` : ""} This is a ranking over candidates found by links, terms, and meaning, not a proof that nothing else depends on it.`);
+      const skipped = [];
+      for (const c of ranked) {
+        const head = `\n### ${where(c.block)}  (related ${c.p.toFixed(2)}, via ${c.via.join("+")})`;
+        if (fits(head + "\n" + render(c.block))) emit(head + "\n" + render(c.block));
+        else skipped.push(c);
+      }
+      if (skipped.length) {
+        emit(`\nListed without text (${skipped.length}, output budget reached):`);
+        for (const c of skipped) emit(`- ${where(c.block)}  (related ${c.p.toFixed(2)})`);
+      }
+      done++;
+    }
+  }
+
   // "format": "json" returns every judged candidate with its probability, matched
   // or not. It exists for measuring and tuning the search, not for reviewers.
-  if (req.format === "json") process.stdout.write(JSON.stringify({ meaning: records }) + "\n");
+  if (req.format === "json") process.stdout.write(JSON.stringify({ meaning: records, related: relatedRecords }) + "\n");
   else process.stdout.write(out.join("\n") + "\n");
 }
 
