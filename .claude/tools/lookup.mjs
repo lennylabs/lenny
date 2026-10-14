@@ -24,9 +24,14 @@
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
 //     "lines":    ["spec/07_session-lifecycle.md:430-446"],   // line ranges to return verbatim
 //     "related":  [{"text": "the passage being changed", "change": "what the edit does",
-//                   "at": "spec/07_session-lifecycle.md:430"}],   // passages that state or depend
-//                                       // on the changed text; candidates by links, terms, and
-//                                       // meaning ("via" narrows them), judged by Jev
+//                   "also": "the new wording, when known", "at": "spec/07_session-lifecycle.md:430",
+//                   "min": 0.7}],       // passages that state or rely on what the change alters,
+//                                       // judged by Jev. For a fix being applied, pass the old
+//                                       // passage as text, the fix as change and also, and min
+//                                       // 0.66: that framing scores true sites lower. "via"
+//                                       // picks candidate sources: meaning, also, sentidx, chunks
+//                                       // (default), and links, terms, sentences, clauses, pairs,
+//                                       // neighbors, all (measurement only)
 //     "context":  "what the caller is trying to establish",   // narrows which exact hits print in full
 //     "maxChars": 24000,                // output budget, capped at 26000
 //     "exhaustive": true,               // meaning: judge every passage in scope. Default: only when the
@@ -52,7 +57,7 @@
 // Exit codes: 0 ran; 1 failed; 2 usage error.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -339,7 +344,16 @@ function embedShortlist(blocks, queries, top) {
     queries,
     passages: blocks.map((b, id) => ({ id, text: (b.heading ? b.heading + "\n" : "") + b.text })),
   });
-  const r = spawnSync("uv", ["run", "--quiet", script], { input, encoding: "utf8", maxBuffer: 1 << 28, timeout: 1_500_000 });
+  // The request is passed as a file. Piped on stdin, a request of tens of
+  // megabytes twice left the helper blocked on a read that never completed.
+  const reqFile = join(dir, `request-${process.pid}-${Date.now()}.json`);
+  writeFileSync(reqFile, input);
+  const r = spawnSync("uv", ["run", "--quiet", script, reqFile], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", maxBuffer: 1 << 28, timeout: 1_500_000 });
+  try {
+    unlinkSync(reqFile);
+  } catch {
+    /* already gone */
+  }
   if (r.error) return { reason: r.error.code === "ENOENT" ? "uv is not installed" : r.error.message };
   if (r.status !== 0) return { reason: `lookup-embed.py failed: ${(r.stderr || "").trim().split("\n").pop()}` };
   try {
@@ -447,15 +461,18 @@ function contextQuestion(term, context) {
 //
 // A fix that changes one statement leaves every other statement of the same fact
 // wrong, and the review loop found those one round at a time. "related" takes the
-// changed text and collects candidates three ways, each of which can be switched
-// off for measurement: by links (the sections the text cites, the section it sits
-// in, and every passage that cites one of those), by terms (the distinctive
-// identifiers in the text), and by meaning (the word-overlap and embedding
-// shortlists). Jev then judges each candidate against the changed text.
+// changed text and collects candidates from the sources "via" names. The default
+// sources are meaning (the word-overlap and embedding shortlists for the text),
+// also (the same for the new wording), sentidx (word overlap against single
+// sentences), and chunks (embeddings of short sentence windows). Links and terms
+// stay available for measurement. Jev then judges each candidate against the
+// changed text.
 
-// Measured on the same set: 0.75 kept 16 of 21 results labelled needed and 12
-// of 148 labelled noise; 0.7 kept 18 and 31.
-const RELATED_MIN = Number(process.env.LOOKUP_RELATED_MIN) || 0.75;
+// Measured with the default sources on 132 isolated cases: 0.7 returned 65% of
+// targets with 72% of labelled results needed or useful, at a median of 16 per
+// call; 0.75 returned 54% at 73% and 10. On 13 targets from real fixes, 0.7
+// returned 7 and 0.75 returned 4, both at 61%.
+const RELATED_MIN = Number(process.env.LOOKUP_RELATED_MIN) || 0.7;
 // Each meaning shortlist contributes this many candidates. Smaller than SHORTLIST,
 // because related search is judged for precision as well as recall.
 const RELATED_SHORTLIST = Number(process.env.LOOKUP_RELATED_SHORTLIST) || 80;
@@ -480,6 +497,11 @@ function linkIndex(blocksOf) {
   for (const bl of blocksOf.values()) for (const b of bl) if (b.isHeading) bySlug.set(slug(b.heading), b.heading);
   for (const bl of blocksOf.values()) {
     const stack = [];
+    const body = bl.filter((b) => !b.isHeading);
+    body.forEach((b, i) => {
+      b.prev = body[i - 1] || null;
+      b.next = body[i + 1] || null;
+    });
     for (const b of bl) {
       if (b.isHeading) {
         while (stack.length && stack[stack.length - 1].level >= b.level) stack.pop();
@@ -524,7 +546,11 @@ function identifiers(text) {
 
 async function relatedSearch(r, ctx) {
   const { all, blocksOf, bySlug, key, root } = ctx;
-  const via = new Set(Array.isArray(r.via) && r.via.length ? r.via : ["links", "terms", "meaning"]);
+  // Default sources, measured on 132 cases (197 targets): meaning, also, sentidx,
+  // and chunks reach 86% of targets as candidates with a median of 281 per call;
+  // the earlier default of links, terms, and meaning reached 76% with 292. Link-
+  // only candidates were mostly noise in blind labelling.
+  const via = new Set(Array.isArray(r.via) && r.via.length ? r.via : ["meaning", "also", "sentidx", "chunks"]);
   const text = String(r.text || "");
   const change = String(r.change || "");
   // The passage the changed text sits in: named by "at", or found by its text.
@@ -579,22 +605,94 @@ async function relatedSearch(r, ctx) {
     notes.push(`terms: ${used.join(", ") || "none"}`);
   }
 
+  const also = String(r.also || "");
+  const k = Number(r.shortlist) > 0 ? Number(r.shortlist) : RELATED_SHORTLIST;
+  const meaningTop = [];
   if (via.has("meaning")) {
     const q = passage + (change ? " " + change : "");
-    for (const b of shortlist(all, q, RELATED_SHORTLIST)) add(b, "meaning");
-    const emb = embedShortlist(all, [q], RELATED_SHORTLIST);
+    const words = shortlist(all, q, k);
+    for (const b of words) add(b, "meaning");
+    const emb = embedShortlist(all, [q], k);
     if (emb.reason) notes.push(`embedding shortlist unavailable (${emb.reason})`);
     else for (const { block } of emb.lists[0]) add(block, "meaning");
+    meaningTop.push(...words.slice(0, 20), ...(emb.lists ? emb.lists[0].slice(0, 20).map((x) => x.block) : []));
   }
 
+  // The sources below exist for measurement; the documented request uses the
+  // three above. "also" is a second text, such as the new wording a fix writes.
+  const units = (t, re, min) => t.split(re).map((x) => x.trim()).filter((x) => x.length >= min);
+  const multi = (queries, kk, src) => {
+    if (!queries.length) return;
+    for (const q of queries) for (const b of shortlist(all, q, kk)) add(b, src);
+    const emb = embedShortlist(all, queries, kk);
+    if (!emb.reason) for (const l of emb.lists) for (const { block } of l) add(block, src);
+  };
+  if (via.has("also") && also) {
+    for (const b of shortlist(all, also, k)) add(b, "also");
+    const emb = embedShortlist(all, [also], k);
+    if (!emb.reason) for (const { block } of emb.lists[0]) add(block, "also");
+  }
+  if (via.has("sentences")) multi(units(passage + (also ? "\n" + also : ""), /(?<=[.!?])\s+(?=[A-Z`*(])|\n+/, 30).slice(0, 24), 15, "sentences");
+  if (via.has("clauses"))
+    multi(units(passage + (also ? "\n" + also : ""), /(?<=[.!?;:])\s+|\n+|,\s+(?=(?:and|or|but|so|which|while|because|unless|until|when)\b)/, 25).slice(0, 40), 8, "clauses");
+  if (via.has("pairs")) {
+    const ids = identifiers(passage + " " + also);
+    if (ids.length >= 2)
+      for (const b of all) {
+        let n = 0;
+        for (const t of ids) if (b.text.includes(t) && ++n >= 2) break;
+        if (n >= 2) add(b, "pairs");
+      }
+  }
+  if (via.has("sentidx")) {
+    // Reverse direction: rank document sentences rather than whole passages, so a
+    // one-sentence restatement inside a long passage is not diluted by the rest.
+    const sents = [];
+    for (const b of all) for (const s of units(b.text, /(?<=[.!?])\s+(?=[A-Z`*(])|\n+/, 30)) sents.push({ block: b, text: s, heading: "" });
+    for (const s of shortlist(sents, passage + " " + also, k)) add(s.block, "sentidx");
+  }
+  if (via.has("chunks")) {
+    // Embedding at sentence grain: each passage is cut into windows of adjacent
+    // sentences (about 120 to 400 characters) and each window is embedded on its
+    // own, so one restating sentence inside a long passage is not averaged away.
+    // A window that matches stands for its passage.
+    const chunks = [];
+    for (const b of all) {
+      if (b.text.length <= 400) {
+        chunks.push({ block: b, text: b.text, heading: b.heading });
+        continue;
+      }
+      let cur = "";
+      for (const s of units(b.text, /(?<=[.!?])\s+(?=[A-Z`*(\[])|\n+/, 1)) {
+        if (cur && cur.length + s.length > 400) {
+          chunks.push({ block: b, text: cur, heading: b.heading });
+          cur = "";
+        }
+        cur = cur ? cur + " " + s : s;
+        if (cur.length >= 120 && /[.!?]$/.test(cur)) {
+          chunks.push({ block: b, text: cur, heading: b.heading });
+          cur = "";
+        }
+      }
+      if (cur.trim().length >= 20) chunks.push({ block: b, text: cur, heading: b.heading });
+    }
+    const qs = [passage + (also ? "\n" + also : ""), ...units(passage + (also ? "\n" + also : ""), /(?<=[.!?])\s+(?=[A-Z`*(])|\n+/, 30).slice(0, 16)];
+    const emb = embedShortlist(chunks, qs, Number(r.chunkTop) > 0 ? Number(r.chunkTop) : 20);
+    if (emb.reason) notes.push(`chunk embedding unavailable (${emb.reason})`);
+    else for (const l of emb.lists) for (const { block } of l) add(block.block, "chunks");
+  }
+  if (via.has("neighbors")) for (const b of [home, ...meaningTop]) if (b) for (const n of [b.prev, b.next]) if (n) add(n, "neighbors");
+  if (via.has("all")) for (const b of all) add(b, "all");
+
   let list = [...cands].map(([block, src]) => ({ block, via: [...src].sort() }));
-  if (list.length > RELATED_MAX_CANDIDATES) {
-    notes.push(`${list.length} candidates; the ${list.length - RELATED_MAX_CANDIDATES} with the least word overlap were not judged`);
-    const keep = new Set(shortlist(list.map((c) => c.block), passage + " " + change, RELATED_MAX_CANDIDATES));
+  const cap = Number(r.cap) > 0 ? Number(r.cap) : RELATED_MAX_CANDIDATES;
+  if (list.length > cap) {
+    notes.push(`${list.length} candidates; the ${list.length - cap} with the least word overlap were not judged`);
+    const keep = new Set(shortlist(list.map((c) => c.block), passage + " " + change, cap));
     list = list.filter((c) => keep.has(c.block));
   }
   let failed = 0;
-  if (key && list.length) {
+  if (key && list.length && r.judge !== false) {
     // For tuning, "format": "json" also asks the question without the change.
     const questions = { q: relatedQuestion(passage, change, text) };
     if (ctx.tune && change) questions.q0 = relatedQuestion(passage, "", text);
@@ -605,7 +703,7 @@ async function relatedSearch(r, ctx) {
       if (questions.q0) c.p0 = answers[i] ? answers[i].q0 : null;
     });
   }
-  return { home, list, notes, failed, judged: Boolean(key) };
+  return { home, list, notes, sources: [...via], failed, judged: Boolean(key) && r.judge !== false };
 }
 
 // The wording was chosen by comparing three on 141 known targets and 279
@@ -903,15 +1001,16 @@ async function main() {
       });
       emit(`\n## related: ${r.text.replace(/\s+/g, " ").slice(0, 120)}${r.text.length > 120 ? " [...]" : ""}`);
       if (res.home) emit(`Changed passage: ${where(res.home)}`);
-      emit(`Candidates by ${res.notes.join("; ")}.`);
+      emit(`Candidate sources: ${res.sources.join(", ")}${res.notes.length ? ` (${res.notes.join("; ")})` : ""}.`);
       if (!res.judged) {
         emit(`No TypeSafe key is set, so these ${res.list.length} candidates are unjudged.`);
         for (const c of res.list.slice(0, 30)) emit(`- ${where(c.block)}  (via ${c.via.join("+")})`);
         done++;
         continue;
       }
-      const ranked = res.list.filter((c) => c.p !== null && c.p >= RELATED_MIN).sort((a, b) => b.p - a.p);
-      emit(`Jev judged ${res.list.length} candidate(s); ${ranked.length} state or depend on the changed text.${res.failed ? ` ${res.failed} could not be judged.` : ""} This is a ranking over candidates found by links, terms, and meaning, not a proof that nothing else depends on it.`);
+      const min = Number(r.min) > 0 ? Number(r.min) : Number(req.min) > 0 ? Number(req.min) : RELATED_MIN;
+      const ranked = res.list.filter((c) => c.p !== null && c.p >= min).sort((a, b) => b.p - a.p);
+      emit(`Jev judged ${res.list.length} candidate(s); ${ranked.length} state or depend on the changed text (threshold ${min}).${res.failed ? ` ${res.failed} could not be judged.` : ""} This is a ranking over the candidates those sources found, not a proof that nothing else depends on it.`);
       const skipped = [];
       for (const c of ranked) {
         const head = `\n### ${where(c.block)}  (related ${c.p.toFixed(2)}, via ${c.via.join("+")})`;

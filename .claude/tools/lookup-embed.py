@@ -9,7 +9,7 @@ Word overlap misses a passage that states the idea in different words, so this
 script adds a second shortlist by embedding similarity. lookup.mjs runs it with
 `uv run`, which resolves the dependencies above on first use.
 
-Reads one JSON request on stdin:
+Reads one JSON request from the file named as the first argument, or from stdin:
     {"cache": "<path to sqlite file>", "top": 80,
      "queries": ["..."], "passages": [{"id": 0, "text": "..."}]}
 Writes {"model": "...", "embedded": <count computed this run>,
@@ -40,7 +40,11 @@ def key(text: str) -> bytes:
 
 
 def main() -> None:
-    req = json.load(sys.stdin)
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], encoding="utf-8") as f:
+            req = json.load(f)
+    else:
+        req = json.load(sys.stdin)
     passages = req.get("passages", [])
     queries = req.get("queries", [])
     top = int(req.get("top", 80))

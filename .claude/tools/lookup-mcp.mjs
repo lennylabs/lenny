@@ -74,6 +74,8 @@ const TOOL = {
             text: { type: "string", description: "The passage being changed, verbatim, or the new text being written." },
             change: { type: "string", description: "What the edit does. Recall falls by about half without it." },
             at: { type: "string", description: 'Location of the passage, such as "spec/07_session-lifecycle.md:430", so the whole passage is used and excluded from results.' },
+            also: { type: "string", description: "The new wording, when the edit writes text: searched as a second query." },
+            min: { type: "number", description: "Score threshold, default 0.7. Use about 0.66 when text is the old passage and change is a fix being applied." },
           },
           required: ["text"],
         },
