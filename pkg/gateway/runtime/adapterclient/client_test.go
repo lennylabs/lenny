@@ -612,6 +612,27 @@ type recordingAdapter struct {
 	gotSignalDeadline *adapterv1.SignalDeadlineRequest
 	signalDelivered   bool
 	signalErr         error
+	gotSeal           *adapterv1.SealSessionRequest
+	sealResp          *adapterv1.SealSessionResponse
+	sealErr           error
+	gotUnseal         *adapterv1.UnsealSessionRequest
+	unsealErr         error
+}
+
+func (r *recordingAdapter) SealSession(_ context.Context, req *adapterv1.SealSessionRequest) (*adapterv1.SealSessionResponse, error) {
+	r.gotSeal = req
+	if r.sealErr != nil {
+		return nil, r.sealErr
+	}
+	return r.sealResp, nil
+}
+
+func (r *recordingAdapter) UnsealSession(_ context.Context, req *adapterv1.UnsealSessionRequest) (*adapterv1.UnsealSessionResponse, error) {
+	r.gotUnseal = req
+	if r.unsealErr != nil {
+		return nil, r.unsealErr
+	}
+	return &adapterv1.UnsealSessionResponse{}, nil
 }
 
 func (r *recordingAdapter) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
@@ -2104,5 +2125,71 @@ func TestUnfencedShutdownFormsSetUnconditionalTeardown_spec_4_7_1(t *testing.T) 
 				t.Errorf("bind_attempt = %q, want empty on the unfenced form", req.GetBindAttempt())
 			}
 		})
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — SealSession carries the
+// session, the caller's coordination generation, and the idle window, and
+// returns the adapter's verdict with the idle age in seconds.
+func TestSealSessionCarriesTheWindowAndReturnsTheVerdict_spec_4_7_1(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		resp       *adapterv1.SealSessionResponse
+		wantSealed bool
+		wantAge    time.Duration
+	}{
+		{"sealed", &adapterv1.SealSessionResponse{Sealed: true}, true, 0},
+		{"not sealed reports the idle age", &adapterv1.SealSessionResponse{Sealed: false, IdleAgeSeconds: 42}, false, 42 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingAdapter{sealResp: tc.resp}
+			cl := dialRecordingAdapter(t, rec)
+
+			sealed, age, err := cl.SealSession(context.Background(), "sess-s", 7, 600)
+			if err != nil {
+				t.Fatalf("SealSession: %v", err)
+			}
+			if sealed != tc.wantSealed || age != tc.wantAge {
+				t.Errorf("SealSession = (%v, %s), want (%v, %s)", sealed, age, tc.wantSealed, tc.wantAge)
+			}
+			got := rec.gotSeal
+			if got.GetSessionId().GetValue() != "sess-s" || got.GetCoordinationGeneration() != 7 || got.GetIdleSeconds() != 600 {
+				t.Errorf("request = (%q, gen %d, idle %d), want (sess-s, gen 7, idle 600)",
+					got.GetSessionId().GetValue(), got.GetCoordinationGeneration(), got.GetIdleSeconds())
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — an adapter error, such as
+// the stale-generation refusal, reaches the caller as not sealed with the
+// status intact, so the idle suspension leaves the session running.
+func TestSealSessionSurfacesTheAdapterError_spec_4_7_1(t *testing.T) {
+	rec := &recordingAdapter{sealErr: status.Error(codes.FailedPrecondition, "activity_untapped: no tap")}
+	cl := dialRecordingAdapter(t, rec)
+
+	sealed, _, err := cl.SealSession(context.Background(), "sess-s", 7, 600)
+	if sealed || status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SealSession = (%v, %v), want not sealed with FailedPrecondition", sealed, err)
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — UnsealSession carries the
+// session and the caller's coordination generation, and surfaces an adapter
+// error.
+func TestUnsealSessionCarriesTheGeneration_spec_4_7_1(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	if err := cl.UnsealSession(context.Background(), "sess-u", 9); err != nil {
+		t.Fatalf("UnsealSession: %v", err)
+	}
+	if got := rec.gotUnseal; got.GetSessionId().GetValue() != "sess-u" || got.GetCoordinationGeneration() != 9 {
+		t.Errorf("request = (%q, gen %d), want (sess-u, gen 9)", got.GetSessionId().GetValue(), got.GetCoordinationGeneration())
+	}
+
+	rec.unsealErr = status.Error(codes.Unavailable, "adapter down")
+	if err := cl.UnsealSession(context.Background(), "sess-u", 9); status.Code(err) != codes.Unavailable {
+		t.Errorf("UnsealSession error = %v, want Unavailable", err)
 	}
 }

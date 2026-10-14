@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -131,6 +132,10 @@ type Tier struct {
 	reclaimEvery time.Duration
 	reclaimIdle  time.Duration
 
+	// knownMu guards known. Publish, Pending, and every per-tenant flusher
+	// goroutine the FlusherManager starts read or write the map
+	// concurrently.
+	knownMu sync.Mutex
 	// known tracks the tenant streams this replica has created the
 	// consumer group on, so a group is created at most once per tenant.
 	known map[string]bool
@@ -206,7 +211,7 @@ func (t *Tier) Publish(ctx context.Context, e billingstore.Event) error {
 // best-effort across tenants — it is not consulted in the write path.
 func (t *Tier) Pending(ctx context.Context) (int, error) {
 	total := 0
-	for tenant := range t.known {
+	for _, tenant := range t.knownTenants() {
 		n, err := t.client.XLen(ctx, streamKey(tenant)).Result()
 		if err != nil {
 			return total, err
@@ -221,16 +226,38 @@ func (t *Tier) Pending(ctx context.Context) (int, error) {
 // also creates the stream itself, so a Publish to a brand-new tenant
 // works. A BUSYGROUP reply means another replica already created the
 // group; that is treated as success.
+//
+// The Redis call runs outside knownMu, so two goroutines that see the same
+// new tenant may both issue it; the second receives BUSYGROUP, which is
+// success, and the map write is idempotent.
 func (t *Tier) ensureGroup(ctx context.Context, tenantID string) error {
-	if t.known[tenantID] {
+	t.knownMu.Lock()
+	seen := t.known[tenantID]
+	t.knownMu.Unlock()
+	if seen {
 		return nil
 	}
 	err := t.client.XGroupCreateMkStream(ctx, streamKey(tenantID), consumerGroup, "0").Err()
 	if err != nil && !isBusyGroup(err) {
 		return err
 	}
+	t.knownMu.Lock()
 	t.known[tenantID] = true
+	t.knownMu.Unlock()
 	return nil
+}
+
+// knownTenants returns a snapshot of the tenants whose consumer group this
+// replica has created, so a caller iterates without holding knownMu across
+// Redis calls.
+func (t *Tier) knownTenants() []string {
+	t.knownMu.Lock()
+	defer t.knownMu.Unlock()
+	out := make([]string, 0, len(t.known))
+	for tenant := range t.known {
+		out = append(out, tenant)
+	}
+	return out
 }
 
 // isBusyGroup reports whether err is the Redis BUSYGROUP reply, which

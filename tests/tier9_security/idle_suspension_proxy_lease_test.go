@@ -41,13 +41,13 @@ func sessionCredentialsFile(sessionID string) string {
 func TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3(t *testing.T) {
 	runtime := os.Getenv(proxyIdleRuntimeEnv)
 	if runtime == "" {
-		t.Skipf("precondition not met: %s names no runtime on a proxy-delivery credential pool with a short maxClientIdleSeconds", proxyIdleRuntimeEnv)
+		t.Skipf("blocked: precondition not met: %s names no runtime on a proxy-delivery credential pool with a short maxClientIdleSeconds", proxyIdleRuntimeEnv)
 	}
 	d := sessiondriver.New(t)
 	args, err := d.Cluster().KubectlOut(t, "-n", "lenny-system", "get", "deploy", "lenny-gateway",
 		"-o", "jsonpath={.spec.template.spec.containers[0].args}")
 	if err != nil || !strings.Contains(args, "--max-suspended-session-seconds") {
-		t.Skipf("precondition not met: the deployed gateway predates the idle suspension (no --max-suspended-session-seconds); redeploy images built from this tree: %v", err)
+		t.Skipf("blocked: precondition not met: the deployed gateway predates the idle suspension (no --max-suspended-session-seconds); redeploy images built from this tree: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*proxyIdleMaxWait)
@@ -61,7 +61,7 @@ func TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3(t *testing.T) {
 	}
 	sess, err := d.CreateAndStart(ctx, tenant, runtime)
 	if err != nil {
-		t.Skipf("precondition not met: no session on the proxy-delivery pool: %v", err)
+		t.Skipf("blocked: precondition not met: no session on the proxy-delivery pool: %v", err)
 	}
 	t.Cleanup(func() {
 		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -70,6 +70,9 @@ func TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3(t *testing.T) {
 	})
 	oldPod := sess.PodAssignment
 	oldToken, proxyURL := readProxyLease(t, d, oldPod, sess.ID)
+	if oldToken == "" {
+		t.Skipf("blocked: precondition not met: pod %s holds no proxy lease token", oldPod)
+	}
 
 	suspended, ok := d.WaitForState(ctx, tenant, sess.ID, proxyIdleMaxWait, "suspended")
 	if !ok {
@@ -87,6 +90,9 @@ func TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3(t *testing.T) {
 		t.Fatalf("session %s did not resume within %s", sess.ID, proxyIdleMaxWait)
 	}
 	newToken, _ := readProxyLease(t, d, resumed.PodAssignment, sess.ID)
+	if newToken == "" {
+		t.Fatalf("the resumed session on pod %s holds no proxy lease token", resumed.PodAssignment)
+	}
 	if newToken == oldToken {
 		t.Fatal("the resumed session holds the released pod's lease token")
 	}
@@ -99,7 +105,9 @@ func TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3(t *testing.T) {
 }
 
 // readProxyLease reads the proxy lease token and proxy URL from the
-// session's credential file on pod.
+// session's credential file on pod. The token is empty when the file names
+// no lease token; the caller decides whether that is a precondition or a
+// failure.
 func readProxyLease(t *testing.T, d *sessiondriver.Driver, pod, sessionID string) (token, proxyURL string) {
 	t.Helper()
 	path := sessionCredentialsFile(sessionID)
@@ -119,9 +127,6 @@ func readProxyLease(t *testing.T, d *sessiondriver.Driver, pod, sessionID string
 		t.Fatalf("decode %s on %s: %v", path, pod, err)
 	}
 	cfg := doc.Providers[0].MaterializedConfig
-	if cfg.LeaseToken == "" {
-		t.Skipf("precondition not met: pod %s holds no proxy lease token", pod)
-	}
 	return cfg.LeaseToken, cfg.ProxyURL
 }
 
@@ -132,7 +137,7 @@ func proxyStatus(t *testing.T, d *sessiondriver.Driver, pod, proxyURL, token str
 	script := fmt.Sprintf(`curl -s -o /dev/null -w '%%{http_code}' -X POST -H 'x-api-key: %s' -H 'content-type: application/json' -d '{"model":"m","messages":[]}' %s/v1/messages`, token, proxyURL)
 	out, err := d.Cluster().KubectlOut(t, "-n", "lenny-agents", "exec", pod, "--", "sh", "-c", script)
 	if err != nil {
-		t.Skipf("precondition not met: pod %s cannot issue a proxy request: %v", pod, err)
+		t.Skipf("blocked: precondition not met: pod %s cannot issue a proxy request: %v", pod, err)
 	}
 	return strings.TrimSpace(out)
 }

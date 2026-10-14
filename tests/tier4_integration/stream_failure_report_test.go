@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -83,11 +84,18 @@ const (
 // session_end frame the adapter writes. A message whose text is
 // streamFailureHang stops the heartbeat acks and is not answered, which is a
 // runtime that hangs mid-turn.
+//
+// It implements the adapter's output tap, as every production transport
+// does: the adapter runs a session's heartbeat monitor only for a runtime
+// whose output it taps, and the tap is where each heartbeat_ack reaches the
+// monitor (§28.5.3, §4.7.1). A runtime without the tap gets no monitor, so
+// heartbeat silence would end no stream.
 type heartbeatRuntime struct {
 	out     chan []byte
 	silent  atomic.Bool
 	mu      sync.Mutex
 	endings []string
+	tap     func(line []byte)
 }
 
 func newHeartbeatRuntime() *heartbeatRuntime {
@@ -120,7 +128,7 @@ func (r *heartbeatRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	switch in.Type {
 	case "heartbeat":
 		if !r.silent.Load() {
-			r.emit(map[string]any{"type": "heartbeat_ack"})
+			r.emit(map[string]any{"type": "heartbeat_ack", "sessionId": in.SessionID})
 		}
 	case "session_end":
 		r.mu.Lock()
@@ -143,8 +151,22 @@ func (r *heartbeatRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	return nil
 }
 
+// TapOutput records fn as the adapter's activity tap. emit calls it with
+// each frame before the frame reaches an Output subscriber.
+func (r *heartbeatRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
+}
+
 func (r *heartbeatRuntime) emit(frame map[string]any) {
 	b, _ := json.Marshal(frame)
+	r.mu.Lock()
+	tap := r.tap
+	r.mu.Unlock()
+	if tap != nil {
+		tap(b)
+	}
 	select {
 	case r.out <- b:
 	default:
@@ -211,6 +233,8 @@ type streamFailureReplica struct {
 	leases    leasestore.LeaseStore
 	replicaID string
 	binder    *podsession.Binder
+	// interactions is the replica's interaction store; nil serves none.
+	interactions interactionstore.Store
 }
 
 // newStreamFailureFixture serves rt over an adapter with its heartbeat monitor
@@ -247,6 +271,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 		CoordinationLeaseStore:  rep.leases,
 		ReplicaID:               rep.replicaID,
 		IDFunc:                  func() string { return id },
+		Interactions:            rep.interactions,
 	})
 	f.exec.SetStreamFailureHandler(f.srv.ReportAttachStreamFailure)
 	hs := httptest.NewServer(f.srv.Handler())

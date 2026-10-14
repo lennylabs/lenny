@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -50,45 +52,10 @@ func TestErasureJobJourney(t *testing.T) {
 	// relation. The single test Postgres instance plays both roles.
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
 	base := gw.BaseURL()
-	client := http.DefaultClient
 
-	// do issues an admin-API request. It takes the calling (sub)test's
-	// *testing.T explicitly rather than closing over the parent's, so a
-	// failure inside a t.Run subtest fails that subtest, not the parent
-	// (calling t.Fatal on a parent test from within a subtest panics).
 	do := func(t *testing.T, method, path, roles string, body any) (int, map[string]any) {
 		t.Helper()
-		var reader io.Reader
-		if body != nil {
-			b, err := json.Marshal(body)
-			if err != nil {
-				t.Fatalf("marshal request body: %v", err)
-			}
-			reader = bytes.NewReader(b)
-		}
-		req, err := http.NewRequest(method, base+path, reader)
-		if err != nil {
-			t.Fatalf("%s %s: build request: %v", method, path, err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		req.Header.Set("X-Lenny-User-ID", "ops@acme.com")
-		if roles != "" {
-			req.Header.Set("X-Lenny-Roles", roles)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, path, err)
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		var out map[string]any
-		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &out); err != nil {
-				t.Fatalf("%s %s: decode response %q: %v", method, path, raw, err)
-			}
-		}
-		return resp.StatusCode, out
+		return erasureAdminDo(t, base, method, path, roles, body)
 	}
 
 	// ---- bootstrap: a tenant and a runtime the sessions will run under ----
@@ -354,4 +321,132 @@ func dbCountErasure(t *testing.T, pg *containers.Postgres, query string, args ..
 		t.Fatalf("db query %q: %v", query, err)
 	}
 	return n
+}
+
+// erasureAdminDo issues one request to the gateway at base as the acme
+// operator, with roles when set, and returns the status and decoded body. It
+// takes the calling (sub)test's *testing.T explicitly, so a failure inside a
+// t.Run subtest fails that subtest rather than its parent.
+func erasureAdminDo(t *testing.T, base, method, path, roles string, body any) (int, map[string]any) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body: %v", err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, base+path, reader)
+	if err != nil {
+		t.Fatalf("%s %s: build request: %v", method, path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-User-ID", "ops@acme.com")
+	if roles != "" {
+		req.Header.Set("X-Lenny-Roles", roles)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("%s %s: decode response %q: %v", method, path, raw, err)
+		}
+	}
+	return resp.StatusCode, out
+}
+
+// spec: 12.8 (Compliance Interfaces)
+// diagnosis: the user-erasure job left the erased user's session DLQ or
+// durable inbox in Redis, or deleted another user's. Either a held message
+// carrying the erased user's content survives the erasure receipt, or an
+// unrelated user's queued messages are lost.
+func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
+		"--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0", "--messaging-durable-inbox")
+	base := gw.BaseURL()
+
+	const alice, bob = "alice@acme.com", "bob@acme.com"
+	code, _ := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
+		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"runtimes": []map[string]any{{
+			"name": "echo", "image": "lenny/echo@sha256:abc", "labels": map[string]string{"tier": "test"},
+		}},
+		"users": []map[string]any{
+			{"subject": alice, "tenantId": "acme", "email": alice, "roles": []string{"tenant-admin"}},
+			{"subject": bob, "tenantId": "acme", "email": bob, "roles": []string{"tenant-admin"}},
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("bootstrap: status %d", code)
+	}
+	start := func(user string) string {
+		t.Helper()
+		code, created := erasureAdminDo(t, base, http.MethodPost, "/v1/sessions/start", "", map[string]any{
+			"runtimeRef": "echo", "userId": user,
+		})
+		sid, _ := created["id"].(string)
+		if code != http.StatusCreated || sid == "" {
+			t.Fatalf("create session for %s: %d (%v)", user, code, created)
+		}
+		return sid
+	}
+	aliceSID, bobSID := start(alice), start(bob)
+
+	// Seed each session's DLQ and durable inbox under the §12.4 key layout.
+	ctx := t.Context()
+	keys := func(sid string) (dlq, inbox string) {
+		return "t:acme:session:" + sid + ":dlq", "t:acme:session:" + sid + ":inbox"
+	}
+	for _, sid := range []string{aliceSID, bobSID} {
+		dlq, inbox := keys(sid)
+		if err := rd.Client.ZAdd(ctx, dlq, redis.Z{Score: float64(time.Now().Add(time.Hour).Unix()), Member: `{"id":"m-dlq"}`}).Err(); err != nil {
+			t.Fatalf("seed %s: %v", dlq, err)
+		}
+		if err := rd.Client.RPush(ctx, inbox, `{"id":"m-inbox"}`).Err(); err != nil {
+			t.Fatalf("seed %s: %v", inbox, err)
+		}
+	}
+
+	code, resp := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/users/"+alice+"/erase", "platform-admin",
+		map[string]any{"tenantId": "acme"})
+	jobID, _ := resp["jobId"].(string)
+	if code != http.StatusAccepted || jobID == "" {
+		t.Fatalf("erase %s: status %d (%v)", alice, code, resp)
+	}
+	wait.For(t, 10*time.Second, "erasure job completes", func() (bool, error) {
+		code, job := erasureAdminDo(t, base, http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, "platform-admin", nil)
+		if code != http.StatusOK {
+			return false, nil
+		}
+		switch job["phase"] {
+		case "completed":
+			return true, nil
+		case "failed":
+			t.Fatalf("erasure job failed: %v", job)
+		}
+		return false, nil
+	})
+
+	aliceDLQ, aliceInbox := keys(aliceSID)
+	bobDLQ, bobInbox := keys(bobSID)
+	if n := rd.Client.Exists(ctx, aliceDLQ, aliceInbox).Val(); n != 0 {
+		t.Errorf("%d of the erased user's session message queues survived the erasure, want 0", n)
+	}
+	if n := rd.Client.Exists(ctx, bobDLQ, bobInbox).Val(); n != 2 {
+		t.Errorf("%d of another user's session message queues remain, want 2", n)
+	}
 }

@@ -2018,7 +2018,8 @@
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureClaimRowsNameDeclaredSymbols_spec_28_5_1",
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3",
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1",
-        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureRecordProbes_spec_28_5_1"
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureRecordProbes_spec_28_5_1",
+        "tests/tier4_integration/elicitation_expiry_test.go::TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2"
       ],
       "packages": [
         "pkg/session/resume",
@@ -2319,7 +2320,9 @@
         "tests/tier4_integration/elicitation_test.go",
         "tests/tier9_security/elicitation_tamper_test.go",
         "tests/tier9_security/elicitation_integrity_gate_test.go",
-        "tests/tier11_docs/elicitation_content_integrity_consistency_test.go"
+        "tests/tier11_docs/elicitation_content_integrity_consistency_test.go",
+        "tests/tier4_integration/elicitation_expiry_test.go::TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2",
+        "tests/tier7a_load_local/elicitation_expiry_race_test.go::TestElicitationRespondRacingExpiryHasOneOutcome_spec_9_2"
       ],
       "packages": [
         "pkg/elicitation"
@@ -3438,7 +3441,8 @@
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
         "tests/tier4_integration/tenant_deletion_phase4_test.go",
         "pkg/gateway/storage/erasure/tenant_order_test.go",
-        "pkg/gateway/mcpfabric/delegationtree/treearchive/erasure_tenant_test.go"
+        "pkg/gateway/mcpfabric/delegationtree/treearchive/erasure_tenant_test.go",
+        "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -4171,7 +4175,6 @@
         "tests/tier10_conformance/scaffold_battery_test.go::TestScaffoldedBinaryMinimalPassesTheBasicBattery_spec_24_18",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestUnaddressedFrameResolvesOnAPodHoldingOneSlot_spec_28_5_3",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestUnaddressedFrameIsRejectedOnAPodHoldingTwoSlots_spec_28_5_3",
-        "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestProtocolFrameIsRelayedOnAPodHoldingTwoSlots_spec_28_5_3",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestInboundEnvelopeCarriesTheAddressedSession_spec_28_5_3",
         "tests/tier3_contract/adapter_jsonl/gateway_envelope_address_test.go::TestGatewayEnvelopeCarriesTheAddressedSession_spec_28_5_3",
         "tests/tier3_contract/adapter_jsonl/subprocess_envelope_address_test.go::TestSubprocessEnvelopeCarriesTheAddressedSession_spec_28_5_3",
@@ -6279,7 +6282,6 @@
         "tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestUnaddressedFrameResolvesOnAPodHoldingOneSlot_spec_28_5_3",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestUnaddressedFrameIsRejectedOnAPodHoldingTwoSlots_spec_28_5_3",
-        "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestProtocolFrameIsRelayedOnAPodHoldingTwoSlots_spec_28_5_3",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestInboundEnvelopeCarriesTheAddressedSession_spec_28_5_3",
         "tests/tier3_contract/adapter_jsonl/gateway_envelope_address_test.go::TestGatewayEnvelopeCarriesTheAddressedSession_spec_28_5_3",
         "tests/tier3_contract/adapter_jsonl/subprocess_envelope_address_test.go::TestSubprocessEnvelopeCarriesTheAddressedSession_spec_28_5_3",
