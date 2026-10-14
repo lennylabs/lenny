@@ -58,8 +58,9 @@ func TestSuspensionSeamsAreWiredToTheSessionServer_spec_6_2(t *testing.T) {
 }
 
 // TestValidateSuspensionFlags_spec_8_3 pins the startup bounds: the budget
-// key TTL must exceed the suspended lifetime, and the backlog re-check
-// interval must be at least 30 seconds.
+// key TTL must exceed the suspended lifetime the watchdog enforces (a
+// non-positive lifetime flag resolves to the 604800-second default before the
+// comparison), and the backlog re-check interval must be at least 30 seconds.
 //
 // spec: 8.3 (Delegation Policy and Lease), 7.2 (Message delivery routing —
 // seven paths, path 6)
@@ -72,6 +73,10 @@ func TestValidateSuspensionFlags_spec_8_3(t *testing.T) {
 		{"defaults", 604800, 691200, 300, false},
 		{"ttl_equal_to_lifetime", 604800, 604800, 300, true},
 		{"ttl_below_lifetime", 604800, 3600, 300, true},
+		{"zero_lifetime_resolves_to_default_ttl_below", 0, 60, 300, true},
+		{"negative_lifetime_resolves_to_default_ttl_below", -1, 604799, 300, true},
+		{"zero_lifetime_resolves_to_default_ttl_equal", 0, 604800, 300, true},
+		{"zero_lifetime_resolves_to_default_ttl_above", 0, 604801, 300, false},
 		{"recheck_at_minimum", 604800, 691200, 30, false},
 		{"recheck_below_minimum", 604800, 691200, 29, true},
 	} {

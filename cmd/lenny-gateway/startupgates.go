@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/deployment/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
@@ -247,13 +248,17 @@ func validatePrimaryReadTimeout(d time.Duration) error {
 
 // validateSuspensionFlags rejects a delegation budget key TTL that does not
 // exceed the suspended lifetime, so a suspended session's budget keys outlive
-// it, and a backlog re-check interval below the minimum.
+// it, and a backlog re-check interval below the minimum. The TTL is compared
+// against the lifetime the watchdog enforces: a non-positive
+// --max-suspended-session-seconds resolves to the watchdog default before the
+// comparison, because the watchdog substitutes that default at runtime.
 // spec: §8.3 (Delegation Policy and Lease), §7.2 (Message delivery routing —
 // seven paths, path 6)
 func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, backlogRecheckSeconds int) error {
-	if budgetKeyTTLSeconds <= maxSuspendedSessionSeconds {
-		return fmt.Errorf("--delegation-budget-key-ttl-seconds (%d) must exceed --max-suspended-session-seconds (%d) (§8.3)",
-			budgetKeyTTLSeconds, maxSuspendedSessionSeconds)
+	lifetime := watchdog.EffectiveMaxSuspendedSessionSeconds(maxSuspendedSessionSeconds)
+	if budgetKeyTTLSeconds <= lifetime {
+		return fmt.Errorf("--delegation-budget-key-ttl-seconds (%d) must exceed the effective --max-suspended-session-seconds (%d, configured %d) (§8.3)",
+			budgetKeyTTLSeconds, lifetime, maxSuspendedSessionSeconds)
 	}
 	if minimum := int(sessionserver.MinSuspendedBacklogRecheckInterval / time.Second); backlogRecheckSeconds < minimum {
 		return fmt.Errorf("--suspended-backlog-recheck-seconds must be at least %d, got %d (§7.2)", minimum, backlogRecheckSeconds)

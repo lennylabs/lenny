@@ -242,6 +242,19 @@ type Config struct {
 	ExpiryWarningSeconds int
 }
 
+// EffectiveMaxSuspendedSessionSeconds returns the suspended-session lifetime
+// the watchdog enforces for a configured value: a non-positive value falls
+// through to DefaultMaxSuspendedSessionSeconds. Startup validation compares
+// the delegation budget key TTL against this resolved value rather than the
+// raw flag, so a zero flag cannot pass a bound the watchdog then exceeds.
+// spec: §6.2 (Pod State Machine), §8.3 (Delegation Policy and Lease)
+func EffectiveMaxSuspendedSessionSeconds(configured int) int {
+	if configured <= 0 {
+		return DefaultMaxSuspendedSessionSeconds
+	}
+	return configured
+}
+
 // withDefaults returns a copy of c with unset fields filled from the
 // §11.3 defaults.
 func (c Config) withDefaults() Config {
@@ -269,9 +282,7 @@ func (c Config) withDefaults() Config {
 	if c.MaxSuspendedPodHoldSeconds <= 0 {
 		c.MaxSuspendedPodHoldSeconds = DefaultMaxSuspendedPodHoldSeconds
 	}
-	if c.MaxSuspendedSessionSeconds <= 0 {
-		c.MaxSuspendedSessionSeconds = DefaultMaxSuspendedSessionSeconds
-	}
+	c.MaxSuspendedSessionSeconds = EffectiveMaxSuspendedSessionSeconds(c.MaxSuspendedSessionSeconds)
 	if c.MaxResumePendingSeconds <= 0 {
 		c.MaxResumePendingSeconds = DefaultMaxResumePendingSeconds
 	}

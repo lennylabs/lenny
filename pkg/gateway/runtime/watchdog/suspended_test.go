@@ -375,3 +375,22 @@ func TestIdleSweepSuspendsOrExpires_spec_6_2(t *testing.T) {
 		}
 	})
 }
+
+// TestEffectiveMaxSuspendedSessionSeconds_spec_6_2 pins the resolved
+// suspended lifetime: a non-positive configured value resolves to the 7-day
+// default, and a positive value is kept. Startup validation of the delegation
+// budget key TTL compares against this resolved value.
+//
+// spec: 6.2 (Pod State Machine), 8.3 (Delegation Policy and Lease)
+func TestEffectiveMaxSuspendedSessionSeconds_spec_6_2(t *testing.T) {
+	for _, tc := range []struct{ configured, want int }{
+		{0, watchdog.DefaultMaxSuspendedSessionSeconds},
+		{-5, watchdog.DefaultMaxSuspendedSessionSeconds},
+		{1, 1},
+		{3600, 3600},
+	} {
+		if got := watchdog.EffectiveMaxSuspendedSessionSeconds(tc.configured); got != tc.want {
+			t.Errorf("EffectiveMaxSuspendedSessionSeconds(%d) = %d, want %d", tc.configured, got, tc.want)
+		}
+	}
+}
