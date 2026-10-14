@@ -63,7 +63,7 @@ type resumeWriteFailStore struct {
 }
 
 func (s *resumeWriteFailStore) Update(ctx context.Context, tenant, id string, fn func(*sessionstore.Session) error) (sessionstore.Session, error) {
-	cur, err := s.Store.Get(ctx, tenant, id)
+	cur, err := s.Get(ctx, tenant, id)
 	if err == nil && cur.State != session.StateRunning {
 		probe := cur
 		if fn(&probe) == nil && probe.State == session.StateRunning {

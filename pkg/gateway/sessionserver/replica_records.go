@@ -209,13 +209,6 @@ func (r *inflightSet) has(sessionID string) bool {
 	return ok
 }
 
-// size reports the number of entries.
-func (r *inflightSet) size() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.entries)
-}
-
 // retryRecord is the suspension retry record: after a checkpoint failure
 // before a suspension release, the session's next release or idle
 // suspension waits until its retry time, 60 s after the failure. Each
