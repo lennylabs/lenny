@@ -1072,7 +1072,7 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// spec: §6.2 (Pod State Machine), §11.3 (Timeouts and Cancellation).
 	f.maxSuspendedPodHoldSeconds = flag.Int("max-suspended-pod-hold-seconds",
 		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
-		"§6.2 / §11.3 maxSuspendedPodHoldSeconds: the wall-clock window an interrupt-suspended session holds its pod. When it ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
+		"§6.2 / §11.3 maxSuspendedPodHoldSeconds: the wall-clock window an interrupt-suspended session holds its pod. When it ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. This deploy-wide flag is the only hold source; no per-tenant hold cap applies. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
 	f.maxSuspendedSessionSeconds = flag.Int("max-suspended-session-seconds",
 		envInt("LENNY_MAX_SUSPENDED_SESSION_SECONDS", watchdog.DefaultMaxSuspendedSessionSeconds),
 		"§6.2 maxSuspendedSessionSeconds: the wall-clock lifetime of a `suspended` session. A session suspended this long, with or without its pod, is transitioned to `expired`. Default 604800s (7 days). Override via LENNY_MAX_SUSPENDED_SESSION_SECONDS.")

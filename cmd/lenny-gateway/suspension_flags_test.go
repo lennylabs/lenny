@@ -67,6 +67,24 @@ func TestSuspensionFlags_spec_6_2(t *testing.T) {
 			t.Fatal("--max-idle-time-seconds parsed; the renamed flag keeps no alias")
 		}
 	})
+	// The hold window has a single deploy-wide source: the watchdog compares
+	// against Config.MaxSuspendedPodHoldSeconds alone, so the help must not
+	// promise a per-tenant cap that no code path applies.
+	t.Run("pod_hold_help_names_interrupt_release_and_single_source", func(t *testing.T) {
+		if _, err := register(t); err != nil {
+			t.Fatal(err)
+		}
+		usage := flag.CommandLine.Lookup("max-suspended-pod-hold-seconds").Usage
+		for _, want := range []string{"interrupt-suspended", "releases the pod", "stays `suspended`", "only hold source"} {
+			if !strings.Contains(usage, want) {
+				t.Errorf("usage = %q, want it to contain %q", usage, want)
+			}
+		}
+		if strings.Contains(strings.ToLower(usage), "per-tenant cap apply") ||
+			strings.Contains(usage, "more restrictive value wins") {
+			t.Errorf("usage = %q claims a per-tenant hold cap the watchdog does not apply", usage)
+		}
+	})
 	t.Run("playground_session_cap_help_names_active_time", func(t *testing.T) {
 		if _, err := register(t); err != nil {
 			t.Fatal(err)
