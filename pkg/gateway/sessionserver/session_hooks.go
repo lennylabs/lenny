@@ -4,6 +4,7 @@ package sessionserver
 
 import (
 	"context"
+	"time"
 )
 
 // Sealer takes the §7.1 final workspace snapshot of a session that has
@@ -29,12 +30,16 @@ type SessionLogHook interface {
 	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
 }
 
-// ActivityStamper records §6.2 qualifying agent activity for
-// a session so the §11.3 idle watchdog does not reap it as idle. The
-// gateway wires *sessionidle.Stamper here. Implementations coalesce the
-// durable write (≤1/s per session) and are non-blocking. F-11.3.7.
+// ActivityStamper records §6.2 qualifying activity for a session on its
+// `last_agent_activity_at`, so the idle watchdog does not suspend or expire
+// it as idle. The gateway wires *sessionidle.Stamper here. Stamp coalesces
+// the durable write (≤1/s per session) and is non-blocking; StampAt persists
+// the given instant without coalescing, for the answer of the runtime
+// adapter's session seal (§6.2 Idle suspension.). Both only advance the
+// stored time. F-11.3.7.
 type ActivityStamper interface {
 	Stamp(tenantID, sessionID string)
+	StampAt(tenantID, sessionID string, at time.Time)
 }
 
 // QuotaFinalCheckpointer writes the §11.2

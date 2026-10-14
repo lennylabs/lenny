@@ -242,3 +242,16 @@ func TestSessionLifetimeIsABasicCategory_spec_15_4_6(t *testing.T) {
 		t.Fatalf("failuresAtOrBelow(basic) = %v, want [session_lifetime]", got)
 	}
 }
+
+// spec: 15.4.6 (Conformance Test Suite, heartbeat busy), 28.5.3 (CH-MSGSOCK)
+// The scaffold probe counts heartbeat_busy as a Basic category, so a
+// runtime that fails it does not reach any declared level.
+func TestHeartbeatBusyIsABasicCategory_spec_15_4_6(t *testing.T) {
+	if lvl, ok := checkLevel["heartbeat_busy"]; !ok || lvl != compliance.LevelBasic {
+		t.Fatalf("checkLevel[heartbeat_busy] = %v, %v; want the Basic level", lvl, ok)
+	}
+	checks := []compliance.Check{chk("heartbeat_busy", false)}
+	if got := failuresAtOrBelow(checks, compliance.LevelBasic); len(got) != 1 || got[0] != "heartbeat_busy" {
+		t.Fatalf("failuresAtOrBelow(basic) = %v, want [heartbeat_busy]", got)
+	}
+}

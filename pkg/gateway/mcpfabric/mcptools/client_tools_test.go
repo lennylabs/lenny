@@ -66,6 +66,7 @@ func TestClientToolsRegisteredWithService_spec_15_2_3(t *testing.T) {
 		"lenny/terminate_session", "lenny/resume_session", "lenny/get_session_status",
 		"lenny/list_sessions", "lenny/get_session_logs", "lenny/list_artifacts",
 		"lenny/get_token_usage", "lenny/download_artifact", "lenny/upload_files",
+		"lenny/interrupt_session",
 	}
 
 	with := newClientToolsMCP(t, &fakeService{})

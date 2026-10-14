@@ -51,11 +51,27 @@ type Hub struct {
 	ended bool
 	// serveOnce starts the single reader at the first Serve call.
 	serveOnce sync.Once
+	// tap, when set before Serve, receives every line the reader reads,
+	// before the broadcast and whether or not a subscriber is registered.
+	// It is the adapter's activity tap (§4.7.1 **Session seal.**): the
+	// adapter observes every runtime frame, including frames no Attach
+	// stream subscribes to, such as a heartbeat_ack or a response written
+	// while no stream is open.
+	tap func(line []byte)
 }
 
 // New returns a hub with no subscribers and no reader.
 func New() *Hub {
 	return &Hub{subs: map[*subscriber]struct{}{}}
+}
+
+// Tap sets fn as the hub's line tap. The reader calls fn with each line
+// before it broadcasts the line, whether or not a subscriber is registered.
+// fn must not block beyond a short-held mutex, because the reader waits on
+// it. Call Tap before Serve; a tap set after the reader started is not read.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
+func (h *Hub) Tap(fn func(line []byte)) {
+	h.tap = fn
 }
 
 // Serve starts the hub's single reader over src at its first call and does
@@ -76,7 +92,11 @@ func (h *Hub) Serve(src io.Reader, maxLine int, onEnd func()) {
 // run is the hub's reader loop.
 func (h *Hub) run(scanner *bufio.Scanner, onEnd func()) {
 	for scanner.Scan() {
-		h.broadcast(append([]byte(nil), scanner.Bytes()...))
+		line := append([]byte(nil), scanner.Bytes()...)
+		if h.tap != nil {
+			h.tap(line)
+		}
+		h.broadcast(line)
 	}
 	if onEnd != nil {
 		onEnd()

@@ -303,7 +303,7 @@ func TestDeliverBufferedKeepsDeliveryExactlyOnce_spec_7_2(t *testing.T) {
 }
 
 // TestHoldMessageReReadsTheRowFromThePrimary_spec_7_2 asserts that
-// holdMessage removes its own entries and answers holdTerminal when its
+// holdMessage removes its own entries and answers HoldTerminal when its
 // primary re-read finds the session terminal, removes them and returns the
 // error when the re-read fails, and leaves them when the re-read finds the
 // session running.
@@ -316,7 +316,7 @@ func TestHoldMessageReReadsTheRowFromThePrimary_spec_7_2(t *testing.T) {
 	t.Run("running keeps the entry", func(t *testing.T) {
 		f := newHeldFixture(t, false)
 		out, st, err := f.srv.holdMessage(context.Background(), "acme", "s", msg("m1"), time.Hour)
-		if err != nil || out != holdQueued || st != session.StateRunning {
+		if err != nil || out != HoldQueued || st != session.StateRunning {
 			t.Fatalf("holdMessage = %v %q %v, want queued running", out, st, err)
 		}
 		if n := f.remaining(t); n != 1 {
@@ -330,8 +330,8 @@ func TestHoldMessageReReadsTheRowFromThePrimary_spec_7_2(t *testing.T) {
 			return nil
 		})
 		out, st, err := f.srv.holdMessage(context.Background(), "acme", "s", msg("m1"), time.Hour)
-		if err != nil || out != holdTerminal || st != session.StateCancelled {
-			t.Fatalf("holdMessage = %v %q %v, want holdTerminal cancelled", out, st, err)
+		if err != nil || out != HoldTerminal || st != session.StateCancelled {
+			t.Fatalf("holdMessage = %v %q %v, want HoldTerminal cancelled", out, st, err)
 		}
 		if n := f.remaining(t); n != 0 {
 			t.Errorf("held = %d, want 0", n)

@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -306,10 +307,20 @@ func (w *gatewayWiring) buildSessionServer(
 		LeaseRegistrar:         sessionLeaseRegistrar,
 		LeaseExtensionDefaults: leaseExtDefaults,
 		QuotaCheckpointer:      quotaCheckpointSvc,
-		HighWatermarkReader:    w.hwmReader,
-		HighWatermarkObserver:  gwMetrics,
-		Interceptors:           policyChain,
-		PolicyAuditSink:        policyAuditSink,
+		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
+		// the workspace before it releases a suspended session's pod; with no
+		// checkpoint service the pod stays held.
+		SuspensionCheckpointer: suspensionCheckpointer(w.checkpointSvc),
+		// spec: §8.3 (Delegation Policy and Lease) — re-arm a suspended
+		// tree's delegation budget keys on each transition into or out of
+		// suspended.
+		BudgetKeyRearmer:                      budgetKeyRearmer(w.treeBudgetConcrete),
+		IncSessionPodReleasedDuringSuspension: gwMetrics.IncSessionPodReleasedDuringSuspension,
+		IncSessionSuspensionCheckpointFailed:  gwMetrics.IncSessionSuspensionCheckpointFailed,
+		HighWatermarkReader:                   w.hwmReader,
+		HighWatermarkObserver:                 gwMetrics,
+		Interceptors:                          policyChain,
+		PolicyAuditSink:                       policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
@@ -461,4 +472,24 @@ func (w *gatewayWiring) sessionAgeCap(ctx context.Context, row sessionstore.Sess
 		return w.wd.AgeCap(ctx, row)
 	}
 	return watchdog.EffectiveAgeCap(ctx, nil, time.Duration(*w.f.maxSessionAgeSeconds)*time.Second, row)
+}
+
+// suspensionCheckpointer returns the checkpoint service as the session
+// server's SuspensionCheckpointer, or an untyped nil for a nil service so the
+// server's nil guard holds. spec: §6.2 (Pod State Machine).
+func suspensionCheckpointer(svc *checkpointer.Checkpointer) sessionserver.SuspensionCheckpointer {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+// budgetKeyRearmer returns the delegation budget Reserver as the session
+// server's BudgetKeyRearmer, or an untyped nil for a nil Reserver.
+// spec: §8.3 (Delegation Policy and Lease).
+func budgetKeyRearmer(r *treebudget.Reserver) sessionserver.BudgetKeyRearmer {
+	if r == nil {
+		return nil
+	}
+	return r
 }

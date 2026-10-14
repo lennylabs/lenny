@@ -1382,7 +1382,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_inbox_drain_failure_total[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Inbox-to-DLQ drain failed",
-			Description: "The atomic inbox-to-DLQ drain failed during a resume_pending state transition and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
+			Description: "The atomic inbox-to-DLQ drain failed, typically because Redis was unavailable, and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
 			SpecRef:     "§16.5",
 		},
 		{

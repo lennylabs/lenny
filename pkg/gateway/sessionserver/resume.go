@@ -93,6 +93,15 @@ func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, ro
 	switch {
 	case err == nil, errors.Is(err, errHeldDeliveryFailed):
 		s.writeSession(w, http.StatusOK, updated)
+	case errors.Is(err, errResumeHeldPodReleased):
+		// spec: §7.2 — a suspension release cleared the pod after the
+		// read; the call is the podless store write.
+		pending, perr := s.enterResumePending(r.Context(), row)
+		if perr != nil {
+			s.writePreconditionError(w, perr)
+			return
+		}
+		s.writeSession(w, http.StatusOK, pending)
 	case errors.Is(err, errResumeHeldPodNotSuspended):
 		moved := row
 		moved.State = session.StateAwaitingClientAction
@@ -113,9 +122,14 @@ func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, ro
 var errHeldDeliveryFailed = errors.New("sessionserver: held-message delivery failed after the resume")
 
 // resumeHeldAndDrain resumes a suspended session on its held pod and then
-// delivers its held messages. The caller holds the session's delivery lock.
-// It returns the running row; a delivery error comes after the running write
-// and is returned wrapped in errHeldDeliveryFailed with that row.
+// delivers its held messages. It is the one implementation of the held-pod
+// resume edge. Its callers are the REST message path, ResumeSuspended, and
+// handleResume, each holding the session's delivery lock and each only when
+// this replica coordinates the session. It returns the running row; a
+// delivery error comes after the running write and is returned wrapped in
+// errHeldDeliveryFailed with that row. A row whose pod a suspension release
+// cleared returns errResumeHeldPodReleased, and the caller moves the session
+// to resume_pending.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6)
 func (s *Server) resumeHeldAndDrain(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {

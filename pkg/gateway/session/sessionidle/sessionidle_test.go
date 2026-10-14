@@ -63,16 +63,17 @@ func TestResolverReturnsRuntimePolicy_spec_11_3_199(t *testing.T) {
 	}
 }
 
-// spec: 6.2 (maxClientIdleSeconds clock default) — when no sessionPolicy
-// declares maxClientIdleSeconds, the bound defaults to the pool's effective
-// maxSessionAgeSeconds rather than a fixed 600s. F-11.3.7.
-func TestResolverDefaultsToEffectiveMaxSessionAge_spec_6_2(t *testing.T) {
-	// Runtime declares only maxSessionAgeSeconds (no idle bound); the idle
-	// default takes that age cap.
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states) — the age
+// cap is not an idle default: with no sessionPolicy.maxClientIdleSeconds the
+// resolver returns 0 and the watchdog's 900s default applies.
+//
+// diagnosis: a failure means the idle bound still falls back to the age cap,
+// so an idle session holds its pod for up to maxSessionAge instead of 900s.
+func TestResolverIgnoresTheAgeCap_spec_6_2(t *testing.T) {
 	r := sessionidle.NewResolver(runtimeStore(t, "rt", 0, 3600), nil)
 	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{RuntimeRef: "rt"})
-	if got != 3600 {
-		t.Errorf("EffectiveMaxIdleSeconds = %d, want 3600 (effective maxSessionAge default)", got)
+	if got != 0 {
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 0 (the age cap is not an idle default)", got)
 	}
 }
 
@@ -104,19 +105,17 @@ func TestResolverPlaygroundOverrideTightensPolicy_spec_27_6_201(t *testing.T) {
 	}
 }
 
-// spec: 27.6 line 201 (playground idle override) — the playground override
-// applies against the maxSessionAge default too: a session whose only bound
-// is the age-default still gets the tighter playground cap. F-27.6.1.
-func TestResolverPlaygroundOverrideTightensAgeDefault_spec_27_6_201(t *testing.T) {
-	// No idle bound declared; the default is the 3600s age cap, which the
-	// 300s playground override tightens.
+// spec: 27.6 (Session lifecycle and cleanup) — a playground idle override
+// under the playground cap applies on its own and ignores the runtime's
+// session-age cap.
+func TestResolverPlaygroundOverrideIgnoresTheAgeCap_spec_27_6(t *testing.T) {
 	r := sessionidle.NewResolver(runtimeStore(t, "rt", 0, 3600), nil)
 	got := r.EffectiveMaxIdleSeconds(context.Background(), sessionstore.Session{
 		RuntimeRef: "rt",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxIdleSeconds: 300},
 	})
 	if got != 300 {
-		t.Errorf("EffectiveMaxIdleSeconds = %d, want 300 (playground cap tightens age default)", got)
+		t.Errorf("EffectiveMaxIdleSeconds = %d, want 300 (the playground override alone)", got)
 	}
 }
 
@@ -221,4 +220,82 @@ func waitForActivity(t *testing.T, store sessionstore.Store, tenant, id string, 
 	}
 	row, _ := store.Get(context.Background(), tenant, id)
 	t.Fatalf("LastAgentActivityAt did not reach %v: got %v", want, row.LastAgentActivityAt)
+}
+
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states), 5.1
+// (Runtime), 5.2 (Pool Configuration and Execution Modes) — a service-mode
+// session and a type: mcp runtime's session cannot be idle-suspended; an
+// agent runtime's session can; a resolution error is returned.
+func TestIdleSuspendableExcludesServiceModeAndMCP_spec_6_2(t *testing.T) {
+	ctx := context.Background()
+	rs := runtimestore.NewMemory()
+	for _, rt := range []runtimestore.Runtime{
+		{Name: "agent", Type: runtimestore.TypeAgent},
+		{Name: "tools", Type: runtimestore.TypeMCP},
+	} {
+		if err := rs.Create(ctx, rt); err != nil {
+			t.Fatalf("create runtime: %v", err)
+		}
+	}
+	r := sessionidle.NewResolver(rs, nil)
+	cases := []struct {
+		name    string
+		sess    sessionstore.Session
+		want    bool
+		wantErr bool
+	}{
+		{"agent runtime", sessionstore.Session{ID: "a", RuntimeRef: "agent"}, true, false},
+		{"mcp runtime", sessionstore.Session{ID: "m", RuntimeRef: "tools"}, false, false},
+		{"service mode", sessionstore.Session{ID: "s", RuntimeRef: "agent", ExecutionMode: string(runtimestore.ExecutionModeService)}, false, false},
+		{"unknown runtime", sessionstore.Session{ID: "u", RuntimeRef: "missing"}, false, true},
+		{"no runtime reference", sessionstore.Session{ID: "n"}, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := r.IdleSuspendable(ctx, c.sess)
+			if (err != nil) != c.wantErr || got != c.want {
+				t.Fatalf("IdleSuspendable = %v, %v; want %v (error %v)", got, err, c.want, c.wantErr)
+			}
+		})
+	}
+}
+
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states) — StampAt
+// persists the given instant without coalescing and only advances the stored
+// time.
+func TestStampAtPersistsWithoutCoalescingAndOnlyAdvances_spec_6_2(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: "sess", TenantID: "acme", State: session.StateRunning, CreatedAt: t0, UpdatedAt: t0,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	st := sessionidle.NewStamper(store, func() time.Time { return t0 })
+	st.Stamp("acme", "sess")
+	read := func() time.Time {
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			row, _ := store.Get(ctx, "acme", "sess")
+			if !row.LastAgentActivityAt.IsZero() || time.Now().After(deadline) {
+				return row.LastAgentActivityAt
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if got := read(); !got.Equal(t0) {
+		t.Fatalf("after Stamp: %v, want %v", got, t0)
+	}
+	later := t0.Add(400 * time.Millisecond)
+	st.StampAt("acme", "sess", later)
+	if row, _ := store.Get(ctx, "acme", "sess"); !row.LastAgentActivityAt.Equal(later) {
+		t.Fatalf("StampAt inside the coalescing window wrote %v, want %v", row.LastAgentActivityAt, later)
+	}
+	st.StampAt("acme", "sess", t0.Add(-time.Hour))
+	if row, _ := store.Get(ctx, "acme", "sess"); !row.LastAgentActivityAt.Equal(later) {
+		t.Fatalf("StampAt moved the anchor backwards to %v", row.LastAgentActivityAt)
+	}
+	var nilStamper *sessionidle.Stamper
+	nilStamper.StampAt("acme", "sess", later)
 }

@@ -43,10 +43,13 @@ func (p *connectorToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
 	return p.forwarder.ListConnectorTools(ctx, sessionID, p.connectorID)
 }
 
+// Call forwards one tools/call, counted as the session's activity through
+// beginToolCall as the platform provider's Call is. List is not activity.
 func (p *connectorToolProvider) Call(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	sessionID, err := p.server.callingSession()
+	sessionID, end, err := p.server.beginToolCall()
 	if err != nil {
 		return nil, err
 	}
+	defer end()
 	return p.forwarder.CallConnectorTool(ctx, sessionID, p.connectorID, name, arguments)
 }

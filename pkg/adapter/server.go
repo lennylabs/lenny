@@ -313,6 +313,18 @@ type Server struct {
 	// default (10s) whenever HeartbeatInterval > 0.
 	HeartbeatAckTimeout time.Duration
 
+	// clock is the time source of the session activity clock that
+	// SealSession compares (§4.7.1 **Session seal.**). Nil selects
+	// time.Now; tests set it.
+	clock func() time.Time
+	// activityTapped records that installActivityTap installed the
+	// activity tap on the runtime's output, so the adapter reads every
+	// runtime frame whether or not an Attach stream is open. SealSession
+	// refuses every session while it is false, because the adapter then
+	// observes no runtime frame. Set once, before the gRPC server serves.
+	// spec: §4.7.1 (Role and Gateway RPC Contract).
+	activityTapped bool
+
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 

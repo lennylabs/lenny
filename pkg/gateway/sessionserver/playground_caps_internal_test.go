@@ -177,13 +177,14 @@ func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *tes
 	}
 }
 
-// TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6 — when the runtime
-// declares no sessionPolicy.maxClientIdleSeconds, the idle override resolves
-// against the runtime's effective maxSessionAgeSeconds (the §6.2 idle-clock
-// default). A maxSessionAgeSeconds tighter than the playground cap keeps the
-// session-age bound. spec: §27.6 (idle defaults to effective
-// maxSessionAgeSeconds). F-27.6.1.
-func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
+// TestApplyPlaygroundCaps_IdleIgnoresSessionAge_spec_27_6 — when the runtime
+// declares no sessionPolicy.maxClientIdleSeconds, the playground idle stamp is
+// the playground cap: the runtime's session-age cap is not an idle default,
+// even when it is tighter than the playground cap.
+//
+// spec: 27.6 (Session lifecycle and cleanup), 6.2 (maxClientIdleSeconds clock
+// behavior across states)
+func TestApplyPlaygroundCaps_IdleIgnoresSessionAge_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name:   "age-only",
@@ -198,8 +199,8 @@ func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
 	if row.Timeouts == nil {
 		t.Fatal("timeouts not stamped")
 	}
-	if row.Timeouts.MaxIdleSeconds != 200 {
-		t.Errorf("MaxIdleSeconds = %d, want 200 (idle defaults to effective maxSessionAgeSeconds)", row.Timeouts.MaxIdleSeconds)
+	if row.Timeouts.MaxIdleSeconds != 300 {
+		t.Errorf("MaxIdleSeconds = %d, want 300 (the playground cap; the age cap is no idle default)", row.Timeouts.MaxIdleSeconds)
 	}
 }
 

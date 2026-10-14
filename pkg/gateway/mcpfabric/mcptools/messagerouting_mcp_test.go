@@ -4,6 +4,7 @@ package mcptools_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // spec: §7.2 paths 1-7 — lenny/send_message routing.
@@ -42,6 +44,7 @@ func newMCPRouting(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioninbox
 		Executor:   executor.NewEchoExecutor(),
 		InputWaits: inputwait.NewRegistry(),
 		Messaging:  coord,
+		Delivery:   &dlqDelivery{coord: coord},
 		Clock:      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:     func() string { return "msg_fixed" },
 		TenantID:   "acme",
@@ -66,9 +69,14 @@ func TestSendMessageRouting_InputRequiredBuffersInbox_spec_7_2_319(t *testing.T)
 	}
 }
 
-// TestSendMessageRouting_SuspendedBuffersInbox covers §7.2 path 6.
-func TestSendMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
-	srv, store, inbox, _ := newMCPRouting(t)
+// TestSendMessageRouting_SuspendedHoldsAndResumes_spec_7_2_path6 covers
+// §7.2 path 6 on MCP: a message to a suspended target is held in the DLQ
+// rather than the inbox, answers queued, and resumes the session with the
+// classified row; nothing is sent to the runtime.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_SuspendedHoldsAndResumes_spec_7_2_path6(t *testing.T) {
+	srv, store, inbox, dlq, del := newMCPRoutingDelivery(t, nil)
 	mkSession(t, store, "sess_sus", session.StateSuspended, "")
 
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"later"}`)
@@ -76,8 +84,180 @@ func TestSendMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
 	if got.Status != session.DeliveryStatusQueued {
 		t.Errorf("status = %q, want queued", got.Status)
 	}
-	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 1 {
-		t.Errorf("inbox depth = %d, want 1", n)
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0", n)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 || del.resumed[0].State != session.StateSuspended {
+		t.Errorf("resumed = %+v, want one suspended row", del.resumed)
+	}
+	if del.locked != del.unlocked {
+		t.Errorf("delivery lock taken %d times, released %d", del.locked, del.unlocked)
+	}
+}
+
+// TestSendMessageRouting_SuspendedHoldTerminalNoResume_spec_7_2_path6 pins
+// that a hold that finds the session terminal answers TARGET_TERMINAL and
+// does not resume.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_SuspendedHoldTerminalNoResume_spec_7_2_path6(t *testing.T) {
+	srv, store, _, _, del := newMCPRoutingDelivery(t, nil)
+	del.outcome = sessionserver.HoldTerminal
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"later"}`)
+	result, _ := resp["result"].(map[string]any)
+	if env := readLennyErrorEnvelope(t, result); env["code"] != "TARGET_TERMINAL" {
+		t.Errorf("error code = %v, want TARGET_TERMINAL", env["code"])
+	}
+	if len(del.resumed) != 0 {
+		t.Errorf("resumed %d sessions, want none", len(del.resumed))
+	}
+}
+
+// TestSendMessageRouting_SuspendedHoldErrorNoResume_spec_7_2_path6 pins that
+// a hold error answers error with inbox_unavailable and does not resume, and
+// that a nil delivery seam answers the same for a suspended target.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_SuspendedHoldErrorNoResume_spec_7_2_path6(t *testing.T) {
+	srv, store, _, _, del := newMCPRoutingDelivery(t, nil)
+	del.holdErr = errors.New("redis down")
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"x"}`))
+	if got.Status != session.DeliveryStatusError || got.Reason != session.DeliveryReasonInboxUnavailable {
+		t.Errorf("receipt = %+v, want error inbox_unavailable", got)
+	}
+	if len(del.resumed) != 0 {
+		t.Errorf("resumed %d sessions, want none", len(del.resumed))
+	}
+}
+
+// TestSendMessageRouting_ResumingHoldsDLQ_spec_7_2_path6 pins that a resuming
+// target holds the message in the DLQ and resumes nothing.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_ResumingHoldsDLQ_spec_7_2_path6(t *testing.T) {
+	srv, store, _, dlq, del := newMCPRoutingDelivery(t, nil)
+	mkSession(t, store, "sess_rs", session.StateResuming, "")
+
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_rs","message":"x"}`))
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_rs"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 0 {
+		t.Errorf("resumed %d sessions, want none", len(del.resumed))
+	}
+}
+
+// TestSendMessageRouting_RunningDeliversHeldFirst_spec_7_2_path6 pins that
+// path 2 delivers the session's held messages before the new message, and
+// that a held-delivery error is the error of the send.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_RunningDeliversHeldFirst_spec_7_2_path6(t *testing.T) {
+	exec := &countingExecutor{}
+	srv, store, _, _, del := newMCPRoutingDelivery(t, exec)
+	mkSession(t, store, "sess_run", session.StateRunning, "")
+
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_run","message":"hello"}`))
+	if got.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status = %q, want delivered", got.Status)
+	}
+	if len(del.delivered) != 1 || exec.sends != 1 || del.order[0] != "held" {
+		t.Errorf("held deliveries %d, sends %d, order %v; want held then send", len(del.delivered), exec.sends, del.order)
+	}
+
+	del.deliverErr = errors.New("adapter gone")
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_run","message":"again"}`)
+	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+		t.Errorf("send after a held-delivery error = %v, want an error result", resp)
+	}
+	if exec.sends != 1 {
+		t.Errorf("sends = %d after a held-delivery error, want 1", exec.sends)
+	}
+}
+
+// TestSendMessageRouting_SealedRefusalReroutes_spec_7_2_path6 pins that the
+// adapter's sealed refusal of the send routes the message again from a
+// primary re-read: a row the idle suspension moved to suspended is held and
+// resumed, and nothing is reported delivered.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6), 6.2 (Pod State
+// Machine)
+func TestSendMessageRouting_SealedRefusalReroutes_spec_7_2_path6(t *testing.T) {
+	exec := &countingExecutor{}
+	srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+	mkSession(t, store, "sess_seal", session.StateRunning, "")
+	exec.onSend = func() error {
+		_, _ = store.Update(context.Background(), "acme", "sess_seal", func(r *sessionstore.Session) error {
+			r.State = session.StateSuspended
+			return nil
+		})
+		return &executor.SealedError{}
+	}
+
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_seal","message":"x"}`))
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_seal"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
+	}
+}
+
+// TestSendMessageRouting_SealedAfterDeliveryIsDelivered_spec_7_2_path6 pins
+// that a refusal the adapter returned after the runtime received the message
+// reports it delivered and routes nothing again.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_SealedAfterDeliveryIsDelivered_spec_7_2_path6(t *testing.T) {
+	exec := &countingExecutor{}
+	srv, store, _, dlq, _ := newMCPRoutingDelivery(t, exec)
+	mkSession(t, store, "sess_seal", session.StateRunning, "")
+	exec.onSend = func() error { return &executor.SealedError{Delivered: 1} }
+
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_seal","message":"x"}`))
+	if got.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status = %q, want delivered", got.Status)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_seal"); n != 0 {
+		t.Errorf("DLQ depth = %d, want 0", n)
+	}
+}
+
+// TestSendMessageRouting_RefusedPreDeliveryHoldsNothing_spec_7_2_path6 pins
+// that a PreMessageDelivery refusal runs before the classification: a
+// message to a suspended target that the interceptor rejects is neither held
+// nor resumes the session.
+//
+// spec: 4.8 (Gateway Policy Engine), 7.2 (Message delivery routing — seven
+// paths, path 6)
+func TestSendMessageRouting_RefusedPreDeliveryHoldsNothing_spec_7_2_path6(t *testing.T) {
+	srv, store, _, dlq, del := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) {
+		d.Interceptors = rejectingChain(t)
+	})
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"x"}`)
+	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+		t.Fatalf("send = %v, want a refusal", resp)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("DLQ depth = %d, want 0", n)
+	}
+	if len(del.resumed) != 0 || del.holds != 0 {
+		t.Errorf("holds %d resumes %d, want none", del.holds, len(del.resumed))
 	}
 }
 
@@ -131,8 +311,11 @@ func TestSendMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 }
 
 // TestSendMessageRouting_InboxUnavailable covers the degraded path: with
-// no coordinator wired, a buffered path returns an `error` receipt with
-// reason inbox_unavailable rather than delivering to a non-running runtime.
+// no coordinator and no delivery seam wired, a held path returns an `error`
+// receipt with reason inbox_unavailable rather than delivering to a
+// non-running runtime.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
 func TestSendMessageRouting_InboxUnavailable_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()

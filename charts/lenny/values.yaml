@@ -2484,6 +2484,22 @@ gateway:
   # warns at startup when it is set high. Default 10s. Rendered into
   # LENNY_CLAIM_HOLD_TTL_SECONDS.
   claimHoldTTLSeconds: 10
+  # maxSuspendedPodHoldSeconds is the §6.2 / §11.3 wall-clock window an
+  # interrupt-suspended session holds its pod. When it ends, the gateway
+  # checkpoints the workspace and releases the pod, and the session stays
+  # `suspended`. Default 900s. Rendered as --max-suspended-pod-hold-seconds.
+  maxSuspendedPodHoldSeconds: 900
+  # maxSuspendedSessionSeconds is the §6.2 wall-clock lifetime of a
+  # `suspended` session, with or without its pod; a session suspended this
+  # long expires. Default 604800s (7 days). It must stay below
+  # delegation.budgetKeyTTLSeconds. Rendered as
+  # --max-suspended-session-seconds.
+  maxSuspendedSessionSeconds: 604800
+  # suspendedBacklogRecheckSeconds is the §7.2 interval at which the gateway
+  # leader resumes a podless `suspended` session that holds a message.
+  # Minimum 30s. Default 300s. Rendered as
+  # --suspended-backlog-recheck-seconds.
+  suspendedBacklogRecheckSeconds: 300
   # slotCounterPostgresFallbackMaxSeconds is the §12.4 bounded
   # window during a Redis outage in which the §5.2 atomic slot counter
   # gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod
@@ -2675,6 +2691,13 @@ delegation:
   # The 600s default sizes for trees up to ~4 levels deep. Override via
   # LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.
   maxTreeRecoverySeconds: 600
+  # budgetKeyTTLSeconds is the §8.3 Redis TTL on a delegation tree's budget
+  # counters, re-armed at each transition into or out of `suspended`. It
+  # must exceed gateway.maxSuspendedSessionSeconds so a suspended session's
+  # keys outlive its suspended lifetime; the gateway refuses to start
+  # otherwise. Default 691200s (8 days). Override via
+  # LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS.
+  budgetKeyTTLSeconds: 691200
   # cascadeTimeoutSeconds is the §8.10 platform-wide cap on
   # how long an `await_completion` child may run after parent failure
   # and how long a `detach` orphan persists before §8.10 cleanup. The
@@ -2822,8 +2845,8 @@ playground:
   # playground runtime picker offers. The default "*" offers every
   # runtime visible to the caller.
   allowedRuntimes: "*"
-  # maxSessionMinutes is the §27.6 hard cap on the duration of a
-  # playground-initiated session.
+  # maxSessionMinutes is the §27.6 hard cap on a playground-initiated
+  # session's active time, which pauses while the session is `suspended`.
   maxSessionMinutes: 30
   # maxIdleTimeSeconds is the §27.6 hard idle-timeout override for a
   # playground-initiated session.

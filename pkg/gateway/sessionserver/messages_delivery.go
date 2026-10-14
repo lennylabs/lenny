@@ -5,6 +5,8 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 
 	"go.opentelemetry.io/otel/trace"
@@ -103,163 +105,284 @@ type deliveryOutcome struct {
 }
 
 // deliverMessageBatch selects and runs the §7.2 paths-1-7 delivery path for
-// the non-reply messages: the messagerouting classifier picks direct
-// delivery (executor.Send plus the §4.8 PostAgentOutput chain, transcript
-// write, and §15.1 event publish), inbox/DLQ buffering, or a terminal /
+// the non-reply messages. It holds the session's delivery lock, taken
+// honoring the request context, from the classification read through the
+// hold or the send, so on this replica no delivery of held messages
+// interleaves with it. The classification reads the primary row; a missing
+// row answers 404, and a primary error falls back to the entry row the
+// precondition gates read. spec: §12.3 (Postgres HA Requirements).
+//
+// The classifier picks direct delivery (path 2), the inbox (path 3), the DLQ
+// (path 7), a resume of a suspended session (path 6), or a terminal or
 // not-ready rejection. It writes the §15.1 error envelope and returns
-// ok=false on an executor failure or a classifier rejection that ends the
-// request; otherwise it returns the deliveryOutcome the receipt echoes.
-// spec: §7.2 paths 1-7, §4.8, §15.1, §15.2.1, §15.4. F-7.2.5, F-MS4.
+// ok=false on an executor failure or a rejection that ends the request;
+// otherwise it returns the deliveryOutcome the receipt echoes.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §7.2 paths
+// 1-7, §12.3 (Postgres HA Requirements), §4.8, §15.1, §15.2.1, §15.4.
+// F-7.2.5, F-MS4.
 func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, span trace.Span, row sessionstore.Session, tenantID string, req MessageRequest, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
-	// spec: §7.2 paths 1-7 — select the delivery path
-	// for the non-reply messages. Path 1 (inReplyTo) was resolved
-	// above; "the first matching path wins". A synchronous in-process
-	// executor is `ready_for_input` by construction, so a `running`
-	// target without a concurrent `input_required` takes path 2 (direct
-	// delivery); the input_required / recovering targets buffer in the
-	// inbox or DLQ. A `delivery: "immediate"` message to a `suspended`,
-	// pod-held session takes path 6: the coordinating replica atomically
-	// resumes the session (suspended → running via resumeHeldPod) and
-	// delivers the message, returning `delivered`, and fails closed to
-	// buffering on a resume or delivery failure so the message is never
-	// dropped (§7.2 Message delivery routing — seven paths, path 6). The pod-adapter `ready_for_input`
-	// signal that distinguishes path 2 from path 5 (runtime-busy), the
-	// path-4 in-flight-tool interrupt, the cross-replica `ForwardMessage`,
-	// and the concurrent-workspace per-slot inbox are gated on the
-	// pod-adapter readiness model and §5.2 concurrent-workspace build-out; a
-	// coordinating replica that cannot drive them buffers and returns
-	// `queued`, which §7.2 sanctions. F-7.2.5.
-	outcome := deliveryOutcome{status: session.DeliveryStatusDelivered}
 	if len(msgs) == 0 {
-		return outcome, true
+		return deliveryOutcome{status: session.DeliveryStatusDelivered}, true
 	}
+	unlock, err := s.deliveryLocks.Lock(r.Context(), row.ID)
+	if err != nil {
+		s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+			"the request ended before the session's delivery lock was taken", nil)
+		return deliveryOutcome{}, false
+	}
+	defer unlock()
+	cur, ok := s.classificationRow(w, r, row)
+	if !ok {
+		return deliveryOutcome{}, false
+	}
+	d := &restDelivery{s: s, w: w, r: r, span: span, tenantID: tenantID, req: req}
+	return d.route(cur, msgs, deliverIdx)
+}
 
+// classificationRow reads the row a message is classified on from the
+// primary, under the delivery lock. A missing row answers 404
+// RESOURCE_NOT_FOUND, as loadMessageTarget does; a primary error is logged
+// at WARN and the entry row is used. spec: §7.2 (Message delivery routing —
+// seven paths, path 6), §12.3 (Postgres HA Requirements).
+func (s *Server) classificationRow(w http.ResponseWriter, r *http.Request, entry sessionstore.Session) (sessionstore.Session, bool) {
+	cur, err := s.readPrimary(r.Context(), entry.TenantID, entry.ID)
+	switch {
+	case err == nil:
+		return cur, true
+	case errors.Is(err, sessionstore.ErrNotFound):
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		return sessionstore.Session{}, false
+	default:
+		slog.Warn("sessionserver: classify a message on the entry row; the primary read failed",
+			"session_id", entry.ID, "error", err)
+		return entry, true
+	}
+}
+
+// restDelivery carries one REST message batch through the §7.2 paths. Its
+// methods run with the session's delivery lock held.
+type restDelivery struct {
+	s        *Server
+	w        http.ResponseWriter
+	r        *http.Request
+	span     trace.Span
+	tenantID string
+	req      MessageRequest
+	// rerouted records that a sealed refusal already routed the batch once
+	// from a primary re-read, so a second refusal takes the held branch.
+	rerouted bool
+}
+
+// route classifies row and runs the path the classification selects for
+// msgs, the payloads deliverIdx indexes.
+func (d *restDelivery) route(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
+	s := d.s
 	inputRequired := row.State == session.StateInputRequired ||
 		(s.inputWaits != nil && len(s.inputWaits.PendingForSession(row.ID)) > 0)
-	immediate := false
-	for _, i := range deliverIdx {
-		if req.Messages[i].Delivery == "immediate" {
-			immediate = true
-			break
-		}
-	}
-	decision := messagerouting.Classify(row.State, inputRequired, immediate, messagerouting.SourceExternal)
+	decision := messagerouting.Classify(row.State, inputRequired, d.immediate(deliverIdx), messagerouting.SourceExternal)
 	switch decision.Action {
 	case messagerouting.ActionDeliver:
-		o, err := s.executor.Send(r.Context(), row.ID, msgs)
-		if err != nil {
-			// spec: §16.3 / §16 error taxonomy — the executor
-			// (the pod) rejected the prompt; UPSTREAM marks it a
-			// downstream dependency failure on the `session.prompt`
-			// span.
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-			s.writeError(w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
-				"executor rejected the message batch",
-				map[string]any{"reason": err.Error()})
-			return deliveryOutcome{}, false
-		}
-		out, ok := s.writeDeliveredResponse(r.Context(), w, tenantID, row, msgs, o)
-		if !ok {
-			return deliveryOutcome{}, false
-		}
-		outcome.out = out
-		outcome.status = session.DeliveryStatusDelivered
-
+		return d.deliverNow(row, msgs, deliverIdx)
 	case messagerouting.ActionResumeAndDeliver:
-		// spec: §7.2 path 6 pod-held branch — atomically
-		// resume the suspended session and deliver. resumeHeldPod
-		// transitions suspended → running reusing any already-bound pod,
-		// guarding a still-suspended row inside its store.Update mutator so
-		// the check and the write are atomic (every `suspended` row is
-		// pod-held while the §6.2 release sweep is unbuilt). Fail closed to
-		// buffering on a resume or delivery failure so the message is never
-		// dropped (§7.2 Message delivery routing — seven paths, path 6).
-		if _, err := s.resumeHeldPod(r.Context(), row); err != nil {
-			// Resume did not happen: leave the row suspended and buffer the
-			// message. bufferIncomingMessages yields the `queued` receipt
-			// the ActionBufferInbox case produces, so the message is not
-			// silently dropped (§7.2 Message delivery routing — seven paths,
-			// path 6).
-			//
-			// spec: §16.3 error taxonomy — the taxonomy defines only
-			// TRANSIENT, PERMANENT, POLICY, and UPSTREAM. A resume fault is
-			// either the resumeHeldPod store.Update write failing or its
-			// suspended-guard rejecting a lost terminal-transition race;
-			// neither contacted the pod/executor (not UPSTREAM) nor was
-			// denied by the policy engine (not POLICY). The `queued`
-			// fallback preserves the message and the inbox drains on the
-			// next ready_for_input, so the fault is recoverable and TRANSIENT
-			// is the correct bucket, matching the create-path convention that
-			// tags a store-write failure TRANSIENT (create.go persist-failure
-			// path).
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
-			return s.bufferOrRespond(r.Context(), w, row, req, deliverIdx, bufferTargetInbox)
-		}
-		// The session is running. Deliver to the runtime; a delivery failure
-		// buffers the message by the state the row is in afterwards rather
-		// than returning a 500, so the message is preserved.
-		o, err := s.executor.Send(r.Context(), row.ID, msgs)
-		if err != nil {
-			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-			return s.bufferAfterResumedSendFailure(w, r, row, req, deliverIdx)
-		}
-		out, ok := s.writeDeliveredResponse(r.Context(), w, tenantID, row, msgs, o)
-		if !ok {
-			return deliveryOutcome{}, false
-		}
-		outcome.out = out
-		outcome.status = session.DeliveryStatusDelivered
-
+		return d.resumeAndDeliver(row, msgs, deliverIdx)
 	case messagerouting.ActionBufferInbox:
-		return s.bufferOrRespond(r.Context(), w, row, req, deliverIdx, bufferTargetInbox)
-
+		return s.bufferOrRespond(d.r.Context(), d.w, row, d.req, deliverIdx, bufferTargetInbox)
 	case messagerouting.ActionBufferDLQ:
-		return s.bufferOrRespond(r.Context(), w, row, req, deliverIdx, bufferTargetDLQ)
-
+		return s.bufferOrRespond(d.r.Context(), d.w, row, d.req, deliverIdx, bufferTargetDLQ)
 	case messagerouting.ActionRejectTerminal:
 		// spec: §7.2 dead-letter table terminal row.
-		s.writeTargetTerminal(w, row.State)
+		s.writeTargetTerminal(d.w, row.State)
 		return deliveryOutcome{}, false
-
-	case messagerouting.ActionRejectNotReady:
-		// spec: §7.2 pre-running external-client row. (The
-		// early pre-running guard above already covers this for REST;
-		// retained so the classifier's contract holds on every path.)
-		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
+	default:
+		// spec: §7.2 pre-running external-client row.
+		s.writeError(d.w, http.StatusConflict, "TARGET_NOT_READY",
 			"session has not yet entered running state; retry after start",
 			map[string]any{"currentState": string(row.State)})
 		return deliveryOutcome{}, false
 	}
+}
+
+// immediate reports whether any payload deliverIdx indexes asks for
+// `delivery: "immediate"`.
+func (d *restDelivery) immediate(deliverIdx []int) bool {
+	for _, i := range deliverIdx {
+		if d.req.Messages[i].Delivery == "immediate" {
+			return true
+		}
+	}
+	return false
+}
+
+// deliverNow is §7.2 path 2: the session's held messages are delivered
+// first, so a new message never reaches the runtime ahead of a held entry
+// this replica can read, and then the batch is sent. An error of either is
+// an error of the send and answers EXECUTOR_FAILURE, except the adapter's
+// sealed refusal, which routes the batch's undelivered messages again.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §6.2 (Pod
+// State Machine)
+func (d *restDelivery) deliverNow(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
+	s := d.s
+	ctx := d.r.Context()
+	if err := s.deliverBuffered(ctx, row); err != nil {
+		if errors.Is(err, executor.ErrSessionSealed) {
+			return d.rerouteSealed(row, msgs, deliverIdx, nil)
+		}
+		return d.executorFailure(err)
+	}
+	o, err := s.executor.Send(ctx, row.ID, msgs)
+	var sealed *executor.SealedError
+	if errors.As(err, &sealed) {
+		delivered, ok := d.recordPartial(row, msgs[:sealed.Delivered], sealed.Response)
+		if !ok {
+			return deliveryOutcome{}, false
+		}
+		return d.rerouteSealed(row, msgs[sealed.Delivered:], deliverIdx[sealed.Delivered:], delivered)
+	}
+	if err != nil {
+		return d.executorFailure(err)
+	}
+	out, ok := s.writeDeliveredResponse(ctx, d.w, d.tenantID, row, msgs, o)
+	if !ok {
+		return deliveryOutcome{}, false
+	}
+	return deliveryOutcome{status: session.DeliveryStatusDelivered, out: out}, true
+}
+
+// recordPartial records the messages a sealed refusal reports delivered,
+// with their response, and returns the output parts.
+func (d *restDelivery) recordPartial(row sessionstore.Session, delivered []executor.Message, resp executor.Response) ([]executor.MessagePart, bool) {
+	if len(delivered) == 0 {
+		return nil, true
+	}
+	return d.s.writeDeliveredResponse(d.r.Context(), d.w, d.tenantID, row, delivered, resp)
+}
+
+// rerouteSealed routes the undelivered messages of a batch the adapter
+// refused as sealed, once, from the classification of a primary re-read; a
+// second refusal, or a re-read that fails, takes the held branch. The
+// receipt is the outcome of the undelivered messages, and the output carries
+// the parts of the messages delivered before the refusal.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §6.2 (Pod
+// State Machine)
+func (d *restDelivery) rerouteSealed(row sessionstore.Session, msgs []executor.Message, deliverIdx []int, delivered []executor.MessagePart) (deliveryOutcome, bool) {
+	if len(msgs) == 0 {
+		return deliveryOutcome{status: session.DeliveryStatusDelivered, out: delivered}, true
+	}
+	var outcome deliveryOutcome
+	var ok bool
+	fresh, err := d.s.readPrimary(d.r.Context(), row.TenantID, row.ID)
+	if err != nil || d.rerouted {
+		outcome, ok = d.heldBranch(row, deliverIdx)
+	} else {
+		d.rerouted = true
+		outcome, ok = d.route(fresh, msgs, deliverIdx)
+	}
+	if ok {
+		outcome.out = append(delivered, outcome.out...)
+	}
+	return outcome, ok
+}
+
+// executorFailure answers a failed send with EXECUTOR_FAILURE.
+func (d *restDelivery) executorFailure(err error) (deliveryOutcome, bool) {
+	// spec: §16.3 / §16 error taxonomy — the executor (the pod) rejected
+	// the prompt; UPSTREAM marks it a downstream dependency failure on the
+	// `session.prompt` span.
+	tracing.RecordError(d.span, tracing.CategorizeError(err, tracing.CategoryUpstream))
+	d.s.writeError(d.w, http.StatusInternalServerError, "EXECUTOR_FAILURE",
+		"executor rejected the message batch",
+		map[string]any{"reason": err.Error()})
+	return deliveryOutcome{}, false
+}
+
+// resumeAndDeliver is §7.2 path 6 for a `suspended` target. On the
+// coordinating replica a session that holds its pod resumes on that pod, its
+// held messages are delivered, and the batch is sent. Every other case holds
+// the batch in the DLQ and moves a podless session to resume_pending: a
+// session that released its pod, a replica that does not coordinate the
+// session, a resume that failed, and a held delivery that failed after the
+// resume, where the message waits behind the failed entry.
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func (d *restDelivery) resumeAndDeliver(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
+	s := d.s
+	ctx := d.r.Context()
+	if !s.holdsPod(row) || !s.coordinatesSession(ctx, row.TenantID, row.ID) {
+		return d.heldBranch(row, deliverIdx)
+	}
+	updated, err := s.resumeHeldAndDrain(ctx, row)
+	if err != nil {
+		tracing.RecordError(d.span, tracing.CategorizeError(err, tracing.CategoryTransient))
+		return d.heldBranch(row, deliverIdx)
+	}
+	o, err := s.executor.Send(ctx, updated.ID, msgs)
+	if err != nil {
+		tracing.RecordError(d.span, tracing.CategorizeError(err, tracing.CategoryUpstream))
+		return d.bufferAfterResumedSendFailure(row, deliverIdx)
+	}
+	out, ok := s.writeDeliveredResponse(ctx, d.w, d.tenantID, updated, msgs, o)
+	if !ok {
+		return deliveryOutcome{}, false
+	}
+	return deliveryOutcome{status: session.DeliveryStatusDelivered, out: out}, true
+}
+
+// heldBranch holds the batch in the session's DLQ through holdMessage and,
+// on a queued or dropped answer, attempts the guarded suspended →
+// resume_pending write, which applies only to a session that holds no pod.
+// A guard miss or a logged store error does not change the answer: queued,
+// dropped with dlq_overflow, TARGET_TERMINAL, or error with
+// inbox_unavailable.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §6.2 (Pod
+// State Machine)
+func (d *restDelivery) heldBranch(row sessionstore.Session, deliverIdx []int) (deliveryOutcome, bool) {
+	outcome, terminal := d.s.holdOutcomeFor(d.r.Context(), row, d.req, deliverIdx)
+	if terminal != "" {
+		d.s.writeTargetTerminal(d.w, terminal)
+		return deliveryOutcome{}, false
+	}
+	if outcome.status == session.DeliveryStatusQueued || outcome.status == session.DeliveryStatusDropped {
+		d.s.resumeHeldSuspended(d.r.Context(), row)
+	}
 	return outcome, true
 }
 
-// bufferAfterResumedSendFailure buffers a path-6 batch whose delivery failed
-// after the session was resumed. A stream failure reports the session before
-// the failed Send returns, so the row read before the resume is stale: the
-// row is re-read and the §7.2 path 7 rows are applied to the state it is in
-// now. A recovering row (resume_pending or awaiting_client_action) buffers to
-// the DLQ, a terminal row answers TARGET_TERMINAL and enqueues nothing, and
-// any other state, or a re-read error, buffers to the inbox as before, where
-// it drains on the next ready_for_input.
-//
-// spec: §7.2 (Message delivery routing — seven paths, paths 6 and 7;
-// Dead-letter handling for inter-session messages); §28.5.1 (CH-ATTACH
-// Degradation.).
-func (s *Server) bufferAfterResumedSendFailure(w http.ResponseWriter, r *http.Request, row sessionstore.Session,
-	req MessageRequest, deliverIdx []int,
-) (deliveryOutcome, bool) {
-	fresh, err := s.store.Get(r.Context(), row.TenantID, row.ID)
-	if err != nil {
-		return s.bufferOrRespond(r.Context(), w, row, req, deliverIdx, bufferTargetInbox)
+// resumeHeldSuspended attempts the guarded suspended → resume_pending write
+// for a message held for the session, logging a store error. A guard miss
+// is the expected outcome for a session that holds its pod.
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func (s *Server) resumeHeldSuspended(ctx context.Context, row sessionstore.Session) {
+	row.State = session.StateSuspended
+	if _, err := s.enterResumePending(ctx, row); err != nil {
+		var pe *session.PreconditionError
+		if !errors.As(err, &pe) {
+			slog.Warn("sessionserver: resume a suspended session with a held message", "session_id", row.ID, "error", err)
+		}
 	}
-	switch messagerouting.Classify(fresh.State, false, false, messagerouting.SourceExternal).Action {
-	case messagerouting.ActionBufferDLQ:
-		return s.bufferOrRespond(r.Context(), w, fresh, req, deliverIdx, bufferTargetDLQ)
-	case messagerouting.ActionRejectTerminal:
-		s.writeTargetTerminal(w, fresh.State)
+}
+
+// bufferAfterResumedSendFailure handles every error of the resumed batch's
+// send. A stream failure reports the session before the failed Send returns,
+// so the row is re-read from the primary: a terminal row answers
+// TARGET_TERMINAL and enqueues nothing, a running or input_required row
+// buffers the batch to the inbox, and any other row, or a re-read error,
+// takes the held branch. The inbox is not a valid destination when the row
+// cannot rule out a recovering state.
+// spec: §7.2 (Message delivery routing — seven paths, paths 6 and 7);
+// §28.5.1 (CH-ATTACH Degradation.).
+func (d *restDelivery) bufferAfterResumedSendFailure(row sessionstore.Session, deliverIdx []int) (deliveryOutcome, bool) {
+	s := d.s
+	fresh, err := s.readPrimary(d.r.Context(), row.TenantID, row.ID)
+	switch {
+	case err != nil:
+		return d.heldBranch(row, deliverIdx)
+	case session.IsTerminal(fresh.State):
+		s.writeTargetTerminal(d.w, fresh.State)
 		return deliveryOutcome{}, false
+	case fresh.State == session.StateRunning || fresh.State == session.StateInputRequired:
+		return s.bufferOrRespond(d.r.Context(), d.w, fresh, d.req, deliverIdx, bufferTargetInbox)
 	default:
-		return s.bufferOrRespond(r.Context(), w, row, req, deliverIdx, bufferTargetInbox)
+		return d.heldBranch(fresh, deliverIdx)
 	}
 }
 
@@ -318,9 +441,9 @@ func (s *Server) holdOutcomeFor(ctx context.Context, row sessionstore.Session, r
 	switch {
 	case err != nil:
 		return deliveryOutcome{status: session.DeliveryStatusError, reason: session.DeliveryReasonInboxUnavailable}, ""
-	case outcome == holdTerminal:
+	case outcome == HoldTerminal:
 		return deliveryOutcome{}, state
-	case outcome == holdDropped:
+	case outcome == HoldDropped:
 		return deliveryOutcome{status: session.DeliveryStatusDropped, reason: session.DeliveryReasonDLQOverflow}, ""
 	default:
 		return deliveryOutcome{status: session.DeliveryStatusQueued}, ""

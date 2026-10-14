@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -61,10 +63,11 @@ const (
 // the single producer; it stamps one of these on every `→ expired` edge it
 // drives and passes it to the SessionExpiryNotifier.
 const (
-	// ExpiryReasonMaxIdleTime is the §6.2 `maxClientIdleSeconds` idle-clock
-	// expiry: a clock-running session reclaimed for continuous client
-	// inactivity. It shares the `expiryReason` vocabulary of the §14
-	// `dev.lenny.session_expired` event. spec: §16.1.1; §6.2.
+	// ExpiryReasonMaxIdleTime is the reason of the two idle expiries: the
+	// §6.2 `maxClientIdleSeconds` expiry of a `running` session that cannot
+	// be idle-suspended, and the §6.2 suspended-session lifetime
+	// (maxSuspendedSessionSeconds). It shares the `expiryReason` vocabulary
+	// of the §14 `dev.lenny.session_expired` event. spec: §16.1.1; §6.2.
 	ExpiryReasonMaxIdleTime = "max_idle_time"
 	// ExpiryReasonMaxSessionAge is the §11.3 `maxSessionAge` age-cap expiry
 	// (and the §7.3 `awaiting_client_action` wall-clock deadline, which shares
@@ -125,27 +128,30 @@ const (
 	// `sweepAwaitingClientAction` below.
 	DefaultMaxAwaitingClientActionSeconds = 900
 
-	// DefaultMaxIdleSeconds is the §11.3 / §6.2
-	// `maxClientIdleSeconds` platform default: the pool's effective
-	// `maxSessionAgeSeconds`, so a session with no resolvable idle bound
-	// is reclaimed at the age cap rather than at a fixed 600s (a deliberate
-	// relaxation recorded in the §6.2 clock-default rewrite). This package
-	// uses DefaultMaxSessionAgeSeconds as the fixed fallback because that is
-	// the platform age default the IdleResolver returns 0 against. A session
-	// with no qualifying agent activity (§6.2 qualifying events) for longer
-	// than its effective cap is expired by the idle sweep. The
-	// `sessionPolicy.maxClientIdleSeconds` knob and the §27.6 playground idle
-	// override tighten it below this default via the IdleResolver. F-11.3.7.
-	DefaultMaxIdleSeconds = DefaultMaxSessionAgeSeconds
+	// DefaultMaxIdleSeconds is the §6.2 `maxClientIdleSeconds` platform
+	// default: 900s. The idle sweep suspends a `running` session that had no
+	// activity for its effective `maxClientIdleSeconds` and releases its pod
+	// or slot (§6.2 Idle suspension.), or expires one that cannot be
+	// idle-suspended. The per-pool `sessionPolicy.maxClientIdleSeconds` and
+	// the §27.6 playground idle override tighten it through the
+	// IdleResolver; with neither set this default applies. spec: §6.2
+	// (maxClientIdleSeconds clock behavior across states).
+	DefaultMaxIdleSeconds = 900
 
-	// DefaultMaxSuspendedPodHoldSeconds is the §11.3 wall-clock
-	// cap on the suspended pod-hold window. A session that has been
-	// `suspended` longer than this releases its pod (and transitions to
-	// `expired` if no resume has begun). Both deploy-wide and per-tenant
-	// caps apply; the more restrictive wins, per §11.3. The
-	// per-tenant cap is read from tenant configuration when present and
-	// otherwise falls back to this platform default. spec: §11.3.
+	// DefaultMaxSuspendedPodHoldSeconds is the §6.2 / §11.3 hold window of
+	// an interrupt suspension: 900s. When a `suspended` session that holds
+	// its pod has been suspended this long, the gateway checkpoints the
+	// workspace and releases the pod, and the session stays `suspended`
+	// with no pod. An idle suspension has a hold of zero. Only the
+	// deploy-wide value exists. spec: §6.2 (Pod State Machine); §11.3.
 	DefaultMaxSuspendedPodHoldSeconds = 900
+
+	// DefaultMaxSuspendedSessionSeconds is the §6.2 suspended-session
+	// lifetime, gateway.maxSuspendedSessionSeconds: 604800s (7 days). A
+	// session that stays `suspended` this long after its entry to
+	// `suspended` is expired with the `max_idle_time` expiry reason.
+	// spec: §6.2 (Pod State Machine).
+	DefaultMaxSuspendedSessionSeconds = 604800
 
 	// DefaultMaxResumePendingSeconds is the §6.2 / §7.3 default for the `resume_pending` wall-clock cap: 900s. A
 	// session that has waited this long for a pod to become available
@@ -197,19 +203,23 @@ type Config struct {
 	// awaiting_client_action state: a session that has waited this
 	// long for client action is expired.
 	MaxAwaitingClientActionSeconds int
-	// MaxIdleSeconds is the §11.3
-	// platform default: a session in a clock-running state with no
-	// qualifying agent activity for longer than this (or its tighter
-	// per-runtime / per-pool / per-session cap via the IdleResolver) is
-	// expired. A zero value falls through to DefaultMaxIdleSeconds (the
-	// platform age default, per §6.2).
+	// MaxIdleSeconds is the §6.2 `maxClientIdleSeconds` platform default:
+	// a `running` session with no activity for longer than this (or its
+	// tighter per-pool or playground cap through the IdleResolver) is
+	// idle-suspended, or expired when it cannot be idle-suspended. A zero
+	// value falls through to DefaultMaxIdleSeconds.
 	MaxIdleSeconds int
-	// MaxSuspendedPodHoldSeconds is the §11.3 deploy-wide cap
-	// on the suspended pod-hold window. The per-tenant cap (when set)
-	// further tightens this; the watchdog applies the more-restrictive
-	// of the two for each row. A zero value falls through to
-	// DefaultMaxSuspendedPodHoldSeconds.
+	// MaxSuspendedPodHoldSeconds is the §6.2 / §11.3 deploy-wide hold window
+	// of an interrupt suspension: once a `suspended` session that holds its
+	// pod has been suspended this long, the gateway checkpoints and releases
+	// the pod and the session stays `suspended`. A zero value falls through
+	// to DefaultMaxSuspendedPodHoldSeconds.
 	MaxSuspendedPodHoldSeconds int
+	// MaxSuspendedSessionSeconds is the §6.2 suspended-session lifetime: a
+	// session suspended this long after its entry to `suspended` is
+	// expired. A zero value falls through to
+	// DefaultMaxSuspendedSessionSeconds.
+	MaxSuspendedSessionSeconds int
 	// MaxResumePendingSeconds is the §6.2 wall-clock cap on
 	// resume_pending. On expiry the session transitions to
 	// awaiting_client_action so the client can intervene. The
@@ -258,6 +268,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxSuspendedPodHoldSeconds <= 0 {
 		c.MaxSuspendedPodHoldSeconds = DefaultMaxSuspendedPodHoldSeconds
+	}
+	if c.MaxSuspendedSessionSeconds <= 0 {
+		c.MaxSuspendedSessionSeconds = DefaultMaxSuspendedSessionSeconds
 	}
 	if c.MaxResumePendingSeconds <= 0 {
 		c.MaxResumePendingSeconds = DefaultMaxResumePendingSeconds
@@ -389,7 +402,9 @@ type RetryAttemptNotifier interface {
 // the termination. The watchdog resolves the §16.1.1 `reason` vocabulary from
 // the expiry edge that fired:
 //
-//   - `max_idle_time` on the §6.2 `maxClientIdleSeconds` idle-clock expiry, and
+//   - `max_idle_time` on the §6.2 `maxClientIdleSeconds` expiry of a session
+//     that cannot be idle-suspended and on the §6.2 suspended-session
+//     lifetime, and
 //   - `max_session_age` on the §11.3 `maxSessionAge` age-cap expiry (and the
 //     §7.3 `awaiting_client_action` wall-clock deadline, whose reason shares the
 //     age-cap series per the §14 `expiryReason` vocabulary).
@@ -423,17 +438,59 @@ type ExpiryWarningNotifier interface {
 	OnSessionExpiringSoon(ctx context.Context, sess sessionstore.Session, maxSessionAgeSeconds, remainingSeconds int)
 }
 
-// DLQSweeper runs the §7.2 dead-letter-queue TTL sweep for one
-// recovering session, emitting a `message_expired` event with `reason:
+// DLQSweeper runs the §7.2 dead-letter-queue TTL sweep for one session in a
+// recovering state, emitting a `message_expired` event with `reason:
 // "dlq_ttl_expired"` per expired entry and returning the count removed.
-// *sessioninbox.Coordinator satisfies it. A nil sweeper disables the
-// sweep. The §7.2 trimmer activates only while the session is in
-// a recovering state (`resume_pending` or `awaiting_client_action`); the
-// watchdog is the periodic background sweeper that enforces that scoping.
+// *sessioninbox.Coordinator satisfies it. A nil sweeper disables the sweep.
+// The watchdog calls it only for a session in `resume_pending`, `resuming`,
+// or `awaiting_client_action` whose state entry is at least the DLQ TTL old,
+// never for a `suspended` session, whose held messages wait for its resume.
 //
-// spec: §7.2.
+// spec: §7.2 (Interactive Session Model).
 type DLQSweeper interface {
 	SweepExpired(ctx context.Context, tenantID, sessionID string) (expired int, err error)
+}
+
+// SuspendedPodReleaser releases the pod of an interrupt suspension whose
+// hold window ended (§6.2 Pod State Machine): it checkpoints, clears the pod
+// from the row, and releases the pod while the session stays `suspended`.
+// It returns at once and runs the release off the caller. The session server
+// implements it. spec: §6.2 (Pod State Machine).
+type SuspendedPodReleaser interface {
+	ReleaseSuspendedPod(ctx context.Context, row sessionstore.Session)
+}
+
+// IdleSuspender suspends an idle `running` session and releases its pod or
+// slot in one sequence (§6.2 Idle suspension.). idleSeconds is the session's
+// effective maxClientIdleSeconds, the window the runtime adapter's seal
+// requires without activity. It returns at once and runs the suspension off
+// the caller. The session server implements it, and the gateway wires it
+// only when a pod binder is wired. spec: §6.2 (maxClientIdleSeconds clock
+// behavior across states).
+type IdleSuspender interface {
+	SuspendIdle(ctx context.Context, row sessionstore.Session, idleSeconds int)
+}
+
+// BacklogResumer resumes a `suspended` session whose held messages arrived
+// while it was suspended (§7.2 delivery path 6 Backlog resume.). HoldsPod
+// reports whether the row holds its pod, which the watchdog's suspended
+// sweep reads to leave a podless row to the gateway leader's re-check.
+// ResumeBacklog reports true when it started a resume or could not read the
+// backlog, in which case the sweep releases nothing this tick. The session
+// server implements it. spec: §7.2 (Message delivery routing — seven paths,
+// path 6).
+type BacklogResumer interface {
+	HoldsPod(row sessionstore.Session) bool
+	ResumeBacklog(ctx context.Context, row sessionstore.Session) bool
+}
+
+// IdleSuspendability is the optional half of the IdleResolver that decides
+// whether a session can be idle-suspended. A service-mode session and a
+// `type: mcp` runtime's session cannot, and keep the idle expiry. An error
+// skips the row this tick. spec: §6.2 (maxClientIdleSeconds clock behavior
+// across states).
+type IdleSuspendability interface {
+	IdleSuspendable(ctx context.Context, sess sessionstore.Session) (bool, error)
 }
 
 // SessionAgeResolver resolves the §5.1 per-runtime / §5.2 per-pool
@@ -476,6 +533,9 @@ type Watchdog struct {
 	messaging    DLQSweeper
 	ageResolver  SessionAgeResolver
 	idleResolver IdleResolver
+	releaser     SuspendedPodReleaser
+	suspender    IdleSuspender
+	backlog      BacklogResumer
 
 	// warnedMu guards warned, the §11.3 expiry-warning dedup set.
 	warnedMu sync.Mutex
@@ -532,7 +592,7 @@ func (w *Watchdog) WithTerminalHook(hook TerminalHook) *Watchdog {
 
 // WithMessaging wires the §7.2 session-inbox coordinator so each sweep
 // runs the dead-letter-queue TTL sweep over every recovering session
-// (`resume_pending`, `awaiting_client_action`). The sweep emits a
+// (`resume_pending`, `resuming`, `awaiting_client_action`). The sweep emits a
 // `message_expired(dlq_ttl_expired)` event per expired DLQ entry, the
 // background-trimmer half of the §7.2 contract. A nil coordinator
 // (the dev / no-Redis posture) leaves the DLQ sweep disabled.
@@ -570,6 +630,30 @@ func (w *Watchdog) WithIdleResolver(r IdleResolver) *Watchdog {
 	return w
 }
 
+// WithSuspendedPodReleaser wires the release of an interrupt suspension's
+// pod at the end of its hold window. A nil releaser leaves the pod held.
+// spec: §6.2 (Pod State Machine).
+func (w *Watchdog) WithSuspendedPodReleaser(r SuspendedPodReleaser) *Watchdog {
+	w.releaser = r
+	return w
+}
+
+// WithIdleSuspender wires the idle suspension of a `running` session. With
+// no suspender the idle sweep expires every idle session, as a gateway with
+// no pod binder does. spec: §6.2 (maxClientIdleSeconds clock behavior across
+// states).
+func (w *Watchdog) WithIdleSuspender(s IdleSuspender) *Watchdog {
+	w.suspender = s
+	return w
+}
+
+// WithBacklogResumer wires the backlog resume of a `suspended` session that
+// holds its pod. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (w *Watchdog) WithBacklogResumer(b BacklogResumer) *Watchdog {
+	w.backlog = b
+	return w
+}
+
 // Result captures the outcome of a sweep.
 type Result struct {
 	// ForcedFailures is the count of sessions transitioned to `failed`
@@ -578,9 +662,16 @@ type Result struct {
 	// Expirations is the count of sessions transitioned to `expired`
 	// by the §11.3 maxSessionAge and maxAwaitingClientAction sweeps.
 	Expirations int
-	// IdleExpirations is the count of `running` sessions transitioned to
-	// `expired` by the §11.3 sweep in this tick.
+	// IdleExpirations is the count of `running` sessions that cannot be
+	// idle-suspended and were transitioned to `expired` by the §6.2 idle
+	// sweep in this tick.
 	IdleExpirations int
+	// IdleSuspensions is the count of idle `running` sessions handed to the
+	// idle suspender in this tick.
+	IdleSuspensions int
+	// SuspendedExpirations is the count of `suspended` sessions expired by
+	// the §6.2 suspended-session lifetime in this tick.
+	SuspendedExpirations int
 	// ResumePendingTimeouts is the count of sessions transitioned from
 	// resume_pending to awaiting_client_action by the §6.2
 	// wall-clock cap.
@@ -695,30 +786,38 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 		if err := w.sweepIdle(ctx, tenant, now, &res); err != nil {
 			return res, err
 		}
-		if err := w.sweepDLQExpiry(ctx, tenant, &res); err != nil {
+		if err := w.sweepSuspended(ctx, tenant, now, &res); err != nil {
+			return res, err
+		}
+		if err := w.sweepDLQExpiry(ctx, tenant, now, &res); err != nil {
 			return res, err
 		}
 	}
 	return res, nil
 }
 
-// sweepDLQExpiry runs the §7.2 dead-letter-queue TTL sweep over
-// every recovering session in tenant. The §7.2 trimmer is
-// state-gated: it activates only while a session is in `resume_pending` or
-// `awaiting_client_action`, so the sweep lists exactly those states and
-// asks the coordinator to expire past-TTL DLQ entries (emitting a
-// `message_expired(dlq_ttl_expired)` event per entry). A per-session sweep
-// error is dropped so a transient Redis blip on one session does not stall
-// the watchdog tick or the other sessions' sweeps; the next tick retries.
-// No-op when messaging is not wired.
+// sweepDLQExpiry runs the §7.2 dead-letter-queue TTL sweep over every
+// session in a recovering state of tenant: `resume_pending`, `resuming`, and
+// `awaiting_client_action`. It does not list `suspended`, so it expires no
+// held message of a `suspended` session; those are delivered after the
+// session's next resume (§7.2 delivery path 6 Held messages. and Backlog
+// resume.), and the terminal drain removes what remains when the
+// suspended-session lifetime ends the session. A row whose UpdatedAt is less
+// than DefaultDLQTTL before now is skipped, so an entry expires at the later
+// of its score and the row's entry to its state plus the TTL (§7.2 delivery
+// path 6 Delivery of held messages.). The coordinator emits a
+// `message_expired(dlq_ttl_expired)` event per expired entry. A per-session
+// sweep error is dropped so a transient Redis blip on one session does not
+// stall the tick; the next tick retries. No-op when messaging is not wired.
 //
-// spec: §7.2.
-func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, res *Result) error {
+// spec: §7.2 (Interactive Session Model).
+func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	if w.messaging == nil {
 		return nil
 	}
 	for _, st := range []session.State{
 		session.StateResumePending,
+		session.StateResuming,
 		session.StateAwaitingClientAction,
 	} {
 		rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
@@ -726,6 +825,9 @@ func (w *Watchdog) sweepDLQExpiry(ctx context.Context, tenant string, res *Resul
 			return err
 		}
 		for _, row := range rows {
+			if now.Sub(row.UpdatedAt) < sessioninbox.DefaultDLQTTL {
+				continue
+			}
 			expired, serr := w.messaging.SweepExpired(ctx, tenant, row.ID)
 			if serr != nil {
 				continue
@@ -908,7 +1010,8 @@ func (w *Watchdog) notifyRetryAttempt(ctx context.Context, sess sessionstore.Ses
 // one is wired, so the §16.1 `lenny_session_expiry_total{reason}` counter sees
 // the watchdog-driven `→ expired` transition. reason is the §16.1.1 vocabulary
 // value the caller resolved from the expiry edge (ExpiryReasonMaxIdleTime on the
-// idle-clock sweep, ExpiryReasonMaxSessionAge on the age-cap and
+// idle expiry of a session that cannot be idle-suspended and on the
+// suspended-session lifetime, ExpiryReasonMaxSessionAge on the age-cap and
 // awaiting-action wall-clock sweeps). Best-effort: a nil hook or one that does
 // not implement the optional notifier silently no-ops.
 //
@@ -1030,114 +1133,138 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 	return nil
 }
 
-// idleClockRunningStates is the §6.2 `maxClientIdleSeconds` clock's own
-// pause table, expressed as the states in which the clock runs. The single
-// idle bound terminates a session after continuous client inactivity, and
-// waiting on an absent client is the condition it exists to reclaim, so the
-// clock runs in `running`, `input_required`, and `awaiting_client_action`.
-// An elicitation wait keeps the session in `running` (§9.2 — the elicitation
-// response is client activity and resets the clock when it arrives), so it is
-// covered by the `running` entry and needs no separate predicate. The clock
-// is paused in `suspended`, `resume_pending`, `resuming`, `finalizing`, and
-// terminal states, which this list omits.
+// idleClockRunningStates is the set of states in which the §6.2
+// `maxClientIdleSeconds` clock is evaluated: `running` alone. The clock is
+// not evaluated in `input_required`, where the runtime waits on the client,
+// and is paused in `awaiting_client_action`, `suspended`, the recovery
+// states, and the pre-running and terminal states, which this list omits.
 //
-// spec: §6.2 (maxClientIdleSeconds clock pause table); §9.2
-// (elicitation-wait idle clock). F-11.3.7 / F-9.2.15.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
 var idleClockRunningStates = []session.State{
 	session.StateRunning,
-	session.StateInputRequired,
-	session.StateAwaitingClientAction,
 }
 
-// sweepIdle implements the §11.3 / §6.2 `maxClientIdleSeconds`
-// control. A session in a clock-running state (idleClockRunningStates) that
-// has had no qualifying agent activity (the §6.2 qualifying events the
-// activity stamper records on `last_agent_activity_at`) for longer than its
-// effective `maxClientIdleSeconds` is transitioned to `expired` with reason
-// `expired:idle`.
-//
-// The clock has its own pause table, distinct from the `maxSessionAge` pause
-// table: the active-time `maxSessionAge` timer is paused in
-// `awaiting_client_action` while this clock runs there, so the default-equal
-// idle bound is the reclaimer for an abandoned `awaiting_client_action` wait. The sweep enforces the pause table
-// by listing only the running states; the paused states (`suspended`,
-// `resume_pending`, `resuming`, `finalizing`, terminal) are never listed.
+// sweepIdle implements the §6.2 `maxClientIdleSeconds` control for the
+// tenant's `running` sessions. A session with no qualifying activity (the
+// §6.2 qualifying events the activity stamper records on
+// `last_agent_activity_at`) for longer than its effective
+// `maxClientIdleSeconds` is idle-suspended when it can be (§6.2 Idle
+// suspension.): the sweep hands it to the IdleSuspender, which returns at
+// once, when one is wired and the IdleResolver answers that the session can
+// be idle-suspended. A session that cannot be idle-suspended, and every idle
+// session on a gateway with no suspender, is transitioned to `expired` with
+// reason `expired:idle`, as before. A resolver error skips the row this
+// tick.
 //
 // The idle anchor is `LastAgentActivityAt`; when it is zero (no qualifying
-// event recorded yet) the sweep falls back to UpdatedAt — the instant the
-// session entered the current state — so a freshly-running session that never
-// does anything is reaped one `maxClientIdleSeconds` after it started running,
-// not after its creation.
+// event recorded yet) the sweep falls back to UpdatedAt, the instant the
+// session entered the current state. The sweep reads the anchor; it sets
+// nothing on it.
 //
-// spec: §6.2 (maxClientIdleSeconds clock); §11.3; §9.2
-// (elicitation-wait idle clock). F-11.3.7 / F-9.2.15.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states); §11.3.
 func (w *Watchdog) sweepIdle(ctx context.Context, tenant string, now time.Time, res *Result) error {
 	platformCap := w.cfg.MaxIdleSeconds
-	for _, st := range idleClockRunningStates {
-		rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: st})
-		if err != nil {
-			return err
+	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{State: session.StateRunning})
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		capSeconds := platformCap
+		if w.idleResolver != nil {
+			if secs := w.idleResolver.EffectiveMaxIdleSeconds(ctx, row); secs > 0 {
+				capSeconds = secs
+			}
 		}
-		for _, row := range rows {
-			capSeconds := platformCap
-			if w.idleResolver != nil {
-				if secs := w.idleResolver.EffectiveMaxIdleSeconds(ctx, row); secs > 0 {
-					capSeconds = secs
-				}
-			}
-			if capSeconds <= 0 {
-				continue
-			}
-			anchor := row.LastAgentActivityAt
-			if anchor.IsZero() {
-				anchor = row.UpdatedAt
-			}
-			if now.Sub(anchor) <= time.Duration(capSeconds)*time.Second {
-				continue
-			}
-			var from session.State
-			end := w.beginTerminal(row.ID)
-			updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-				if !isIdleClockRunning(r.State) {
-					// spec: §7.2 — the locked row moved to a paused or
-					// terminal state; leave it.
-					return sessionstore.ErrSuperseded
-				}
-				from = r.State
-				r.State = session.StateExpired
-				// spec: §8.8 — the open-ended `expired:*` prefix
-				// distinguishes idle reclamation from the active-time
-				// `maxSessionAge` cap (`expired:deadline`). F-11.3.7.
-				if r.FailureReason == "" {
-					r.FailureReason = string(session.FailureExpiredIdle)
-				}
-				sessionstore.MarkTerminated(r, from, now)
-				return nil
-			})
-			if errors.Is(err, sessionstore.ErrSuperseded) {
-				end()
-				continue
-			}
-			if err != nil {
-				end()
-				return err
-			}
-			res.IdleExpirations++
-			res.Expirations++
-			// spec: §16.1.1 — the idle-clock expiry stamps the
-			// `max_idle_time` reason on the session_expiry counter. F-11.3.7.
-			w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxIdleTime)
-			w.recordCompleted(ctx, from, updated)
-			end()
+		if capSeconds <= 0 {
+			continue
+		}
+		anchor := row.LastAgentActivityAt
+		if anchor.IsZero() {
+			anchor = row.UpdatedAt
+		}
+		if now.Sub(anchor) <= time.Duration(capSeconds)*time.Second {
+			continue
+		}
+		suspend, ok := w.idleSuspendable(ctx, row)
+		if !ok {
+			continue
+		}
+		if suspend {
+			w.suspender.SuspendIdle(ctx, row, capSeconds)
+			res.IdleSuspensions++
+			continue
+		}
+		if err := w.expireIdle(ctx, tenant, row, now, res); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// isIdleClockRunning reports whether st is one of the §6.2 states in which the
-// `maxClientIdleSeconds` clock runs. The transition guard uses it so a row
-// that races into a paused state between the list and the update is left
-// alone. spec: §6.2 (maxClientIdleSeconds clock pause table). F-11.3.7.
+// idleSuspendable reports whether an idle row goes to the idle suspender.
+// ok is false when the suspendability check failed, so the sweep skips the
+// row this tick. With no suspender, or an IdleResolver that cannot answer,
+// the row is expired.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
+func (w *Watchdog) idleSuspendable(ctx context.Context, row sessionstore.Session) (suspend, ok bool) {
+	if w.suspender == nil {
+		return false, true
+	}
+	check, can := w.idleResolver.(IdleSuspendability)
+	if !can {
+		return false, true
+	}
+	suspendable, err := check.IdleSuspendable(ctx, row)
+	if err != nil {
+		slog.Warn("watchdog: decide whether an idle session can be idle-suspended", "session_id", row.ID, "error", err)
+		return false, false
+	}
+	return suspendable, true
+}
+
+// expireIdle writes the idle expiry of a `running` session that cannot be
+// idle-suspended. The write is a terminal writer on the funnel path, guarded
+// on the locked row still being `running`; a guard miss changes nothing.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
+func (w *Watchdog) expireIdle(ctx context.Context, tenant string, row sessionstore.Session, now time.Time, res *Result) error {
+	var from session.State
+	end := w.beginTerminal(row.ID)
+	defer end()
+	updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+		if !isIdleClockRunning(r.State) {
+			// spec: §7.2 — the locked row left `running`; leave it.
+			return sessionstore.ErrSuperseded
+		}
+		from = r.State
+		r.State = session.StateExpired
+		// spec: §8.8 — the open-ended `expired:*` prefix distinguishes
+		// idle reclamation from the active-time `maxSessionAge` cap
+		// (`expired:deadline`). F-11.3.7.
+		if r.FailureReason == "" {
+			r.FailureReason = string(session.FailureExpiredIdle)
+		}
+		sessionstore.MarkTerminated(r, from, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	res.IdleExpirations++
+	res.Expirations++
+	// spec: §16.1.1 — the idle expiry stamps the `max_idle_time` reason on
+	// the session_expiry counter. F-11.3.7.
+	w.notifySessionExpiry(ctx, updated, ExpiryReasonMaxIdleTime)
+	w.recordCompleted(ctx, from, updated)
+	return nil
+}
+
+// isIdleClockRunning reports whether st is the state in which the §6.2
+// `maxClientIdleSeconds` clock is evaluated. The transition guard uses it so
+// a row that leaves `running` between the list and the update is left alone.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states). F-11.3.7.
 func isIdleClockRunning(st session.State) bool {
 	for _, s := range idleClockRunningStates {
 		if st == s {

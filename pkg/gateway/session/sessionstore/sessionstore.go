@@ -59,12 +59,15 @@ type Session struct {
 	TerminatedAt     time.Time
 	TerminatedReason string
 
-	// SuspendedAt and SuspendedReason carry the §7.2 interrupt-suspension
-	// Suspended session-condition fact, relocated off
-	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
-	// is the wall-clock instant the session entered `suspended`; it is the
-	// zero time while the session is not suspended. SuspendedReason is the
-	// coded interrupt reason. spec: §7.2; §8.8.
+	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
+	// session-condition fact, relocated off Sandbox.status.conditions
+	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
+	// the session entered `suspended`; it is the zero time while the
+	// session is not suspended. SuspendedReason is the coded reason the
+	// session was suspended for: SuspendedReasonInterruptAcknowledged or
+	// SuspendedReasonInterruptTimeout for an interrupt, and
+	// SuspendedReasonIdle for an idle suspension, whose row names no pod.
+	// spec: §7.2; §8.8; §6.2 (Pod State Machine).
 	SuspendedAt     time.Time
 	SuspendedReason string
 
@@ -1171,3 +1174,20 @@ func ActiveAge(row Session, now time.Time) time.Duration {
 	}
 	return age
 }
+
+// Suspension reasons recorded in Session.SuspendedReason. An interrupt
+// suspension keeps its pod for the hold window (§6.2
+// maxSuspendedPodHoldSeconds); an idle suspension releases its pod in the
+// same sequence that writes it, so an Idle row names no pod.
+//
+// spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model).
+const (
+	// SuspendedReasonInterruptAcknowledged is an interrupt the runtime
+	// acknowledged before the deadline.
+	SuspendedReasonInterruptAcknowledged = "InterruptAcknowledged"
+	// SuspendedReasonInterruptTimeout is an interrupt whose deadline elapsed
+	// without an acknowledgement.
+	SuspendedReasonInterruptTimeout = "InterruptTimeout"
+	// SuspendedReasonIdle is an idle suspension (§6.2 Idle suspension.).
+	SuspendedReasonIdle = "Idle"
+)

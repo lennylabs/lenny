@@ -79,6 +79,18 @@ type MCPRuntime struct {
 	// initResult records the agent server's negotiated protocol version
 	// and identity from the initialize handshake.
 	initResult mcp.InitializeResult
+	// tap is the adapter's activity tap, recorded by TapOutput. Guarded by
+	// mu. spec: §4.7.1.
+	tap func(line []byte)
+}
+
+// TapOutput records fn as the activity tap: WriteEnvelope calls it with each
+// response frame it delivers to the output channel, whether or not Output
+// was called. spec: §4.7.1 (Role and Gateway RPC Contract)
+func (r *MCPRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
 }
 
 const (
@@ -188,6 +200,7 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	client := r.client
 	out := r.out
 	closed := r.closed
+	tap := r.tap
 	r.mu.Unlock()
 	if closed || client == nil {
 		return errors.New("adapter: MCP runtime is not running")
@@ -214,6 +227,9 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	}
 	select {
 	case out <- frame:
+		if tap != nil {
+			tap(frame)
+		}
 		return nil
 	default:
 		// The Output buffer is full. Block-free delivery would drop the

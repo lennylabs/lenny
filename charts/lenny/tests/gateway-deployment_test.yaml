@@ -1074,6 +1074,7 @@ tests:
             @.name != "LENNY_CLAIM_HOLD_TTL_SECONDS" &&
             @.name != "LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS" &&
             @.name != "LENNY_CREDENTIAL_POOL_LOW_THRESHOLD" &&
+            @.name != "LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS" &&
             @.name != "LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS" &&
             @.name != "LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS" &&
             @.name != "LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT" &&
@@ -1160,6 +1161,7 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CLAIM_HOLD_TTL_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT}, any: true, count: 1}
@@ -3094,6 +3096,59 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-jitter-fraction=0.2
+
+  # spec: §6.2 (Pod State Machine), §7.2 (Message delivery routing — seven
+  # paths, path 6) — the suspension bounds render as gateway flags with
+  # their defaults: the interrupt pod hold (900s), the suspended-session
+  # lifetime (604800s), and the backlog re-check interval (300s).
+  - it: renders the suspension bound flags with their defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-pod-hold-seconds=900
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-session-seconds=604800
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --suspended-backlog-recheck-seconds=300
+
+  # spec: §6.2 (Pod State Machine) — operators override the suspension
+  # bounds via Helm; the rendered flags match the values.
+  - it: honors the suspension bound overrides
+    set:
+      gateway.maxSuspendedPodHoldSeconds: 600
+      gateway.maxSuspendedSessionSeconds: 86400
+      gateway.suspendedBacklogRecheckSeconds: 60
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-pod-hold-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-session-seconds=86400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --suspended-backlog-recheck-seconds=60
+
+  # spec: §8.3 (Delegation Policy and Lease) — the delegation budget key
+  # TTL renders as LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS (default 691200).
+  - it: renders the delegation budget key TTL
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS
+            value: "691200"
 
   # spec: §4.4 — operators may override the periodic checkpoint
   # cadence via Helm; the rendered flag matches the value.

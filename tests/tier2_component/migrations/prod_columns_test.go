@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -598,6 +599,16 @@ var prodMigrationSchema = []struct {
 	// and default are asserted directly in
 	// TestAccumulatedSessionAgeMigration_spec_6_2. spec: §6.2.
 	{migration: "0182", table: "sessions", columns: []string{"accumulated_session_age_seconds"}},
+	// 0183 adds the idx_sessions_podless_suspended partial index the
+	// gateway leader's §7.2 backlog re-check pages through. It adds no
+	// column; the index and its drop are asserted directly in
+	// TestPodlessSuspendedIndexMigration_spec_7_2. spec: §7.2.
+	{migration: "0183", table: "sessions"},
+	// 0184 adds the idx_interactions_pending_elicitation_origin partial index
+	// the §9.2 elicitation expiry deletes through. It adds no column; the
+	// index and its drop are asserted directly in
+	// TestPendingElicitationOriginIndexMigration_spec_9_2. spec: §9.2.
+	{migration: "0184", table: "interactions"},
 }
 
 // spec: 12.2, 18.5
@@ -742,6 +753,53 @@ func TestAccumulatedSessionAgeMigration_spec_6_2(t *testing.T) {
 	mustNotHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
 	pg.MigrateTo(t, dir, accumulatedAgePriorVersion+1)
 	mustHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+}
+
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+// diagnosis: migration 0183 did not create idx_sessions_podless_suspended as
+//
+//	a (tenant_id, id) index restricted to podless suspended rows, or its
+//	.down.sql did not drop it. Without it the gateway leader's backlog
+//	re-check reads every session row of every tenant on each pass.
+func TestPodlessSuspendedIndexMigration_spec_7_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_sessions_podless_suspended")
+	for _, want := range []string{"(tenant_id, id)", "state = 'suspended'", "pod_assignment = ''"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_podless_suspended = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 182)
+	if got := indexDef(t, ctx, pg, "idx_sessions_podless_suspended"); got != "" {
+		t.Errorf("after rolling 0183 back the index still exists: %q", got)
+	}
+}
+
+// spec: 9.2 (Elicitation Chain)
+// diagnosis: migration 0184 did not create
+//
+//	idx_interactions_pending_elicitation_origin as a (tenant_id,
+//	detail->>'originPod') index restricted to pending elicitations, or its
+//	.down.sql did not drop it. Without it the elicitation expiry at a pod
+//	release scans every interaction the tenant keeps.
+func TestPendingElicitationOriginIndexMigration_spec_9_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin")
+	for _, want := range []string{"tenant_id", "originPod", "kind = 'elicitation'", "phase = 'pending'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_interactions_pending_elicitation_origin = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 183)
+	if got := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin"); got != "" {
+		t.Errorf("after rolling 0184 back the index still exists: %q", got)
+	}
 }
 
 // --- helpers -------------------------------------------------------------

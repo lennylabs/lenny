@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -94,6 +95,31 @@ type attachConn struct {
 	// done is closed by the reader when it exits, or by the open goroutine
 	// when the open fails.
 	done chan struct{}
+	// endErr is the error the stream ended with. endConn writes it before
+	// it closes done, and it is read only after done closes.
+	endErr error
+}
+
+// sealedPrefix opens the status message of the adapter's refusal of a
+// message to a sealed session. spec: §28.5.1 (CH-ATTACH).
+const sealedPrefix = "session_sealed:"
+
+// endedSealed reports whether the stream ended because the adapter refused
+// a message to a sealed session: FailedPrecondition with a message
+// beginning session_sealed:. It is read only after done closes.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *attachConn) endedSealed() bool {
+	st, ok := status.FromError(c.endErr)
+	return ok && st.Code() == codes.FailedPrecondition && strings.HasPrefix(st.Message(), sealedPrefix)
+}
+
+// endCause is the cause a Send waiting on the ended stream returns:
+// ErrSessionSealed for a sealed refusal, and errStreamEnded otherwise.
+func (c *attachConn) endCause() error {
+	if c.endedSealed() {
+		return ErrSessionSealed
+	}
+	return errStreamEnded
 }
 
 // newAttachConn builds an unopened conn for bind. Its context is derived
@@ -226,7 +252,7 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error) error {
 	select {
 	case <-c.done:
-		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, errStreamEnded, sendErr)
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, c.endCause(), sendErr)
 	case <-ctx.Done():
 		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, ctx.Err(), sendErr)
 	}
@@ -249,7 +275,7 @@ func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (
 	case <-ctx.Done():
 		cause = ctx.Err()
 	case <-c.done:
-		cause = errStreamEnded
+		cause = c.endCause()
 	}
 	select {
 	case res := <-result:
@@ -322,7 +348,10 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 	c.completeTurn(turnResult{parts: parts, ann: ann})
 }
 
-// endConn runs once when the conn's stream ends. A gateway-caused end
+// endConn runs once when the conn's stream ends. It records the end error,
+// which a Send waiting on the conn reads to tell the adapter's sealed
+// refusal (§28.5.1, a FailedPrecondition that is not a stream failure) from
+// any other end. A gateway-caused end
 // (EvictStream or Release) only closes done. Any other end removes the conn
 // from the cache when it is still the cached conn, hands an end that
 // isReportedStreamFailure classifies as a failure to the stream-failure
@@ -344,6 +373,7 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 // spec: §28.5.1 (CH-ATTACH Timing. and Degradation.); §5.2 (Pool
 // Configuration and Execution Modes).
 func (e *PodExecutor) endConn(c *attachConn, err error) {
+	c.endErr = err
 	e.mu.Lock()
 	if c.closedByGateway.Load() {
 		e.mu.Unlock()

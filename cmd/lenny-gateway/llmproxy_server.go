@@ -26,7 +26,7 @@ type llmFallbackWiring struct {
 	metrics    llmproxy.FallbackMetrics
 }
 
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, budgetGate llmproxy.BudgetGate, fallback llmFallbackWiring) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, budgetGate llmproxy.BudgetGate, fallback llmFallbackWiring, activity llmproxy.ActivityStamper) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -53,6 +53,10 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		FallbackRotator: fallback.rotator,
 		FallbackAudit:   fallback.audit,
 		FallbackMetrics: fallback.metrics,
+		// spec: §6.2 (maxClientIdleSeconds clock behavior across states) —
+		// each relayed stream line of a proxy-mode session stamps its idle
+		// clock.
+		Activity: activity,
 	})
 	return &http.Server{
 		Addr:              addr,

@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -183,6 +184,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	if err := validatePrimaryReadTimeout(*f.sessionPrimaryReadTimeout); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
@@ -237,6 +241,22 @@ func (w *gatewayWiring) buildStartupGates() {
 func validatePrimaryReadTimeout(d time.Duration) error {
 	if d <= 0 {
 		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
+}
+
+// validateSuspensionFlags rejects a delegation budget key TTL that does not
+// exceed the suspended lifetime, so a suspended session's budget keys outlive
+// it, and a backlog re-check interval below the minimum.
+// spec: §8.3 (Delegation Policy and Lease), §7.2 (Message delivery routing —
+// seven paths, path 6)
+func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, backlogRecheckSeconds int) error {
+	if budgetKeyTTLSeconds <= maxSuspendedSessionSeconds {
+		return fmt.Errorf("--delegation-budget-key-ttl-seconds (%d) must exceed --max-suspended-session-seconds (%d) (§8.3)",
+			budgetKeyTTLSeconds, maxSuspendedSessionSeconds)
+	}
+	if minimum := int(sessionserver.MinSuspendedBacklogRecheckInterval / time.Second); backlogRecheckSeconds < minimum {
+		return fmt.Errorf("--suspended-backlog-recheck-seconds must be at least %d, got %d (§7.2)", minimum, backlogRecheckSeconds)
 	}
 	return nil
 }

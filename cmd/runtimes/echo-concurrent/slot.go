@@ -169,15 +169,15 @@ func (s *slotWriter) Write(p []byte) (int, error) {
 }
 
 // stamp injects the sessionId into a single outbound JSONL frame. It
-// decodes the object, sets sessionId on every session-scoped frame, and
-// re-encodes. A `heartbeat_ack` is protocol-level, carries no per-session
-// identifier by design, and is forwarded unchanged. A frame that is not a
-// JSON object is forwarded unchanged so a future non-object frame is not
-// dropped. sessionId is the only field the schema adds for multiplexing;
-// the per-session cwd is an internal derivation (slotCwd) the runtime
-// never emits on the wire.
+// decodes the object, sets sessionId, and re-encodes. A `heartbeat_ack` the
+// worker writes answers a heartbeat that named this session, so it is
+// stamped too: an ack naming the session answers that session's liveness
+// probe. A frame that is not a JSON object is forwarded unchanged so a
+// future non-object frame is not dropped. sessionId is the only field the
+// schema adds for multiplexing; the per-session cwd is an internal
+// derivation (slotCwd) the runtime never emits on the wire.
 //
-// spec: §28.5.3.
+// spec: §28.5.3 (CH-MSGSOCK).
 func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(frame)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -186,14 +186,6 @@ func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(trimmed, &obj); err != nil {
 		return nil, fmt.Errorf("stamp session address: decode outbound frame: %w", err)
-	}
-	var typ string
-	if raw, ok := obj["type"]; ok {
-		_ = json.Unmarshal(raw, &typ)
-	}
-	if typ == "heartbeat_ack" {
-		// Protocol-level ack with no content payload; leave it untouched.
-		return frame, nil
 	}
 	id, err := json.Marshal(s.worker.sessionID)
 	if err != nil {

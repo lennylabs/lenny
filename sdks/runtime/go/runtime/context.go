@@ -19,6 +19,7 @@ const (
 	ctxKeyLifecycle
 	ctxKeyCredentials
 	ctxKeyAdapterTools
+	ctxKeySession
 )
 
 // ToolsFrom returns the §15.7 platform MCP tool surface carried on ctx,
@@ -47,12 +48,37 @@ func CredentialsFrom(ctx context.Context) *CredentialBundle {
 	return c
 }
 
+// HoldBusy reports work the handler does for the session ctx names after
+// the handler returns, such as a background task, a tool call made outside
+// a turn, or a wait on children. While a hold is unreleased, the SDK
+// answers each heartbeat naming the session with busy: true, so the
+// platform does not idle-suspend the session and release its pod. Work
+// after a handler returns is reported only through a hold, and a release
+// of the session's pod can end work that no hold reports.
+//
+// release drops the hold; a second call does nothing. A context naming no
+// live session returns a no-op release. OnCreate, OnMessage, and
+// OnTerminate each receive a context that names their session, so work
+// started in OnCreate, before any message, takes a hold the same way. The
+// session's session_end clears every hold.
+//
+// spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3 (CH-MSGSOCK).
+func HoldBusy(ctx context.Context) (release func()) {
+	st, _ := ctx.Value(ctxKeySession).(*sessionState)
+	if st == nil {
+		return func() {}
+	}
+	return st.holdBusy()
+}
+
 // withSessionContext returns the context the SDK passes to a Handler
 // method for st: the session's own context, carrying the process-scoped
-// Tools and Lifecycle and the session's credentials.
+// Tools and Lifecycle, the session's credentials, and the session that
+// HoldBusy reads.
 func (p *process) withSessionContext(st *sessionState) context.Context {
 	ctx := context.WithValue(st.ctx, ctxKeyTools, p.tools)
 	ctx = context.WithValue(ctx, ctxKeyLifecycle, p.lifecycle)
 	ctx = context.WithValue(ctx, ctxKeyCredentials, st.Credentials())
+	ctx = context.WithValue(ctx, ctxKeySession, st)
 	return ctx
 }

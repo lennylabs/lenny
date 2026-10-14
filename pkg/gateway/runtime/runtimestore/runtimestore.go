@@ -1055,8 +1055,11 @@ type SessionPolicy struct {
 	// falls back to the platform default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
-	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound.
-	// Zero defaults to the effective MaxSessionAgeSeconds.
+	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound on a
+	// `running` session: an idle session is suspended and its pod released,
+	// and a session that cannot be idle-suspended (service mode or an MCP
+	// runtime) expires. Zero selects the platform default of 900 seconds.
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
 	MaxClientIdleSeconds int `json:"maxClientIdleSeconds,omitempty"`
 
 	// SlotRetries is the §5.2 per-slot retry budget when

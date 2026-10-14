@@ -385,9 +385,19 @@ type outboundResponse struct {
 	SessionID string         `json:"sessionId,omitempty"`
 }
 
-// outboundHeartbeatAck is the §28.5.3 heartbeat_ack frame.
+// outboundHeartbeatAck is the §28.5.3 heartbeat_ack frame. SessionID names
+// the session the answered heartbeat named when the process holds it, and
+// Busy reports that the process is doing work for that session. Both are
+// omitted on the bare ack. spec: §28.5.3 (CH-MSGSOCK).
 type outboundHeartbeatAck struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Busy      bool   `json:"busy,omitempty"`
+}
+
+// inboundHeartbeat is the part of the §28.5.3 heartbeat frame the SDK reads.
+type inboundHeartbeat struct {
+	SessionID string `json:"sessionId"`
 }
 
 // outboundToolCall is the §28.5.3 tool_call frame.

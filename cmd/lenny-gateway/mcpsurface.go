@@ -286,7 +286,13 @@ func (w *gatewayWiring) buildMCPSurface(
 		// the session server's terminal claim and run its post-terminal
 		// hook, so an MCP cancel seals, drains, emits the terminal events,
 		// and releases the pod as every other terminal writer does.
-		Terminal:           sessionSrv,
+		Terminal: sessionSrv,
+		// spec: §7.2 (Message delivery routing — seven paths, path 6) —
+		// lenny/send_message and lenny/delegate_task take the session
+		// server's delivery lock, deliver held messages, hold a message to a
+		// suspended or recovering target, and resume a suspended one.
+		Delivery:           sessionSrv,
+		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
 		ElicitationMetrics: gwMetrics,

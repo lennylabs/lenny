@@ -675,6 +675,45 @@ type Deps struct {
 	// does. Nil records the Terminated fact alone. spec: §7.2 (Interactive
 	// Session Model), §15.1 (REST API).
 	Terminal Terminal
+
+	// Delivery is the session server's delivery of held messages and resume
+	// of suspended sessions. lenny/send_message takes the session's
+	// delivery lock, delivers held messages before a path-2 send, holds a
+	// message to a suspended or recovering target in the DLQ, and resumes a
+	// suspended target; lenny/delegate_task delivers a child's held
+	// messages after its task input. With a nil Delivery, lenny/send_message
+	// delivers no held message and answers a held or resume decision with
+	// error and inbox_unavailable. spec: §7.2 (Message delivery routing —
+	// seven paths, path 6).
+	Delivery SessionDelivery
+
+	// PrimaryReadTimeout bounds every sessionstore.ReadPrimary call the
+	// tools make: the lenny/send_message classification read and its
+	// re-read after a sealed refusal, the lenny/delegate_task child read,
+	// and the lenny/request_elicitation terminal-state check. A
+	// non-positive value selects sessionstore.DefaultPrimaryReadTimeout.
+	// spec: §12.3 (Postgres HA Requirements).
+	PrimaryReadTimeout time.Duration
+}
+
+// SessionDelivery is the session server's delivery seam the message tools
+// consume. *sessionserver.Server satisfies it.
+//
+//   - LockDelivery takes the session's per-replica delivery lock, honoring
+//     ctx, and returns its release. The lock is not reentrant.
+//   - HoldMessage holds a message in the session's DLQ and re-reads the
+//     primary row, answering queued, dropped, or terminal.
+//   - DeliverHeld delivers the held messages of a session its caller found
+//     `running` with the lock held, reading no row.
+//   - ResumeSuspended resumes a `suspended` session a message is held for;
+//     it takes the lock itself, so the caller must not hold it.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+type SessionDelivery interface {
+	LockDelivery(ctx context.Context, sessionID string) (func(), error)
+	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
+	DeliverHeld(ctx context.Context, row sessionstore.Session) error
+	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
 }
 
 // VCSLeaseAuditor records a §4.9.2 VCS credential lease the
@@ -798,8 +837,7 @@ func Register(srv *mcp.Server, deps Deps) {
 	}
 
 	// §15.2 session-lifecycle surface: attach_session (when the session store
-	// is wired), create_session, send_message, interrupt_session, and
-	// cancel_session.
+	// is wired), create_session, send_message, and cancel_session.
 	registerSessionLifecycleTools(srv, deps, env)
 
 	// §8.5/§8.9 delegation-tree surface: get_task_tree, cancel_child, and

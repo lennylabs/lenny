@@ -345,8 +345,8 @@ func (r *Reconciler) fallbackOrphaned(ctx context.Context, row sessionstore.Sess
 
 // failOrphan transitions an orphaned session to `failed` with the §10.1
 // reason and runs the terminal pipeline. It is a funnel terminal writer: it
-// opens the terminal claim before its Update, writes only over a non-terminal
-// locked row and records the Terminated fact in the write, so two replicas
+// opens the terminal claim before its Update, writes only over a locked row
+// that is still an orphan candidate naming the listed pod, and records the Terminated fact in the write, so two replicas
 // running this pass cannot double-fail a session, and it runs the terminal
 // hook with fromState from the locked row exactly when its write applied.
 // Returns true when this call performed the transition.
@@ -361,7 +361,12 @@ func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessio
 	var from session.State
 	now := r.clock()
 	updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {
-		if session.IsTerminal(s.State) {
+		// spec: §6.2 (Pod State Machine), §10.1.4 (Coordinator-Loss
+		// Detection and Hold State) — the locked row must still be an orphan
+		// candidate on the same pod: a suspended session whose pod the
+		// suspension released after the listing names no pod and is not an
+		// orphan of the terminated one.
+		if !eligible(*s) || s.PodAssignment != row.PodAssignment {
 			return errOrphanSuperseded
 		}
 		from = s.State

@@ -402,7 +402,7 @@
               "cleanupCommands":                  { "type": "array", "items": { "type": "string" }, "description": "§5.2 deployer cleanup executed before the whole-pod scrub." },
               "cleanupTimeoutSeconds":            { "type": "integer" },
               "maxSessionAgeSeconds":             { "type": "integer", "description": "§5.2 active-time session age cap; paused in suspended and the recovery states." },
-              "maxClientIdleSeconds":             { "type": "integer", "description": "§5.2 / §6.2 client-inactivity bound; defaults to the effective maxSessionAgeSeconds." },
+              "maxClientIdleSeconds":             { "type": "integer", "description": "§5.2 / §6.2 client-inactivity bound on a running session. An idle session is suspended and its pod released; a session that cannot be idle-suspended (service mode or an MCP runtime) expires. Defaults to the platform default of 900 seconds." },
               "slotRetries":                      { "type": "integer", "description": "§5.2 per-slot retry budget when maxConcurrentSessions > 1 (default 1)." },
               "onPoolExhausted":                  { "type": "string", "enum": ["reject","queue"], "description": "§5.2 pool-exhaustion disposition (default reject)." },
               "maxQueueWaitSeconds":              { "type": "integer", "description": "§5.2 queue-wait bound when onPoolExhausted: queue." }

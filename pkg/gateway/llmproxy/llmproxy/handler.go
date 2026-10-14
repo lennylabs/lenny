@@ -186,6 +186,11 @@ type Metrics interface {
 // credential, forwards through the circuit breaker, and translates the
 // response back. The real upstream key never leaves the gateway.
 type Handler struct {
+	// Activity records §6.2 qualifying activity for a proxy-mode lease that
+	// names a session: each stream line the proxy relays stamps the
+	// session's idle clock. A nil Activity stamps nothing.
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states)
+	Activity ActivityStamper
 	// Leases resolves a bearer lease token to its §4.9 lease. The
 	// interface admits both the in-memory store and the Postgres
 	// backend.
@@ -524,6 +529,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 	if f, ok := w.(http.Flusher); ok {
 		flush = f.Flush
 	}
+	flush = h.stampingFlush(lease, flush)
 	usage, _ := RelayStream(w, resp.Body, flush)
 	// spec: §8.6 — settle the streamed usage against the session's
 	// token budget. The 200/SSE response is already committed (WriteHeader
@@ -753,5 +759,25 @@ func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.
 		h.writeError(w, http.StatusGatewayTimeout, "PROVIDER_TIMEOUT", te.Message)
 	default: // ErrUpstream5xx, ErrStreamingInterrupted
 		h.writeError(w, http.StatusServiceUnavailable, "PROVIDER_UNAVAILABLE", te.Message)
+	}
+}
+
+// ActivityStamper records §6.2 qualifying activity for a session. The
+// gateway's sessionidle.Stamper satisfies it.
+type ActivityStamper interface {
+	Stamp(tenantID, sessionID string)
+}
+
+// stampingFlush wraps flush so each relayed stream line of a proxy-mode lease
+// that names a session also stamps the session's activity, after the line is
+// flushed. Any other lease, or a nil Activity, keeps flush unchanged.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states)
+func (h *Handler) stampingFlush(lease credential.Lease, flush func()) func() {
+	if h.Activity == nil || lease.DeliveryMode != credential.DeliveryProxy || lease.SessionID == "" {
+		return flush
+	}
+	return func() {
+		flush()
+		h.Activity.Stamp(lease.TenantID, lease.SessionID)
 	}
 }

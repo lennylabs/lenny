@@ -24,9 +24,12 @@
 //   - A session-scoped frame carrying no sessionId names no session this
 //     runtime may act for, and the loop exits with the protocol-error
 //     code rather than routing it to a pod-global session.
-//   - The protocol-level frames are pod-global and carry no per-session
-//     identifier: the front loop answers `heartbeat` with an unstamped
-//     `heartbeat_ack` and forwards `shutdown` to every live session.
+//   - A `heartbeat` naming a held session goes to that session's worker,
+//     which answers it after the session's queued frames with a
+//     `heartbeat_ack` carrying the sessionId. A `heartbeat` naming no
+//     session, or one the runtime does not hold, gets the front loop's
+//     bare `heartbeat_ack`, and `shutdown` is forwarded to every live
+//     session.
 //
 // The per-frame `message` behavior is reused from pkg/runtimekit/echocore
 // as a composable primitive: each session runs an independent

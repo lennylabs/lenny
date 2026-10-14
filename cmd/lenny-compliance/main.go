@@ -223,6 +223,7 @@ func basicCases() []checkCase {
 		{"empty_stdin_exits_cleanly", "15.4", checkEmptyStdin},
 		{"message_emits_response", "15.4", checkMessageEmitsResponse},
 		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
+		{"heartbeat_busy", "15.4", checkHeartbeatBusy},
 		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
 		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
 		{"session_lifetime", "15.4.6", checkSessionLifetime},

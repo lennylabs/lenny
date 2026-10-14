@@ -48,6 +48,22 @@ type SubprocessExecutor struct {
 
 	mu    sync.Mutex
 	procs map[string]*subprocessSession
+	// tap is the runtime adapter's activity tap, recorded by TapOutput.
+	// When set, each child the adapter starts gets a tapped hub whose
+	// reader starts where the hub is created. Guarded by mu.
+	tap func(line []byte)
+}
+
+// TapOutput records fn as the activity tap of every child the adapter
+// starts through Start: the child's stdout reader calls fn with each line,
+// before the broadcast and whether or not Output is ever called. A child
+// Send spawned is untouched, because Send reads the same stdout pipe
+// through its scanner, and the tapping adapter never calls Send.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
+func (e *SubprocessExecutor) TapOutput(fn func(line []byte)) {
+	e.mu.Lock()
+	e.tap = fn
+	e.mu.Unlock()
 }
 
 // SubprocessOptions configures a SubprocessExecutor.
@@ -88,7 +104,8 @@ type subprocessSession struct {
 	// child serves one reader of its stdout: the Send path reads it
 	// through the stdout scanner, and the §4.7 adapter path, which spawns
 	// through Start and never calls Send, reads it through output, whose
-	// single reader starts at the first Output.
+	// single reader starts at the first Output, or where the child is
+	// spawned when the adapter's activity tap is recorded.
 	stdoutPipe io.Reader
 	output     *linefanout.Hub
 	// stderr captures the runtime's stderr tail so a non-zero exit can be
@@ -267,7 +284,7 @@ func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard
 
 // Output subscribes to every line the session's runtime writes to stdout,
 // as a channel of §28.5.3 JSONL frames. One reader per child, started at
-// the first Output, broadcasts each line to the live subscribers, as the
+// the first Output or, for a tapped child, at its spawn, broadcasts each line to the live subscribers, as the
 // adapter's socket transport does: the adapter's Attach stream and a
 // start's session_started wait each subscribe, and a subscriber whose ctx
 // ends is removed and consumes nothing afterwards. The channel closes when
@@ -440,6 +457,9 @@ func (e *SubprocessExecutor) session(sessionID string, origin spawnOrigin) (*sub
 			s.abandon()
 			return nil, err
 		}
+	} else if e.tap != nil {
+		s.output.Tap(e.tap)
+		s.output.Serve(s.stdoutPipe, maxStdoutFrameBytes, nil)
 	}
 	e.procs[sessionID] = s
 	return s, nil

@@ -44,7 +44,7 @@ type receiptStatusReason struct {
 // surfaces and surfaces the inbox_unavailable receipt. The REST surface
 // needs the executor wired (its /messages handler rejects early with
 // EXECUTOR_UNAVAILABLE when none is present); the inbox-enqueue failure
-// is reached only after that guard, on the §7.2 path-6 buffered branch.
+// is reached only after that guard, on the §7.2 held branch.
 func newUnwiredMessagingServers(t *testing.T) (*httptest.Server, *httptest.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
@@ -69,19 +69,20 @@ func newUnwiredMessagingServers(t *testing.T) (*httptest.Server, *httptest.Serve
 	return tsREST, tsMCP, store
 }
 
-// seedSuspended writes a `suspended` session into the shared store so the
-// §7.2 path-6 buffered branch runs on both surfaces. With no messaging
-// coordinator wired (newConsistencyServers wires none), the buffered
-// branch fails the enqueue and surfaces inbox_unavailable.
-func seedSuspended(t *testing.T, store sessionstore.Store, id string) {
+// seedRecovering writes a `resume_pending` session into the shared store so
+// the §7.2 held branch (path 7) runs on both surfaces. With no messaging
+// coordinator wired (newUnwiredMessagingServers wires none), the hold fails
+// and surfaces inbox_unavailable. A `suspended` target is no longer used
+// here: a session that holds its pod resumes and takes the message.
+func seedRecovering(t *testing.T, store sessionstore.Store, id string) {
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: id, TenantID: "acme", UserID: "alice@acme.com",
-		State: session.StateSuspended, RuntimeRef: "claude-code",
+		State: session.StateResumePending, RuntimeRef: "claude-code",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("seed suspended session: %v", err)
+		t.Fatalf("seed resume_pending session: %v", err)
 	}
 }
 
@@ -136,7 +137,7 @@ func mcpReceipt(t *testing.T, mcpURL, id string) receiptStatusReason {
 // §15.2.1 consistency contract and a client cannot rely on one parsing.
 func TestSendMessageInboxUnavailableParity_spec_15_4(t *testing.T) {
 	tsREST, tsMCP, store := newUnwiredMessagingServers(t)
-	seedSuspended(t, store, "sess_unavailable")
+	seedRecovering(t, store, "sess_unavailable")
 
 	rest := restReceipt(t, tsREST.URL, "sess_unavailable")
 	mcp := mcpReceipt(t, tsMCP.URL, "sess_unavailable")

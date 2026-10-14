@@ -735,3 +735,52 @@ func TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3(t *testing.T) {
 		t.Fatalf("got %d heartbeat_ack frames, want one for each of the 3 heartbeats", acks)
 	}
 }
+
+// spec: §28.5.3 (CH-MSGSOCK)
+// A heartbeat naming a held session is answered by that session's worker
+// after the session's response, with the sessionId stamped; a heartbeat
+// naming an unknown session, an ended one, or no session gets one bare ack
+// from the front loop and no drop diagnostic.
+func TestHeartbeatNamingAHeldSessionIsAckedByItsWorker_spec_28_5_3(t *testing.T) {
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	in := `{"type":"session_start","sessionId":"sess_a","startId":"1"}` + "\n" +
+		`{"type":"message","id":"m1","sessionId":"sess_a","input":[{"type":"text","inline":"hi"}]}` + "\n" +
+		`{"type":"heartbeat","ts":1,"sessionId":"sess_a"}` + "\n" +
+		`{"type":"heartbeat","ts":2,"sessionId":"sess_x"}` + "\n" +
+		`{"type":"session_start","sessionId":"sess_b","startId":"2"}` + "\n" +
+		`{"type":"session_end","sessionId":"sess_b"}` + "\n" +
+		`{"type":"heartbeat","ts":3,"sessionId":"sess_b"}` + "\n" +
+		`{"type":"heartbeat","ts":4}` + "\n" +
+		`{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n"
+	if err := run(context.Background(), strings.NewReader(in), &out, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	frames := decodeFrames(t, out.String())
+	sawResponse := false
+	addressed, bare := 0, 0
+	for _, f := range frames {
+		switch {
+		case f.Type == "response" && f.SessionID == "sess_a":
+			sawResponse = true
+		case f.Type == "heartbeat_ack" && f.SessionID == "sess_a":
+			if !sawResponse {
+				t.Fatal("sess_a's heartbeat_ack preceded its response")
+			}
+			addressed++
+		case f.Type == "heartbeat_ack" && f.SessionID == "":
+			bare++
+		case f.Type == "heartbeat_ack":
+			t.Fatalf("ack stamped with %q, want only sess_a or none", f.SessionID)
+		}
+	}
+	if addressed != 1 {
+		t.Fatalf("addressed acks = %d, want 1: %+v", addressed, frames)
+	}
+	if bare != 3 {
+		t.Fatalf("bare acks = %d, want 3 (unknown, ended, and unaddressed): %+v", bare, frames)
+	}
+	if strings.Contains(stderr.String(), `"heartbeat"`) {
+		t.Fatalf("stderr %q carries a drop diagnostic for a heartbeat", stderr.String())
+	}
+}

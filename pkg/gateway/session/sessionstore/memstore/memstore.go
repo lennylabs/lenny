@@ -261,6 +261,31 @@ func labelsContain(have, want map[string]string) bool {
 	return true
 }
 
+// ListPodlessSuspended returns at most limit of the tenant's suspended
+// sessions that name no pod, with an id after afterID (every id when afterID
+// is empty), in id order. It backs the gateway leader's §7.2 backlog
+// re-check, which pages through the podless suspended population by id.
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (s *Store) ListPodlessSuspended(_ context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error) {
+	s.mu.RLock()
+	out := make([]sessionstore.Session, 0)
+	for _, row := range s.sessions {
+		if row.TenantID != tenantID || row.State != session.StateSuspended || row.PodAssignment != "" {
+			continue
+		}
+		if afterID != "" && row.ID <= afterID {
+			continue
+		}
+		out = append(out, row)
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListByRoot implements Store — every row whose RootSessionID equals
 // rootSessionID within tenantID, ordered by CreatedAt ascending so a
 // caller can rebuild the §8.9 tree by walking ParentSessionID. An empty

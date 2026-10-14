@@ -21,6 +21,14 @@ import (
 // a terminal row to running. spec: §7.2 path 6.
 var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not suspended")
 
+// errResumeHeldPodReleased is returned by the resumeHeldPod mutator when the
+// locked row is still suspended but no longer holds its pod: a suspension
+// release cleared it after the caller read the row. The row is unchanged,
+// and the caller moves the session to resume_pending, so the resume driver
+// restores it on a new pod. spec: §7.2 (Message delivery routing — seven
+// paths, path 6).
+var errResumeHeldPodReleased = errors.New("resume held pod: the suspended session released its pod")
+
 // resumeHeldPod performs the §7.2 path-6 pod-held resume: it transitions the
 // caller's suspended row, whose pod is still held, from `suspended` to
 // `running`, reusing the bound pod (no fresh warm-pod claim). The caller
@@ -30,23 +38,36 @@ var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not s
 // mutator, which returns errResumeHeldPodNotSuspended when the locked row is
 // not session.StateSuspended, so a concurrent terminal transition on the
 // suspended row (DELETE, the watchdog, a parent cascade) cannot slip between
-// the guard and the write and resurrect a terminal session to running.
+// the guard and the write and resurrect a terminal session to running. A
+// still-suspended row that no longer holds its pod returns
+// errResumeHeldPodReleased. The write stamps LastAgentActivityAt, so the
+// idle clock starts fresh in running. resumeHeldAndDrain is its only caller.
 //
 // On the state write it emits the session.resumed lifecycle audit row and the
 // resume status-change. It returns the running row.
 //
 // spec: §7.2 path 6.
 func (s *Server) resumeHeldPod(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {
+	now := s.clock()
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State != session.StateSuspended {
 			return errResumeHeldPodNotSuspended
 		}
+		if !s.holdsPod(*r) {
+			return errResumeHeldPodReleased
+		}
 		transitionResume(r)
+		// spec: §6.2 (maxClientIdleSeconds clock behavior across states) —
+		// the idle clock starts fresh on entry to running.
+		r.LastAgentActivityAt = now
 		return nil
 	})
 	if err != nil {
 		return sessionstore.Session{}, fmt.Errorf("resume held pod %s: %w", row.ID, err)
 	}
+	// spec: §8.3 (Delegation Policy and Lease) — a committed write out of
+	// suspended re-arms the tree's delegation budget keys.
+	s.rearmBudgetKeys(ctx, updated)
 	// spec: §11.7 / §16.7 — append the session.resumed audit row after the
 	// successful resume, then surface the resume status-change on the
 	// session's SSE stream.

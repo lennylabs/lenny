@@ -157,19 +157,45 @@ func (s *Server) removeHeld(ctx context.Context, row sessionstore.Session, entry
 	return found, nil
 }
 
-// holdOutcome is what holdMessage answers for a held batch.
-type holdOutcome int
+// HoldOutcome is what holdMessage answers for a held batch.
+type HoldOutcome int
 
 const (
-	// holdQueued is a batch held in the DLQ.
-	holdQueued holdOutcome = iota
-	// holdDropped is a batch held in the DLQ whose enqueue evicted an older
+	// HoldQueued is a batch held in the DLQ.
+	HoldQueued HoldOutcome = iota
+	// HoldDropped is a batch held in the DLQ whose enqueue evicted an older
 	// entry under the DLQ cap.
-	holdDropped
-	// holdTerminal is a batch the session ended before: its entries were
+	HoldDropped
+	// HoldTerminal is a batch the session ended before: its entries were
 	// removed and the caller answers TARGET_TERMINAL.
-	holdTerminal
+	HoldTerminal
 )
+
+// HoldMessage holds one inter-session message in the session's DLQ through
+// holdMessage, for the MCP message path. It answers as holdMessage does.
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func (s *Server) HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (HoldOutcome, session.State, error) {
+	if s.messaging == nil {
+		return HoldQueued, "", sessioninbox.ErrMessagingUnavailable
+	}
+	return s.holdMessage(ctx, tenantID, sessionID, []sessioninbox.Message{msg}, 0)
+}
+
+// LockDelivery takes the session's delivery lock, honoring ctx, for the MCP
+// message path and the lenny/delegate_task held delivery, and returns its
+// release. The lock is not reentrant. spec: §7.2 (Message delivery routing
+// — seven paths, path 6).
+func (s *Server) LockDelivery(ctx context.Context, sessionID string) (func(), error) {
+	return s.deliveryLocks.Lock(ctx, sessionID)
+}
+
+// DeliverHeld delivers the held messages of row, a session its caller found
+// `running` with the delivery lock held. It reads no row and returns
+// deliverBuffered's error. spec: §7.2 (Message delivery routing — seven
+// paths, path 6).
+func (s *Server) DeliverHeld(ctx context.Context, row sessionstore.Session) error {
+	return s.deliverBuffered(ctx, row)
+}
 
 // holdMessage is the one DLQ enqueue site of the REST message path: it holds
 // msgs in the session's DLQ, then reads the row from the primary, so a hold
@@ -181,17 +207,17 @@ const (
 //     with inbox_unavailable.
 //   - A re-read error removes each entry it enqueued and returns the error;
 //     the caller answers error with inbox_unavailable.
-//   - A terminal row removes each entry it enqueued and returns holdTerminal
+//   - A terminal row removes each entry it enqueued and returns HoldTerminal
 //     when any removal found its entry (a removal error counts as found),
-//     and holdQueued otherwise, when the terminal drain already reported
+//     and HoldQueued otherwise, when the terminal drain already reported
 //     every entry; it then drains the session once with the re-read row, so
 //     an entry a failed removal left is removed and reported message_expired.
-//   - Any other row returns holdQueued, or holdDropped on an eviction.
+//   - Any other row returns HoldQueued, or HoldDropped on an eviction.
 //
 // It returns the re-read row's state for the caller's TARGET_TERMINAL answer.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6)
-func (s *Server) holdMessage(ctx context.Context, tenantID, sessionID string, msgs []sessioninbox.Message, ttl time.Duration) (holdOutcome, session.State, error) {
+func (s *Server) holdMessage(ctx context.Context, tenantID, sessionID string, msgs []sessioninbox.Message, ttl time.Duration) (HoldOutcome, session.State, error) {
 	evicted := false
 	members := make([]string, 0, len(msgs))
 	for _, m := range msgs {
@@ -201,7 +227,7 @@ func (s *Server) holdMessage(ctx context.Context, tenantID, sessionID string, ms
 		dropped, err := s.messaging.EnqueueDLQ(ctx, tenantID, sessionID, m, ttl)
 		if err != nil {
 			s.removeHeldMembers(ctx, tenantID, sessionID, members)
-			return holdQueued, "", err
+			return HoldQueued, "", err
 		}
 		if member, merr := sessioninbox.DLQMember(m); merr == nil {
 			members = append(members, member)
@@ -211,20 +237,20 @@ func (s *Server) holdMessage(ctx context.Context, tenantID, sessionID string, ms
 	row, err := s.readPrimary(ctx, tenantID, sessionID)
 	if err != nil {
 		s.removeHeldMembers(ctx, tenantID, sessionID, members)
-		return holdQueued, "", fmt.Errorf("re-read session %s after holding its messages: %w", sessionID, err)
+		return HoldQueued, "", fmt.Errorf("re-read session %s after holding its messages: %w", sessionID, err)
 	}
 	if session.IsTerminal(row.State) {
 		found := s.removeHeldMembers(ctx, tenantID, sessionID, members)
 		s.drainMessagingOnTerminal(ctx, row)
 		if found {
-			return holdTerminal, row.State, nil
+			return HoldTerminal, row.State, nil
 		}
-		return holdQueued, row.State, nil
+		return HoldQueued, row.State, nil
 	}
 	if evicted {
-		return holdDropped, row.State, nil
+		return HoldDropped, row.State, nil
 	}
-	return holdQueued, row.State, nil
+	return HoldQueued, row.State, nil
 }
 
 // removeHeldMembers removes the DLQ entries holdMessage enqueued and reports

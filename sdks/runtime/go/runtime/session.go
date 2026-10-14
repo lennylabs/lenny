@@ -73,6 +73,71 @@ type sessionState struct {
 	// every response and tool_call written for the state checks it under
 	// that same lock.
 	ended bool
+
+	// work is the session's busy accounting, which a heartbeat_ack
+	// naming the session reports. spec: §28.5.3 (CH-MSGSOCK), §15.7
+	// (Runtime Author SDKs).
+	work busyCounts
+}
+
+// busyCounts counts a session's messages routed and not finished and its
+// unreleased busy holds. The session is busy while either is above zero.
+// zero, run at the session's session_end, clears both and makes every
+// later change a no-op, so a handler or hold that outlives the session
+// never drives a count below zero.
+type busyCounts struct {
+	mu      sync.Mutex
+	pending int
+	holds   int
+	ended   bool
+}
+
+// addPending changes the routed-message count by delta.
+func (b *busyCounts) addPending(delta int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ended {
+		return
+	}
+	b.pending += delta
+	if b.pending < 0 {
+		b.pending = 0
+	}
+}
+
+// addHold changes the hold count by delta.
+func (b *busyCounts) addHold(delta int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ended {
+		return
+	}
+	b.holds += delta
+	if b.holds < 0 {
+		b.holds = 0
+	}
+}
+
+// busy reports whether a routed message or a hold is outstanding.
+func (b *busyCounts) busy() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending > 0 || b.holds > 0
+}
+
+// zero clears both counts for good.
+func (b *busyCounts) zero() {
+	b.mu.Lock()
+	b.pending, b.holds, b.ended = 0, 0, true
+	b.mu.Unlock()
+}
+
+// holdBusy takes one busy hold on the session and returns its release,
+// which drops the hold once; a second call does nothing.
+func (st *sessionState) holdBusy() (release func()) {
+	st.work.addHold(1)
+	var once sync.Once
+	return func() { once.Do(func() { st.work.addHold(-1) }) }
 }
 
 // failed reports whether the state's context creation failed.
@@ -288,6 +353,9 @@ func (p *process) handleSessionEnd(line []byte) {
 		return
 	}
 	p.w.endOwner(st)
+	// spec: §15.7 (Busy reporting) — the session's session_end zeroes its
+	// busy counts.
+	st.work.zero()
 	if n := st.queue.end(); n > 0 {
 		p.cfg.logf("runtime: session %s ended with %d undispatched message(s); dropping them", st.id, n)
 	}
@@ -311,8 +379,15 @@ func (p *process) handleSessionEnd(line []byte) {
 // spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
 func (p *process) routeMessage(env *MessageEnvelope) {
 	st := p.sessions.lookup(env.SessionID)
-	if st != nil && st.queue.push(env) {
-		return
+	if st != nil {
+		// spec: §28.5.3 (heartbeat_ack busy) — the message counts as
+		// work from before its handler can dequeue it until the handler
+		// that took it returns.
+		st.work.addPending(1)
+		if st.queue.push(env) {
+			return
+		}
+		st.work.addPending(-1)
 	}
 	if st == nil && p.sessions.endedSince(env.SessionID) {
 		p.cfg.logf("runtime: dropping message %q for session %q, which already ended", env.ID, env.SessionID)
@@ -400,8 +475,11 @@ func (p *process) createContext(st *sessionState) error {
 	return nil
 }
 
-// dispatch handles one queued message for the session.
+// dispatch handles one queued message for the session. The message stops
+// counting as the session's work once its handling returned, after the
+// response or error response it produced was written.
 func (p *process) dispatch(st *sessionState, env *MessageEnvelope) {
+	defer st.work.addPending(-1)
 	if st.failed() {
 		p.writeFor(st, sessionErrorResponse(st.id, "the context of session "+st.id+" could not be created"))
 		return

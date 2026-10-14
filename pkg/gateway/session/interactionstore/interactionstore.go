@@ -119,7 +119,22 @@ type Store interface {
 	// elicitations. Pending tool-use interactions are left untouched;
 	// §11.4 step 7 scopes the dismissal to elicitations.
 	DismissByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// ExpireRaisedBy deletes every pending elicitation the session
+	// originSessionID raised within tenantID and returns the count. The
+	// raising session is the elicitation's detail["originPod"], which the
+	// lenny/request_elicitation handler records; it is never the row's
+	// session_id, which names the chain resolver, so an elicitation a child
+	// raised and the chain holds for this session is not matched. A
+	// lease-extension elicitation carries no originPod and is never
+	// matched. A later Resolve or Get of a deleted row returns ErrNotFound.
+	// spec: §9.2 (Elicitation Chain).
+	ExpireRaisedBy(ctx context.Context, tenantID, originSessionID string) (int, error)
 }
+
+// DetailOriginPod is the elicitation detail key naming the session whose
+// pod raised it. spec: §9.2 (Elicitation Chain).
+const DetailOriginPod = "originPod"
 
 // Memory is the in-memory Store implementation.
 type Memory struct {
@@ -258,4 +273,22 @@ func (m *Memory) DismissByUser(_ context.Context, tenantID, userID string) (int,
 		}
 	}
 	return dismissed, nil
+}
+
+// ExpireRaisedBy implements Store. It deletes under the store's mutex.
+func (m *Memory) ExpireRaisedBy(_ context.Context, tenantID, originSessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expired := 0
+	for k, in := range m.interactions {
+		if in.TenantID != tenantID || in.Kind != KindElicitation || in.Phase != PhasePending {
+			continue
+		}
+		if origin, _ := in.Detail[DetailOriginPod].(string); origin != originSessionID || origin == "" {
+			continue
+		}
+		delete(m.interactions, k)
+		expired++
+	}
+	return expired, nil
 }

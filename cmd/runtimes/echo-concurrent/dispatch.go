@@ -31,9 +31,10 @@ func (e protocolError) Error() string { return "protocol error: " + e.msg }
 // every pod, so a session-scoped frame carrying none is a protocol error
 // rather than a route to a pod-global session. Every worker runs an
 // independent §28.5.3 echocore loop, so the per-frame message behavior is
-// reused unchanged and each session keeps its own sequence counter. The
-// protocol-level frames, heartbeat and shutdown, are pod-global and are
-// answered by the front loop itself.
+// reused unchanged and each session keeps its own sequence counter. A
+// heartbeat naming a held session goes to that session's worker; shutdown
+// and a heartbeat naming no held session are answered by the front loop
+// itself.
 //
 // spec: §5.2; §28.5.3 — dispatch loop keyed on sessionId
 // over a single stdin channel.
@@ -78,12 +79,17 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 			break
 		}
 
-		// spec: §28.5.3 — heartbeat is protocol-level and carries no
-		// per-session identifier, so the pod answers it once, unstamped,
-		// rather than routing it to a session.
+		// spec: §28.5.3 (CH-MSGSOCK) — a heartbeat naming a session the
+		// runtime holds goes to that session's worker, whose echocore loop
+		// answers it after every frame queued ahead of it, so the ack that
+		// slotWriter stamps with the sessionId follows the session's
+		// response and the runtime never reports idle while a message is
+		// outstanding. A heartbeat naming no session, or one the runtime
+		// does not hold, is answered once by the front loop with the bare
+		// ack, never through rejectUnheld.
 		if env.Type == "heartbeat" {
-			if err := d.writeFrame([]byte(`{"type":"heartbeat_ack"}`)); err != nil {
-				return fmt.Errorf("write heartbeat_ack: %w", err)
+			if err := d.answerHeartbeat(env.SessionID, line); err != nil {
+				return err
 			}
 			continue
 		}
@@ -264,6 +270,24 @@ func (d *demux) route(frameType, sessionID string, line []byte) error {
 		return w.deliver(line)
 	}
 	return d.rejectUnheld(frameType, sessionID, ended)
+}
+
+// answerHeartbeat routes a heartbeat naming a held session to that
+// session's worker, and answers any other heartbeat with the front loop's
+// bare ack. spec: §28.5.3 (CH-MSGSOCK).
+func (d *demux) answerHeartbeat(sessionID string, line []byte) error {
+	if sessionID != "" {
+		d.mu.Lock()
+		w, held := d.slots[sessionID]
+		d.mu.Unlock()
+		if held {
+			return w.deliver(line)
+		}
+	}
+	if err := d.writeFrame([]byte(`{"type":"heartbeat_ack"}`)); err != nil {
+		return fmt.Errorf("write heartbeat_ack: %w", err)
+	}
+	return nil
 }
 
 // rejectUnheld answers a frame for a session the runtime does not hold and

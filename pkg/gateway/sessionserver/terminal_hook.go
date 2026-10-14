@@ -42,6 +42,7 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     one session_complete, then run signals.
 //  5. Release the pod: a pre-running claim by name, otherwise the executor's
 //     binding with the disposition of the row's state.
+//  6. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
@@ -75,6 +76,9 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 			log.Printf("lenny-gateway: executor release session=%s: %v", sess.ID, err)
 		}
 	}
+	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
+	// runtime on the released pod cannot raise again after the expiry.
+	s.expireRaisedElicitations(ctx, sess)
 	return sess
 }
 

@@ -523,6 +523,8 @@ var errResumeCommitMissed = errors.New("sessionserver: resume commit missed on t
 func (s *Server) commitResume(ctx context.Context, row sessionstore.Session, b commitBaseline) (commitObservation, bool) {
 	var obs commitObservation
 	backoff := 50 * time.Millisecond
+	// Captured once, so every try of the repeat writes the same inputs.
+	now := s.clock()
 	for {
 		var seen sessionstore.Session
 		updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
@@ -531,6 +533,9 @@ func (s *Server) commitResume(ctx context.Context, row sessionstore.Session, b c
 				return errResumeCommitMissed
 			}
 			transitionResume(r)
+			// spec: §6.2 (maxClientIdleSeconds clock behavior across
+			// states) — the idle clock starts fresh on entry to running.
+			r.LastAgentActivityAt = now
 			r.RecoveryGeneration++
 			if !b.binderless && b.sandbox != "" {
 				r.PodAssignment = b.sandbox

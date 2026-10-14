@@ -542,17 +542,41 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 // IncSessionExpiry increments the §16.1
 // `lenny_session_expiry_total{pool, reason}` counter for one session the
 // watchdog terminated on a platform expiry clock. reason is the §16.1.1
-// vocabulary value the watchdog resolved from the expiry edge — "max_idle_time"
-// for the §6.2 maxClientIdleSeconds idle clock or "max_session_age" for the
-// §11.3 maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
+// vocabulary value the watchdog resolved from the expiry edge: "max_idle_time"
+// for both the §6.2 idle expiry of a session that cannot be idle-suspended and
+// the §6.2 suspended-session lifetime, or "max_session_age" for the §11.3
+// maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
 // deadline. The pool label echoes the session's §5.2 PoolRef at expiry time
-// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1.
-// F-11.3.7.
+// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1;
+// §6.2 (maxClientIdleSeconds clock behavior across states; Pod State
+// Machine). F-11.3.7.
 func (m *Metrics) IncSessionExpiry(pool, reason string) {
 	if m == nil {
 		return
 	}
 	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
+}
+
+// IncSessionPodReleasedDuringSuspension increments
+// `lenny_session_pod_released_during_suspension_total{pool, tenant_id}` once
+// for a suspended session whose pod or slot the suspension release
+// released. Nil-safe. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionPodReleasedDuringSuspension(pool, tenantID string) {
+	if m == nil || m.sessionPodReleasedDuringSuspension == nil {
+		return
+	}
+	m.sessionPodReleasedDuringSuspension.WithLabelValues(pool, tenantID).Inc()
+}
+
+// IncSessionSuspensionCheckpointFailed increments
+// `lenny_session_suspension_checkpoint_failed_total{pool, tenant_id}` once
+// for a checkpoint before a suspension release that failed. Nil-safe.
+// spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionSuspensionCheckpointFailed(pool, tenantID string) {
+	if m == nil || m.sessionSuspensionCheckpointFailed == nil {
+		return
+	}
+	m.sessionSuspensionCheckpointFailed.WithLabelValues(pool, tenantID).Inc()
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1

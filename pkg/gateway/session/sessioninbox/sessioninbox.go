@@ -110,6 +110,13 @@ type Inbox interface {
 	// it. A missing entry is not an error.
 	// spec: §7.2 (Message delivery routing — seven paths, path 6).
 	Ack(ctx context.Context, tenantID, sessionID, handle string) (removed bool, err error)
+
+	// Delete removes every buffered message of (tenantID, sessionID) and
+	// reports how many it removed. It backs the §12.8 user erasure of the
+	// session's message queues; it emits nothing. A memory inbox removes
+	// this replica's entries.
+	// spec: §12.8 (Compliance Interfaces).
+	Delete(ctx context.Context, tenantID, sessionID string) (int, error)
 }
 
 // inboxKey is the §12.4 durable-inbox Redis key
@@ -207,6 +214,17 @@ func (m *MemoryInbox) Ack(_ context.Context, tenantID, sessionID, handle string)
 		return true, nil
 	}
 	return false, nil
+}
+
+// Delete implements Inbox. It removes this replica's entries for the
+// session.
+func (m *MemoryInbox) Delete(_ context.Context, tenantID, sessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := inboxKey(tenantID, sessionID)
+	n := len(m.byKey[key])
+	delete(m.byKey, key)
+	return n, nil
 }
 
 // memoryHandle is the in-memory inbox's entry handle.
@@ -336,6 +354,21 @@ func (r *RedisInbox) Peek(ctx context.Context, tenantID, sessionID string) (Mess
 func (r *RedisInbox) Ack(ctx context.Context, tenantID, sessionID, handle string) (bool, error) {
 	n, err := r.client.LRem(ctx, inboxKey(tenantID, sessionID), 1, handle).Result()
 	return n > 0, err
+}
+
+// Delete implements Inbox. It reads the list length and deletes the key in
+// one transaction.
+func (r *RedisInbox) Delete(ctx context.Context, tenantID, sessionID string) (int, error) {
+	key := inboxKey(tenantID, sessionID)
+	var lenCmd *redis.IntCmd
+	if _, err := r.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		lenCmd = p.LLen(ctx, key)
+		p.Del(ctx, key)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return int(lenCmd.Val()), nil
 }
 
 // ErrInboxUnavailable reports that a durable-inbox operation failed

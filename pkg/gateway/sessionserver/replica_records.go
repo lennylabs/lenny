@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // This file holds the per-replica records the resume driver and the
@@ -162,4 +163,112 @@ func (l *sessionLocks) size() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.locks)
+}
+
+// inflightSet records, per session, one piece of background work in flight
+// on this replica: the suspension record (a suspension release or an idle
+// suspension) and the backlog-resume record. The caller tests for an entry
+// and inserts one under the set's lock before it starts its goroutine, and a
+// deferred removal in that goroutine removes the entry on every return. The
+// zero value is ready to use.
+//
+// spec: §6.2 (Pod State Machine), §7.2 (Message delivery routing — seven
+// paths, path 6)
+type inflightSet struct {
+	mu      sync.Mutex
+	entries map[string]struct{}
+}
+
+// begin inserts sessionID and reports true, or reports false and inserts
+// nothing when the session already has an entry.
+func (r *inflightSet) begin(sessionID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.entries == nil {
+		r.entries = map[string]struct{}{}
+	}
+	if _, ok := r.entries[sessionID]; ok {
+		return false
+	}
+	r.entries[sessionID] = struct{}{}
+	return true
+}
+
+// end removes the session's entry.
+func (r *inflightSet) end(sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.entries, sessionID)
+}
+
+// has reports whether the session has an entry.
+func (r *inflightSet) has(sessionID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.entries[sessionID]
+	return ok
+}
+
+// size reports the number of entries.
+func (r *inflightSet) size() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.entries)
+}
+
+// retryRecord is the suspension retry record: after a checkpoint failure
+// before a suspension release, the session's next release or idle
+// suspension waits until its retry time, 60 s after the failure. Each
+// insertion first deletes every entry whose retry time is at or before now,
+// so the record holds only entries inserted within the last 60 s before its
+// latest insertion. A lookup removes nothing. The zero value is ready to use.
+//
+// spec: §6.2 (Pod State Machine)
+type retryRecord struct {
+	mu      sync.Mutex
+	retryAt map[string]time.Time
+}
+
+// suspensionRetryInterval is the §6.2 interval after a failed suspension
+// checkpoint before the release is tried again.
+const suspensionRetryInterval = 60 * time.Second
+
+// recordFailure records a checkpoint failure of sessionID at now, pruning
+// every entry whose retry time has passed.
+func (r *retryRecord) recordFailure(sessionID string, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retryAt == nil {
+		r.retryAt = map[string]time.Time{}
+	}
+	for id, at := range r.retryAt {
+		if !at.After(now) {
+			delete(r.retryAt, id)
+		}
+	}
+	r.retryAt[sessionID] = now.Add(suspensionRetryInterval)
+}
+
+// waiting reports whether the session's retry time is after now.
+func (r *retryRecord) waiting(sessionID string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at, ok := r.retryAt[sessionID]
+	return ok && at.After(now)
+}
+
+// size reports the number of entries.
+func (r *retryRecord) size() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.retryAt)
+}
+
+// claimed reports whether this replica holds an open terminal-writer claim
+// for the session.
+func (r *terminalClaimRecord) claimed(sessionID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e := r.entries[sessionID]
+	return e != nil && e.claims > 0
 }

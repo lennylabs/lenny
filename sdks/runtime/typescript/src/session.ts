@@ -129,6 +129,52 @@ export class SessionRecord {
     this.resolveReleased();
   }
 
+  // The busy accounting a heartbeat_ack naming the session reports: the
+  // messages routed and not finished and the unreleased busy holds. The
+  // session's session_end zeroes both for good, so a handler or hold that
+  // outlives the session never drives a count below zero.
+  // spec: §28.5.3 (CH-MSGSOCK), §15.7 (Runtime Author SDKs).
+  private pending = 0;
+  private holds = 0;
+  private busyEnded = false;
+
+  // addPending changes the routed-message count by delta.
+  addPending(delta: number): void {
+    if (!this.busyEnded) {
+      this.pending = Math.max(0, this.pending + delta);
+    }
+  }
+
+  // isBusy reports whether a routed message or a busy hold is outstanding.
+  isBusy(): boolean {
+    return this.pending > 0 || this.holds > 0;
+  }
+
+  // zeroBusy clears both counts for good, at the session's session_end.
+  zeroBusy(): void {
+    this.pending = 0;
+    this.holds = 0;
+    this.busyEnded = true;
+  }
+
+  // holdBusy takes one busy hold on the session and returns its release,
+  // which drops the hold once; a second call does nothing.
+  holdBusy(): () => void {
+    if (!this.busyEnded) {
+      this.holds += 1;
+    }
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      if (!this.busyEnded) {
+        this.holds = Math.max(0, this.holds - 1);
+      }
+    };
+  }
+
   // terminationReason is the reason Handler.onTerminate receives.
   terminationReason(): TerminationReason {
     if (this.endRead) {

@@ -721,6 +721,52 @@ func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) 
 	return out, nil
 }
 
+// ListPodlessSuspended returns at most limit of the tenant's suspended
+// sessions that name no pod, with an id after afterID, in id order. It backs
+// the gateway leader's §7.2 backlog re-check, which pages through the podless
+// suspended population by id. The state and pod predicates are literals so
+// the planner matches the partial index idx_sessions_podless_suspended
+// (tenant_id, id), which returns the rows in id order with no sort; the id
+// bound is omitted when afterID is empty, because ” is not a valid uuid. It
+// reads the read pool: the listing selects work, and every write the
+// re-check makes is guarded on the locked row.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §12.5
+// (Artifact Store).
+func (s *Store) ListPodlessSuspended(ctx context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error) {
+	q := `SELECT ` + selectList + ` FROM sessions WHERE tenant_id = $1
+		AND state = 'suspended' AND pod_assignment = ''`
+	args := []any{tenantID}
+	if afterID != "" {
+		args = append(args, afterID)
+		q += fmt.Sprintf(" AND id > $%d::uuid", len(args))
+	}
+	q += ` ORDER BY id`
+	if limit > 0 {
+		args = append(args, limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	var out []sessionstore.Session
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			sess, err := scanSession(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, sess)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list podless suspended sessions of tenant %s: %w", tenantID, err)
+	}
+	return out, nil
+}
+
 // Delete removes the session row. session_messages rows cascade.
 func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {

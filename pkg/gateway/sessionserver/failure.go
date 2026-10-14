@@ -170,9 +170,13 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 
 	switch row.State {
 	case session.StateRunning, session.StateInputRequired, session.StateSuspended:
-		return s.applyFailureFromActive(ctx, row, rep, classification, maxRetries)
+		disp, err := s.applyFailureFromActive(ctx, row, rep, classification, maxRetries)
+		s.afterRecoveryEdge(ctx, row, disp, err)
+		return disp, err
 	case session.StateResuming:
-		return s.applyFailureFromResuming(ctx, row, rep, classification, maxRetries)
+		disp, err := s.applyFailureFromResuming(ctx, row, rep, classification, maxRetries)
+		s.afterRecoveryEdge(ctx, row, disp, err)
+		return disp, err
 	case session.StateCreated, session.StateFinalizing, session.StateReady,
 		session.StateStarting:
 		// Pre-running states are bounded by the watchdog's
@@ -184,6 +188,28 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 	default:
 		// Defensive: unrecognised non-terminal state. Do not transition.
 		return disp, nil
+	}
+}
+
+// afterRecoveryEdge runs the effects of a committed failure edge into
+// resume_pending or awaiting_client_action: the session left its pod, so the
+// elicitations it raised expire, and an edge out of `suspended` re-arms the
+// tree's delegation budget keys. A failed disposition expires through the
+// post-terminal hook its write runs, and a no-op or conflict disposition, or
+// an error, runs neither.
+//
+// spec: §9.2 (Elicitation Chain), §7.3 (Retry and Resume), §8.3 (Delegation
+// Policy and Lease)
+func (s *Server) afterRecoveryEdge(ctx context.Context, row sessionstore.Session, disp FailureDisposition, err error) {
+	if err != nil || disp.To == disp.From {
+		return
+	}
+	if disp.To != session.StateResumePending && disp.To != session.StateAwaitingClientAction {
+		return
+	}
+	s.expireRaisedElicitations(ctx, row)
+	if disp.From == session.StateSuspended {
+		s.rearmBudgetKeys(ctx, row)
 	}
 }
 
@@ -517,6 +543,9 @@ func (s *Server) enterResumePending(ctx context.Context, row sessionstore.Sessio
 	}
 	s.migrateInboxOnResumePending(ctx, updated)
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §8.3 (Delegation Policy and Lease) — every committed
+	// enterResumePending re-arms the tree's delegation budget keys.
+	s.rearmBudgetKeys(ctx, updated)
 	return updated, nil
 }
 

@@ -499,7 +499,10 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 	// Serialise every attempt for this session so the supersede set
 	// the intent-row transaction fences is stable for the duration of the
 	// attempt.
-	unlock := c.lockFlight(sessionID)
+	unlock, err := c.lockFlight(ctx, sessionID)
+	if err != nil {
+		return "", 0, fmt.Errorf("checkpoint session %s: wait for the single-flight lock: %w", sessionID, err)
+	}
 	defer unlock()
 
 	// Cancel the stream on return so its RPC is torn down once the

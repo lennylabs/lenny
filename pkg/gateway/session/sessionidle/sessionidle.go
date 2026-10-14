@@ -1,43 +1,44 @@
 // SPDX-License-Identifier: MIT
 
-// Package sessionidle implements the gateway side of the §11.3 /
-// §6.2 `maxClientIdleSeconds` control: the per-session idle-cap resolver and
-// the activity stamper that advances `last_agent_activity_at` on qualifying
-// agent events.
+// Package sessionidle implements the gateway side of the §6.2
+// `maxClientIdleSeconds` control: the per-session idle-cap resolver, the
+// decision whether a session can be idle-suspended, and the activity stamper
+// that advances `last_agent_activity_at` on qualifying events.
 //
 //   - Resolver resolves the effective `maxClientIdleSeconds` for a session.
-//     `sessionPolicy.maxClientIdleSeconds` is the single platform idle bound
-//     (it replaces the former pool-level `runtime.limits.maxIdleTimeSeconds`
-//     knob). Its default is the pool's effective `maxSessionAgeSeconds`, so a
-//     session with no explicit idle bound is reclaimed at the age cap rather
-//     than at a fixed 600s. The §27.6 playground idle override the create
+//     `sessionPolicy.maxClientIdleSeconds` on the runtime or pool is the
+//     platform idle bound, and the §27.6 playground idle override the create
 //     path lands on the row's `SessionTimeouts.MaxIdleSeconds` tightens it
-//     min-wins through the existing most-restrictive resolution.
+//     min-wins. With neither set the resolver returns 0 and the watchdog's
+//     900s default applies.
+//   - Resolver.IdleSuspendable reports whether an idle session is suspended
+//     and its pod released (§6.2 Idle suspension.) or, for a service-mode
+//     session or a `type: mcp` runtime, expired.
 //   - Stamper coalesces `last_agent_activity_at` writes to at most once per
 //     second per session (§6.2) and persists them through the session store,
 //     so a streaming or long-running session is never mistaken for idle.
+//     StampAt persists a given instant without coalescing, for the idle
+//     suspension's answer from the runtime adapter.
 //
-// The clock has its own pause table, distinct from the `maxSessionAge` pause
-// table. It runs in `running`, `input_required`, and `awaiting_client_action`
-// (an elicitation wait keeps the session in `running`, so the clock runs
-// there too) and is paused in `suspended`, `resume_pending`, `resuming`,
-// `finalizing`, and terminal states. The watchdog implements the pause table
-// by listing only the running states for the idle sweep, so this package
-// carries no pause predicate.
+// The clock is evaluated in `running` alone. It is not evaluated in
+// `input_required`, is paused in `awaiting_client_action`, `suspended`, the
+// recovery states, and `finalizing`, and the watchdog implements that by
+// listing only `running` rows for the idle sweep, so this package carries no
+// pause predicate.
 //
-// spec: §6.2 (maxClientIdleSeconds clock); §9.2 (elicitation-wait idle
-// clock); §11.3. F-11.3.7 / F-9.2.15.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states); §9.2
+// (elicitation-wait idle clock); §11.3. F-11.3.7 / F-9.2.15.
 package sessionidle
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -49,53 +50,61 @@ import (
 type Resolver struct {
 	runtimes runtimestore.Store
 	pools    poolstore.Store
-	// age resolves the effective `maxSessionAgeSeconds`, which is the
-	// default `maxClientIdleSeconds` when no idle bound is declared.
-	age *sessionage.Resolver
 }
 
 // NewResolver returns a Resolver backed by the runtime and pool stores. A
 // nil store disables the corresponding lookup.
 func NewResolver(runtimes runtimestore.Store, pools poolstore.Store) *Resolver {
-	return &Resolver{
-		runtimes: runtimes,
-		pools:    pools,
-		age:      sessionage.New(runtimes, pools),
-	}
+	return &Resolver{runtimes: runtimes, pools: pools}
 }
 
 // EffectiveMaxIdleSeconds returns the most-restrictive `maxClientIdleSeconds`
-// for sess (in seconds), or 0 when no configuration surface resolves a cap —
-// in which case the watchdog applies its platform default.
+// for sess (in seconds), or 0 when no configuration surface resolves a cap,
+// in which case the watchdog applies its 900s platform default.
 //
 // Resolution, most-restrictive-wins:
 //
 //   - The §5.2 `sessionPolicy.maxClientIdleSeconds` declared on the runtime
-//     and/or pool. When neither declares one, the bound defaults to the
-//     effective `maxSessionAgeSeconds` (§6.2: "The default value is the
-//     pool's effective maxSessionAgeSeconds"), so an unbounded session is
-//     reclaimed at the age cap rather than at a fixed default.
+//     and/or pool.
 //   - The §27.6 playground idle override, already landed onto
 //     `sess.Timeouts.MaxIdleSeconds` at create time (F-27.6.1), tightens the
 //     resolved cap min-wins.
 //
-// spec: §11.3; §6.2 (maxClientIdleSeconds
-// clock default); §27.6 (playground idle override). F-11.3.7.
+// The age cap is not an idle default.
+//
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states); §27.6
+// (playground idle override). F-11.3.7.
 func (r *Resolver) EffectiveMaxIdleSeconds(ctx context.Context, sess sessionstore.Session) int {
 	cap := r.policyIdleSeconds(ctx, sess)
-	if cap <= 0 {
-		// §6.2: the single idle bound defaults to the pool's effective
-		// maxSessionAgeSeconds. The age resolver returns 0 when neither
-		// the runtime nor the pool declares an age cap, leaving the
-		// watchdog's platform default in force.
-		cap = r.age.EffectiveMaxSessionAgeSeconds(ctx, sess)
-	}
 	// spec: §27.6 — the playground idle override (landed on
 	// Timeouts.MaxIdleSeconds at create time) tightens the bound min-wins.
 	if sess.Timeouts != nil && sess.Timeouts.MaxIdleSeconds > 0 {
 		cap = minPositive(cap, int(sess.Timeouts.MaxIdleSeconds))
 	}
 	return cap
+}
+
+// IdleSuspendable reports whether an idle session can be idle-suspended
+// (§6.2 Idle suspension.). A service-mode session holds no pod of its own
+// and a `type: mcp` runtime's adapter cannot seal it, so both answer false
+// and keep the idle expiry. It returns the runtime resolution error, which
+// the watchdog takes as a skip of the row this tick. A session with no
+// runtime reference, or a resolver with no runtime store, answers true.
+//
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states); §5.1
+// (Runtime); §5.2 (Pool Configuration and Execution Modes).
+func (r *Resolver) IdleSuspendable(ctx context.Context, sess sessionstore.Session) (bool, error) {
+	if sess.ExecutionMode == string(runtimestore.ExecutionModeService) {
+		return false, nil
+	}
+	if r.runtimes == nil || sess.RuntimeRef == "" {
+		return true, nil
+	}
+	rt, err := runtimestore.Resolve(ctx, r.runtimes, sess.RuntimeRef)
+	if err != nil {
+		return false, fmt.Errorf("resolve runtime %s of session %s: %w", sess.RuntimeRef, sess.ID, err)
+	}
+	return rt.Type != runtimestore.TypeMCP, nil
 }
 
 // policyIdleSeconds returns the most-restrictive
@@ -189,6 +198,20 @@ func (s *Stamper) Stamp(tenantID, sessionID string) {
 	s.pruneLocked(now)
 	s.mu.Unlock()
 	go s.persist(tenantID, sessionID, now)
+}
+
+// StampAt persists at as the session's `last_agent_activity_at` through the
+// same forward-only write Stamp uses, without coalescing: the idle
+// suspension calls it with the runtime adapter's last activity, or the
+// current time when the adapter could not answer, so the idle clock fires
+// again one window after that instant. A nil Stamper or store does nothing.
+//
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
+func (s *Stamper) StampAt(tenantID, sessionID string, at time.Time) {
+	if s == nil || s.store == nil || sessionID == "" {
+		return
+	}
+	s.persist(tenantID, sessionID, at)
 }
 
 // Forget drops a session's coalescing entry. The terminal-side-effects

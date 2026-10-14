@@ -292,15 +292,14 @@ func TestAttachDemultiplexesConcurrentSlotsBySessionID_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §28.5.3 — a protocol-level frame that carries no session address
-// (a heartbeat ack) passes the demultiplexer to the stream so the
-// per-session heartbeat monitor still observes it. The address is a
-// session-scoped-frame rule; the protocol-level frames sit outside it.
+// spec: §28.5.3 (CH-MSGSOCK) — a heartbeat_ack is protocol-level and is
+// relayed to no Attach stream, whether or not the session has a heartbeat
+// monitor: the ack reaches the monitor through the activity tap. A
+// session-scoped frame after it still reaches the stream.
 //
-// diagnosis: a failure means the demultiplexer swallows the protocol-level
-// frames too, so every runtime misses its heartbeat ack deadline and has
-// its session's stream ended mid-session.
-func TestAttachRelaysAProtocolLevelFrame_spec_28_5_3(t *testing.T) {
+// diagnosis: a failure means a heartbeat_ack reached the gateway as session
+// content, or the stream stopped relaying the frames that follow it.
+func TestAttachConsumesHeartbeatAckWithoutAMonitor_spec_28_5_3(t *testing.T) {
 	s, rt := concurrentServer(t)
 	rt.output = make(chan []byte, 4)
 	ctx := context.Background()
@@ -323,12 +322,13 @@ func TestAttachRelaysAProtocolLevelFrame_spec_28_5_3(t *testing.T) {
 	rt.waitForSubscribers(t, 1)
 
 	rt.output <- []byte(`{"type":"heartbeat_ack"}`)
+	rt.output <- []byte(`{"type":"status","sessionId":"sess-base","state":"thinking"}`)
 	got, err := stream.Recv()
 	if err != nil {
 		t.Fatalf("Recv: %v", err)
 	}
-	if string(got.GetEnvelopeJson()) != `{"type":"heartbeat_ack"}` {
-		t.Errorf("stream received %q, want the protocol-level frame", got.GetEnvelopeJson())
+	if ty := frameTypeOf(got.GetEnvelopeJson()); ty != "status" {
+		t.Errorf("stream received %q, want the status frame (the heartbeat_ack is consumed)", got.GetEnvelopeJson())
 	}
 }
 

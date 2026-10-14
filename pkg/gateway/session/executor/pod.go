@@ -97,8 +97,12 @@ var (
 // is one turn: Send takes the stream's turn token, writes the envelope, and
 // waits for the reader to hand it the turn's `response`. When ctx ends
 // mid-turn, Send returns the context error and leaves the turn to the
-// reader, which consumes its late reply. spec: §28.5.1 (CH-ATTACH Timing.),
-// §28.5.3, §7.2.
+// reader, which consumes its late reply. When the adapter refuses a message
+// because the session is sealed, Send returns a *SealedError carrying the
+// count and the response of the batch's messages already delivered. That
+// end is not a stream failure, and the conn has left the cache, so the next
+// Send opens a new stream. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3,
+// §7.2, §4.7.1 (Role and Gateway RPC Contract).
 func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	conn, err := e.streamFor(ctx, sessionID)
 	if err != nil {
@@ -106,6 +110,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	}
 	var out []MessagePart
 	var envAnn map[string]any
+	delivered := 0
 	for _, m := range messages {
 		env := messageEnvelope{
 			SchemaVersion: 1,
@@ -124,9 +129,16 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			return Response{}, err
 		}
 		res, err := conn.runTurn(ctx, line)
+		if errors.Is(err, ErrSessionSealed) {
+			// spec: §28.5.1 (CH-ATTACH) — the adapter refused this message
+			// as sealed; the batch's earlier messages were delivered, and
+			// the caller routes the rest again.
+			return Response{}, &SealedError{Delivered: delivered, Response: Response{Parts: out, Annotations: envAnn}}
+		}
 		if err != nil {
 			return Response{}, err
 		}
+		delivered++
 		out = append(out, res.parts...)
 		envAnn = mergeAnnotations(envAnn, res.ann)
 	}

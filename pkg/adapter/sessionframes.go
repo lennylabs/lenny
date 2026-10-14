@@ -125,8 +125,14 @@ func (s *Server) writeSessionStart(sessionID, startID string, in manifestInputs)
 // that carries it ends. A failed write is logged at debug level. A
 // type: mcp runtime exchanges no CH-MSGSOCK frame, so nothing is written
 // for it.
+//
+// Before the frame, and before the type: mcp return, it stops and joins
+// entry's heartbeat monitor, so no heartbeat for the session is written
+// after its session_end. Every caller holds the entry and calls it with
+// s.mu released.
 // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end; Session frame writes).
-func (s *Server) writeSessionEnd(sessionID string) {
+func (s *Server) writeSessionEnd(sessionID string, entry *slotState) {
+	s.stopEntryHeartbeat(entry)
 	if s.RuntimeKind == RuntimeKindMCP || s.Runtime == nil {
 		return
 	}
@@ -245,8 +251,8 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 	if s.noteRuntimeStarted(sessionID, claim.entry) {
 		return true, nil
 	}
-	s.markSessionStartWritten(claim.entry, false)
-	s.writeSessionEnd(sessionID)
+	s.markSessionStartWritten(sessionID, claim.entry, false)
+	s.writeSessionEnd(sessionID, claim.entry)
 	return false, nil
 }
 
@@ -259,31 +265,30 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 var errSessionNotOpened = errors.New("session_start not yet written for the session")
 
 // markSessionStartWritten records, under s.mu, whether entry's open
-// sequence has written the session's session_start. A nil entry has no
-// record to change. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start),
-// rule 1.
-func (s *Server) markSessionStartWritten(entry *slotState, written bool) {
+// sequence has written sessionID's session_start. A nil entry has no
+// record to change.
+//
+// A write of the session_start is the session's first activity and the only
+// reset of its idle window (§4.7.1 **Session seal.**), so marking it written
+// stamps the entry, and starts the session's heartbeat monitor in the same
+// hold (§28.5.3). Clearing the flag starts and stops nothing, because every
+// caller that clears it writes the session's session_end next, and
+// writeSessionEnd stops the monitor.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1; §4.7.1 (Role
+// and Gateway RPC Contract)
+func (s *Server) markSessionStartWritten(sessionID string, entry *slotState, written bool) {
 	if entry == nil {
 		return
 	}
 	s.mu.Lock()
-	entry.sessionStartWritten = written
-	s.mu.Unlock()
-}
-
-// checkSessionStartWritten returns errSessionNotOpened unless the registry
-// holds an entry for sessionID whose open sequence wrote its
-// session_start. Every message-writing path calls it before its write;
-// the flag is set only after the session_start write returns, so a write
-// it admits lands behind that frame on the runtime connection.
-// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1.
-func (s *Server) checkSessionStartWritten(sessionID string) error {
-	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.slotStateLocked(sessionID); ok && st.sessionStartWritten {
-		return nil
+	entry.sessionStartWritten = written
+	if !written {
+		return
 	}
-	return fmt.Errorf("session %s: %w", sessionID, errSessionNotOpened)
+	s.stampLocked(entry)
+	s.startHeartbeatLocked(sessionID, entry)
 }
 
 // failStartGate moves the claimed entry's gate to failed for the start
@@ -333,7 +338,7 @@ func (s *Server) writeStartFrame(ctx context.Context, sessionID, startID string,
 		if err := s.writeSessionStart(sessionID, startID, in); err != nil {
 			return err
 		}
-		s.markSessionStartWritten(entry, true)
+		s.markSessionStartWritten(sessionID, entry, true)
 		entry.ack.reset(startID, false)
 		return nil
 	}
@@ -359,7 +364,7 @@ func (s *Server) writeAwaitedSessionStart(ctx context.Context, sessionID, startI
 	if err := s.writeSessionStart(sessionID, startID, in); err != nil {
 		return err
 	}
-	s.markSessionStartWritten(entry, true)
+	s.markSessionStartWritten(sessionID, entry, true)
 	code, read := readSessionStarted(waitCtx, frames, sessionID, startID)
 	if !read || code != "" {
 		return s.failUnacknowledgedStart(sessionID, startID, entry, code)
@@ -383,8 +388,8 @@ func (s *Server) writeAwaitedSessionStart(ctx context.Context, sessionID, startI
 func (s *Server) failUnacknowledgedStart(sessionID, startID string, entry *slotState, code string) error {
 	slog.Warn("session_start_unacknowledged", "slot_id", sessionID, "error_code", code)
 	entry.ack.fail(startID)
-	s.markSessionStartWritten(entry, false)
-	s.writeSessionEnd(sessionID)
+	s.markSessionStartWritten(sessionID, entry, false)
+	s.writeSessionEnd(sessionID, entry)
 	return fmt.Errorf("open session %s: %w (%s)", sessionID, errSessionStartUnacknowledged, code)
 }
 

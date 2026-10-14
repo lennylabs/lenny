@@ -85,10 +85,13 @@ func TestMessageRouting_InputRequiredBuffersInbox_spec_7_2_319(t *testing.T) {
 	}
 }
 
-// TestMessageRouting_SuspendedBuffersInbox covers §7.2 path 6: a
-// suspended target buffers the message in the inbox with a `queued`
-// receipt (the pod-held resume-and-deliver is a pod-adapter behaviour).
-func TestMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
+// TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6 covers §7.2
+// path 6 for a suspended session that holds its pod, with or without
+// `delivery: "immediate"`: the coordinating replica resumes it and delivers
+// the message, and nothing waits in the inbox.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6(t *testing.T) {
 	srv, store, inbox, _ := newRoutingServer(t)
 	seedSessionState(t, store, "sess_sus", session.StateSuspended)
 
@@ -100,11 +103,14 @@ func TestMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
 	}
 	var resp sessionserver.MessageResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.DeliveryReceipt.Status != session.DeliveryStatusQueued {
-		t.Errorf("status = %q, want queued", resp.DeliveryReceipt.Status)
+	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
-	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 1 {
-		t.Errorf("inbox depth = %d, want 1", n)
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0", n)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_sus"); row.State != session.StateRunning {
+		t.Errorf("state = %q, want running", row.State)
 	}
 }
 
@@ -170,7 +176,7 @@ func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 		Executor: executor.NewEchoExecutor(),
 		// No Messaging coordinator.
 	})
-	seedSessionState(t, store, "sess_nb", session.StateSuspended)
+	seedSessionState(t, store, "sess_nb", session.StateResumePending)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_nb", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},

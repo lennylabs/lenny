@@ -268,7 +268,7 @@ class RuntimeProcess {
         this.routeMessage(frame as unknown as MessageEnvelope);
         break;
       case "heartbeat":
-        await this.writer.write({ type: "heartbeat_ack" });
+        await this.writer.write(this.heartbeatAck(frame));
         break;
       case "tool_result":
         this.handleToolResult(frame as unknown as InboundToolResult);
@@ -280,6 +280,24 @@ class RuntimeProcess {
         this.cfg.logger(`runtime: ignoring unknown frame type "${kind}"`);
     }
     return false;
+  }
+
+  // heartbeatAck builds the answer to one heartbeat. A heartbeat naming a
+  // session the process holds is answered with that sessionId and, while
+  // the session has a message routed and not finished or an unreleased busy
+  // hold, busy: true. A heartbeat naming no session, or one the process
+  // does not hold, is answered with the bare ack.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK), §15.7 (Runtime Author SDKs).
+  private heartbeatAck(frame: Record<string, unknown>): Record<string, unknown> {
+    const sessionId = typeof frame.sessionId === "string" ? frame.sessionId : "";
+    const rec = sessionId === "" ? undefined : this.sessions.lookup(sessionId);
+    if (!rec) {
+      return { type: "heartbeat_ack" };
+    }
+    return rec.isBusy()
+      ? { type: "heartbeat_ack", sessionId: rec.id, busy: true }
+      : { type: "heartbeat_ack", sessionId: rec.id };
   }
 
   // handleSessionStart opens the session a session_start names. A frame
@@ -334,6 +352,9 @@ class RuntimeProcess {
     }
     rec.ended = true;
     rec.endRead = true;
+    // spec: §15.7 (Busy reporting) — the session's session_end zeroes its
+    // busy counts.
+    rec.zeroBusy();
     this.registry.cancelOwner(rec);
     this.chain(rec, () => this.release(rec));
   }
@@ -353,7 +374,19 @@ class RuntimeProcess {
     const sessionId = env.sessionId ?? "";
     const rec = this.sessions.lookup(sessionId);
     if (rec) {
-      this.chain(rec, () => (rec.endRead ? undefined : this.dispatch(rec, env)));
+      // spec: §28.5.3 (heartbeat_ack busy) — the message counts as work from
+      // before its handler can take it until its handling settles, after
+      // the response or error response it produced was written.
+      rec.addPending(1);
+      this.chain(rec, async () => {
+        try {
+          if (!rec.endRead) {
+            await this.dispatch(rec, env);
+          }
+        } finally {
+          rec.addPending(-1);
+        }
+      });
       return;
     }
     if (this.sessions.endedSince(sessionId)) {
@@ -418,6 +451,7 @@ class RuntimeProcess {
       tracingContext: rec.start.tracingContext,
       llm: rec.start.llm,
       manifestSnapshot: this.manifest,
+      holdBusy: () => rec.holdBusy(),
     };
     try {
       await this.handler.onCreate(req);
@@ -531,6 +565,7 @@ class RuntimeProcess {
       adapter: new AdapterToolset(this.writer, this.registry, this.cfg.dialTimeoutMs, rec),
       platform: this.tools,
       credentials: rec.credentials,
+      holdBusy: () => rec.holdBusy(),
     };
 
     let reply: Reply;

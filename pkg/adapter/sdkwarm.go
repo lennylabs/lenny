@@ -372,16 +372,19 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 	// waiting on the gate returns without writing a frame for a session the
 	// runtime is about to release.
 	s.mu.Lock()
-	if st, ok := s.slots[sessionID]; ok {
-		st.ack.release()
+	entry, ok := s.slots[sessionID]
+	if ok {
+		entry.ack.release()
 	}
 	running := s.runtimeHoldsLocked(sessionID)
 	s.mu.Unlock()
 	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — DemoteSDK while
 	// the session is running writes its session_end before the
-	// pre-connected SDK is torn down and the entry is removed.
+	// pre-connected SDK is torn down and the entry is removed. The write
+	// stops the entry's heartbeat monitor first, so no heartbeat follows the
+	// session_end even when the demotion fails and the entry stays.
 	if running {
-		s.writeSessionEnd(sessionID)
+		s.writeSessionEnd(sessionID, entry)
 	}
 	if err := sw.DemoteSDK(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)

@@ -20,6 +20,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"strconv"
 )
 
 // Sentinel errors.
@@ -28,7 +29,34 @@ var (
 	// support the given operation (e.g., a stateless executor asked
 	// to maintain conversation context).
 	ErrUnsupported = errors.New("executor: operation not supported")
+
+	// ErrSessionSealed reports that the session's runtime adapter refused a
+	// message because an idle suspension sealed the session (§4.7.1
+	// **Session seal.**). The message did not reach the runtime, and the
+	// stream end is not a stream failure, so the caller routes the message
+	// again by the session's state.
+	ErrSessionSealed = errors.New("executor: session sealed against message delivery")
 )
+
+// SealedError is the error a Send returns when the adapter refused one of
+// the batch's messages as sealed. Delivered counts the batch's messages the
+// runtime received before the refusal, in order, and Response carries their
+// output; the refused message and every later one were not delivered.
+// errors.Is(err, ErrSessionSealed) holds for it.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+type SealedError struct {
+	Delivered int
+	Response  Response
+}
+
+// Error implements error.
+func (e *SealedError) Error() string {
+	return "executor: session sealed against message delivery after " + strconv.Itoa(e.Delivered) + " delivered message(s)"
+}
+
+// Unwrap returns ErrSessionSealed.
+func (e *SealedError) Unwrap() error { return ErrSessionSealed }
 
 // Message captures the §7.2 / §15.4 inbound message envelope.
 // Implementations of Executor receive a slice of Messages and emit

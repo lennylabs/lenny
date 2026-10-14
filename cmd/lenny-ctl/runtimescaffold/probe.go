@@ -50,6 +50,7 @@ var checkLevel = map[string]compliance.Level{
 	"empty_stdin_exits_cleanly":      compliance.LevelBasic,
 	"message_emits_response":         compliance.LevelBasic,
 	"heartbeat_emits_ack":            compliance.LevelBasic,
+	"heartbeat_busy":                 compliance.LevelBasic,
 	"unknown_type_ignored":           compliance.LevelBasic,
 	"shutdown_exits_within_deadline": compliance.LevelBasic,
 	"session_lifetime":               compliance.LevelBasic,

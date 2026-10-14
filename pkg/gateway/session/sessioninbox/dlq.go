@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -36,14 +37,16 @@ func dlqKey(tenantID, sessionID string) string {
 	return "t:" + tenantID + ":session:" + sessionID + ":dlq"
 }
 
-// DLQ is the §7.2 dead-letter queue: a Redis sorted set scored by expiry
-// timestamp. It buffers messages addressed to a session in a recovering
-// state (`resume_pending`, `awaiting_client_action`) and the messages
-// drained from a session's inbox on `resume_pending` / terminal
-// transitions. Entries past their score are expired; entries are
-// delivered in FIFO (ascending-score) order on resume.
+// DLQ is the §7.2 dead-letter queue: a Redis sorted set. It holds the
+// messages the gateway has accepted for a session but has not yet written
+// to its runtime, whatever state the session is in (pre-running,
+// recovering, suspended, or running behind a held entry), until a delivery
+// point drains them or the expiry sweep expires them. Each entry is scored
+// by its acceptance time plus DefaultDLQTTL, so ascending score is
+// acceptance order and delivery is FIFO. The sweep expires an entry at the
+// later of its score and the session row's entry to its state plus the TTL.
 //
-// spec: §7.2; §12.4 DLQ key.
+// spec: §7.2 (Interactive Session Model); §12.4 DLQ key.
 type DLQ struct {
 	client redis.UniversalClient
 	max    int
@@ -201,6 +204,37 @@ func (d *DLQ) PeekOldest(ctx context.Context, tenantID, sessionID string) (Messa
 func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (bool, error) {
 	n, err := d.client.ZRem(ctx, dlqKey(tenantID, sessionID), member).Result()
 	return n > 0, err
+}
+
+// CountAcceptedAfter counts the DLQ entries the gateway accepted strictly
+// after since. Every held entry is scored by its acceptance time plus
+// DefaultDLQTTL, so the count is the entries whose score exceeds since plus
+// that TTL. It backs the backlog check of an interrupt suspension, which
+// counts only messages accepted after the suspension.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (d *DLQ) CountAcceptedAfter(ctx context.Context, tenantID, sessionID string, since time.Time) (int, error) {
+	floor := since.Add(DefaultDLQTTL).UnixMilli()
+	n, err := d.client.ZCount(ctx, dlqKey(tenantID, sessionID), "("+strconv.FormatInt(floor, 10), "+inf").Result()
+	return int(n), err
+}
+
+// Delete removes the session's DLQ and reports how many entries it held,
+// reading the count and deleting the key in one transaction. It backs the
+// §12.8 user erasure of the session's message queues; it emits nothing.
+//
+// spec: §12.8 (Compliance Interfaces).
+func (d *DLQ) Delete(ctx context.Context, tenantID, sessionID string) (int, error) {
+	key := dlqKey(tenantID, sessionID)
+	var card *redis.IntCmd
+	if _, err := d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		card = p.ZCard(ctx, key)
+		p.Del(ctx, key)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return int(card.Val()), nil
 }
 
 // Len reports the DLQ entry count.

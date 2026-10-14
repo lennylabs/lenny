@@ -750,6 +750,10 @@ type goProbe struct {
 	calls   int
 	byCtx   map[<-chan struct{}]int
 	byCreds map[*runtime.CredentialBundle]int
+	// holds holds each session's busy-hold release, taken by a message
+	// whose id starts with "hold" and released by one whose id starts with
+	// "unhold".
+	holds map[string]func()
 }
 
 // probeLease names the first lease of creds, or "none".
@@ -815,6 +819,17 @@ func (h *goProbe) OnMessage(ctx context.Context, m runtime.Message) (runtime.Rep
 		h.await("release-msg-" + m.SessionID)
 	}
 	h.mu.Lock()
+	switch {
+	case strings.HasPrefix(id, "unhold"):
+		if release := h.holds[m.SessionID]; release != nil {
+			release()
+		}
+	case strings.HasPrefix(id, "hold"):
+		if h.holds == nil {
+			h.holds = map[string]func(){}
+		}
+		h.holds[m.SessionID] = runtime.HoldBusy(ctx)
+	}
 	n := h.byCtx[ctx.Done()]
 	h.mu.Unlock()
 	return runtime.TextReply(fmt.Sprintf("creation %d %s lease %s", n, id, probeLease(runtime.CredentialsFrom(ctx)))), nil
@@ -843,6 +858,8 @@ _calls = 0
 # Each session's calls run on that session's own worker thread, so the
 # creation a context came from is per-thread state.
 _context = threading.local()
+# _holds maps a session to the busy hold a "hold" message took.
+_holds = {}
 
 def _event(line):
     with _lock:
@@ -876,6 +893,12 @@ class Probe:
         if mid.startswith("block"):
             _touch("handling-" + msg.session_id)
             _await("release-msg-" + msg.session_id)
+        if mid.startswith("unhold"):
+            hold = _holds.pop(msg.session_id, None)
+            if hold is not None:
+                hold.release()
+        elif mid.startswith("hold"):
+            _holds[msg.session_id] = tools.hold_busy()
         n = getattr(_context, "creation", 0)
         creds = tools.credentials
         lease = creds.providers[0].lease_id if creds and creds.providers else "none"
@@ -904,6 +927,8 @@ let calls = 0;
 // The SDK hands onCreate and onMessage the same credential bundle object for
 // one context, so the bundle object identifies the creation that built it.
 const creations = new WeakMap();
+// holds maps a session to the busy-hold release a "hold" message took.
+const holds = new Map();
 const event = (line) => appendFileSync(join(dir, "events"), line + "\n");
 const touch = (name) => writeFileSync(join(dir, name), "");
 const wait = async (name) => {
@@ -934,6 +959,12 @@ try {
       if (id.startsWith("block")) {
         touch("handling-" + msg.sessionId);
         await wait("release-msg-" + msg.sessionId);
+      }
+      if (id.startsWith("unhold")) {
+        holds.get(msg.sessionId)?.();
+        holds.delete(msg.sessionId);
+      } else if (id.startsWith("hold")) {
+        holds.set(msg.sessionId, tools.holdBusy());
       }
       const creds = tools.credentials;
       const n = (creds && creations.get(creds)) ?? 0;

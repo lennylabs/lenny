@@ -29,8 +29,9 @@ type terminalWriter struct {
 // writeTerminal is the shared mutator of expireSession, failSession,
 // failFinalizing, and cascadeToChildren; cancelNode and cancelSession are
 // the mutators of cancelSubtree and the lenny/cancel_session handler;
-// expireOrphan is sweepTenant's; transitionTerminate is applied inside
-// handleTerminalWrite's mutator.
+// expireOrphan is sweepTenant's; expireIdle is sweepIdle's and
+// expireSuspendedIfDue is sweepSuspended's; transitionTerminate is applied
+// inside handleTerminalWrite's mutator.
 var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/sessionserver/session_transitions.go", "handleDelete", "handleTerminalWrite"},
 	{"pkg/gateway/sessionserver/session_transitions.go", "transitionTerminate", "handleTerminalWrite"},
@@ -40,7 +41,8 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/sessionserver/seal.go", "failWorkspaceSeal", ""},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "Tick", "Tick"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepAwaitingClientAction", "sweepAwaitingClientAction"},
-	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepIdle", "sweepIdle"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireIdle", "expireIdle"},
+	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepMaxAge", "sweepMaxAge"},
 	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
 	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "expireOrphan", "expireOrphan"},

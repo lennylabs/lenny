@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 
@@ -50,6 +51,13 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	if err != nil {
 		return err
 	}
+	if hung := s.entryHeartbeatHung(sessionID); hung != nil {
+		select {
+		case <-hung:
+			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; session stream ended (§28.5.3)")
+		default:
+		}
+	}
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
 		if err := s.writeSessionEnvelope(rt, sessionID, env); err != nil {
 			return envelopeWriteStatus("deliver message to runtime", err)
@@ -69,15 +77,12 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// against the pod's slot count.
 	out := demuxSessionOutput(ctx, rawOut, sessionID, s.slotCount)
 
-	// spec: §28.5.3 — the adapter probes runtime liveness with periodic
-	// heartbeats and ends the session's stream when the runtime misses the
-	// ack deadline; the runtime process receives no signal on the sidecar
-	// transport (§4.7.10, Runtime process lifetime). Disabled (hbHung == nil) unless HeartbeatInterval is set.
-	hb := s.startHeartbeat(ctx, sessionID, rt)
-	var hbHung <-chan struct{}
-	if hb != nil {
-		hbHung = hb.hung
-	}
+	// spec: §28.5.3 — the session's heartbeat monitor runs from its
+	// session_start, independent of this stream. When the runtime misses
+	// the ack deadline the monitor closes hung and escalates once, and this
+	// stream, and every later stream for the entry, ends. hbHung is nil when
+	// the entry has no monitor.
+	hbHung := s.entryHeartbeatHung(sessionID)
 
 	// The receive loop forwards client envelopes to the runtime's
 	// stdin; it runs concurrently with the send loop below. recvErr is
@@ -97,9 +102,9 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			}
 			// spec: §28.5.3 — heartbeat_ack is protocol-level
 			// with no content payload; it answers the adapter's liveness
-			// probe and is never relayed to the gateway.
-			if hb != nil && jsonlFrameType(line) == "heartbeat_ack" {
-				hb.ack()
+			// probe, which the activity tap feeds, and is never relayed to
+			// the gateway, whether or not the entry has a monitor.
+			if jsonlFrameType(line) == heartbeatAckFrameType {
 				continue
 			}
 			// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule
@@ -153,13 +158,11 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			return err
 		case <-hbHung:
 			// spec: §28.5.3 — the runtime missed the heartbeat ack
-			// deadline. The adapter calls Runtime.Interrupt, which signals a
-			// process only on the developer-loop executor and ends nothing on
-			// the sidecar transport, and ends the stream with
-			// DeadlineExceeded so the gateway sees the unresponsive-agent
-			// escalation rather than a clean close. spec: §4.7.10 (Runtime
-			// process lifetime).
-			s.onHeartbeatHung(ctx, sessionID, rt)
+			// deadline. The monitor already escalated through
+			// Runtime.Interrupt once; the stream ends with DeadlineExceeded
+			// so the gateway sees the unresponsive-agent escalation rather
+			// than a clean close, and makes no second Interrupt call.
+			// spec: §4.7.10 (Runtime process lifetime).
 			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; session stream ended (§28.5.3)")
 		case <-ctx.Done():
 			return ctx.Err()
@@ -269,27 +272,73 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 // session-mode slot's identifier is its session's identifier, so the
 // stamp is unconditional and every inbound frame carries it.
 // spec: §5.2; §6.4; §28.5.3.
+//
+// It is also the adapter's seal check and the activity stamp of each frame
+// it writes (§4.7.1 **Session seal.**): in one hold of s.mu it refuses a
+// message frame for a sealed session with errSessionSealed, writing and
+// stamping nothing, and otherwise stamps the entry before the write; it
+// stamps the same entry again when the write returns, whether or not the
+// write succeeded. Every other frame type passes the seal.
+// spec: §5.2; §6.4; §28.5.3; §4.7.1 (Role and Gateway RPC Contract);
+// §28.5.1 (CH-ATTACH).
 func (s *Server) writeSessionEnvelope(rt RuntimeProcess, sessionID string, envelope []byte) error {
-	// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1 — the
-	// session's session_start precedes every other frame addressed to it,
-	// so a write for a session whose open sequence has not written that
-	// frame is refused rather than left to the gateway's call order.
-	if err := s.checkSessionStartWritten(sessionID); err != nil {
+	entry, err := s.admitSessionWrite(sessionID, jsonlFrameType(envelope) == "message")
+	if err != nil {
 		return err
 	}
 	stamped, err := stampSessionID(envelope, sessionID)
 	if err != nil {
 		return err
 	}
-	return rt.WriteEnvelope(sessionID, stamped)
+	err = rt.WriteEnvelope(sessionID, stamped)
+	s.stampEntry(entry)
+	return err
 }
 
+// admitSessionWrite is the one critical section that admits a frame write
+// for sessionID and stamps it as activity. It returns errSessionNotOpened
+// for an entry whose session_start the open sequence has not written
+// (§28.5.3 CH-MSGSOCK, Inbound: session_start, rule 1, so a frame never
+// precedes the session's session_start), errSessionSealed for a message to
+// a sealed session, and otherwise the entry it stamped.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §4.7.1 (Role and
+// Gateway RPC Contract)
+func (s *Server) admitSessionWrite(sessionID string, isMessage bool) (*slotState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok || !st.sessionStartWritten {
+		return nil, fmt.Errorf("session %s: %w", sessionID, errSessionNotOpened)
+	}
+	if isMessage && st.sealed {
+		return nil, fmt.Errorf("session %s: %w", sessionID, errSessionSealed)
+	}
+	s.stampLocked(st)
+	return st, nil
+}
+
+// errSessionSealed is the error of a message write for a session that
+// SealSession sealed. The caller answers FailedPrecondition with a message
+// beginning session_sealed:, which the gateway reads as a refused delivery
+// rather than a stream failure. spec: §4.7.1 (Role and Gateway RPC
+// Contract), §28.5.1 (CH-ATTACH).
+var errSessionSealed = errors.New("session sealed against message delivery")
+
+// sessionSealedPrefix opens the status message of a sealed refusal.
+const sessionSealedPrefix = "session_sealed: "
+
 // envelopeWriteStatus maps a writeSessionEnvelope error to the gRPC status
-// its caller returns: FailedPrecondition for a session whose session_start
-// the adapter has not written, which the caller may retry once the start
-// has opened the session, and Internal for a failed write.
-// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1.
+// its caller returns: FailedPrecondition with a message beginning
+// session_sealed: for a message the seal refused, FailedPrecondition for a
+// session whose session_start the adapter has not written, which the
+// caller may retry once the start has opened the session, and Internal for
+// a failed write.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1; §28.5.1
+// (CH-ATTACH).
 func envelopeWriteStatus(what string, err error) error {
+	if errors.Is(err, errSessionSealed) {
+		return status.Errorf(codes.FailedPrecondition, "%s%s: %v", sessionSealedPrefix, what, err)
+	}
 	if errors.Is(err, errSessionNotOpened) {
 		return status.Errorf(codes.FailedPrecondition, "%s: %v", what, err)
 	}
@@ -299,9 +348,9 @@ func envelopeWriteStatus(what string, err error) error {
 // sessionScopedFrameTypes is the §28.5.3 session-scoped set: the frame
 // types that address a session and are therefore relayed to that
 // session's Attach stream alone. Every other frame type is
-// protocol-level and passes through the demultiplexer unchanged, which is
-// what keeps the per-stream heartbeat monitor answering on a pod-global
-// runtime that acks unstamped. spec: §28.5.3.
+// protocol-level and passes through the demultiplexer unchanged. A
+// heartbeat_ack reaches the session's heartbeat monitor through the
+// activity tap rather than through any stream. spec: §28.5.3.
 var sessionScopedFrameTypes = map[string]bool{
 	"message":             true,
 	"tool_call":           true,
@@ -318,8 +367,8 @@ var sessionScopedFrameTypes = map[string]bool{
 //
 // The predicate narrows by frame type. A frame whose type is outside the
 // §28.5.3 session-scoped set is protocol-level (heartbeat and
-// heartbeat_ack) and passes through, so each session's heartbeat monitor
-// still sees its ack on an unaddressed frame. A session-scoped frame
+// heartbeat_ack) and passes through; the Attach loop consumes a
+// heartbeat_ack without relaying it. A session-scoped frame
 // carrying this session's address is delivered and one carrying a
 // co-tenant's is dropped. A session-scoped frame carrying no address
 // resolves to this stream's own binding while the pod holds at most one

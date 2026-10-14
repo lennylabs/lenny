@@ -273,6 +273,35 @@ func (s *Store) DismissByUser(ctx context.Context, tenantID, userID string) (int
 	return dismissed, err
 }
 
+// ExpireRaisedBy deletes every pending elicitation originSessionID raised
+// within tenantID and returns the count. kind and phase are literals so the
+// planner matches the predicate of the partial index
+// idx_interactions_pending_elicitation_origin (tenant_id,
+// detail->>'originPod'), and the delete reads only the tenant's pending
+// elicitations with that origin, whatever the tenant's resolved history.
+// spec: §9.2 (Elicitation Chain).
+func (s *Store) ExpireRaisedBy(ctx context.Context, tenantID, originSessionID string) (int, error) {
+	if originSessionID == "" {
+		return 0, nil
+	}
+	expired := 0
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM interactions WHERE tenant_id = $1 AND kind = 'elicitation' AND phase = 'pending'
+			 AND detail->>'originPod' = $2`,
+			tenantID, originSessionID)
+		if err != nil {
+			return err
+		}
+		expired = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("expire elicitations raised by session %s: %w", originSessionID, err)
+	}
+	return expired, nil
+}
+
 // scanInteraction reads one row in selectList order into an
 // Interaction.
 func scanInteraction(row pgx.Row) (interactionstore.Interaction, error) {

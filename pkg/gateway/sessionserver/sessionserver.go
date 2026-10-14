@@ -411,6 +411,38 @@ type Server struct {
 	// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica
 	// Behavior).
 	terminalClaims terminalClaimRecord
+	// suspensions is the suspension record: at most one suspension release
+	// or idle suspension per session in flight on this replica. The
+	// goroutine that runs it removes its own entry on every return.
+	// spec: §6.2 (Pod State Machine).
+	suspensions inflightSet
+	// suspensionRetries is the retry record: a session whose checkpoint
+	// before a suspension release failed is not released or idle-suspended
+	// again for 60 s. spec: §6.2 (Pod State Machine).
+	suspensionRetries retryRecord
+	// backlogResumes is the backlog-resume record: at most one
+	// ResumeSuspended started by the backlog check per session in flight on
+	// this replica. spec: §7.2 (Message delivery routing — seven paths,
+	// path 6).
+	backlogResumes inflightSet
+	// suspensionCheckpointer takes the checkpoint a suspension release
+	// takes before it releases the pod. Nil releases nothing: a suspension
+	// release without a checkpoint would lose the workspace. spec: §6.2
+	// (Pod State Machine).
+	suspensionCheckpointer SuspensionCheckpointer
+	// budgetRearmer re-arms the TTL of a suspended session's delegation
+	// budget keys on each committed transition into or out of suspended.
+	// Nil re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	budgetRearmer BudgetKeyRearmer
+	// sealerFor returns the runtime adapter's session seal for a binding.
+	// Nil uses the binding's adapter client; a unit test replaces it with a
+	// fake. spec: §4.7.1 (Role and Gateway RPC Contract).
+	sealerFor func(*podsession.BindResult) sessionSealer
+	// incPodReleasedDuringSuspension and incSuspensionCheckpointFailed
+	// increment the §16.1 suspension-release counters, labeled by pool and
+	// tenant. Nil disables the emission. spec: §16.1 (Metrics).
+	incPodReleasedDuringSuspension func(pool, tenantID string)
+	incSuspensionCheckpointFailed  func(pool, tenantID string)
 	// lifetimeCtx is the server-lifetime context: background work the
 	// server starts (a resume attempt, its commit and tail, a takeover
 	// delivery, a terminal binding release) runs on it, and Close cancels
@@ -1125,6 +1157,25 @@ type Options struct {
 	// Requirements).
 	PrimaryReadTimeout time.Duration
 
+	// SuspensionCheckpointer takes the checkpoint a suspension release takes
+	// before it releases a suspended session's pod. The gateway wires the
+	// checkpoint service. Nil leaves every suspended pod held.
+	// spec: §6.2 (Pod State Machine).
+	SuspensionCheckpointer SuspensionCheckpointer
+
+	// BudgetKeyRearmer re-arms the TTL of a session tree's delegation budget
+	// keys on each committed transition into or out of suspended. Nil
+	// re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	BudgetKeyRearmer BudgetKeyRearmer
+
+	// IncSessionPodReleasedDuringSuspension and
+	// IncSessionSuspensionCheckpointFailed, when set, increment the §16.1
+	// lenny_session_pod_released_during_suspension_total and
+	// lenny_session_suspension_checkpoint_failed_total counters, labeled by
+	// pool and tenant. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+	IncSessionPodReleasedDuringSuspension func(pool, tenantID string)
+	IncSessionSuspensionCheckpointFailed  func(pool, tenantID string)
+
 	// MaxResumePending and MaxResuming are the platform caps the watchdog
 	// applies to resume_pending (the maxResumeWindowSeconds window) and to
 	// resuming. The resume driver bounds an attempt by the window left
@@ -1537,9 +1588,11 @@ type Options struct {
 	// lenny_session_expiry_total{pool, reason} counter when the watchdog
 	// terminates a session on a platform expiry clock. reason is the
 	// §16.1.1 vocabulary value the watchdog resolved from the expiry edge
-	// ("max_idle_time" for the §6.2 idle clock, "max_session_age" for the
-	// §11.3 age cap and the §7.3 awaiting_client_action deadline). Nil
-	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
+	// ("max_idle_time" for the §6.2 idle expiry of a session that cannot be
+	// idle-suspended and for the §6.2 suspended-session lifetime,
+	// "max_session_age" for the §11.3 age cap and the §7.3
+	// awaiting_client_action deadline). Nil disables the emission.
+	// spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1
@@ -1716,6 +1769,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.streamFailureReportTimeout = DefaultStreamFailureReportTimeout
 	}
 	s.primaryReadTimeout = opts.PrimaryReadTimeout
+	s.suspensionCheckpointer = opts.SuspensionCheckpointer
+	s.budgetRearmer = opts.BudgetKeyRearmer
+	s.incPodReleasedDuringSuspension = opts.IncSessionPodReleasedDuringSuspension
+	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
 	s.maxResumePending = opts.MaxResumePending
 	s.maxResuming = opts.MaxResuming
 	s.ageCap = opts.AgeCap

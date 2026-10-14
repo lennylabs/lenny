@@ -79,21 +79,22 @@ func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore
 	}
 }
 
-// migrateInboxOnResumePending runs the §7.2 atomic inbox
-// drain to the DLQ when sess enters resume_pending. In the default
-// in-memory mode the buffered inbox messages are written to the DLQ, keeping
-// their acceptance order, so they survive a coordinator crash during
-// recovery; in durable mode the Redis inbox is left in place with no TTL and
-// is delivered from there. A drain failure still commits the resume_pending
-// transition (pod failure is non-negotiable) and is logged. No-op when
-// messaging is not wired.
+// migrateInboxOnResumePending runs the §7.2 atomic inbox drain to the DLQ
+// when sess enters resume_pending, and when a suspension release leaves sess
+// `suspended` with no pod. In the default in-memory mode the buffered inbox
+// messages are written to the DLQ, keeping their acceptance order, so they
+// survive the loss of this replica; in durable mode the Redis inbox is left
+// in place with no TTL and is delivered from there. sess.State labels a
+// drain failure. A drain failure still commits the transition (pod failure
+// is non-negotiable) and is logged. No-op when messaging is not wired.
 //
-// spec: §7.2. F-7.2.4.
+// spec: §7.2 (Interactive Session Model); §6.2 (Pod State Machine).
+// F-7.2.4.
 func (s *Server) migrateInboxOnResumePending(ctx context.Context, sess sessionstore.Session) {
 	if s.messaging == nil {
 		return
 	}
-	if _, err := s.messaging.MigrateInboxToDLQ(ctx, sess.TenantID, sess.ID, sess.PoolRef); err != nil {
-		log.Printf("lenny-gateway: §7.2 inbox-to-DLQ drain on resume_pending session=%s: %v", sess.ID, err)
+	if _, err := s.messaging.MigrateInboxToDLQ(ctx, sess.TenantID, sess.ID, sess.PoolRef, string(sess.State)); err != nil {
+		log.Printf("lenny-gateway: §7.2 inbox-to-DLQ drain on %s session=%s: %v", sess.State, sess.ID, err)
 	}
 }

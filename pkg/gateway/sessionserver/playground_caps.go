@@ -126,15 +126,18 @@ func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userI
 //
 //   - origin=playground is recorded on the row for the §27.6 audit
 //     label and the §27.8 dashboard slice (F-27.6.8);
-//   - the §27.6 hard duration cap
+//   - the §27.6 hard cap on the session's active time
 //     min(runtime.maxSessionAge, playground.maxSessionMinutes) is stamped onto
 //     Timeouts.MaxSessionAgeSeconds so the §11.3 watchdog (via the sessionage
-//     resolver) expires the session at the playground bound (F-27.6.2);
+//     resolver) expires the session at the playground bound; like
+//     maxSessionAge it counts active time and pauses while the session is
+//     suspended (F-27.6.2);
 //   - the §27.6 idle override
 //     min(maxClientIdleSeconds, playground.maxIdleTimeSeconds) is stamped onto
 //     Timeouts.MaxIdleSeconds (F-27.6.1), where maxClientIdleSeconds is the
-//     pool's effective sessionPolicy.maxClientIdleSeconds (its declared value,
-//     or the effective maxSessionAgeSeconds default).
+//     runtime's declared sessionPolicy.maxClientIdleSeconds; the age cap is
+//     not an idle default, so with none declared the playground cap applies
+//     alone.
 //
 // Both caps are stamped min-wins against any §14 client-requested timeout, so
 // a tighter client value is never loosened. A non-playground caller, or a
@@ -175,11 +178,11 @@ func (s *Server) applyPlaygroundCaps(ctx context.Context, runtimeRef string, row
 	}
 	row.Timeouts.MaxSessionAgeSeconds = minPositiveInt64(row.Timeouts.MaxSessionAgeSeconds, capSeconds)
 
-	// §27.6 idle override. The pool's effective
-	// `sessionPolicy.maxClientIdleSeconds` (its declared value, or the
-	// effective `maxSessionAgeSeconds` default) is resolved min-wins against
-	// the playground idle cap, so a runtime that already declares a tighter
-	// idle bound is never loosened to the playground default. The override
+	// §27.6 idle override. The runtime's declared
+	// `sessionPolicy.maxClientIdleSeconds` is resolved min-wins against the
+	// playground idle cap, so a runtime that already declares a tighter idle
+	// bound is never loosened to the playground default; the age cap plays
+	// no part. The override
 	// computes `min(maxClientIdleSeconds, playground.maxIdleTimeSeconds)` and
 	// the resulting value lands on Timeouts.MaxIdleSeconds, which the §11.3
 	// idle watchdog (via sessionidle.Resolver) enforces. F-11.3.7 / F-27.6.1.
