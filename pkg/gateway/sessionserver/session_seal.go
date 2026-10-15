@@ -89,22 +89,29 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 
 // unsealSession lifts the session's seal through its runtime adapter, under
 // the 5 s RPC deadline, at the binding's coordination generation, and clears
-// the binding's seal mark when the adapter lifted it. A failed unseal leaves
-// the mark, because the adapter may still refuse the session's messages, and
-// withdraws the grant, because the adapter may instead have lifted the seal
-// before the failure, so a message written afterwards can reach the runtime
-// and its stream's end must not read as a refusal. The adapter's own
-// session_sealed refusal still reports a refused message.
-// spec: §4.7.1 (Role and Gateway RPC Contract)
+// the binding's seal mark when the adapter lifted it.
+//
+// The grant is withdrawn before the call, mirroring the seal side, where the
+// mark is placed before SealSession and the grant recorded only after a
+// sealed answer. The adapter lifts the seal at some point during the call,
+// and from then on a message written to the attach stream reaches the
+// runtime, so a stream that ends during the call, or after a failed call,
+// must not read as a refusal: routing that message again would deliver it
+// twice. A failed unseal leaves the mark, because the adapter may still
+// refuse the session's messages; the adapter's own session_sealed refusal
+// still reports a refused message, since only a refused message has not
+// reached the runtime.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
+// clock behavior across states)
 func (s *Server) unsealSession(ctx context.Context, bind *podsession.BindResult) error {
 	sealer := s.sealerOf(bind)
 	if sealer == nil {
 		return errNoSealer
 	}
+	bind.WithdrawSealGrant()
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
 	if err := sealer.UnsealSession(cctx, bind.SessionID, bind.CoordinationGeneration); err != nil {
-		bind.WithdrawSealGrant()
 		return err
 	}
 	bind.ClearSealed()

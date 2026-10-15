@@ -726,6 +726,7 @@
       "tests": [
         "pkg/gateway/session/executor/pod_sealed_test.go::TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1",
         "pkg/gateway/sessionserver/suspension_internal_test.go::TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1",
+        "pkg/gateway/sessionserver/unseal_inflight_internal_test.go::TestUnsealInFlightStreamEndIsNotARefusal_spec_4_7_1",
         "tests/tier3_contract/adapter_session_seal/session_seal_wire_test.go::TestSessionSealWireContract_spec_4_7_1",
         "pkg/adapter/slotsession_test.go::TestTheRecordTimeConfirmationComparesEntryIdentity_spec_4_7_1",
         "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
