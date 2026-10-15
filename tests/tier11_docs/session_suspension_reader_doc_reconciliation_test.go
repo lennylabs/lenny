@@ -111,7 +111,9 @@ func TestLifecyclePagesStateIdleSuspensionAndResumeOnAnyMessage(t *testing.T) {
 	}
 }
 
-// spec: 7.3 (Retry and Resume, Retry accounting, Resume driver), 11.1
+// spec: 7.3 (Retry and Resume, Retry accounting, Resume driver,
+// awaiting_client_action entry paths), 7.2 (Interactive Session Model,
+// delivery path 6 Held messages), 11.1
 // (Admission and Fairness, Resume admission)
 // diagnosis: the client lifecycle page no longer presents automatic recovery
 // first, omits the retry accounting, or omits the concurrent-session refusal
@@ -134,10 +136,19 @@ func TestClientLifecyclePageStatesRecoveryRetryAccountingAndResumeAdmission(t *t
 		"`429 QUOTA_EXCEEDED`",
 		"retries with a new key",
 		"`status_change` event",
+		"A retryable failure that occurs when `retryCount` has already reached `retryPolicy.maxRetries` moves the session to `awaiting_client_action` instead of `resume_pending`",
+		"when a restore fails with a non-retryable failure",
+		"stays in `resume_pending` for `maxResumeWindowSeconds`",
+		"`dropped` with reason `dlq_overflow`",
 	} {
 		if !strings.Contains(resume, want) {
 			t.Errorf("%s: the resume section does not state %q", page, want)
 		}
+	}
+	// Reaching maxRetries does not itself move the session: the next
+	// retryable failure does (§7.3 awaiting_client_action entry path (a)).
+	if strings.Contains(resume, "When `retryCount` reaches `retryPolicy.maxRetries`") {
+		t.Errorf("%s: the resume section says reaching maxRetries moves the session; the next retryable failure does", page)
 	}
 	window := tableRow(t, page, body, "maxResumeWindow")
 	if !strings.Contains(window, "Maximum time a session stays in `resume_pending` before it moves to `awaiting_client_action`") {
@@ -563,6 +574,7 @@ func TestReaderPagesStateIdleEventsBacklogResumeAndSuspendedDeliveryReceipts(t *
 		"`POST /v1/sessions/{id}/messages`",
 		"receipt `delivered`",
 		"receipt `queued`",
+		"`dropped` with reason `dlq_overflow`",
 		"`lenny/send_message`",
 		"`QUOTA_EXCEEDED`",
 	} {
@@ -741,7 +753,7 @@ func TestReaderPagesStateSuspensionOutcomesBeyondTheSuccessPath(t *testing.T) {
 	if delivery == "" {
 		t.Fatalf("%s: no `suspended` row in the message-delivery table", lifecycle)
 	}
-	if !strings.Contains(delivery, "is held with the receipt `queued`, the session stays `suspended`") {
+	if !strings.Contains(delivery, "is held in the dead-letter queue with the same receipts. The session stays `suspended`") {
 		t.Errorf("%s: the suspended delivery row omits the message admitted on entry and refused at the state write: %s", lifecycle, delivery)
 	}
 
