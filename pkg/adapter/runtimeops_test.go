@@ -272,6 +272,30 @@ func TestRuntimeOpsDeadlineApproachingNamesSession_spec_28_5_3(t *testing.T) {
 }
 
 // spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// deadline_approaching carries only the "session_age" and "budget" triggers:
+// each is written, and any other trigger returns ErrUnknownDeadlineTrigger
+// and writes no frame, so the next frame the runtime reads is the valid one
+// that follows.
+func TestRuntimeOpsDeadlineApproachingTriggers_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	for _, trigger := range []string{"idle", "", "SESSION_AGE"} {
+		if err := lc.SignalDeadlineApproaching("sess-dave", 5000, trigger); !errors.Is(err, ErrUnknownDeadlineTrigger) {
+			t.Errorf("trigger %q: err = %v, want ErrUnknownDeadlineTrigger", trigger, err)
+		}
+	}
+	for _, trigger := range []string{"budget", "session_age"} {
+		if err := lc.SignalDeadlineApproaching("sess-dave", 5000, trigger); err != nil {
+			t.Fatalf("trigger %q: %v", trigger, err)
+		}
+		if got := fr.read(); got.Type != "deadline_approaching" || got.Trigger != trigger {
+			t.Errorf("frame = %+v, want deadline_approaching with trigger %q", got, trigger)
+		}
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
 // files_updated carries the sessionId the adapter passed, and a
 // process-scoped frame (lifecycle_capabilities) carries none.
 func TestRuntimeOpsFilesUpdatedNamesSession_spec_28_5_3(t *testing.T) {

@@ -582,11 +582,21 @@ func (lc *RuntimeOps) RotateCredentials(ctx context.Context, sessionID, provider
 	})
 }
 
+// ErrUnknownDeadlineTrigger is returned by SignalDeadlineApproaching for a
+// trigger outside the CH-RUNTIMEOPS contract, which names only
+// "session_age" and "budget". No frame is written, so a runtime never reads
+// a deadline_approaching frame the published schema rejects.
+var ErrUnknownDeadlineTrigger = errors.New("deadline_approaching trigger is neither session_age nor budget")
+
 // SignalDeadlineApproaching warns the runtime that sessionID is nearing
 // expiry or budget exhaustion so it wraps up that session's work.
-// remainingMs is the time left; trigger is "session_age" or "budget".
+// remainingMs is the time left; trigger is "session_age" or "budget", and
+// any other trigger returns ErrUnknownDeadlineTrigger without writing.
 // spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 func (lc *RuntimeOps) SignalDeadlineApproaching(sessionID string, remainingMs int32, trigger string) error {
+	if trigger != "session_age" && trigger != "budget" {
+		return fmt.Errorf("%w: %q", ErrUnknownDeadlineTrigger, trigger)
+	}
 	return lc.writeFrame(lifecycleFrame{
 		Type:        "deadline_approaching",
 		SessionID:   sessionID,

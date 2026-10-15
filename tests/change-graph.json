@@ -353,6 +353,15 @@
       "component": ["tests/tier2_component/lifecycle/..."],
       "chaos": ["tests/tier8_chaos/lifecycle_fault_injection_test.go"]
     },
+    "tests/testinfra/runtimes/conformance-fixtures/always-busy": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/bare-ack-while-handling": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/sdk-delayed-response": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
     "tests/testinfra/rotationgate": {
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
