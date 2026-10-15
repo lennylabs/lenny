@@ -91,31 +91,55 @@ func readProbeFrames(out io.Reader, frames chan map[string]any) {
 }
 
 // startGoProbe runs goProbe under the Go SDK's Run over pipes.
+//
+// Run executes in a goroutine of the test process, so its handlers write into
+// the probe directory until Run returns. The cleanup closes stdin, unblocks
+// any pending stdout write, and waits for Run to return. The probe directory
+// is a t.TempDir created before this call, so its RemoveAll cleanup runs after
+// this one and never races a late control-file write.
 func startGoProbe(t *testing.T, dir, manifest string) *probeRuntime {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	done := make(chan int, 1)
+	returned := make(chan struct{})
+	var exitCode int
 	go func() {
+		defer close(returned)
 		err := runtime.Run(&goProbe{dir: dir, byCtx: map[<-chan struct{}]int{}, byCreds: map[*runtime.CredentialBundle]int{}},
 			runtime.WithStreams(inR, outW), runtime.WithSocketTransport(false),
 			runtime.WithLogger(nil), runtime.WithManifestPath(manifest),
 			runtime.WithLifecycleHandlers())
 		_ = outW.Close()
-		switch {
-		case err == nil:
-			done <- 0
-		case runtime.ErrIsProtocol(err):
-			done <- 2
-		default:
-			done <- 1
-		}
+		exitCode = goProbeExitCode(err)
 	}()
 	p := &probeRuntime{in: inW, frames: make(chan map[string]any, 64), dir: dir}
-	p.wait = func() int { return <-done }
+	p.wait = func() int { <-returned; return exitCode }
 	go readProbeFrames(outR, p.frames)
-	t.Cleanup(func() { _ = inW.Close() })
+	t.Cleanup(func() {
+		_ = inW.Close()
+		_ = outR.CloseWithError(io.ErrClosedPipe)
+		select {
+		case <-returned:
+		case <-time.After(goProbeStopTimeout):
+			t.Errorf("Go probe Run did not return within %s of stdin closing", goProbeStopTimeout)
+		}
+	})
 	return p
+}
+
+// goProbeStopTimeout bounds how long the cleanup waits for Run to return.
+const goProbeStopTimeout = 30 * time.Second
+
+// goProbeExitCode maps Run's error to the exit status the SDK's main reports.
+func goProbeExitCode(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case runtime.ErrIsProtocol(err):
+		return 2
+	default:
+		return 1
+	}
 }
 
 // startProcessProbe runs argv as a probe process with the control directory
