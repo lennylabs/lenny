@@ -49,7 +49,9 @@ func (s *Server) sealerOf(bind *podsession.BindResult) sessionSealer {
 // had no activity in the last idleSeconds (§4.7.1 Session seal.). The call
 // names the binding's session and coordination generation and runs under
 // the 5 s RPC deadline. sealed reports whether the session is sealed; when it
-// is not, idleAge is the time since the adapter's last activity for it.
+// is not, idleAge is the time since the adapter's last activity for it. A
+// seal marks the binding sealed, so a message whose stream a release ends
+// while the seal holds is routed again as a refused message.
 // spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
 // clock behavior across states)
 func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, idleSeconds int) (bool, time.Duration, error) {
@@ -59,11 +61,17 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 	}
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
-	return sealer.SealSession(cctx, bind.SessionID, bind.CoordinationGeneration, idleSeconds)
+	sealed, idleAge, err := sealer.SealSession(cctx, bind.SessionID, bind.CoordinationGeneration, idleSeconds)
+	if err == nil && sealed {
+		bind.MarkSealed()
+	}
+	return sealed, idleAge, err
 }
 
 // unsealSession lifts the session's seal through its runtime adapter, under
-// the 5 s RPC deadline, at the binding's coordination generation.
+// the 5 s RPC deadline, at the binding's coordination generation, and clears
+// the binding's seal mark when the adapter lifted it. A failed unseal leaves
+// the mark, because the adapter may still refuse the session's messages.
 // spec: §4.7.1 (Role and Gateway RPC Contract)
 func (s *Server) unsealSession(ctx context.Context, bind *podsession.BindResult) error {
 	sealer := s.sealerOf(bind)
@@ -72,5 +80,9 @@ func (s *Server) unsealSession(ctx context.Context, bind *podsession.BindResult)
 	}
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
-	return sealer.UnsealSession(cctx, bind.SessionID, bind.CoordinationGeneration)
+	if err := sealer.UnsealSession(cctx, bind.SessionID, bind.CoordinationGeneration); err != nil {
+		return err
+	}
+	bind.ClearSealed()
+	return nil
 }

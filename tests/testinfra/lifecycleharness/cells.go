@@ -42,6 +42,38 @@ func Report(t *testing.T, r *Replica, id, reason string) {
 	}
 }
 
+// PreState is one non-terminal pre-state a scenario reaches through
+// production calls on a replica.
+type PreState struct {
+	// Name labels the pre-state.
+	Name string
+	// State is the state the row reaches.
+	State session.State
+	// Reach starts a session on the replica and drives it to State.
+	Reach func(t *testing.T, h *Harness, r *Replica) string
+}
+
+// PreStates returns the pre-states the terminal-writer cells use: running,
+// held-pod suspended, resume_pending, and awaiting_client_action.
+func PreStates() []PreState {
+	var out []PreState
+	for _, p := range preStates() {
+		out = append(out, PreState{Name: p.name, State: p.state, Reach: p.reach})
+	}
+	return out
+}
+
+// CancelSessionMCP calls lenny/cancel_session for the session on the
+// replica's MCP surface.
+func (h *Harness) CancelSessionMCP(r *Replica, id string) {
+	h.T.Helper()
+	t, ok := h.T.(*testing.T)
+	if !ok {
+		h.T.Fatalf("CancelSessionMCP needs a *testing.T")
+	}
+	mcpCall(t, h, r, "lenny/cancel_session", fmt.Sprintf(`{"sessionId":%q}`, id))
+}
+
 func preStates() []preState {
 	return []preState{
 		{"running", session.StateRunning, func(t *testing.T, h *Harness, r *Replica) string {
@@ -86,19 +118,38 @@ func nonTerminal(st session.State) bool { return !session.IsTerminal(st) }
 
 func mcpCall(t *testing.T, h *Harness, r *Replica, tool, args string) {
 	t.Helper()
+	h.MCPCall(r, tool, args)
+}
+
+// MCPCall calls the MCP tool with the JSON arguments on the replica's MCP
+// surface, wired as the gateway wires it, and returns the JSON-RPC result.
+func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
+	h.T.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    h.Store,
-		Terminal: r.Server,
-		Clock:    h.Clock.Now,
-		TenantID: Tenant,
+		Store:          h.Store,
+		Terminal:       r.Server,
+		SessionService: r.Server,
+		Delivery:       r.Server,
+		Executor:       r.Executor,
+		Messaging:      h.Messaging,
+		Interactions:   h.Interactions,
+		Clock:          h.Clock.Now,
+		TenantID:       Tenant,
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
-	var resp map[string]any
+	var resp struct {
+		Result map[string]any `json:"result"`
+		Error  map[string]any `json:"error"`
+	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Error != nil {
+		return map[string]any{"_error": resp.Error}
+	}
+	return resp.Result
 }
 
 func writers() []writer {

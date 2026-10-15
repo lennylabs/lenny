@@ -351,7 +351,17 @@
     "tests/testinfra/lifecycleharness": {
       "unit": ["tests/tier1_unit/lifecycle/..."],
       "component": ["tests/tier2_component/lifecycle/..."],
-      "chaos": ["tests/tier8_chaos/lifecycle_fault_injection_test.go"]
+      "integration": [
+        "tests/tier4_integration/session_resume_driver_integration_test.go",
+        "tests/tier4_integration/session_suspension_delivery_integration_test.go",
+        "tests/tier4_integration/session_held_pod_integration_test.go",
+        "tests/tier4_integration/stream_failure_recycle_retire_test.go",
+        "tests/tier4_integration/delegation_tree_resume_peer_child_test.go"
+      ],
+      "chaos": [
+        "tests/tier8_chaos/lifecycle_fault_injection_test.go",
+        "tests/tier8_chaos/session_suspend_resume_chaos_test.go"
+      ]
     },
     "tests/testinfra/runtimes/conformance-fixtures/always-busy": {
       "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]

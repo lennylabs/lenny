@@ -36,6 +36,13 @@ var (
 	// stream end is not a stream failure, so the caller routes the message
 	// again by the session's state.
 	ErrSessionSealed = errors.New("executor: session sealed against message delivery")
+
+	// ErrNotBound reports that this replica holds no pod binding for the
+	// session, so nothing was sent and the message did not reach the
+	// runtime. A caller whose classification read found the session
+	// running routes the message again when a re-read finds it in another
+	// state, such as after an idle suspension released the pod.
+	ErrNotBound = errors.New("executor: session is not bound to a pod")
 )
 
 // SealedError is the error a Send returns when the adapter refused one of

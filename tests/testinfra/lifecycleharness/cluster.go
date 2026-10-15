@@ -6,11 +6,17 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,6 +49,8 @@ const Pool = "echo-pool"
 type Cluster struct {
 	Client client.Client
 
+	heartbeat time.Duration
+
 	mu       sync.Mutex
 	pods     map[string]*Pod // by pod IP
 	nextIP   int
@@ -56,10 +64,88 @@ type Pod struct {
 	Adapter *adapter.Server
 	Runtime *RecordingRuntime
 	lis     *bufconn.Listener
+
+	mu         sync.Mutex
+	failAttach chan struct{}
+	attaches   atomic.Int64
+}
+
+// Attaches reports how many Attach streams the pod's adapter has opened.
+func (p *Pod) Attaches() int64 { return p.attaches.Load() }
+
+// FailAttach ends every Attach stream open on the pod's adapter with
+// codes.Internal, as a broken CH-ATTACH stream ends. Streams opened later
+// are not affected.
+func (p *Pod) FailAttach() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.failAttach != nil {
+		close(p.failAttach)
+	}
+	p.failAttach = make(chan struct{})
+}
+
+// attachFailure returns the channel that FailAttach closes for the streams
+// open now.
+func (p *Pod) attachFailure() <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.failAttach == nil {
+		p.failAttach = make(chan struct{})
+	}
+	return p.failAttach
+}
+
+// failableAttach is the adapter's stream interceptor that ends an Attach
+// stream with codes.Internal when FailAttach is called. It cancels the
+// stream's context and waits for the handler before it returns.
+func (p *Pod) failableAttach(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
+	if !strings.HasSuffix(info.FullMethod, "/Attach") {
+		return h(srv, ss)
+	}
+	p.attaches.Add(1)
+	fail := p.attachFailure()
+	ctx, cancel := context.WithCancel(ss.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h(srv, &ctxStream{ServerStream: ss, ctx: ctx}) }()
+	select {
+	case err := <-done:
+		return err
+	case <-fail:
+		cancel()
+		<-done
+		return status.Error(codes.Internal, "lifecycleharness: injected CH-ATTACH failure")
+	}
+}
+
+// ctxStream is a server stream with a replaced context.
+type ctxStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *ctxStream) Context() context.Context { return s.ctx }
+
+// ClusterOptions configures the harness cluster.
+type ClusterOptions struct {
+	// Recycling, when true, makes the warm pool a recycling pool: its
+	// template carries a sessionPolicy.recycle block, so a clean session
+	// end recycles the pod rather than retiring it.
+	Recycling bool
+	// HeartbeatInterval, when set, is every pod adapter's heartbeat
+	// interval.
+	HeartbeatInterval time.Duration
 }
 
 // NewCluster starts envtest and seeds the warm pool and template.
 func NewCluster(t testing.TB) *Cluster {
+	return NewClusterWith(t, ClusterOptions{})
+}
+
+// NewClusterWith starts envtest and seeds the warm pool and a template
+// configured by opts.
+func NewClusterWith(t testing.TB, opts ClusterOptions) *Cluster {
 	t.Helper()
 	env := envtest.Start(t)
 	s := runtime.NewScheme()
@@ -82,16 +168,25 @@ func NewCluster(t testing.TB) *Cluster {
 			ObjectMeta: metav1.ObjectMeta{Name: Pool, Namespace: Namespace},
 			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 64},
 		},
-		&lennyv1.SandboxTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: Namespace},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: RuntimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
-		},
+		template(opts),
 	} {
 		if err := c.Create(ctx, o); err != nil {
 			t.Fatalf("create %T: %v", o, err)
 		}
 	}
-	return &Cluster{Client: c, pods: map[string]*Pod{}, nextIP: 10}
+	return &Cluster{Client: c, pods: map[string]*Pod{}, nextIP: 10, heartbeat: opts.HeartbeatInterval}
+}
+
+// template is the warm pool's SandboxTemplate.
+func template(opts ClusterOptions) *lennyv1.SandboxTemplate {
+	tmpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: Namespace},
+		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: RuntimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
+	}
+	if opts.Recycling {
+		tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "standard"}}
+	}
+	return tmpl
 }
 
 // AddIdlePod creates one idle Sandbox and starts the adapter behind it.
@@ -104,16 +199,19 @@ func (c *Cluster) AddIdlePod(t testing.TB) *Pod {
 	ip := fmt.Sprintf("10.244.%d.%d", c.nextIP/250, c.nextIP%250)
 	c.mu.Unlock()
 
-	rt := &RecordingRuntime{}
+	rt := NewRecordingRuntime()
 	srv := adapter.New("harness-" + name)
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = rt
+	if c.heartbeat > 0 {
+		srv.HeartbeatInterval = c.heartbeat
+	}
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	pod := &Pod{Name: name, IP: ip, Adapter: srv, Runtime: rt, lis: lis}
+	gs := adapter.NewGRPCServer(srv, grpc.ChainStreamInterceptor(pod.failableAttach))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
-	pod := &Pod{Name: name, IP: ip, Adapter: srv, Runtime: rt, lis: lis}
 
 	ctx := context.Background()
 	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
@@ -184,41 +282,45 @@ func (c *Cluster) BoundClaims(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// RecordingRuntime is the runtime behind a harness pod. It records every
-// message it receives.
-type RecordingRuntime struct {
-	mu       sync.Mutex
-	started  []string
-	envelope [][]byte
+// Received returns the messages every pod's runtime received for the
+// session, in arrival order.
+func (c *Cluster) Received(sessionID string) []Received {
+	var out []Received
+	for _, p := range c.Pods() {
+		out = append(out, p.Runtime.Received(sessionID)...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
 }
 
-// Start records the session start.
-func (r *RecordingRuntime) Start(_ context.Context, sessionID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.started = append(r.started, sessionID)
-	return nil
+// ReceivedTexts returns the text of each message the session's runtimes
+// received, in arrival order.
+func (c *Cluster) ReceivedTexts(sessionID string) []string {
+	var out []string
+	for _, m := range c.Received(sessionID) {
+		out = append(out, m.Text)
+	}
+	return out
 }
 
-// WriteEnvelope records a delivered envelope.
-func (r *RecordingRuntime) WriteEnvelope(_ string, env []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.envelope = append(r.envelope, append([]byte(nil), env...))
-	return nil
+// PodOf returns the pod whose Sandbox name is the session row's pod.
+func (c *Cluster) PodOf(podName string) *Pod {
+	p, _ := c.PodByName(podName)
+	return p
 }
 
-// Interrupt does nothing.
-func (r *RecordingRuntime) Interrupt(context.Context, string, bool) error { return nil }
-
-// Close does nothing.
-func (r *RecordingRuntime) Close(context.Context, string) error { return nil }
-
-// Output returns a closed channel.
-func (r *RecordingRuntime) Output(context.Context, string) (<-chan []byte, error) {
-	ch := make(chan []byte)
-	close(ch)
-	return ch, nil
+// ClaimPhase returns the phase of the pod's SandboxClaim, and false when
+// the pod has no claim.
+func (c *Cluster) ClaimPhase(ctx context.Context, podName string) (string, bool, error) {
+	var claim lennyv1.SandboxClaim
+	err := c.Client.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "claim-" + podName}, &claim)
+	if apierrors.IsNotFound(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return claim.Status.Phase, true, nil
 }
 
 // Break makes the pod's adapter refuse every workspace restore or

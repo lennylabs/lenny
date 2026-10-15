@@ -38,6 +38,9 @@ type Store struct {
 	// single primary serves reads and writes unchanged. Writes always use
 	// pool. spec: §12.3.
 	read *pgxpool.Pool
+	// now stamps created_at and updated_at and accrues the active session
+	// age. It is time.Now unless WithClock replaces it.
+	now func() time.Time
 }
 
 // Option configures a Store at construction time.
@@ -54,11 +57,23 @@ func WithReadPool(read *pgxpool.Pool) Option {
 	}
 }
 
+// WithClock replaces the wall clock that stamps created_at and updated_at
+// and accrues the active session age, so a test that steps a clock sees the
+// same instants the gateway's timers compare against. A nil clock keeps the
+// wall clock.
+func WithClock(now func() time.Time) Option {
+	return func(s *Store) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // New returns a Store backed by pool. The pool must point at a
 // database that has the migrations/ schema applied. Without WithReadPool
 // the read-heavy query paths share pool.
 func New(pool *pgxpool.Pool, opts ...Option) *Store {
-	s := &Store{pool: pool, read: pool}
+	s := &Store{pool: pool, read: pool, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
@@ -142,7 +157,7 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 // share the same root, which §8.9 and §12.5 read via the
 // idx_sessions_root index. F-8.9.8.
 func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = now
 	}
@@ -533,7 +548,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if sess.LastSeq < prevLastSeq {
 			sess.LastSeq = prevLastSeq
 		}
-		now := pgtenant.MonotonicNext(prevUpdated, time.Now())
+		now := pgtenant.MonotonicNext(prevUpdated, s.now())
 		// spec: §6.2 (maxSessionAge timer behavior across states) — the
 		// store is the only writer of the accumulated active age: discard
 		// any value the mutator set, then accrue the active age the locked

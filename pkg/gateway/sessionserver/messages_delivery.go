@@ -235,6 +235,9 @@ func (d *restDelivery) deliverNow(row sessionstore.Session, msgs []executor.Mess
 		if errors.Is(err, executor.ErrSessionSealed) {
 			return d.rerouteSealed(row, msgs, deliverIdx, nil)
 		}
+		if errors.Is(err, executor.ErrNotBound) {
+			return d.rerouteUnbound(row, msgs, deliverIdx, err)
+		}
 		return d.executorFailure(err)
 	}
 	o, err := s.executor.Send(ctx, row.ID, msgs)
@@ -245,6 +248,9 @@ func (d *restDelivery) deliverNow(row sessionstore.Session, msgs []executor.Mess
 			return deliveryOutcome{}, false
 		}
 		return d.rerouteSealed(row, msgs[sealed.Delivered:], deliverIdx[sealed.Delivered:], delivered)
+	}
+	if errors.Is(err, executor.ErrNotBound) {
+		return d.rerouteUnbound(row, msgs, deliverIdx, err)
 	}
 	if err != nil {
 		return d.executorFailure(err)
@@ -292,6 +298,26 @@ func (d *restDelivery) rerouteSealed(row sessionstore.Session, msgs []executor.M
 		outcome.out = append(delivered, outcome.out...)
 	}
 	return outcome, ok
+}
+
+// rerouteUnbound routes the batch once more when this replica held no
+// binding for the session, so nothing was sent, and a primary re-read finds
+// the session no longer `running`: an idle suspension, a release, or a
+// failure report moved it after the classification read. A session still
+// `running`, a re-read failure, or a second attempt answers EXECUTOR_FAILURE
+// with sendErr.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states), §7.2
+// (Message delivery routing — seven paths, path 6)
+func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.Message, deliverIdx []int, sendErr error) (deliveryOutcome, bool) {
+	if d.rerouted {
+		return d.executorFailure(sendErr)
+	}
+	fresh, err := d.s.readPrimary(d.r.Context(), row.TenantID, row.ID)
+	if err != nil || fresh.State == session.StateRunning {
+		return d.executorFailure(sendErr)
+	}
+	d.rerouted = true
+	return d.route(fresh, msgs, deliverIdx)
 }
 
 // executorFailure answers a failed send with EXECUTOR_FAILURE.

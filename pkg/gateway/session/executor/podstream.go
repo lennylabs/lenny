@@ -114,9 +114,15 @@ func (c *attachConn) endedSealed() bool {
 }
 
 // endCause is the cause a Send waiting on the ended stream returns:
-// ErrSessionSealed for a sealed refusal, and errStreamEnded otherwise.
+// ErrSessionSealed for a sealed refusal or for a stream that ended while the
+// session was sealed through its binding, and errStreamEnded otherwise. The
+// adapter refuses every message to a sealed session, so a message whose
+// stream a suspension release ended while the seal held never reached the
+// runtime, whichever of the refusal and the release ended the stream.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+// (maxClientIdleSeconds clock behavior across states)
 func (c *attachConn) endCause() error {
-	if c.endedSealed() {
+	if c.endedSealed() || (c.bind != nil && c.bind.Sealed()) {
 		return ErrSessionSealed
 	}
 	return errStreamEnded

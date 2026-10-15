@@ -166,7 +166,7 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*attachC
 		bind, bound := e.registry.Get(sessionID)
 		if !bound {
 			e.mu.Unlock()
-			return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
+			return nil, fmt.Errorf("podexec: session %s: %w", sessionID, ErrNotBound)
 		}
 		c = newAttachConn(ctx, bind)
 		e.streams[sessionID] = c

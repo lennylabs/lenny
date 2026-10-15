@@ -7280,6 +7280,13 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Gap:** The input-wait forget runs only on the writing replica, while the one_shot request_input counter lives on the serving replica.
 **Suggested resolution:** Forget on every replica from the Sweeper's terminal branch, or share the registry. Owned by remediation step R20 (message-plane durability and cross-replica input wait), which builds the shared input-wait store this fix needs (`gateway-runtime-comms-remediation.md` §10.1). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-7.2.38 — A message a non-coordinating replica serves for a `running` session answers `EXECUTOR_FAILURE` instead of being forwarded or held [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (delivery path 2 and the forwarding sentence) and §29.3 Interactive message send (the off-holder `running` row).
+**Evidence:** `pkg/gateway/sessionserver/messages_delivery.go` (`deliverNow` sends through the serving replica's executor, whose registry holds no binding for a session another replica coordinates, and answers the executor's `not bound to a pod` error as HTTP 500 `EXECUTOR_FAILURE`). The failing test is `tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2`, case `message on rep-2 racing the zero-hold release`, in either start order, whenever the peer replica classifies the message on the `running` row before the idle suspension's write lands. The case is skipped with this finding's identifier. Recorded by the tests of proposal 0092 (step 18 of its build sequence), filed 2026-10-15.
+**Gap:** §29.3 states that the serving replica forwards a message for a `running` session to the coordinator, and on an unreachable coordinator buffers it and answers `queued`. No forward exists, and the serving replica answers a retryable 500 instead, so the message is neither delivered nor held.
+**Suggested resolution:** Owned by remediation step R19 (cross-replica message forwarding, `gateway-runtime-comms-remediation.md` §10.1), which builds `ForwardMessage` and degrades an unreachable coordinator to a DLQ enqueue under the path-6 custody rule. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §7.3 Retry and Resume <a id="7.3"></a>
 Spec: `spec/07_session-lifecycle.md` lines 375–427.
 

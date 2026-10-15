@@ -35,13 +35,18 @@ func (h *Harness) Settle() {
 }
 
 // Pass steps the clock by one tick, runs each surviving replica's Sweeper
-// and watchdog once, and settles.
+// and watchdog once and the gateway leader's backlog re-check on the first
+// surviving replica, which the harness treats as the leader, and settles.
 func (h *Harness) Pass() {
 	h.Clock.Advance(SweepInterval)
 	ctx := context.Background()
-	for _, r := range h.Surviving() {
+	surviving := h.Surviving()
+	for _, r := range surviving {
 		_, _ = r.Sweeper.Sweep(ctx)
 		_, _ = r.Watchdog.Tick(ctx, h.Clock.Now())
+	}
+	if len(surviving) > 0 {
+		h.backlogRechecker(surviving[0]).Pass(ctx)
 	}
 	h.Settle()
 }

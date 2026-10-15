@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,6 +121,51 @@ func TestSealedRefusalReroutesRESTMessage_spec_7_2(t *testing.T) {
 	}
 	if got := r.get(t, "s1").State; got != session.StateResumePending {
 		t.Fatalf("state = %q, want resume_pending", got)
+	}
+}
+
+// TestUnboundSendReroutesWhenTheSessionLeftRunning_spec_6_2 pins the
+// not-bound send: when this replica holds no binding, nothing was sent, so a
+// batch whose session an idle suspension moved to podless suspended after
+// the classification read is held in the DLQ and answered queued; a session
+// still running answers EXECUTOR_FAILURE, because the serving replica does
+// not coordinate it.
+//
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states), 7.2
+// (Message delivery routing — seven paths, path 6)
+func TestUnboundSendReroutesWhenTheSessionLeftRunning_spec_6_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	r.seedRunning(t, "s1")
+	r.exec.sendErr = func() error {
+		_, _ = r.store.Update(context.Background(), "acme", "s1", func(s *sessionstore.Session) error {
+			s.State = session.StateSuspended
+			s.SuspendedReason = sessionstore.SuspendedReasonIdle
+			s.SuspendedAt = r.now
+			s.PodAssignment = ""
+			return nil
+		})
+		return fmt.Errorf("podexec: session s1: %w", executor.ErrNotBound)
+	}
+	if got := postMessage(t, r.srv, "s1"); got != string(session.DeliveryStatusQueued) {
+		t.Fatalf("receipt = %q, want queued", got)
+	}
+	if r.dlqLen(t, "s1") != 1 || r.get(t, "s1").State != session.StateResumePending {
+		t.Fatalf("DLQ %d state %q, want 1 and resume_pending", r.dlqLen(t, "s1"), r.get(t, "s1").State)
+	}
+
+	r.seedRunning(t, "s2")
+	r.exec.sendErr = func() error { return fmt.Errorf("podexec: session s2: %w", executor.ErrNotBound) }
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s2/messages",
+		strings.NewReader(`{"messages":[{"role":"user","content":"x"}]}`))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError || !strings.Contains(rr.Body.String(), "EXECUTOR_FAILURE") {
+		t.Fatalf("unbound send on a running session = %d %s, want 500 EXECUTOR_FAILURE", rr.Code, rr.Body.String())
+	}
+	if r.dlqLen(t, "s2") != 0 {
+		t.Fatalf("DLQ = %d for a running session, want nothing held", r.dlqLen(t, "s2"))
 	}
 }
 

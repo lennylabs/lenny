@@ -638,3 +638,41 @@ func TestRetryRecordPrunesOnInsert_spec_6_2(t *testing.T) {
 		t.Fatalf("after the insertion: size %d, want old pruned and recent kept", r.size())
 	}
 }
+
+// errUnsealFailed is a fake adapter's unseal failure.
+var errUnsealFailed = errors.New("unseal failed")
+
+// failingUnsealer seals and fails every unseal.
+type failingUnsealer struct{ fakeSealer }
+
+func (f *failingUnsealer) UnsealSession(context.Context, string, int64) error { return errUnsealFailed }
+
+// spec: §4.7.1 (Role and Gateway RPC Contract)
+// A seal the adapter grants marks the binding sealed, a refused seal does
+// not, a lifted seal clears the mark, and an unseal the adapter does not
+// confirm keeps it, so the executor reads a stream end during a seal as a
+// refusal only while the adapter may still refuse the session's messages.
+func TestSealMarksTheBinding_spec_4_7_1(t *testing.T) {
+	s := &Server{}
+	ctx := context.Background()
+
+	refused := &podsession.BindResult{SessionID: "sess-refused"}
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &fakeSealer{sealed: false} }
+	if _, _, err := s.sealSession(ctx, refused, 1); err != nil || refused.Sealed() {
+		t.Fatalf("refused seal: err %v, marked %v; want no mark", err, refused.Sealed())
+	}
+
+	bind := &podsession.BindResult{SessionID: "sess-sealed"}
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &fakeSealer{sealed: true} }
+	if sealed, _, err := s.sealSession(ctx, bind, 1); err != nil || !sealed || !bind.Sealed() {
+		t.Fatalf("granted seal: sealed %v err %v marked %v; want marked", sealed, err, bind.Sealed())
+	}
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &failingUnsealer{} }
+	if err := s.unsealSession(ctx, bind); !errors.Is(err, errUnsealFailed) || !bind.Sealed() {
+		t.Fatalf("failed unseal: err %v marked %v; want the error and the mark kept", err, bind.Sealed())
+	}
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &fakeSealer{} }
+	if err := s.unsealSession(ctx, bind); err != nil || bind.Sealed() {
+		t.Fatalf("unseal: err %v marked %v; want the mark cleared", err, bind.Sealed())
+	}
+}

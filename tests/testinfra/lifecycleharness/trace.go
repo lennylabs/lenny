@@ -71,6 +71,8 @@ type Trace struct {
 	entries   []TraceEntry
 	faultAt   int
 	faultKey  string
+	faultCall string
+	faultSite string
 	fault     FaultKind
 	onFault   func(TraceEntry, FaultKind)
 	recording bool
@@ -93,7 +95,17 @@ func (t *Trace) Arm(index int, kind FaultKind, onFault func(TraceEntry, FaultKin
 func (t *Trace) ArmAtKey(key string, kind FaultKind, onFault func(TraceEntry, FaultKind)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.faultAt, t.faultKey, t.fault, t.onFault, t.recording = -1, key, kind, onFault, true
+	t.faultAt, t.faultKey, t.faultCall, t.faultSite = -1, key, "", ""
+	t.fault, t.onFault, t.recording = kind, onFault, true
+}
+
+// ArmMatching arms one fault of kind at the next recorded call named call
+// whose call site contains site, and restarts recording.
+func (t *Trace) ArmMatching(call, site string, kind FaultKind, onFault func(TraceEntry, FaultKind)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.faultAt, t.faultKey, t.faultCall, t.faultSite = -1, "", call, site
+	t.fault, t.onFault, t.recording = kind, onFault, true
 }
 
 // Start restarts recording with no fault armed and an empty trace.
@@ -101,6 +113,7 @@ func (t *Trace) Start() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.entries, t.faultAt, t.faultKey, t.fault, t.onFault, t.recording = nil, -1, "", FaultNone, nil, true
+	t.faultCall, t.faultSite = "", ""
 }
 
 // Entries returns a copy of the recorded entries.
@@ -126,9 +139,10 @@ func (t *Trace) record(call, sessionID string) (TraceEntry, FaultKind, func(Trac
 	}
 	e := TraceEntry{Index: len(t.entries), Call: call, Site: callSite(), SessionID: sessionID}
 	t.entries = append(t.entries, e)
-	if e.Index == t.faultAt || (t.faultKey != "" && e.Key() == t.faultKey) {
+	matched := t.faultCall != "" && e.Call == t.faultCall && strings.Contains(e.Site, t.faultSite)
+	if e.Index == t.faultAt || (t.faultKey != "" && e.Key() == t.faultKey) || matched {
 		f, cb := t.fault, t.onFault
-		t.faultAt, t.faultKey, t.fault, t.onFault = -1, "", FaultNone, nil
+		t.faultAt, t.faultKey, t.faultCall, t.faultSite, t.fault, t.onFault = -1, "", "", "", FaultNone, nil
 		return e, f, cb
 	}
 	return e, FaultNone, nil
@@ -232,4 +246,21 @@ func (s *TracedStore) List(ctx context.Context, tenantID string, filter sessions
 	}
 	defer after(e, f, cb)
 	return s.Store.List(ctx, tenantID, filter)
+}
+
+// ListPodlessSuspended records and lists one page of podless suspended rows,
+// for the gateway leader's backlog re-check.
+func (s *TracedStore) ListPodlessSuspended(ctx context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error) {
+	lister, ok := s.Store.(interface {
+		ListPodlessSuspended(ctx context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("lifecycleharness: the session store lists no podless suspended rows")
+	}
+	e, f, cb, err := s.before("ListPodlessSuspended", "")
+	if err != nil {
+		return nil, err
+	}
+	defer after(e, f, cb)
+	return lister.ListPodlessSuspended(ctx, tenantID, afterID, limit)
 }

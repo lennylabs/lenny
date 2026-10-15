@@ -105,6 +105,17 @@ func TestLifecycleRandomInterleavings_spec_7_3(t *testing.T) {
 		func(r *lifecycleharness.Replica, id string) {
 			r.Server.ReleaseTerminalBinding(h.Row(id))
 		},
+		// spec: §6.2 (maxClientIdleSeconds clock behavior across states) —
+		// an idle suspension, the suspension release, the leader's backlog
+		// re-check, and message sends on either replica.
+		func(r *lifecycleharness.Replica, id string) {
+			r.Server.SuspendIdle(context.Background(), h.Row(id), lifecycleharness.IdleWindow)
+		},
+		func(r *lifecycleharness.Replica, id string) {
+			r.Server.ReleaseSuspendedPod(context.Background(), h.Row(id))
+		},
+		func(r *lifecycleharness.Replica, id string) { h.Recheck(r) },
+		func(r *lifecycleharness.Replica, id string) { h.Send(r, id, "interleaved") },
 	}
 	for run := 0; run < 8; run++ {
 		id := h.StartSession(h.Replicas[0])

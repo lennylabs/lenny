@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -72,19 +73,68 @@ func liveReplica(h *lifecycleharness.Harness, n *int) *lifecycleharness.Replica 
 // between two effects: a leaked claim, lease, or queue entry, a doubled
 // coordinator, or a retry spent twice.
 func TestLifecycleFaultInjection_spec_10_1_2(t *testing.T) {
+	runFaultInjection(t, faultScenario, []session.State{
+		session.StateRunning, session.StateAwaitingClientAction, session.StateResumePending,
+		session.StateFailed, session.StateSuspended,
+	})
+}
+
+// idleSuspensionScenario starts a session on the replica, suspends it for
+// idleness, and sends it a message, which resumes it.
+func idleSuspensionScenario(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharness.Replica) string {
+	t.Helper()
+	id, code, _ := h.TryStartSession(r)
+	if code != http.StatusCreated {
+		return id
+	}
+	h.SuspendIdle(r, id)
+	h.Send(r, id, "after-suspension")
+	for i := 0; i < 6; i++ {
+		h.Pass()
+	}
+	return id
+}
+
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states), §7.2
+// (Message delivery routing — seven paths, path 6), §10.1.2 (Coordinator
+// Handoff Protocol)
+// diagnosis: an idle suspension or the resume a held message triggers,
+// interrupted between two of its effects by a store error, a context
+// cancel, a crash, or a takeover, left the session in a state the staged
+// spec does not give for the interruption, or leaked a claim, lease, or
+// queue entry.
+func TestIdleSuspensionFaultInjection_spec_6_2(t *testing.T) {
+	runFaultInjection(t, idleSuspensionScenario, []session.State{
+		session.StateRunning, session.StateSuspended, session.StateResumePending,
+		session.StateResuming, session.StateAwaitingClientAction, session.StateFailed,
+	})
+}
+
+// runFaultInjection records the distinct call sites a clean run of scenario
+// reaches, then re-runs it once per call site and fault kind, and requires
+// each re-run to end in one of allowed with no invariant violation.
+func runFaultInjection(t *testing.T, scenario func(*testing.T, *lifecycleharness.Harness, *lifecycleharness.Replica) string, allowed []session.State) {
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
 	seedChaosTenant(t, pg, lifecycleharness.Tenant)
-	var store sessionstore.Store = sessionpg.New(pg.Pool)
-	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 64, CredentialPool: true, Store: store})
+	h := lifecycleharness.New(t, lifecycleharness.Options{
+		Replicas: 2, Pods: 96, CredentialPool: true,
+		NewStore: func(now func() time.Time) sessionstore.Store {
+			return sessionpg.New(pg.Pool, sessionpg.WithClock(now))
+		},
+	})
 	h.RelaxOrphanClaims = true
+	ok := map[session.State]bool{}
+	for _, st := range allowed {
+		ok[st] = true
+	}
 
 	// Clean run: record the distinct call sites the scenario reaches.
 	h.Trace.Start()
-	clean := faultScenario(t, h, h.Replicas[0])
-	if st := h.Row(clean).State; st != session.StateRunning {
-		t.Fatalf("clean run ended in %q, want running", st)
+	clean := scenario(t, h, h.Replicas[0])
+	if st := h.Row(clean).State; !ok[st] {
+		t.Fatalf("clean run ended in %q", st)
 	}
 	seen := map[string]bool{}
 	var keys []string
@@ -114,19 +164,12 @@ func TestLifecycleFaultInjection_spec_10_1_2(t *testing.T) {
 						h.TakeOver(e.SessionID, r)
 					}
 				})
-				id := faultScenario(t, h, r)
+				id := scenario(t, h, r)
 				h.RunToQuiescence()
-				if id == "" {
-					for _, v := range h.Violations() {
-						t.Errorf("%s at %s: %s", kind, key, v)
+				if id != "" {
+					if st := h.Row(id).State; !ok[st] {
+						t.Errorf("session ended in %q after a %s at %s", st, kind, key)
 					}
-					return
-				}
-				switch st := h.Row(id).State; st {
-				case session.StateRunning, session.StateAwaitingClientAction, session.StateResumePending,
-					session.StateFailed, session.StateSuspended:
-				default:
-					t.Errorf("session ended in %q after a %s at %s", st, kind, key)
 				}
 				for _, v := range h.Violations() {
 					t.Errorf("%s at %s: %s", kind, key, v)

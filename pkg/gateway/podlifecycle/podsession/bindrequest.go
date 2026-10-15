@@ -255,7 +255,25 @@ type BindResult struct {
 	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
 	// and Execution Modes), §28.5.1 (Gateway-to-pod).
 	crashed atomic.Bool
+	// sealed records that the session's runtime adapter sealed the session
+	// for an idle suspension through this binding and no unseal has lifted
+	// the seal since. While it is set the adapter refuses every message to
+	// the session, so a message whose stream a release ended did not reach
+	// the runtime. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+	// (maxClientIdleSeconds clock behavior across states).
+	sealed atomic.Bool
 }
+
+// MarkSealed records that the adapter sealed the session through the
+// binding. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) MarkSealed() { r.sealed.Store(true) }
+
+// ClearSealed records that an unseal lifted the binding's seal.
+// spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) ClearSealed() { r.sealed.Store(false) }
+
+// Sealed reports whether the session is sealed through the binding.
+func (r *BindResult) Sealed() bool { return r.sealed.Load() }
 
 // MarkCrashed records that the binding's attach stream ended in a reported
 // stream failure, so a later Release retires the pod. spec: §28.5.1

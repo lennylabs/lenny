@@ -25,6 +25,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -59,11 +61,34 @@ type Options struct {
 	// Store, when set, is the shared session store; otherwise an in-memory
 	// store is used.
 	Store sessionstore.Store
+	// NewStore, when set and Store is not, builds the shared session store
+	// over the harness's stepped clock, so the store's row stamps and the
+	// gateway's timers read one clock.
+	NewStore func(now func() time.Time) sessionstore.Store
 	// Pods is the number of idle pods seeded before the scenario.
 	Pods int
 	// CredentialPool, when true, registers one proxy-mode credential pool
 	// that every session leases from.
 	CredentialPool bool
+	// Events, when true, gives every replica a session event bus that
+	// relays through the shared Redis, the cross-replica event relay.
+	Events bool
+	// DurableInbox, when true, keeps every session inbox in the shared
+	// Redis rather than in memory.
+	DurableInbox bool
+	// Recycling, when true, makes the warm pool a recycling pool.
+	Recycling bool
+	// MaxIdleSeconds is every replica's watchdog idle bound; zero keeps it
+	// longer than any scenario, so no idle sweep fires.
+	MaxIdleSeconds int
+	// HeartbeatInterval, when set, is every pod adapter's heartbeat
+	// interval, so a runtime's busy reports reach the adapter's activity
+	// window within a scenario.
+	HeartbeatInterval time.Duration
+	// QueueAddr, when set, maps the shared Redis address to the address the
+	// session DLQ and inbox client dials, so a scenario can put a
+	// partitionable proxy on the held-message path alone.
+	QueueAddr func(addr string) string
 }
 
 // Harness is the shared world the replicas run in.
@@ -82,14 +107,25 @@ type Harness struct {
 	Inbox      sessioninbox.Inbox
 	Cluster    *Cluster
 	Replicas   []*Replica
+	// Checkpoints is the suspension checkpointer every replica uses.
+	Checkpoints *Checkpointer
+	// Interactions is the interaction store every replica shares.
+	Interactions *interactionstore.Memory
+	// TreeMetrics records every replica's delegation-tree recovery
+	// outcomes.
+	TreeMetrics *TreeMetrics
 	// RelaxOrphanClaims applies the crash relaxation of the pods-and-claims
 	// invariant: a bound claim whose pod no non-terminal row names and no
 	// surviving replica binds is accepted, because the claim-orphan GC
 	// reclaims it (§4.6.1 Orphaned SandboxClaim detection, §7.3).
 	RelaxOrphanClaims bool
 
-	mu       sync.Mutex
-	sessions map[string]bool
+	mu          sync.Mutex
+	sessions    map[string]bool
+	rc          *redis.Client
+	events      bool
+	recycling   bool
+	idleSeconds int
 }
 
 // Replica is one gateway replica: a session server with its own pod
@@ -125,17 +161,28 @@ func New(t testing.TB, opts Options) *Harness {
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	h := &Harness{
-		T:        t,
-		Clock:    NewClock(time.Now().UTC(), mr),
-		Trace:    NewTrace(),
-		Redis:    mr,
-		Leases:   leasestore.New(rc),
-		Cluster:  NewCluster(t),
-		sessions: map[string]bool{},
+		T:            t,
+		Clock:        NewClock(time.Now().UTC(), mr),
+		Trace:        NewTrace(),
+		Redis:        mr,
+		Leases:       leasestore.New(rc),
+		Cluster:      NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval}),
+		Checkpoints:  &Checkpointer{},
+		Interactions: interactionstore.NewMemory(),
+		TreeMetrics:  &TreeMetrics{},
+		sessions:     map[string]bool{},
+		rc:           rc,
+		events:       opts.Events,
+		recycling:    opts.Recycling,
+		idleSeconds:  opts.MaxIdleSeconds,
 	}
 	h.Inner = opts.Store
-	if h.Inner == nil {
-		h.Inner = memstore.New()
+	switch {
+	case h.Inner != nil:
+	case opts.NewStore != nil:
+		h.Inner = opts.NewStore(h.Clock.Now)
+	default:
+		h.Inner = memstore.NewWithClock(h.Clock.Now)
 	}
 	h.Store = NewTracedStore(h.Inner, h.Trace)
 	h.CredLeases = credleasestore.New()
@@ -143,9 +190,17 @@ func New(t testing.TB, opts Options) *Harness {
 	if opts.CredentialPool {
 		h.Creds.RegisterPool(ProxyPool())
 	}
-	h.DLQ = sessioninbox.NewDLQ(rc, 100)
+	qc := rc
+	if opts.QueueAddr != nil {
+		qc = redis.NewClient(&redis.Options{Addr: opts.QueueAddr(mr.Addr())})
+		t.Cleanup(func() { _ = qc.Close() })
+	}
+	h.DLQ = sessioninbox.NewDLQ(qc, 100)
 	h.Inbox = sessioninbox.NewMemoryInbox(100)
-	h.Messaging = sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: h.Inbox, DLQ: h.DLQ, Now: h.Clock.Now})
+	if opts.DurableInbox {
+		h.Inbox = sessioninbox.NewRedisInbox(qc, 100)
+	}
+	h.Messaging = sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: h.Inbox, DLQ: h.DLQ, Now: h.Clock.Now, Durable: opts.DurableInbox})
 	for i := 0; i < opts.Pods; i++ {
 		h.Cluster.AddIdlePod(t)
 	}
@@ -170,7 +225,12 @@ func (h *Harness) AddReplica(id string) *Replica {
 	}
 	exec := executor.NewPodExecutor(reg, binder)
 	r := &Replica{ID: id, Registry: reg, Executor: exec, Binder: binder}
+	var bus *sessionevents.Bus
+	if h.events {
+		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
+	}
 	r.Server = sessionserver.New(h.Store, sessionserver.Options{
+		Events:                  bus,
 		IDFunc:                  newIDFunc(id),
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -184,15 +244,26 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Clock:                   h.Clock.Now,
 		MaxResumePending:        MaxResumePending,
 		MaxResuming:             MaxResuming,
+		SuspensionCheckpointer:  h.Checkpoints,
+		Interactions:            h.Interactions,
+		TreeRecoveryMetrics:     h.TreeMetrics,
 	})
+	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
+	// reported to the replica's session server, as the gateway wires it.
+	exec.SetStreamFailureHandler(r.Server.ReportAttachStreamFailure)
 	r.Watchdog = watchdog.New(h.Store, watchdog.StaticTenants{Tenant}, watchdog.Config{
 		MaxResumePendingSeconds:        int(MaxResumePending / time.Second),
 		MaxResumingSeconds:             int(MaxResuming / time.Second),
 		MaxRetries:                     MaxRetries,
-		MaxIdleSeconds:                 100000,
+		MaxIdleSeconds:                 h.watchdogIdleSeconds(),
 		MaxSessionAgeSeconds:           100000,
 		MaxAwaitingClientActionSeconds: 100000,
-	}, h.Clock.Now).WithTerminalHook(r.Server)
+	}, h.Clock.Now).WithTerminalHook(r.Server).
+		WithSuspendedPodReleaser(r.Server).
+		WithBacklogResumer(r.Server).
+		WithIdleSuspender(r.Server).
+		WithIdleResolver(idleResolver{}).
+		WithMessaging(h.Messaging)
 	r.Sweeper = coordination.NewSweeper(watchdog.StaticTenants{Tenant}, h.Store, h.Leases, coordination.Options{
 		ReplicaID:        id,
 		TTL:              LeaseTTL,
@@ -200,6 +271,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Bindings:         registryBindings{reg: reg, exec: exec},
 		HeldDeliverer:    r.Server,
 		TerminalReleaser: r.Server,
+		Readopter:        readopter{h: h, r: r},
 		Clock:            h.Clock.Now,
 	})
 	h.mu.Lock()
@@ -292,6 +364,22 @@ func (h *Harness) Do(r *Replica, method, path string, body any) (int, map[string
 	out := map[string]any{}
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	return rr.Code, out
+}
+
+// Events reads the session's event list from the replica's JSON events
+// view and returns the decoded items.
+func (h *Harness) Events(r *Replica, id string) (int, []any) {
+	h.T.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/events", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	r.Server.Handler().ServeHTTP(rr, req)
+	var out struct {
+		Items []any `json:"items"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	return rr.Code, out.Items
 }
 
 // StartSession creates and starts a running session on the replica and
@@ -389,4 +477,13 @@ func (h *Harness) TakeOver(sessionID string, from *Replica) {
 		r.CoordinationGeneration++
 		return nil
 	})
+}
+
+// watchdogIdleSeconds is the watchdog idle bound: Options.MaxIdleSeconds,
+// or a bound longer than any scenario.
+func (h *Harness) watchdogIdleSeconds() int {
+	if h.idleSeconds > 0 {
+		return h.idleSeconds
+	}
+	return 100000
 }

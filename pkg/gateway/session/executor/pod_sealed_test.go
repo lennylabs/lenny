@@ -98,3 +98,71 @@ func jsonHasType(frame []byte, ty string) bool {
 	}
 	return json.Unmarshal(frame, &probe) == nil && probe.Type == ty
 }
+
+// silentRuntime receives messages and answers none, so a Send waits until
+// its stream ends.
+type silentRuntime struct {
+	out      chan []byte
+	received chan struct{}
+	once     sync.Once
+}
+
+func (r *silentRuntime) TapOutput(func([]byte)) {}
+
+func (r *silentRuntime) Start(context.Context, string) error { return nil }
+
+func (r *silentRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	if jsonHasType(envelope, "message") {
+		r.once.Do(func() { close(r.received) })
+	}
+	return nil
+}
+
+func (r *silentRuntime) Output(context.Context, string) (<-chan []byte, error) { return r.out, nil }
+func (r *silentRuntime) Interrupt(context.Context, string, bool) error         { return nil }
+func (r *silentRuntime) Close(context.Context, string) error                   { return nil }
+
+// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
+// clock behavior across states)
+// A Send whose stream ends while the binding is marked sealed returns an
+// error satisfying ErrSessionSealed, whatever ended the stream, so the
+// caller routes the message again rather than answering a delivery failure;
+// without the mark the same end is a plain stream end.
+func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		sealed bool
+	}{{"sealed binding", true}, {"unsealed binding", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}
+			cl := dialPodAdapter(t, rt)
+			bind := &podsession.BindResult{SessionID: "sess-pod", Adapter: cl}
+			reg := podsession.NewRegistry()
+			reg.Put(bind)
+			pe := executor.NewPodExecutor(reg, nil)
+			errc := make(chan error, 1)
+			go func() {
+				_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "one"}})
+				errc <- err
+			}()
+			select {
+			case <-rt.received:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the runtime never received the message")
+			}
+			if tc.sealed {
+				bind.MarkSealed()
+			}
+			pe.EvictStream("sess-pod")
+			var err error
+			select {
+			case err = <-errc:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Send did not return after its stream ended")
+			}
+			if got := errors.Is(err, executor.ErrSessionSealed); got != tc.sealed {
+				t.Fatalf("Send = %v; ErrSessionSealed = %v, want %v", err, got, tc.sealed)
+			}
+		})
+	}
+}

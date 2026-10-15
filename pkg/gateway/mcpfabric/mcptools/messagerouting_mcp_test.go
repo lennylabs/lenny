@@ -5,6 +5,7 @@ package mcptools_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -213,6 +214,46 @@ func TestSendMessageRouting_SealedRefusalReroutes_spec_7_2_path6(t *testing.T) {
 	}
 	if len(del.resumed) != 1 {
 		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
+	}
+}
+
+// TestSendMessageRouting_UnboundSendReroutes_spec_6_2 pins that a send this
+// replica could not make because it holds no binding routes the message
+// again when the session left running after the classification read, and
+// fails when the session is still running.
+//
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states), 7.2
+// (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_UnboundSendReroutes_spec_6_2(t *testing.T) {
+	exec := &countingExecutor{}
+	srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+	mkSession(t, store, "sess_unbound", session.StateRunning, "")
+	exec.onSend = func() error {
+		_, _ = store.Update(context.Background(), "acme", "sess_unbound", func(r *sessionstore.Session) error {
+			r.State = session.StateSuspended
+			return nil
+		})
+		return fmt.Errorf("podexec: session sess_unbound: %w", executor.ErrNotBound)
+	}
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_unbound","message":"x"}`))
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_unbound"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
+	}
+
+	mkSession(t, store, "sess_running", session.StateRunning, "")
+	exec.onSend = func() error { return fmt.Errorf("podexec: session sess_running: %w", executor.ErrNotBound) }
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_running","message":"x"}`)
+	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+		t.Fatalf("unbound send on a running session = %v, want a tool error", resp)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_running"); n != 0 {
+		t.Errorf("DLQ depth = %d for a running session, want 0", n)
 	}
 }
 

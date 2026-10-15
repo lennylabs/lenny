@@ -299,6 +299,9 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 			if errors.Is(err, executor.ErrSessionSealed) {
 				return m.rerouteSealed(ctx, row)
 			}
+			if errors.Is(err, executor.ErrNotBound) {
+				return m.rerouteUnbound(ctx, row, err)
+			}
 			return mcp.ToolResult{}, err
 		}
 	}
@@ -316,10 +319,32 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 		}
 		return m.rerouteSealed(ctx, row)
 	}
+	if errors.Is(err, executor.ErrNotBound) {
+		return m.rerouteUnbound(ctx, row, err)
+	}
 	if err != nil {
 		return mcp.ToolResult{}, err
 	}
 	return m.deliveredResult(ctx, row, resp)
+}
+
+// rerouteUnbound routes a message once more when this replica held no
+// binding for the session, so nothing was sent, and a primary re-read finds
+// the session no longer `running`: an idle suspension, a release, or a
+// failure report moved it after the classification read. A session still
+// `running`, a re-read failure, or a second attempt returns sendErr.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states), §7.2
+// (Message delivery routing — seven paths, path 6)
+func (m *mcpSend) rerouteUnbound(ctx context.Context, row sessionstore.Session, sendErr error) (mcp.ToolResult, error) {
+	if m.rerouted {
+		return mcp.ToolResult{}, sendErr
+	}
+	fresh, err := sessionstore.ReadPrimary(ctx, m.deps.Store, m.deps.PrimaryReadTimeout, m.tenant, row.ID)
+	if err != nil || fresh.State == session.StateRunning {
+		return mcp.ToolResult{}, sendErr
+	}
+	m.rerouted = true
+	return m.route(ctx, fresh)
 }
 
 // rerouteSealed routes a message the adapter refused as sealed once more,
