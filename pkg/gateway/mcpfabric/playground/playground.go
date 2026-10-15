@@ -106,7 +106,8 @@ type Config struct {
 	AllowedRuntimes []string
 
 	// MaxSessionMinutes mirrors playground.maxSessionMinutes: the hard
-	// cap on playground-initiated session duration (§27.6).
+	// cap on a playground-initiated session's active time, which pauses
+	// while the session is suspended (§27.6).
 	MaxSessionMinutes int
 
 	// MaxIdleTimeSeconds mirrors playground.maxIdleTimeSeconds: the

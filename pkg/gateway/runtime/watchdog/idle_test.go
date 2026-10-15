@@ -47,7 +47,7 @@ func TestIdleSweepExpiresIdleRunningSession_spec_11_3_199(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, "sess", "acme", session.StateRunning, born)
-	// A 600s platform idle cap (the spec default is now the age cap; this
+	// A 600s platform idle cap (the spec default is 900s; this
 	// test pins the sweep behaviour against an explicit cap).
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, idleCfg(600), nil)
 

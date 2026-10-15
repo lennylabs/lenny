@@ -18,7 +18,7 @@ import (
 // idleCapDisabled is a maxIdleTime far larger than any session age these
 // maxSessionAge / resolver tests exercise, so the §11.3 idle
 // sweep never fires on their stale `running` rows. It lets a test isolate
-// the wall-clock maxSessionAge behaviour from the idle reclamation path
+// the active-time maxSessionAge behaviour from the idle reclamation path
 // (the idle sweep is covered directly in idle_test.go). F-11.3.7.
 const idleCapDisabled = 100 * 24 * 3600
 

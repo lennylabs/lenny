@@ -65,7 +65,9 @@ func wantsJSONEvents(r *http.Request) bool {
 // (the default for browsers and `curl -N`) returns the Server-Sent
 // Events stream of session activity. `Accept: application/json`
 // returns the §15.1 canonical list envelope
-// `{items, cursor, hasMore}` over the retained replay buffer so a
+// `{items, cursor, hasMore}` over the backlog the serving replica
+// reads, which merges its replay buffer with the history of the shared
+// session-event relay `CH-EVENTRELAY` when that relay is wired, so a
 // polling client that cannot speak SSE still reaches the events
 // without sidecar parsing. The SSE branch carries Last-Event-ID
 // resume semantics; the JSON branch carries the canonical cursor.
@@ -424,7 +426,9 @@ func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
 }
 
 // serveEventsJSON renders the §15.1 canonical envelope
-// `{items, cursor, hasMore}` over the in-memory replay buffer. The
+// `{items, cursor, hasMore}` over the backlog the serving replica
+// reads: its in-memory replay buffer merged with the history of the
+// shared session-event relay `CH-EVENTRELAY` when that relay is wired. The
 // JSON path is the cursor-paginated alternative to the SSE stream;
 // `?cursor=` (canonical) or `?afterSeq=` (legacy) advance the
 // pagination, `?limit=` clamps to [1, 200], and the envelope is the

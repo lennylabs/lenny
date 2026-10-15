@@ -75,10 +75,11 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
 	}
-	// spec: §4.2 — a newly created session row carries
+	// spec: §4.2, §10.1.1 — a newly created session row carries
 	// coordination_generation = 1, so the value a replica holds for a
-	// session no coordinator has taken over is positive and §10.1.2
-	// step 1's first compare-and-swap mints 2 strictly above it.
+	// session no takeover and no resume driver write has advanced is
+	// positive and each §10.1.2 step 1 compare-and-swap mints a value
+	// strictly above the one it fences.
 	if sess.CoordinationGeneration == 0 {
 		sess.CoordinationGeneration = 1
 	}

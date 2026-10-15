@@ -626,7 +626,7 @@ type Deps struct {
 
 	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
 	// lenny/send_message routes a message to a non-delivering target
-	// (input_required / suspended → inbox; recovering / pre-running →
+	// (input_required → inbox; suspended / recovering / pre-running →
 	// DLQ) instead of forcing it onto the executor, returning a
 	// `queued` delivery receipt per the §7.2 paths 3/5/6/7. A nil
 	// coordinator (no Redis) surfaces inbox_unavailable for those

@@ -253,10 +253,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		// spec: §4.2 — v1 sessions are written at schema_version=1.
 		schemaVersion = 1
 	}
-	// spec: §4.2 — a newly created session row carries
+	// spec: §4.2, §10.1.1 — a newly created session row carries
 	// coordination_generation = 1, so the value a replica holds for a
-	// session no coordinator has taken over is positive and §10.1.2
-	// step 1's first compare-and-swap mints 2 strictly above it. The
+	// session no takeover and no resume driver write has advanced is
+	// positive and each §10.1.2 step 1 compare-and-swap mints a value
+	// strictly above the one it fences. The
 	// insert names the column, so the column default baselines nothing
 	// and this floor is the enforcement on this path.
 	if sess.CoordinationGeneration == 0 {

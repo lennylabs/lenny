@@ -318,9 +318,11 @@ type Session struct {
 	// spec: §4.2.
 	RecoveryGeneration int64
 
-	// CoordinationGeneration is the §4.2 coordinator-handoff counter,
+	// CoordinationGeneration is the §4.2 coordination counter,
 	// incremented when a different gateway replica becomes the
-	// authoritative coordinator for this session. Internal-only —
+	// authoritative coordinator for this session and by the §7.3 resume
+	// driver's resume_pending → resuming write (§10.1.1 Generation
+	// counters). Internal-only —
 	// used for split-brain fencing. Monotonically non-decreasing.
 	// Bumped under a mid-resume terminal write per §7.2 to fence any
 	// stale coordinator still attempting resume.

@@ -587,9 +587,9 @@ var prodMigrationSchema = []struct {
 	{migration: "0180", table: "checkpoint_manifest"},
 	// 0181 baselines the §4.2 coordination generation: it moves
 	// sessions.coordination_generation and its coordination_lease mirror onto
-	// DEFAULT 1 and backfills the rows still carrying 0, so the first
-	// coordinator handoff mints 2 strictly above the value a replica already
-	// holds for the session. It adds no column, so the entry names none; it is
+	// DEFAULT 1 and backfills the rows still carrying 0, so each
+	// coordinator handoff mints a value strictly above the one a replica
+	// already holds for the session. It adds no column, so the entry names none; it is
 	// here so TestProdMigrationsRollBackPerStep steps through its .down.sql,
 	// and the SQL surface is asserted directly in
 	// TestCoordinationGenerationBaselineMigration_spec_4_2. spec: §4.2, §10.1.
