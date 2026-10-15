@@ -702,6 +702,39 @@ var podHoldEndOutcomePages = []string{
 	filepath.Join("docs", "runtime-author-guide", "lifecycle.md"),
 }
 
+// podHoldEndResumeCondition is the condition under which the end of an
+// interrupt suspension's pod hold resumes the session: a dead-letter-queue
+// message accepted after the session entered `suspended`. Inbox entries and
+// messages held before the interrupt do not count.
+const podHoldEndResumeCondition = "dead-letter queue holds a message the gateway accepted after the session entered `suspended`"
+
+// podHoldEndRefusalRelease is the outcome when the concurrent-session admission
+// check refuses the backlog resume at the end of the hold: the release is not
+// deferred.
+const podHoldEndRefusalRelease = "the gateway still checkpoints the workspace and releases the pod"
+
+// podHoldEndUnconditionalResume is the wording that stated any held message as
+// keeping the pod and resuming the session.
+var podHoldEndUnconditionalResume = regexp.MustCompile(
+	"session (has|with) held messages( waiting for it| that meet the backlog resume condition)?,? (the gateway resumes|is resumed)",
+)
+
+// assertPodHoldEndBacklogQualified requires a page that states the hold-end
+// backlog resume to name its interrupt-suspension condition and the release
+// that follows an admission refusal, and to carry no unconditional wording.
+func assertPodHoldEndBacklogQualified(t *testing.T, page, body string) {
+	t.Helper()
+	if !strings.Contains(body, podHoldEndResumeCondition) {
+		t.Errorf("%s does not limit the hold-end resume to a dead-letter-queue message accepted after the session entered `suspended`", page)
+	}
+	if !strings.Contains(body, podHoldEndRefusalRelease) || !strings.Contains(body, "concurrent-session admission check refuses that resume") {
+		t.Errorf("%s does not state that a resume the concurrent-session admission check refuses still releases the pod when the hold ends", page)
+	}
+	if loc := podHoldEndUnconditionalResume.FindString(body); loc != "" {
+		t.Errorf("%s states the hold-end resume for any held message: %q", page, loc)
+	}
+}
+
 // spec: 6.2 (Pod State Machine, Graceful pod release during extended
 // suspension), 7.2 (Interactive Session Model, delivery path 6 Admission,
 // Held messages, Backlog resume), 9.2 (Elicitation Chain, Idle clock), 11.1
@@ -724,11 +757,15 @@ func TestReaderPagesStateSuspensionOutcomesBeyondTheSuccessPath(t *testing.T) {
 		if !strings.Contains(body, "resumes the session rather than releasing the pod") {
 			t.Errorf("%s does not state that a session with held messages is resumed rather than released when the pod hold ends", page)
 		}
+		assertPodHoldEndBacklogQualified(t, page, body)
 	}
 	lifecycle := filepath.Join("docs", "client-guide", "session-lifecycle.md")
 	lbody := readDocPage(t, filepath.Join(root, lifecycle))
 	hold := tableRow(t, lifecycle, lbody, "maxSuspendedPodHold")
-	for _, want := range []string{"failed checkpoint keeps the pod held", "resumed rather than released"} {
+	for _, want := range []string{
+		"failed checkpoint keeps the pod held", "resumed rather than released",
+		podHoldEndResumeCondition, podHoldEndRefusalRelease,
+	} {
 		if !strings.Contains(hold, want) {
 			t.Errorf("%s: the `maxSuspendedPodHold` row does not state %q: %s", lifecycle, want, hold)
 		}
