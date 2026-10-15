@@ -122,17 +122,48 @@ func (r *silentRuntime) Output(context.Context, string) (<-chan []byte, error) {
 func (r *silentRuntime) Interrupt(context.Context, string, bool) error         { return nil }
 func (r *silentRuntime) Close(context.Context, string) error                   { return nil }
 
+// sealStep is one change to the binding's seal mark in a stream-end case.
+type sealStep int
+
+const (
+	markSeal sealStep = iota
+	clearSeal
+)
+
+// apply runs the step on bind.
+func (st sealStep) apply(bind *podsession.BindResult) {
+	if st == markSeal {
+		bind.MarkSealed()
+		return
+	}
+	bind.ClearSealed()
+}
+
 // spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
 // clock behavior across states)
-// A Send whose stream ends while the binding is marked sealed returns an
-// error satisfying ErrSessionSealed, whatever ended the stream, so the
-// caller routes the message again rather than answering a delivery failure;
-// without the mark the same end is a plain stream end.
+// A Send whose stream ends returns an error satisfying ErrSessionSealed only
+// when its message was written after the binding was marked sealed and the
+// same seal held until the stream ended. A message the runtime received
+// before the mark is a delivered message on an ended stream, because work
+// the runtime began before the seal without producing activity does not
+// prevent the seal and the release ends it; routing it again would deliver
+// it twice. A mark cleared before the end (the adapter answered not sealed)
+// does not make the turn a refusal either.
 func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		sealed bool
-	}{{"sealed binding", true}, {"unsealed binding", false}} {
+		name string
+		// beforeWrite runs on the binding before the message is sent, and
+		// afterReceipt after the runtime has received it.
+		beforeWrite  []sealStep
+		afterReceipt []sealStep
+		wantSealed   bool
+	}{
+		{name: "unsealed binding"},
+		{name: "marked after the runtime received the message", afterReceipt: []sealStep{markSeal}},
+		{name: "marked before the write", beforeWrite: []sealStep{markSeal}, wantSealed: true},
+		{name: "marked before the write and cleared before the end", beforeWrite: []sealStep{markSeal}, afterReceipt: []sealStep{clearSeal}},
+		{name: "marked before the write and re-marked under a new seal", beforeWrite: []sealStep{markSeal}, afterReceipt: []sealStep{clearSeal, markSeal}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}
 			cl := dialPodAdapter(t, rt)
@@ -140,6 +171,9 @@ func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 			reg := podsession.NewRegistry()
 			reg.Put(bind)
 			pe := executor.NewPodExecutor(reg, nil)
+			for _, st := range tc.beforeWrite {
+				st.apply(bind)
+			}
 			errc := make(chan error, 1)
 			go func() {
 				_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{{Role: "user", Content: "one"}})
@@ -150,8 +184,8 @@ func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("the runtime never received the message")
 			}
-			if tc.sealed {
-				bind.MarkSealed()
+			for _, st := range tc.afterReceipt {
+				st.apply(bind)
 			}
 			pe.EvictStream("sess-pod")
 			var err error
@@ -160,8 +194,11 @@ func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("Send did not return after its stream ended")
 			}
-			if got := errors.Is(err, executor.ErrSessionSealed); got != tc.sealed {
-				t.Fatalf("Send = %v; ErrSessionSealed = %v, want %v", err, got, tc.sealed)
+			if err == nil {
+				t.Fatal("Send returned no error after its stream ended")
+			}
+			if got := errors.Is(err, executor.ErrSessionSealed); got != tc.wantSealed {
+				t.Fatalf("Send = %v; ErrSessionSealed = %v, want %v", err, got, tc.wantSealed)
 			}
 		})
 	}

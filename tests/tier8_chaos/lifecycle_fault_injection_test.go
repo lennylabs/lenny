@@ -121,7 +121,7 @@ func runFaultInjection(t *testing.T, scenario func(*testing.T, *lifecycleharness
 	h := lifecycleharness.New(t, lifecycleharness.Options{
 		Replicas: 2, Pods: 96, CredentialPool: true,
 		NewStore: func(now func() time.Time) sessionstore.Store {
-			return sessionpg.New(pg.Pool, sessionpg.WithClock(now))
+			return lifecycleharness.NewSteppedClockStore(sessionpg.New(pg.Pool), now)
 		},
 	})
 	h.RelaxOrphanClaims = true

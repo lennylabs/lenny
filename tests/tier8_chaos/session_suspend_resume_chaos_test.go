@@ -226,7 +226,7 @@ func TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3(t *testing.T) {
 		}
 		h.Trace.Start()
 		if !r1.Crashed() {
-			t.Skip("blocked: the resume attempt's entry write did not run on the coordinator, so no crash point was reached")
+			t.Fatalf("the coordinator's resume driver did not reach the resume attempt's entry write within 4 passes after a runtime-crash report; the session is %q", h.Row(id).State)
 		}
 		if row := h.Row(id); row.State != session.StateResuming {
 			t.Fatalf("after the crash the session is %q, want resuming", row.State)
@@ -435,7 +435,7 @@ func partitionedPrimary(t *testing.T, opts lifecycleharness.Options) (*lifecycle
 	t.Cleanup(primary.Close)
 	opts.CredentialPool = true
 	opts.NewStore = func(now func() time.Time) sessionstore.Store {
-		return sessionpg.New(primary, sessionpg.WithReadPool(pg.Pool), sessionpg.WithClock(now))
+		return lifecycleharness.NewSteppedClockStore(sessionpg.New(primary, sessionpg.WithReadPool(pg.Pool)), now)
 	}
 	return lifecycleharness.New(t, opts), proxy
 }

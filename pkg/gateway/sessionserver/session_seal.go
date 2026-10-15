@@ -49,9 +49,19 @@ func (s *Server) sealerOf(bind *podsession.BindResult) sessionSealer {
 // had no activity in the last idleSeconds (§4.7.1 Session seal.). The call
 // names the binding's session and coordination generation and runs under
 // the 5 s RPC deadline. sealed reports whether the session is sealed; when it
-// is not, idleAge is the time since the adapter's last activity for it. A
-// seal marks the binding sealed, so a message whose stream a release ends
-// while the seal holds is routed again as a refused message.
+// is not, idleAge is the time since the adapter's last activity for it.
+//
+// The binding is marked sealed before the call, so a message written from
+// then on is covered by the mark whichever of the message and the seal
+// reaches the adapter first: when the adapter seals, it refuses the message,
+// and when the message reaches the runtime first, the adapter counts it as
+// activity and does not seal. When the adapter does not seal, or the call
+// fails, the mark is cleared, unless the binding was already marked before
+// the call, because a seal the adapter placed earlier stays in place when it
+// answers not sealed. The executor reads the end of a turn's stream as a
+// refusal only when the turn's message was written under a mark that held
+// until the end, so a message written before the mark, which may have
+// reached the runtime, is never routed again.
 // spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
 // clock behavior across states)
 func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, idleSeconds int) (bool, time.Duration, error) {
@@ -59,11 +69,13 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 	if sealer == nil {
 		return false, 0, errNoSealer
 	}
+	markedBefore := bind.Sealed()
+	bind.MarkSealed()
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
 	sealed, idleAge, err := sealer.SealSession(cctx, bind.SessionID, bind.CoordinationGeneration, idleSeconds)
-	if err == nil && sealed {
-		bind.MarkSealed()
+	if (err != nil || !sealed) && !markedBefore {
+		bind.ClearSealed()
 	}
 	return sealed, idleAge, err
 }

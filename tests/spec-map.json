@@ -724,6 +724,8 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/gateway/session/executor/pod_sealed_test.go::TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1",
+        "pkg/gateway/sessionserver/suspension_internal_test.go::TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1",
         "tests/tier3_contract/adapter_session_seal/session_seal_wire_test.go::TestSessionSealWireContract_spec_4_7_1",
         "pkg/adapter/slotsession_test.go::TestTheRecordTimeConfirmationComparesEntryIdentity_spec_4_7_1",
         "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
@@ -1600,6 +1602,7 @@
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreStampsFromTheSteppedClock_spec_6_2",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier2_component/watchdog/suspended_lifetime_test.go::TestWatchdogSuspendedLifetime_spec_6_2",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestResumeFailureReasonSetupCommand_spec_7_3",
@@ -1694,7 +1697,6 @@
         "pkg/gateway/runtime/watchdog/active_age_test.go::TestSweepMaxAgeUsesActiveAge_spec_6_2",
         "pkg/gateway/runtime/watchdog/active_age_test.go::TestSweepMaxAgeRechecksLockedRow_spec_6_2",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
-        "tests/tier2_component/stores/sessionstore_clock_test.go::TestSessionStoreStampsFromTheInjectedClock_spec_6_2",
         "tests/tier4_integration/session_held_pod_integration_test.go::TestHoldReleaseExpiresTheRaisedElicitation_spec_9_2",
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSessionOnRecyclingPoolIsSuspendedAndResumed_spec_6_2",
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSlotReleaseKeepsTheOtherSessionAnswering_spec_5_2",
@@ -1983,6 +1985,7 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreStampsFromTheSteppedClock_spec_6_2",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier9_security/idle_suspension_proxy_lease_test.go::TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3",
         "pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
@@ -2059,7 +2062,6 @@
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestResumeAndInterruptToolsMatchREST_spec_15_2_1",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestNoReaderPageNamesTheRetiredResumeTerms",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
-        "tests/tier2_component/stores/sessionstore_clock_test.go::TestSessionStoreStampsFromTheInjectedClock_spec_6_2",
         "tests/tier4_integration/session_resume_driver_integration_test.go::TestResumeDriverRestoresWithoutAClientCall_spec_7_3",
         "tests/tier4_integration/session_resume_driver_integration_test.go::TestPeerAdoptsAResumePendingSession_spec_10_1_1",
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestHeldDeliveryAndReleaseRequiredPairs_spec_7_2",

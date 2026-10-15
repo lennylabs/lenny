@@ -255,25 +255,57 @@ type BindResult struct {
 	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
 	// and Execution Modes), §28.5.1 (Gateway-to-pod).
 	crashed atomic.Bool
-	// sealed records that the session's runtime adapter sealed the session
-	// for an idle suspension through this binding and no unseal has lifted
-	// the seal since. While it is set the adapter refuses every message to
-	// the session, so a message whose stream a release ended did not reach
-	// the runtime. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+	// sealEpoch counts the binding's seal transitions: it is odd while the
+	// binding is marked sealed and even otherwise, and every mark and every
+	// clear moves it by one. The mark is set before the gateway asks the
+	// adapter to seal and stays set while the adapter may refuse the
+	// session's messages. A Send captures the epoch when it writes a message
+	// and reads the stream's end as a refusal only when the epoch it captured
+	// is odd and still current, that is, when the message was written after
+	// the seal mark and the same seal held until the stream ended. A message
+	// written before the seal can have reached the runtime, because work the
+	// runtime began before the seal without producing activity does not
+	// prevent it. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
 	// (maxClientIdleSeconds clock behavior across states).
-	sealed atomic.Bool
+	sealEpoch atomic.Int64
 }
 
-// MarkSealed records that the adapter sealed the session through the
-// binding. spec: §4.7.1 (Role and Gateway RPC Contract).
-func (r *BindResult) MarkSealed() { r.sealed.Store(true) }
+// MarkSealed marks the binding sealed. A binding already marked keeps its
+// epoch. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) MarkSealed() {
+	for {
+		e := r.sealEpoch.Load()
+		if e%2 == 1 || r.sealEpoch.CompareAndSwap(e, e+1) {
+			return
+		}
+	}
+}
 
-// ClearSealed records that an unseal lifted the binding's seal.
-// spec: §4.7.1 (Role and Gateway RPC Contract).
-func (r *BindResult) ClearSealed() { r.sealed.Store(false) }
+// ClearSealed clears the binding's seal mark, after an unseal lifted the
+// seal or when the adapter did not seal the session. A binding not marked
+// keeps its epoch. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) ClearSealed() {
+	for {
+		e := r.sealEpoch.Load()
+		if e%2 == 0 || r.sealEpoch.CompareAndSwap(e, e+1) {
+			return
+		}
+	}
+}
 
-// Sealed reports whether the session is sealed through the binding.
-func (r *BindResult) Sealed() bool { return r.sealed.Load() }
+// Sealed reports whether the binding is marked sealed.
+func (r *BindResult) Sealed() bool { return r.sealEpoch.Load()%2 == 1 }
+
+// SealEpoch returns the binding's seal epoch, odd while the binding is
+// marked sealed. A caller compares two reads to tell whether one seal held
+// between them.
+func (r *BindResult) SealEpoch() int64 { return r.sealEpoch.Load() }
+
+// SealHeldSince reports whether the binding is marked sealed under the same
+// seal it was marked sealed under when SealEpoch returned epoch.
+func (r *BindResult) SealHeldSince(epoch int64) bool {
+	return epoch%2 == 1 && r.sealEpoch.Load() == epoch
+}
 
 // MarkCrashed records that the binding's attach stream ended in a reported
 // stream failure, so a later Release retires the pod. spec: §28.5.1

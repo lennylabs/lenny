@@ -154,7 +154,7 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 				}
 				adopted := h.Row(id)
 				if adopted.CoordinationGeneration <= stale.CoordinationGeneration || h.Bound(id) == nil {
-					t.Skipf("blocked: the peer did not re-adopt the running session (generation %d → %d)", stale.CoordinationGeneration, adopted.CoordinationGeneration)
+					t.Fatalf("the peer did not re-adopt the running session whose lease lapsed (generation %d → %d, bound %v)", stale.CoordinationGeneration, adopted.CoordinationGeneration, h.Bound(id) != nil)
 				}
 				var code int
 				var body map[string]any

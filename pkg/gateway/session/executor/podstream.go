@@ -113,19 +113,33 @@ func (c *attachConn) endedSealed() bool {
 	return ok && st.Code() == codes.FailedPrecondition && strings.HasPrefix(st.Message(), sealedPrefix)
 }
 
-// endCause is the cause a Send waiting on the ended stream returns:
-// ErrSessionSealed for a sealed refusal or for a stream that ended while the
-// session was sealed through its binding, and errStreamEnded otherwise. The
-// adapter refuses every message to a sealed session, so a message whose
-// stream a suspension release ended while the seal held never reached the
-// runtime, whichever of the refusal and the release ended the stream.
-// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+// endCause is the cause a Send waiting on the ended stream returns for a
+// turn whose envelope it wrote at seal epoch writeEpoch. It is
+// ErrSessionSealed when the adapter refused the message as sealed, or when
+// the turn's message was written after the binding was marked sealed and the
+// same seal held until the stream ended, because the adapter refuses every
+// message that reaches it under a seal and the stream's end, whatever caused
+// it, then means the message did not reach the runtime. A message written
+// before the seal mark can have reached the runtime, since work the runtime
+// began before the seal without producing activity does not prevent the
+// seal and the release that follows ends it, so its turn returns
+// errStreamEnded, the outcome of a message delivered on a stream that then
+// ended. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
 // (maxClientIdleSeconds clock behavior across states)
-func (c *attachConn) endCause() error {
-	if c.endedSealed() || (c.bind != nil && c.bind.Sealed()) {
+func (c *attachConn) endCause(writeEpoch int64) error {
+	if c.endedSealed() || (c.bind != nil && c.bind.SealHeldSince(writeEpoch)) {
 		return ErrSessionSealed
 	}
 	return errStreamEnded
+}
+
+// sealEpoch returns the binding's seal epoch, or zero, which is never a
+// sealed epoch, for a conn with no binding.
+func (c *attachConn) sealEpoch() int64 {
+	if c.bind == nil {
+		return 0
+	}
+	return c.bind.SealEpoch()
 }
 
 // newAttachConn builds an unopened conn for bind. Its context is derived
@@ -240,11 +254,15 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 		return turnResult{}, err
 	}
 	result := c.registerTurn()
+	// The epoch is read before the write, so a seal marked while the write
+	// is in flight does not make a message the runtime may have received
+	// read as refused.
+	writeEpoch := c.sealEpoch()
 	if err := c.send(envelope); err != nil {
 		c.abortTurn(result)
-		return turnResult{}, c.awaitEndAfterWriteError(ctx, err)
+		return turnResult{}, c.awaitEndAfterWriteError(ctx, writeEpoch, err)
 	}
-	return c.awaitReply(ctx, result)
+	return c.awaitReply(ctx, writeEpoch, result)
 }
 
 // awaitEndAfterWriteError returns once the conn's end handling has finished
@@ -255,10 +273,10 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 // re-reads the session after the error sees the state the report recorded,
 // and a retried delivery cannot open a new stream over a binding the report
 // is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
-func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error) error {
+func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, writeEpoch int64, sendErr error) error {
 	select {
 	case <-c.done:
-		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, c.endCause(), sendErr)
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, c.endCause(writeEpoch), sendErr)
 	case <-ctx.Done():
 		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, ctx.Err(), sendErr)
 	}
@@ -273,7 +291,7 @@ func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error)
 // once, and select picks among ready cases at random. A reply the runtime
 // produced wins: the caller must not see a delivery failure for a message
 // the runtime answered. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3.
-func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (turnResult, error) {
+func (c *attachConn) awaitReply(ctx context.Context, writeEpoch int64, result <-chan turnResult) (turnResult, error) {
 	var cause error
 	select {
 	case res := <-result:
@@ -281,7 +299,7 @@ func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (
 	case <-ctx.Done():
 		cause = ctx.Err()
 	case <-c.done:
-		cause = c.endCause()
+		cause = c.endCause(writeEpoch)
 	}
 	select {
 	case res := <-result:

@@ -676,3 +676,66 @@ func TestSealMarksTheBinding_spec_4_7_1(t *testing.T) {
 		t.Fatalf("unseal: err %v marked %v; want the mark cleared", err, bind.Sealed())
 	}
 }
+
+// markObservingSealer records whether the binding was marked sealed while
+// the adapter decided the seal, and answers with the configured outcome.
+type markObservingSealer struct {
+	fakeSealer
+	bind        *podsession.BindResult
+	markedInRPC bool
+}
+
+func (f *markObservingSealer) SealSession(ctx context.Context, id string, gen int64, idle int) (bool, time.Duration, error) {
+	f.markedInRPC = f.bind.Sealed()
+	return f.fakeSealer.SealSession(ctx, id, gen, idle)
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
+// clock behavior across states)
+// The binding is marked sealed while the adapter decides the seal, so a
+// message written between the adapter's seal and its answer is covered. A
+// not-sealed answer or a failed call clears a mark the call placed and moves
+// the seal epoch, so a turn written during the call is not read as refused,
+// and keeps a mark an earlier seal placed, because the adapter keeps an
+// earlier seal when it answers not sealed.
+func TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		markedBefore bool
+		sealed       bool
+		err          error
+		wantMarked   bool
+	}{
+		{"granted", false, true, nil, true},
+		{"not sealed", false, false, nil, false},
+		{"call failed", false, false, errUnsealFailed, false},
+		{"not sealed keeps an earlier seal", true, false, nil, true},
+		{"failed call keeps an earlier seal", true, false, errUnsealFailed, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bind := &podsession.BindResult{SessionID: "sess-" + tc.name}
+			if tc.markedBefore {
+				bind.MarkSealed()
+			}
+			before := bind.SealEpoch()
+			sealer := &markObservingSealer{fakeSealer: fakeSealer{sealed: tc.sealed, err: tc.err}, bind: bind}
+			s := &Server{sealerFor: func(*podsession.BindResult) sessionSealer { return sealer }}
+			_, _, _ = s.sealSession(ctx, bind, 1)
+			if !sealer.markedInRPC {
+				t.Fatal("the binding was not marked sealed while the adapter decided the seal")
+			}
+			if bind.Sealed() != tc.wantMarked {
+				t.Fatalf("marked after the call = %v, want %v", bind.Sealed(), tc.wantMarked)
+			}
+			// A turn that captured the epoch during a call that did not
+			// seal must not find the same seal held afterwards.
+			if !tc.markedBefore && !tc.wantMarked && bind.SealHeldSince(before+1) {
+				t.Fatal("the seal epoch captured during an unsealed call still reads as held")
+			}
+			if tc.markedBefore && bind.SealEpoch() != before {
+				t.Fatalf("seal epoch moved from %d to %d under an earlier seal", before, bind.SealEpoch())
+			}
+		})
+	}
+}
