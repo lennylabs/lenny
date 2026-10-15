@@ -24,11 +24,11 @@
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
 //     "lines":    ["spec/07_session-lifecycle.md:430-446"],   // line ranges to return verbatim
 //     "related":  [{"text": "the passage being changed", "change": "what the edit does",
-//                   "also": "the new wording, when known", "at": "spec/07_session-lifecycle.md:430",
+//                   "after": "the passage's new wording", "at": "spec/07_session-lifecycle.md:430",
 //                   "min": 0.7}],       // passages that state or rely on what the change alters,
-//                                       // judged by Jev. For a fix being applied, pass the old
-//                                       // passage as text, the fix as change and also, and min
-//                                       // 0.66: that framing scores true sites lower. "via"
+//                                       // judged by Jev. Pass the old passage as text, a one-line
+//                                       // description as change, and the new wording as after.
+//                                       // "also" takes extra queries (a string or a list). "via"
 //                                       // picks candidate sources: meaning, also, sentidx, chunks
 //                                       // (default), and links, terms, sentences, clauses, pairs,
 //                                       // neighbors, all (measurement only)
@@ -479,7 +479,7 @@ const RELATED_SHORTLIST = Number(process.env.LOOKUP_RELATED_SHORTLIST) || 80;
 // A term in more passages than this names a common concept rather than the
 // changed statement, and is dropped from the term source.
 const TERM_MAX_PASSAGES = Number(process.env.LOOKUP_TERM_MAX_PASSAGES) || 40;
-const RELATED_MAX_CANDIDATES = 400;
+const RELATED_MAX_CANDIDATES = 600;
 
 const sectionNumber = (heading) => (/^§?\s*(\d+(?:\.\d+)*)\.?\s/.exec(heading || "") || [])[1] || null;
 const slug = (h) =>
@@ -552,7 +552,12 @@ async function relatedSearch(r, ctx) {
   // only candidates were mostly noise in blind labelling.
   const via = new Set(Array.isArray(r.via) && r.via.length ? r.via : ["meaning", "also", "sentidx", "chunks"]);
   const text = String(r.text || "");
-  const change = String(r.change || "");
+  // "after" is the passage's new wording. It is searched like "also" and is
+  // given to Jev with the change: on 56 landed spec changes, Jev returned 73% of
+  // the other edited sites at 0.7 with it and 67% without, at the same share of
+  // relevant results.
+  const after = String(r.after || "").trim();
+  const change = String(r.change || "") + (after ? "\nThe passage then reads:\n" + after.slice(0, 3000) : "");
   // The passage the changed text sits in: named by "at", or found by its text.
   let home = null;
   if (r.at) {
@@ -566,8 +571,12 @@ async function relatedSearch(r, ctx) {
   // restate it.
   const passage = home && home.text.length > text.length ? home.text : text;
   const cands = new Map();
+  // Review logs record past decisions rather than current statements, so a fix
+  // never makes one wrong. They made up about half of the returned passages on
+  // proposal 0092 before they were left out. "reviewLogs": true keeps them.
+  const skipFile = (f) => r.reviewLogs !== true && /(^|\/)[^/]*review-log[^/]*\.md$/.test(f);
   const add = (b, src) => {
-    if (b === home || b.isHeading) return;
+    if (b === home || b.isHeading || skipFile(b.file)) return;
     if (!cands.has(b)) cands.set(b, new Set());
     cands.get(b).add(src);
   };
@@ -605,7 +614,9 @@ async function relatedSearch(r, ctx) {
     notes.push(`terms: ${used.join(", ") || "none"}`);
   }
 
-  const also = String(r.also || "");
+  // "also" is one text or a list of short queries, each searched on its own.
+  const alsoList = [...(Array.isArray(r.also) ? r.also : [r.also]), r.after].map((x) => String(x || "").trim()).filter(Boolean);
+  const also = alsoList.join("\n");
   const k = Number(r.shortlist) > 0 ? Number(r.shortlist) : RELATED_SHORTLIST;
   const meaningTop = [];
   if (via.has("meaning")) {
@@ -627,10 +638,10 @@ async function relatedSearch(r, ctx) {
     const emb = embedShortlist(all, queries, kk);
     if (!emb.reason) for (const l of emb.lists) for (const { block } of l) add(block, src);
   };
-  if (via.has("also") && also) {
-    for (const b of shortlist(all, also, k)) add(b, "also");
-    const emb = embedShortlist(all, [also], k);
-    if (!emb.reason) for (const { block } of emb.lists[0]) add(block, "also");
+  if (via.has("also") && alsoList.length) {
+    for (const q of alsoList) for (const b of shortlist(all, q, k)) add(b, "also");
+    const emb = embedShortlist(all, alsoList, k);
+    if (!emb.reason) for (const l of emb.lists) for (const { block } of l) add(block, "also");
   }
   if (via.has("sentences")) multi(units(passage + (also ? "\n" + also : ""), /(?<=[.!?])\s+(?=[A-Z`*(])|\n+/, 30).slice(0, 24), 15, "sentences");
   if (via.has("clauses"))
@@ -677,6 +688,7 @@ async function relatedSearch(r, ctx) {
       if (cur.trim().length >= 20) chunks.push({ block: b, text: cur, heading: b.heading });
     }
     const qs = [passage + (also ? "\n" + also : ""), ...units(passage + (also ? "\n" + also : ""), /(?<=[.!?])\s+(?=[A-Z`*(])|\n+/, 30).slice(0, 16)];
+    if (alsoList.length > 1) qs.push(...alsoList);
     const emb = embedShortlist(chunks, qs, Number(r.chunkTop) > 0 ? Number(r.chunkTop) : 20);
     if (emb.reason) notes.push(`chunk embedding unavailable (${emb.reason})`);
     else for (const l of emb.lists) for (const { block } of l) add(block.block, "chunks");
@@ -688,7 +700,7 @@ async function relatedSearch(r, ctx) {
   const cap = Number(r.cap) > 0 ? Number(r.cap) : RELATED_MAX_CANDIDATES;
   if (list.length > cap) {
     notes.push(`${list.length} candidates; the ${list.length - cap} with the least word overlap were not judged`);
-    const keep = new Set(shortlist(list.map((c) => c.block), passage + " " + change, cap));
+    const keep = new Set(shortlist(list.map((c) => c.block), passage + " " + change + " " + also, cap));
     list = list.filter((c) => keep.has(c.block));
   }
   let failed = 0;
