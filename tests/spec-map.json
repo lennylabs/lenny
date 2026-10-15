@@ -425,6 +425,7 @@
       "title": "Warm Pool Controller \u2014 Pod Lifecycle",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/testinfra/lifecycleharness/crashclient_test.go::TestCrashableClientRefusesWritesAfterTheCrash_spec_4_6_1",
         "pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
         "tests/tier2_component/postclaimrelease/postclaim_release_test.go",
         "pkg/sandboxclaim/state/state_test.go::TestStatesAndTerminals",
@@ -1603,6 +1604,7 @@
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "tests/tier1_unit/lifecycle/recording_runtime_test.go::TestRecordingRuntimeReportsTurnsTheReleaseEnded_spec_6_2",
         "tests/tier1_unit/lifecycle/stepped_store_test.go::TestSteppedClockStoreStampsFromTheSteppedClock_spec_6_2",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier2_component/watchdog/suspended_lifetime_test.go::TestWatchdogSuspendedLifetime_spec_6_2",

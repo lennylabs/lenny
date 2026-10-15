@@ -349,7 +349,7 @@
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
     "tests/testinfra/lifecycleharness": {
-      "unit": ["tests/tier1_unit/lifecycle/..."],
+      "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],
       "component": ["tests/tier2_component/lifecycle/..."],
       "integration": [
         "tests/tier4_integration/session_resume_driver_integration_test.go",

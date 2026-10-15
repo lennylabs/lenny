@@ -33,6 +33,35 @@ func idleWindowElapsed() {
 	time.Sleep(lifecycleharness.IdleWindow*time.Second + 100*time.Millisecond)
 }
 
+// turnInHand is how long a harness runtime keeps a turn in hand in a
+// scenario that asserts no release ends a turn. It is shorter than the idle
+// window, so a turn in hand never outlasts the activity it stamped.
+const turnInHand = 200 * time.Millisecond
+
+// setResponseDelay makes every pod's runtime keep each later turn in hand
+// for d.
+func setResponseDelay(h *lifecycleharness.Harness, d time.Duration) {
+	for _, p := range h.Cluster.Pods() {
+		p.Runtime.SetResponseDelay(d)
+	}
+}
+
+// awaitTurnsAnswered waits until no pod's runtime holds a turn for the
+// session in hand, so every turn a runtime received has either been
+// answered or been ended.
+func awaitTurnsAnswered(t *testing.T, h *lifecycleharness.Harness, id string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * turnInHand)
+	for _, p := range h.Cluster.Pods() {
+		for p.Runtime.Handling(id) > 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("pod %s still holds %d turns for the session in hand", p.Name, p.Runtime.Handling(id))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
 // countText counts the messages with text the session's runtimes received.
 func countText(h *lifecycleharness.Harness, id, text string) int {
 	n := 0
@@ -74,7 +103,8 @@ func answered(code int, body map[string]any) bool {
 // paths, path 6), §6.2 (maxClientIdleSeconds clock behavior across states)
 // diagnosis: a message racing an idle suspension was left held by a podless
 // suspended session, reached the runtime twice, or was lost; a message
-// racing the suspension ended a turn, its runtime never wrote the response;
+// racing the suspension was delivered between the seal and the release, so
+// the release reached its runtime before the runtime wrote the response;
 // or a stale coordinator's idle suspension acted on a session a peer had
 // taken over at a later generation.
 func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
@@ -113,6 +143,12 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 			}
 
 			t.Run("message sends racing SuspendIdle never end a turn", func(t *testing.T) {
+				// Each runtime keeps a turn in hand for turnInHand, so a turn
+				// delivered between the seal and the release is still in hand
+				// when the release reaches the runtime, and the runtime
+				// records its response as written after the release.
+				setResponseDelay(h, turnInHand)
+				defer setResponseDelay(h, 0)
 				id := h.StartSession(r1)
 				idleWindowElapsed()
 				row := h.Row(id)
@@ -134,9 +170,10 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 						t.Errorf("message %d was answered %d %v, want delivered or queued", i, res.code, res.body)
 					}
 				}
+				awaitTurnsAnswered(t, h, id)
 				for _, p := range h.Cluster.Pods() {
-					if got, done := len(p.Runtime.Received(id)), p.Runtime.Responded(id); got != done {
-						t.Errorf("pod %s received %d messages and responded to %d: a turn ended without its response", p.Name, got, done)
+					for _, m := range p.Runtime.TurnsNotAnsweredBeforeRelease(id) {
+						t.Errorf("pod %s received message %q and did not write its response before the release reached the runtime: the release ended the turn", p.Name, m.Text)
 					}
 				}
 			})

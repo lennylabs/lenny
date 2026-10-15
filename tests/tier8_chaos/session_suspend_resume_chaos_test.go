@@ -25,12 +25,19 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
+	sandboxstate "github.com/lennylabs/lenny/pkg/sandbox/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -174,12 +181,39 @@ func orphanClaim(t *testing.T, h *lifecycleharness.Harness) string {
 	return ""
 }
 
+// orphanedClaimsReclaimed reads the controller's lenny_orphaned_claims_total
+// series for the harness pool.
+func orphanedClaimsReclaimed(t *testing.T) float64 {
+	t.Helper()
+	families, err := ctrlmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("gather controller metrics: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() != "lenny_orphaned_claims_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "pool" && l.GetValue() == lifecycleharness.Pool {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
 // runClaimGC runs the controller's claim-orphan GC until the pod's claim is
-// gone, aging every claim past its orphan timeout.
+// gone, aging every claim past its orphan timeout, and asserts the GC
+// recorded the reclaim: the pod's Sandbox is draining and carries the
+// OrphanClaimReclaimed condition, and lenny_orphaned_claims_total for the
+// pool rose by one (§4.6.1 Orphaned SandboxClaim detection).
 func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	before := orphanedClaimsReclaimed(t)
 	gc := &warmpool.ClaimGarbageCollector{
 		Client: h.Cluster.Client, Sessions: orphanLookup{h.Inner},
 		Namespaces: []string{lifecycleharness.Namespace}, OrphanTimeout: time.Millisecond,
@@ -187,10 +221,21 @@ func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	}
 	done := make(chan struct{})
 	go func() { _ = gc.Start(ctx); close(done) }()
-	defer func() { cancel(); <-done }()
+	awaitClaimGone(t, h, pod)
+	cancel()
+	<-done
+	assertSandboxReclaimed(t, h, pod)
+	if got := orphanedClaimsReclaimed(t) - before; got != 1 {
+		t.Errorf("lenny_orphaned_claims_total{pool=%q} rose by %v, want 1", lifecycleharness.Pool, got)
+	}
+}
+
+// awaitClaimGone waits until the pod has no claim.
+func awaitClaimGone(t *testing.T, h *lifecycleharness.Harness, pod string) {
+	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		_, exists, err := h.Cluster.ClaimPhase(ctx, pod)
+		_, exists, err := h.Cluster.ClaimPhase(context.Background(), pod)
 		if err != nil {
 			t.Fatalf("read the claim of %s: %v", pod, err)
 		}
@@ -204,10 +249,27 @@ func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	}
 }
 
+// assertSandboxReclaimed asserts the claim-orphan GC drained the pod's
+// Sandbox and recorded the OrphanClaimReclaimed condition on it.
+func assertSandboxReclaimed(t *testing.T, h *lifecycleharness.Harness, pod string) {
+	t.Helper()
+	var sb lennyv1.Sandbox
+	if err := h.Cluster.Client.Get(context.Background(), client.ObjectKey{Namespace: lifecycleharness.Namespace, Name: pod}, &sb); err != nil {
+		t.Fatalf("read the Sandbox %s: %v", pod, err)
+	}
+	if sb.Status.Phase != sandboxstate.CoarseDraining {
+		t.Errorf("the reclaimed Sandbox %s is %q, want %q", pod, sb.Status.Phase, sandboxstate.CoarseDraining)
+	}
+	if c := meta.FindStatusCondition(sb.Status.Conditions, sandboxcond.OrphanClaimReclaimed); c == nil || c.Status != metav1.ConditionTrue {
+		t.Errorf("the reclaimed Sandbox %s carries %s = %v, want True", pod, sandboxcond.OrphanClaimReclaimed, c)
+	}
+}
+
 // spec: 7.3 (Resume driver), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 // diagnosis: a coordinator killed right after the resume attempt's entry
-// write left a claim the controller's claim-orphan GC could not reclaim, or
-// the session did not reach running on another pod through the watchdog and
+// write left no orphaned claim, or a claim the controller's claim-orphan GC
+// could not reclaim, or the GC reclaimed it without draining and marking
+// the Sandbox or without counting the orphan; or the session did not reach running on another pod through the watchdog and
 // the peer's driver; or a crash between an interrupt suspension's binding
 // clear and its release left a session that could not resume.
 func TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3(t *testing.T) {
@@ -218,7 +280,14 @@ func TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3(t *testing.T) {
 		var once sync.Once
 		h.Trace.ArmMatching("Update", "entryHook", lifecycleharness.FaultCrash,
 			func(lifecycleharness.TraceEntry, lifecycleharness.FaultKind) { once.Do(func() { h.Crash(r1) }) })
+		crashed := h.Row(id).PodAssignment
 		lifecycleharness.Report(t, r1, id, string(session.FailureRuntimeCrash))
+		// The pod whose runtime crashed is retired, so the restore claims a
+		// pod the session row does not name, and that claim is an orphan
+		// once its coordinator dies.
+		if err := h.Cluster.Retire(context.Background(), h.Cluster.PodOf(crashed)); err != nil {
+			t.Fatalf("retire the crashed pod: %v", err)
+		}
 		// The coordinator's watchdog drives the restore; its entry write is
 		// the crash point.
 		for i := 0; i < 4 && !r1.Crashed(); i++ {
@@ -231,18 +300,20 @@ func TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3(t *testing.T) {
 		if row := h.Row(id); row.State != session.StateResuming {
 			t.Fatalf("after the crash the session is %q, want resuming", row.State)
 		}
-		// spec: §7.3 — the claim the attempt made is deleted by the binder's
-		// detached release when the replica's goroutines outlive the crash,
-		// as the harness's do, and otherwise by the claim-orphan GC.
+		// spec: §7.3, §4.6.1 — the crashed coordinator issues no further
+		// Kubernetes write, so the claim the attempt made outlives it with
+		// no session row naming its pod, and only the claim-orphan GC
+		// reclaims it.
 		claimed := orphanClaim(t, h)
-		if claimed != "" {
-			runClaimGC(t, h, claimed)
+		if claimed == "" {
+			t.Fatal("the crash after the entry write left no bound claim that no session row names; the attempt's claim was released by a replica that no longer runs")
 		}
+		runClaimGC(t, h, claimed)
 		row := h.AwaitState(id, session.StateRunning, chaosRecoveryPasses)
 		if row.State != session.StateRunning {
 			t.Fatalf("the session reached %q, want running", row.State)
 		}
-		if claimed != "" && row.PodAssignment == claimed {
+		if row.PodAssignment == claimed {
 			t.Errorf("the session runs on %s, the pod whose claim the GC reclaimed", claimed)
 		}
 	})

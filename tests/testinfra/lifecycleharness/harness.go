@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,6 +142,9 @@ type Replica struct {
 
 	mu      sync.Mutex
 	crashed bool
+	// k8sDown fails the binder's Kubernetes writes once the replica
+	// crashed (crashableClient).
+	k8sDown atomic.Bool
 }
 
 // Crashed reports whether the replica crashed.
@@ -215,8 +219,9 @@ func New(t testing.TB, opts Options) *Harness {
 func (h *Harness) AddReplica(id string) *Replica {
 	h.T.Helper()
 	reg := podsession.NewRegistry()
+	r := &Replica{ID: id, Registry: reg}
 	binder := &podsession.Binder{
-		Client:           h.Cluster.Client,
+		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown},
 		Namespace:        Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
@@ -224,7 +229,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Credentials:      h.Creds,
 	}
 	exec := executor.NewPodExecutor(reg, binder)
-	r := &Replica{ID: id, Registry: reg, Executor: exec, Binder: binder}
+	r.Executor, r.Binder = exec, binder
 	var bus *sessionevents.Bus
 	if h.events {
 		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
@@ -281,7 +286,8 @@ func (h *Harness) AddReplica(id string) *Replica {
 }
 
 // Crash ends the replica's server-lifetime context, drops its pod registry
-// and stream cache, and leaves its coordination leases to lapse.
+// and stream cache, fails every later Kubernetes write of its binder, and
+// leaves its coordination leases to lapse.
 func (h *Harness) Crash(r *Replica) {
 	r.mu.Lock()
 	if r.crashed {
@@ -289,6 +295,7 @@ func (h *Harness) Crash(r *Replica) {
 		return
 	}
 	r.crashed = true
+	r.k8sDown.Store(true)
 	r.mu.Unlock()
 	r.Server.Close()
 	for _, b := range r.Registry.Snapshot() {

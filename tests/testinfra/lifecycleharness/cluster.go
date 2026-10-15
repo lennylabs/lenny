@@ -338,6 +338,22 @@ func (c *Cluster) Pods() []*Pod {
 	return out
 }
 
+// Retire moves the pod's Sandbox to draining, as the WarmPoolController
+// retires a pod whose runtime crashed, so no later claim takes the pod.
+// spec: §6.2 (Pod State Machine)
+func (c *Cluster) Retire(ctx context.Context, p *Pod) error {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion(lennyv1.GroupVersion.String())
+	u.SetKind("Sandbox")
+	u.SetName(p.Name)
+	u.SetNamespace(Namespace)
+	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "draining", "podIP": p.IP}, "status")
+	if err := c.Client.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
+		return fmt.Errorf("retire sandbox %s: %w", p.Name, err)
+	}
+	return nil
+}
+
 // RemoveSandbox deletes the pod's Sandbox, so no claim can take it.
 func (c *Cluster) RemoveSandbox(ctx context.Context, p *Pod) error {
 	return client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.Sandbox{

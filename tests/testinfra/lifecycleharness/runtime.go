@@ -5,9 +5,11 @@ package lifecycleharness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 )
@@ -24,6 +26,17 @@ type Received struct {
 	// Seq orders the message among every message any harness runtime
 	// received.
 	Seq int64
+	// binding names the session's binding on the runtime the message
+	// arrived under: the count of session_start frames the runtime had
+	// received for the session.
+	binding int
+}
+
+// answer records the response the runtime wrote to one message.
+type answer struct {
+	// late records a response the runtime wrote after the release of the
+	// message's binding reached it: the release ended the turn.
+	late bool
 }
 
 // receivedSeq numbers the messages harness runtimes receive.
@@ -39,6 +52,13 @@ var receivedSeq atomic.Int64
 //
 // Hold makes the runtime keep each later message in hand until Release, so
 // a scenario can race an operation against a turn in flight.
+//
+// The runtime also records when a release reached each binding of a
+// session (its session_end) and whether it
+// wrote each response before that release, so TurnsNotAnsweredBeforeRelease reports a turn a release
+// ended. SetResponseDelay keeps each turn in hand for a while, so a turn
+// that starts just before a release is still in hand when the release
+// arrives.
 type RecordingRuntime struct {
 	hub *linefanout.Hub
 	w   *io.PipeWriter
@@ -56,6 +76,17 @@ type RecordingRuntime struct {
 	held     chan struct{}
 	// responded counts the responses written per session.
 	responded map[string]int
+	// bindings counts the session_start frames per session; each opens a
+	// new binding of the session on the runtime.
+	bindings map[string]int
+	// released records each binding a release reached.
+	released map[string]bool
+	// answers records the response to each message, keyed by the
+	// message's Seq.
+	answers map[int64]answer
+	// delay is how long the runtime keeps each message in hand before it
+	// answers.
+	delay time.Duration
 }
 
 // NewRecordingRuntime returns a runtime whose output reader is running.
@@ -64,6 +95,8 @@ func NewRecordingRuntime() *RecordingRuntime {
 	r := &RecordingRuntime{
 		hub: linefanout.New(), w: pw,
 		handling: map[string]int{}, responded: map[string]int{},
+		bindings: map[string]int{}, released: map[string]bool{},
+		answers: map[int64]answer{},
 	}
 	r.hub.Tap(func(line []byte) {
 		if fn := r.tap.Load(); fn != nil {
@@ -83,6 +116,19 @@ func (r *RecordingRuntime) Start(_ context.Context, sessionID string) error {
 	defer r.mu.Unlock()
 	r.started = append(r.started, sessionID)
 	return nil
+}
+
+// bindingKey names one binding of a session.
+func bindingKey(sessionID string, binding int) string {
+	return fmt.Sprintf("%s#%d", sessionID, binding)
+}
+
+// markReleased records that a release of the session's current binding
+// reached the runtime.
+func (r *RecordingRuntime) markReleased(sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.released[bindingKey(sessionID, r.bindings[sessionID])] = true
 }
 
 // inboundFrame is the part of an inbound frame the runtime reads.
@@ -107,6 +153,10 @@ func (r *RecordingRuntime) WriteEnvelope(sessionID string, env []byte) error {
 	r.frames = append(r.frames, Received{SessionID: f.SessionID, Text: f.Type, Seq: receivedSeq.Add(1)})
 	r.mu.Unlock()
 	switch f.Type {
+	case "session_start":
+		r.mu.Lock()
+		r.bindings[f.SessionID]++
+		r.mu.Unlock()
 	case "message":
 		r.receive(f)
 	case "heartbeat":
@@ -115,6 +165,7 @@ func (r *RecordingRuntime) WriteEnvelope(sessionID string, env []byte) error {
 		r.mu.Lock()
 		r.ended = append(r.ended, f.SessionID)
 		r.mu.Unlock()
+		r.markReleased(f.SessionID)
 	}
 	return nil
 }
@@ -126,14 +177,19 @@ func (r *RecordingRuntime) receive(f inboundFrame) {
 		text = f.Input[0].Inline
 	}
 	r.mu.Lock()
-	r.received = append(r.received, Received{SessionID: f.SessionID, Text: text, Seq: receivedSeq.Add(1)})
+	m := Received{SessionID: f.SessionID, Text: text, Seq: receivedSeq.Add(1), binding: r.bindings[f.SessionID]}
+	r.received = append(r.received, m)
 	r.handling[f.SessionID]++
-	held := r.held
+	held, delay := r.held, r.delay
 	r.mu.Unlock()
 	go func() {
 		if held != nil {
 			<-held
 		}
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		r.recordAnswer(m)
 		r.emit(map[string]any{
 			"type": "response", "sessionId": f.SessionID,
 			"output": []map[string]any{{"type": "text", "inline": "echo:" + text}},
@@ -143,6 +199,16 @@ func (r *RecordingRuntime) receive(f inboundFrame) {
 		r.responded[f.SessionID]++
 		r.mu.Unlock()
 	}()
+}
+
+// recordAnswer records the response to m just before the runtime writes
+// it, marking it late when the release of m's binding already reached the
+// runtime. A release that lands between this record and the write is not
+// seen, which is a window of one pipe write.
+func (r *RecordingRuntime) recordAnswer(m Received) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.answers[m.Seq] = answer{late: r.released[bindingKey(m.SessionID, m.binding)]}
 }
 
 // ackHeartbeat answers a heartbeat, reporting busy for a session with a
@@ -179,8 +245,39 @@ func (r *RecordingRuntime) Output(ctx context.Context, _ string) (<-chan []byte,
 // Interrupt does nothing.
 func (r *RecordingRuntime) Interrupt(context.Context, string, bool) error { return nil }
 
-// Close does nothing.
+// Close does nothing. A release reaches the runtime as the session's
+// session_end, which WriteEnvelope records; the adapter's later Close of
+// the session can land after the next binding's session_start, so it does
+// not mark a release.
 func (r *RecordingRuntime) Close(context.Context, string) error { return nil }
+
+// SetResponseDelay makes the runtime keep each later message in hand for d
+// before it answers.
+func (r *RecordingRuntime) SetResponseDelay(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.delay = d
+}
+
+// TurnsNotAnsweredBeforeRelease returns the messages for the session whose
+// response the runtime has not written, or wrote only after the release of
+// the binding the message arrived under reached it. Each is a turn the
+// release ended (or a turn still in hand, when the caller did not wait for
+// the runtime to answer).
+func (r *RecordingRuntime) TurnsNotAnsweredBeforeRelease(sessionID string) []Received {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Received
+	for _, m := range r.received {
+		if m.SessionID != sessionID {
+			continue
+		}
+		if a, ok := r.answers[m.Seq]; !ok || a.late {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // Hold makes the runtime keep every later message in hand until Release.
 func (r *RecordingRuntime) Hold() {
