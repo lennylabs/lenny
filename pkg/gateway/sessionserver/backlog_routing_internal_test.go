@@ -169,6 +169,46 @@ func TestUnboundSendReroutesWhenTheSessionLeftRunning_spec_6_2(t *testing.T) {
 	}
 }
 
+// TestUnboundSendWhoseReReadFailsHolds_spec_6_2 pins the not-bound send
+// whose primary re-read fails on REST: the idle suspension released the pod
+// after the classification read, so the batch reached no runtime, and a
+// failed re-read holds it in the DLQ and answers queued, as a sealed refusal
+// whose re-read fails does, rather than refusing it with EXECUTOR_FAILURE.
+//
+// spec: 6.2 (Idle suspension), 7.2 (Message delivery routing — seven paths,
+// path 6)
+func TestUnboundSendWhoseReReadFailsHolds_spec_6_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	r.seedRunning(t, "s1")
+	primary := &flakyPrimary{Store: r.store}
+	r.srv.store = primary
+	sends := 0
+	r.exec.sendErr = func() error {
+		sends++
+		_, _ = r.store.Update(context.Background(), "acme", "s1", func(s *sessionstore.Session) error {
+			s.State = session.StateSuspended
+			s.SuspendedReason = sessionstore.SuspendedReasonIdle
+			s.SuspendedAt = r.now
+			s.PodAssignment = ""
+			return nil
+		})
+		primary.fails.Store(1)
+		return fmt.Errorf("podexec: session s1: %w", executor.ErrNotBound)
+	}
+	if got := postMessage(t, r.srv, "s1"); got != string(session.DeliveryStatusQueued) {
+		t.Fatalf("receipt = %q, want queued", got)
+	}
+	if sends != 1 {
+		t.Fatalf("sends = %d, want the one not-bound send and no re-routed send", sends)
+	}
+	if r.dlqLen(t, "s1") != 1 {
+		t.Fatalf("DLQ = %d, want the batch held", r.dlqLen(t, "s1"))
+	}
+	if got := r.get(t, "s1").State; got != session.StateResumePending {
+		t.Fatalf("state = %q, want resume_pending from the guarded resume", got)
+	}
+}
+
 // TestUnboundSendAfterSealedRefusalHolds_spec_6_2 pins the idle-suspension
 // race on REST: the adapter refuses the batch as sealed while the primary
 // re-read still shows `running`, the re-routed send then finds the pod

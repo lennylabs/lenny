@@ -331,8 +331,13 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 // rerouteUnbound routes a message once more when this replica held no
 // binding for the session, so nothing was sent, and a primary re-read finds
 // the session no longer `running`: an idle suspension, a release, or a
-// failure report moved it after the classification read. A session still
-// `running` or a re-read failure returns sendErr.
+// failure report moved it after the classification read. A session the
+// re-read finds still `running` returns sendErr.
+//
+// A re-read that fails takes the held branch, as it does after a sealed
+// refusal: a not-bound send reached no runtime, so the gateway holds the
+// message in the DLQ and attempts the guarded resume rather than refusing it
+// to a session it cannot read.
 //
 // A message already routed again after a sealed refusal takes the held
 // branch instead: the adapter refused it under the seal, so it never reached
@@ -345,7 +350,11 @@ func (m *mcpSend) rerouteUnbound(ctx context.Context, row sessionstore.Session, 
 		return m.holdAndResume(ctx, row)
 	}
 	fresh, err := sessionstore.ReadPrimary(ctx, m.deps.Store, m.deps.PrimaryReadTimeout, m.tenant, row.ID)
-	if err != nil || fresh.State == session.StateRunning {
+	if err != nil {
+		m.rerouted = true
+		return m.holdAndResume(ctx, row)
+	}
+	if fresh.State == session.StateRunning {
 		return mcp.ToolResult{}, sendErr
 	}
 	m.rerouted = true

@@ -303,8 +303,12 @@ func (d *restDelivery) rerouteSealed(row sessionstore.Session, msgs []executor.M
 // rerouteUnbound routes the batch once more when this replica held no
 // binding for the session, so nothing was sent, and a primary re-read finds
 // the session no longer `running`: an idle suspension, a release, or a
-// failure report moved it after the classification read. A session still
-// `running` or a re-read failure answers EXECUTOR_FAILURE with sendErr.
+// failure report moved it after the classification read. A session the
+// re-read finds still `running` answers EXECUTOR_FAILURE with sendErr.
+//
+// A re-read that fails takes the held branch, as it does after a sealed
+// refusal: a not-bound send reached no runtime, so the gateway holds the
+// batch in the DLQ rather than refusing it to a session it cannot read.
 //
 // A batch already routed again after a sealed refusal takes the held branch
 // instead. The adapter refused it under the seal, so it never reached the
@@ -319,7 +323,11 @@ func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.
 		return d.heldBranch(row, deliverIdx)
 	}
 	fresh, err := d.s.readPrimary(d.r.Context(), row.TenantID, row.ID)
-	if err != nil || fresh.State == session.StateRunning {
+	if err != nil {
+		d.rerouted = true
+		return d.heldBranch(row, deliverIdx)
+	}
+	if fresh.State == session.StateRunning {
 		return d.executorFailure(sendErr)
 	}
 	d.rerouted = true

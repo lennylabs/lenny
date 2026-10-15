@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,6 +255,57 @@ func TestSendMessageRouting_UnboundSendReroutes_spec_6_2(t *testing.T) {
 	}
 	if n, _ := dlq.Len(context.Background(), "acme", "sess_running"); n != 0 {
 		t.Errorf("DLQ depth = %d for a running session, want 0", n)
+	}
+}
+
+// primaryFaultStore fails every primary read while failing is set, so a test
+// can fail the re-read that follows a send. Every other read delegates.
+type primaryFaultStore struct {
+	sessionstore.Store
+	failing atomic.Bool
+}
+
+func (s *primaryFaultStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if s.failing.Load() {
+		return sessionstore.Session{}, errors.New("primary unreachable")
+	}
+	return s.Get(ctx, tenantID, id)
+}
+
+// TestSendMessageRouting_UnboundReReadFailureHolds_spec_6_2 pins the
+// not-bound send whose primary re-read fails on MCP: the message reached no
+// runtime, so it is held in the DLQ, the guarded resume is attempted, and
+// the answer is queued, as after a sealed refusal whose re-read fails,
+// rather than the send error.
+//
+// spec: 6.2 (Idle suspension), 7.2 (Message delivery routing — seven paths,
+// path 6)
+func TestSendMessageRouting_UnboundReReadFailureHolds_spec_6_2(t *testing.T) {
+	exec := &countingExecutor{}
+	var store *primaryFaultStore
+	srv, inner, _, dlq, del := newMCPRoutingDeliveryWith(t, exec, func(d *mcptools.Deps) {
+		store = &primaryFaultStore{Store: d.Store}
+		d.Store = store
+	})
+	mkSession(t, inner, "sess_unread", session.StateRunning, "")
+	attempts := 0
+	exec.onSend = func() error {
+		attempts++
+		store.failing.Store(true)
+		return fmt.Errorf("podexec: session sess_unread: %w", executor.ErrNotBound)
+	}
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_unread","message":"x"}`))
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if attempts != 1 {
+		t.Errorf("send attempts = %d, want the one not-bound send", attempts)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_unread"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want the guarded resume attempted once", len(del.resumed))
 	}
 }
 
