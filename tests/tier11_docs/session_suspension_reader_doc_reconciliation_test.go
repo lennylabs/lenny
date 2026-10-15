@@ -586,3 +586,62 @@ func TestSessionSealPagesStateUnsealFenceAndAfterSealRelease(t *testing.T) {
 		t.Errorf("%s: the idle suspension paragraph does not state that the release ends work begun after the seal", lifecycle)
 	}
 }
+
+// sessionlessFrameActivityRetired is the statement of the sessionId-less
+// activity rule that scoped it to a pod holding one session. Leaked and failed
+// slots count against pod occupancy, so a pod can hold one live session and
+// more than one slot, and the adapter counts such a frame for no session there.
+const sessionlessFrameActivityRetired = "carries no `sessionId` on a pod holding one session"
+
+// sessionlessFrameActivityCurrent is the current statement of the rule, scoped
+// to a pod holding at most one slot.
+const sessionlessFrameActivityCurrent = "carries no `sessionId` on a pod holding at most one [slot]("
+
+// spec: 4.7.1 (Role and Gateway RPC Contract, Session seal), 6.2 (Pod State
+// Machine, Idle suspension), 7.3 (Retry and Resume, Retry accounting, Resume
+// driver), 9.2 (Elicitation Chain, Elicitation Timeout Semantics), 27.6
+// (Session lifecycle and cleanup, Idle-timeout override)
+// diagnosis: a reader page states one of these windows wider or narrower than
+// the spec: an idle suspension expiring an elicitation the runtime still waits
+// on, a restore failure before the resume driver's `resume_pending` to
+// `resuming` write consuming a retry, a sessionId-less frame counting as
+// activity on a pod holding one session and a leaked slot, or a playground
+// suspension attempt whose checkpoint or suspend write fails releasing the pod.
+// A reader plans around an outcome the gateway or the adapter never produces.
+func TestReaderPagesStateSealWindowsAndRetryWindowAsSpecified(t *testing.T) {
+	root := repoRoot(t)
+
+	tools := filepath.Join("docs", "runtime-author-guide", "platform-tools.md")
+	tbody := readDocPage(t, filepath.Join(root, tools))
+	if strings.Contains(tbody, "(including an idle suspension)") {
+		t.Errorf("%s names idle suspension as a way a pending elicitation expires; the pending call keeps the session from idle suspension", tools)
+	}
+	if !strings.Contains(tbody, "the wait keeps the session from idle suspension") {
+		t.Errorf("%s does not state that a pending elicitation keeps the session from idle suspension", tools)
+	}
+
+	lifecycle := filepath.Join("docs", "client-guide", "session-lifecycle.md")
+	lbody := readDocPage(t, filepath.Join(root, lifecycle))
+	if strings.Contains(lbody, "after the driver has claimed the replacement pod") {
+		t.Errorf("%s counts restore failures from the pod claim rather than from the resuming write", lifecycle)
+	}
+	if !strings.Contains(lbody, "the resume driver's `resume_pending` to `resuming` write") {
+		t.Errorf("%s does not anchor the retry accounting on the resume driver's `resume_pending` to `resuming` write", lifecycle)
+	}
+
+	for _, page := range busyReportingPages {
+		body := readDocPage(t, filepath.Join(root, page))
+		if strings.Contains(body, sessionlessFrameActivityRetired) {
+			t.Errorf("%s scopes sessionId-less activity to a pod holding one session rather than at most one slot", page)
+		}
+		if !strings.Contains(body, sessionlessFrameActivityCurrent) {
+			t.Errorf("%s does not scope sessionId-less activity to a pod holding at most one slot", page)
+		}
+	}
+
+	playground := filepath.Join("docs", "operator-guide", "web-playground.md")
+	pbody := readDocPage(t, filepath.Join(root, playground))
+	if !strings.Contains(pbody, "or whose attempt fails because the workspace checkpoint fails or the session changed before the suspend write, stays `running`") {
+		t.Errorf("%s omits the failed suspension attempt that leaves the session `running`", playground)
+	}
+}

@@ -283,7 +283,7 @@ A session also enters `suspended` without an interrupt, at every integration lev
 Your runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for a session (see [Health Checks](#health-checks)). The runtime SDKs report it while a message for the session is pending or being handled, and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. The adapter also counts the following traffic as activity for a session without a report, and no other traffic:
 
 - each frame it writes to your runtime for the session, other than `heartbeat` and `session_end`;
-- each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from your runtime that names the session, or that carries no `sessionId` on a pod holding one session;
+- each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from your runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot);
 - each CH-RUNTIMEOPS `llm_request_completed` that names the session; and
 - each platform or connector MCP tool call for the session, while it is in flight.
 
