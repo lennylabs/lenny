@@ -213,7 +213,7 @@ func TestHeldPodSuspendedAdopterFencesThePod_spec_10_1_2(t *testing.T) {
 	requirePoolReadyPods(t, c, recyclePool, 2)
 	pgIP := t5DataStorePodIP(t, c, "postgres")
 	if pgIP == "" {
-		t.Skip("precondition not met: the e2e Postgres pod is not running")
+		t.Skip("blocked: the e2e Postgres pod is not running, so the adopter cannot read the suspended row")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -227,7 +227,7 @@ func TestHeldPodSuspendedAdopterFencesThePod_spec_10_1_2(t *testing.T) {
 		t.Fatalf("list gateway pods: %v", err)
 	}
 	if len(strings.Fields(out)) < 2 {
-		t.Skip("precondition not met: the handoff needs at least two gateway replicas")
+		t.Skip("blocked: the handoff needs at least two gateway replicas and the e2e cluster runs fewer")
 	}
 	if got, err := d.Interrupt(ctx, tenant, sess.ID); err != nil || got.State != "suspended" {
 		t.Fatalf("interrupt = %+v (%v), want suspended", got, err)
