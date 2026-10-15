@@ -800,3 +800,65 @@ func TestReaderPagesStateSuspensionOutcomesBeyondTheSuccessPath(t *testing.T) {
 		t.Errorf("%s: the hard-limits bullet omits the message admitted on entry and refused at the state write", tenancy)
 	}
 }
+
+// idleSuspensionCarveOutPages are the reader pages whose idle suspension
+// description must exempt the sessions that cannot be idle-suspended.
+var idleSuspensionCarveOutPages = []string{
+	filepath.Join("docs", "runtime-author-guide", "lifecycle.md"),
+	filepath.Join("docs", "reference", "state-machines.md"),
+	filepath.Join("docs", "getting-started", "concepts.md"),
+}
+
+// spec: 6.2 (Pod State Machine, maxClientIdleSeconds clock behavior across
+// states, Idle suspension)
+// diagnosis: a reader page describes idle suspension as happening to every
+// `running` session. A runtime author or operator running a `type: mcp`
+// runtime or an `executionMode: service` pool expects a suspended session to
+// resume, when the gateway expires it with the `max_idle_time` reason.
+func TestReaderPagesExemptSessionsThatCannotBeIdleSuspended(t *testing.T) {
+	root := repoRoot(t)
+	for _, page := range idleSuspensionCarveOutPages {
+		body := readDocPage(t, filepath.Join(root, page))
+		for _, want := range []string{"cannot be idle-suspended", "`type: mcp`", "`executionMode: service`", "`max_idle_time`"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: the idle suspension description does not state %q", page, want)
+			}
+		}
+	}
+
+	lifecycle := filepath.Join("docs", "runtime-author-guide", "lifecycle.md")
+	lbody := readDocPage(t, filepath.Join(root, lifecycle))
+	if strings.Contains(lbody, "without an interrupt, at every integration level. When") {
+		t.Errorf("%s: the idle suspension section states idle suspension at every integration level without the carve-out", lifecycle)
+	}
+
+	machines := filepath.Join("docs", "reference", "state-machines.md")
+	mbody := readDocPage(t, filepath.Join(root, machines))
+	idle := regexp.MustCompile("(?m)^\\| `running` \\| `suspended` \\| Idle suspension.*$").FindString(mbody)
+	if !strings.Contains(idle, "cannot be idle-suspended") && !strings.Contains(idle, "excludes a `type: mcp` runtime and an `executionMode: service` pool") {
+		t.Errorf("%s: the idle suspension transition row does not exempt the sessions that cannot be idle-suspended: %s", machines, idle)
+	}
+	expiry := regexp.MustCompile("(?m)^\\| `running` \\| `expired` \\| Idle expiry.*$").FindString(mbody)
+	if !strings.Contains(expiry, "`max_idle_time`") {
+		t.Errorf("%s: no `running` to `expired` idle-expiry transition row with the `max_idle_time` reason", machines)
+	}
+}
+
+// spec: 4.7.1 (Role and Gateway RPC Contract, Session seal)
+// diagnosis: the adapter-contract Session seal paragraph keeps an earlier seal
+// only when the adapter answers sealed. A reader concludes that a not-sealed
+// answer lifts an existing seal, when only `UnsealSession` or a release ends
+// it.
+func TestAdapterContractNotSealedAnswerKeepsEarlierSeal(t *testing.T) {
+	root := repoRoot(t)
+	page := filepath.Join("docs", "reference", "adapter-contract.md")
+	body := readDocPage(t, filepath.Join(root, page))
+	for _, want := range []string{
+		"A seal the adapter placed earlier stays in place when it answers not sealed.",
+		"the time since the session's last activity, which is zero while a call is in flight",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: the Session seal paragraph does not state %q", page, want)
+		}
+	}
+}

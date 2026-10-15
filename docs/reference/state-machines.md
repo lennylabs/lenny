@@ -40,6 +40,7 @@ stateDiagram-v2
     running --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
     running --> cancelled : Client or parent cancels
     running --> expired : Lease/budget/deadline exhausted
+    running --> expired : Idle expiry (session cannot be idle-suspended)
     running --> resume_pending : Retryable failure (retries remain)
     running --> awaiting_client_action : Retryable failure (retries exhausted)
 
@@ -113,12 +114,13 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 | `ready` | `starting` | Client calls StartSession | `POST /v1/sessions/{id}/start` |
 | `starting` | `running` | Agent runtime reaches ready | Internal |
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
-| `running` | `suspended` | Idle suspension: `maxClientIdleSeconds` elapsed with no activity, and the runtime adapter observed none in the window; workspace checkpointed and pod or slot released | Internal timer |
+| `running` | `suspended` | Idle suspension: `maxClientIdleSeconds` elapsed with no activity, and the runtime adapter observed none in the window; workspace checkpointed and pod or slot released. Applies only to a session that can be idle-suspended, which excludes a `type: mcp` runtime and an `executionMode: service` pool | Internal timer |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
 | `running` | `failed` | Non-retryable failure or `BUDGET_KEYS_EXPIRED` | Internal |
 | `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
+| `running` | `expired` | Idle expiry: `maxClientIdleSeconds` elapsed with no activity for a session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool); reason `max_idle_time` | Internal timer |
 | `running` | `resume_pending` | Retryable failure with retries remaining | Internal |
 | `running` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond` |
