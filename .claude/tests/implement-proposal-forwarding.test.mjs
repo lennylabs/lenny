@@ -36,6 +36,7 @@ const TUNING = {
   maxPhaseOscillations: 25,
   maxFinalGateFailures: 27,
   expensiveTierSeconds: 29,
+  fullFinalPassesBeforeScoping: 33,
   leaseTtlHours: 31,
   skipBuild: true,
   specReviewFocus: ["4.7 adapter manifest"],
