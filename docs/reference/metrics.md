@@ -116,11 +116,11 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_session_startup_duration_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from pod claim to session ready (excluding file upload). | `StartupLatencyBurnRate`, `StartupLatencyGVisorBurnRate` alerts. |
 | `lenny_session_startup_phase_duration_seconds` | Histogram | `phase`, `runtime_class` | Per-phase startup latency (`pod_claim`, `workspace_materialization`, `setup_commands`, `credential_assignment`, `agent_session_start`). | §6.3 per-phase budget validation, including the deployer-controlled setup-command budget (≤ 3s runc / ≤ 1s gVisor recommended). |
 | `lenny_session_time_to_first_token_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from session start request to first streaming event emitted to client. | `TTFTBurnRate` alert. |
-| `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when `maxSuspendedPodHoldSeconds` fires and pod is released. | Operational monitoring. |
+| `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when a suspended session's pod hold ends and the pod or slot is successfully released. An idle suspension, whose hold is zero, also increments it. | Operational monitoring. |
 | `lenny_session_suspension_checkpoint_failed_total` | Counter | `pool`, `tenant_id` | Increments when checkpoint attempt before pod release fails. | Operational monitoring. |
 | `lenny_session_error_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Session errors by variant. | Experiment rollback triggers. |
 | `lenny_session_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Total sessions by variant. | Experiment rollback trigger denominator. |
-| `lenny_session_expiry_total` | Counter | `pool`, `reason` | Sessions terminated by a platform expiry clock. Reasons: `max_session_age`, `max_idle_time` (the `maxClientIdleSeconds` idle bound). | Idle-termination and age-cap monitoring. |
+| `lenny_session_expiry_total` | Counter | `pool`, `reason` | Sessions terminated by a platform expiry clock. Reasons: `max_session_age`, `max_idle_time`. The `max_idle_time` series counts sessions that cannot be idle-suspended and were expired under the `maxClientIdleSeconds` bound, and `suspended` sessions that reached the suspended-session lifetime `gateway.maxSuspendedSessionSeconds`. | Idle-expiry and age-cap monitoring. |
 
 ---
 

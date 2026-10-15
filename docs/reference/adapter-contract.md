@@ -63,10 +63,12 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode). Timeout: 10s. |
 | `DemoteSDK` | Write the session's `session_end` frame when the pod holds a session in `running`, tear down the pre-connected SDK process, drop the adapter's slot registry entry the pod holds if it holds one, whichever session holds it, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. Where that cleanup runs and completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 | `Attach` | Connect client stream to running session |
+| `SealSession` | Seal the named session against `message` delivery when it had no activity in the window the request names (see [Session seal](#session-seal)). Deadline: 5s. |
+| `UnsealSession` | Lift the named session's seal (see [Session seal](#session-seal)). Deadline: 5s. |
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
 | `CheckpointBarrier` | Barrier signal during graceful drain; adapter quiesces tool-call dispatch, flushes a best-effort checkpoint, and replies via `CheckpointBarrierAck` |
-| `CoordinatorFence` | Announce new coordination generation on gateway handoff; precondition for any subsequent operational RPC |
+| `CoordinatorFence` | Announce new coordination generation on gateway handoff; precondition for operational RPCs to the pod it fences |
 | `ExportPaths` | Package files for delegation, rebased per export spec |
 | `AssignCredentials` | Push per-provider credential map to the runtime before session start |
 | `RotateCredentials` | Push replacement credentials for a specific provider mid-session |
@@ -86,6 +88,19 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 **Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime process lives as long as the pod. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, it serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. Each session opens with its `session_start` frame and ends with its `session_end` frame (see [Inbound Messages](#inbound-messages-adapter-writes-to-your-stdin)), and a runtime that exits after its session makes the pod retire at the recycle boundary. The adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, which clears the shared paths and does not reach the runtime process, then reports through these RPCs.
 
 **Checkpoint and Interrupt are mutually exclusive.** The adapter maintains a per-session operation lock. Only one of these operations may execute at a time; the other is queued until the first completes.
+
+**Session seal.** The gateway idle-suspends a `running` session only when two clocks find the session idle: the gateway's `maxClientIdleSeconds` clock and the adapter's activity window for the session. The adapter keeps, for each session it holds, the time of the session's last activity and the number of the session's platform and connector MCP tool calls in flight. A session's activity is the following traffic and no other:
+{: #session-seal }
+
+- **stdin writes.** Each frame the adapter writes for the session other than `heartbeat` and `session_end`, at the start of the write and when the write returns. The session's `session_start` is one of them, so a start and a restore each begin a fresh idle window. A `message` the seal refuses is not written and is not activity.
+- **stdout reads.** Each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame the adapter reads from your runtime whose `sessionId` names the session, or that carries no `sessionId` on a pod holding at most one [slot](glossary#slot), whether or not the gateway has a stream open for the session. A frame that names another session, a frame that carries no `sessionId` on a pod holding more than one slot, `session_started`, and a frame of any other type are activity for no session.
+- **`busy` reports.** Each `heartbeat_ack` that carries `busy: true` and names the session in `sessionId`. A `heartbeat_ack` that names no session, or carries `busy` false or absent, is activity for no session.
+- **LLM request completions.** Each CH-RUNTIMEOPS `llm_request_completed` whose `sessionId` names the session, whatever its `status` and token counts. No other CH-RUNTIMEOPS frame is activity.
+- **Platform and connector tool calls.** Each `tools/call` the adapter dispatches for the session on the platform MCP server or a connector MCP server, from its dispatch until its result returns to the adapter. `initialize`, `tools/list`, and a call the adapter refuses are activity for no session.
+
+A process-scoped frame such as `shutdown` is activity for no session, and an open `Attach` stream is not activity. LLM proxy traffic runs between your runtime and the gateway and resets the gateway's clock rather than the adapter's window. `SealSession` names an idle window in seconds and decides in one step. It refuses a session whose `session_start` the adapter has not written, and a session whose runtime output the adapter does not read. It answers not sealed when a platform or connector tool call for the session is in flight, or when activity occurred within the window. Otherwise it seals the session, or keeps a seal it placed earlier, and answers sealed. While the adapter's heartbeats are disabled, or when your runtime's acknowledgements name no session, no `busy` report is attributed to a session, and the decision rests on the other activity alone. The gateway does not call `SealSession` for a session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool).
+
+While a session is sealed, the adapter writes no `message` frame for it to your runtime. On `Attach` it refuses such a frame by ending the stream with `FAILED_PRECONDITION` and a `session_sealed` error detail, which is not a stream failure. Other frames and RPCs for the session are unaffected. `UnsealSession` lifts the seal, and the adapter refuses both RPCs for a session it does not hold. The gateway calls `SealSession` only at the start of an idle suspension, and calls `UnsealSession` only when that suspension's checkpoint fails or its state write does not take effect. Releasing the session ends the seal, and a `CoordinatorFence` leaves it in place. Work your runtime begins after the session's last activity and before the seal, without producing activity, does not prevent the seal, and the pod or slot release that follows the seal ends it. Report `busy: true` on the heartbeat acknowledgement while your runtime does work for a session, as the `heartbeat_ack` section below states.
 
 **Adapter-to-Gateway events** (sent over the gRPC CH-ADAPTEREVENTS):
 
@@ -216,7 +231,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
 | `sessionId` | string | All | Names the session this message is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
-**Basic-level runtimes:** Read `type`, `id`, `input`, and `sessionId`. The remaining envelope fields may be ignored safely. `sessionId` is excepted from that permission: it names the session the message is addressed to, the adapter populates it on every pod, and a Basic-level runtime echoes it on the session-scoped frames it emits in response.
+**Basic-level runtimes:** Read `type`, `id`, `input`, and `sessionId`. The remaining envelope fields may be ignored safely. `sessionId` is excepted from that permission: it names the session the message is addressed to, the adapter populates it on every pod, and a Basic-level runtime echoes it on the session-scoped frames it emits in response, other than `heartbeat_ack`, whose `sessionId` the `heartbeat_ack` section states.
 
 **The `input` array contains MessagePart objects.** The simplest MessagePart is:
 
@@ -385,7 +400,7 @@ Must be sent in response to every inbound `heartbeat`.
 | `sessionId` | `string` | When `busy` is true | The `sessionId` of the `heartbeat` the frame answers. |
 | `busy` | `boolean` | No | True while the runtime does work for the named session, as the rule below states. False or absent otherwise. |
 
-A runtime MUST report `busy: true` for a session while it does any work for that session: while it handles a `message` for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. The adapter counts a `heartbeat_ack` that carries `busy: true` and names a session as activity for that session when it decides whether the session is idle; an ack that names no session, or carries `busy` false or absent, is activity for no session. A `heartbeat_ack` that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod.
+A runtime MUST report `busy: true` for a session while it does any work for that session: while it handles a `message` for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. The adapter counts a `heartbeat_ack` that carries `busy: true` and names a session as activity for that session when it decides whether the session is idle (see [Session seal](#session-seal)); an ack that names no session, or carries `busy` false or absent, is activity for no session. A `heartbeat_ack` that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod.
 
 #### `session_started` --- Acknowledge a Session Start
 
@@ -672,7 +687,7 @@ After the connection handshake, the adapter sends `lifecycle_capabilities` first
 | `checkpoint_complete` | `sessionId`, `checkpointId`, `status` (`"ok"` or `"failed"`), `reason` | Snapshot upload result; the named session's work may resume. |
 | `interrupt_request` | `sessionId`, `interruptId`, `deadlineMs` | Bring the named session's work to a safe stop point within `deadlineMs`. If no `interrupt_acknowledged` arrives within the deadline, the adapter suspends the session anyway. |
 | `credentials_rotated` | `sessionId`, `provider`, `credentialsPath`, `leaseId` | New credentials written for the named session at `credentialsPath`; rebind that session and reply with `credentials_acknowledged`. |
-| `deadline_approaching` | `sessionId`, `remainingMs`, `trigger` | Advance warning before the named session's forced termination. `trigger`: `"session_age"`, `"budget"`, or `"idle"`. Wrap up that session's work; write no `response` for the session in reply to this frame when no `message` for the session is in flight. |
+| `deadline_approaching` | `sessionId`, `remainingMs`, `trigger` | Advance warning before the named session's forced termination. `trigger`: `"session_age"` or `"budget"`. Wrap up that session's work; write no `response` for the session in reply to this frame when no `message` for the session is in flight. |
 | `files_updated` | `sessionId` | A mid-session upload has promoted new files into the named session's workspace. One-way, with no acknowledgement. |
 
 #### Runtime to Adapter

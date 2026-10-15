@@ -317,9 +317,8 @@ pools:
       cleanupCommands:
         - rm -rf /tmp/sandbox-*
       cleanupTimeoutSeconds: 60
-      maxSessionRetries: 1               # crash re-dispatch budget; default 1 (2 total attempts; 0 disables)
-      maxSessionAgeSeconds: 7200
-      maxClientIdleSeconds: 7200         # client-inactivity bound; defaults to the effective maxSessionAgeSeconds
+      maxSessionAgeSeconds: 7200         # active-time session age cap; paused in suspended and the recovery states
+      maxClientIdleSeconds: 900          # inactivity bound before idle suspension or expiry (default 900)
       slotRetries: 1
       onPoolExhausted: reject            # reject | queue
       maxQueueWaitSeconds: 30            # queue wait bound when onPoolExhausted: queue

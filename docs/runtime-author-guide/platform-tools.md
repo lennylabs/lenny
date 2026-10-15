@@ -236,7 +236,7 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 | `schema` | object | Yes | JSON Schema describing the input to collect |
 | `message` | string | Yes | Human-readable prompt displayed to the user |
 
-**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out.
+**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out. When the session leaves its pod before the user answers, through the release of a suspended session's pod (including an idle suspension), a pod failure, or the end of the session, the pending elicitation expires and its answer is never delivered. A runtime restored onto a new pod raises the elicitation again if it still needs the input. While your runtime waits inside the call, the call counts as activity for the session, so the wait keeps the session from idle suspension.
 
 **Example:**
 

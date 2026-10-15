@@ -30,7 +30,7 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 | `session_start` | Opens a session and carries that session's own context, such as its credential file path. It precedes every other frame addressed to the session. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS (the Full-level operations channel, listed under [Integration level quick reference](#integration-level-quick-reference)) may ignore it. The echo and calculator runtimes in this tutorial ignore it through their `default` case. |
 | `message` | A user or agent message with input content, addressed to a session by its `sessionId` |
 | `tool_result` | Result of a tool call you previously requested |
-| `heartbeat` | Liveness check; reply with `heartbeat_ack` |
+| `heartbeat` | Liveness check for the session its `sessionId` names; reply with `heartbeat_ack` |
 | `session_end` | Ends a session. The runtime releases the session's context and keeps running to serve the pod's other sessions. A runtime that keeps no per-session context may ignore it, as the runtimes in this tutorial do. |
 | `shutdown` | Process-scoped graceful shutdown signal, written when the pod drains rather than at a session boundary; exit within `deadline_ms` |
 
@@ -42,7 +42,7 @@ The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter
 |------|---------|
 | `response` | Your output (text, structured data, etc.) |
 | `tool_call` | Request the adapter to execute a tool (e.g., `read_file`) |
-| `heartbeat_ack` | Reply to a heartbeat |
+| `heartbeat_ack` | Reply to a heartbeat; carries the heartbeat's `sessionId` and `busy: true` while the runtime does work for that session |
 | `status` | Optional progress update |
 | `session_started` | Acknowledges a `session_start`. A runtime that keeps per-session context, or that has opened the CH-RUNTIMEOPS, writes it; the runtimes in this tutorial do neither and writes no `session_started`. |
 
@@ -54,7 +54,7 @@ Here is a minimal session exchange. The session opens with its `session_start` f
 STDIN  -> {"type":"session_start","sessionId":"sess_abc","startId":"st_1"}
 STDIN  -> {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}
 STDOUT <- {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Echo: Hello"}]}
-STDIN  -> {"type":"heartbeat","ts":1717430410}
+STDIN  -> {"type":"heartbeat","ts":1717430410,"sessionId":"sess_abc"}
 STDOUT <- {"type":"heartbeat_ack"}
 STDIN  -> {"type":"session_end","sessionId":"sess_abc"}
 STDIN  -> {"type":"shutdown","reason":"drain","deadline_ms":10000}
@@ -305,6 +305,7 @@ func main() {
 
 	// Track pending tool calls so we can process results
 	pendingToolCalls := make(map[string]string) // tool_call_id -> original expression
+	pendingBySession := make(map[string]int)    // sessionId -> pending tool calls
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -338,6 +339,7 @@ func main() {
 				callID := fmt.Sprintf("tc_%03d", toolCallCounter)
 
 				pendingToolCalls[callID] = content
+				pendingBySession[msg.SessionID]++
 
 				call := ToolCallMsg{
 					Type:      "tool_call",
@@ -393,6 +395,9 @@ func main() {
 				continue
 			}
 			delete(pendingToolCalls, msg.ID)
+			if pendingBySession[msg.SessionID]--; pendingBySession[msg.SessionID] <= 0 {
+				delete(pendingBySession, msg.SessionID)
+			}
 
 			seq++
 			if msg.IsError {
@@ -426,7 +431,14 @@ func main() {
 			}
 
 		case "heartbeat":
-			writeJSON(map[string]string{"type": "heartbeat_ack"})
+			// While a tool call this runtime made for the session the
+			// heartbeat names is pending, the runtime is doing work for that
+			// session, so the ack reports it busy.
+			if pendingBySession[msg.SessionID] > 0 {
+				writeJSON(map[string]interface{}{"type": "heartbeat_ack", "sessionId": msg.SessionID, "busy": true})
+			} else {
+				writeJSON(map[string]string{"type": "heartbeat_ack"})
+			}
 
 		case "shutdown":
 			// Clean up any resources if needed, then exit
@@ -468,7 +480,7 @@ func writeJSON(v interface{}) {
 
 2. **Tool calls are asynchronous within the stdin channel:** When you emit a `tool_call`, the result does not arrive on the next line. Other messages (heartbeats, additional user messages) may arrive first. Track pending tool calls by ID.
 
-3. **Heartbeats:** If the runtime does not respond to a heartbeat within 10 seconds, the adapter ends that session's stream and the gateway handles the session as a runtime crash. The runtime process receives no signal. Always handle them in your main loop.
+3. **Heartbeats:** The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. Always handle them in your main loop. While the calculator waits for the `tool_result` of a `write_file` call it made for a session, it acknowledges a heartbeat that names that session with `busy: true`. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding one session; each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../runtime-author-guide/lifecycle.md#idle-suspension).
 
 4. **Unknown messages are ignored:** The protocol is forward-compatible. New message types may be added in future versions. Your runtime must not crash on unrecognized types.
 
@@ -501,7 +513,7 @@ Expected output:
 Test heartbeat handling:
 
 ```bash
-echo '{"type":"heartbeat","ts":1717430410}' | ./calc-runtime
+echo '{"type":"heartbeat","ts":1717430410,"sessionId":"sess_abc"}' | ./calc-runtime
 ```
 
 Expected output:

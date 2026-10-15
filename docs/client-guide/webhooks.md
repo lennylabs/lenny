@@ -55,7 +55,7 @@ Every webhook delivery is a [CloudEvents v1.0.2](https://github.com/cloudevents/
 | `dev.lenny.session_failed` | Session reaches `failed` state |
 | `dev.lenny.session_terminated` | Admin or system terminated the session |
 | `dev.lenny.session_cancelled` | User/runtime cancelled the session |
-| `dev.lenny.session_expired` | Session reached `maxSessionAge` or `maxClientIdleSeconds` |
+| `dev.lenny.session_expired` | Session reached `maxSessionAge`, reached `maxClientIdleSeconds` when it cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool), or stayed `suspended` for the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` |
 | `dev.lenny.session_awaiting_action` | Session transitioned to `awaiting_client_action` (retries exhausted) |
 | `dev.lenny.delegation_completed` | Child session reached a terminal state |
 

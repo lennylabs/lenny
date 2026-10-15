@@ -55,7 +55,7 @@ These are the client-facing tools exposed by the Lenny gateway as an MCP server:
 | `list_artifacts` | List artifacts for a session |
 | `download_artifact` | Download a specific artifact |
 | `terminate_session` | End a session |
-| `resume_session` | Resume a suspended or paused session |
+| `resume_session` | Resume a `suspended` session or a session in `awaiting_client_action` |
 | `list_sessions` | List active/recent sessions (filterable) |
 | `list_runtimes` | List available runtimes (identity-filtered, policy-scoped) |
 
@@ -766,7 +766,7 @@ main().catch(console.error);
 
 ### Step-by-Step Walkthrough with Interrupt/Resume
 
-This example demonstrates suspending and resuming a session mid-work:
+This example suspends a session mid-work and then sends it new instructions. A message to a `suspended` session resumes it, whatever its `delivery` value, so the example makes no separate `resume_session` call:
 
 ```typescript
 // interrupt_resume.ts: interrupt and resume a session
@@ -844,8 +844,8 @@ async function main(): Promise<void> {
     console.log(`State after interrupt: ${status.state}`);
     // Expected: "suspended"
 
-    // Send a new message and resume
-    console.log("Sending new instructions and resuming...");
+    // Send new instructions; a message to a suspended session resumes it
+    console.log("Sending new instructions, which resumes the session...");
     await client.callTool({
       name: "send_message",
       arguments: {
@@ -857,12 +857,6 @@ async function main(): Promise<void> {
           },
         ],
       },
-    });
-
-    // Resume the session
-    await client.callTool({
-      name: "resume_session",
-      arguments: { sessionId },
     });
 
     // Poll until complete
@@ -1568,7 +1562,7 @@ async def main() -> None:
             data = parse_result(result)
             print(f"State: {data['state']}")  # Expected: "suspended"
 
-            # Send new instructions
+            # Send new instructions; a message to a suspended session resumes it
             await session.call_tool(
                 "send_message",
                 arguments={
@@ -1580,13 +1574,6 @@ async def main() -> None:
                         }
                     ],
                 },
-            )
-
-            # Resume
-            print("Resuming...")
-            await session.call_tool(
-                "resume_session",
-                arguments={"sessionId": session_id},
             )
 
             # Poll until done

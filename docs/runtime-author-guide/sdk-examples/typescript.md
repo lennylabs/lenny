@@ -22,7 +22,8 @@ This page presents a complete file summarizer runtime in TypeScript. It implemen
  *   - Reads JSON Lines from stdin
  *   - Handles "message" by reading workspace files and summarizing them
  *   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
- *   - Handles "heartbeat" by responding with "heartbeat_ack"
+ *   - Handles "heartbeat" by responding with "heartbeat_ack", reporting busy
+ *     for the session whose message is in progress
  *   - Handles "shutdown" by exiting cleanly
  *   - Ignores unknown message types for forward compatibility
  *
@@ -76,6 +77,9 @@ let phase = 0; // 0=idle, 1=listing, 2=reading, 3=summarizing
 let fileList: string[] = [];
 let fileContents: string[] = [];
 let currentFileIndex = 0;
+// Sessions whose message is in progress, from handleMessage until
+// writeResponse answers it.
+const busySessions = new Set<string>();
 
 // ---- Output helpers ----
 
@@ -105,6 +109,9 @@ function writeResponse(sessionId: string | undefined, text: string): void {
     output: [{ type: "text", inline: text }],
   };
   writeJSON(resp);
+  if (sessionId !== undefined) {
+    busySessions.delete(sessionId);
+  }
   phase = 0;
 }
 
@@ -171,6 +178,9 @@ function handleMessage(msg: InboundMessage): void {
   fileContents = [];
   currentFileIndex = 0;
   phase = 1;
+  if (msg.sessionId !== undefined) {
+    busySessions.add(msg.sessionId);
+  }
 
   // Extract the user's request text.
   let requestText = "";
@@ -293,8 +303,13 @@ function main(): void {
         break;
 
       case "heartbeat":
-        // Respond immediately, within 10 seconds.
-        writeJSON({ type: "heartbeat_ack" });
+        // Respond immediately, within 10 seconds. While a message for the
+        // session the heartbeat names is in progress, report busy.
+        if (msg.sessionId !== undefined && busySessions.has(msg.sessionId)) {
+          writeJSON({ type: "heartbeat_ack", sessionId: msg.sessionId, busy: true });
+        } else {
+          writeJSON({ type: "heartbeat_ack" });
+        }
         break;
 
       case "shutdown":
@@ -323,6 +338,10 @@ main();
 ```
 
 ---
+
+## Heartbeats and busy reporting
+
+The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`. The example acknowledges each heartbeat at once, and while a message is in progress it acknowledges a heartbeat that names that message's session with `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding one session; each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 
 ## Stdout Flushing in Node.js
 

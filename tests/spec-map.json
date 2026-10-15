@@ -1595,6 +1595,7 @@
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier2_component/watchdog/suspended_lifetime_test.go::TestWatchdogSuspendedLifetime_spec_6_2",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestResumeFailureReasonSetupCommand_spec_7_3",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestResumeAttemptExitCellsOnPostgres_spec_7_3",
@@ -1870,6 +1871,7 @@
       "title": "Interactive Session Model",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier2_component/stores/sessionstore_podless_suspended_test.go::TestSessionStoreListPodlessSuspended_spec_7_2",
         "tests/tier2_component/migrations/prod_columns_test.go::TestPodlessSuspendedIndexMigration_spec_7_2",
         "tests/tier2_component/lifecycle/lifecycle_cells_test.go::TestTerminalWriterCellsOnPostgres_spec_7_2",
@@ -1953,6 +1955,7 @@
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier9_security/idle_suspension_proxy_lease_test.go::TestIdleSuspendedProxyLeaseRetiredAndReplaced_spec_7_3",
         "pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
         "pkg/gateway/sessionserver/slotretry_hook_error_test.go",
@@ -3009,6 +3012,7 @@
       "title": "Admission and Fairness",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier2_component/ratelimit/...",
         "tests/tier5_e2e_kind/gateway_probe_test.go",
@@ -3085,6 +3089,7 @@
       "title": "Timeouts and Cancellation",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/gateway/runtime/watchdog/...",
         "pkg/gateway/session/inputwait/...",
         "pkg/session/state/...",
@@ -4347,6 +4352,7 @@
       "title": "Runtime Author SDKs",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_busy_test.go::TestRuntimeSDKsReportBusyOnHeartbeatAck_spec_28_5_3",
         "tests/tier3_contract/sdks/runtime_sdk_sessions_test.go",
         "sdks/runtime/go/runtime/session_test.go",
@@ -4548,6 +4554,7 @@
       "title": "Alerting Rules and SLOs",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateAcceptsWellFormed",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateRejectsBadPromQL",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateCriticalRequiresRunbook",
@@ -6074,6 +6081,7 @@
       "title": "Web Playground \u2014 Session Lifecycle and Cleanup",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
@@ -6223,6 +6231,7 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_busy_test.go::TestRuntimeSDKsReportBusyOnHeartbeatAck_spec_28_5_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",

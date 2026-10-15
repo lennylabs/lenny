@@ -29,9 +29,8 @@ sessionPolicy:                    # session mode only
     allowCrossTenantReuse: false  # microvm-gated; never permitted when maxConcurrentSessions > 1
   cleanupCommands: []
   cleanupTimeoutSeconds: 60
-  maxSessionRetries: 1            # crash re-dispatch budget; 2 total attempts; 0 disables
-  maxSessionAgeSeconds: 7200
-  maxClientIdleSeconds: 7200      # defaults to the effective maxSessionAgeSeconds
+  maxSessionAgeSeconds: 7200      # active-time session age cap
+  maxClientIdleSeconds: 900       # inactivity bound before idle suspension or expiry (default 900)
   slotRetries: 1
   onPoolExhausted: reject         # reject | queue
   maxQueueWaitSeconds: 30

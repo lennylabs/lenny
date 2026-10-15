@@ -227,7 +227,7 @@ Quotas are enforced hierarchically: **global to tenant to user**. A user quota c
 |---|---|
 | Token limits (LLM tokens) | Per-request, per-session, per-user/window, per-tenant/window |
 | Runtime limits (wall clock) | Per-session |
-| Concurrent sessions | Per-tenant, per-user |
+| Concurrent sessions | Per-tenant, per-user; a session counts from its creation until it reaches a terminal state, except while it is `suspended` |
 | Storage quota | Per-tenant (total artifact storage) |
 | Delegation budget | Per-session (depth, fan-out, total children) |
 
@@ -247,7 +247,7 @@ tenants:
 - **Real-time enforcement** via Redis counters (fast path)
 - **Durable checkpoint** to Postgres at configurable intervals (`quotaSyncIntervalSeconds`)
 - **Soft warnings** at 80% utilization (emitted as billing events)
-- **Hard limits** at 100% -- new sessions or requests rejected with `QUOTA_EXCEEDED`
+- **Hard limits** at 100% -- new sessions or requests rejected with `QUOTA_EXCEEDED`. A `suspended` session does not count toward the concurrent-session limits, with or without its pod, and resuming it counts it again: while a limit it counts toward is full, its resume, whether a `POST /v1/sessions/{id}/resume`, a `resume_session` call, or a message, is refused with `QUOTA_EXCEEDED` and the session stays `suspended`
 
 ### Storage Quota Enforcement
 

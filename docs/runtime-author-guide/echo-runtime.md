@@ -23,7 +23,9 @@ The sections below follow the source in order: a line-by-line walkthrough of eac
 // This implements the Basic level of the Lenny adapter contract:
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by echoing input with a sequence number
-//   - Handles "heartbeat" by responding with "heartbeat_ack"
+//   - Handles "heartbeat" by responding with "heartbeat_ack"; the echo runtime
+//     finishes each message before it reads the next frame, so it is never
+//     busy for a session when it reads a heartbeat
 //   - Handles "shutdown" by exiting cleanly
 //   - Ignores unknown message types for forward compatibility
 //
@@ -77,9 +79,13 @@ type Response struct {
 	Output    []MessagePart `json:"output"`
 }
 
-// HeartbeatAck acknowledges a heartbeat ping.
+// HeartbeatAck acknowledges a heartbeat ping. SessionID and Busy report
+// that the runtime is doing work for the session the heartbeat names; a
+// runtime that is idle omits both.
 type HeartbeatAck struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Busy      bool   `json:"busy,omitempty"`
 }
 
 // ---- Main loop ----
@@ -135,7 +141,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "echo-runtime: received tool_result id=%s (ignored)\n", msg.ID)
 
 		case "heartbeat":
-			// Respond immediately, within 10 seconds.
+			// Respond immediately, within 10 seconds. The echo runtime has
+			// finished every message it read, so it does no work for the
+			// session the heartbeat names and reports no busy session.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":
@@ -231,7 +239,9 @@ case "heartbeat":
 	writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 ```
 
-The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds. A missed acknowledgment ends that session's stream, and the runtime process receives no signal. The gateway handles the session as a runtime crash. The heartbeat handler should be immediate --- do not do any heavy work here.
+The adapter sends a `heartbeat` once per interval for each session it holds, naming the session in `sessionId`. You MUST respond within 10 seconds. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. The heartbeat handler should be immediate --- do not do any heavy work here.
+
+The echo runtime handles each message to completion before it reads the next frame, so when it reads a heartbeat it is doing no work for any session, and a bare `heartbeat_ack` is correct. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding one session; each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension). A runtime that waits for a `tool_result` or does other work across frames reports it, as [How to Modify It for Your Own Runtime](#how-to-modify-it-for-your-own-runtime) shows.
 
 ### Handling `shutdown`
 
@@ -351,9 +361,21 @@ case "message":
 		Arguments: map[string]string{"path": "/workspace/slots/" + msg.SessionID + "/current/input.txt"},
 	}
 	writeJSON(readCall)
+	pending[msg.SessionID]++ // pending := map[string]int{} in main
 
 	// Continue reading stdin for the tool_result
 	// (heartbeats may arrive before the result)
+```
+
+While a tool call is pending, the runtime is doing work for the session, so its heartbeat acknowledgement reports `busy: true` with the heartbeat's `sessionId`:
+
+```go
+case "heartbeat":
+	if pending[msg.SessionID] > 0 {
+		writeJSON(HeartbeatAck{Type: "heartbeat_ack", SessionID: msg.SessionID, Busy: true})
+	} else {
+		writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+	}
 ```
 
 3. **Handle `tool_result`** to process the results of your tool calls:
@@ -361,6 +383,7 @@ case "message":
 ```go
 case "tool_result":
 	if msg.ID == "tc_001" {
+		pending[msg.SessionID]--
 		fileContent := msg.Content[0].Inline
 		// Process the file content...
 	}

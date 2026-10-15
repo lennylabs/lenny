@@ -30,6 +30,7 @@ stateDiagram-v2
     starting --> completed : POST /v1/sessions/{id}/terminate
 
     running --> suspended : POST /v1/sessions/{id}/interrupt
+    running --> suspended : idle suspension (maxClientIdleSeconds)
     running --> completed : agent finishes
     running --> failed : non-retryable failure
     running --> cancelled : client/parent cancels
@@ -37,11 +38,11 @@ stateDiagram-v2
     running --> resume_pending : retryable failure (retries remain)
     running --> awaiting_client_action : retryable failure (retries exhausted)
 
-    suspended --> running : resume_session / delivery:immediate message
-    suspended --> resume_pending : pod released + resume requested
+    suspended --> running : message or resume (pod still held)
+    suspended --> resume_pending : message or resume (pod released)
     suspended --> completed : POST /v1/sessions/{id}/terminate
     suspended --> cancelled : client/parent cancels
-    suspended --> expired : delegation lease expiry
+    suspended --> expired : suspended-session lifetime or delegation lease expiry
 
     resume_pending --> running : pod allocated, workspace restored
     resume_pending --> awaiting_client_action : maxResumeWindow elapsed
@@ -65,8 +66,8 @@ stateDiagram-v2
 | `ready` | Setup complete, awaiting `start`. | No |
 | `starting` | Agent runtime is launching. | No |
 | `running` | Agent is actively executing. May also be in the `input_required` sub-state (see below). | No |
-| `suspended` | Agent paused via `interrupt`; pod held, workspace preserved. | No |
-| `resume_pending` | Pod failed; gateway is retrying on a new pod. | No |
+| `suspended` | Agent paused via `interrupt` or by idle suspension; workspace preserved. After an interrupt the pod is held for up to `maxSuspendedPodHoldSeconds` and then released; an idle suspension releases the pod as it suspends the session. Any message or resume call resumes the session. The session expires after `gateway.maxSuspendedSessionSeconds` (default 7 days) in this state. | No |
+| `resume_pending` | Gateway is restoring the session onto a new pod, after a pod failure or a resume of a `suspended` session whose pod was released. | No |
 | `awaiting_client_action` | Retries exhausted or resume window elapsed; client must explicitly resume or terminate. | No |
 | `completed` | Agent finished successfully. | Yes |
 | `failed` | Unrecoverable error. | Yes |
@@ -77,7 +78,7 @@ stateDiagram-v2
 
 `input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required`: the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
 
-While in `input_required`, all session timers (including `maxSessionAge`) continue running; the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on a retryable failure with retries remaining), `awaiting_client_action` (on a retryable failure with retries exhausted), or `failed` (on a non-retryable failure). The session's `retryPolicy` classifies each pod or runtime failure as retryable or non-retryable.
+While in `input_required`, the session is logically active and `maxSessionAge` keeps running. The `maxClientIdleSeconds` idle clock is not evaluated, because the runtime is waiting for the client, so the session is not idle-suspended; it keeps its pod until `maxSessionAge` expires it or the `lenny/request_input` call expires. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on a retryable failure with retries remaining), `awaiting_client_action` (on a retryable failure with retries exhausted), or `failed` (on a non-retryable failure). The session's `retryPolicy` classifies each pod or runtime failure as retryable or non-retryable.
 
 ---
 
@@ -104,6 +105,11 @@ Authorization: Bearer <token>
     "mode": "auto_then_client",
     "maxRetries": 2,
     "retryableFailures": ["pod_evicted", "node_lost", "runtime_crash"],
+    "nonRetryableFailures": [
+      "workspace_validation_failed",
+      "setup_command_failed",
+      "credential_rejected"
+    ],
     "maxSessionAgeSeconds": 7200,
     "maxResumeWindowSeconds": 900
   },
@@ -252,7 +258,7 @@ Authorization: Bearer <token>
 |---|---|
 | `running` (runtime available) | Delivered to runtime stdin |
 | `running` (tool call in flight) | Buffered in session inbox, delivered when runtime is ready |
-| `suspended` | Buffered in inbox; with `delivery: "immediate"`, atomically resumes and delivers |
+| `suspended` | Resumes the session, whatever the `delivery` value. A message that the session's coordinating gateway replica can deliver at once to a held pod is delivered; every other message is held in the session's dead-letter queue until the resume delivers it. Refused with `QUOTA_EXCEEDED` when a concurrent-session limit the session counts toward is full |
 | `resume_pending` / `awaiting_client_action` | Enqueued in dead-letter queue with TTL |
 | Pre-running (`created`, `ready`, `starting`) | Rejected with `TARGET_NOT_READY` for external clients |
 | Terminal | Rejected with `TARGET_TERMINAL` |
@@ -273,11 +279,23 @@ Authorization: Bearer <token>
 }
 ```
 
-Valid only when the session is `running`. What the agent receives depends on its runtime's [integration level](../runtime-author-guide/integration-levels.md). The pod is held for up to `maxSuspendedPodHoldSeconds` (default 900s) before being released.
+Valid only when the session is `running`. What the agent receives depends on its runtime's [integration level](../runtime-author-guide/integration-levels.md). The pod is held for up to `maxSuspendedPodHoldSeconds` (default 900s). When the hold ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`.
+
+### Idle Suspension
+
+A `running` session with no activity for `maxClientIdleSeconds` (default 900s) is suspended by the gateway, and its pod or slot is released. A message to the session, its runtime's output and tool use, and the runtime's `busy` report on its heartbeat acknowledgement all count as activity. The runtime adapter in the pod keeps its own activity window for the session, and a session whose adapter observed activity within the window stays `running`. The gateway checkpoints the workspace and releases the pod or slot in the same sequence that suspends the session, so an idle-suspended session never holds a pod.
+
+A session that cannot be idle-suspended expires with the `max_idle_time` reason instead. These are sessions whose runtime is `type: mcp` and sessions whose pool runs `executionMode: service`.
+
+A `suspended` session, whether interrupted or idle-suspended, does not count toward the concurrent-session limits, and the `maxSessionAge` and `maxClientIdleSeconds` clocks are paused while it is suspended. The session expires with the `max_idle_time` reason when it stays `suspended` for `gateway.maxSuspendedSessionSeconds` (default 604800s, 7 days).
 
 ### g. Resume
 
-Resume a session that is in `awaiting_client_action` (after automatic retries are exhausted):
+The gateway recovers a session automatically. After a retryable pod or stream failure, the session enters `resume_pending`, and the gateway's resume driver claims a replacement pod and restores the session onto it. The driver restores the workspace from the latest checkpoint. A session that has neither a checkpoint nor a minimal eviction state record is rebuilt from its workspace plan, including its setup commands, with no carried conversation state. The restore assigns the session new credential leases on the replacement pod, and while the pool or the credential pool is exhausted the session waits in `resume_pending`.
+
+`retryCount` advances by one each time a pod failure, a failure of a restore after the driver has claimed the replacement pod, or the gateway's watchdog for a stalled restore moves the session into `resume_pending`. A successful restore does not advance it, and a resume requested by a client or by a message does not advance it. When `retryCount` reaches `retryPolicy.maxRetries`, or when the session stays in `resume_pending` for `maxResumeWindowSeconds`, the session moves to `awaiting_client_action`.
+
+`POST /v1/sessions/{id}/resume` is the client override. It resumes a session in `awaiting_client_action` or a `suspended` session:
 
 ```
 POST /v1/sessions/sess_abc123/resume
@@ -293,9 +311,11 @@ Authorization: Bearer <token>
 }
 ```
 
-The gateway allocates a new pod, restores the workspace from the latest checkpoint, and resumes the session. The state transitions from `resume_pending` to `running` once the pod is ready.
+The call returns the session in its new state. From `awaiting_client_action`, and from a `suspended` session whose pod was released, the session is returned in `resume_pending`: the resume driver restores it onto a new pod, and the restore's outcome arrives on the event stream as a `status_change` event. A `suspended` session whose pod is still held is returned in `running`. The MCP `resume_session` tool behaves the same way.
 
-For suspended sessions, send a message with `delivery: "immediate"` to trigger automatic resume, or wait for the client to call `resume_session` via MCP.
+A message to a `suspended` session also resumes it, whatever its `delivery` value, so a client does not need to call `resume` before sending a message.
+
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. When a limit the session counts toward is full, the resume, or the message that would resume the session, is refused with `429 QUOTA_EXCEEDED`, and the session stays `suspended`. A client that sent an `Idempotency-Key` with a refused resume retries with a new key, because the gateway returns the cached refusal for the original key until that key expires.
 
 ### h. Terminate
 
@@ -525,7 +545,7 @@ The source session must be in a terminal state. Two replay modes:
 | `POST /v1/sessions/{id}/start` | `ready` | `starting` then `running` |
 | `POST /v1/sessions/{id}/interrupt` | `running` | `suspended` |
 | `POST /v1/sessions/{id}/terminate` | Any non-terminal | `completed` |
-| `POST /v1/sessions/{id}/resume` | `awaiting_client_action` | `resume_pending` then `running` |
+| `POST /v1/sessions/{id}/resume` | `awaiting_client_action`, `suspended` | `awaiting_client_action` to `resume_pending`; `suspended` to `resume_pending` when the pod was released; `suspended` to `running` when the pod is still held |
 | `POST /v1/sessions/{id}/messages` | Any non-terminal | Varies by state (see delivery semantics) |
 | `POST /v1/sessions/{id}/derive` | Terminal states; non-terminal with `allowStale: true` | Creates new session |
 | `DELETE /v1/sessions/{id}` | Any non-terminal | `cancelled` |
@@ -637,11 +657,12 @@ The `treeUsage` field is populated only when the session has a delegation tree a
 | Timeout | Default | Description |
 |---|---|---|
 | `maxCreatedStateTimeout` | 300s | Time allowed in `created` state before auto-expiry |
-| `maxSessionAge` | 7200s (2h) | Maximum wall-clock session duration |
-| `maxIdleTime` | 600s (10m) | Maximum time without activity before idle expiry |
-| `maxResumeWindow` | 900s (15m) | Time to find a new pod after failure before escalating to `awaiting_client_action` |
+| `maxSessionAge` | 7200s (2h) | Maximum active session time. The clock pauses while the session is `suspended`, `resume_pending`, or `awaiting_client_action` |
+| `maxClientIdleSeconds` | 900s (15m) | Time without activity before the session is idle-suspended, or expired when it cannot be idle-suspended |
+| `maxResumeWindow` | 900s (15m) | Maximum time a session stays in `resume_pending` before it moves to `awaiting_client_action` |
 | `maxAwaitingClientAction` | 900s (15m) | Time in `awaiting_client_action` before auto-expiry |
-| `maxSuspendedPodHold` | 900s (15m) | Time to hold the pod during suspension before releasing it |
+| `maxSuspendedPodHold` | 900s (15m) | Time an interrupted session holds its pod before the gateway checkpoints the workspace and releases it. An idle suspension holds no pod |
+| `gateway.maxSuspendedSessionSeconds` | 604800s (7d) | Suspended-session lifetime: time a session stays `suspended` before it expires |
 
 A `session_expiring_soon` event is sent to the client and pod 5 minutes before `maxSessionAge` expires.
 
