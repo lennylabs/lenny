@@ -1977,7 +1977,13 @@
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestHeldMessageReadOutageDoesNotStallDelivery_spec_7_2",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestPrimaryPartitionDoesNotStallMessages_spec_12_3",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestSealedSessionMessageDuringPrimaryPartition_spec_6_2",
-        "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestIdleSuspensionFaultInjection_spec_6_2"
+        "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestIdleSuspensionFaultInjection_spec_6_2",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeFiledFindingsAreFiledOnce_spec_7_2",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestFiledSuspendResumeFindingsMatchTheTree_spec_7_2",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestBlockedSkipsNameOpenFindings_spec_7_2",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeRecordProbes_spec_7_2",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSessionInboxRedeliveryRowStaysAbsentUnderForwarding_spec_29_3",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestOffHolderInboxFindingCrossReferencesTheForwardFinding_spec_29_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2057,6 +2063,9 @@
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3",
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1",
         "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureRecordProbes_spec_28_5_1",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeClaimRowsNameDeclaredSymbols_spec_7_3",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestClosedSuspendResumeFindingsCiteLandedCodeAndTests_spec_7_3",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestRemediationPlanRecordsTheSuspendResumeProposal_spec_7_3",
         "tests/tier4_integration/elicitation_expiry_test.go::TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2",
         "tests/tier0_static/api_codegen_drift_test.go::TestAPICodegenMatchesCommittedOutput",
         "tests/tier3_contract/rest_sessions/resume_binderless_test.go::TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1",

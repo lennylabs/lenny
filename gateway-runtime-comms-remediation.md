@@ -2504,7 +2504,7 @@ other while their code proceeds in parallel.
     filed: the per-frame `coordination_generation` check on `CH-ATTACH`, two retry budgets, the embedded
     `Interrupt`, the hung-runtime scrub residual (assigned to proposal 0087 part 1's `CH-SUPERVISE`
     liveness ping), and the undocumented `retryPolicy.mode: client_only`.
-- [ ] Session suspend-and-resume proposal (proposal 0092, in review), after proposal 0091 and before
+- [x] Session suspend-and-resume proposal (proposal 0092, implemented 2026-10-15), after proposal 0091 and before
   proposal 0087 part 1 (owner decision, 2026-10-06). It stays one proposal (owner decision, 2026-10-10).
   After it is implemented, the next steps are R4, then a BUILD-GAPS fix for the credential fail-open that
   proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails)
@@ -2738,12 +2738,12 @@ Proposals, third wave:
   - **Members.** F-8.2.30 (TT-32), F-8.3.2 to F-8.3.5 (TT-50, TT-58, TT-59, and TT-65), F-8.6.24 to
     F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
     F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
-    (TT-68), plus F-8.10.18 (TT-48) if 0092 records it as a departure. Five are High, counting TT-48.
+    (TT-68). Four are High.
   - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
     recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
     the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
     TT-67, and TT-68).
-  - **Dependencies.** After 0092's item 11 for the tree-recovery members (TT-48, TT-49, TT-53, and TT-54),
+  - **Dependencies.** After 0092's item 11 for the tree-recovery members (TT-49, TT-53, and TT-54),
     and after P2 for the cascade and budget-return members, which run in the terminal tail. TT-47 (High,
     derive and replay lineage) is pulled forward as its own small proposal if P4 slips.
   - **Overlapping plan steps.** R20 (cross-replica input wait, for TT-62; TT-51 itself is R20's).
@@ -2771,7 +2771,9 @@ Proposals, third wave:
   (TT-16, a failed occupancy-zero recycle patch on a concurrent pool skips `ShutdownRecycle`, so the pod is
   reused without the whole-pod scrub; the fix retires the pod when the patch fails) and F-5.2.48 (TT-17,
   `ClaimSlot` places a new session on a pod whose per-pod claim is recycling). Both sit next to F-5.2.37 and
-  F-5.2.46, and their tests follow the expansive-test instruction above. It can start right
+  F-5.2.46, and their tests follow the expansive-test instruction above. It also takes the gap that an
+  `expired` session's pod is recycled on a recycling pool, which §29.4 implies and no section states, and
+  which proposal 0092 did not take. It can start right
   after proposal 0079. It edits §5.2, §4.6.1, and the warm-pool controller like the pinned-idle proposal,
   so the two are drafted together or one immediately after the other, with their spec steps serialized.
 - [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)

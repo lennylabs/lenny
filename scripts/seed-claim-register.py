@@ -142,6 +142,11 @@ def canonical(text):
 # `deferral_id` the reference's own cell assigned, because a wired mechanism has
 # no step left to close it and the claim-register validator refuses a `WIRED`
 # row that names one.
+#
+# An entry may also carry a `deferral_id`, which replaces the step the
+# deferral rules assigned to a row that stays unwired or absent. It is used when
+# part of the mechanism landed and the part that remains belongs to a different
+# step than the one the reference's wording selects.
 SURFACE_OVERRIDES = {
     "Checkpoint restore onto a concurrent pod": {
         "status": "WIRED",
@@ -164,6 +169,21 @@ SURFACE_OVERRIDES = {
                 "from the opening request and keeps it across turns, with one reader "
                 "that hands each response to the turn holding the stream, until the "
                 "binding is released, the stream is evicted, or the stream ends",
+    },
+    # The coordinating replica now dequeues its own inbox through deliverBuffered,
+    # so the reference's "no dequeue path" no longer holds. What stays absent is
+    # the redelivery of a message a non-coordinating replica buffered in its own
+    # in-process inbox under durableInbox: false, which cross-replica message
+    # forwarding (R19) closes, and BUILD-GAPS.md F-29.3.2 records it.
+    "Session inbox redelivery": {
+        "deferral_id": "R19",
+        "surface": "`pkg/gateway/sessionserver/held_delivery.go` `deliverBuffered` dequeues "
+                   "the coordinating replica's own inbox; no path redelivers a message a "
+                   "non-coordinating replica holds in its in-process inbox under "
+                   "durableInbox: false",
+        "note": "the coordinating replica delivers its own inbox at each delivery point, "
+                "and a message a peer replica buffered in that peer's in-memory inbox "
+                "is read by no other replica",
     },
 }
 
@@ -319,6 +339,173 @@ EXPLICIT = [
                 "files a runtime_crash report that the failure funnel applies by releasing "
                 "the pod with the failed disposition, with no new Attach dialed",
     },
+    # Session suspend and resume. The resume driver row carries the §28.5.1
+    # CH-ATTACH sentence that the gateway re-attaches a session on its
+    # replacement pod, which had no row while no driver existed.
+    {
+        "claim": "Resume driver restores a resume_pending session onto a replacement pod "
+                 "and re-attaches CH-ATTACH",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepResumePending`, "
+                   "`pkg/gateway/sessionserver/resume_driver.go` `DriveResume`, "
+                   "`pkg/gateway/sessionserver/resume_rebind.go` `resumeOnPod`",
+        "note": "the watchdog hands each resume_pending row to the driver, which starts one "
+                "restore attempt only on the replica holding the session's coordination "
+                "lease, writes resuming, claims a replacement pod, re-attaches the session "
+                "on it, and commits running",
+    },
+    {
+        "claim": "Coordination lease adoption in the recovering and pod-holding states, "
+                 "with no lease and a released mirror for a podless suspended session",
+        "status": "WIRED",
+        "spec_anchor": "#register-entry-register",
+        "surface": "`pkg/gateway/coordination/coordination/coordination.go` `adoptedState`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `podlessSuspended`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `Sweeper.RecordHandoff`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `Sweeper.releaseMirror`",
+        "note": "a peer adopts a lapsed REG-COORDLEASE on a resume_pending, "
+                "awaiting_client_action, or pod-holding running, input_required, or suspended "
+                "row through the generation compare-and-swap, and releases the lease and "
+                "the mirror entry of a suspended row whose pod was released",
+    },
+    {
+        "claim": "Suspension release checkpoints a held-pod suspended session at "
+                 "maxSuspendedPodHoldSeconds and releases its pod",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `sweepSuspended`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `ReleaseSuspendedPod`",
+        "note": "the watchdog hands a suspended session whose pod hold ended to the "
+                "coordinating replica, which checkpoints the workspace, clears the row's "
+                "pod assignment, and releases the pod while the session stays suspended",
+    },
+    {
+        "claim": "Idle suspension seals, checkpoints, and suspends an idle running session "
+                 "and releases its pod or slot",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepIdle`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `SuspendIdle`",
+        "note": "a running session with no qualifying activity for maxClientIdleSeconds is "
+                "sealed on the adapter, checkpointed, and written suspended, and its pod or "
+                "slot is released at once",
+    },
+    {
+        "claim": "Adapter session seal keyed on the session's last activity",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, "
+                   "`pkg/adapter/activity.go` `observeRuntimeFrame`, "
+                   "`pkg/gateway/sessionserver/session_seal.go` `sealSession`",
+        "note": "the adapter seals a session only when its last activity is older than the "
+                "requested idle bound, answers the activity age otherwise, and refuses "
+                "every later message to a sealed session until it is unsealed",
+    },
+    {
+        "claim": "SealSession unary RPC on the CH-ATTACH service",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `Client.SealSession`",
+        "note": "the gateway calls SealSession with the session's coordination generation "
+                "before an idle suspension, and the adapter answers sealed or the session's "
+                "idle age",
+    },
+    {
+        "claim": "UnsealSession unary RPC on the CH-ATTACH service",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.UnsealSession`, "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `Client.UnsealSession`",
+        "note": "the gateway lifts a seal when the idle suspension it guarded does not "
+                "complete, and the adapter admits messages to the session again",
+    },
+    {
+        "claim": "heartbeat frame names its session in sessionId",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/heartbeat.go` `heartbeatMonitor.frame`, "
+                   "`pkg/adapter/heartbeat.go` `Server.startHeartbeatLocked`",
+        "note": "the adapter runs one heartbeat monitor per session from its written "
+                "session_start and stamps the session's identifier on every heartbeat",
+    },
+    {
+        "claim": "heartbeat_ack sessionId and busy fields, with the heartbeat busy "
+                 "compliance check",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/activity.go` `observeHeartbeatAck`, "
+                   "`sdks/runtime/go/runtime/session.go` `busyCounts`, "
+                   "`cmd/lenny-compliance/heartbeatbusy.go` `checkHeartbeatBusy`",
+        "note": "the runtime SDK answers busy true for a session while it does work for it, "
+                "the adapter counts a busy ack that names a session as that session's "
+                "activity, and the compliance suite checks the busy report",
+    },
+    {
+        "claim": "Backlog resume of a suspended session that holds messages",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/sessionserver/suspended_backlog.go` `Server.ResumeBacklog`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `checkBacklogOnce`, "
+                   "`pkg/gateway/sessionserver/suspended_backlog.go` `BacklogRechecker.Pass`, "
+                   "`cmd/lenny-gateway/leader_sweeps.go` `addSuspendedBacklogRecheck`",
+        "note": "the coordinating replica's sweep resumes a held-pod suspended session with "
+                "held messages, the suspension release checks once after it releases the "
+                "pod, and the gateway leader re-checks podless suspended sessions",
+    },
+    {
+        "claim": "User erasure deletes each session's message queues",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`cmd/lenny-gateway/adminrouter.go` `buildSessionScopedErasers`, "
+                   "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EraseSession`",
+        "note": "the user-erasure job deletes the DLQ and durable inbox keys of each of the "
+                "user's sessions; tenant deletion does not yet (BUILD-GAPS.md F-12.8.37)",
+    },
+    {
+        "claim": "Pod release returns only the credential leases at or below the binding's "
+                 "coordination generation",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/podlifecycle/podsession/credentiallease.go` "
+                   "`Binder.releasePodCredentials`, "
+                   "`pkg/gateway/credentials/credassign/credassign.go` `Service.ReleaseThrough`",
+        "note": "a pod release returns the leases its own binding minted and the session's "
+                "leases recorded at or below its generation, so a later incarnation's "
+                "leases stay in place",
+    },
+    {
+        "claim": "Suspended-session lifetime expiry",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `Watchdog.expireSuspendedIfDue`, "
+                   "`pkg/gateway/runtime/watchdog/watchdog.go` `EffectiveMaxSuspendedSessionSeconds`",
+        "note": "the watchdog expires a session that stayed suspended past the "
+                "operator-tunable suspended-session lifetime",
+    },
+    {
+        "claim": "Concurrent-session count excludes suspended sessions, and a resume of a "
+                 "suspended session passes the admission check",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/api/v1/session/session.go` `CountsTowardConcurrencyCaps`, "
+                   "`pkg/gateway/session/sessionstore/pgstore/pgstore.go` `Store.CountActiveSessions`, "
+                   "`pkg/gateway/sessionserver/quota.go` `Server.admitResume`, "
+                   "`pkg/gateway/mcpfabric/mcptools/send_delivery.go` `mcpSend.admitResume`",
+        "note": "the tenant, user, runtime, and global counts leave suspended sessions out, "
+                "and a resume that would exceed a cap is refused with the quota error while "
+                "the session stays suspended",
+    },
+    {
+        "claim": "Session age measured as active time",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/gateway/session/sessionstore/sessionstore.go` `ActiveAge`, "
+                   "`pkg/gateway/runtime/watchdog/watchdog.go` `Watchdog.sweepMaxAge`",
+        "note": "the watchdog compares the session's accumulated active time, which pauses "
+                "in suspended and the recovery states, with maxSessionAgeSeconds",
+    },
 ]
 
 # One row per request-message field the specification adds, each naming the step
@@ -431,6 +618,8 @@ def main():
                     row["status"] = override["status"]
                     if row["status"] == "WIRED":
                         row.pop("deferral_id", None)
+                if "deferral_id" in override:
+                    row["deferral_id"] = override["deferral_id"]
                 overridden.add(row["claim"])
             claims.append(row)
 
