@@ -126,29 +126,44 @@ func (r *silentRuntime) Close(context.Context, string) error                   {
 type sealStep int
 
 const (
+	// markSeal is the mark placed before the seal call.
 	markSeal sealStep = iota
+	// grantSeal is the adapter's sealed answer to the call.
+	grantSeal
+	// withdrawGrant is an unseal whose outcome is unknown.
+	withdrawGrant
+	// clearSeal is a not-sealed answer or a lifted seal.
 	clearSeal
 )
 
 // apply runs the step on bind.
 func (st sealStep) apply(bind *podsession.BindResult) {
-	if st == markSeal {
+	switch st {
+	case markSeal:
 		bind.MarkSealed()
-		return
+	case grantSeal:
+		bind.GrantSealed(bind.SealEpoch())
+	case withdrawGrant:
+		bind.WithdrawSealGrant()
+	default:
+		bind.ClearSealed()
 	}
-	bind.ClearSealed()
 }
 
 // spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
 // clock behavior across states)
 // A Send whose stream ends returns an error satisfying ErrSessionSealed only
-// when its message was written after the binding was marked sealed and the
-// same seal held until the stream ended. A message the runtime received
-// before the mark is a delivered message on an ended stream, because work
-// the runtime began before the seal without producing activity does not
-// prevent the seal and the release ends it; routing it again would deliver
-// it twice. A mark cleared before the end (the adapter answered not sealed)
-// does not make the turn a refusal either.
+// when its message was written after the binding was marked sealed, the
+// adapter granted that seal, and the same seal held until the stream ended.
+// A message the runtime received before the mark is a delivered message on
+// an ended stream, because work the runtime began before the seal without
+// producing activity does not prevent the seal and the release ends it;
+// routing it again would deliver it twice. A mark whose seal call has not
+// returned when the stream ends says nothing about the message, which the
+// adapter may have written to the runtime and counted as activity, so a
+// transport end during the call is a stream end. A mark cleared before the
+// end (the adapter answered not sealed), and a grant an unseal with an
+// unknown outcome withdrew, do not make the turn a refusal either.
 func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -160,9 +175,12 @@ func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 	}{
 		{name: "unsealed binding"},
 		{name: "marked after the runtime received the message", afterReceipt: []sealStep{markSeal}},
-		{name: "marked before the write", beforeWrite: []sealStep{markSeal}, wantSealed: true},
-		{name: "marked before the write and cleared before the end", beforeWrite: []sealStep{markSeal}, afterReceipt: []sealStep{clearSeal}},
-		{name: "marked before the write and re-marked under a new seal", beforeWrite: []sealStep{markSeal}, afterReceipt: []sealStep{clearSeal, markSeal}},
+		{name: "granted before the write", beforeWrite: []sealStep{markSeal, grantSeal}, wantSealed: true},
+		{name: "marked before the write and the seal call still running at the end", beforeWrite: []sealStep{markSeal}},
+		{name: "granted before the write and cleared before the end", beforeWrite: []sealStep{markSeal, grantSeal}, afterReceipt: []sealStep{clearSeal}},
+		{name: "granted before the write and re-granted under a new seal", beforeWrite: []sealStep{markSeal, grantSeal}, afterReceipt: []sealStep{clearSeal, markSeal, grantSeal}},
+		{name: "granted before the write and withdrawn by an unknown unseal", beforeWrite: []sealStep{markSeal, grantSeal}, afterReceipt: []sealStep{withdrawGrant}},
+		{name: "grant withdrawn before the write", beforeWrite: []sealStep{markSeal, grantSeal, withdrawGrant}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}

@@ -116,10 +116,14 @@ func (c *attachConn) endedSealed() bool {
 // endCause is the cause a Send waiting on the ended stream returns for a
 // turn whose envelope it wrote at seal epoch writeEpoch. It is
 // ErrSessionSealed when the adapter refused the message as sealed, or when
-// the turn's message was written after the binding was marked sealed and the
-// same seal held until the stream ended, because the adapter refuses every
-// message that reaches it under a seal and the stream's end, whatever caused
-// it, then means the message did not reach the runtime. A message written
+// the turn's message was written after the binding was marked sealed, the
+// adapter granted that seal, and the same seal held until the stream ended,
+// because the adapter refuses every message that reaches it under a granted
+// seal and the stream's end, whatever caused it, then means the message did
+// not reach the runtime. A mark the adapter has not granted when the stream
+// ends, such as one placed before a seal call that is still running, says
+// nothing about the message: the adapter may have written it to the runtime
+// and counted it as activity, so the turn returns errStreamEnded. A message written
 // before the seal mark can have reached the runtime, since work the runtime
 // began before the seal without producing activity does not prevent the
 // seal and the release that follows ends it, so its turn returns

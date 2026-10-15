@@ -169,6 +169,37 @@ func TestUnboundSendReroutesWhenTheSessionLeftRunning_spec_6_2(t *testing.T) {
 	}
 }
 
+// TestUnboundSendAfterSealedRefusalHolds_spec_6_2 pins the idle-suspension
+// race on REST: the adapter refuses the batch as sealed while the primary
+// re-read still shows `running`, the re-routed send then finds the pod
+// unbound by the release, and the batch, which never reached the runtime, is
+// held in the DLQ and answered queued rather than failed with
+// EXECUTOR_FAILURE.
+//
+// spec: 6.2 (Idle suspension), 7.2 (Message delivery routing — seven paths,
+// path 6)
+func TestUnboundSendAfterSealedRefusalHolds_spec_6_2(t *testing.T) {
+	r := newSuspensionRig(t, true)
+	r.seedRunning(t, "s1")
+	sends := 0
+	r.exec.sendErr = func() error {
+		sends++
+		if sends == 1 {
+			return &executor.SealedError{}
+		}
+		return fmt.Errorf("podexec: session s1: %w", executor.ErrNotBound)
+	}
+	if got := postMessage(t, r.srv, "s1"); got != string(session.DeliveryStatusQueued) {
+		t.Fatalf("receipt = %q, want queued", got)
+	}
+	if sends != 2 {
+		t.Fatalf("sends = %d, want the refused send and one re-routed send", sends)
+	}
+	if r.dlqLen(t, "s1") != 1 {
+		t.Fatalf("DLQ = %d, want the refused batch held", r.dlqLen(t, "s1"))
+	}
+}
+
 // TestResumeBacklogResumesAHeldPodSession_spec_7_2 pins the backlog resume:
 // with a message accepted after the suspension, ResumeBacklog answers true and
 // resumes the session on its pod off the caller, delivering the message; with

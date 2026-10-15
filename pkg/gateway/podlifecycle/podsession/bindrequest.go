@@ -268,6 +268,17 @@ type BindResult struct {
 	// prevent it. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
 	// (maxClientIdleSeconds clock behavior across states).
 	sealEpoch atomic.Int64
+	// sealGranted is the odd seal epoch the adapter confirmed it sealed
+	// under, or zero. The mark is placed before the adapter decides the
+	// seal, so during the call it says nothing about whether the adapter
+	// refuses messages: a message written then reaches the runtime when it
+	// arrives before the seal. Only a granted seal makes a stream end a
+	// refusal, so SealHeldSince requires the captured epoch to be granted.
+	// An unseal whose outcome is unknown withdraws the grant, because the
+	// adapter may already have lifted the seal. spec: §4.7.1 (Role and
+	// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior
+	// across states).
+	sealGranted atomic.Int64
 }
 
 // MarkSealed marks the binding sealed. A binding already marked keeps its
@@ -301,10 +312,29 @@ func (r *BindResult) Sealed() bool { return r.sealEpoch.Load()%2 == 1 }
 // between them.
 func (r *BindResult) SealEpoch() int64 { return r.sealEpoch.Load() }
 
+// GrantSealed records that the adapter sealed the session under epoch, the
+// odd epoch SealEpoch returned after the mark that preceded the seal call.
+// An epoch that is even or no longer current records nothing, since the
+// mark it names was cleared. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) GrantSealed(epoch int64) {
+	if epoch%2 == 1 && r.sealEpoch.Load() == epoch {
+		r.sealGranted.Store(epoch)
+	}
+}
+
+// WithdrawSealGrant withdraws a recorded grant and keeps the mark, after an
+// unseal whose outcome is unknown: the adapter may still refuse the
+// session's messages, or may have lifted the seal and delivered them, so a
+// stream end no longer reads as a refusal. spec: §4.7.1 (Role and Gateway
+// RPC Contract).
+func (r *BindResult) WithdrawSealGrant() { r.sealGranted.Store(0) }
+
 // SealHeldSince reports whether the binding is marked sealed under the same
-// seal it was marked sealed under when SealEpoch returned epoch.
+// seal it was marked sealed under when SealEpoch returned epoch, and the
+// adapter granted that seal and no unknown unseal outcome withdrew the
+// grant. A mark the adapter has not yet granted reports false.
 func (r *BindResult) SealHeldSince(epoch int64) bool {
-	return epoch%2 == 1 && r.sealEpoch.Load() == epoch
+	return epoch%2 == 1 && r.sealEpoch.Load() == epoch && r.sealGranted.Load() == epoch
 }
 
 // MarkCrashed records that the binding's attach stream ended in a reported

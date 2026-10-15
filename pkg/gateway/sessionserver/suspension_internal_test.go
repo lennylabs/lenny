@@ -667,9 +667,19 @@ func TestSealMarksTheBinding_spec_4_7_1(t *testing.T) {
 	if sealed, _, err := s.sealSession(ctx, bind, 1); err != nil || !sealed || !bind.Sealed() {
 		t.Fatalf("granted seal: sealed %v err %v marked %v; want marked", sealed, err, bind.Sealed())
 	}
+	epoch := bind.SealEpoch()
+	if !bind.SealHeldSince(epoch) {
+		t.Fatal("granted seal: the seal does not read as held for a turn written under it")
+	}
 	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &failingUnsealer{} }
 	if err := s.unsealSession(ctx, bind); !errors.Is(err, errUnsealFailed) || !bind.Sealed() {
 		t.Fatalf("failed unseal: err %v marked %v; want the error and the mark kept", err, bind.Sealed())
+	}
+	// The adapter may have lifted the seal before the failure, so a turn
+	// written afterwards can reach the runtime: its stream end is not a
+	// refusal.
+	if bind.SealHeldSince(epoch) {
+		t.Fatal("failed unseal: the grant still reads as held after an unseal with an unknown outcome")
 	}
 	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &fakeSealer{} }
 	if err := s.unsealSession(ctx, bind); err != nil || bind.Sealed() {
@@ -683,10 +693,14 @@ type markObservingSealer struct {
 	fakeSealer
 	bind        *podsession.BindResult
 	markedInRPC bool
+	// heldInRPC records whether a turn written during the call would read
+	// its stream's end as a refusal.
+	heldInRPC bool
 }
 
 func (f *markObservingSealer) SealSession(ctx context.Context, id string, gen int64, idle int) (bool, time.Duration, error) {
 	f.markedInRPC = f.bind.Sealed()
+	f.heldInRPC = f.bind.SealHeldSince(f.bind.SealEpoch())
 	return f.fakeSealer.SealSession(ctx, id, gen, idle)
 }
 
@@ -724,6 +738,15 @@ func TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1(t *testing.T) {
 			_, _, _ = s.sealSession(ctx, bind, 1)
 			if !sealer.markedInRPC {
 				t.Fatal("the binding was not marked sealed while the adapter decided the seal")
+			}
+			// Before the adapter answers, the mark does not say the
+			// adapter refuses messages, so a stream end during the call
+			// is not a refusal.
+			if !tc.markedBefore && sealer.heldInRPC {
+				t.Fatal("a turn written during the seal call reads as refused before the adapter granted the seal")
+			}
+			if granted := bind.SealHeldSince(bind.SealEpoch()); !tc.markedBefore && granted != (tc.sealed && tc.err == nil) {
+				t.Fatalf("seal held after the call = %v, want %v", granted, tc.sealed && tc.err == nil)
 			}
 			if bind.Sealed() != tc.wantMarked {
 				t.Fatalf("marked after the call = %v, want %v", bind.Sealed(), tc.wantMarked)

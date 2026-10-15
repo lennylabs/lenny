@@ -58,10 +58,12 @@ func (s *Server) sealerOf(bind *podsession.BindResult) sessionSealer {
 // activity and does not seal. When the adapter does not seal, or the call
 // fails, the mark is cleared, unless the binding was already marked before
 // the call, because a seal the adapter placed earlier stays in place when it
-// answers not sealed. The executor reads the end of a turn's stream as a
-// refusal only when the turn's message was written under a mark that held
-// until the end, so a message written before the mark, which may have
-// reached the runtime, is never routed again.
+// answers not sealed. A sealed answer records the grant for the epoch the
+// mark opened. The executor reads the end of a turn's stream as a refusal
+// only when the turn's message was written under a mark the adapter granted
+// and that held until the end. A message written before the mark, or under
+// a mark the adapter had not yet granted when the stream ended, may have
+// reached the runtime, so it is never routed again.
 // spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
 // clock behavior across states)
 func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, idleSeconds int) (bool, time.Duration, error) {
@@ -71,10 +73,14 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 	}
 	markedBefore := bind.Sealed()
 	bind.MarkSealed()
+	epoch := bind.SealEpoch()
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
 	sealed, idleAge, err := sealer.SealSession(cctx, bind.SessionID, bind.CoordinationGeneration, idleSeconds)
-	if (err != nil || !sealed) && !markedBefore {
+	switch {
+	case err == nil && sealed:
+		bind.GrantSealed(epoch)
+	case !markedBefore:
 		bind.ClearSealed()
 	}
 	return sealed, idleAge, err
@@ -83,7 +89,11 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 // unsealSession lifts the session's seal through its runtime adapter, under
 // the 5 s RPC deadline, at the binding's coordination generation, and clears
 // the binding's seal mark when the adapter lifted it. A failed unseal leaves
-// the mark, because the adapter may still refuse the session's messages.
+// the mark, because the adapter may still refuse the session's messages, and
+// withdraws the grant, because the adapter may instead have lifted the seal
+// before the failure, so a message written afterwards can reach the runtime
+// and its stream's end must not read as a refusal. The adapter's own
+// session_sealed refusal still reports a refused message.
 // spec: §4.7.1 (Role and Gateway RPC Contract)
 func (s *Server) unsealSession(ctx context.Context, bind *podsession.BindResult) error {
 	sealer := s.sealerOf(bind)
@@ -93,6 +103,7 @@ func (s *Server) unsealSession(ctx context.Context, bind *podsession.BindResult)
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
 	if err := sealer.UnsealSession(cctx, bind.SessionID, bind.CoordinationGeneration); err != nil {
+		bind.WithdrawSealGrant()
 		return err
 	}
 	bind.ClearSealed()

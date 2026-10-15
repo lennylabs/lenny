@@ -332,12 +332,17 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 // binding for the session, so nothing was sent, and a primary re-read finds
 // the session no longer `running`: an idle suspension, a release, or a
 // failure report moved it after the classification read. A session still
-// `running`, a re-read failure, or a second attempt returns sendErr.
+// `running` or a re-read failure returns sendErr.
+//
+// A message already routed again after a sealed refusal takes the held
+// branch instead: the adapter refused it under the seal, so it never reached
+// the runtime, and a second failure of the re-routed message holds it in the
+// DLQ and attempts the guarded resume, as a second sealed refusal does.
 // spec: §6.2 (maxClientIdleSeconds clock behavior across states), §7.2
 // (Message delivery routing — seven paths, path 6)
 func (m *mcpSend) rerouteUnbound(ctx context.Context, row sessionstore.Session, sendErr error) (mcp.ToolResult, error) {
 	if m.rerouted {
-		return mcp.ToolResult{}, sendErr
+		return m.holdAndResume(ctx, row)
 	}
 	fresh, err := sessionstore.ReadPrimary(ctx, m.deps.Store, m.deps.PrimaryReadTimeout, m.tenant, row.ID)
 	if err != nil || fresh.State == session.StateRunning {

@@ -304,13 +304,19 @@ func (d *restDelivery) rerouteSealed(row sessionstore.Session, msgs []executor.M
 // binding for the session, so nothing was sent, and a primary re-read finds
 // the session no longer `running`: an idle suspension, a release, or a
 // failure report moved it after the classification read. A session still
-// `running`, a re-read failure, or a second attempt answers EXECUTOR_FAILURE
-// with sendErr.
+// `running` or a re-read failure answers EXECUTOR_FAILURE with sendErr.
+//
+// A batch already routed again after a sealed refusal takes the held branch
+// instead. The adapter refused it under the seal, so it never reached the
+// runtime, and the not-bound send means the release that follows the seal
+// unbound the pod before the re-routed send; a second failure of the
+// re-routed batch keeps it in gateway custody in the DLQ, as a second sealed
+// refusal does.
 // spec: §6.2 (maxClientIdleSeconds clock behavior across states), §7.2
 // (Message delivery routing — seven paths, path 6)
 func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.Message, deliverIdx []int, sendErr error) (deliveryOutcome, bool) {
 	if d.rerouted {
-		return d.executorFailure(sendErr)
+		return d.heldBranch(row, deliverIdx)
 	}
 	fresh, err := d.s.readPrimary(d.r.Context(), row.TenantID, row.ID)
 	if err != nil || fresh.State == session.StateRunning {

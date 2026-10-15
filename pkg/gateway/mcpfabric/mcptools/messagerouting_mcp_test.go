@@ -257,6 +257,42 @@ func TestSendMessageRouting_UnboundSendReroutes_spec_6_2(t *testing.T) {
 	}
 }
 
+// TestSendMessageRouting_UnboundAfterSealedRefusalHolds_spec_6_2 pins the
+// idle-suspension race on MCP: the adapter refuses the message as sealed
+// while the primary re-read still shows `running`, the re-routed send then
+// finds the pod unbound by the release, and the message, which never reached
+// the runtime, is held in the DLQ, the guarded resume is attempted, and the
+// answer is queued rather than a tool error.
+//
+// spec: 6.2 (Idle suspension), 7.2 (Message delivery routing — seven paths,
+// path 6)
+func TestSendMessageRouting_UnboundAfterSealedRefusalHolds_spec_6_2(t *testing.T) {
+	exec := &countingExecutor{}
+	srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+	mkSession(t, store, "sess_race", session.StateRunning, "")
+	attempts := 0
+	exec.onSend = func() error {
+		attempts++
+		if attempts == 1 {
+			return &executor.SealedError{}
+		}
+		return fmt.Errorf("podexec: session sess_race: %w", executor.ErrNotBound)
+	}
+	got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_race","message":"x"}`))
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if attempts != 2 {
+		t.Errorf("send attempts = %d, want the refused send and one re-routed send", attempts)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_race"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want the guarded resume attempted once", len(del.resumed))
+	}
+}
+
 // TestSendMessageRouting_SealedAfterDeliveryIsDelivered_spec_7_2_path6 pins
 // that a refusal the adapter returned after the runtime received the message
 // reports it delivered and routes nothing again.
