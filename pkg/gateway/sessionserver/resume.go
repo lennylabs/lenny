@@ -28,10 +28,13 @@ import (
 //     answers 409 TARGET_NOT_READY, because no inter-replica carrier for the
 //     forward exists.
 //
-// The call claims no pod and runs no post-commit effect itself.
+// The call claims no pod and runs no post-commit effect itself. Every write
+// out of suspended first passes the resume admission check; a refusal
+// answers 429 QUOTA_EXCEEDED and the row stays suspended. The off-holder
+// TARGET_NOT_READY answer writes nothing and runs no check.
 //
 // spec: §7.3 (Retry and Resume), §15.1 (REST API), §29.3 (Interactive
-// message send), §29.6 (Restore and resume)
+// message send), §29.6 (Restore and resume), §11.1 (Resume admission)
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -57,10 +60,25 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.enterResumePending(r.Context(), row)
 	if err != nil {
-		s.writePreconditionError(w, err)
+		s.writeResumeError(w, err)
 		return
 	}
 	s.writeSession(w, http.StatusOK, updated)
+}
+
+// writeResumeError answers a failed POST /resume write: a cap refusal of the
+// resume admission check as 429 QUOTA_EXCEEDED with the details a refused
+// creation carries, a precondition error with its §15.1 code, and any other
+// error, an admission lookup or count error included, as 500
+// INTERNAL_ERROR. The row stays as it was.
+// spec: §11.1 (Resume admission), §15.1 (REST API)
+func (s *Server) writeResumeError(w http.ResponseWriter, err error) {
+	var refusal *CapRefusal
+	if errors.As(err, &refusal) {
+		s.writeCapRefusal(w, refusal)
+		return
+	}
+	s.writePreconditionError(w, err)
 }
 
 // resumeHeldPodRequest serves POST /resume on a suspended session that holds
@@ -98,7 +116,7 @@ func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, ro
 		// read; the call is the podless store write.
 		pending, perr := s.enterResumePending(r.Context(), row)
 		if perr != nil {
-			s.writePreconditionError(w, perr)
+			s.writeResumeError(w, perr)
 			return
 		}
 		s.writeSession(w, http.StatusOK, pending)
@@ -112,7 +130,7 @@ func (s *Server) resumeHeldPodRequest(w http.ResponseWriter, r *http.Request, ro
 		}
 		s.writeSession(w, http.StatusOK, pending)
 	default:
-		s.writePreconditionError(w, err)
+		s.writeResumeError(w, err)
 	}
 }
 

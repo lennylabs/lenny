@@ -429,7 +429,9 @@ func (s *Store) PoolDrainStats(_ context.Context, poolRef string) (int, time.Tim
 }
 
 // CountActiveSessions implements the §11.2 per-tenant concurrent-session
-// quota count: the number of live (non-terminal) sessions for tenantID.
+// quota count: the number of non-terminal sessions other than suspended
+// ones for tenantID, as session.CountsTowardConcurrencyCaps defines.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, nil
@@ -438,7 +440,7 @@ func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, er
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -446,8 +448,9 @@ func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, er
 }
 
 // CountActiveSessionsByUser implements the §11.1 per-user
-// concurrent-session admission count: live (non-terminal) sessions
-// owned by userID within tenantID.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) owned by userID
+// within tenantID. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -456,7 +459,7 @@ func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID st
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && row.UserID == userID && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && row.UserID == userID && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -464,8 +467,9 @@ func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID st
 }
 
 // CountActiveSessionsByRuntime implements the §11.1 per-runtime
-// concurrent-session admission count: live (non-terminal) sessions
-// targeting runtimeRef within tenantID.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) targeting
+// runtimeRef within tenantID. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtimeRef string) (int, error) {
 	if tenantID == "" || runtimeRef == "" {
 		return 0, nil
@@ -474,7 +478,7 @@ func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtim
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && row.RuntimeRef == runtimeRef && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && row.RuntimeRef == runtimeRef && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -482,14 +486,15 @@ func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtim
 }
 
 // CountActiveSessionsGlobal implements the §11.1 global
-// concurrent-session admission count: live (non-terminal) sessions
-// across every tenant.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) across every
+// tenant. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsGlobal(_ context.Context) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if !session.IsTerminal(row.State) {
+		if session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}

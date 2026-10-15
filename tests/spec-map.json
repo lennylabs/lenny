@@ -1941,7 +1941,8 @@
         "tests/tier4_integration/stream_failure_report_test.go::TestEmbeddedInterruptEndsTheStreamWithoutAReport_spec_28_5_1",
         "tests/tier4_integration/stream_failure_report_test.go::TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "tests/tier4_integration/suspended_resume_admission_test.go::TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3015,7 +3016,12 @@
         "tests/tier8_chaos/live_session_test.go",
         "tests/tier9_security/live_session_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
-        "pkg/gateway/sessionserver/create_test.go"
+        "pkg/gateway/sessionserver/create_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go::TestCountedSessionIndexMigration_spec_11_1",
+        "tests/tier2_component/stores/sessionstore_test.go::TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1",
+        "tests/tier3_contract/rest_mcp_consistency/cap_refusal_parity_test.go::TestResumeCapRefusalParity_spec_15_2_1",
+        "tests/tier4_integration/suspended_resume_admission_test.go::TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1",
+        "tests/tier7a_load_local/suspended_resume_admission_race_test.go::TestConcurrentSuspendedResumesAtQuota_spec_11_1"
       ],
       "packages": [
         "pkg/policy/admission"
@@ -4122,7 +4128,8 @@
         "tests/tier4_integration/multi_protocol_same_deployment_test.go",
         "tests/tier4_integration/openai_cross_tenant_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
-        "pkg/gateway/sessionserver/create_test.go"
+        "pkg/gateway/sessionserver/create_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/cap_refusal_parity_test.go::TestResumeCapRefusalParity_spec_15_2_1"
       ],
       "packages": [
         "pkg/gateway/rest",

@@ -921,9 +921,11 @@ spec:
             {{- end }}
             {{- end }}
             # §11.1 — global, per-user, and per-runtime
-            # concurrent-session admission caps (live non-terminal session
-            # counts). The per-tenant scope is enforced separately against
-            # the tenant record. Zero leaves a scope unlimited. F-11.1.3.
+            # concurrent-session admission caps (counts of non-terminal
+            # sessions other than suspended ones). A resume of a suspended
+            # session is also refused with 429 QUOTA_EXCEEDED at a cap. The
+            # per-tenant scope is enforced separately against the tenant
+            # record. Zero leaves a scope unlimited. F-11.1.3.
             {{- with .Values.gateway.concurrentSessions }}
             {{- if gt (int .global) 0 }}
             - name: LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL

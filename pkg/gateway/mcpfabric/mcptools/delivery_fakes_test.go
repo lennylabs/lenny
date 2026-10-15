@@ -35,6 +35,8 @@ type dlqDelivery struct {
 	outcome    sessionserver.HoldOutcome
 	holdErr    error
 	deliverErr error
+	admitErr   error
+	admits     int
 	delivered  []sessionstore.Session
 	resumed    []sessionstore.Session
 	order      []string
@@ -87,6 +89,15 @@ func (d *dlqDelivery) ResumeSuspended(_ context.Context, row sessionstore.Sessio
 	defer d.mu.Unlock()
 	d.resumed = append(d.resumed, row)
 	return nil
+}
+
+// AdmitResume records the check and answers admitErr.
+func (d *dlqDelivery) AdmitResume(context.Context, sessionstore.Session) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.admits++
+	d.order = append(d.order, "admit")
+	return d.admitErr
 }
 
 // countingExecutor counts sends; onSend, when set, answers a send.

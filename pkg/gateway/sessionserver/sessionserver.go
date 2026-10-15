@@ -199,11 +199,13 @@ type Server struct {
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
 	// maxConcSessGlobal / maxConcSessPerUser / maxConcSessPerRuntime are
-	// the §11.1 concurrent-session admission caps (live
-	// non-terminal session counts) for the global, per-user, and
-	// per-runtime scopes. The per-tenant scope is enforced separately by
-	// requireSessionQuota against the tenant record. A non-positive value
-	// leaves the corresponding scope unlimited. F-11.1.3.
+	// the §11.1 concurrent-session admission caps (counts of non-terminal
+	// sessions other than suspended ones) for the global, per-user, and
+	// per-runtime scopes. Session creation and every resume of a
+	// suspended session (admitResume) are checked against them. The
+	// per-tenant scope is enforced separately against the tenant record.
+	// A non-positive value leaves the corresponding scope unlimited.
+	// F-11.1.3.
 	maxConcSessGlobal     int
 	maxConcSessPerUser    int
 	maxConcSessPerRuntime int

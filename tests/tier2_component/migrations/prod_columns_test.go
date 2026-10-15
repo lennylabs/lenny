@@ -609,6 +609,12 @@ var prodMigrationSchema = []struct {
 	// index and its drop are asserted directly in
 	// TestPendingElicitationOriginIndexMigration_spec_9_2. spec: §9.2.
 	{migration: "0184", table: "interactions"},
+	// 0185 replaces idx_sessions_active_by_tenant with the
+	// idx_sessions_counted_by_tenant partial index whose predicate is the
+	// §11.1 concurrent-session count predicate. It adds no column; the
+	// index swap, its reversal, and the count plans are asserted directly
+	// in TestCountedSessionIndexMigration_spec_11_1. spec: §11.1.
+	{migration: "0185", table: "sessions"},
 }
 
 // spec: 12.2, 18.5
@@ -800,6 +806,101 @@ func TestPendingElicitationOriginIndexMigration_spec_9_2(t *testing.T) {
 	if got := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin"); got != "" {
 		t.Errorf("after rolling 0184 back the index still exists: %q", got)
 	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: migration 0185 did not replace idx_sessions_active_by_tenant
+//
+//	with idx_sessions_counted_by_tenant, a (tenant_id, user_id) index whose
+//	predicate excludes the terminal states and suspended, or its .down.sql
+//	did not restore the 0102 index, or the planner no longer reads the new
+//	index for the tenant and per-user counts. Without it every admission
+//	count reads a heap tuple for each suspended row of the tenant.
+func TestCountedSessionIndexMigration_spec_11_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	def := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant")
+	for _, want := range []string{"(tenant_id, user_id)", "'suspended'", "'completed'", "'failed'", "'cancelled'", "'expired'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_counted_by_tenant = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant"); got != "" {
+		t.Errorf("idx_sessions_active_by_tenant still exists after 0185: %q", got)
+	}
+
+	seedCountedSessionPopulation(t, ctx, pg)
+	for name, query := range map[string]string{
+		"tenant": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+		"user": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme' AND user_id = 'alice'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+	} {
+		if plan := explainPlan(t, ctx, pg, query); !strings.Contains(plan, "idx_sessions_counted_by_tenant") {
+			t.Errorf("%s count plan does not read idx_sessions_counted_by_tenant:\n%s", name, plan)
+		}
+	}
+
+	pg.MigrateTo(t, dir, 184)
+	if got := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant"); got != "" {
+		t.Errorf("after rolling 0185 back the index still exists: %q", got)
+	}
+	restored := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant")
+	if !strings.Contains(restored, "(tenant_id)") || strings.Contains(restored, "'suspended'") {
+		t.Errorf("after rolling 0185 back idx_sessions_active_by_tenant = %q, want the 0102 definition", restored)
+	}
+}
+
+// seedCountedSessionPopulation fills tenant acme with many terminal and
+// suspended rows and a few counted ones, then analyzes the table, so the
+// planner's choice reflects a tenant with a long history.
+func seedCountedSessionPopulation(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const seed = `INSERT INTO sessions (id, tenant_id, user_id, state, runtime_ref, root_session_id)
+		SELECT md5(g::text)::uuid, 'acme',
+		       CASE WHEN g % 2 = 0 THEN 'alice' ELSE 'bob' END,
+		       CASE WHEN g <= 20 THEN 'running'
+		            WHEN g % 3 = 0 THEN 'suspended'
+		            WHEN g % 3 = 1 THEN 'completed'
+		            ELSE 'expired' END,
+		       'echo', md5(g::text)::uuid
+		FROM generate_series(1, 6000) AS g`
+	if err := execTenant(ctx, pg, "acme", seed); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `ANALYZE sessions`); err != nil {
+		t.Fatalf("analyze sessions: %v", err)
+	}
+}
+
+// explainPlan returns the text plan Postgres chooses for query.
+func explainPlan(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) string {
+	t.Helper()
+	rows, err := pg.Pool.Query(ctx, "EXPLAIN "+query)
+	if err != nil {
+		t.Fatalf("explain %q: %v", query, err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan line: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	return b.String()
 }
 
 // --- helpers -------------------------------------------------------------

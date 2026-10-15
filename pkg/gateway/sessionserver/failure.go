@@ -524,9 +524,20 @@ func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Sessio
 // status change. A guard miss returns the §15.1 precondition error for the
 // resume endpoint, with the locked row's state.
 //
+// From suspended, the write is a resume and runs the resume admission check
+// on row first: a *CapRefusal or a lookup or count error is returned
+// unchanged and nothing is written. From awaiting_client_action the session
+// already counts toward the caps, so no check runs. The check and the
+// guarded write are not atomic.
+//
 // spec: §7.3 (Retry and Resume; "Retry accounting."), §7.2 (Interactive
-// Session Model)
+// Session Model), §11.1 (Resume admission)
 func (s *Server) enterResumePending(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {
+	if row.State == session.StateSuspended {
+		if err := s.admitResume(ctx, row); err != nil {
+			return sessionstore.Session{}, err
+		}
+	}
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State != row.State || (r.State == session.StateSuspended && s.holdsPod(*r)) {
 			return &session.PreconditionError{

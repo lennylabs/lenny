@@ -303,15 +303,30 @@ func (d *restDelivery) executorFailure(err error) (deliveryOutcome, bool) {
 // session that released its pod, a replica that does not coordinate the
 // session, a resume that failed, and a held delivery that failed after the
 // resume, where the message waits behind the failed entry.
-// spec: §7.2 (Message delivery routing — seven paths, path 6)
+//
+// Before any of that the resume admission check runs on the classified row:
+// a cap refusal answers 429 QUOTA_EXCEEDED and any other check error 500
+// INTERNAL_ERROR, and the message is neither held nor sent. A refusal from
+// the later check at the resume write takes the held branch, as the write's
+// other errors do, and is logged at INFO with its scope.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
 func (d *restDelivery) resumeAndDeliver(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	s := d.s
 	ctx := d.r.Context()
+	if err := s.admitResume(ctx, row); err != nil {
+		s.answerCapCheck(d.w, err)
+		return deliveryOutcome{}, false
+	}
 	if !s.holdsPod(row) || !s.coordinatesSession(ctx, row.TenantID, row.ID) {
 		return d.heldBranch(row, deliverIdx)
 	}
 	updated, err := s.resumeHeldAndDrain(ctx, row)
 	if err != nil {
+		var refusal *CapRefusal
+		if errors.As(err, &refusal) {
+			logCapRefusal("sessionserver: resume of a suspended session refused after its message was admitted", row.ID, err)
+		}
 		tracing.RecordError(d.span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		return d.heldBranch(row, deliverIdx)
 	}
@@ -349,13 +364,20 @@ func (d *restDelivery) heldBranch(row sessionstore.Session, deliverIdx []int) (d
 
 // resumeHeldSuspended attempts the guarded suspended → resume_pending write
 // for a message held for the session, logging a store error. A guard miss
-// is the expected outcome for a session that holds its pod.
-// spec: §7.2 (Message delivery routing — seven paths, path 6)
+// is the expected outcome for a session that holds its pod. A cap refusal
+// of the write's admission check leaves the session suspended with the
+// message held, and is logged at INFO with its scope.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
 func (s *Server) resumeHeldSuspended(ctx context.Context, row sessionstore.Session) {
 	row.State = session.StateSuspended
 	if _, err := s.enterResumePending(ctx, row); err != nil {
 		var pe *session.PreconditionError
-		if !errors.As(err, &pe) {
+		var refusal *CapRefusal
+		switch {
+		case errors.As(err, &refusal):
+			logCapRefusal("sessionserver: resume of a suspended session refused after its message was admitted", row.ID, err)
+		case !errors.As(err, &pe):
 			slog.Warn("sessionserver: resume a suspended session with a held message", "session_id", row.ID, "error", err)
 		}
 	}

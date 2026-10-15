@@ -707,13 +707,18 @@ type Deps struct {
 //     `running` with the lock held, reading no row.
 //   - ResumeSuspended resumes a `suspended` session a message is held for;
 //     it takes the lock itself, so the caller must not hold it.
+//   - AdmitResume runs the resume admission check on a `suspended` row
+//     before its message is held: nil, a *sessionserver.CapRefusal, or a
+//     lookup or count error.
 //
-// spec: §7.2 (Message delivery routing — seven paths, path 6)
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
 type SessionDelivery interface {
 	LockDelivery(ctx context.Context, sessionID string) (func(), error)
 	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
 	DeliverHeld(ctx context.Context, row sessionstore.Session) error
 	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
+	AdmitResume(ctx context.Context, row sessionstore.Session) error
 }
 
 // VCSLeaseAuditor records a §4.9.2 VCS credential lease the

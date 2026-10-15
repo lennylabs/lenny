@@ -257,7 +257,9 @@ func (s *Server) checkBacklogOnce(ctx context.Context, row sessionstore.Session)
 		return
 	}
 	if _, err := s.enterResumePending(ctx, row); err != nil {
-		slog.Info("sessionserver: resume a suspended session with held messages", "session_id", row.ID, "error", err)
+		// spec: §11.1 (Resume admission) — a refused row stays podless
+		// suspended, and the gateway leader's re-check tries again.
+		logCapRefusal("sessionserver: resume a suspended session with held messages", row.ID, err)
 	}
 }
 

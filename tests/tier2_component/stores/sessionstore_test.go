@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -1511,5 +1512,93 @@ func assertStoredPlan(t *testing.T, got, want json.RawMessage) {
 	}
 	if !reflect.DeepEqual(gotDoc, wantDoc) {
 		t.Errorf("stored WorkspacePlan = %s, want %s", got, want)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: a pgstore concurrent-session count disagrees with
+//
+//	session.CountsTowardConcurrencyCaps or with the memstore count for the
+//	same rows. The SQL predicate and the Go predicate have diverged: either a
+//	suspended row (with or without its pod) is counted, so an idle session
+//	holds an admission slot, or a resuming, resume_pending, or
+//	awaiting_client_action row is not counted, so a cap can be exceeded.
+func TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	mem := memstore.New()
+
+	rows := []sessionstore.Session{}
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		for _, user := range []string{"alice", "bob"} {
+			rows = append(rows, sessionstore.Session{
+				ID: newUUID(t), TenantID: tenant, UserID: user, State: st,
+				RuntimeRef: "echo", PodAssignment: "pod-" + user,
+			})
+		}
+	}
+	// A podless suspended row and a row on another runtime.
+	rows = append(rows,
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateSuspended, RuntimeRef: "echo"},
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateRunning, RuntimeRef: "other"},
+	)
+	wantTenant, wantAlice, wantEcho := 0, 0, 0
+	for _, r := range rows {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("pgstore Create %s: %v", r.State, err)
+		}
+		if err := mem.Create(ctx, r); err != nil {
+			t.Fatalf("memstore Create %s: %v", r.State, err)
+		}
+		if !session.CountsTowardConcurrencyCaps(r.State) {
+			continue
+		}
+		wantTenant++
+		if r.UserID == "alice" {
+			wantAlice++
+		}
+		if r.RuntimeRef == "echo" {
+			wantEcho++
+		}
+	}
+
+	type count func(sessionstore.Store) (int, error)
+	scopes := []struct {
+		name string
+		fn   count
+		want int
+	}{
+		{"tenant", func(s sessionstore.Store) (int, error) { return s.CountActiveSessions(ctx, tenant) }, wantTenant},
+		{"user", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByUser(ctx, tenant, "alice") }, wantAlice},
+		{"runtime", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByRuntime(ctx, tenant, "echo") }, wantEcho},
+		// The container holds only this test's rows, so the global count
+		// equals the tenant count.
+		{"global", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsGlobal(ctx) }, wantTenant},
+	}
+	for _, sc := range scopes {
+		pgGot, err := sc.fn(store)
+		if err != nil {
+			t.Fatalf("pgstore %s count: %v", sc.name, err)
+		}
+		memGot, err := sc.fn(mem)
+		if err != nil {
+			t.Fatalf("memstore %s count: %v", sc.name, err)
+		}
+		if pgGot != sc.want || memGot != sc.want {
+			t.Errorf("%s count: pgstore %d, memstore %d, want %d", sc.name, pgGot, memGot, sc.want)
+		}
+	}
+
+	// The recovery count, the §16.5 numerator, is unchanged and stays a
+	// subset of the global count.
+	recovery, err := store.CountActiveSessionsInRecoveryGlobal(ctx)
+	if err != nil {
+		t.Fatalf("recovery count: %v", err)
+	}
+	if want := 2 * len(session.RecoveryStates()); recovery != want {
+		t.Errorf("recovery count = %d, want %d", recovery, want)
 	}
 }

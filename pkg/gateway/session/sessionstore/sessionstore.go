@@ -1036,38 +1036,42 @@ type Store interface {
 	// spec: §15.1.
 	PoolDrainStats(ctx context.Context, poolRef string) (active int, oldestCreatedAt time.Time, err error)
 
-	// CountActiveSessions returns the number of live (non-terminal)
-	// sessions belonging to tenantID. It backs the §11.2 per-tenant
-	// concurrent-session quota check on the session-creation path so the
-	// gateway counts active sessions without materializing every
-	// historical row. A tenant with no live sessions returns (0, nil).
-	// spec: §11.2 (per-tenant concurrent-session quota with hard
-	// rejection).
+	// CountActiveSessions returns the number of non-terminal sessions
+	// other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// belonging to tenantID. It backs the §11.2 per-tenant
+	// concurrent-session quota check on the session-creation path and on
+	// every resume of a suspended session, so the gateway counts without
+	// materializing every historical row. A tenant with no counted
+	// sessions returns (0, nil).
+	// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 	CountActiveSessions(ctx context.Context, tenantID string) (int, error)
 
-	// CountActiveSessionsByUser returns the number of live (non-terminal)
-	// sessions owned by userID within tenantID. It backs the §11.1
-	// per-user concurrent-session admission limit so a single user cannot
+	// CountActiveSessionsByUser returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// owned by userID within tenantID. It backs the §11.1 per-user
+	// concurrent-session admission limit so a single user cannot
 	// monopolize the tenant's concurrent-session capacity. An empty
-	// tenant or user, or a user with no live sessions, returns (0, nil).
-	// spec: §11.1.
+	// tenant or user, or a user with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error)
 
-	// CountActiveSessionsByRuntime returns the number of live
-	// (non-terminal) sessions targeting runtimeRef within tenantID. It
-	// backs the §11.1 per-runtime concurrent-session admission limit so a
-	// single runtime cannot be flooded with concurrent sessions. An empty
-	// tenant or runtime, or a runtime with no live sessions, returns
-	// (0, nil).
-	// spec: §11.1.
+	// CountActiveSessionsByRuntime returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// targeting runtimeRef within tenantID. It backs the §11.1 per-runtime
+	// concurrent-session admission limit so a single runtime cannot be
+	// flooded with concurrent sessions. An empty tenant or runtime, or a
+	// runtime with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error)
 
-	// CountActiveSessionsGlobal returns the number of live (non-terminal)
-	// sessions across every tenant. It backs the §11.1 global
-	// concurrent-session admission limit (the gateway-wide ceiling). The
-	// count is cross-tenant by design; the global cap bounds total live
-	// sessions regardless of tenant attribution.
-	// spec: §11.1.
+	// CountActiveSessionsGlobal returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// across every tenant. It backs the §11.1 global concurrent-session
+	// admission limit (the gateway-wide ceiling) and is the denominator of
+	// the §16.5 session-availability ratio. The count is cross-tenant by
+	// design; the global cap bounds the counted sessions regardless of
+	// tenant attribution.
+	// spec: §11.1 (Concurrent-session count), §16.5 (Alerting Rules and SLOs)
 	CountActiveSessionsGlobal(ctx context.Context) (int, error)
 
 	// CountActiveSessionsInRecoveryGlobal returns the number of live
@@ -1075,8 +1079,11 @@ type Store interface {
 	// (resume_pending, resuming, awaiting_client_action). The gateway
 	// export loop divides it by CountActiveSessionsGlobal to publish the
 	// §16.5 lenny_session_unavailability_ratio SLI the
-	// SessionAvailabilityBurnRate alert reads.
-	// spec: §16.5. F-16.5.3.
+	// SessionAvailabilityBurnRate alert reads. Every recovery state is a
+	// counted state, so the numerator is a subset of the denominator, and
+	// a suspended session, which runs no turn and is in no recovery
+	// state, is in neither.
+	// spec: §16.5 (Alerting Rules and SLOs), §11.1 (Concurrent-session count). F-16.5.3.
 	CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error)
 
 	// CountActiveDelegatedChildrenByUser returns the number of live

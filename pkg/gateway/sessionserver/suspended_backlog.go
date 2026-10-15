@@ -29,8 +29,10 @@ func (s *Server) HoldsPod(row sessionstore.Session) bool {
 // this replica holds no binding for the session, or when this replica does
 // not hold the session's coordination lease or the lease read fails. On a
 // held-message read error it logs and returns true, so the sweep releases
-// nothing this tick. With no held message it returns false. Otherwise it
-// returns true and starts ResumeSuspended off the caller, on the
+// nothing this tick. With no held message it returns false. When the resume
+// admission check refuses or fails it logs at INFO and returns false, so the
+// hold timer decides the release. Otherwise it returns true and starts
+// ResumeSuspended off the caller, on the
 // server-lifetime context, at most one per session on this replica, so a
 // watchdog tick never waits on a delivery.
 //
@@ -48,6 +50,13 @@ func (s *Server) ResumeBacklog(ctx context.Context, row sessionstore.Session) bo
 		return true
 	}
 	if n == 0 {
+		return false
+	}
+	// spec: §11.1 (Resume admission) — a backlog resume the check refuses,
+	// or whose count fails, starts nothing, and the hold timer decides the
+	// release this tick; the next evaluation checks again.
+	if err := s.admitResume(ctx, row); err != nil {
+		logCapRefusal("sessionserver: backlog resume of a suspended session not admitted", row.ID, err)
 		return false
 	}
 	if s.backlogResumes.begin(row.ID) {
@@ -248,7 +257,9 @@ func (s *Server) recheckRow(ctx context.Context, row sessionstore.Session) bool 
 		return false
 	}
 	if _, err := s.enterResumePending(ctx, row); err != nil {
-		slog.Info("sessionserver: resume a podless suspended session with held messages", "session_id", row.ID, "error", err)
+		// spec: §11.1 (Resume admission) — a refused row stays suspended,
+		// and the next pass checks it again.
+		logCapRefusal("sessionserver: resume a podless suspended session with held messages", row.ID, err)
 		return false
 	}
 	return true

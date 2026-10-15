@@ -338,3 +338,73 @@ func TestSendMessageRouting_InboxUnavailable_spec_7_2(t *testing.T) {
 		t.Errorf("reason = %q, want inbox_unavailable", got.Reason)
 	}
 }
+
+// TestSendMessageToSuspendedAtCapIsRefused_spec_11_1 pins the resume
+// admission check on lenny/send_message: a message to a suspended target
+// whose check refuses answers the QUOTA_EXCEEDED tool error with the
+// refusal's details and is neither held nor resumed, and a check error is
+// the tool's Go error with the same outcome. The check runs before the hold.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Concurrent-session count)
+func TestSendMessageToSuspendedAtCapIsRefused_spec_11_1(t *testing.T) {
+	t.Run("refusal", func(t *testing.T) {
+		srv, store, _, dlq, del := newMCPRoutingDelivery(t, nil)
+		del.admitErr = &sessionserver.CapRefusal{Scope: sessionserver.CapScopeUser, Limit: 2, Active: 2}
+		mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+		resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"x"}`)
+		result, _ := resp["result"].(map[string]any)
+		env := readLennyErrorEnvelope(t, result)
+		if env["code"] != "QUOTA_EXCEEDED" || env["message"] != "the user concurrent-session limit was reached" {
+			t.Errorf("error = %v %v, want QUOTA_EXCEEDED with the user-scope message", env["code"], env["message"])
+		}
+		details, _ := env["details"].(map[string]any)
+		if details["scope"] != "user" || details["limit"] != float64(2) || details["active"] != float64(2) {
+			t.Errorf("details = %v, want scope user, limit 2, active 2", details)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 0 || del.holds != 0 || len(del.resumed) != 0 {
+			t.Errorf("DLQ %d holds %d resumed %d, want nothing held or resumed", n, del.holds, len(del.resumed))
+		}
+		if del.admits != 1 || del.locked != del.unlocked {
+			t.Errorf("admits %d, lock %d/%d; want one check and the lock released", del.admits, del.locked, del.unlocked)
+		}
+	})
+	t.Run("check error", func(t *testing.T) {
+		srv, store, _, dlq, del := newMCPRoutingDelivery(t, nil)
+		del.admitErr = errors.New("count failed")
+		mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+		resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"x"}`)
+		if !toolFailed(resp) {
+			t.Fatalf("response = %+v, want the tool's error", resp)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 0 || del.holds != 0 || len(del.resumed) != 0 {
+			t.Errorf("DLQ %d holds %d resumed %d, want nothing held or resumed", n, del.holds, len(del.resumed))
+		}
+	})
+	t.Run("admitted holds and resumes", func(t *testing.T) {
+		srv, store, _, dlq, del := newMCPRoutingDelivery(t, nil)
+		mkSession(t, store, "sess_sus", session.StateSuspended, "")
+		got := receiptFromResult(t, call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"x"}`))
+		if got.Status != session.DeliveryStatusQueued {
+			t.Fatalf("receipt = %+v, want queued", got)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 1 || len(del.resumed) != 1 {
+			t.Errorf("DLQ %d resumed %d, want 1 and 1", n, len(del.resumed))
+		}
+		if len(del.order) == 0 || del.order[0] != "admit" {
+			t.Errorf("order = %v, want the check first", del.order)
+		}
+	})
+}
+
+// toolFailed reports whether resp carries a JSON-RPC error or an isError
+// result.
+func toolFailed(resp map[string]any) bool {
+	if _, ok := resp["error"]; ok {
+		return true
+	}
+	result, _ := resp["result"].(map[string]any)
+	return result["isError"] == true
+}

@@ -3,57 +3,34 @@
 package sessionserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // requireSessionQuota enforces the §11.2 per-tenant concurrent-session
 // quota on the session-creation path. When the tenant already holds
-// MaxConcurrentSessions non-terminal sessions, the create is rejected
-// with 429 QUOTA_EXCEEDED.
+// MaxConcurrentSessions sessions that count toward the caps (every
+// non-terminal session other than a suspended one), the create is
+// rejected with 429 QUOTA_EXCEEDED. The same tenant check gates every
+// resume of a suspended session through admitResume.
 //
 // A zero limit, an unknown tenant, or an unwired tenant registry means
 // the tenant has no concurrent-session limit. requireSessionQuota
 // returns true when the create may proceed; when it returns false it
 // has already written the response.
+//
+// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, tenantID string) bool {
-	if s.tenants == nil {
-		return true
-	}
-	tenant, err := s.tenants.Get(r.Context(), tenantID)
-	if errors.Is(err, tenantstore.ErrNotFound) {
-		return true
-	}
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"concurrent-session quota check failed: "+err.Error(), nil)
-		return false
-	}
-	if tenant.MaxConcurrentSessions <= 0 {
-		return true
-	}
-	// §11.2: count the tenant's live sessions with an indexed COUNT
-	// rather than materializing every historical row in Go.
-	active, err := s.store.CountActiveSessions(r.Context(), tenantID)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"concurrent-session quota check failed: "+err.Error(), nil)
-		return false
-	}
-	if active >= tenant.MaxConcurrentSessions {
-		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
-			"the tenant has reached its concurrent-session limit",
-			map[string]any{
-				"limit":  tenant.MaxConcurrentSessions,
-				"active": active,
-			})
-		return false
-	}
-	return true
+	return s.answerCapCheck(w, s.checkTenantCap(r.Context(), tenantID))
 }
 
 // requireTenantClassification implements the §12.9 requirement
@@ -172,57 +149,40 @@ func (s *Server) requireTenantNotSuspended(w http.ResponseWriter, r *http.Reques
 // with no admin-settable limit surface in the spec). Each scope is
 // checked only when its cap is configured (> 0). The scopes are
 // evaluated narrowest-first (per-user, per-runtime, global) so the
-// rejection names the tightest binding limit.
+// rejection names the tightest binding limit. Each count covers the
+// non-terminal sessions other than suspended ones, and the same check
+// gates every resume of a suspended session through admitResume.
 //
-// A non-terminal session at or above a scope's cap rejects the create
-// with 429 QUOTA_EXCEEDED — the same code and status the per-tenant
-// concurrent-session cap returns — carrying the breached scope, its
-// limit, and the live count. A counter error fails the request closed
-// with 500 (an unenforceable admission cap must not silently admit).
+// A count at or above a scope's cap rejects the create with 429
+// QUOTA_EXCEEDED, the same code and status the per-tenant cap returns,
+// carrying the breached scope, its limit, and the count. A counter
+// error fails the request closed with 500 (an unenforceable admission
+// cap must not silently admit).
 //
 // requireConcurrencyLimits returns true when the create may proceed;
 // when it returns false it has already written the response.
 //
-// spec: §11.1. F-11.1.3.
+// spec: §11.1 (Concurrent-session count). F-11.1.3.
 func (s *Server) requireConcurrencyLimits(w http.ResponseWriter, r *http.Request, tenantID, userID, runtimeRef string) bool {
-	if s.maxConcSessPerUser > 0 && userID != "" {
-		active, err := s.store.CountActiveSessionsByUser(r.Context(), tenantID, userID)
-		if !s.admitConcurrencyScope(w, "user", s.maxConcSessPerUser, active, err) {
-			return false
-		}
-	}
-	if s.maxConcSessPerRuntime > 0 && runtimeRef != "" {
-		active, err := s.store.CountActiveSessionsByRuntime(r.Context(), tenantID, runtimeRef)
-		if !s.admitConcurrencyScope(w, "runtime", s.maxConcSessPerRuntime, active, err) {
-			return false
-		}
-	}
-	if s.maxConcSessGlobal > 0 {
-		active, err := s.store.CountActiveSessionsGlobal(r.Context())
-		if !s.admitConcurrencyScope(w, "global", s.maxConcSessGlobal, active, err) {
-			return false
-		}
-	}
-	return true
+	return s.answerCapCheck(w, s.checkScopeCaps(r.Context(), tenantID, userID, runtimeRef))
 }
 
-// admitConcurrencyScope applies one §11.1 concurrent-session scope
-// decision. A counter error fails closed with 500; an active count at
-// or above the cap rejects with 429 QUOTA_EXCEEDED. It returns true when
-// the scope admits the create. spec: §11.1. F-11.1.3.
-func (s *Server) admitConcurrencyScope(w http.ResponseWriter, scope string, limit, active int, err error) bool {
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"concurrent-session limit check failed: "+err.Error(), nil)
+// answerCapCheck writes the REST answer of a failed cap check, on session
+// creation or on a message's resume admission: a *CapRefusal as 429
+// QUOTA_EXCEEDED and any other error, a lookup or count error, as 500
+// INTERNAL_ERROR, so an unenforceable cap fails closed. It returns true
+// when err is nil.
+func (s *Server) answerCapCheck(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return true
+	}
+	var refusal *CapRefusal
+	if errors.As(err, &refusal) {
+		s.writeCapRefusal(w, refusal)
 		return false
 	}
-	if active >= limit {
-		s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
-			"the "+scope+" concurrent-session limit was reached",
-			map[string]any{"scope": scope, "limit": limit, "active": active})
-		return false
-	}
-	return true
+	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	return false
 }
 
 // requirePolicyChain runs the §4.8 PostAuth interceptor chain on the
@@ -295,4 +255,167 @@ func (s *Server) requirePolicyChain(w http.ResponseWriter, r *http.Request, tena
 	}
 	s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED", res.Reason, details)
 	return false
+}
+
+// Concurrent-session cap scopes a CapRefusal names.
+const (
+	CapScopeTenant  = "tenant"
+	CapScopeUser    = "user"
+	CapScopeRuntime = "runtime"
+	CapScopeGlobal  = "global"
+)
+
+// CapRefusal is the refusal of a concurrent-session admission check: the
+// count of the named scope is at or above its limit. Session creation and
+// every resume of a suspended session answer it with 429 QUOTA_EXCEEDED,
+// and lenny/send_message with the QUOTA_EXCEEDED tool error, each carrying
+// Message and Details, so a refused resume carries the details a refused
+// creation carries.
+//
+// spec: §11.1 (Concurrent-session count), §11.1 (Resume admission)
+type CapRefusal struct {
+	// Scope is CapScopeTenant, CapScopeUser, CapScopeRuntime, or
+	// CapScopeGlobal.
+	Scope string
+	// Limit is the scope's configured limit.
+	Limit int
+	// Active is the count the check read.
+	Active int
+}
+
+// Error implements error.
+func (r *CapRefusal) Error() string {
+	return "concurrent-session " + r.Scope + " limit " + strconv.Itoa(r.Limit) +
+		" reached (" + strconv.Itoa(r.Active) + " counted)"
+}
+
+// Message is the human-readable message of the refusal's error envelope.
+func (r *CapRefusal) Message() string {
+	if r.Scope == CapScopeTenant {
+		return "the tenant has reached its concurrent-session limit"
+	}
+	return "the " + r.Scope + " concurrent-session limit was reached"
+}
+
+// Details is the refusal's error-envelope details. The tenant scope
+// carries limit and active; the other scopes also carry scope.
+func (r *CapRefusal) Details() map[string]any {
+	if r.Scope == CapScopeTenant {
+		return map[string]any{"limit": r.Limit, "active": r.Active}
+	}
+	return map[string]any{"scope": r.Scope, "limit": r.Limit, "active": r.Active}
+}
+
+// writeCapRefusal writes a cap refusal as 429 QUOTA_EXCEEDED.
+// spec: §15.1 (REST API), §11.1 (Concurrent-session count)
+func (s *Server) writeCapRefusal(w http.ResponseWriter, r *CapRefusal) {
+	s.writeError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED", r.Message(), r.Details())
+}
+
+// checkTenantCap runs the §11.2 per-tenant concurrent-session quota check.
+// It returns nil when the tenant has no enabled limit (no registry, an
+// unknown tenant, or a non-positive MaxConcurrentSessions) or its count is
+// below the limit, a *CapRefusal at or above it, and a wrapped error when
+// the tenant lookup or the count fails, so the caller fails closed.
+//
+// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
+func (s *Server) checkTenantCap(ctx context.Context, tenantID string) error {
+	if s.tenants == nil {
+		return nil
+	}
+	tenant, err := s.tenants.Get(ctx, tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("concurrent-session quota check failed: %w", err)
+	}
+	if tenant.MaxConcurrentSessions <= 0 {
+		return nil
+	}
+	active, err := s.store.CountActiveSessions(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("concurrent-session quota check failed: %w", err)
+	}
+	if active >= tenant.MaxConcurrentSessions {
+		return &CapRefusal{Scope: CapScopeTenant, Limit: tenant.MaxConcurrentSessions, Active: active}
+	}
+	return nil
+}
+
+// checkScopeCaps runs the §11.1 per-user, per-runtime, and global
+// concurrent-session limit checks, in that order, each only when its limit
+// is enabled and its key is non-empty. It returns nil, the first
+// *CapRefusal, or a wrapped count error.
+//
+// spec: §11.1 (Concurrent-session count)
+func (s *Server) checkScopeCaps(ctx context.Context, tenantID, userID, runtimeRef string) error {
+	if s.maxConcSessPerUser > 0 && userID != "" {
+		active, err := s.store.CountActiveSessionsByUser(ctx, tenantID, userID)
+		if err := scopeOutcome(CapScopeUser, s.maxConcSessPerUser, active, err); err != nil {
+			return err
+		}
+	}
+	if s.maxConcSessPerRuntime > 0 && runtimeRef != "" {
+		active, err := s.store.CountActiveSessionsByRuntime(ctx, tenantID, runtimeRef)
+		if err := scopeOutcome(CapScopeRuntime, s.maxConcSessPerRuntime, active, err); err != nil {
+			return err
+		}
+	}
+	if s.maxConcSessGlobal > 0 {
+		active, err := s.store.CountActiveSessionsGlobal(ctx)
+		if err := scopeOutcome(CapScopeGlobal, s.maxConcSessGlobal, active, err); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scopeOutcome turns one scope's count into the check's outcome: a wrapped
+// count error, a *CapRefusal at or above the limit, or nil.
+func scopeOutcome(scope string, limit, active int, err error) error {
+	if err != nil {
+		return fmt.Errorf("concurrent-session limit check failed: %w", err)
+	}
+	if active >= limit {
+		return &CapRefusal{Scope: scope, Limit: limit, Active: active}
+	}
+	return nil
+}
+
+// admitResume is the resume admission check: the check session creation
+// runs, evaluated over the session's tenant, owning user, and runtime. Every
+// write out of suspended toward running calls it before the write and makes
+// no write on an error. It returns nil, a *CapRefusal, or a wrapped lookup or
+// count error. With every limit disabled it issues no count query. The check
+// and the write are not atomic: admissions in flight at once can each pass
+// against the same count, as session creation can.
+//
+// spec: §11.1 (Resume admission), §11.1 (Concurrent admissions)
+func (s *Server) admitResume(ctx context.Context, row sessionstore.Session) error {
+	if err := s.checkTenantCap(ctx, row.TenantID); err != nil {
+		return err
+	}
+	return s.checkScopeCaps(ctx, row.TenantID, row.UserID, row.RuntimeRef)
+}
+
+// AdmitResume exposes admitResume to the lenny/send_message tool, which
+// checks a message to a suspended session before holding it.
+// spec: §11.1 (Resume admission), §7.2 (Message delivery routing — seven
+// paths, path 6)
+func (s *Server) AdmitResume(ctx context.Context, row sessionstore.Session) error {
+	return s.admitResume(ctx, row)
+}
+
+// logCapRefusal logs a refusal of a resume that follows an admitted entry
+// check, or of a backlog resume, at INFO with the refusing scope. Any other
+// error is logged at INFO without one.
+func logCapRefusal(msg, sessionID string, err error) {
+	var refusal *CapRefusal
+	if errors.As(err, &refusal) {
+		slog.Info(msg, "session_id", sessionID, "scope", refusal.Scope,
+			"limit", refusal.Limit, "active", refusal.Active)
+		return
+	}
+	slog.Info(msg, "session_id", sessionID, "error", err)
 }

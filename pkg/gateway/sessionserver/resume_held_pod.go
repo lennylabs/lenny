@@ -46,8 +46,15 @@ var errResumeHeldPodReleased = errors.New("resume held pod: the suspended sessio
 // On the state write it emits the session.resumed lifecycle audit row and the
 // resume status-change. It returns the running row.
 //
-// spec: §7.2 path 6.
+// Before the write it runs the resume admission check on row; a *CapRefusal
+// or a lookup or count error is returned unchanged, and the row stays
+// suspended.
+//
+// spec: §7.2 path 6, §11.1 (Resume admission).
 func (s *Server) resumeHeldPod(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {
+	if err := s.admitResume(ctx, row); err != nil {
+		return sessionstore.Session{}, err
+	}
 	now := s.clock()
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State != session.StateSuspended {

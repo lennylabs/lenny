@@ -233,10 +233,26 @@ func (m *mcpSend) hold(ctx context.Context, row sessionstore.Session) (res mcp.T
 // holdAndResume is §7.2 path 6 on MCP: the message to a `suspended` target
 // is held in the DLQ and, unless the hold found the session terminal or
 // failed, the delivery lock is released and the session resumed with the
-// classified row. A resume error leaves the answer queued. The path never
-// enqueues to the inbox or sends to the runtime for a suspended target.
-// spec: §7.2 (Message delivery routing — seven paths, path 6)
+// classified row. A resume error, a cap refusal at the resume write
+// included, leaves the answer queued. The path never enqueues to the inbox
+// or sends to the runtime for a suspended target.
+//
+// Before the hold the resume admission check runs on the classified row: a
+// cap refusal answers the QUOTA_EXCEEDED tool error with the refusal's
+// details, any other check error is the tool's Go error, and the message is
+// not held.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
 func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
+	if m.deps.Delivery != nil {
+		if err := m.deps.Delivery.AdmitResume(ctx, row); err != nil {
+			var refusal *sessionserver.CapRefusal
+			if errors.As(err, &refusal) {
+				return mcp.ToolResult{}, mcp.NewToolError("QUOTA_EXCEEDED", refusal.Message(), refusal.Details())
+			}
+			return mcp.ToolResult{}, fmt.Errorf("resume admission check for session %s: %w", row.ID, err)
+		}
+	}
 	res, held, err := m.hold(ctx, row)
 	if err != nil || !held {
 		return res, err

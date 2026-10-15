@@ -168,6 +168,19 @@ func IsTerminal(s State) bool {
 	return false
 }
 
+// CountsTowardConcurrencyCaps reports whether a session in state s
+// counts toward the concurrent-session admission caps: the per-tenant
+// quota and the per-user, per-runtime, and global limits. Every
+// non-terminal state counts except suspended, whether or not the
+// suspended session still holds its pod. The pgstore count queries and
+// the migration-0185 partial index spell the same predicate in SQL
+// (state NOT IN the terminal states and 'suspended'), so a change here
+// changes both.
+// spec: §11.1 (Concurrent-session count)
+func CountsTowardConcurrencyCaps(s State) bool {
+	return !IsTerminal(s) && s != StateSuspended
+}
+
 // RecoveryStates returns the retry/recovery subset: states in which a
 // session is not actively serving because it is waiting on a resume
 // (resume_pending), mid-resume (resuming), or stalled awaiting a client

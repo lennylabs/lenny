@@ -938,15 +938,23 @@ func (s *Store) PoolDrainStats(ctx context.Context, poolRef string) (int, time.T
 	return count, *oldest, nil
 }
 
+// countedStatePredicate is the SQL spelling of
+// session.CountsTowardConcurrencyCaps: every non-terminal state other
+// than suspended. It is the exact predicate text of the migration-0185
+// partial index idx_sessions_counted_by_tenant, so the planner can match
+// the index; change both together.
+// spec: §11.1 (Concurrent-session count)
+const countedStatePredicate = `state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`
+
 // CountActiveSessions implements Store — the §11.2 per-tenant
-// concurrent-session quota count. It counts the tenant's live
-// (non-terminal) sessions with a COUNT query so the gateway's quota
-// check does not materialize every historical row. The partial index
-// from migration 0102 (sessions(tenant_id) WHERE state NOT IN terminal)
-// keeps the count cheap on a tenant with a large session history. The
-// non-terminal predicate matches the index predicate and
-// session.TerminalStates() verbatim.
-// spec: §11.2 (per-tenant concurrent-session quota with hard rejection).
+// concurrent-session quota count. It counts the tenant's non-terminal
+// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+// with a COUNT query so the gateway's quota check does not materialize
+// every historical row. The partial index idx_sessions_counted_by_tenant
+// from migration 0185 (sessions(tenant_id, user_id) WHERE
+// countedStatePredicate) answers the count index-only on a tenant with
+// a large history of terminal and suspended rows.
+// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, nil
@@ -956,7 +964,7 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 		return tx.QueryRow(ctx,
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID).Scan(&count)
 	})
 	if err != nil {
@@ -966,10 +974,11 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 }
 
 // CountActiveSessionsByUser implements Store — the §11.1 per-user
-// concurrent-session admission count. It counts the user's live
-// (non-terminal) sessions with a COUNT query, scoped to the tenant via
-// RLS. The non-terminal predicate matches session.TerminalStates()
-// verbatim. spec: §11.1.
+// concurrent-session admission count. It counts the user's non-terminal
+// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+// with a COUNT query, scoped to the tenant via RLS, and reads
+// idx_sessions_counted_by_tenant index-only.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -980,7 +989,7 @@ func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID 
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
 			     AND user_id = $2
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID, userID).Scan(&count)
 	})
 	if err != nil {
@@ -990,10 +999,11 @@ func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID 
 }
 
 // CountActiveSessionsByRuntime implements Store — the §11.1 per-runtime
-// concurrent-session admission count. It counts live (non-terminal)
-// sessions targeting runtimeRef within the tenant. The non-terminal
-// predicate matches session.TerminalStates() verbatim.
-// spec: §11.1.
+// concurrent-session admission count. It counts non-terminal sessions
+// other than suspended ones (session.CountsTowardConcurrencyCaps)
+// targeting runtimeRef within the tenant, reading
+// idx_sessions_counted_by_tenant by its tenant prefix.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
 	if tenantID == "" || runtimeRef == "" {
 		return 0, nil
@@ -1004,7 +1014,7 @@ func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runt
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
 			     AND runtime_ref = $2
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID, runtimeRef).Scan(&count)
 	})
 	if err != nil {
@@ -1014,17 +1024,18 @@ func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runt
 }
 
 // CountActiveSessionsGlobal implements Store — the §11.1 global
-// concurrent-session admission count. It counts every live
-// (non-terminal) session across all tenants (InAllTenants) so the
-// gateway-wide ceiling bounds total live sessions. The non-terminal
-// predicate matches session.TerminalStates() verbatim.
-// spec: §11.1.
+// concurrent-session admission count. It counts every non-terminal
+// session other than suspended ones (session.CountsTowardConcurrencyCaps)
+// across all tenants (InAllTenants), scanning
+// idx_sessions_counted_by_tenant. The §16.5 session-availability ratio
+// divides by this count, so its population is the same set.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	var count int
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT count(*) FROM sessions
-			   WHERE state NOT IN ('completed', 'failed', 'cancelled', 'expired')`).Scan(&count)
+			   WHERE `+countedStatePredicate).Scan(&count)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("pgstore: count active sessions global: %w", err)

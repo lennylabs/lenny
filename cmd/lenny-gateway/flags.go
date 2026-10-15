@@ -593,13 +593,13 @@ func (f *gatewayFlags) registerStorageFlags() {
 		"§11.1 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
 	f.maxConcSessGlobal = flag.Int("max-concurrent-sessions-global",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL", 0),
-		"§11.1 global concurrent-session admission cap (live non-terminal sessions across every tenant). Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
+		"§11.1 global concurrent-session admission cap (non-terminal sessions other than suspended ones across every tenant). A resume of a suspended session is checked against the cap. Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
 	f.maxConcSessPerUser = flag.Int("max-concurrent-sessions-per-user",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_USER", 0),
-		"§11.1 per-user concurrent-session admission cap (live non-terminal sessions a single user holds in their tenant). Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
+		"§11.1 per-user concurrent-session admission cap (non-terminal sessions other than suspended ones a single user holds in their tenant). A resume of a suspended session is checked against the cap. Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
 	f.maxConcSessPerRuntime = flag.Int("max-concurrent-sessions-per-runtime",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME", 0),
-		"§11.1 per-runtime concurrent-session admission cap (live non-terminal sessions targeting a single runtime in a tenant). Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
+		"§11.1 per-runtime concurrent-session admission cap (non-terminal sessions other than suspended ones targeting a single runtime in a tenant). A resume of a suspended session is checked against the cap. Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
 	f.evalRLPerSessionPerMin = flag.Int("eval-rate-limit-per-session-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
 		"§10.7 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
