@@ -711,7 +711,8 @@ func (f *markObservingSealer) SealSession(ctx context.Context, id string, gen in
 // not-sealed answer or a failed call clears a mark the call placed and moves
 // the seal epoch, so a turn written during the call is not read as refused,
 // and keeps a mark an earlier seal placed, because the adapter keeps an
-// earlier seal when it answers not sealed.
+// earlier seal when it answers not sealed. Each call opens a new epoch even
+// over an earlier mark.
 func TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -756,9 +757,44 @@ func TestSealMarksTheBindingDuringTheSealCall_spec_4_7_1(t *testing.T) {
 			if !tc.markedBefore && !tc.wantMarked && bind.SealHeldSince(before+1) {
 				t.Fatal("the seal epoch captured during an unsealed call still reads as held")
 			}
-			if tc.markedBefore && bind.SealEpoch() != before {
-				t.Fatalf("seal epoch moved from %d to %d under an earlier seal", before, bind.SealEpoch())
+			// Every seal call opens its own epoch, so a turn written under
+			// the earlier seal's epoch never reads as held under this one.
+			if tc.markedBefore && (bind.SealEpoch() == before || bind.SealHeldSince(before)) {
+				t.Fatalf("seal epoch %d kept under an earlier seal at %d; want a new epoch", bind.SealEpoch(), before)
 			}
 		})
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract), §6.2 (maxClientIdleSeconds
+// clock behavior across states)
+// A sealed answer to a later seal call does not re-grant a seal whose grant
+// an unseal with an unknown outcome withdrew. The adapter may have lifted the
+// seal before the unseal failed and written a message sent afterwards to the
+// runtime, so that message's turn must not read as refused when a later
+// sealed answer arrives; routing it again would deliver it twice.
+func TestSealCallDoesNotRegrantAWithdrawnSeal_spec_4_7_1(t *testing.T) {
+	ctx := context.Background()
+	bind := &podsession.BindResult{SessionID: "sess-regrant"}
+	s := &Server{sealerFor: func(*podsession.BindResult) sessionSealer { return &fakeSealer{sealed: true} }}
+	if sealed, _, err := s.sealSession(ctx, bind, 1); err != nil || !sealed {
+		t.Fatalf("first seal: sealed %v err %v; want sealed", sealed, err)
+	}
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &failingUnsealer{} }
+	if err := s.unsealSession(ctx, bind); !errors.Is(err, errUnsealFailed) {
+		t.Fatalf("unseal: err %v; want the unseal failure", err)
+	}
+	// A message sent now captures this epoch; the adapter may have lifted
+	// the seal and written it to the runtime.
+	written := bind.SealEpoch()
+	s.sealerFor = func(*podsession.BindResult) sessionSealer { return &fakeSealer{sealed: true} }
+	if sealed, _, err := s.sealSession(ctx, bind, 1); err != nil || !sealed {
+		t.Fatalf("second seal: sealed %v err %v; want sealed", sealed, err)
+	}
+	if bind.SealHeldSince(written) {
+		t.Fatal("a message written while the grant was withdrawn reads as refused after a later sealed answer")
+	}
+	if !bind.SealHeldSince(bind.SealEpoch()) {
+		t.Fatal("the second seal is not granted for messages written after its own mark")
 	}
 }

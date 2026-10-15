@@ -281,13 +281,24 @@ type BindResult struct {
 	sealGranted atomic.Int64
 }
 
-// MarkSealed marks the binding sealed. A binding already marked keeps its
-// epoch. spec: §4.7.1 (Role and Gateway RPC Contract).
-func (r *BindResult) MarkSealed() {
+// MarkSealed marks the binding sealed under a new odd seal epoch and returns
+// it. A binding already marked moves to the next odd epoch and stays marked,
+// so each seal call opens its own epoch and a grant covers only the messages
+// written after that call's mark. Keeping the earlier epoch would let a later
+// sealed answer re-grant an epoch whose grant an unseal with an unknown
+// outcome withdrew, and a message the runtime received in between would then
+// read as refused and be delivered a second time. spec: §4.7.1 (Role and
+// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior across
+// states).
+func (r *BindResult) MarkSealed() int64 {
 	for {
 		e := r.sealEpoch.Load()
-		if e%2 == 1 || r.sealEpoch.CompareAndSwap(e, e+1) {
-			return
+		next := e + 1
+		if e%2 == 1 {
+			next = e + 2
+		}
+		if r.sealEpoch.CompareAndSwap(e, next) {
+			return next
 		}
 	}
 }

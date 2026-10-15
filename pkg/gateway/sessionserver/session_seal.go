@@ -58,8 +58,10 @@ func (s *Server) sealerOf(bind *podsession.BindResult) sessionSealer {
 // activity and does not seal. When the adapter does not seal, or the call
 // fails, the mark is cleared, unless the binding was already marked before
 // the call, because a seal the adapter placed earlier stays in place when it
-// answers not sealed. A sealed answer records the grant for the epoch the
-// mark opened. The executor reads the end of a turn's stream as a refusal
+// answers not sealed. Every call opens its own seal epoch, also over an
+// earlier mark, and a sealed answer records the grant for that epoch only, so
+// a grant never covers a message written while an earlier grant was
+// withdrawn. The executor reads the end of a turn's stream as a refusal
 // only when the turn's message was written under a mark the adapter granted
 // and that held until the end. A message written before the mark, or under
 // a mark the adapter had not yet granted when the stream ended, may have
@@ -72,8 +74,7 @@ func (s *Server) sealSession(ctx context.Context, bind *podsession.BindResult, i
 		return false, 0, errNoSealer
 	}
 	markedBefore := bind.Sealed()
-	bind.MarkSealed()
-	epoch := bind.SealEpoch()
+	epoch := bind.MarkSealed()
 	cctx, cancel := context.WithTimeout(ctx, sealRPCTimeout)
 	defer cancel()
 	sealed, idleAge, err := sealer.SealSession(cctx, bind.SessionID, bind.CoordinationGeneration, idleSeconds)

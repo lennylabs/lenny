@@ -163,7 +163,8 @@ func (st sealStep) apply(bind *podsession.BindResult) {
 // adapter may have written to the runtime and counted as activity, so a
 // transport end during the call is a stream end. A mark cleared before the
 // end (the adapter answered not sealed), and a grant an unseal with an
-// unknown outcome withdrew, do not make the turn a refusal either.
+// unknown outcome withdrew, do not make the turn a refusal either, also when
+// a later seal call over the kept mark is granted before the end.
 func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -181,6 +182,7 @@ func TestPodExecutorStreamEndWhileSealedIsARefusal_spec_4_7_1(t *testing.T) {
 		{name: "granted before the write and re-granted under a new seal", beforeWrite: []sealStep{markSeal, grantSeal}, afterReceipt: []sealStep{clearSeal, markSeal, grantSeal}},
 		{name: "granted before the write and withdrawn by an unknown unseal", beforeWrite: []sealStep{markSeal, grantSeal}, afterReceipt: []sealStep{withdrawGrant}},
 		{name: "grant withdrawn before the write", beforeWrite: []sealStep{markSeal, grantSeal, withdrawGrant}},
+		{name: "grant withdrawn before the write and a later seal granted", beforeWrite: []sealStep{markSeal, grantSeal, withdrawGrant}, afterReceipt: []sealStep{markSeal, grantSeal}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &silentRuntime{out: make(chan []byte, 1), received: make(chan struct{})}
