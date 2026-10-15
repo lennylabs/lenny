@@ -179,6 +179,8 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `focusAreas` | launch | none | required in `redesign`: a slug or `{area, reason}` each |
 | `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
 | `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
+| `redesignFullSweep` | forward | true | after an applied redesign, every retired lens reviews again; `false` keeps the retired set |
+| `lookupTool` | launch | `<repoRoot>/.claude/tools/lookup.mjs` | the lookup script the expansion, fix, post-fix, and redesign-apply agents run for related passages; set it when the tree under review predates the tool |
 | `maxPrunes` | forward | 2 | the prune budget; a section the run already pruned is not pruned again |
 | `cacheScope` | launch | none | names the lens cache this run may read and write; empty means no cache and every lens reviews. Two runs sharing a scope share answers |
 | `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
@@ -206,7 +208,7 @@ A lens can be served its own earlier answer instead of reviewing again. It is **
 
 ### The base tier
 
-`baseModel` and `baseEffort` set what every agent runs at, **independent of the session's own model and effort**, so two runs of one proposal stay comparable. Every run logs its tier. Some agents name their own model and effort, and those names are absolute: `haiku` at high effort for the mechanical bookkeeping agents, and `opus` at low effort for `init`, the conventions pass, the checklist verifier, site expansion, and the decisions phase's triage and single collectors. Keep the base at or above `opus` at low effort, or those agents end up above it. After two failures an agent is retried on `sonnet`, and every fallback is logged. A burst of failures inside a minute or two is usually a rate-limit window to ride out rather than a model fault.
+`baseModel` and `baseEffort` set what every agent runs at, **independent of the session's own model and effort**, so two runs of one proposal stay comparable. Every run logs its tier. Some agents name their own model and effort, and those names are absolute: `haiku` at high effort for the mechanical bookkeeping agents, and `opus` at low effort for `init`, the conventions pass, the checklist verifier, and the decisions phase's triage and single collectors. Site expansion runs on `opus` at medium effort, and fix design, the fixer, and the redesign's specification and consolidation agents run at high effort. Keep the base at or above `opus` at low effort, or those agents end up above it. After two failures an agent is retried on `sonnet`, and every fallback is logged. A burst of failures inside a minute or two is usually a rate-limit window to ride out rather than a model fault.
 
 ## Changing an argument on a run in flight
 
