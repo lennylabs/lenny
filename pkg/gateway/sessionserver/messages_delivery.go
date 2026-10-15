@@ -172,6 +172,13 @@ type restDelivery struct {
 	// rerouted records that a sealed refusal already routed the batch once
 	// from a primary re-read, so a second refusal takes the held branch.
 	rerouted bool
+	// deliveredAny records that a sealed refusal reported leading messages
+	// of the batch delivered to the runtime. The resume admission check runs
+	// before any message of the request is held or delivered, so once one
+	// was delivered the re-routed remainder skips the entry check, and a cap
+	// refusal surfaces from the check at the resume write, which holds the
+	// remainder and answers queued.
+	deliveredAny bool
 }
 
 // route classifies row and runs the path the classification selects for
@@ -271,6 +278,9 @@ func (d *restDelivery) rerouteSealed(row sessionstore.Session, msgs []executor.M
 	}
 	var outcome deliveryOutcome
 	var ok bool
+	if len(delivered) > 0 {
+		d.deliveredAny = true
+	}
 	fresh, err := d.s.readPrimary(d.r.Context(), row.TenantID, row.ID)
 	if err != nil || d.rerouted {
 		outcome, ok = d.heldBranch(row, deliverIdx)
@@ -306,17 +316,22 @@ func (d *restDelivery) executorFailure(err error) (deliveryOutcome, bool) {
 //
 // Before any of that the resume admission check runs on the classified row:
 // a cap refusal answers 429 QUOTA_EXCEEDED and any other check error 500
-// INTERNAL_ERROR, and the message is neither held nor sent. A refusal from
-// the later check at the resume write takes the held branch, as the write's
-// other errors do, and is logged at INFO with its scope.
+// INTERNAL_ERROR, and the message is neither held nor sent. The entry check
+// is skipped for the remainder of a batch whose leading messages a sealed
+// refusal reported delivered, since the check must precede every hold or
+// delivery of the request. A refusal from the later check at the resume
+// write takes the held branch, as the write's other errors do, and is
+// logged at INFO with its scope.
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
 // (Resume admission)
 func (d *restDelivery) resumeAndDeliver(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	s := d.s
 	ctx := d.r.Context()
-	if err := s.admitResume(ctx, row); err != nil {
-		s.answerCapCheck(d.w, err)
-		return deliveryOutcome{}, false
+	if !d.deliveredAny {
+		if err := s.admitResume(ctx, row); err != nil {
+			s.answerCapCheck(d.w, err)
+			return deliveryOutcome{}, false
+		}
 	}
 	if !s.holdsPod(row) || !s.coordinatesSession(ctx, row.TenantID, row.ID) {
 		return d.heldBranch(row, deliverIdx)

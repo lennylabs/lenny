@@ -408,3 +408,36 @@ func toolFailed(resp map[string]any) bool {
 	result, _ := resp["result"].(map[string]any)
 	return result["isError"] == true
 }
+
+// TestSendMessageSealedFallbackAtCapIsHeld_spec_11_1 pins that the resume
+// admission check gates only a row classified suspended. A message the
+// adapter refuses as sealed twice while the row stays running takes the
+// held-branch fallback: it is held and answers queued even when every cap
+// would refuse, because the running session already counts toward the caps.
+// The check never runs on that path.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
+func TestSendMessageSealedFallbackAtCapIsHeld_spec_11_1(t *testing.T) {
+	exec := &countingExecutor{onSend: func() error { return &executor.SealedError{} }}
+	srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)
+	del.admitErr = &sessionserver.CapRefusal{Scope: sessionserver.CapScopeTenant, Limit: 1, Active: 1}
+	mkSession(t, store, "sess_seal", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_seal","message":"x"}`)
+	if toolFailed(resp) {
+		t.Fatalf("response = %+v, want a queued receipt", resp)
+	}
+	if got := receiptFromResult(t, resp); got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_seal"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if del.admits != 0 {
+		t.Errorf("admission checks = %d, want none on the sealed fallback", del.admits)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
+	}
+}

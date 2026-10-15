@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -655,6 +656,68 @@ func TestReleaseBacklogCheckAtCap_spec_11_1(t *testing.T) {
 			r.srv.maxConcSessGlobal = 2
 			if n := rc.Pass(context.Background()); n != 1 || r.get(t, "s1").State != session.StateResumePending {
 				t.Fatalf("re-check after a slot freed resumed %d, state %q; want 1 and resume_pending", n, r.get(t, "s1").State)
+			}
+		})
+	}
+}
+
+// TestSealedPartialBatchAtCapIsHeld_spec_7_2 pins that the resume admission
+// check never runs after a message of the request reached the runtime. A
+// batch of two to a running session whose adapter seals after delivering the
+// first, with the global cap full once the session is suspended, answers 200
+// queued with the first message's output parts, holds the second, and leaves
+// the row suspended: the refusal comes from the check at the resume write,
+// for a podless and a held-pod row.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
+func TestSealedPartialBatchAtCapIsHeld_spec_7_2(t *testing.T) {
+	const body = `{"messages":[{"role":"user","content":"a"},{"role":"user","content":"b"}]}`
+	for _, held := range []bool{false, true} {
+		t.Run(fmt.Sprintf("held_pod=%v", held), func(t *testing.T) {
+			r := newSuspensionRig(t, true)
+			r.srv.maxConcSessGlobal = 1
+			seedCounted(t, r.store, "other")
+			r.seedRunning(t, "s1")
+			first := true
+			r.exec.sendErr = func() error {
+				if !first {
+					return nil
+				}
+				first = false
+				_, _ = r.store.Update(context.Background(), "acme", "s1", func(s *sessionstore.Session) error {
+					s.State = session.StateSuspended
+					s.SuspendedReason = sessionstore.SuspendedReasonIdle
+					s.SuspendedAt = r.now
+					if !held {
+						s.PodAssignment = ""
+					}
+					return nil
+				})
+				return &executor.SealedError{Delivered: 1, Response: executor.Response{
+					Parts: []executor.MessagePart{{Type: "text", Text: "first"}},
+				}}
+			}
+
+			rec := postJSON(t, r.srv, "/v1/sessions/s1/messages", body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+			}
+			var resp MessageResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.DeliveryReceipt.Status != session.DeliveryStatusQueued {
+				t.Errorf("receipt = %q, want queued", resp.DeliveryReceipt.Status)
+			}
+			if len(resp.Output) != 1 || resp.Output[0].Text != "first" {
+				t.Errorf("output = %+v, want the first message's part", resp.Output)
+			}
+			if n := r.dlqLen(t, "s1"); n != 1 {
+				t.Errorf("DLQ = %d, want the second message held", n)
+			}
+			if got := r.get(t, "s1"); got.State != session.StateSuspended {
+				t.Errorf("state = %q, want suspended", got.State)
 			}
 		})
 	}
