@@ -340,10 +340,26 @@ var sealActivityMarkers = []string{
 	"connector MCP tool call",
 }
 
-// retiredMissedAckOutcome is the statement of a missed acknowledgment from
-// before the adapter heartbeated each session: it ended a stream and nothing
-// more, with no refusal of a later stream.
-const retiredMissedAckOutcome = "A missed acknowledgment ends that session's stream"
+// retiredMissedAckOutcomes are statements of a missed acknowledgment from
+// before the adapter heartbeated each session. One ended a stream and nothing
+// more, with no refusal of a later stream. The other named an unscoped
+// escalation against the whole runtime rather than the session the heartbeat
+// names, and said nothing of the gateway's crash-and-retry handling.
+var retiredMissedAckOutcomes = []string{
+	"A missed acknowledgment ends that session's stream",
+	"unresponsive-agent escalation",
+}
+
+// currentMissedAckOutcome is the adapter contract's statement of a missed
+// acknowledgment: hung for the named session, the stream ended, later streams
+// refused until release, no signal to the process, and crash handling at the
+// gateway. Each part is one marker.
+var currentMissedAckOutcome = []string{
+	"treats the runtime as hung for the session the heartbeat names",
+	"refuses each later stream for the session until the adapter releases the session",
+	"receives no signal",
+	"as a runtime crash under its retry policy",
+}
 
 // spec: 28.5.3 (Intra-pod, Outbound heartbeat_ack, Timing), 4.7.1 (Role and
 // Gateway RPC Contract, Session seal), 15.7 (Runtime Author SDKs, Busy
@@ -365,14 +381,25 @@ func TestRuntimeAuthorPagesStateBusyReportingAndAdapterActivity(t *testing.T) {
 				t.Errorf("%s: the adapter activity list lacks %q", page, m)
 			}
 		}
-		if strings.Contains(body, retiredMissedAckOutcome) {
-			t.Errorf("%s states the retired missed-acknowledgment outcome %q", page, retiredMissedAckOutcome)
+		for _, retired := range retiredMissedAckOutcomes {
+			if strings.Contains(body, retired) {
+				t.Errorf("%s states the retired missed-acknowledgment outcome %q", page, retired)
+			}
 		}
 	}
 	testsPage := filepath.Join("docs", "runtime-author-guide", "testing.md")
-	row := tableRow0(t, testsPage, readDocPage(t, filepath.Join(root, testsPage)), "heartbeat busy")
+	testsBody := readDocPage(t, filepath.Join(root, testsPage))
+	row := tableRow0(t, testsPage, testsBody, "heartbeat busy")
 	if !strings.Contains(row, "`busy: true` and the session's `sessionId`") {
 		t.Errorf("%s: the heartbeat busy conformance row does not state the assertion: %s", testsPage, row)
+	}
+	// The conformance table row for the acknowledgment states the same
+	// missed-acknowledgment outcome as the prose below it on the same page.
+	ackRow := tableRow0(t, testsPage, testsBody, "heartbeat ack")
+	for _, want := range currentMissedAckOutcome {
+		if !strings.Contains(ackRow, want) {
+			t.Errorf("%s: the heartbeat ack conformance row lacks the missed-acknowledgment outcome %q: %s", testsPage, want, ackRow)
+		}
 	}
 }
 
