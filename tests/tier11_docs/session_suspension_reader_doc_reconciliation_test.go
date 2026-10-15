@@ -616,8 +616,8 @@ func TestReaderPagesStateSealWindowsAndRetryWindowAsSpecified(t *testing.T) {
 	if strings.Contains(tbody, "(including an idle suspension)") {
 		t.Errorf("%s names idle suspension as a way a pending elicitation expires; the pending call keeps the session from idle suspension", tools)
 	}
-	if !strings.Contains(tbody, "the wait keeps the session from idle suspension") {
-		t.Errorf("%s does not state that a pending elicitation keeps the session from idle suspension", tools)
+	if !strings.Contains(tbody, elicitationWaitBeforeSeal) {
+		t.Errorf("%s does not state that a pending elicitation keeps the session from idle suspension when the call began before the seal", tools)
 	}
 
 	lifecycle := filepath.Join("docs", "client-guide", "session-lifecycle.md")
@@ -643,5 +643,84 @@ func TestReaderPagesStateSealWindowsAndRetryWindowAsSpecified(t *testing.T) {
 	pbody := readDocPage(t, filepath.Join(root, playground))
 	if !strings.Contains(pbody, "or whose attempt fails because the workspace checkpoint fails or the session changed before the suspend write, stays `running`") {
 		t.Errorf("%s omits the failed suspension attempt that leaves the session `running`", playground)
+	}
+}
+
+// elicitationWaitBeforeSeal conditions the elicitation wait's protection from
+// idle suspension on the call having begun before the adapter sealed the
+// session. The release that follows a seal ends a call begun after it.
+const elicitationWaitBeforeSeal = "The wait keeps the session from idle suspension when the call began before the adapter sealed the session."
+
+// elicitationWaitUnconditional is the retired statement that made the wait an
+// unconditional guard against idle suspension.
+const elicitationWaitUnconditional = "so the wait keeps the session from idle suspension"
+
+// podHoldEndOutcomePages are the reader pages that state what happens when an
+// interrupt suspension's pod hold ends.
+var podHoldEndOutcomePages = []string{
+	filepath.Join("docs", "reference", "configuration.md"),
+	filepath.Join("docs", "client-guide", "session-lifecycle.md"),
+	filepath.Join("docs", "runtime-author-guide", "lifecycle.md"),
+}
+
+// spec: 6.2 (Pod State Machine, Graceful pod release during extended
+// suspension), 7.2 (Interactive Session Model, delivery path 6 Admission,
+// Held messages, Backlog resume), 9.2 (Elicitation Chain, Idle clock), 11.1
+// (Admission and Fairness, Resume admission)
+// diagnosis: a reader page states the success path of a suspension outcome as
+// its only path: the end of an interrupt suspension's pod hold always
+// releasing the pod, a pending elicitation always keeping the session from idle
+// suspension, or a full concurrent-session limit always refusing the message
+// that would resume a suspended session. A reader expects a podless session
+// after a failed checkpoint, relies on an elicitation begun after the seal, or
+// reads a `queued` receipt on a suspended session as a resume.
+func TestReaderPagesStateSuspensionOutcomesBeyondTheSuccessPath(t *testing.T) {
+	root := repoRoot(t)
+
+	for _, page := range podHoldEndOutcomePages {
+		body := readDocPage(t, filepath.Join(root, page))
+		if !strings.Contains(body, "keeps the pod held") {
+			t.Errorf("%s does not state that a failed checkpoint at the end of the pod hold keeps the pod held", page)
+		}
+		if !strings.Contains(body, "resumes the session rather than releasing the pod") {
+			t.Errorf("%s does not state that a session with held messages is resumed rather than released when the pod hold ends", page)
+		}
+	}
+	lifecycle := filepath.Join("docs", "client-guide", "session-lifecycle.md")
+	lbody := readDocPage(t, filepath.Join(root, lifecycle))
+	hold := tableRow(t, lifecycle, lbody, "maxSuspendedPodHold")
+	for _, want := range []string{"failed checkpoint keeps the pod held", "resumed rather than released"} {
+		if !strings.Contains(hold, want) {
+			t.Errorf("%s: the `maxSuspendedPodHold` row does not state %q: %s", lifecycle, want, hold)
+		}
+	}
+
+	tools := filepath.Join("docs", "runtime-author-guide", "platform-tools.md")
+	tbody := readDocPage(t, filepath.Join(root, tools))
+	if strings.Contains(tbody, elicitationWaitUnconditional) {
+		t.Errorf("%s states that a pending elicitation always keeps the session from idle suspension", tools)
+	}
+	if !strings.Contains(tbody, "../reference/adapter-contract.md#session-seal") {
+		t.Errorf("%s does not link the session seal section for the work a release ends", tools)
+	}
+
+	resume := regexp.MustCompile("(?s)A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again\\..*?\n\n").FindString(lbody)
+	for _, want := range []string{"the second refuses it", "receipt `queued`", "The session stays `suspended`"} {
+		if !strings.Contains(resume, want) {
+			t.Errorf("%s: the resume admission paragraph does not state %q", lifecycle, want)
+		}
+	}
+	delivery := regexp.MustCompile("(?m)^\\| `suspended` \\| Resumes the session.*$").FindString(lbody)
+	if delivery == "" {
+		t.Fatalf("%s: no `suspended` row in the message-delivery table", lifecycle)
+	}
+	if !strings.Contains(delivery, "is held with the receipt `queued`, the session stays `suspended`") {
+		t.Errorf("%s: the suspended delivery row omits the message admitted on entry and refused at the state write: %s", lifecycle, delivery)
+	}
+
+	tenancy := filepath.Join("docs", "operator-guide", "multi-tenancy.md")
+	mbody := readDocPage(t, filepath.Join(root, tenancy))
+	if !strings.Contains(mbody, "refused at the state write, because another admission took the last slot, is held with the receipt `queued`, the session stays `suspended`") {
+		t.Errorf("%s: the hard-limits bullet omits the message admitted on entry and refused at the state write", tenancy)
 	}
 }

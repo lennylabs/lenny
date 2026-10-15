@@ -258,7 +258,7 @@ Authorization: Bearer <token>
 |---|---|
 | `running` (runtime available) | Delivered to runtime stdin |
 | `running` (tool call in flight) | Buffered in session inbox, delivered when runtime is ready |
-| `suspended` | Resumes the session, whatever the `delivery` value. A message sent through `POST /v1/sessions/{id}/messages` and served by the session's coordinating gateway replica while the session holds its pod is delivered synchronously, with the receipt `delivered`. Every other admitted message, including an MCP `send_message` and a `lenny/send_message` from another session, is held in the session's dead-letter queue, with the receipt `queued`, until the resume delivers it. Refused with `QUOTA_EXCEEDED` when a concurrent-session limit the session counts toward is full |
+| `suspended` | Resumes the session, whatever the `delivery` value. A message sent through `POST /v1/sessions/{id}/messages` and served by the session's coordinating gateway replica while the session holds its pod is delivered synchronously, with the receipt `delivered`. Every other admitted message, including an MCP `send_message` and a `lenny/send_message` from another session, is held in the session's dead-letter queue, with the receipt `queued`, until the resume delivers it. Refused with `QUOTA_EXCEEDED` when a concurrent-session limit the session counts toward is full. A message admitted on entry whose resume is then refused, because another admission took the last slot, is held with the receipt `queued`, the session stays `suspended`, and the gateway resumes it once a slot frees |
 | `resume_pending` / `awaiting_client_action` | Enqueued in dead-letter queue with TTL |
 | Pre-running (`created`, `ready`, `starting`) | Rejected with `TARGET_NOT_READY` for external clients |
 | Terminal | Rejected with `TARGET_TERMINAL` |
@@ -279,7 +279,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Valid only when the session is `running`. What the agent receives depends on its runtime's [integration level](../runtime-author-guide/integration-levels.md). The pod is held for up to `maxSuspendedPodHoldSeconds` (default 900s). When the hold ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`.
+Valid only when the session is `running`. What the agent receives depends on its runtime's [integration level](../runtime-author-guide/integration-levels.md). The pod is held for up to `maxSuspendedPodHoldSeconds` (default 900s). When the hold ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. When that checkpoint fails, the gateway keeps the pod held and retries the checkpoint at its next evaluation, 60 seconds later, so the pod stays held until a checkpoint succeeds or the session leaves `suspended`. When the session has held messages waiting for it, the gateway resumes the session rather than releasing the pod.
 
 ### Idle Suspension
 
@@ -315,7 +315,7 @@ The call returns the session in its new state. From `awaiting_client_action`, an
 
 A message to a `suspended` session also resumes it, whatever its `delivery` value, so a client does not need to call `resume` before sending a message.
 
-A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. When a limit the session counts toward is full, the resume, or the message that would resume the session, is refused with `429 QUOTA_EXCEEDED`, and the session stays `suspended`. A client that sent an `Idempotency-Key` with a refused resume retries with a new key, because the gateway returns the cached refusal for the original key until that key expires.
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. When a limit the session counts toward is full, the resume, or the message that would resume the session, is refused with `429 QUOTA_EXCEEDED`, and the session stays `suspended`. The gateway checks a message when it arrives and checks again before the state write that resumes the session. When the first check admits the message and the second refuses it, because another admission took the last slot, the message is held in the session's dead-letter queue with the receipt `queued` rather than refused. The session stays `suspended`, and the gateway resumes it and delivers the held message once the check admits the resume. A `queued` receipt for a `suspended` session therefore does not mean the session has resumed. A client that sent an `Idempotency-Key` with a refused resume retries with a new key, because the gateway returns the cached refusal for the original key until that key expires.
 
 ### h. Terminate
 
@@ -661,7 +661,7 @@ The `treeUsage` field is populated only when the session has a delegation tree a
 | `maxClientIdleSeconds` | 900s (15m) | Time without activity before the session is idle-suspended, or expired when it cannot be idle-suspended |
 | `maxResumeWindow` | 900s (15m) | Maximum time a session stays in `resume_pending` before it moves to `awaiting_client_action` |
 | `maxAwaitingClientAction` | 900s (15m) | Time in `awaiting_client_action` before auto-expiry |
-| `maxSuspendedPodHold` | 900s (15m) | Time an interrupted session holds its pod before the gateway checkpoints the workspace and releases it. An idle suspension holds no pod |
+| `maxSuspendedPodHold` | 900s (15m) | Time an interrupted session holds its pod before the gateway checkpoints the workspace and releases it. A failed checkpoint keeps the pod held and is retried at the next evaluation, and a session with held messages is resumed rather than released. An idle suspension holds no pod |
 | `gateway.maxSuspendedSessionSeconds` | 604800s (7d) | Suspended-session lifetime: time a session stays `suspended` before it expires |
 
 A `session_expiring_soon` event is sent to the client and pod 5 minutes before `maxSessionAge` expires.
