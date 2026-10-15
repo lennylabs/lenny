@@ -461,3 +461,128 @@ func TestOperatorPagesStateSuspendedAccountingAndRestoreWaits(t *testing.T) {
 		}
 	}
 }
+
+// idleQualifyingEventMarkers name each qualifying event of the idle clock on
+// the configuration reference row, in the order the spec lists them.
+var idleQualifyingEventMarkers = []string{
+	"a message the runtime adapter writes to the runtime",
+	"a tool approval or denial",
+	"an elicitation response",
+	"an attach",
+	"`agent_output` or `tool_use` event",
+	"`lenny/await_children` call and each partial result",
+	"proxy delivery mode",
+	"non-zero token delta (direct delivery mode)",
+}
+
+// retiredIdleQualifyingEvents are events an earlier row listed that the idle
+// clock does not count.
+var retiredIdleQualifyingEvents = []string{"tool result", "elicitation request"}
+
+// spec: 6.2 (Pod State Machine, maxClientIdleSeconds clock behavior across
+// states), 7.2 (Interactive Session Model, delivery path 6 Backlog resume,
+// Synchronous delivery, Held messages), 11.1 (Admission and Fairness, Resume
+// admission)
+// diagnosis: the configuration reference lists idle-clock events the spec does
+// not define or omits the ones it does, or overstates which podless suspended
+// sessions the leader resumes; or the client lifecycle page extends the
+// `delivered` receipt beyond a REST message on the coordinating replica. An
+// operator expects a parent in `await_children` to be idle-suspended, expects a
+// message held before an interrupt to resume the session, or a client expects
+// `delivered` for an MCP message that receives `queued`.
+func TestReaderPagesStateIdleEventsBacklogResumeAndSuspendedDeliveryReceipts(t *testing.T) {
+	root := repoRoot(t)
+	page := filepath.Join("docs", "reference", "configuration.md")
+	body := readDocPage(t, filepath.Join(root, page))
+
+	idle, _ := configRowDefault(t, page, body, "session.maxClientIdleSeconds")
+	for _, m := range idleQualifyingEventMarkers {
+		if !strings.Contains(idle, m) {
+			t.Errorf("%s: the maxClientIdleSeconds qualifying events lack %q: %s", page, m, idle)
+		}
+	}
+	for _, r := range retiredIdleQualifyingEvents {
+		if strings.Contains(idle, r) {
+			t.Errorf("%s: the maxClientIdleSeconds row lists %q, which the idle clock does not count", page, r)
+		}
+	}
+
+	recheck, _ := configRowDefault(t, page, body, "gateway.suspendedBacklogRecheckSeconds")
+	for _, want := range []string{
+		"idle-suspended and its dead-letter queue or inbox holds a message",
+		"accepted after the session entered `suspended`",
+		"concurrent-session admission check",
+		"again at the next interval",
+	} {
+		if !strings.Contains(recheck, want) {
+			t.Errorf("%s: the backlog re-check row does not state %q: %s", page, want, recheck)
+		}
+	}
+
+	lifecycle := filepath.Join("docs", "client-guide", "session-lifecycle.md")
+	lbody := readDocPage(t, filepath.Join(root, lifecycle))
+	// The page has two `suspended` rows; the message-delivery one names the
+	// admission refusal.
+	var row string
+	for _, l := range strings.Split(lbody, "\n") {
+		if strings.HasPrefix(l, "| `suspended` |") && strings.Contains(l, "QUOTA_EXCEEDED") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s: no `suspended` message-delivery row", lifecycle)
+	}
+	for _, want := range []string{
+		"`POST /v1/sessions/{id}/messages`",
+		"receipt `delivered`",
+		"receipt `queued`",
+		"`lenny/send_message`",
+		"`QUOTA_EXCEEDED`",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s: the suspended message-delivery row does not state %q: %s", lifecycle, want, row)
+		}
+	}
+}
+
+// spec: 4.7.1 (Role and Gateway RPC Contract, Session seal), 6.2 (Pod State
+// Machine, Idle suspension)
+// diagnosis: the adapter-contract reference or the runtime-author lifecycle
+// page widens the unseal condition, omits the outcome of a seal nobody lifts,
+// or implies that a `busy` report after the seal protects work from the
+// release. A runtime author relies on a late `busy` report and loses the work,
+// or an operator cannot explain a `running` session refusing every message.
+func TestSessionSealPagesStateUnsealFenceAndAfterSealRelease(t *testing.T) {
+	root := repoRoot(t)
+	page := filepath.Join("docs", "reference", "adapter-contract.md")
+	body := readDocPage(t, filepath.Join(root, page))
+	start := strings.Index(body, "**Session seal.**")
+	end := strings.Index(body, "**Adapter-to-Gateway events**")
+	if start < 0 || end < start {
+		t.Fatalf("%s: no Session seal paragraph before the adapter-to-gateway events", page)
+	}
+	seal := body[start:end]
+	for _, want := range []string{
+		"still at the attempt's `coordination_generation` and names the attempt's pod",
+		"No other caller lifts a seal.",
+		"refuses every `message` for the session",
+		"`maxSessionAge` bounds a sealed `running` session",
+		"also ends work your runtime begins after the seal, whether or not your runtime reports it `busy`",
+	} {
+		if !strings.Contains(seal, want) {
+			t.Errorf("%s: the Session seal paragraph does not state %q", page, want)
+		}
+	}
+	if strings.Contains(body, "its state write does not take effect") {
+		t.Errorf("%s: the Session seal paragraph unseals on any missed state write, without the generation and pod fence", page)
+	}
+
+	lifecycle := filepath.Join("docs", "runtime-author-guide", "lifecycle.md")
+	lbody := readDocPage(t, filepath.Join(root, lifecycle))
+	if strings.Contains(lbody, "that it has not reported.") {
+		t.Errorf("%s: the idle suspension paragraph implies reported work always survives the release", lifecycle)
+	}
+	if !strings.Contains(lbody, "any work your runtime begins after the seal, even when it reports that work `busy`") {
+		t.Errorf("%s: the idle suspension paragraph does not state that the release ends work begun after the seal", lifecycle)
+	}
+}

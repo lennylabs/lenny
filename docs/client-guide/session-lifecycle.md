@@ -258,7 +258,7 @@ Authorization: Bearer <token>
 |---|---|
 | `running` (runtime available) | Delivered to runtime stdin |
 | `running` (tool call in flight) | Buffered in session inbox, delivered when runtime is ready |
-| `suspended` | Resumes the session, whatever the `delivery` value. A message that the session's coordinating gateway replica can deliver at once to a held pod is delivered; every other message is held in the session's dead-letter queue until the resume delivers it. Refused with `QUOTA_EXCEEDED` when a concurrent-session limit the session counts toward is full |
+| `suspended` | Resumes the session, whatever the `delivery` value. A message sent through `POST /v1/sessions/{id}/messages` and served by the session's coordinating gateway replica while the session holds its pod is delivered synchronously, with the receipt `delivered`. Every other admitted message, including an MCP `send_message` and a `lenny/send_message` from another session, is held in the session's dead-letter queue, with the receipt `queued`, until the resume delivers it. Refused with `QUOTA_EXCEEDED` when a concurrent-session limit the session counts toward is full |
 | `resume_pending` / `awaiting_client_action` | Enqueued in dead-letter queue with TTL |
 | Pre-running (`created`, `ready`, `starting`) | Rejected with `TARGET_NOT_READY` for external clients |
 | Terminal | Rejected with `TARGET_TERMINAL` |
