@@ -2783,7 +2783,22 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Overlapping plan steps.** None; no plan step owns erasure, tenant deletion, or tenant suspension.
   - **Drafting.** Under the drafting rules and the test instruction above.
 
-Proposal 0087 part 1 (Phase 2 above) follows P1 and P5.
+- [ ] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
+  foreign key, and full_revoke** (not yet written). Split from P5 on 2026-10-16 (proposal 0094 decision D20,
+  confirmed by the owner).
+  - **Scope.** The Phase 3 credential-lease revoker and token-cache flush, and the Phase 4 and user-erasure
+    erasers the store table lists and the tree omits, including the session message queues, the checkpoint
+    manifest, retention, and metadata rows, the coordination mirror rows, and the user registry row.
+    Also the `audit_redaction_receipts` foreign key that blocks an audit eraser, and the full_revoke session
+    loop, listing, and error handling.
+  - **Members.** F-11.4.12, F-11.4.13, the F-11.4.14 remainder (0094's fence closes its creation race),
+    F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, and the P5 dossier's N-3 and N-4
+    (`scratchpad/p1-p5/p5-dossier.md`).
+  - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
+    and release mechanism, and after P5 (0094), whose fence and drain it builds on.
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 and does not block 0087 part 1.
 
 Proposals, second wave:
 
