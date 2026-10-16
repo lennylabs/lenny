@@ -458,9 +458,10 @@ type commitObservation struct {
 	row      sessionstore.Session
 }
 
-// commitBaseline is what the attempt knew before its commit: its generation
-// G, the replacement pod's sandbox, and the RecoveryGeneration of the row it
-// restored. binderless selects the binderless rows of the classification.
+// commitBaseline is what the attempt knew before its commit: its
+// coordination generation, the replacement pod's sandbox, and the
+// RecoveryGeneration of the row it restored. binderless selects the
+// classification the binderless path applies, which has no sandbox to match.
 type commitBaseline struct {
 	gen         int64
 	sandbox     string
@@ -468,7 +469,10 @@ type commitBaseline struct {
 	binderless  bool
 }
 
-// commitOutcome selects the column of the post-commit tail.
+// commitOutcome names which exit a resume commit took: the commit did not
+// land, it landed at the attempt's generation, or it landed and an adopter's
+// handoff has since advanced the row past that generation. The exit decides
+// what completeResume does after the commit.
 type commitOutcome int
 
 const (
@@ -479,11 +483,13 @@ const (
 
 // classifyCommit classifies a commit's observation against its baseline.
 // With a pod binder, only this attempt's commit writes its sandbox at G and
-// advances RecoveryGeneration, so a guard miss after a store error is Landed
-// when R names the sandbox at G with an advanced recovery generation and a
-// held pod or a terminal state, Above G when an adopter's handoff advanced
-// that row past G, and Not landed otherwise. A guard miss with no earlier
-// store error is Not landed: a concurrent pool's PodAssignment names the
+// advances RecoveryGeneration. A guard miss after a store error therefore
+// counts as landed when the observed row names the sandbox at the attempt's
+// generation with an advanced recovery generation and a held pod or a
+// terminal state, as landed-then-adopted when an adopter's handoff advanced
+// that row past the attempt's generation, and as not landed otherwise. A
+// guard miss with no earlier store error did not land: a concurrent pool's
+// PodAssignment names the
 // shared pod, so only the error history separates this attempt's write from
 // a later incarnation's. On the binderless path, an advanced recovery
 // generation means a commit landed since the received row.
@@ -577,8 +583,9 @@ func commitGuard(r sessionstore.Session, b commitBaseline) bool {
 	return r.State == session.StateResuming && r.CoordinationGeneration == b.gen
 }
 
-// completeResume commits a restore that reached its replacement pod and runs
-// the post-commit tail of the exit the commit takes. It runs on the
+// completeResume commits a restore that reached its replacement pod and then
+// finishes the exit the commit took: landed at the attempt's generation,
+// landed and adopted past it, or not landed. It runs on the
 // server-lifetime context, so the attempt bound does not reach it, and holds
 // the session's delivery lock from before its commit until its tail ends.
 //
@@ -615,8 +622,10 @@ func (s *Server) completeResume(row sessionstore.Session, gen int64, out resumeO
 	}
 }
 
-// resumeTail runs the rows of the post-commit tail for one exit. Each method
-// is one column of that table, and runs its rows top to bottom.
+// resumeTail carries what an attempt needs to finish after its commit. Each
+// method finishes one exit, running its steps in the order the spec gives.
+//
+// spec: §7.3 (Resume driver)
 type resumeTail struct {
 	s   *Server
 	ctx context.Context
@@ -626,10 +635,16 @@ type resumeTail struct {
 	r   sessionstore.Session
 }
 
-// landed is the Landed column: fence at G (a relinquish moves to the
-// Relinquished column), publish, the terminal re-check (a terminal row hands
-// the binding to the terminal binding release and ends the tail), and the
-// resume's events, cleanup, tree recovery, and held-message delivery.
+// landed finishes a commit that landed at the attempt's generation. It fences
+// the pod at that generation, and a relinquished fence hands the pod to the
+// adopter through adopted. It then publishes the binding and re-checks the row
+// for a terminal state; a terminal row hands the binding to the terminal
+// binding release and stops there. Otherwise it emits the resume events, runs
+// the partial-manifest cleanup, recovers the delegation tree, and delivers the
+// held messages.
+//
+// spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §8.10
+// (Delegation Tree Recovery)
 func (t resumeTail) landed() {
 	res := t.out.result
 	if res != nil && !t.s.binderless() {
@@ -671,11 +686,15 @@ func (t resumeTail) publish(res *podsession.BindResult) {
 	}
 }
 
-// adopted is the Relinquished column (relinquished true) and the Above G
-// column (false): nothing is published, the terminal re-check skips every
-// remaining row except the connection close, the attempt's connection is
-// closed, and the resume's events, cleanup, and tree recovery run. The
-// adopter delivers the held messages.
+// adopted finishes a commit whose pod an adopter owns: either the fence at the
+// attempt's generation was relinquished (relinquished true) or an adopter's
+// handoff advanced the row past that generation (false). It publishes
+// nothing and closes the attempt's adapter connection. When the row is not
+// terminal it emits the resume events, runs the partial-manifest cleanup, and
+// recovers the delegation tree; a terminal row skips those. The adopter
+// delivers the held messages.
+//
+// spec: §7.3 (Resume driver), §8.10 (Delegation Tree Recovery)
 func (t resumeTail) adopted(relinquished bool) {
 	terminal := false
 	if fresh, err := t.s.readPrimary(t.ctx, t.row.TenantID, t.row.ID); err != nil {
@@ -694,9 +713,11 @@ func (t resumeTail) adopted(relinquished bool) {
 	t.events()
 }
 
-// notLanded is the Not landed column: the attempt releases exactly its pod
-// and the leases it minted, publishing and writing nothing. After a store
-// error it releases only on a confirmed reclaim.
+// notLanded finishes a commit that did not land: the attempt releases only
+// the uncommitted pod and the leases it minted, and publishes and writes
+// nothing. After a store error it releases only on a confirmed reclaim.
+//
+// spec: §7.3 (Resume driver)
 func (t resumeTail) notLanded(storeErr bool) {
 	if t.s.binderless() || t.out.result == nil {
 		return
@@ -706,8 +727,9 @@ func (t resumeTail) notLanded(storeErr bool) {
 	}
 }
 
-// events runs the audit, status, resumed-event, cleanup, children, and
-// tree-recovery rows of a landed column, in table order. The resume mode is
+// events emits the resume audit event, the status change, and the resumed
+// event, runs the partial-manifest cleanup, emits the children-reattached
+// event, and recovers the delegation tree, in that order. The resume mode is
 // classified before the partial-manifest cleanup soft-deletes the manifest
 // the classification reads.
 func (t resumeTail) events() {
