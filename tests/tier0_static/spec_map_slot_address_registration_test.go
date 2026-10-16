@@ -313,6 +313,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/session/executor/pod_test.go",
 	"pkg/gateway/session/sessionstore/memstore/reserve_slot_under_lock_test.go",
 	"pkg/gateway/sessionserver/create_test.go",
+	"pkg/gateway/sessionserver/credential_lookup_failclosed_internal_test.go",
 	"pkg/gateway/sessionserver/delegated_child_materialize_test.go",
 	"pkg/gateway/sessionserver/messages_component_test.go",
 	"pkg/gateway/sessionserver/messages_test.go",
