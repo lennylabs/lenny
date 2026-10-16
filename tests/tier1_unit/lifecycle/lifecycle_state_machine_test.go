@@ -4,6 +4,7 @@ package lifecycle_test
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"strings"
@@ -51,6 +52,35 @@ func lifecycleOps() []lifecycleOp {
 	}
 }
 
+// lifecycleChecks is the number of operation sequences the state machine
+// runs in the tier-1 package. Each sequence drives the harness to quiescence
+// twice, about 26 checker passes of real-time settling each, so one sequence
+// takes several seconds and rapid's default of 100 sequences alone runs past
+// go test's default ten-minute package timeout. A run that passes
+// -rapid.checks on the command line keeps its own count.
+const lifecycleChecks = 20
+
+// boundRapidChecks sets rapid's check count to n for the calling test when
+// the command line did not set it, and restores the previous value when the
+// test ends.
+func boundRapidChecks(t *testing.T, n int) {
+	t.Helper()
+	f := flag.Lookup("rapid.checks")
+	if f == nil {
+		t.Fatal("rapid registers no rapid.checks flag")
+	}
+	explicit := false
+	flag.Visit(func(set *flag.Flag) { explicit = explicit || set.Name == f.Name })
+	if explicit {
+		return
+	}
+	prev := f.Value.String()
+	if err := f.Value.Set(fmt.Sprint(n)); err != nil {
+		t.Fatalf("set rapid.checks: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Value.Set(prev) })
+}
+
 // TestLifecycleStateMachine_spec_7_2 applies random sequences of lifecycle
 // operations (terminal writes, POST /resume, interrupts, failure reports,
 // resume drives, and loop ticks) to a session on random replicas of a
@@ -61,6 +91,7 @@ func lifecycleOps() []lifecycleOp {
 // spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §6.2 (Pod
 // State Machine)
 func TestLifecycleStateMachine_spec_7_2(t *testing.T) {
+	boundRapidChecks(t, lifecycleChecks)
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 64, CredentialPool: true})
 	ops := lifecycleOps()
 	rapid.Check(t, func(rt *rapid.T) {
