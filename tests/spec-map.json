@@ -2384,7 +2384,9 @@
         "tests/tier11_docs/elicitation_content_integrity_consistency_test.go",
         "tests/tier4_integration/elicitation_expiry_test.go::TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2",
         "tests/tier7a_load_local/elicitation_expiry_race_test.go::TestElicitationRespondRacingExpiryHasOneOutcome_spec_9_2",
-        "tests/tier4_integration/session_held_pod_integration_test.go::TestHoldReleaseExpiresTheRaisedElicitation_spec_9_2"
+        "tests/tier4_integration/session_held_pod_integration_test.go::TestHoldReleaseExpiresTheRaisedElicitation_spec_9_2",
+        "pkg/gateway/mcpfabric/mcptools/elicitation_test.go::TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2",
+        "pkg/gateway/mcpfabric/mcptools/elicitation_test.go::TestRequestElicitationWaiterExitsWhenExpired_spec_9_2"
       ],
       "packages": [
         "pkg/elicitation"
