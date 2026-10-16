@@ -116,6 +116,23 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session, rb r
 	return resumeOutcome{result: result.Result, mode: result.Mode}, nil
 }
 
+// runClaimlessEntry runs the resume driver's post-claim hook for a restore
+// that claims no pod, a service-mode session. Such a restore has no claim for
+// the binder to follow with the hook, so the hook runs at the point the claim
+// would have been, before the restore returns, and the resume_pending to
+// resuming entry write stays the hook's write on every path. The hook's error
+// is returned unwrapped, as the binder returns it, so the driver reads a
+// superseded or failed entry write the same way for both kinds of restore. A
+// zero resumeBind, the create and start paths, runs nothing.
+//
+// spec: §7.3 (Resume driver), §5.2 (Pool Configuration and Execution Modes)
+func runClaimlessEntry(ctx context.Context, rb resumeBind) error {
+	if rb.onClaimed == nil {
+		return nil
+	}
+	return rb.onClaimed(ctx)
+}
+
 // releaseThenResumeOnPod releases any earlier binding of the session and then
 // restores it onto a fresh pod. The resume driver calls it once per attempt,
 // holding the coordination lease it acquired before the call, with its

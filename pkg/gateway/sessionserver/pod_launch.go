@@ -150,9 +150,12 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// touching the claim or slot acquisition paths, so no Sandbox is
 	// claimed and no pod is bound to the session. The session row persists
 	// with execution_mode=service; message routing reads that mode and
-	// dispatches to the stateless data plane rather than a bound pod.
+	// dispatches to the stateless data plane rather than a bound pod. On the
+	// resume path the driver's post-claim hook still runs here, before the
+	// restore returns, so the resuming entry write precedes the commit
+	// (spec: §7.3, Resume driver).
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return nil, nil
+		return nil, runClaimlessEntry(ctx, rb)
 	}
 	// spec: §4.9 — the session-start credential-delivery gate. Evaluate each
 	// resolved CredentialPool's effective deliveryMode against the bound

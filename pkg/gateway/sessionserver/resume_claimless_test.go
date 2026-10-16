@@ -23,8 +23,8 @@ import (
 // TestServiceModeSuspendedSessionResumesToRunning_spec_7_3 asserts that a
 // suspended service-mode session, which holds no pod, is answered
 // resume_pending by POST /resume and that the resume driver then commits it
-// to running: the claimless restore never calls the binder's post-claim hook,
-// so the driver writes the resuming incarnation itself before its commit. The
+// to running: the claimless restore runs the driver's post-claim hook before
+// it returns, so the resuming incarnation exists before the commit. The
 // attempt counts one success and no failure, and the row's coordination and
 // recovery generations each advance by one.
 //
