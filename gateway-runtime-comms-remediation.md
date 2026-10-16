@@ -2630,15 +2630,19 @@ Direct BUILD-GAPS fixes, now, in parallel with 0092's review (none touches a fun
 
 Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 edits:
 
-- [ ] F-15.1.43 (TT-35): check the row state before driving the adapter interrupt (0092's CODE-6 item 1
-  edits `handleInterrupt`).
-- [ ] F-10.1.29 (TT-23): close the adapter client on every Sweeper and D6 eviction (D6 adds the evict
-  branch).
-- [ ] F-10.1.31 (TT-25): clear `backoffUntil` for a terminal or absent row (0092's CODE-5 edits the
-  Sweeper).
-- [ ] F-25.4.31: assign the `lenny-ops` clientset only when one was built, so a process with no
+- [x] F-15.1.43 (TT-35): check the row state before driving the adapter interrupt (0092's CODE-6 item 1
+  edits `handleInterrupt`). Landed 2026-10-16 on `fix/post-0092-direct`: the interrupt re-checks the
+  primary row before it drives the adapter.
+- [x] F-10.1.29 (TT-23): close the adapter client on every Sweeper and D6 eviction (D6 adds the evict
+  branch). Landed 2026-10-16 on `fix/post-0092-direct`: both eviction seams close the binding they
+  removed, once.
+- [x] F-10.1.31 (TT-25): clear `backoffUntil` for a terminal or absent row (0092's CODE-5 edits the
+  Sweeper). Landed 2026-10-16 on `fix/post-0092-direct`: terminal rows clear the entry and a complete
+  sweep prunes unlisted sessions.
+- [x] F-25.4.31: assign the `lenny-ops` clientset only when one was built, so a process with no
   kubeconfig does not panic on a typed-nil clientset. Found by 0092's S15 full tier pass; it blocks tier 4's
-  ops tests.
+  ops tests. Landed 2026-10-16 on `fix/post-0092-direct`: the clientset is an interface left nil without a
+  cluster.
 
 F-4.6.30 (SandboxClaims that stay bound after their sessions are gone, seen in tier-5 `TestPodLifecycle`
 and possibly the cause of the never-passing tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash`) is

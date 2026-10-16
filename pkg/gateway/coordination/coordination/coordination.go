@@ -386,6 +386,11 @@ func peerTookOver(row sessionstore.Session, bindGen int64) bool {
 // ErrHeld alone does not evict, because leasestore.Failover can report a stale
 // Redis holder after a Redis outage while the generation is unchanged.
 //
+// The adoption backoff of a terminal session is dropped when its row is
+// listed, and a pass that lists every tenant without error drops the backoff
+// of every session it did not list, so the map holds entries only for live
+// sessions.
+//
 // spec: §4.6.1, §10.1.1 (Stateless Replicas and Per-Session Coordination),
 // §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica Behavior),
 // §10.1.8 (Rolling Updates and the CheckpointBarrier Protocol), §7.2
@@ -396,12 +401,14 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	held := 0
+	listed := map[string]struct{}{}
 	for _, tenantID := range tenants {
 		rows, err := s.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
 		if err != nil {
 			return held, err
 		}
 		for _, row := range rows {
+			listed[row.ID] = struct{}{}
 			holds, err := s.sweepRow(ctx, tenantID, row)
 			if err != nil {
 				return held, err
@@ -411,6 +418,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			}
 		}
 	}
+	s.pruneAdoptionBackoff(listed)
 	return held, nil
 }
 
@@ -418,6 +426,10 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 // row's lease afterwards. A returned error ends the sweep.
 func (s *Sweeper) sweepRow(ctx context.Context, tenantID string, row sessionstore.Session) (bool, error) {
 	if session.IsTerminal(row.State) {
+		// A terminal session is never adopted again, so its adoption
+		// backoff can never be consulted; drop it here rather than wait on
+		// a lazy expiry that never runs. spec: §10.1.1.
+		s.clearAdoptionBackoff(row.ID)
 		s.sweepTerminal(ctx, tenantID, row)
 		return false, nil
 	}
@@ -658,6 +670,24 @@ func (s *Sweeper) clearAdoptionBackoff(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.backoffUntil, sessionID)
+}
+
+// pruneAdoptionBackoff drops the adoption backoff of every session a complete
+// sweep did not list, which is a session whose row was hard-deleted (or whose
+// tenant is gone). Such a session is never listed again, so neither
+// inAdoptionBackoff's lazy expiry nor the terminal branch would ever remove
+// its entry. Sweep calls it only after every tenant was listed without error,
+// so a partial listing never drops a live session's window. Session IDs are
+// globally unique, so the set is keyed by ID alone, as backoffUntil is.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination).
+func (s *Sweeper) pruneAdoptionBackoff(listed map[string]struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id := range s.backoffUntil {
+		if _, ok := listed[id]; !ok {
+			delete(s.backoffUntil, id)
+		}
+	}
 }
 
 // nextBackoff returns the §10.1.2 re-adoption delay. A positive

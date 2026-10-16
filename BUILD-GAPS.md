@@ -13880,12 +13880,14 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Gap:** A superseded coordinator, or the cancel_child handler, releases through a local binding without checking the coordination generation, so it seals and releases a pod a peer adopted.
 **Suggested resolution:** Fence executor.Release and Seal on the row's coordination generation. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
-### - [ ] F-10.1.29 — The Sweeper's dead-connection and D6 evict branches drop the adapter gRPC connection without closing it [Medium] — OPEN
+### - [x] F-10.1.29 — The Sweeper's dead-connection and D6 evict branches drop the adapter gRPC connection without closing it [Medium] — CLOSED
 
 **Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination and §10.1.5 Stale Replica Behavior.
 **Evidence:** `pkg/gateway/sessionserver/stream_failure.go:129-137`; `cmd/lenny-gateway/coordination_seams.go:81-88`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-23 (bucket B; source findings B: p3#31, p11#29; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D6: the evict branch is 0092's.
 **Gap:** The Sweeper's dead-connection and D6 evict branches drop the BindResult without closing the adapter gRPC connection.
 **Suggested resolution:** Close the adapter client on every eviction. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because D6 adds the evict branch (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+**Resolution:** Every eviction now closes the removed binding's adapter connection. `coordinationBindings.EvictBinding` (`cmd/lenny-gateway/coordination_seams.go`), which serves the Sweeper's dead-connection and peer-takeover branches, closes the binding `Registry.Remove` returned. `Server.evictStaleBinding` (`pkg/gateway/sessionserver/stream_failure.go`), which serves the stream-failure report, the D6 terminal binding release, and the stale idle suspension, removes with the new compare-and-remove `Registry.RemoveIf` and closes only on a removal, so concurrent evictors close each connection exactly once (`BindResult.CloseAdapter` in `pkg/gateway/podlifecycle/podsession/registry.go`). Tests: `TestSweeperEvictionBranchesCloseTheAdapterConnection_spec_10_1_5`, `TestEvictBindingClosesOnlyTheRemovedBinding_spec_10_1_5`, `TestConcurrentEvictBindingClosesOnce_spec_10_1_5`, and `TestEvictBindingLeaksNoGoroutines_spec_10_1_5` in `cmd/lenny-gateway/coordination_evict_close_test.go`; `TestStaleStreamFailureEvictionClosesTheAdapter_spec_10_1_5`, `TestStaleTerminalBindingEvictionClosesTheAdapter_spec_10_1_5`, and `TestEvictStaleBindingClosesOnlyTheBindingItRemoves_spec_10_1_5` in `pkg/gateway/sessionserver/evict_close_internal_test.go`; `TestRegistryRemoveIfComparesTheBinding_spec_10_1_5`, `TestRegistryRemoveIfHasOneWinner_spec_10_1_5`, and `TestBindResultCloseAdapter_spec_10_1_1` in `pkg/gateway/podlifecycle/podsession/registry_removeif_test.go`. The eviction tests fail on the pre-fix code.
 
 ### - [ ] F-10.1.30 — An ambiguous `RecordHandoff` error raises the generation with no adopter, and the old holder re-acquires at the old stamp [Medium] — OPEN
 
@@ -13894,12 +13896,14 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Gap:** An ambiguous RecordHandoff error raises the generation with no adopter, and the old holder re-acquires at the old stamp.
 **Suggested resolution:** Re-read the generation after an ambiguous RecordHandoff and adopt or abandon on the read value. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
-### - [ ] F-10.1.31 — The Sweeper's adoption-backoff map entry is never removed once the session is terminal or hard-deleted [Low] — OPEN
+### - [x] F-10.1.31 — The Sweeper's adoption-backoff map entry is never removed once the session is terminal or hard-deleted [Low] — CLOSED
 
 **Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination.
 **Evidence:** `pkg/gateway/coordination/coordination/coordination.go:562-569, :575-588`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-25 (bucket B; source findings B: p12#46, p14#23; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Takeover/readopt (CODE-5 edits the Sweeper).
 **Gap:** The Sweeper's adoption-backoff map entry is never removed once the session is terminal or hard-deleted.
 **Suggested resolution:** Clear backoffUntil when a listed row is terminal or absent. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because CODE-5 edits the Sweeper (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+**Resolution:** The Sweeper (`pkg/gateway/coordination/coordination/coordination.go`) clears a session's adoption backoff when it lists the row in a terminal state, and after a pass that lists every tenant without error it drops the backoff of every session the pass did not list (`pruneAdoptionBackoff`), which covers a hard-deleted row and a tenant that left the listing. A pass whose listing fails part-way prunes nothing. Tests: `TestSweepDropsAdoptionBackoffOfTerminalAndAbsentRows_spec_10_1_1` (every terminal state, a hard delete, a vanished tenant, and live controls), `TestSweepKeepsAdoptionBackoffOnPartialListing_spec_10_1_1`, and `TestSweepBackoffPruneUnderConcurrentSweepsAndTerminalWrites_spec_10_1_1` (randomized concurrent sweeps and writes under `-race`) in `pkg/gateway/coordination/coordination/coordination_backoff_prune_test.go`; each fails on the pre-fix code.
 
 ### - [ ] F-10.1.32 — The active-source failure funnel compares only the state, so a stale replica writes the failure edge after a takeover [High] — OPEN
 
@@ -28827,12 +28831,14 @@ in the MCP Management Server inventory.
 **Gap:** A derive of a completed source during the seal window copies the pre-seal checkpoint.
 **Suggested resolution:** Refuse or wait on derive until the source's seal outcome is recorded. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
-### - [ ] F-15.1.43 — Interrupt answers 409 `INTERRUPT_BUSY` against an already-terminal row [Medium] — OPEN
+### - [x] F-15.1.43 — Interrupt answers 409 `INTERRUPT_BUSY` against an already-terminal row [Medium] — CLOSED
 
 **Spec:** §15.1 REST API (`POST /v1/sessions/{id}/interrupt` and the error code table).
 **Evidence:** `pkg/gateway/sessionserver/interrupt.go:46-75, :85`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-35 (bucket B; source findings B: p9#40, p11#44; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Idle suspension: 0092 edits handleInterrupt (CODE-6 item 1).
 **Gap:** Interrupt answers 409 INTERRUPT_BUSY against an already-terminal row, because the adapter call and BUSY return precede any locked-row check.
 **Suggested resolution:** Check the row's state before driving the adapter and answer the terminal-state error. Direct BUILD-GAPS fix under existing spec text, scheduled after proposal 0092 lands, because CODE-6 item 1 edits `handleInterrupt` (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+**Resolution:** `handleInterrupt` (`pkg/gateway/sessionserver/interrupt.go`) now reads the row from the primary through `readPrimary` and re-applies the §15.1 interrupt precondition before it drives the bound adapter (`interruptPrimaryRow`). A terminal row, or any other state the interrupt is not valid in, answers 409 `INVALID_STATE_TRANSITION` with the row's current state and never reaches the adapter; a hard-deleted row answers 404 and an unreadable primary fails closed with 500. `INTERRUPT_BUSY` remains the answer for a running or `input_required` row whose adapter answers `STATUS_BUSY`. Tests: `TestInterruptChecksThePrimaryRowBeforeDrivingTheAdapter_spec_15_1` (every session state against a `STATUS_BUSY` and an acknowledging adapter, the absent row, and an unreadable primary; fails on the pre-fix code) and `TestInterruptWithoutBindingSkipsThePrimaryRead_spec_15_1` in `pkg/gateway/sessionserver/interrupt_primary_row_test.go`.
 
 ### - [ ] F-15.1.44 — `persistDeriveFailure`'s generation fence is a separate read outside the INSERT transaction and records `error` for an INSERT that committed [Medium] — OPEN
 
@@ -44299,12 +44305,15 @@ The architectural gap is dominant: most §25.4 features depend on substrates (OI
 ---
 
 
-### - [ ] F-25.4.31 — `lenny-ops` panics at startup with no kubeconfig, because a typed-nil clientset passes the nil check [Medium] — OPEN
+### - [x] F-25.4.31 — `lenny-ops` panics at startup with no kubeconfig, because a typed-nil clientset passes the nil check [Medium] — CLOSED
 
 **Spec:** §25.4 The `lenny-ops` Service, §25.5 Operational Event Stream (the `subscription_cache_invalidate` broadcast).
 **Evidence:** `cmd/lenny-ops/deps_setup.go` declares `var clientset *kubernetes.Clientset` and stores it in `deps.Clientset`, whose type is the `kubernetes.Interface` interface. With no kubeconfig the pointer stays nil, but the interface value is non-nil, so `deps.Clientset != nil` in `buildWebhookDelivery` (`cmd/lenny-ops/deps.go`) holds and `deps.Clientset.CoreV1()` dereferences a nil pointer. Proposal 0092's S15 full tier pass (2026-10-15) saw the panic fail tier-4 `TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E`, and the same failure is in the earlier S15 tier-4 log (`s15-t4.log`).
 **Gap:** A `lenny-ops` process started without in-cluster or file kubeconfig, with a non-empty shared key, crashes at startup instead of running with the broadcaster disabled.
 **Suggested resolution:** Assign `deps.Clientset` only when the clientset was built, leaving the interface nil otherwise, and add a tier-1 test that builds the deps with no kubeconfig and a shared key. This is a direct fix with no spec change, scheduled with the other direct fixes after proposal 0092 in `gateway-runtime-comms-remediation.md` §10.2.
+
+**Resolution:** The lenny-ops wiring field `clientset` is now a `kubernetes.Interface`, built by the new `buildKubeClients` (`cmd/lenny-ops/deps_setup.go`), which returns an untyped nil for every client it did not build; the REST-config loader is injectable through `opsWiringFields.kubeConfig`. `buildVersionAggregator` and `configMapsGetter` take the interface. An audit of every other possibly-nil concrete pointer converted to an interface in `cmd/lenny-ops` found no other unguarded site. Tests: `TestBuildKubeClientsReturnsUntypedNilWithoutACluster_spec_25_4`, `TestOpsStartsWithoutKubeconfigWithAndWithoutSharedKey_spec_25_4` (no kubeconfig, a clientset build failure, and a present config, each with and without a shared key; panics on the pre-fix storage), and `TestNilClientsetGuardedSites_spec_25_4` (the webhook delivery build, the OpsRoll ConfigMaps getter, the version aggregator, and the doctor service) in `cmd/lenny-ops/deps_nokubeconfig_test.go`.
+
 ## §25.5 Operational Event Stream <a id="25.5"></a>
 Reviewed: 2026-05-23.
 

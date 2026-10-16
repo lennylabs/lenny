@@ -15,6 +15,7 @@ import (
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
@@ -123,37 +124,11 @@ func (w *opsWiring) buildDependencies() {
 	// cluster connection is available lenny-ops still serves the HTTP
 	// surface (the K8s probe reports unreachable) and skips leader
 	// election — a single-process degraded mode for local development.
-	var clientset *kubernetes.Clientset
-	var dynClient dynamic.Interface
-	var apiextClient apiextensionsclientset.Interface
-	if cfg, err := ctrlconfig.GetConfig(); err != nil {
-		log.Printf("lenny-ops: no Kubernetes config (%v); running without leader election", err)
-	} else if cs, err := kubernetes.NewForConfig(cfg); err != nil {
-		log.Printf("lenny-ops: build Kubernetes clientset: %v; running without leader election", err)
-	} else {
-		clientset = cs
-		// The §25.8 cert-manager probe reads the cert-manager Certificate
-		// CRs through a dynamic client; a build failure leaves the probe
-		// unconfigured (reports healthy) rather than failing startup.
-		if dc, err := dynamic.NewForConfig(cfg); err != nil {
-			log.Printf("lenny-ops: build Kubernetes dynamic client: %v; cert-manager probe disabled", err)
-		} else {
-			dynClient = dc
-		}
-		// The §25.8 version-aggregation CRD source reads the
-		// `lenny.dev/schema-version` annotation on the installed CRDs
-		// through the apiextensions clientset; a build failure leaves the
-		// CRD-version component out of the report rather than failing
-		// startup.
-		if ac, err := apiextensionsclientset.NewForConfig(cfg); err != nil {
-			log.Printf("lenny-ops: build apiextensions clientset: %v; CRD-version source disabled", err)
-		} else {
-			apiextClient = ac
-		}
+	loadConfig := w.kubeConfig
+	if loadConfig == nil {
+		loadConfig = ctrlconfig.GetConfig
 	}
-	w.clientset = clientset
-	w.dynClient = dynClient
-	w.apiextClient = apiextClient
+	w.clientset, w.dynClient, w.apiextClient = buildKubeClients(loadConfig)
 
 	// The §25.4 dependency probes feed the readiness signal and the
 	// §25.6 connectivity diagnostic.
@@ -208,6 +183,51 @@ func (w *opsWiring) buildDependencies() {
 		elector = le
 	}
 	w.elector = elector
+}
+
+// buildKubeClients builds the §25.4 Kubernetes clients from the REST config
+// loadConfig returns. Each client is returned as an interface that is an
+// untyped nil when the client was not built: no config, or a build failure,
+// leaves the clientset nil and the subsystems that need it (the K8s probe,
+// the leader elector, the §25.5 subscription_cache_invalidate broadcaster,
+// and the §25.8 version sources) disabled. Storing a nil *kubernetes.Clientset
+// in an interface instead produces a typed nil that passes every consumer's
+// `!= nil` check and panics on the first method call, which crashed startup
+// with no kubeconfig and a shared HMAC key. F-25.4.31.
+//
+// spec: §25.4 (The lenny-ops Service), §25.5 (Operational Event Stream),
+// §25.8.
+func buildKubeClients(loadConfig func() (*rest.Config, error)) (kubernetes.Interface, dynamic.Interface, apiextensionsclientset.Interface) {
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Printf("lenny-ops: no Kubernetes config (%v); running without leader election", err)
+		return nil, nil, nil
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		log.Printf("lenny-ops: build Kubernetes clientset: %v; running without leader election", err)
+		return nil, nil, nil
+	}
+	// The §25.8 cert-manager probe reads the cert-manager Certificate CRs
+	// through a dynamic client; a build failure leaves the probe
+	// unconfigured (reports healthy) rather than failing startup.
+	var dynClient dynamic.Interface
+	if dc, err := dynamic.NewForConfig(cfg); err != nil {
+		log.Printf("lenny-ops: build Kubernetes dynamic client: %v; cert-manager probe disabled", err)
+	} else {
+		dynClient = dc
+	}
+	// The §25.8 version-aggregation CRD source reads the
+	// `lenny.dev/schema-version` annotation on the installed CRDs through the
+	// apiextensions clientset; a build failure leaves the CRD-version
+	// component out of the report rather than failing startup.
+	var apiextClient apiextensionsclientset.Interface
+	if ac, err := apiextensionsclientset.NewForConfig(cfg); err != nil {
+		log.Printf("lenny-ops: build apiextensions clientset: %v; CRD-version source disabled", err)
+	} else {
+		apiextClient = ac
+	}
+	return cs, dynClient, apiextClient
 }
 
 // redisConfig resolves the §17.9.3 Redis topology lenny-ops is configured
