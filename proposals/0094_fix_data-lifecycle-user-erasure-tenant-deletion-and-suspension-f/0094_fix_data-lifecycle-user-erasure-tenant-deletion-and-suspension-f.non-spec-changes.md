@@ -13,22 +13,22 @@
 | User erasure | Step 1 `LeaseStore` release | Existing no-op recorded in F-12.1.3, which holds as an invariant once the drain runs before the erasers |
 | User erasure | Step 3 Redis access-token and routing caches | Existing decision F-12.2.16, which stands |
 | User erasure | Session, transcript, interaction, queue, and other wired erasers | Existing |
-| User erasure | Checkpoint manifest, retention, and metadata rows (N-3) | Piece B follow-on |
-| User erasure | `coordination_lease` mirror rows | Piece B follow-on |
-| User erasure | User registry row (SG-9 user half) | Piece B follow-on |
+| User erasure | Checkpoint manifest, retention, and metadata rows (N-3) | P5b (piece B) |
+| User erasure | `coordination_lease` mirror rows | P5b (piece B) |
+| User erasure | User registry row (SG-9 user half) | P5b (piece B) |
 | User erasure, tenant deletion, tenant suspension | Pod release and terminal tail of a session bound on another replica | P2 (residual; REC-1 files it) |
 | Tenant deletion | Phase 1 creation fence | 0094: CODE-1, CODE-2 |
 | Tenant deletion | Phase 1 API-key issuance and user sign-up gate | Unassigned (REC-1 files it) |
 | Tenant deletion | Phase 2 drain | 0094: CODE-5 |
-| Tenant deletion | Phase 3 token and credential-lease revocation (F-12.8.30) | Piece B follow-on, gated on P1's lease reclaimer |
+| Tenant deletion | Phase 3 token and credential-lease revocation (F-12.8.30) | P5b (piece B), gated on P1's lease reclaimer |
 | Tenant deletion | Phase 3.5 legal-hold segregation | Existing |
 | Tenant deletion | Phase 4 stores already wired | Existing |
-| Tenant deletion | Phase 4 missing stores (F-12.8.34, F-12.8.35, F-12.8.37) | Piece B follow-on |
-| Tenant deletion | Phase 4 audit eraser foreign key (F-12.8.25) | Piece C follow-on, before B's audit eraser |
+| Tenant deletion | Phase 4 missing stores (F-12.8.34, F-12.8.35, F-12.8.37) | P5b (piece B) |
+| Tenant deletion | Phase 4 audit eraser foreign key (F-12.8.25) | P5b (piece C), before piece B's audit eraser |
 | Tenant deletion | Phases 5 and 6 | Existing |
 | Tenant suspension | Marker, audit, repeat drain, and response | 0094: CODE-4 |
 | full_revoke | Creation race (F-11.4.14 creation half) | 0094: CODE-1 |
-| full_revoke | Primary listing, detached context, error continuation, and per-effect counts (F-11.4.12, F-11.4.13, F-11.4.14 listing half) | full_revoke follow-on, after P1 |
+| full_revoke | Primary listing, detached context, error continuation, and per-effect counts (F-11.4.12, F-11.4.13, F-11.4.14 listing half) | P5b (full_revoke fixes), after P1 |
 | full_revoke | Release mechanics | P1 (0093) |
 | `DELETE /v1/responses/{id}` | Route removal (F-15.1.48) | 0094: CODE-8 |
 | `GET /v1/responses/{id}` | User check (F-15.1.54) | Unassigned |
@@ -40,6 +40,43 @@
 **One drain.** `admin.DrainSessions` (CODE-3) is the only drain. Suspension (CODE-4), tenant-deletion Phase 2 (CODE-5), and the erasure runner (CODE-7) call it. What a successful drain proves is stated once, in the doc comment CODE-3 item 4 specifies.
 
 **One erasure executor.** The erasure job runs only inside the existing advisory-locked `tenantDeletionRunner` tick. No handler starts a goroutine for it.
+
+**Erasure entry-point table.** This table is the single normative statement, within this proposal, of how each erasure entry point treats the legal-hold preflight, the job record, the failure counter, the audit events, the `processing_restricted` flag, the session drain, and the HTTP response. Summary D15, D23, and D24, SPEC-2 Edits 2a, 2d, 2g, 2h, 2i, and 2j, SPEC-4 Edits 4e to 4h, CODE-6, CODE-7, and the T8 tests cite it and do not restate it. The legal-hold preflight is a handler check that writes nothing when it blocks. The job carries a second check, the runner re-check in row E6, which fails the job through the ordinary failed-job path. Each row states the behavior after this proposal lands. The verification notes after the table state what the tree does at the merge base and which deliverable changes it.
+
+| Row | Entry point | Legal-hold preflight | Job row written or changed | Status and `failure_phase` | `lenny_erasure_job_failed_total` | Audit event | `processing_restricted` | Session drain | HTTP response |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| E1 | `POST /v1/admin/users/{userId}/erase` without `acknowledgeHoldOverride` | Runs in `handleEraseUser` after the registered-user check and before `Start`. A hold found blocks the request. | Blocked: none. Admitted: `Start` inserts the job. The user already has an in-progress job: none. | Blocked: no job exists. Admitted: `initiated`, no `failure_phase`. In-progress job: unchanged. | Not incremented. | Blocked: `gdpr.erasure_blocked_by_hold` with `tenantId`, `userId`, `holdCount`, `holds`, and `heldSessions`, and no `jobId`. Admitted: `admin.user.erasure_initiated` with `tenantId` and `jobId`. In-progress job: none. | Blocked: unchanged. Admitted: set, with `erasure_job_id` naming the new job, in the transaction that inserts the job. In-progress job: unchanged. | None in the handler. The tick drains in row E6. | Blocked: `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` with `details.holds` and `details.heldSessions`. Preflight read error: `500 INTERNAL_ERROR`. Admitted: `202` with `jobId`, `userId`, `tenantId`, and `phase: initiated`. In-progress job: `202` with that job's `jobId`. `Start` error: `500 INTERNAL_ERROR`. Unregistered user: `404 RESOURCE_NOT_FOUND`. |
+| E2 | `POST /v1/admin/users/{userId}/erase` with `acknowledgeHoldOverride: true` | Runs in `handleEraseUser` as in E1. When holds are found, an empty `justification` answers `400` and a caller without `platform-admin` answers `403`; otherwise the request is admitted with the override. When no hold is found, the override is ignored and the row is E1. | Admitted: `Start` inserts the job with `InitiatedBy` and `OverrideReceipt`. In-progress job: none, and that job keeps its own `OverrideReceipt`. | Admitted: `initiated`. | Not incremented. | Admitted: `gdpr.legal_hold_overridden` after `Start`, with `tenantId`, `userId`, `jobId`, `holdCount`, and the override fields (`legalHoldOverride`, `overrideBy`, `overrideJustification`, `overrideAt`, `overriddenHolds`, and `holds`), then `admin.user.erasure_initiated`. No `gdpr.erasure_blocked_by_hold`. In-progress job: none. | Admitted: set in the transaction that inserts the job. | None in the handler. | Admitted: `202`. Missing justification: `400 VALIDATION_ERROR`. Not `platform-admin`: `403 FORBIDDEN`. In-progress job: `202` with that job's `jobId`. |
+| E3 | `POST /v1/admin/erasure-jobs/{jobId}/retry` | Runs in `handleRetryErasureJob` after the job lookup, the tenant-visibility check, and the `failed`-phase check, and before `Restart`. No override applies, including the job's own `OverrideReceipt`. | Blocked: unchanged. Admitted: `Restart` sets `initiated`, clears `Failure`, `CompletedAt`, `ErasedAt`, and `Billing`, and appends `initiated` to `PhaseLog`. `OverrideReceipt` stays on the job for the receipt and exempts no hold in E6. Another job for the user in progress: unchanged. | Blocked: stays `failed` with its recorded `failure_phase`. Admitted: `initiated`. | Not incremented. | Blocked: `gdpr.erasure_blocked_by_hold` with the E1 fields plus `jobId` naming the retried job. Admitted: `gdpr.erasure_job_retried` with `tenantId`, `userId`, and `jobId`. | Blocked: unchanged, whether set or cleared by an earlier operator clear. Admitted: set, with `erasure_job_id` naming the job, in the transaction that restarts it. | None in the handler. The tick drains in row E6. | Blocked: `409 ERASURE_BLOCKED_BY_LEGAL_HOLD`. Unknown job or another tenant's job: `404 RESOURCE_NOT_FOUND`. Job not `failed`: `409 ERASURE_JOB_NOT_FAILED`. Preflight read error: `500 INTERNAL_ERROR`. Another job in progress: `409 INVALID_STATE_TRANSITION`. Admitted: `202` with `jobId`, `userId`, `tenantId`, and `phase: initiated`. |
+| E4 | Crash resume: `RunPending` on the next tick of the replica holding the advisory lock | None in a handler. The E6 re-check runs again only when the persisted phase is `initiated`. | Advances from the persisted phase with one `Update` per phase and re-runs no step of an earlier phase. A job with `ErasedAt` set goes to the receipt and `Complete`. | From the persisted phase onward. A failure records the label of the phase that failed (CODE-7 item 1). | Incremented once per failure, under that label. | `gdpr.erasure_completed` at completion. A crash between the receipt and `Complete` writes an identical second receipt. | Stays set until `Complete` clears it where `erasure_job_id` matches. | Runs only when the persisted phase is `initiated`. | None. |
+| E5 | `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | None. | Unchanged. The handler checks no job phase. | Unchanged. | Not incremented. | `gdpr.processing_restriction_cleared` with `tenantId`, `userId`, `jobId`, and `justification`. | Cleared, with `erasure_job_id` emptied, through `ClearProcessingRestriction` and its session-local trigger bypass, in any job phase. | None. | `200` with `jobId`, `userId`, `tenantId`, and `processingRestricted: false`. Missing justification: `400 VALIDATION_ERROR`. Unknown job, another tenant's job, or unknown user: `404 RESOURCE_NOT_FOUND`. Store error: `500 INTERNAL_ERROR`. |
+| E6 | The runner's `initiated` phase, inside the tick | The runner re-check, after the drain and before the advance to `store_deleting`, through the same enumeration as the handlers. It exempts the holds listed in `OverrideReceipt["holds"]` only while `PhaseLog` records no `failed` transition, so a retried job exempts no hold. | Success: `Update` to `store_deleting`. Failure: `fail` sets `failed`. | Memory preflight failure: `memory_store_preflight`. Drain failure: `store_delete`. A hold the re-check does not exempt, or a hold read error: `store_delete`, with the hold tuples or the read error in `Failure`. | Incremented once, under the failure's label. | None. `ErasureJobFailed` fires from the counter. | Stays set on every failure. | `DrainSessions(tenantID, userID)` over the primary listing, before the re-check. | None. |
+
+The table orders the checks in E1 and E2 as follows: the registered-user check, the preflight, the override validation, and `Start`. A duplicate erase for a user with a hold therefore answers `409` rather than the existing job's id. In E3 the order is the job lookup, the tenant-visibility check, the `failed`-phase check, the preflight, and `Restart`. Both handlers and the runner enumerate holds through one exported function that lists the user's sessions with `ListFilter{UserID: userID, Primary: true}` and checks each session's artifact hold (CODE-7 item 7). A hold set after the job advances to `store_deleting` is not re-checked; the re-check closes the window up to the first eraser.
+
+Verification against the tree at the merge base:
+
+- E1: `handleEraseUser` (`pkg/gateway/externalapi/admin/erasure.go`) runs `heldResourcesForUser` (`pkg/gateway/externalapi/admin/legalhold.go`) after `users.Get`, and on a hold without override emits `gdpr.erasure_blocked_by_hold` with no `jobId`, answers `409`, and writes nothing. The preflight lists every tenant session from the read pool (`ListFilter{}`) and filters the user in Go. An admitted erase calls `Runner.Start`, which writes the in-memory job store, then sets the flag in a separate `users.Update` whose error is discarded, and starts `runErasureToCompletion` in a goroutine. No duplicate check exists. CODE-6 and CODE-7 items 6 and 7 change this.
+- E2: the override is validated and `gdpr.legal_hold_overridden` is emitted after `Start` with `jobId`, as the row states. `overrideReceipt` lives only in the goroutine's arguments and is not persisted. CODE-6 item 2 persists it.
+- E3: `handleRetryErasureJob` answers `409 ERASURE_JOB_NOT_FAILED` for a job not `failed`, runs no preflight, resets the job to `initiated` with an `Update` that clears `Failure` and `CompletedAt`, leaves the flag untouched, starts the goroutine with a nil override, and emits `gdpr.erasure_job_retried`. CODE-6 `Restart` and CODE-7 item 7 change this.
+- E4: the tree has no crash resume. The job store is in memory, and `Runner.Run` re-runs every step from the top. CODE-6 and CODE-7 items 1 to 5 add it.
+- E5: `handleClearErasureRestriction` behaves as the row states, and `pgstore.ClearProcessingRestriction` sets `lenny.clear_processing_restriction` and empties `erasure_job_id`. This proposal changes only the users write path behind it (CODE-6 item 4).
+- E6: `Runner.Run` (`pkg/gateway/storage/erasurejob/runner.go`) runs the memory preflight and then store deletion, with no drain and no hold check. `fail` invokes the `WithFailureObserver` hook, which increments `lenny_erasure_job_failed_total`. CODE-7 items 1 and 7 add the drain and the re-check.
+
+Spec sites that state part of this table, each regenerated from it:
+
+| Spec site | Rows it states | Staged edit |
+|:--|:--|:--|
+| §12.8 **`DeleteByUser` dependency-ordered deletion sequence** step 0 | Preflight placement in E1 to E3, the blocked outcome, the blocked event's fields, the retry's override rule, and the E6 re-check | Edit 2j |
+| §12.8 **Processing restriction during erasure (GDPR Article 18)** | The flag write in E1 to E3, and the E6 drain failure | Edits 2a and 2d |
+| §12.8 **User-level erasure invocation** | The single in-progress job (E1, E2) and the E3 order and `INVALID_STATE_TRANSITION` | Edit 2g |
+| §12.8 **Erasure job phase field (crash recovery)** | E4 and the E6 order | Edit 2h |
+| §15.1 erase row | E1 and E2 | None. The row already states a handler preflight before the job is queued. |
+| §15.1 retry row | E3 preflight | Edit 4g |
+| §15.1 `ERASURE_BLOCKED_BY_LEGAL_HOLD` catalog row | The E1 and E3 blocked response | Edit 4e |
+| §16.5 `ErasureJobFailed` | Which rows increment the counter | Edit 4h |
+| §16.7 `gdpr.erasure_blocked_by_hold` entry | The E1 and E3 blocked event | Edit 4f |
+| §24.12 retry row | E3 preflight | Edit 2i |
 
 ## Staged code changes
 
@@ -167,7 +204,7 @@
 
 1. Add `tenantSessionTerminator{sessions, term}` in `cmd/lenny-gateway/tenantdeletion.go`, implementing `tenantdeletion.SessionTerminator`. `TerminateTenantSessions(ctx, tenantID)` calls `admin.DrainSessions(ctx, sessions, term, tenantID, "")` and returns its error. The runner's context is already detached, so the adapter adds no context wrapping.
 2. Assign `Terminator: tenantSessionTerminator{sessions: w.sessions, term: sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}}` in the reconciler construction.
-3. Rewrite the seam comment so `Terminator` is required alongside `Eraser` and `Receipts`. `Revoker` stays optional; Phase 3 belongs to piece B.
+3. Rewrite the seam comment so `Terminator` is required alongside `Eraser` and `Receipts`. `Revoker` stays optional; Phase 3 belongs to P5b (piece B).
 4. In `runPhase`, `PhaseTerminateSessions`:
    - a nil `Terminator` calls `r.fail` with a permanent misconfiguration error;
    - a `TerminateTenantSessions` error leaves `Phase` unchanged, records the error text (the failed and remaining session ids) in the job's reason field, logs it at WARN with the tenant id, and returns nil, so `ReconcileAll` continues and the next tick re-runs the drain. Follow `pauseEscrowUnresolvable`. A later successful drain clears the reason field when the phase advances.
@@ -189,8 +226,9 @@
        Get(ctx context.Context, id string) (Job, error)
        Update(ctx context.Context, id string, mutate func(*Job) error) (Job, error)
        // Restart moves a `failed` job to `initiated`, clears ErasedAt and the
-       // recorded Billing outcome, and re-sets the restriction in one
-       // transaction. Returns *ErrActiveJob when
+       // recorded Billing outcome, keeps OverrideReceipt for the receipt, and
+       // re-sets the restriction in one transaction (row E3 of the
+       // Erasure entry-point table). Returns *ErrActiveJob when
        // another job for the user is in progress, and ErrNotFailed when the job
        // is not `failed`.
        Restart(ctx context.Context, id string) (Job, error)
@@ -214,10 +252,10 @@
 
 ### CODE-7 · Erasure runner: drain step, phase dispatch, receipt before completion, and execution in the lifecycle tick
 
-**Targets:** `pkg/gateway/storage/erasurejob/runner.go` (`Run`, new `WithSessionDrain`, new `WithCompletionReceipt`, new `RunPending`); `pkg/gateway/externalapi/admin/erasure.go` (`handleEraseUser`, `runErasureToCompletion`, `handleRetryErasureJob`); `cmd/lenny-gateway/tenantdeletion.go` (`tenantDeletionRunner.Start` and `reconcileOnce`); `cmd/lenny-gateway/adminrouter.go` (the erasure `Sessions` lister and the runner start).
+**Targets:** `pkg/gateway/storage/erasurejob/runner.go` (`Run`, new `WithSessionDrain`, new `WithHoldCheck`, new `WithCompletionReceipt`, new `RunPending`); `pkg/gateway/externalapi/admin/erasure.go` (`handleEraseUser`, `runErasureToCompletion`, `handleRetryErasureJob`); `pkg/gateway/externalapi/admin/legalhold.go` (`heldResourcesForUser`); `cmd/lenny-gateway/tenantdeletion.go` (`tenantDeletionRunner.Start` and `reconcileOnce`); `cmd/lenny-gateway/adminrouter.go` (the erasure `Sessions` lister and the runner start).
 
 1. `Run` dispatches on the persisted `job.Phase`:
-   - `initiated`: run the memory preflight, then the session drain hook (`WithSessionDrain(func(ctx, tenantID, userID string) error)`), then advance to `store_deleting`. A drain error fails the job with failure phase `store_delete` and leaves the restriction set.
+   - `initiated`: run the memory preflight, then the session drain hook (`WithSessionDrain(func(ctx, tenantID, userID string) error)`), then the legal-hold re-check hook (`WithHoldCheck`, item 7), then advance to `store_deleting`. The outcomes are row E6 of the **Erasure entry-point table**.
    - `store_deleting`: run `DeleteByUser` and the dead-letter redaction. Merge each store's count into `j.Deleted` with a per-store maximum, so a re-run that deletes nothing never lowers a recorded count, and recompute `Total` from the merged map. Then advance to `pseudonymizing`.
    - `pseudonymizing`: when `job.Billing.Disposition` is already recorded, skip `Pseudonymize`. Otherwise run it and persist its outcome in the same `Update` that advances to `verifying`, or, for an exempt tenant, that records the erasers done.
    - `verifying`: re-run `Verify` only.
@@ -226,9 +264,13 @@
 3. Completion order: when `ReceiptAt` is zero, persist `ReceiptAt = now` with an `Update`. Build the `gdpr.erasure_completed` receipt from the persisted `Job` (counts, billing outcome, phase log with a final `{phase: completed, at: ReceiptAt}` entry, `InitiatedBy`, and `OverrideReceipt`) and write it through `WithCompletionReceipt(func(ctx, Job) error)`. Only after the receipt write returns nil, call `store.Complete(ctx, id, ReceiptAt)`. A receipt error leaves the job in progress for the next tick. A crash or error between the receipt and `Complete` makes the next tick write a byte-identical receipt. `runErasureToCompletion` becomes the receipt builder over `Job`, and its separate restriction clear is deleted.
 4. Add `RunPending(ctx)`: list `ListActive` and run each job sequentially under a context bounded by the job's remaining deadline (`StartedAt + Deadline`), logging the elapsed drain time per job. Its doc comment states that erasure shares the tenant-deletion tick's advisory lock and runs sequentially with it.
 5. `tenantDeletionRunner`: `reconcileOnce` calls `RunPending` after the tenant-deletion reconcile, under the same advisory lock. `Start` runs the loop whenever the erasure runner or the deletion reconciler is wired; the deletion reconcile body still runs only when `Receipts` is wired.
-6. `handleEraseUser`: build the `Job` (with `InitiatedBy` and `OverrideReceipt`) and call `store.Start`. On `*ErrActiveJob`, answer `202` with the existing job's id. On any other error, answer `500 INTERNAL_ERROR` and start nothing. On success, answer `202` with the new id. Delete the goroutine and the separate `users.Update` call.
-7. `handleRetryErasureJob`: before `store.Restart`, run `heldResourcesForUser` with no override and, when it returns a hold, answer through the block branch of `handleEraseUser`, extracted into a helper both handlers call, without calling `Restart`. Map `*ErrActiveJob` to `409 INVALID_STATE_TRANSITION`. Delete the goroutine.
-8. `adminrouter.go`: the erasure `Sessions` lister calls `List(ctx, tenantID, ListFilter{UserID: userID, Primary: true})` and stops filtering the tenant in Go. Wire `WithSessionDrain` to `admin.DrainSessions` over the session store and the `sessionAdminAdapter`.
+6. `handleEraseUser` implements rows E1 and E2 of the **Erasure entry-point table**: build the `Job` (with `InitiatedBy` and `OverrideReceipt`) and call `store.Start`. On `*ErrActiveJob`, answer `202` with the existing job's id and emit no event. On any other error, answer `500 INTERNAL_ERROR` and start nothing. On success, answer `202` with the new id. Delete the goroutine and the separate `users.Update` call.
+7. Legal-hold enumeration and the retry handler, rows E3 and E6:
+   - Replace `Router.heldResourcesForUser` with an exported function in package `admin`, `HeldResourcesForUser(ctx, sessions DrainLister, artifacts ArtifactHoldChecker, tenantID, userID string) ([]HeldResource, error)`, which lists with `ListFilter{UserID: userID, Primary: true}` and keeps the existing session and artifact checks. `ArtifactHoldChecker` is a new one-method consumer interface holding `IsLegalHeldAt`, and `HeldResource` is the exported form of `heldResource`. Both handlers call the function.
+   - Extract the block branch of `handleEraseUser` into a helper both handlers call. It takes the job id, which is empty on the erase path, and adds `jobId` to `gdpr.erasure_blocked_by_hold` when the id is non-empty.
+   - `handleRetryErasureJob`: after the `failed`-phase check and before `store.Restart`, call `HeldResourcesForUser` with no override and, when it returns a hold, answer through the block helper without calling `Restart`. Map `*ErrActiveJob` to `409 INVALID_STATE_TRANSITION` and `ErrNotFailed` to `409 ERASURE_JOB_NOT_FAILED`. Delete the goroutine.
+   - Add `Runner.WithHoldCheck(func(ctx context.Context, tenantID, userID string) ([]erasurejob.Hold, error))`, where `Hold` carries `ResourceType` and `ResourceID`. In `initiated`, after the drain, the runner calls it and filters out each hold listed in `job.OverrideReceipt["holds"]` only when `job.PhaseLog` records no `PhaseFailed` transition. Any remaining hold, or a hook error, fails the job through `fail` with `FailurePhaseStoreDelete` and a `Failure` text naming the holds or the error. The doc comment cites `// spec: §12.8 (DeleteByUser dependency-ordered deletion sequence)` and states that a hold set after the advance to `store_deleting` is not re-checked.
+8. `adminrouter.go`: the erasure `Sessions` lister calls `List(ctx, tenantID, ListFilter{UserID: userID, Primary: true})` and stops filtering the tenant in Go. Wire `WithSessionDrain` to `admin.DrainSessions` over the session store and the `sessionAdminAdapter`, and wire `WithHoldCheck` to `admin.HeldResourcesForUser` over the same session store and the artifact-hold checker the admin router uses.
 9. Cite `// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)), §12.8 (Erasure job phase field (crash recovery)), §24.12 (Erasure Job Management)`.
 
 ### CODE-8 · Remove `DELETE /v1/responses/{id}`
@@ -289,12 +331,13 @@ Register `{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}
 1. Close, with a resolution naming 0094: F-12.8.26, F-12.8.27, F-12.8.28, F-12.8.31, F-12.8.32, F-12.8.33, F-15.1.48, F-15.1.50, F-15.1.51, and F-12.8.36.
 2. Reopen F-12.8.20 (the in-memory erasure job store with no writer of `erasure_jobs`) and close it under 0094 with a resolution.
 3. File N-1 (the Phase 2 terminator is unwired) and N-5 (the completion clear ignores its error and is not atomic with the receipt) as findings closed by 0094.
-4. Keep F-11.7.22 and F-11.4.14 OPEN and annotate them. F-11.7.22: the `tenant.suspended` half landed in 0094, and the `session.force_terminated` half stays with P2. F-11.4.14: 0094's creation fence covers the concurrent-insert case, and the read-pool single listing stays with the full_revoke follow-on.
-5. File N-3 and the `coordination_lease` mirror gap under piece B. Keep F-11.4.12 and F-11.4.13 OPEN.
+4. Keep F-11.7.22 and F-11.4.14 OPEN and annotate them. F-11.7.22: the `tenant.suspended` half landed in 0094, and the `session.force_terminated` half stays with P2. F-11.4.14: 0094's creation fence covers the concurrent-insert case, and the read-pool single listing stays with P5b.
+5. File N-3 and the `coordination_lease` mirror gap under P5b. Keep F-11.4.12 and F-11.4.13 OPEN and annotate them as owned by P5b.
 6. File an OPEN finding owned by P2 for the terminal-tail residual that SPEC-1 *Drain* accepts, with the bound of the other replica's Sweeper interval plus `maxWorkspaceSealDurationSeconds`.
 7. File an OPEN finding, unassigned, for the §12.8 Phase 1 API-key issuance and user sign-up rejection: `POST /v1/oauth/token` mints, including the playground mint, are not refused for a tenant whose `TenantState` is not `active`.
 8. No claim-register row is added for a duplicate receipt, because SPEC-2 makes it specified behavior. When the owner wants a claim row for the terminal-tail residual, add it to `EXPLICIT` in `scripts/seed-claim-register.py` with a spec anchor that resolves in `spec/28_communication-channels.md` and a `deferral_id` naming an R step the plan declares, then regenerate `tests/claim-map.json` with the script. Never hand-edit `tests/claim-map.json`.
-9. Update the P5 bullet of `gateway-runtime-comms-remediation.md`: 0094 covers pieces A and D; pieces B and C and the full_revoke fixes are follow-ons; replace "waits for their terminal hooks" with the P2-owned residual of item 6.
+9. Update the P5 bullet of `gateway-runtime-comms-remediation.md`: 0094 covers pieces A and D; pieces B and C and the full_revoke fixes go to the follow-on proposal P5b, which lands after P1 (0093); replace "waits for their terminal hooks" with the P2-owned residual of item 6.
+10. File an OPEN finding, unassigned, for the legal-hold preflight's coverage of §12.8 step 0: the enumeration skips the audit-range and workspace-snapshot holds of the legal-hold ledger, the `gdpr.erasure_blocked_by_hold` tuples omit `holdSetAt`, `holdSetBy`, and `note`, and the `409` details omit `userId` and `holdCount`. SPEC-2 Edit 2j leaves step 0's lists unchanged, so the finding records a code divergence from text this proposal keeps.
 
 ## Testing
 
@@ -359,10 +402,11 @@ Tests are stated as intents. Each intent is pinned by at least one test at each 
 - **T8.2 (tier 1).** A drain error fails the job with failure phase `store_delete` and leaves the restriction set.
 - **T8.3 (tier 1).** A receipt error leaves the job in progress; the next `RunPending` re-runs no eraser, and the receipt counts equal the first attempt's.
 - **T8.4 (tier 1).** A no-op re-run of `store_deleting` does not lower any per-store count.
-- **T8.5 (tier 1).** The handler answers `202` with the existing id on a duplicate erase, and the retry handler answers `409 INVALID_STATE_TRANSITION` on `*ErrActiveJob` and, when the user has a legally-held session, answers `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` without calling `Restart` or the drain fake.
+- **T8.5 (tier 1).** A table over rows E1, E2, E3, and E5 of the **Erasure entry-point table** asserts each cell of the row: the job write or its absence, the status, the counter, the audit event and its `jobId`, the flag, and the HTTP response. The cases include a duplicate erase answering `202` with the existing id; a duplicate erase for a held user answering `409`; a retry answering `409 INVALID_STATE_TRANSITION` on `*ErrActiveJob`; and a retry of a job whose `OverrideReceipt` lists a still-active hold answering `409 ERASURE_BLOCKED_BY_LEGAL_HOLD`, emitting `gdpr.erasure_blocked_by_hold` with `jobId` equal to the retried job, and calling neither `Restart` nor the drain fake.
 - **T8.6 (tier 4).** The erasure journey in `tests/tier4_integration/erasure_job_test.go` runs with a short `--tenant-deletion-interval`, and two gateway replicas against one Postgres resume a job after the replica running it is stopped.
 - **T8.7 (tier 8).** A crash between the receipt and `Complete` yields a byte-identical second receipt and a completed job with the restriction cleared.
 - **T8.8 (tier 1).** After an operator clear of a job that failed in `verifying`, a retry followed by `RunPending` calls the drain before `DeleteByUser`, the drain terminates a session created while the restriction was cleared, and `Pseudonymize` runs again before `Verify`.
+- **T8.9 (tier 1).** Row E6 of the **Erasure entry-point table**: a hold the hook returns after the drain fails the job with `store_delete`, increments the counter once, leaves the flag set, and calls no `DeleteByUser`; a hold listed in `OverrideReceipt` is exempt on the first run and fails the job after a `Restart`; a hook error fails the job the same way; and a crash-resumed job in `store_deleting` does not call the hook.
 - Retarget `pkg/gateway/externalapi/admin/erasure_test.go` and `erasure_retry_test.go` to drive `Runner.RunPending` or the store directly instead of polling a goroutine.
 
 ### Tests that land with CODE-8

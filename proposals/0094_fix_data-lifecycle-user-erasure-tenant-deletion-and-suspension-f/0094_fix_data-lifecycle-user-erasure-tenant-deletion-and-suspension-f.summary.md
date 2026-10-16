@@ -7,8 +7,8 @@
 **What changes.**
 - Session store and every creation path: a creation fence inside the session insert transaction, with matching early checks and refusal mapping at each create site and at delegation (SPEC-1, CODE-1, CODE-2).
 - One shared drain over a primary listing with a tenant-scoped forced termination, used by tenant suspension, tenant-deletion Phase 2, and user erasure (SPEC-1, SPEC-3, SPEC-4, CODE-3, CODE-4, CODE-5).
-- Erasure job: a Postgres store over the migration 0042 table with a transactional start and completion, run from the existing advisory-locked lifecycle tick with phase dispatch (SPEC-2, MIG-1, CODE-6, CODE-7).
-- §15.1, §15.2.1, and §16.7: the suspend row's repeat and response contract, catalog rows for `TENANT_NOT_ACTIVE` and `USER_INVALIDATED`, both codes in rule 5, and the retry endpoint in the `ERASURE_BLOCKED_BY_LEGAL_HOLD` row and the `gdpr.erasure_blocked_by_hold` audit entry (SPEC-4).
+- Erasure job: a Postgres store over the migration 0042 table with a transactional start and completion, run from the existing advisory-locked lifecycle tick with phase dispatch, and a §12.8 step 0 that states the legal-hold preflight as a handler check with a runner re-check (SPEC-2, MIG-1, CODE-6, CODE-7).
+- §15.1, §15.2.1, §16.5, and §16.7: the suspend row's repeat and response contract, catalog rows for `TENANT_NOT_ACTIVE` and `USER_INVALIDATED`, both codes in rule 5, the retry endpoint in the `ERASURE_BLOCKED_BY_LEGAL_HOLD` row, the §15.1 retry row, and the `gdpr.erasure_blocked_by_hold` audit entry, and the `ErasureJobFailed` legal-hold clause (SPEC-4).
 - Removal of `DELETE /v1/responses/{id}` (CODE-8).
 - Reader documentation and records (DOCS-1, REC-1).
 
@@ -22,19 +22,21 @@
 - D7. `SessionAdmin.ForceTerminate` takes the tenant and drops its replica `GetByID`, which can miss a row the drain just listed from the primary. One method serves both the §24.11 handler and the drain.
 - D8. The drain makes one pass, continues past per-session errors, and verifies with a second primary listing. The fence fixes the scope's set once the marker commits, and a repeat-until-empty loop could run without bound and terminate sessions created after a concurrent resume.
 - D9. A successful drain proves only that every scoped row is terminal on the primary. A session bound on another replica releases its pod later through that replica's Sweeper. This residual is filed as a P2-owned finding, and this proposal adds no quiesce mechanism.
-- D10. User erasure drains the user's sessions before any eraser (SG-1). A wait cannot meet the T4 one-hour SLA when `maxSessionAge` defaults to 7200 seconds. This replaces the §12.8 "complete naturally" sentence and is staged for owner confirmation.
-- D11. Phase 2 is narrowed to the drain. No session-level graceful-shutdown signal is defined, the 5-minute timeout knob was never implemented, and drained sessions still run their terminal pipeline. A drain failure keeps the job in Phase 2 and the next tick retries, because `Reconciler.Retry` has no production caller and a failed job is terminal. Staged for owner confirmation.
+- D10. User erasure drains the user's sessions before any eraser (SG-1). A wait cannot meet the T4 one-hour SLA when `maxSessionAge` defaults to 7200 seconds. This replaces the §12.8 "complete naturally" sentence. Confirmed 2026-10-16 under the owner's standing delegation.
+- D11. Phase 2 is narrowed to the drain. No session-level graceful-shutdown signal is defined, the 5-minute timeout knob was never implemented, and drained sessions still run their terminal pipeline. A drain failure keeps the job in Phase 2 and the next tick retries, because `Reconciler.Retry` has no production caller and a failed job is terminal. Confirmed 2026-10-16 under the owner's standing delegation.
 - D12. The Phase 1 row keeps its API-key issuance and user sign-up requirement. Only the session clause cites the fence. The missing issuance gate is filed for a later fix, because Phase 3.5 can hold a tenant in `deleting` after Phase 3 revoked its tokens.
 - D13. Lifecycle listings read the primary through one new field, `ListFilter.Primary`. §12.3 is not amended, because SPEC-1 states the primary-read requirement and §12.3's replica routing is a recommendation for read-heavy queries.
 - D14. The erasure job store is Postgres over migration 0042 with one jsonb `detail` column and a partial unique index allowing one in-progress job per user. Without the index, the 0042 trigger rejects one job's completion while a second job for the user is in progress.
-- D15. `Start` inserts the job and sets the restriction in one transaction. A separate flag write can strand a job with no restriction. A duplicate erase returns the existing job's id with `202`.
+- D15. `Start` inserts the job and sets the restriction in one transaction. A separate flag write can strand a job with no restriction. A duplicate erase returns the existing job's id with `202`. The legal-hold preflight runs in the handler before `Start` and writes nothing when it blocks, as rows E1 and E2 of the non-spec **Erasure entry-point table** state, so no failed job exists for a blocked erase.
 - D16. The existing advisory-locked tenant-deletion tick is the single erasure executor, resuming each job from its persisted phase. §12.8 already requires crash resume, and a per-handler goroutine can run one job on two replicas.
 - D17. The completion receipt is written first, and one transaction then marks the job completed and clears the restriction where `erasure_job_id` matches. Audit can live on a separate pool, so the receipt cannot share the transaction in every deployment. Writing it first means the job never lifts the restriction without a receipt, at the cost of a possible identical duplicate receipt.
 - D18. Suspension commits the marker under the row lock, emits `tenant.suspended` on a detached context for every request, recording whether the marker was already set, and then drains. A repeat suspend re-drains and is audited, because its drain terminates sessions and §11.8 audits every admin operation. An incomplete drain answers `200` with `failedSessions`, following the §11.4 full-revoke pattern of reporting partial failure in the body. A listing failure answers `500 INTERNAL_ERROR`.
 - D19. `TENANT_NOT_ACTIVE` and `USER_INVALIDATED` are catalogued and added to rule 5. Both are already on the wire, and today MCP classifies them as transient and retryable while REST does not.
-- D20. Scope is piece A without the full_revoke fixes, plus piece D. Pieces B and C and the full_revoke fixes are follow-ons. The fence closes the creation-race half of F-11.4.14. Staged for owner confirmation.
+- D20. Scope is piece A without the full_revoke fixes, plus piece D. Pieces B and C and the full_revoke fixes go to a follow-on proposal, P5b, which lands after P1 (0093): the full_revoke fixes edit the function P1 changes, and piece B's Phase 3 revocation depends on P1's lease reclaimer. The fence closes the creation-race half of F-11.4.14. Confirmed 2026-10-16 under the owner's standing delegation.
 - D21. F-12.1.3 (the `LeaseStore` step-1 no-op) holds as an invariant once the drain precedes the erasers, and F-12.2.16 (the step-3 Redis caches) stands. F-12.8.20 is reopened and closed by the durable store, F-12.8.36 is absorbed, and the `tenant.suspended` half of F-11.7.22 moves from P2 to this proposal.
 - D22. The owner's triage rule governs failures the tests find, as non-spec Testing **Failures the tests find.** states.
+- D23. An erasure retry follows row E3 of the non-spec **Erasure entry-point table**. The retry restarts the job at `initiated` and sets `processing_restricted` again in the same transaction, because after an operator clear the fence admits new sessions and new data into stores whose phase already ran, and only a restart from `initiated` drains and erases them. The legal-hold preflight runs in the retry handler before `Restart`, so a blocked retry leaves the job and the flag unchanged. The retry does not inherit the job's `OverrideReceipt`, because the retry endpoint has no body to carry a fresh justification, and the recovery path for a held user is a new erase request with `acknowledgeHoldOverride`. `Restart` resets `ErasedAt` and `Billing`: a kept `ErasedAt` would skip the drain and the erasers, and a kept billing outcome would skip pseudonymizing billing rows written while the restriction was cleared. Crash resume is a separate path. It continues from the persisted phase, re-runs no earlier step, and is the recovery §12.8 requires for an interrupted job (D16).
+- D24. The runner re-checks legal holds after the drain and before the first eraser (row E6). A hold set between the handler preflight and the erasers would otherwise be destroyed, and the owner's standing preference on compliance paths is fail-closed. The re-check fails the job with `failure_phase: store_delete` and leaves the flag set, which is the outcome a drain failure already has (Edit 2d). This keeps step 0's handler framing: the request-time preflight still writes nothing, and the re-check is an ordinary failure of a job whose flag is already set. A distinct `legal_hold_preflight` label would need a CMP-026 enumeration change, a §16.5 clause, and a new code constant for a case the job's `Failure` text already names. The re-check exempts the holds the job's own override lists until the job is first retried. It emits no `gdpr.erasure_blocked_by_hold`, because the tick runs with no request principal and `ErasureJobFailed` already alerts. A hold set after the job enters `store_deleting` is not re-checked.
 
 **Watch out for.**
 - `FOR KEY SHARE` looks sufficient and is not: it lets `userstore.SoftDelete` and `tenantstore.SoftDelete` race the insert. T1.4's `SoftDelete` cases are the discriminating assertions.
@@ -49,6 +51,8 @@
 - The 0042 trigger rejects a clear while any in-progress job exists for the user. `Complete` marks the job completed before it clears, in the same transaction.
 - `ClearProcessingRestriction` sets a session-local trigger bypass. The shared users helper must not set it.
 - ServeMux answers a removed method with a plain-text `405`, so the tier-4 assertion on the OpenAI error envelope must go.
+- The runner re-check exempts override holds only while the job's `PhaseLog` records no `failed` transition. Dropping that condition lets a retry inherit an override, which D23 forbids.
+- `heldResourcesForUser` lists every tenant session from the read pool today. The exported enumeration lists the user's sessions from the primary, or a hold set just before the request can be missed.
 - `scripts/lint-migrations.sh` rule 3 fails tier 0 unless a tier-2 test names migration 0186. The migration number is provisional.
 - `tests/claim-map.json` is generated by `scripts/seed-claim-register.py` and is never hand-edited.
 
@@ -84,7 +88,9 @@
 - A new drain package. The existing drain is extended in package `admin`.
 - A durable drain record or table. Session rows are the progress record.
 - Concurrent drain workers with a new concurrency flag. The drain stays sequential.
-- Re-issuing the erase as the recovery path. §12.8 requires crash resume (D16).
+- Re-issuing the erase as the recovery path for an interrupted job. §12.8 requires crash resume from the persisted phase (D16). A new erase request with `acknowledgeHoldOverride` is the recovery path only for a job a legal hold blocks (D23).
+- A failed job record for a request the legal-hold preflight blocks. The preflight is a handler check that writes nothing (D15, D24).
+- A `legal_hold_preflight` failure label, or a `gdpr.erasure_blocked_by_hold` event emitted by the runner (D24).
 - A separate erasure loop with its own advisory key, per-job advisory locks, Kubernetes Lease election, or an immediate goroutine kick from the handler (D16).
 - Restriction-first ordering, or job-first ordering with a checked flag write (D15).
 - Binding the receipt into the completion transaction with `auditstore.AppendInTx`, writing the receipt after the completion commit, or exactly-once receipts through an audit existence check or an outbox column (D17).
@@ -93,15 +99,15 @@
 - Moving the tenant-deletion job store to Postgres. The job is rebuilt from `TenantState`.
 - Answering a duplicate erase with `409 ERASURE_IN_PROGRESS`. That code is a session-creation rejection, and returning the existing job's id is idempotent (D15).
 - Gating `POST /v1/admin/users` and `user_bearer` mints on `POST /v1/oauth/token` on the tenant state in this proposal (D12).
-- Wiring the Phase 3 revoker and renaming `RevokeByTenant`. That is piece B, and lease invalidation depends on P1's reclaimer.
-- Pieces B and C, and the full_revoke fixes (D20).
+- Wiring the Phase 3 revoker and renaming `RevokeByTenant`. That is piece B, owned by P5b, and lease invalidation depends on P1's reclaimer.
+- Pieces B and C, and the full_revoke fixes, which P5b owns (D20).
 - Narrowing session `DeleteByUser` and `DeleteByTenant` to terminal rows. The fence and the drain already make live rows absent at eraser time.
 - An owner, state, and kind check on `DELETE /v1/responses/{id}`, or a spec clause defining a native `405`. The route has no spec basis, so removal needs no spec edit.
 - `ON DELETE SET NULL` on `audit_redaction_receipts.audit_event_id` (piece C).
 - Renaming the `--tenant-deletion-interval` flag.
 - Handling every member in the direct-fix lane. SG-1, the Phase 2 narrowing, and the fence paragraph are normative spec changes, and the fence and the drain ship together.
-- Erasing the user registry row during user erasure. It holds the invalidation tombstone and the restriction anchor, and the decision belongs to piece B.
-- Edits to the §11.4 full-revoke note (full_revoke follow-on).
+- Erasing the user registry row during user erasure. It holds the invalidation tombstone and the restriction anchor, and the decision belongs to P5b.
+- Edits to the §11.4 full-revoke note (P5b).
 
 ## Open decisions for human to make
 
@@ -109,30 +115,31 @@ None yet. The review loops write this section.
 
 ## Defects in the shipped tree that this proposal does not stage
 
-- **Phase 3 revokes nothing (F-12.8.30).** No `Revoker` is wired and no `RevokeByTenant` exists. Piece B owns it, and it depends on P1's lease reclaimer.
-- **Phase 4 and user erasure omit stores (F-12.8.34, F-12.8.35, F-12.8.37, N-3, the `coordination_lease` mirror).** Piece B wires the missing erasers from the store table.
-- **The audit-receipt foreign key blocks an audit eraser (F-12.8.25).** Piece C owns it.
-- **full_revoke runs on the request context, stops at the first error, lists once from the read pool, and reports no counts (F-11.4.12, F-11.4.13, F-11.4.14 listing half).** The full_revoke follow-on owns it after P1, because it edits the function P1 changes.
+- **Follow-on proposal P5b owns pieces B and C and the full_revoke fixes (D20).** It lands after P1 (0093). Its members are F-11.4.12, F-11.4.13, the F-11.4.14 remainder (the read-pool single listing), F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, N-3, N-4 (the §12.8 step 1 and step 3 text that still names a release and a flush), the `coordination_lease` mirror rows, and the user registry row.
+- **Phase 3 revokes nothing (F-12.8.30).** No `Revoker` is wired and no `RevokeByTenant` exists. P5b owns it, and it depends on P1's lease reclaimer.
+- **Phase 4 and user erasure omit stores (F-12.8.34, F-12.8.35, F-12.8.37, N-3, the `coordination_lease` mirror).** P5b wires the missing erasers from the store table.
+- **The audit-receipt foreign key blocks an audit eraser (F-12.8.25).** P5b owns it as piece C.
+- **full_revoke runs on the request context, stops at the first error, lists once from the read pool, and reports no counts (F-11.4.12, F-11.4.13, F-11.4.14 listing half).** P5b owns it, because it edits the function P1 changes.
+- **The legal-hold preflight covers less than §12.8 step 0 names.** It enumerates session holds and artifact holds and skips the audit-range and workspace-snapshot holds of the legal-hold ledger. The blocked event's tuples carry `resourceType` and `resourceId` without `holdSetAt`, `holdSetBy`, and `note`, and the `409` details carry `holds` and `heldSessions` without `userId` and `holdCount`. Edit 2j keeps step 0's lists unchanged. REC-1 item 10 files the divergence.
 - **Phase 1 does not refuse API-key issuance or user sign-ups.** No gate on `POST /v1/oauth/token` checks the tenant state. REC-1 files it unassigned.
 - **A remote-bound session's pod release can trail the drain.** P2 owns the terminal pipeline. REC-1 files it.
 - **`GET /v1/responses/{id}` has no user check (F-15.1.54).** It is an authorization fix outside the data-lifecycle boundary.
 - **The gateway runs the erasure job as `lenny_app`.** §11.7 item 7 says only the erasure job connects as `lenny_erasure` and that gateway replicas never hold its credentials. The divergence predates this proposal and is recorded here rather than written into §12.8.
 - **The `lenny_erasure` trigger exemption is now unused by the completion path.** Retiring it is a follow-on.
-- **`session_tree_archive.root_session_id` references `sessions(id)` with no `ON DELETE` action.** The drain removes the live-row case. The foreign key itself belongs to piece B's store review.
+- **`session_tree_archive.root_session_id` references `sessions(id)` with no `ON DELETE` action.** The drain removes the live-row case. The foreign key itself belongs to P5b's store review.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0093 (P1, release ownership) | Draft, only in the `draft-0093` worktree | CODE-3 changes `SessionAdmin.ForceTerminate` and `sessionAdminAdapter.ForceTerminate` to take the tenant, and the drain becomes a caller of the forced transition. The full_revoke follow-on, which reuses the drain, lands after 0093. | Stage any change to `cmd/lenny-gateway/session_admin.go` against the new signature, and treat `admin.DrainSessions` as a caller of whatever release path 0093 defines. |
-| 0092 | Implemented | The drain relies on its post-terminal hook and on `ReleaseTerminalBinding` for pods bound on other replicas. CODE-3 changes the signature of the force-terminate adapter its terminal-writer work routes through. | Nothing. The record stands. |
+| 0093 (P1, release ownership) | Draft, only in the `draft-0093` worktree | CODE-3 changes `SessionAdmin.ForceTerminate` and `sessionAdminAdapter.ForceTerminate` to take the tenant, and the drain becomes a caller of the forced transition. P5b, which carries the full_revoke fixes and reuses the drain, lands after 0093. | Stage any change to `cmd/lenny-gateway/session_admin.go` against the new signature, and treat `admin.DrainSessions` as a caller of whatever release path 0093 defines. |
 
 ## Deliverable index
 
 - SPEC-1 — `spec/12_storage-architecture.md` and `spec/16_observability.md` — the new §12.8 **Lifecycle fence and drain** paragraph, and the §12.6 and §16.5 swap-scope edits.
-- SPEC-2 — `spec/12_storage-architecture.md` and `spec/24_lenny-ctl-command-reference.md` — the §12.8 Article 18, invocation, and phase-field edits for the drain step, the one-transaction start, the single in-progress job, and the completion order, and the §24.12 retry row.
+- SPEC-2 — `spec/12_storage-architecture.md` and `spec/24_lenny-ctl-command-reference.md` — the §12.8 Article 18, invocation, phase-field, and step-0 edits for the drain step, the one-transaction start, the single in-progress job, the legal-hold preflight and re-check, and the completion order, and the §24.12 retry row.
 - SPEC-3 — `spec/12_storage-architecture.md` — the tenant deletion Phase 1 and Phase 2 rows.
-- SPEC-4 — `spec/15_external-api-surface.md` and `spec/16_observability.md` — the §15.1 suspend row, the `TENANT_NOT_ACTIVE` and `USER_INVALIDATED` catalog rows, the retry endpoint in the `ERASURE_BLOCKED_BY_LEGAL_HOLD` row and the §16.7 `gdpr.erasure_blocked_by_hold` entry, and the §15.2.1 rule 5 list.
+- SPEC-4 — `spec/15_external-api-surface.md` and `spec/16_observability.md` — the §15.1 suspend row, the `TENANT_NOT_ACTIVE` and `USER_INVALIDATED` catalog rows, the retry endpoint in the `ERASURE_BLOCKED_BY_LEGAL_HOLD` row and the §16.7 `gdpr.erasure_blocked_by_hold` entry, the §15.1 retry row, the §16.5 `ErasureJobFailed` row, and the §15.2.1 rule 5 list.
 - CODE-1 — `pkg/gateway/session/sessionstore/` and `cmd/lenny-gateway/stores.go` — the creation predicate and the fence in `pgstore.Create` and `memstore.Create`.
 - CODE-2 — `pkg/gateway/sessionserver/`, `pkg/gateway/environment/translator/singleshot.go`, `pkg/gateway/mcpfabric/mcptools/`, and `pkg/gateway/externalapi/errorclassify/errorclassify.go` — the pre-gates, the refusal mapping at every create site, and the classifier entries.
 - CODE-3 — `pkg/gateway/session/sessionstore/`, `cmd/lenny-gateway/session_admin.go`, and `pkg/gateway/externalapi/admin/` — `ListFilter.Primary`, the tenant-scoped `ForceTerminate`, and `DrainSessions`.

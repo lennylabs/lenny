@@ -4,7 +4,8 @@
 
 The specification gains one mechanism, the lifecycle fence and drain, and states it once in a new §12.8 paragraph (SPEC-1). Every other staged edit cites that paragraph by its bold label, **Lifecycle fence and drain**, and adds only what its own operation decides.
 
-- User erasure uses the fence through `processing_restricted` and runs the drain before any store deletion. The Article 18 paragraph, the invocation paragraph, the phase-field paragraph, and the §24.12 retry row state the erasure-specific parts: the one-transaction start and retry, the single in-progress job per user, the drain step and its failure label, and the completion order (SPEC-2).
+- User erasure uses the fence through `processing_restricted` and runs the drain before any store deletion. The Article 18 paragraph, the invocation paragraph, the phase-field paragraph, step 0 of the deletion sequence, and the §24.12 retry row state the erasure-specific parts: the one-transaction start and retry, the single in-progress job per user, the drain step and its failure label, the legal-hold preflight and its re-check, and the completion order (SPEC-2).
+- The legal-hold preflight is a handler check. The erase and retry handlers run it before they write or restart the job, and a blocked request writes nothing. The job re-checks the holds after the drain and fails through the ordinary failed-job path. Every staged sentence about the preflight (Edits 2g, 2h, 2i, 2j, and 4e to 4h) is generated from the non-spec **Erasure entry-point table**, and step 0 (Edit 2j) is the one spec site that states the rule. The other sites cite step 0.
 - Tenant deletion uses the fence from Phase 1 and runs the drain as Phase 2. A Phase 2 drain that does not succeed keeps the job in Phase 2 (SPEC-3).
 - Tenant suspension uses the fence through the suspension marker and runs the drain on every suspend request. The §15.1 suspend row states the repeat behavior and the response body (SPEC-4).
 - The fence's refusal codes `TENANT_NOT_ACTIVE` and `USER_INVALIDATED` are already emitted on the wire. SPEC-4 catalogs them and adds them to the §15.2.1 rule 5 parity list.
@@ -24,6 +25,7 @@ Each case below is owned by the staged text named in parentheses.
 7. **Drain listing failure during suspension** (SPEC-4, Edit 4a).
 8. **Phase 2 drain that never succeeds** (SPEC-3, Edit 3b).
 9. **Multi-shard placement** (SPEC-1, *Creation fence*, Edits 1b and 1c).
+10. **A legal hold set after the erase or retry request is accepted** (SPEC-2, Edit 2j).
 
 ## Staged edits
 
@@ -47,7 +49,7 @@ adding a Tier 4 implementation requires no application code restructuring, and t
 The [§12.6](12_storage-architecture.md#126-interface-design) **Scaling extension interfaces** paragraph states which swaps change application code, and each swap also needs accompanying infrastructure provisioning (Postgres schema migrations, NATS/Kafka deployment, additional cluster federation).
 ```
 
-### SPEC-2 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: Article 18, invocation, and phase field; spec/24_lenny-ctl-command-reference.md § 24.12 Erasure Job Management
+### SPEC-2 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: Article 18, invocation, phase field, and deletion-sequence step 0; spec/24_lenny-ctl-command-reference.md § 24.12 Erasure Job Management
 
 Every edit in SPEC-2 keeps its paragraph one physical line.
 
@@ -90,13 +92,13 @@ The trigger exempts the `lenny_erasure` database role and the explicit `clear-pr
 **Edit 2g.** In the paragraph that opens `**User-level erasure invocation.**`, append after the sentence `These endpoints are listed in [Section 15.1](15_external-api-surface.md#151-rest-api).`:
 
 ```markdown
-At most one erasure job per user is in progress at a time. A request for a user who already has a job in progress returns that job's ID and starts no second job. A retry first runs the legal-hold preflight (step 0 of **`DeleteByUser` dependency-ordered deletion sequence**). When a hold blocks, the retry is rejected with `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` and emits `gdpr.erasure_blocked_by_hold`, and the job and `processing_restricted` are left unchanged. Otherwise the retry moves the job to `initiated` and sets `processing_restricted` again in one transaction. The retry is rejected with `INVALID_STATE_TRANSITION` while another job for the same user is in progress.
+At most one erasure job per user is in progress at a time. An erase request for a user who already has a job in progress returns that job's ID and starts no second job. A retry runs the legal-hold preflight (step 0 of **`DeleteByUser` dependency-ordered deletion sequence**) and then moves the job to `initiated` and sets `processing_restricted` again in one transaction. The retry is rejected with `409 INVALID_STATE_TRANSITION` while another job for the same user is in progress.
 ```
 
 **Edit 2h.** In the paragraph that opens `**Erasure job phase field (crash recovery).**`, replace `` it reads the persisted `phase` to determine the safe resume point: jobs in `store_deleting` re-run `` with:
 
 ```markdown
-it reads the persisted `phase` to determine the safe resume point: jobs in `initiated` re-run the session drain (**Lifecycle fence and drain**) before advancing to `store_deleting`; jobs in `store_deleting` re-run
+it reads the persisted `phase` to determine the safe resume point: jobs in `initiated` re-run the session drain (**Lifecycle fence and drain**) and then the legal-hold re-check (step 0 of **`DeleteByUser` dependency-ordered deletion sequence**) before advancing to `store_deleting`; jobs in `store_deleting` re-run
 ```
 
 Then append after the paragraph's last sentence, `This prevents double-deletion errors and ensures crash recovery cannot silently skip a deletion step.`:
@@ -105,7 +107,25 @@ Then append after the paragraph's last sentence, `This prevents double-deletion 
 One executor advances a given job at a time.
 ```
 
-**Edit 2i.** In `spec/24_lenny-ctl-command-reference.md` §24.12, in the row `` | `lenny-ctl admin erasure-jobs retry <job-id>` ``, delete `Clears transient errors and resumes from the last persisted phase. `. The row stays one physical line.
+**Edit 2i.** In `spec/24_lenny-ctl-command-reference.md` §24.12, in the row `` | `lenny-ctl admin erasure-jobs retry <job-id>` ``, replace `Clears transient errors and resumes from the last persisted phase.` with the text below. The row stays one physical line.
+
+```markdown
+The legal-hold preflight ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) runs before the job restarts.
+```
+
+**Edit 2j.** In the paragraph that opens `` **`DeleteByUser` dependency-ordered deletion sequence.** ``, in the list item that opens `0. **Legal-hold preflight (CMP-049, fail-closed).**`, make two replacements. The list item stays one physical line.
+
+Replace `` Before any destructive operation, the erasure job enumerates active legal holds scoped to the target `user_id`. `` with:
+
+```markdown
+Before any destructive operation, the platform enumerates active legal holds scoped to the target `user_id`: the handler of `POST /v1/admin/users/{user_id}/erase` does so before it writes the job, and the handler of `POST /v1/admin/erasure-jobs/{job_id}/retry` does so before it restarts the job.
+```
+
+Replace the span that begins with `` If **any** active hold is present, the erasure job **MUST abort before step 1** `` and ends with `` override the preflight via the `--acknowledge-hold-override` admin action (see below). `` with:
+
+```markdown
+If **any** active hold is present, the handler rejects the request with error code `ERASURE_BLOCKED_BY_LEGAL_HOLD` (HTTP 409, `POLICY` category) and emits a `gdpr.erasure_blocked_by_hold` critical audit event carrying `user_id`, `tenant_id`, `job_id` (present only when the blocked request is a retry), `hold_count`, and an array of `{resourceType, resourceId, holdSetAt, holdSetBy, note}` tuples describing the blocking holds. A blocked request writes no job record, leaves a retried job `failed` and unchanged, leaves the `processing_restricted` flag as it was, and does not increment `lenny_erasure_job_failed_total`. A blocked erase request therefore never sets the flag, because the erasure never initiates and Article 18 restriction-of-processing is not triggered. The admin may either release the holds via `POST /v1/admin/legal-hold` (with `hold: false`) before re-invoking erasure, or override the preflight via the `--acknowledge-hold-override` admin action (see below). A retry applies no override, including one recorded on the job it retries, so a held user's erasure proceeds through a new erase request with the override. After the session drain and before step 1, the erasure job enumerates the holds again. A hold that the job's recorded override does not list, or any hold once the job has been retried, fails the job with `failure_phase: store_delete` and leaves the `processing_restricted` flag set.
+```
 
 ### SPEC-3 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: tenant deletion phases 1 and 2
 
@@ -123,7 +143,7 @@ Reject new session creation through the creation fence (**Lifecycle fence and dr
 Drain the tenant's sessions (**Lifecycle fence and drain**). The phase completes only when the drain succeeds. When the drain does not succeed, the job stays in this phase and the controller runs the drain again on its next pass.
 ```
 
-### SPEC-4 · spec/15_external-api-surface.md § 15.1 REST API and § 15.2.1 REST/MCP Consistency Contract; spec/16_observability.md § 16.7 Section 25 Audit Events
+### SPEC-4 · spec/15_external-api-surface.md § 15.1 REST API and § 15.2.1 REST/MCP Consistency Contract; spec/16_observability.md § 16.5 Alerting Rules and SLOs and § 16.7 Section 25 Audit Events
 
 Every table row in SPEC-4 is one physical line.
 
@@ -163,10 +183,30 @@ keeping the matrix in lockstep with the §15.1 Error code catalog (any future se
 `POST /v1/admin/users/{userId}/erase` or `POST /v1/admin/erasure-jobs/{jobId}/retry` rejected by
 ```
 
-**Edit 4f.** In `spec/16_observability.md` §16.7, in the list item for `gdpr.erasure_blocked_by_hold`, `gdpr.legal_hold_overridden`, replace `` written when `POST /v1/admin/users/{user_id}/erase` is blocked `` with the text below. The list item stays one physical line.
+**Edit 4f.** In `spec/16_observability.md` §16.7, in the list item for `gdpr.erasure_blocked_by_hold`, `gdpr.legal_hold_overridden`, make two replacements. The list item stays one physical line.
+
+Replace `` written when `POST /v1/admin/users/{user_id}/erase` is blocked `` with:
 
 ```markdown
 written when `POST /v1/admin/users/{user_id}/erase` or `POST /v1/admin/erasure-jobs/{job_id}/retry` is blocked
+```
+
+Replace `` `gdpr.erasure_blocked_by_hold` payload fields: `user_id`, `tenant_id`, `job_id`, `hold_count`, `` with:
+
+```markdown
+`gdpr.erasure_blocked_by_hold` payload fields: `user_id`, `tenant_id`, `job_id` (present only when the blocked request is a retry), `hold_count`,
+```
+
+**Edit 4g.** In the §15.1 admin endpoint table, in the row `` | `POST`   | `/v1/admin/erasure-jobs/{jobId}/retry` ``, replace `` Retry a failed erasure job. The job must be in `failed` state. `` with the text below. The row stays one physical line.
+
+```markdown
+Retry a failed erasure job. The job must be in `failed` state. The legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) runs before the job restarts.
+```
+
+**Edit 4h.** In `spec/16_observability.md` §16.5, in the row for `ErasureJobFailed`, replace `` The `failure_phase` label distinguishes failure modes, including `legal_hold_preflight` (Step 0 of the DeleteByUser sequence aborted the job — no `processing_restricted` is set in that case; the admin must release the blocking holds or submit `acknowledgeHoldOverride: true` to proceed). `` with the text below. The row stays one physical line.
+
+```markdown
+The `failure_phase` label distinguishes failure modes. A legal hold blocks an erasure as [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0 states.
 ```
 
 ## Spec files touched
