@@ -116,6 +116,8 @@ type Harness struct {
 	// TreeMetrics records every replica's delegation-tree recovery
 	// outcomes.
 	TreeMetrics *TreeMetrics
+	// Claims records every SandboxClaim any replica's binder created.
+	Claims *ClaimLog
 	// RelaxOrphanClaims applies the crash relaxation of the pods-and-claims
 	// invariant: a bound claim whose pod no non-terminal row names and no
 	// surviving replica binds is accepted, because the claim-orphan GC
@@ -178,6 +180,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Checkpoints:  &Checkpointer{},
 		Interactions: interactionstore.NewMemory(),
 		TreeMetrics:  &TreeMetrics{},
+		Claims:       &ClaimLog{},
 		sessions:     map[string]bool{},
 		rc:           rc,
 		events:       opts.Events,
@@ -225,7 +228,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 	reg := podsession.NewRegistry()
 	r := &Replica{ID: id, Registry: reg, InputWaits: inputwait.NewRegistry()}
 	binder := &podsession.Binder{
-		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown},
+		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims},
 		Namespace:        Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},

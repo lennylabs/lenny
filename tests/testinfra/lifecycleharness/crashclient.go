@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
 // errReplicaCrashed is the error every Kubernetes write of a crashed
@@ -23,9 +25,13 @@ var errReplicaCrashed = errors.New("lifecycleharness: the replica crashed")
 // the orphaned claim the controller's claim-orphan GC exists to reclaim
 // (§4.6.1 Orphaned SandboxClaim detection, §7.3 Resume driver). Reads pass
 // through, because a read changes nothing a scenario asserts.
+//
+// It also records each SandboxClaim create the kube-apiserver accepts in
+// claims, when set, so a scenario can count the pods a race claimed.
 type crashableClient struct {
 	client.Client
 	crashed *atomic.Bool
+	claims  *ClaimLog
 }
 
 // down reports the crash error once the replica crashed.
@@ -41,7 +47,13 @@ func (c crashableClient) Create(ctx context.Context, obj client.Object, opts ...
 	if err := c.down(); err != nil {
 		return err
 	}
-	return c.Client.Create(ctx, obj, opts...)
+	if err := c.Client.Create(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if claim, ok := obj.(*lennyv1.SandboxClaim); ok {
+		c.claims.record(claim.Spec.SandboxRef)
+	}
+	return nil
 }
 
 // Update refuses the update once the replica crashed.
