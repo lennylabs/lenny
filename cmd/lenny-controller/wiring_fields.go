@@ -15,8 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/events"
-	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -42,17 +40,15 @@ type controllerWiringFields struct {
 	resourceClasses       resourceclass.Registry
 
 	// §4.6.1 Postgres-backed stores and ops emitter.
-	pgPool                 *pgxpool.Pool
-	redisClient            *redis.Client
-	mirror                 *agentpodstatepg.Store
-	sessionLookup          warmpool.SessionLookup
-	runtimeRegistry        *runtimepg.Store
-	poolScalingPools       *poolstorepg.Store
-	poolScalingExperiments *experimentstorepg.Store
-	opsEmitter             events.EventEmitter
-	queueFactory           controllermetrics.QueueFactory
+	pgPool          *pgxpool.Pool
+	redisClient     *redis.Client
+	mirror          *agentpodstatepg.Store
+	sessionLookup   warmpool.SessionLookup
+	runtimeRegistry *runtimepg.Store
+	opsEmitter      events.EventEmitter
+	queueFactory    controllermetrics.QueueFactory
 
 	// §4.6.1 agent namespaces resolved from --agent-namespaces, shared by the
-	// leader-elected mirror/GC, pool-scaling, and CIDR-drift runnables.
+	// leader-elected mirror/GC and CIDR-drift runnables.
 	agentNamespaces []string
 }

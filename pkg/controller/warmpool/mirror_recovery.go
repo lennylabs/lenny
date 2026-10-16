@@ -80,7 +80,14 @@ func (m *MirrorReconciler) reconcile(ctx context.Context) error {
 
 	for _, ns := range m.Namespaces {
 		var sandboxes lennyv1.SandboxList
-		if err := m.Client.List(ctx, &sandboxes, client.InNamespace(ns)); err != nil {
+		// The pass reads every Sandbox in the namespace, terminal ones
+		// included, so the list can hold tens of thousands of objects. A
+		// cached List deep-copies each one by default, which doubles the
+		// informer's footprint in one burst and OOM-killed the controller at
+		// the chart's default memory limit once the chart started running this
+		// pass (F-4.6.30). The pass only reads the items, so it takes the
+		// cache's objects without the copy and must not mutate them.
+		if err := m.Client.List(ctx, &sandboxes, client.InNamespace(ns), client.UnsafeDisableDeepCopy); err != nil {
 			return fmt.Errorf("list sandboxes in %s: %w", ns, err)
 		}
 		byPool := map[string][]lennyv1.Sandbox{}

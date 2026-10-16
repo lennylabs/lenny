@@ -3895,6 +3895,7 @@ spec:
             - --health-probe-bind-address=:8081
             - --adapter-image=ghcr.io/lennylabs/lenny-adapter:0.1.0
             - --gateway-grpc-addr=lenny-gateway.default.svc:50051
+            - --agent-namespaces=lenny-agents
             - --dev-mode
             - --adapter-uid=65532
             - --agent-uid=65533
