@@ -24,8 +24,6 @@ import (
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
-	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -55,7 +53,7 @@ type recordingManager struct {
 // is the controller-runtime internal controller type (its package path is the
 // controller-runtime tree); a leader-elected runnable this binary wires is one
 // of Lenny's own concrete types (MirrorReconciler, ClaimGarbageCollector,
-// poolscaling.Runnable, cidrdrift.Detector, LeaseRenewalMonitor). The two sets
+// cidrdrift.Detector, LeaseRenewalMonitor). The two sets
 // are distinguished by package path so the discriminator does not depend on the
 // exact generic type string controller-runtime emits.
 func (m *recordingManager) Add(r manager.Runnable) error {
@@ -148,8 +146,8 @@ func (w *controllerWiring) registerAll() {
 
 // spec: 4.6.1 (controller composition-root wiring outcome), 4.1 (the
 // composition root threads its inputs to each subsystem), 5.1
-// (RuntimeReconciler is Postgres-gated), 10.7 (PoolScalingController is
-// Postgres+namespace-gated), 13.2 (CIDR-drift detector is namespace/
+// (RuntimeReconciler is Postgres-gated), 4.6.2 (the PoolScalingController is
+// separate from the WarmPoolController and never registers here), 13.2 (CIDR-drift detector is namespace/
 // system-gated), 16.5 (leader-lease monitor is leader-election-gated)
 //
 // diagnosis: a failure here means the R8 decomposition (proposal 0020 §4 Part A
@@ -186,7 +184,7 @@ func TestControllerWiringOutcomePinsRegistrationGates(t *testing.T) {
 		f := &controllerFlags{leaderElectNS: "lenny-system"}
 		mgr := newRecordingManager(t, cfg, false)
 		w := newWiringForTest(f, mgr)
-		// No Postgres: mirror/runtimeRegistry/poolScaling stores stay nil.
+		// No Postgres: mirror/runtimeRegistry stores stay nil.
 		// No namespaces: agentNamespaces is empty.
 		w.registerAll()
 
@@ -211,10 +209,8 @@ func TestControllerWiringOutcomePinsRegistrationGates(t *testing.T) {
 		f := &controllerFlags{leaderElectNS: "lenny-system"}
 		mgr := newRecordingManager(t, cfg, false)
 		w := newWiringForTest(f, mgr)
-		// Postgres present: the §5.1 RuntimeReconciler gate opens. The pool/
-		// experiment registries are present, but the §10.7 PoolScalingController
-		// and the §4.6.1 mirror/GC stay gated on agent namespaces, which are
-		// empty here.
+		// Postgres present: the §5.1 RuntimeReconciler gate opens. The §4.6.1
+		// mirror/GC stay gated on agent namespaces, which are empty here.
 		setPostgresStores(w)
 		w.registerAll()
 
@@ -222,8 +218,9 @@ func TestControllerWiringOutcomePinsRegistrationGates(t *testing.T) {
 			t.Errorf("registered %d controllers, want %d (core + §5.1 RuntimeReconciler)", got, coreControllers+1)
 		}
 		runnables := mgr.runnableTypeNames()
-		// Mirror/GC and PoolScalingController need agent namespaces too, so they
-		// stay absent under Postgres-only.
+		// Mirror/GC need agent namespaces too, so they stay absent under
+		// Postgres-only. The §4.6.2 PoolScalingController never registers in
+		// this binary.
 		notRunnable(t, runnables, &warmpool.MirrorReconciler{})
 		notRunnable(t, runnables, &warmpool.ClaimGarbageCollector{})
 		notRunnable(t, runnables, &poolscaling.Runnable{})
@@ -244,8 +241,11 @@ func TestControllerWiringOutcomePinsRegistrationGates(t *testing.T) {
 		// Postgres + namespaces.
 		wantRunnable(t, runnables, &warmpool.MirrorReconciler{})
 		wantRunnable(t, runnables, &warmpool.ClaimGarbageCollector{})
-		// §10.7 PoolScalingController opens under Postgres + namespaces.
-		wantRunnable(t, runnables, &poolscaling.Runnable{})
+		// §4.6.2: the PoolScalingController runs as its own workload
+		// (cmd/lenny-pool-scaling-controller). The chart renders
+		// --agent-namespaces on this binary, so an in-process copy registered
+		// here would contend with that workload in every install.
+		notRunnable(t, runnables, &poolscaling.Runnable{})
 		// §13.2 CIDR-drift detector registers (namespaces set).
 		wantRunnable(t, runnables, &cidrdrift.Detector{})
 		// Still no leader election, so the §16.5 lease monitor stays absent.
@@ -277,8 +277,6 @@ func setPostgresStores(w *controllerWiring) {
 	pool := &pgxpool.Pool{}
 	w.mirror = agentpodstatepg.New(pool)
 	w.runtimeRegistry = runtimepg.New(pool)
-	w.poolScalingPools = poolstorepg.New(pool)
-	w.poolScalingExperiments = experimentstorepg.New(pool)
 	w.sessionLookup = &sessionActiveLookup{}
 }
 

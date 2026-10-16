@@ -150,7 +150,7 @@ func registerRateLimitFlags(f *controllerFlags) {
 	flag.StringVar(&f.postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	flag.StringVar(&f.agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
-		"comma-separated agent namespaces. When set, the §13.2 NET-022 cluster-CIDR drift detector audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes. When empty, drift detection is disabled.")
+		"comma-separated agent namespaces. With --postgres-dsn, the leader runs the §4.6.1 orphaned-SandboxClaim GarbageCollect loop and the agent_pod_state mirror reconciler over these namespaces; without this flag neither runs. The §13.2 NET-022 cluster-CIDR drift detector also audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes.")
 	flag.StringVar(&f.redisURL, "redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis connection URL for the §25.5 operational event stream. When set, controller-emitted pool_state_changed events land on ops:events:stream alongside the gateway-emitted events. When empty, events stay in the controller-local in-memory buffer.")
 	flag.StringVar(&f.redisPassword, "redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),

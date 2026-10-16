@@ -2730,11 +2730,15 @@ Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 e
   kubeconfig does not panic on a typed-nil clientset. Found by 0092's S15 full tier pass; it blocks tier 4's
   ops tests. Landed 2026-10-16 on `fix/post-0092-direct`: the clientset is an interface left nil without a
   cluster.
-
-F-4.6.30 (SandboxClaims that stay bound after their sessions are gone, seen in tier-5 `TestPodLifecycle`
-and possibly the cause of the never-passing tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash`) is
-triaged with P1: P1's opening defect list decides whether the claim-orphan GC owns it or the tests leak
-cluster state.
+- [x] F-4.6.30: render `--agent-namespaces` on the `lenny-controller` Deployment, so the §4.6.1
+  orphan-claim GC and the agent_pod_state mirror reconciler run in every install with Postgres. The chart
+  had never rendered the flag, so neither had run in a chart install. Landed 2026-10-16 on
+  `fix/controller-agent-namespaces` (commits 835127775 and eb8105d0f), with the in-process
+  PoolScalingController removed from `lenny-controller`, the mirror's full list no longer deep-copied, and
+  start-time sweeps on the tier-5 and tier-8 claim fixtures. On `lenny-e2e` the GC reclaimed the 48 leaked
+  claims, and tier-5 `TestPodLifecycle` and both tier-8 orphan-GC tests pass. P1's and 0092's departures
+  that name the GC as their fallback are now bounded: a claim that no replica releases is reclaimed within
+  `claimOrphanTimeout` plus one sweep interval. The leak source, F-10.1.21, stays with P1.
 
 Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
 
