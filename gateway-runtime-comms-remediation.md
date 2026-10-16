@@ -863,6 +863,69 @@ today's `main.go` in wave 0, which is where the plan wants the answer.
 
 **Size.** S.
 
+**8.2 compatibility note.** The adapter reads three inputs that no rendered agent pod sets today:
+`--runtime-ops-socket` (spelled `--lifecycle-socket` before the R1b rename under rule N7),
+`--post-mortem-dir`, and the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. R17 renders
+`--runtime-ops-socket`, and R12 renders `--post-mortem-dir` and `OTEL_EXPORTER_OTLP_ENDPOINT`. A deployment
+that sets any of them outside this repository, through a mutating webhook, a Kustomize or Helm
+post-renderer overlay, or an operator fork, must remove its setter when the step that renders the input
+lands. Two conditions apply:
+
+- An out-of-tree setter of `--lifecycle-socket` already fails. The adapter binary no longer defines that
+  flag, so Go's flag package rejects it and the adapter container exits with status 2 at startup. The
+  setter must move to `--runtime-ops-socket` now, and must then be removed when R17 lands.
+- After R17 or R12 renders an input, an out-of-tree setter of the same input produces a duplicate. For a
+  repeated flag, the adapter takes the last occurrence, so the overlay's value silently replaces the
+  rendered one or is silently replaced by it, depending on argument order. For a repeated environment
+  variable, the container receives the later entry, so the result again depends on where the overlay
+  inserts its entry.
+
+The release notes of R12 and R17 must carry this note. The plan names no concrete register for an
+out-of-tree setter: the deployment-boundary exception register (`tests/registers/exceptions-deployment-boundary.yaml`,
+landed with R6) already holds one deferred row for each of the three inputs, with R17 or R12 as its
+blocker, and the step that renders an input deletes that row. No further row is added.
+
+**Outcome (landed 2026-10-16, branch `fix/r4-graceful-stop`).** Both investigations ran as timing tests,
+and the verdicts are as follows.
+
+- **8.3 is positive.** `TestAdapterExitsWithinGraceBudget` (tier 7a, `tests/tier7a_load_local/`) builds
+  and runs the real `cmd/lenny-adapter` and `cmd/runtimes/echo-concurrent` binaries, puts the server in
+  each pending-RPC state, sends SIGTERM, and times the exit. With no stream open, with an idle session,
+  and with an open `Attach` stream whose runtime is SIGTERMed at the same moment, the process exits in 2
+  to 5ms. With a `StartSession` in flight, the graceful stop waits for that RPC, which completes, and the
+  process exits about 509ms after SIGTERM. With one, or four concurrent, established `Attach` streams
+  held open while the runtime stays up, and with a stream whose handler is blocked mid-send, the process
+  does not exit: it was still running 15s after SIGTERM in every run, and still running 120s after
+  SIGTERM in a run with the budget raised to 115s, past the 120s default grace period. The cause is a
+  cycle. `GracefulStop` waits for the `Attach` handler, the handler waits for the runtime's output to
+  end, and the pod-scope teardown that ends that output is deferred in `main` until `srv.Serve` returns,
+  which in grpc-go v1.80.0 happens only after the stop completes. The cases that hang skip on BUILD-GAPS
+  F-4.6.31.
+- **The 8.3 fix is not landed, because the specification defines neither the budget nor the fallback.**
+  §4.6.1 fixes the pod's `terminationGracePeriodSeconds` (default 120s) as the outer bound, and nothing
+  states a bound on the adapter's own graceful stop or what the adapter does when it overruns. The fix
+  therefore goes through the proposal pipeline. F-4.6.31 records the two candidate designs: a bounded
+  `GracefulStop` with a `Stop()` fallback, and ending the runtime connection before the graceful stop.
+- **R16's design input.** R16 cannot assume that the adapter exits after its preStop checkpoint. Until
+  the fix lands, a pod whose runtime does not exit on its own SIGTERM holds the adapter until the
+  kubelet's SIGKILL, and none of the steps `main` defers past the server's stop run. R16 reorders this
+  call, so it takes the proposal and F-4.6.31, and its estimate grows by that proposal. R16's tier-5
+  terminate-and-checkpoint test must also assert that the adapter exits before the grace deadline, using
+  the same `TestAdapterExitsWithinGraceBudget` cases with `LENNY_TIER7A_ADAPTER_GRACE_RUN_BLOCKED=run`.
+- **8.5 is answered.** The elicitation waiter does not mirror the tool-approval await exactly: it has no
+  in-process registry and polls the shared interaction store alone, every 25 milliseconds
+  (`awaitPollInterval` in `pkg/gateway/mcpfabric/mcptools`), so every replica's resolution reaches it the
+  same way. `TestElicitationAnsweredOnAnotherReplicaWakesTheBlockedCall_spec_9_2` (tier 7a) runs two
+  independent registrations of the platform MCP tools that share only a Postgres interaction store,
+  raises 24 elicitations on replica A, and ends them on replica B in random order through B's
+  `respond_to_elicitation` and `dismiss_elicitation` tools and through the raising-session expiry that
+  proposal 0092 added. Every blocked call on A returned the outcome B recorded, and the expiry returns an
+  error other than the timeout. Over five race-enabled runs the wake latency from B's commit to A's return
+  had a median of 10 to 16ms and a maximum of 26ms, against a 2-second budget.
+- **R20's design input.** R20 can reuse the Postgres interaction store and its poll for the
+  request-input wait (6c.4), adding a request-input interaction kind, and does not need a second
+  cross-replica store. The 6c.4 gap itself stands: `inputwait` still has no shared store.
+
 ### R5. Session-server and composition-root carve-up
 
 **Closes:** no record. This is the decoupling investment that every wave-3 and wave-5 parallelism claim in
@@ -942,6 +1005,12 @@ the mTLS material. `OTEL_EXPORTER_OTLP_ENDPOINT` is an environment variable rath
 as a fourth row, also naming R12. The gate is green on arrival and the debt is countable.
 
 **Dependencies.** R1a for the register's names, and R1b because rule N7 renames `--lifecycle-socket`.
+
+**8.2 compatibility requirement (added 2026-10-16 by R4).** This step is 8.2's verdict owner. The
+compatibility note is in the R4 section: an out-of-tree setter of `--lifecycle-socket` already stops the
+adapter at startup, and an out-of-tree setter of `--runtime-ops-socket`, `--post-mortem-dir`, or
+`OTEL_EXPORTER_OTLP_ENDPOINT` duplicates the input once R17 or R12 renders it. The three deferred rows of
+the deployment-boundary exception register are the register rows; no further row is owed.
 
 **Parallel with.** R5 (`pkg/gateway` and `cmd/lenny-gateway`), R2a, and R7 (`tests/testinfra` and
 `e2e-values.yaml`, which this step does not touch).
@@ -1482,6 +1551,12 @@ PDB and admission rows of 6a.4, which conform to the specification (see R6).
 **Risk.** This is where a wrong shutdown budget turns a best-effort checkpoint into a hang. R4 is the
 control.
 
+**R4's 8.3 verdict (2026-10-16).** Positive: the adapter does not exit after SIGTERM while an `Attach`
+stream is open and the runtime is up, and only the kubelet's SIGKILL ends it (BUILD-GAPS F-4.6.31, owned
+here). The specification defines no adapter shutdown budget and no fallback, so this step's design commits
+only after a proposal settles them. The measured numbers and the two candidate designs are in the R4
+outcome.
+
 **Size.** L.
 
 ### R17. Enabling `CH-RUNTIMEOPS` at the deployment boundary
@@ -1516,6 +1591,11 @@ zero. That is silent billing loss. `TestDirectModeUsagePullIsNonZero`, tier 4.
 **Dependencies.** R16 (S-5), R15 (the frames must match the schema before they carry production traffic),
 R6 (the podspec must render the socket flag), and R8 (the host-conformance battery is the only mechanism
 that establishes 8.6).
+
+**8.2 compatibility note (added 2026-10-16 by R4).** Rendering `--runtime-ops-socket` makes any
+out-of-tree setter of that flag a duplicate, and a setter of the old `--lifecycle-socket` spelling already
+stops the adapter at startup. This step's release notes carry the note in the R4 section, and the step
+deletes the flag's row from the deployment-boundary exception register when it renders the flag.
 
 **Parallel with.** R19 and R21. Not parallel with R14 (both exercise the `GatewayControl` handshake), and
 not parallel with R16.
@@ -2017,10 +2097,10 @@ prevents recurrence.
 | 6c.10 | Tier-11: the two Responses senses named distinctly at every site | 11 | R11a |
 | 8.1 | Full-tier run plus the `UNVERIFIED` verdict state | all | R25, with R3 as prerequisite |
 | 8.2 | Compatibility note plus a register row | 0 | R6, with R17 |
-| 8.3 | `TestAdapterExitsWithinGraceBudget` | 7a | R4 |
+| 8.3 | `TestAdapterExitsWithinGraceBudget`. Answered 2026-10-16: positive, the open-stream cases skip on F-4.6.31 | 7a | R4 |
 | 8.4a | Tier-5 NetworkPolicy under a live CNI, existing policies | 5 | R14 |
 | 8.4b | Tier-5 NetworkPolicy under a live CNI, inter-replica policy | 5 | R18 |
-| 8.5 | Reading plus a tier-7a elicitation wake case | 7a | R4, feeding R20 |
+| 8.5 | Reading plus a tier-7a elicitation wake case (`TestElicitationAnsweredOnAnotherReplicaWakesTheBlockedCall_spec_9_2`). Answered 2026-10-16: the waiter wakes cross-replica | 7a | R4, feeding R20 |
 | 8.6 | Reciprocal host-conformance battery | 2 or 10 | R8, consumed by R17 |
 | 8.7 | Duplicate-terminal case on the two-replica harness | 4 | R10 |
 
@@ -2116,10 +2196,10 @@ the three composites with their 36 rows gives 71 tracked units, a strict superse
 | 6c.10 | Open Responses and the OpenAI Responses API conflated | R11a | R2a | Tier-11 naming check under N3 |
 | 8.1 | No test tier was run | R25 | R3 | Full-tier run, `UNVERIFIED` verdict |
 | 8.2 | Out-of-tree flag setters | R6 | R4, R17 | Compatibility note plus a register row |
-| 8.3 | `GracefulStop` past the grace deadline | R4 | R16 | Tier-7a grace-budget test |
+| 8.3 | `GracefulStop` past the grace deadline. Answered 2026-10-16: it hangs until SIGKILL, F-4.6.31 | R4 | R16 | Tier-7a grace-budget test |
 | 8.4a | NetworkPolicy under a live CNI, existing policies | R14 | R7 | Tier-5 CNI |
 | 8.4b | NetworkPolicy under a live CNI, inter-replica policy | R18 | R7 | Tier-5 CNI |
-| 8.5 | Elicitation waiter versus tool-approval poll | R4 | R20 | Reading plus a tier-7a case |
+| 8.5 | Elicitation waiter versus tool-approval poll. Answered 2026-10-16: it polls the shared store alone and wakes within 26ms | R4 | R20 | Reading plus a tier-7a case |
 | 8.6 | Runtime side of the `checkpoint_ready` contract | R8 | R17 | Reciprocal host-conformance battery |
 | 8.7 | Duplicate terminal from the orphan reconciler | R10 | R7 | Tier-4 duplicate-terminal case |
 
@@ -2258,11 +2338,12 @@ it, and name the commit or merge.
   (`tests/registers/line-citations.yaml`), the register contract (`tests/registers/README.md`), the
   `UNVERIFIED` verdict state in `cmd/lenny-test`, and the change-graph coverage registers (proposals 0065
   and 0066).
-- [ ] **R4.** Not started. `srv.GracefulStop()` in `cmd/lenny-adapter/main.go` still has no bound or
-  `Stop()` fallback, and `TestAdapterExitsWithinGraceBudget` does not exist. It is overdue against its wave
-  0 placement. Proposal 0078 landed `CloseListener` as a deferred call in `cmd/lenny-adapter/main.go`
-  (`closeRuntimeListener`), and proposal 0079 extended it to the pod-scope teardown, so R4 keeps that call
-  on both the graceful path and the fallback path.
+- [x] **R4.** Done 2026-10-16 on `fix/r4-graceful-stop` (see the R4 outcome). 8.3 is positive and 8.5 is
+  answered, each by a tier-7a timing test, and the 8.2 compatibility note is in the R4 section. The bounded
+  `GracefulStop` did not land, because the specification defines no adapter shutdown budget and no
+  fallback; BUILD-GAPS F-4.6.31 records the hang, R16 owns it, and the fix waits on a proposal. Whichever
+  design the proposal picks keeps the pod-scope teardown (`closeRuntimeListener`, from proposals 0078 and
+  0079) on every exit path.
 - [x] **R5.** Landed 2026-09-29, merge `6325283df`, with the scope extension recorded in the R5 section.
 - [x] **R6.** Landed 2026-10-03 on `r6/podspec-chart-decoupling`: `podspec.go` split into per-concern files
   move-only (`86f3c2b14`, render dump and test lists identical to base), chart test list assertions keyed by
