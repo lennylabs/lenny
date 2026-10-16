@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
@@ -139,6 +140,9 @@ type Replica struct {
 	Binder   *podsession.Binder
 	Watchdog *watchdog.Watchdog
 	Sweeper  *coordination.Sweeper
+	// InputWaits is the replica's lenny/request_input registry, shared by
+	// its REST and MCP message paths as the gateway wires it.
+	InputWaits *inputwait.Registry
 
 	mu      sync.Mutex
 	crashed bool
@@ -219,7 +223,7 @@ func New(t testing.TB, opts Options) *Harness {
 func (h *Harness) AddReplica(id string) *Replica {
 	h.T.Helper()
 	reg := podsession.NewRegistry()
-	r := &Replica{ID: id, Registry: reg}
+	r := &Replica{ID: id, Registry: reg, InputWaits: inputwait.NewRegistry()}
 	binder := &podsession.Binder{
 		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown},
 		Namespace:        Namespace,
@@ -252,6 +256,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 		SuspensionCheckpointer:  h.Checkpoints,
 		Interactions:            h.Interactions,
 		TreeRecoveryMetrics:     h.TreeMetrics,
+		InputWaits:              r.InputWaits,
 	})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.

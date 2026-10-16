@@ -122,9 +122,11 @@ func isPreRunning(s session.State) bool {
 //     resuming) → DLQ, queued (path 7).
 //   - Pre-running target → external client TARGET_NOT_READY, or
 //     inter-session DLQ, queued (dead-letter table pre-running row).
+//   - Suspended (path 6) → ActionResumeAndDeliver, whatever immediate
+//     is and whatever the inputwait registry holds: a suspended row with
+//     a pending lenny/request_input wait still resumes.
 //   - input_required (path 3) → inbox, queued. Path 3 wins over the
 //     `delivery: "immediate"` escalation (path 4).
-//   - Suspended (path 6) → ActionResumeAndDeliver, whatever immediate is.
 //   - Running, not input_required (path 2) → deliver now. The path-5
 //     runtime-busy buffering and the path-4 in-flight-tool interrupt
 //     require the adapter `ready_for_input` signal; a synchronous
@@ -149,12 +151,16 @@ func Classify(state session.State, inputRequired, immediate bool, src Source) De
 		// Inter-session parent→child: the parent knows the child will
 		// start, so buffer in the DLQ until it reaches running.
 		return Decision{Path: 7, Action: ActionBufferDLQ, Status: session.DeliveryStatusQueued}
+	case state == session.StateSuspended:
+		// §7.2 path 6: a message to a suspended session resumes it,
+		// whatever the input-wait registry holds. An interrupt of a
+		// runtime blocked in lenny/request_input leaves the wait
+		// registered on a suspended row; routing that row to the inbox
+		// would never resume it. The caller answers delivered or queued
+		// from the branch it takes.
+		return Decision{Path: 6, Action: ActionResumeAndDeliver, Status: session.DeliveryStatusQueued}
 	case state == session.StateInputRequired || inputRequired:
 		return Decision{Path: 3, Action: ActionBufferInbox, Status: session.DeliveryStatusQueued}
-	case state == session.StateSuspended:
-		// §7.2 path 6: a message to a suspended session resumes it. The
-		// caller answers delivered or queued from the branch it takes.
-		return Decision{Path: 6, Action: ActionResumeAndDeliver, Status: session.DeliveryStatusQueued}
 	default:
 		// Running (or any other admitted non-blocked state): deliver now.
 		return Decision{Path: 2, Action: ActionDeliver, Status: session.DeliveryStatusDelivered}

@@ -132,6 +132,7 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 		SessionService: r.Server,
 		Delivery:       r.Server,
 		Executor:       r.Executor,
+		InputWaits:     r.InputWaits,
 		Messaging:      h.Messaging,
 		Interactions:   h.Interactions,
 		Clock:          h.Clock.Now,

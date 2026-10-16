@@ -1971,6 +1971,7 @@
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestBacklogRecheckResumesAStrandedPodlessSession_spec_7_2",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2",
         "tests/tier4_integration/session_held_pod_integration_test.go::TestHeldPodSuspendedMessageWaitsInTheDLQ_spec_7_2",
+        "tests/tier4_integration/session_suspended_input_wait_integration_test.go::TestSuspendedWithPendingInputWaitResumesOnMessage_spec_7_2",
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2",
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestHeldDeliveryAndReleaseRequiredPairs_spec_7_2",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestKilledCoordinatorHeldMessageReachesThePeer_spec_10_1_2",

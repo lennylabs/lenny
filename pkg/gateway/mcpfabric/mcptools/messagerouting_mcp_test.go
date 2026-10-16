@@ -100,6 +100,39 @@ func TestSendMessageRouting_SuspendedHoldsAndResumes_spec_7_2_path6(t *testing.T
 	}
 }
 
+// TestSendMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6
+// pins that §7.2 path 6 wins for a suspended target whose runtime was
+// interrupted while blocked in lenny/request_input: the wait stays in the
+// registry, yet the message is held in the DLQ and the session resumed.
+// Routing it to the inbox would leave the session suspended with the
+// message unread.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestSendMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(t *testing.T) {
+	waits := inputwait.NewRegistry()
+	srv, store, inbox, dlq, del := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) {
+		d.InputWaits = waits
+	})
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+	if _, err := waits.Register("sess_sus", "req_blocked", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"later"}`)
+	if got := receiptFromResult(t, resp); got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0 (path 6 never enqueues to the inbox)", n)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "sess_sus"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1", n)
+	}
+	if len(del.resumed) != 1 {
+		t.Errorf("resumed %d sessions, want 1", len(del.resumed))
+	}
+}
+
 // TestSendMessageRouting_SuspendedHoldTerminalNoResume_spec_7_2_path6 pins
 // that a hold that finds the session terminal answers TARGET_TERMINAL and
 // does not resume.

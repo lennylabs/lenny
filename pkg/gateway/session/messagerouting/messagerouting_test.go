@@ -68,6 +68,42 @@ func TestClassify_spec_7_2_paths(t *testing.T) {
 			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
 		},
 		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_external_immediate_false", state: session.StateSuspended,
+			inputRequired: true, immediate: false, src: SourceExternal,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_external_immediate_true", state: session.StateSuspended,
+			inputRequired: true, immediate: true, src: SourceExternal,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_intersession_immediate_false", state: session.StateSuspended,
+			inputRequired: true, immediate: false, src: SourceInterSession,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_intersession_immediate_true", state: session.StateSuspended,
+			inputRequired: true, immediate: true, src: SourceInterSession,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
 			// §7.2 path 7: a resuming target has no runtime reading its
 			// input, so the message is held in the DLQ.
 			name: "path7_resuming_dlq", state: session.StateResuming,
