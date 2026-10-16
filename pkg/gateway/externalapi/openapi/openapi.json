@@ -785,7 +785,7 @@
     "/v1/sessions/{id}/resume": {
       "post": {
         "operationId": "postV1SessionsByIdResume",
-        "summary": "Resume after retry exhaustion",
+        "summary": "Resume a session in awaiting_client_action or suspended",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" } }

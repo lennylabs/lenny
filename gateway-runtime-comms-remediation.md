@@ -2765,8 +2765,8 @@ Proposals, third wave:
   isolation), F-5.2.43 (a retire reason that names a recycling-disabled edit), F-4.6.23 (`Claimer.Claim`
   deletes its claim on a failed tenant stamp; the unused `ClaimPod` implementations read the pin or are
   deleted), F-4.6.24 (`WarmPoolOversized` corrected and evaluated), F-4.6.25 (the
-  `podClaimFallbackMaxMirrorLagSeconds` gateway flag), F-6.2.27 (the §6.2 `idle → draining` trigger list),
-  and F-15.1.41 (a failed resume claim leaves the row in `awaiting_client_action`). It also closes two
+  `podClaimFallbackMaxMirrorLagSeconds` gateway flag), and F-6.2.27 (the §6.2 `idle → draining` trigger
+  list). Proposal 0092 closed F-15.1.41. It also closes two
   whole-pod scrub defects from the terminal-transition table run (owner decision, 2026-10-12): F-5.2.47
   (TT-16, a failed occupancy-zero recycle patch on a concurrent pool skips `ShutdownRecycle`, so the pod is
   reused without the whole-pod scrub; the fix retires the pod when the patch fails) and F-5.2.48 (TT-17,
