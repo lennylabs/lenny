@@ -28935,6 +28935,13 @@ in the MCP Management Server inventory.
 **Gap:** A client sees a state §15.1 states it never sees.
 **Suggested resolution:** Map `resuming` to `resume_pending` in every external response.
 
+
+### - [ ] F-15.1.54 — `GET /v1/responses/{id}` returns any tenant session's metadata to any caller in the tenant [Medium] — OPEN
+
+**Spec:** §15.1 REST API (the Open Responses surface), §13 Security Model (tenant and user isolation).
+**Evidence:** `OpenResponsesHandler.handleGet` (`pkg/gateway/environment/translator/open_responses.go`) resolves only the tenant and reads the row by tenant and id, with no check of the caller's user against the row's `user_id` and no role check. Found by the P5 data-lifecycle dossier (`scratchpad/p1-p5/p5-dossier.md`, N-6), filed 2026-10-16. `handleDelete` on the same handler is F-15.1.48, owned by P5.
+**Gap:** A caller can read the state, runtime, creation time, and continuation parent of another user's responses session by id.
+**Suggested resolution:** First confirm the spec's read-authorization rule for a session owned by another user in the same tenant (§15.1, §13). If the spec states it, apply the same check that `GET /v1/sessions/{id}` applies, as a direct fix with a tier-9 test. If the spec is silent, raise the rule through the proposal pipeline. Unowned; it is outside P5, whose scope is the `DELETE`.
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
 Trees audited: `pkg/gateway/mcp/`, `pkg/gateway/mcptools/`, `pkg/gateway/sessionserver/`, `pkg/gateway/errorclassify/`, `pkg/gateway/adapter/`, `pkg/api/v1/session/`, `sdks/client/go/lenny/`, `tests/tier3_contract/rest_mcp_consistency/`, `cmd/lenny-gateway/main.go`.
