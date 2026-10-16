@@ -460,11 +460,18 @@ func TestOutsideRuleScanDrainsAndFallbackAddsNoStamp_spec_5_2(t *testing.T) {
 		binder.DialAdapter = func(string) (*adapterclient.Client, error) {
 			return nil, errors.New("adapter unreachable")
 		}
+		// The dial failure after the claim releases it, so the claim is
+		// observed from the post-claim hook, which runs while it is held.
+		claimed := false
 		_, _ = binder.Resume(context.Background(), podsession.ResumeRequest{
 			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
 			CheckpointID: "ckpt-1", KeepsRuntime: true,
+			OnClaimed: func(context.Context) error {
+				claimed = claimExists(t, base, "or-pod")
+				return nil
+			},
 		})
-		if !claimExists(t, base, "or-pod") {
+		if !claimed {
 			t.Error("the resume claim refused the pod pinned to its own tenant")
 		}
 		if got := rec.drainPatches(); len(got) != 0 {

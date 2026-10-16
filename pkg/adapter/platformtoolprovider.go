@@ -52,11 +52,16 @@ func (p *platformToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
 	return p.forwarder.ListPlatformTools(ctx, sessionID)
 }
 
+// Call forwards one tools/call. The call is the session's activity from
+// its dispatch until its result returns (§4.7.1 **Session seal.**), so it
+// resolves and counts the session through beginToolCall. List is not
+// activity.
 func (p *platformToolProvider) Call(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	sessionID, err := p.server.callingSession()
+	sessionID, end, err := p.server.beginToolCall()
 	if err != nil {
 		return nil, err
 	}
+	defer end()
 	return p.forwarder.CallPlatformTool(ctx, sessionID, name, arguments)
 }
 

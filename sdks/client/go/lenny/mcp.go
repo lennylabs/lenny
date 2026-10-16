@@ -355,11 +355,10 @@ func (m *MCPClient) SendMessage(ctx context.Context, sessionID, content string) 
 	return res.Text(), nil
 }
 
-// MCPSessionState is the decoded `{sessionId, state}` result the
-// session-management MCP tools (lenny/interrupt_session,
-// lenny/cancel_session) return. Accepted and Reason are populated only by
-// the §27.6 best-effort cancel path; the interrupt and authoritative
-// cancel paths leave them zero.
+// MCPSessionState is the decoded `{sessionId, state}` result
+// lenny/cancel_session returns. Accepted and Reason are populated only by
+// the §27.6 best-effort cancel path; the authoritative cancel path leaves
+// them zero.
 type MCPSessionState struct {
 	// SessionID is the affected session.
 	SessionID string `json:"sessionId"`
@@ -373,12 +372,30 @@ type MCPSessionState struct {
 }
 
 // InterruptSession invokes the lenny/interrupt_session MCP tool,
-// transitioning a running session to suspended. It is the MCP transport
-// the §24.17 `lenny session interrupt` command uses. The §24.17 command
-// table names the mapping `lenny/interrupt`; the canonical §15.2 tool catalog registers it as `interrupt_session`, which is the
-// name the gateway answers.
-func (m *MCPClient) InterruptSession(ctx context.Context, sessionID string) (*MCPSessionState, error) {
-	return m.sessionStateTool(ctx, "lenny/interrupt_session", map[string]any{"sessionId": sessionID})
+// transitioning a running session to suspended. The tool runs the REST
+// POST /v1/sessions/{id}/interrupt route and answers its session body, which
+// InterruptSession decodes into a Session. It is the MCP transport the
+// §24.17 `lenny session interrupt` command uses. The §24.17 command table
+// names the mapping `lenny/interrupt`; the canonical §15.2 tool catalog
+// registers it as `interrupt_session`, which is the name the gateway
+// answers. spec: §15.2.1 (REST/MCP Consistency Contract).
+func (m *MCPClient) InterruptSession(ctx context.Context, sessionID string) (*Session, error) {
+	const name = "lenny/interrupt_session"
+	res, err := m.CallTool(ctx, name, map[string]any{"sessionId": sessionID})
+	if err != nil {
+		return nil, err
+	}
+	if res.IsError {
+		if env := res.LennyError(); env != nil {
+			return nil, env
+		}
+		return nil, fmt.Errorf("lenny: %s reported a failure: %s", name, res.Text())
+	}
+	var out Session
+	if err := json.Unmarshal([]byte(res.Text()), &out); err != nil {
+		return nil, fmt.Errorf("lenny: decode %s result: %w", name, err)
+	}
+	return &out, nil
 }
 
 // CancelSession invokes the §15.2 lenny/cancel_session MCP tool, marking

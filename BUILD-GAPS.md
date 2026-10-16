@@ -222,6 +222,7 @@ are not yet deduplicated; treat related findings as a cluster.
 - [§27.8 — Metrics](#-278)
 - [§27.9 — Security considerations](#-279)
 - [§27.10 — Roll-forward notes](#-2710)
+- [§29.3 — Interactive message send](#-293)
 ---
 
 ## §4.0 Agent Operability Additions <a id="4.0"></a>
@@ -1086,6 +1087,13 @@ The Session Manager's core storage surface is broadly implemented: a tenant-scop
   - SSE replay-with-cursor via Last-Event-ID in `pkg/gateway/sessionserver/events.go:33-104` (modulo cross-replica finding F-4.4.19).
 - **Phases deferred per the package docstring:** `pkg/checkpoint/checkpoint.go:9-13` self-documents that the MinIO upload pipeline, SIGSTOP/SIGCONT path, eviction Postgres fallback, and `lenny-drain-readiness` webhook are deferred. Several of those phases have shipped partially (drain readiness, eviction state table) while leaving most of the checkpoint/eviction integration unwritten — many findings above lie inside that explicit deferral. The audit notes them because they are normative claims §4.4 holds against an in-progress build; they should be tracked as build gaps until reconciled.
 
+### - [ ] F-4.4.29 — No production code writes or reads the §4.4.5 minimal state record [Medium] — OPEN
+
+**Spec:** §4.4.5 (the minimal state record written when an eviction checkpoint cannot complete) and §7.3 step 3e (a session that has only that record resumes with conversation context and an empty workspace).
+**Evidence:** `evictionfallback.Writer` (`pkg/gateway/storage/evictionfallback/`) has no caller outside tests, and `cmd/` wires no `EvictionStateLookup` into the session server (`pkg/gateway/sessionserver/sessionserver.go`). The resume path's `resumeOnPod` (`pkg/gateway/sessionserver/resume_rebind.go`) rebuilds every session without a checkpoint from its stored workspace plan, and `classifyResume` (`pkg/gateway/sessionserver/resume_mode.go`) never reaches its `conversation_only` branch in production. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** An evicted session whose checkpoint failed is rebuilt from its workspace plan rather than resumed with its conversation context, and the record §4.4.5 requires is never written.
+**Suggested resolution:** Wire `evictionfallback.Writer` into the eviction path and an `EvictionStateLookup` into the session server, and resume a record-only session as §7.3 step 3e states.
+
 ---
 
 ## §4.5 Artifact Store <a id="4.5"></a>
@@ -1501,6 +1509,13 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 **Evidence:** `pkg/gateway/sessionserver/usage.go:448`; `pkg/gateway/credentials/credassign/credassign.go:400-421`; `pkg/controller/warmpool/gc.go:233-241`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-21 (bucket B; source findings B: p3#2, p3#35, p3#55, p7#52; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6 and D6: 0092's accepted gap misstates this as GC-covered.
 **Gap:** A process exit between the terminal commit and the in-process release leaks credential-lease slots and concurrent-workspace slots, because peers skip terminal rows and the claim-orphan GC skips a pod with a live sibling.
 **Suggested resolution:** Persist a pending-release marker with the terminal write and let the Sweeper or the GC complete it. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.30 — SandboxClaims stay bound after their sessions are gone, and nothing reclaims them [Medium] — OPEN
+
+**Spec:** §4.6.1 Warm Pool Controller (Pod Lifecycle) (the claim-orphan GC), §6.2 Pod State Machine.
+**Evidence:** Proposal 0092's S15 full tier pass (2026-10-15) found tier-5 `TestPodLifecycle` failing with `backing Sandbox phase = claimed, want idle` for `echo-pool-sidecar` and `heartbeat-silence-concurrent-pool` pods on the long-lived e2e cluster. Their SandboxClaims stay bound although the sessions that held them no longer exist. One claim was created by `TestSessionContinuesAfterCoordinatingGatewayReplicaLoss`, which kills a gateway replica. The same failure appears in worklogs from 2026-08-26 (`tier5b.log`), 2026-10-03 (`impl0088-t5.log`), and 2026-10-05 (`s20-t5c.log`). The tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash` has failed in every tier-8 log since 2026-08-26 (`reserved claim ... was not reclaimed by the orphan GC`) and may share the cause. The namespace also holds about 16,000 failed or terminated Sandbox objects, which makes `TestPodLifecycle` take about 11 minutes.
+**Gap:** After the session that holds a claim is gone (its replica was killed, or the test ended without cleanup), the claim stays bound and its pod stays `claimed`. Neither the claim-orphan GC nor a test start-time sweep reclaims it.
+**Suggested resolution:** Establish first whether the claim-orphan GC should have reclaimed these claims (a product defect, related to F-4.6.29) or whether the tests leak cluster-scoped state, which `.claude/rules/test-coverage.md` check 6 requires a start-time sweep for. Triage with proposal P1 (release ownership for pods, slots, and credential leases) in `gateway-runtime-comms-remediation.md` §10.2. Also prune the terminal Sandbox objects from the e2e namespace.
 
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
@@ -3605,6 +3620,20 @@ Key file paths:
 **Gap:** revokeFinalizeLease ignores REG-COORDLEASE, so a finalize failure path can revoke a started session's lease before its holder's Shutdown.
 **Suggested resolution:** Revoke the finalize lease only through the owner-checked finalize reclaim, after the guarded failFinalizing write applied. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-4.9.36 — `resolveCredentialPools` starts or resumes a session with no credential on a transient lookup error [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (a session whose tenant has a credential policy is assigned credentials from the intersection of the runtime's providers and the policy).
+**Evidence:** `resolveCredentialPools` (`pkg/gateway/sessionserver/credential_preclaim.go`) returns no provider and no error when the tenant read fails or when `runtimestore.Resolve` fails, so the caller assigns no credential. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A transient tenant or runtime lookup error starts or resumes a session that should hold a credential without one, rather than failing the start or the resume.
+**Suggested resolution:** Return the lookup error so the start or resume fails closed and is retried. Scheduled as the credential fail-open fix after R4 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.9.37 — The expired-lease sweep deletes a lease record without returning its pool slot [High] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (a credential's active-session count is decremented when its lease is released or expires).
+**Evidence:** The expired-lease sweep (`cmd/lenny-gateway/credential_lease_sweep.go`) deletes an expired lease record. `credassign.Service.releaseLocked` and the Token Service's `RevokeCredentials` are the only decrements of a credential's active-session count, and the sweep calls neither. A spent renewal lease is released by nothing. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A lease that no releaser returns, and every spent renewal lease, stays counted against its credential until the assigner's process restarts, so a pool can refuse assignments while it has free capacity.
+**Suggested resolution:** Return the pool slot when the sweep deletes an expired lease. Owned by proposal P1 (release ownership for pods, slots, and credential leases). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §5.1 Runtime <a id="5.1"></a>
 ### Summary
 
@@ -4409,6 +4438,13 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Evidence:** `pkg/gateway/session/executor/pod.go:257-265`; `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:854-856`; `pkg/gateway/sessionserver/failure.go:237-239, :285-287`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-22 (bucket B; source findings B: p8#43, p9#1; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7 H6 and D6 restate this release.
 **Gap:** A slot release that fails after the unbind (counter error) leaves the slot counted, and nothing retries it.
 **Suggested resolution:** Make the slot release idempotent and retried from a durable record, or decrement before the unbind. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.50 — A stream-failure report that commits no failure edge does not count the failed slot [Medium] — OPEN
+
+**Spec:** §5.2 slot failure and the **Whole-pod replacement trigger:**.
+**Evidence:** A `CH-ATTACH` stream-failure report runs `accountFailedSlot` only when it commits a failure edge. A report that reads a terminal row (`ReportSessionFailure`), one whose compare-and-swap loses to a terminal write or to a suspend write (an interrupt or an idle suspension), one that the suspended-source guard in `pkg/gateway/sessionserver/failure.go` turns into `errReportConflict`, and one that `ReportAttachStreamFailure` (`pkg/gateway/sessionserver/stream_failure.go`) drops on a store read error count nothing. The later terminal or suspension release frees the slot through `ReleaseSlot`, which counts nothing either. A crashed pod that serves one session is retired, so the single-session case is unaffected. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A concurrent pod's failed slot is not counted toward the whole-pod replacement trigger when the report loses its race, so a pod with a hung runtime can stay in service.
+**Suggested resolution:** Count the failed slot on every report that names a crashed runtime, without counting again a slot whose winning write was a sibling failure report that already counted it. Owned by proposal P1. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
@@ -5338,6 +5374,21 @@ Secondary risk: the `lenny-sandboxclaim-guard` webhook's PATCH/PUT rule is pinne
 **Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:1074-1091`; `spec/06_warm-pod-model.md` (maxSessionAgeSeconds pauses). Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-38 (bucket B; source findings B: p10#10, p6#12; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Idle suspension: CODE-1 item 4 restates sweepMaxAge, and 0092's own C1.2 conflicts with SPEC-5g (0092-A10).
 **Gap:** sweepMaxAge lists every non-terminal row by wall-clock age, so it expires paused rows (suspended, resume_pending, awaiting_client_action), which §6.2 forbids.
 **Suggested resolution:** Restrict the age sweep to counting states and measure active time. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** `sweepMaxAge` and the expiry warning measure age as active time on the locked row (`sessionstore.ActiveAge`), `sweepMaxAge` never expires a `suspended` row, and `DriveResume` starts no attempt for a row whose active age exceeds its cap (6e30929db, 6c79026a3, 3f943f56f). Tests: `TestSweepMaxAgeUsesActiveAge_spec_6_2` and `TestSweepMaxAgeRechecksLockedRow_spec_6_2` in `pkg/gateway/runtime/watchdog/active_age_test.go`, `TestWatchdogMaxAgeUsesActiveAge_spec_6_2` in `tests/tier2_component/watchdog/active_age_test.go`, and `TestDriveResumeRefusals_spec_7_3` in `pkg/gateway/sessionserver/resume_driver_internal_test.go`. The `resume_pending` and `awaiting_client_action` cases remain with P3.
+
+### - [ ] F-6.2.29 — No tenant-configuration field carries `maxSuspendedPodHoldSeconds` [Medium] — OPEN
+
+**Spec:** §6.2 **Graceful pod release during extended suspension** (the hold is `min(deployment_value, tenant_value)`) and §11.3.
+**Evidence:** Only the deploy-wide `--max-suspended-pod-hold-seconds` value exists (`watchdog.Config.MaxSuspendedPodHoldSeconds` in `pkg/gateway/runtime/watchdog/watchdog.go`); no tenant record or admin API field carries a tenant value. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A tenant cannot shorten the hold, so the §6.2 minimum always resolves to the deployment value.
+**Suggested resolution:** Add the tenant field to the tenant record and the admin API, and apply the minimum in the watchdog's hold sweep.
+
+### - [ ] F-6.2.30 — No code stamps `last_agent_activity_at` on a client-originated interaction [Medium] — OPEN
+
+**Spec:** §6.2 **`maxClientIdleSeconds` clock behavior across states.** (a client message, a tool approval or denial, an elicitation response, and an attach are qualifying events).
+**Evidence:** `publishEvent` stamps only agent-activity events (`isAgentActivityEvent`, `pkg/gateway/sessionserver/events.go`). The other `Stamp` callers are the `lenny/await_children` poll (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`), the LLM-proxy usage recorder (`cmd/lenny-gateway/llmproxy_usage.go`) and stream flush (`pkg/gateway/llmproxy/llmproxy/handler.go`), and the seal answer of an idle suspension (`stampActivity` in `pkg/gateway/sessionserver/suspend_release.go`). Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A client message advances the idle clock only through the agent output it causes, and an attach or a tool approval or denial advances it not at all.
+**Suggested resolution:** Stamp a client message only after the adapter writes it to the runtime, so a message the seal refuses does not stamp, and stamp the other client interactions §6.2 lists.
 
 ## §6.3 Startup Latency Analysis <a id="6.3"></a>
 Spec section: `spec/06_warm-pod-model.md` lines 315–372 (subsection 6.3).
@@ -6774,6 +6825,13 @@ fidelity** (no real copy, no advisory lock, no DERIVE_SNAPSHOT_UNAVAILABLE).
 **Gap:** A responses DELETE during the hook makes H3 retry the seal for the whole window and record a false seal failure.
 **Suggested resolution:** Treat ErrNotFound as permanent in isPermanentSealError. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-7.1.30 — The session-end order departs from §7.1 and §29.4 in two places [Medium] — OPEN
+
+**Spec:** §7.1 steps 20 to 24, §29.4 steps 11 to 17, and §5.2 **Lenny scrub procedure.**
+**Evidence:** Every terminal writer commits the terminal state before the seal runs. `Binder.Release` (`pkg/gateway/podlifecycle/podsession/release.go`) releases the credential leases first; on the retire path it then sends `Shutdown` and deletes the claim, and on the recycle path it patches the claim `bound → recycling` and then sends the recycle-disposition `Shutdown`. On both paths `Shutdown` follows the terminal mark, the terminal event, and the lease release. The terminal write stays first because every writer's guard and terminal claim key on it. §29.4 step 12 places the recycle-disposition `Shutdown`, which carries the whole-pod scrub parameters, before step 17's `bound → recycling` patch, while §5.2 runs the scrub on a claim already `recycling`, and the tree patches first. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** The tree and §7.1 and §29.4 disagree on the order of the terminal write, the seal, `Shutdown`, and the recycle patch, and §29.4 and §5.2 disagree with each other on the recycle order.
+**Suggested resolution:** Amend §7.1 and §29.4 through the proposal pipeline to the order the tree keeps, or move the code to the specified order, and reconcile §29.4 with §5.2.
+
 ## §7.2 Interactive Session Model <a id="7.2"></a>
 Spec source: `spec/07_session-lifecycle.md` lines 114–373.
 
@@ -7200,7 +7258,7 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Gap:** Messages buffered in the in-memory inbox when a session enters `awaiting_client_action` directly stay in the coordinating replica's memory, so a crash of that replica before the session leaves the state loses them.
 **Suggested resolution:** Decide in §7.2, through the proposal pipeline, whether a direct entry to `awaiting_client_action` migrates the inbox as the `resume_pending` entry does, then implement it in `transitionToAwaitingClientAction` with a tier-4 test that a message buffered before the edge survives it.
 
-### - [ ] F-7.2.27 — `POST /v1/sessions/{id}/resume` writes `resuming` before it claims a pod and never writes `resume_pending` [Medium] — OPEN
+### - [x] F-7.2.27 — `POST /v1/sessions/{id}/resume` writes `resuming` before it claims a pod and never writes `resume_pending` [Medium] — CLOSED
 
 **Spec:** §7.2 (`awaiting_client_action → resume_pending` on `POST /resume`, and `resume_pending → resuming` only when a pod is allocated within `maxResumeWindowSeconds`) and §29.6 step 3, which states the same order.
 **Evidence:**
@@ -7209,6 +7267,7 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 - F-15.1.41 records the non-transient demotion to `failed` on the same exit. Filed by proposal 0091 (owner-delegate answer, 2026-10-06), 2026-10-07.
 **Gap:** The code and §7.2 and §29.6 disagree on the state a resume holds while it claims a pod, so an observer of the row during the claim sees a state the specification does not give it.
 **Suggested resolution:** Choose between moving the code to the specified order and amending §7.2 and §29.6 to the shipped order. Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, which builds the `resume_pending → resuming` driver (F-7.3.29). Either choice keeps the release-before-rebind and the hold guard ordered after the state the resume writes.
+**Resolution (3f943f56f, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). The code moved to the specified order. `handleResume` (`pkg/gateway/sessionserver/resume.go`) writes `awaiting_client_action → resume_pending` (or `suspended → resume_pending`) and claims no pod, and only the resume driver (`DriveResume` in `pkg/gateway/sessionserver/resume_driver.go`) writes `resume_pending → resuming`, before it claims a replacement pod. Tests: `TestResumeEndpointIsAStoreWrite_spec_7_3` in `pkg/gateway/sessionserver/resume_endpoint_internal_test.go`, `pkg/gateway/sessionserver/resume_driver_exits_test.go`, and `tests/tier1_unit/lifecycle/lifecycle_state_machine_test.go`.
 
 ### - [ ] F-7.2.28 — An embedded runtime's `Interrupt` ends the session's runtime loop [Medium] — OPEN
 
@@ -7265,6 +7324,7 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Evidence:** `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:607-618`; `pkg/gateway/sessionserver/lifecycle.go:282`; `pkg/gateway/sessionserver/usage.go:210-235, :473`; `pkg/gateway/environment/translator/openai_chat.go:284-287`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-84 (bucket C; source findings C: p3#24, p4#23, p14#38, p10#20; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: D7: 0092 runs the hook with nil signals for these writers.
 **Gap:** Writers with nil or no terminal signals (cancel_session, cancelSubtree, full_revoke, the translators) skip the retention roll, callbackSecret clear, cascade, and DLQ drain.
 **Suggested resolution:** Give every terminal writer the same terminal-signal set, so the tail is not writer-specific. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** For `cascadeToChildren`, `cancelSubtree`, and the `lenny/cancel_session` handler, the post-terminal hook drains the inbox and DLQ and emits the terminal `status_change` and `session_complete` (3f943f56f), and `AfterRevokeWrite` drains the inbox and DLQ after each `full_revoke` write of `terminateUserSessions`. Tests: `TestPostTerminalHookRunsItsStepsInOrder_spec_7_2` in `pkg/gateway/sessionserver/terminal_binding_internal_test.go`, `TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2` in `pkg/gateway/sessionserver/terminal_writers_internal_test.go`, `TestCancelChildDrainsCancelledRuntimes_spec_11_3_1` in `pkg/gateway/mcpfabric/mcptools/cancel_release_test.go`, `pkg/gateway/externalapi/admin/users_revoke_hook_test.go`, and `TestTerminalWriterSeamsAreWiredToTheSessionServer_spec_7_2` in `cmd/lenny-gateway/terminal_seams_wiring_test.go`. The rest of the tail this finding names (the retention roll, the `callbackSecret` clear, and the cascade) stays with P2 for those writers, as does every terminal signal of the translator completions. No writer that runs no post-terminal hook emits the terminal events.
 
 ### - [ ] F-7.2.36 — Post-commit emitters do not re-check for a terminal write, so session-stream events can follow the terminal events [Medium] — OPEN
 
@@ -7279,6 +7339,41 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Evidence:** `pkg/gateway/session/inputwait/inputwait.go:114-123`; `pkg/gateway/sessionserver/usage.go:492`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-90 (bucket C; source findings C: p9#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
 **Gap:** The input-wait forget runs only on the writing replica, while the one_shot request_input counter lives on the serving replica.
 **Suggested resolution:** Forget on every replica from the Sweeper's terminal branch, or share the registry. Owned by remediation step R20 (message-plane durability and cross-replica input wait), which builds the shared input-wait store this fix needs (`gateway-runtime-comms-remediation.md` §10.1). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.38 — A message a non-coordinating replica serves for a `running` session answers `EXECUTOR_FAILURE` instead of being forwarded or held [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (delivery path 2 and the forwarding sentence) and §29.3 Interactive message send (the off-holder `running` row).
+**Evidence:** `pkg/gateway/sessionserver/messages_delivery.go` (`deliverNow` sends through the serving replica's executor, whose registry holds no binding for a session another replica coordinates, and answers the executor's `not bound to a pod` error as HTTP 500 `EXECUTOR_FAILURE`). The failing test is `tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2`, case `message on rep-2 racing the zero-hold release`, in either start order, whenever the peer replica classifies the message on the `running` row before the idle suspension's write lands. The case is skipped with this finding's identifier. Related: F-29.3.2, where the same off-holder classification buffers a message for an `input_required` session in the serving replica's own inbox. Recorded by the tests of proposal 0092 (step 18 of its build sequence), filed 2026-10-15.
+**Gap:** §29.3 states that the serving replica forwards a message for a `running` session to the coordinator, and on an unreachable coordinator buffers it and answers `queued`. No forward exists, and the serving replica answers a retryable 500 instead, so the message is neither delivered nor held.
+**Suggested resolution:** Owned by remediation step R19 (cross-replica message forwarding, `gateway-runtime-comms-remediation.md` §10.1), which builds `ForwardMessage` and degrades an unreachable coordinator to a DLQ enqueue under the path-6 custody rule. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.39 — A snapshotless rebuild reports `resumeMode: full` [Medium] — OPEN
+
+**Spec:** §7.2 `session.resumed` (`resumeMode: full` is a full restore from a checkpoint).
+**Evidence:** `classifyResume` (`pkg/gateway/sessionserver/resume_mode.go`) returns `ResumeFull` whenever no eviction state record and no partial manifest exist, including a session rebuilt with no checkpoint. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A client reads a rebuild that restored no checkpoint as a full restore.
+**Suggested resolution:** Classify a resume that restored no checkpoint with a value §7.2 defines for it, through the proposal pipeline when §7.2 has none.
+
+### - [ ] F-7.2.40 — No code emits `inbox_cleared` at adoption [Medium] — OPEN
+
+**Spec:** §7.2 crash-recovery row (the adopting coordinator emits `inbox_cleared`).
+**Evidence:** `Coordinator.ClearInboxOnAcquire` (`pkg/gateway/session/sessioninbox/coordinator.go`), the only emitter of `inbox_cleared`, has no production caller. The resume path no longer clears an inbox (`clearInboxOnResume` is deleted), because no inbox was cleared there. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A sender whose buffered messages a coordinator crash lost receives no `inbox_cleared` event.
+**Suggested resolution:** Call `ClearInboxOnAcquire` from the coordination takeover so the adopter emits the event.
+
+### - [ ] F-7.2.41 — No code implements the adapter's `delivered_message_ids` duplicate suppression [Medium] — OPEN
+
+**Spec:** §7.2 Explicit ACK row (the adapter keeps a `delivered_message_ids` set and drops a redelivered message) and §16.1 `lenny_inbox_duplicate_suppressed_total`.
+**Evidence:** No code keeps the set, and `lenny_inbox_duplicate_suppressed_total` is registered in `pkg/observability/metrics/catalog.go` and incremented nowhere. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A held message that a coordinator crash or a lease handoff delivers again between its consumption and its removal reaches the runtime twice.
+**Suggested resolution:** Implement the set in the adapter, increment the counter on a suppression, and pin the redelivery with a tier-8 test. Owned by remediation step R20 (message-plane durability). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.2.42 — No code implements the durable-inbox per-message TTL trimmer [Medium] — OPEN
+
+**Spec:** §7.2 Per-message TTL row (a durable inbox entry past its TTL is trimmed and its sender notified).
+**Evidence:** `sessioninbox.ReasonDurableInboxTTLExpired` (`pkg/gateway/session/sessioninbox/events.go`) has no caller. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A durable inbox entry of a recovering session leaves only through delivery after the commit to `running` or through the terminal drain, so it can outlive its TTL.
+**Suggested resolution:** Implement the trimmer with the `durable_inbox_ttl_expired` notification. Owned by remediation step R20 (message-plane durability). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §7.3 Retry and Resume <a id="7.3"></a>
 Spec: `spec/07_session-lifecycle.md` lines 375–427.
@@ -7625,7 +7720,7 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 **Suggested resolution:** Verify first, with a tier-4 test that sends two messages in separate requests on one session. If confirmed, open the stream on a session-scoped context. Owned by the same gateway stream-failure proposal, which checks this first.
 **Resolution (beae9a921, bd0491dd4, a5ff6f3fe, 70f7423a2):** Closed by proposal 0091 (`proposals/0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti/`). `PodExecutor.streamFor` (`pkg/gateway/session/executor/pod.go`) opens the session's `Attach` stream on a context detached from the delivering request's cancellation and caches it as an `attachConn` (`pkg/gateway/session/executor/podstream.go`) that holds the stream for the life of the binding. One reader goroutine per stream hands each response to the turn that holds the stream's turn token. `EvictStream` and `Release` end the stream by cancelling its context, and `Release` unbinds and evicts under one executor lock (5b1cc9e0e). Tests: `TestHeldAttachStreamOutlivesTheDeliveringRequest_spec_28_5_1`, `TestAbandonedTurnLateReplyNeverReachesTheNextTurn_spec_28_5_1`, `TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1`, `TestReleaseEndOfStreamIsSilent_spec_28_5_1`, `TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1`, `TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1`, `TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1`, and `TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1` with the other cases in `pkg/gateway/session/executor/podstream_internal_test.go`; and, from the held-stream test commits (a2f1eccde, bd661a68f), `tests/tier4_integration/held_attach_stream_multi_turn_test.go`, `tests/tier7a_load_local/held_attach_stream_race_test.go`, `tests/tier5_e2e_kind/prompt_roundtrip_test.go`, and `tests/tier2_component/translators/openai_singleshot_disconnect_test.go`.
 
-### - [ ] F-7.3.29 — No driver moves a `resume_pending` session to `resuming` on a replacement pod [High] — OPEN
+### - [x] F-7.3.29 — No driver moves a `resume_pending` session to `resuming` on a replacement pod [High] — CLOSED
 
 **Spec:** §7.3 **Resume flow after pod failure** (a session in `resume_pending` is resumed on a replacement pod within `maxResumeWindowSeconds`), §7.2 (`resume_pending → resuming` when a pod is allocated), §29.6, and the §28.5.1 `CH-ATTACH` **Degradation.** sentence that the gateway re-attaches the session on the replacement pod.
 **Evidence:**
@@ -7635,13 +7730,15 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 - Filed by proposal 0091 (`proposals/0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti/`), 2026-10-07.
 **Gap:** Automatic retry after a pod failure never runs. Every retryable failure ends in `awaiting_client_action` after the resume window, and only a client resume continues the session.
 **Suggested resolution:** Build the `resume_pending → resuming` driver in the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2. This finding owns adding the claim row for the §28.5.1 re-attach sentence, together with an R step for the driver, when the driver is scheduled.
+**Resolution (3f943f56f, c96efca53, 71c212c26, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). `DriveResume` (`pkg/gateway/sessionserver/resume_driver.go`) is the resume driver: the watchdog's `sweepResumePending` (`pkg/gateway/runtime/watchdog/watchdog.go`) calls it for every `resume_pending` row, and it starts one restore attempt on the replica that holds the session's coordination lease, which writes `resuming`, claims a replacement pod, re-attaches the session on it, and commits `running`. The `WIRED` claim row "Resume driver restores a resume_pending session onto a replacement pod and re-attaches CH-ATTACH" in `tests/claim-map.json` carries the §28.5.1 replacement-pod re-attach sentence, so no remediation step is created for it. Tests: `pkg/gateway/sessionserver/resume_driver_internal_test.go`, `pkg/gateway/sessionserver/resume_driver_exits_test.go`, `TestResumeDriverRestoresWithoutAClientCall_spec_7_3` in `tests/tier4_integration/session_resume_driver_integration_test.go`, and `TestLifecycleRequiredPairs_spec_7_3` in `tests/tier7a_load_local/lifecycle_interleaving_test.go`.
 
-### - [ ] F-7.3.30 — Two settings bound the same session retries [Medium] — OPEN
+### - [x] F-7.3.30 — Two settings bound the same session retries [Medium] — CLOSED
 
 **Spec:** §6.2 `sessionPolicy.maxSessionRetries` and §7.3 `retryPolicy.maxRetries`.
 **Evidence:** Both settings bound the number of automatic retries of one session, and neither section states which governs when both are set or how the two counts relate. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **Defects in the shipped tree that this proposal does not stage**, **Two retry budgets.**), filed 2026-10-07. Stream-failure handling does not depend on which budget governs.
 **Gap:** A deployer cannot tell which limit ends automatic retry, and the resume driver of F-7.3.29 has no single budget to spend.
 **Suggested resolution:** Reconcile the two settings in the specification through the proposal pipeline. Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, whose resume driver spends the budget.
+**Resolution (a6f776019, 929a4bede, d35ab8ef8):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). The specification keeps one budget, `retryPolicy.maxRetries` (§7.3), and deletes `sessionPolicy.maxSessionRetries`; the code deletes the field from the runtime and pool policy, the stores, and the admin API. A retry is spent only on a failure edge into `resume_pending`, so one recovered crash spends one unit. Tests: `TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3` in `pkg/gateway/sessionserver/retry_metric_internal_test.go`; `pkg/gateway/externalapi/admin/session_retries_removed_test.go`; `tests/tier2_component/stores/session_retries_removed_test.go`; and `tests/tier3_contract/rest_pools/session_retries_removed_wire_test.go`.
 
 ### - [ ] F-7.3.31 — `retryPolicy.mode: client_only` is served but unspecified [Low] — OPEN
 
@@ -7670,6 +7767,13 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 **Evidence:** `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:737-747`; `pkg/gateway/podlifecycle/podsession/resume.go:142-145`; `pkg/gateway/podlifecycle/podsession/reclaim.go:28-35, :51-60`; `pkg/gateway/sessionserver/resume_rebind.go:46`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-30 (bucket B; source findings B: p7#2, p7#32; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: H1 cancels these attempts.
 **Gap:** The resume binder's failure compensation is incomplete under an H1 cancel: reserveResumeSlot's rollback runs on the cancelled context, and a rebuild-branch Bind failure drains with no pod-side reclaim.
 **Suggested resolution:** Run binder compensation on a detached context and send ShutdownReclaim before draining on every Bind failure. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-7.3.35 — A snapshotless rebuild with a long setup never reaches `running` [Medium] — OPEN
+
+**Spec:** §7.3 Retry and Resume and §6.2 (`maxFinalizingTimeoutSeconds`, 600 s, bounds materialization and setup in `finalizing`).
+**Evidence:** A snapshotless rebuild runs materialization and setup inside `resuming`, which the watchdog bounds at 300 s (`--max-resuming-seconds` in `cmd/lenny-gateway/flags.go`), and `setupPolicy.timeoutSeconds` defaults to 300 s. The replacement claim is referenced by no row until the commit writes `PodAssignment`, so the orphan-claim GC drains it after `claimOrphanTimeout` (5 min, `cmd/lenny-controller/flags.go`). Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A rebuild whose setup approaches 300 s never reaches `running`, and raising `--max-resuming-seconds` alone does not change that.
+**Suggested resolution:** Bound the rebuild's setup as §6.2 bounds it in `finalizing`, and reference the replacement claim from the row before setup starts.
 
 ## §7.4 Upload Safety <a id="7.4"></a>
 Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload handler, archive extraction, mid-session uploads, uploadToken auth, storage-quota integration, audit/observability hooks.
@@ -9695,6 +9799,13 @@ transitively depends on.
 **Evidence:** `pkg/gateway/sessionserver/usage.go:869-881`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-65 (bucket C; source findings C: p13#35; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
 **Gap:** When a parent read fails in treeRoot, the child's budget returns to the wrong root's keys.
 **Suggested resolution:** Fail the return (and retry) on a parent read error rather than using the deepest node. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-8.3.6 — `BUDGET_KEYS_EXPIRED` detection and tree cleanup have no implementation [Medium] — OPEN
+
+**Spec:** §8.3 **`BUDGET_KEYS_EXPIRED` detection and tree cleanup.**
+**Evidence:** Neither budget script checks the sentinel key (`pkg/gateway/mcpfabric/delegationtree/treebudget/`, `pkg/gateway/session/sessionbudget/`); the code name appears only in the alert rules (`pkg/alerting/rules/rules.go`). Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** An expired or deleted budget key reads as zero, so a delegation tree whose keys expired spends from an empty budget rather than failing with `BUDGET_KEYS_EXPIRED`.
+**Suggested resolution:** Check the sentinel in both budget scripts and run the §8.3 tree cleanup on a miss.
 
 ## §8.4 Approval Modes <a id="8.4"></a>
 **Spec scope.** §8.4 of `spec/08_recursive-delegation.md` (lines 515–521) is a single normative table defining the closed enum `approvalMode` carried on the `delegation lease` (referenced by the example at §8.3 line 265 `"approvalMode": "policy"`). The table defines three legal values:
@@ -12036,12 +12147,13 @@ codebase, but that gap belongs to a §8.9 audit rather than this one.
 **Gap:** A delegate_task admitted before the parent's terminal write creates or starts a child that nothing cancels, because the parent is checked only at admission and the materializer does not re-read after its running commit.
 **Suggested resolution:** Re-read the parent under the child's running commit and cancel the child when the parent is terminal. Owned by proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
-### - [ ] F-8.10.18 — Tree recovery selects every node outside the local registry, so it fails healthy children that run on a peer [High] — OPEN
+### - [x] F-8.10.18 — Tree recovery selects every node outside the local registry, so it fails healthy children that run on a peer [High] — CLOSED
 
 **Spec:** §8.10 Delegation Tree Recovery and §10.1.1 Stateless Replicas and Per-Session Coordination.
 **Evidence:** `pkg/gateway/sessionserver/treerecovery.go:72-77`; `pkg/delegation/recovery/recovery.go:177-191`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-48 (bucket B; source findings B: p2#4, p11#3; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. 0092-adjacent: Resume driver: item 11 routes ReattachNode through DriveResume.
 **Gap:** Tree recovery selects every node outside the local registry, so it expires or fails healthy children that run on a peer, including one that entered resume_pending mid-traversal.
 **Suggested resolution:** Select nodes by row state and lease holder rather than by local registry absence. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P4 (delegation tree and budget lifecycle), third wave after P2 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution (3f943f56f, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). Tree recovery selects nodes by the row state `resume_pending` rather than by absence from the local pod registry, and `ReattachNode` (`pkg/gateway/sessionserver/treerecovery.go`) routes each selected node through `DriveResume` and returns the driver's outcome, so a healthy child that runs on a peer is neither failed nor claimed again. Tests: `TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10` and `TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10` in `pkg/gateway/sessionserver/treerecovery_driver_internal_test.go`; `TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10` in `tests/tier4_integration/delegation_tree_resume_peer_child_test.go`; and `TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10` and `TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3` in `tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go`, which race `ReattachNode` against the watchdog's resume driver on one descendant and assert one claimed pod, and race `POST /resume` against `DELETE` and assert a `cancelled` session with no pod claimed, each over seeded iterations with the invariant checker after every iteration.
 
 ### - [ ] F-8.10.19 — Tree recovery computes a node's resume deadline from `CreatedAt` and fails an elapsed node instead of expiring it [High] — OPEN
 
@@ -13707,6 +13819,7 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Evidence:** `PodExecutor.Release` (`pkg/gateway/session/executor/pod.go`) returns nil without calling the binder when `unbind` finds no binding in the replica's own registry. The watchdog's idle and max-age sweeps and a terminate can run on any replica, so a release issued away from the coordinating replica neither drains the pod nor releases the slot. F-7.3.27 recorded the watchdog case. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **A release on a replica that does not hold the in-memory binding is a no-op.**), filed 2026-10-07. Proposal 0091 forwards no release between replicas; a binding that a peer has taken over is evicted by the coordination Sweeper. The terminal-transition table run on proposal 0092 recorded the same defect as TT-14 (bucket B; source findings B: p2#21, p5#22, p5#28, p5#32; C: p4#25, p9#38; `scratchpad/terminal-transition/distinct-defects.md`), 2026-10-12, and adds three cases in which nothing releases the pod, slot, or credential leases: after the Sweeper's dead-connection eviction, after the coordinator is lost, and after a failed readopt. Its evidence, re-confirmed against the tree at `319b80091`: `pkg/gateway/session/executor/pod.go:257-262`; `pkg/gateway/coordination/coordination/coordination.go:308-315, :355-361`; `cmd/lenny-gateway/coordination_seams.go:209-252`; `pkg/gateway/sessionserver/usage.go:447-448`. TT-14 is 0092-adjacent: it is the case that 0092's D6 binding reclamation and its readopt exit leave open.
 **Gap:** A session that ends on a replica other than its coordinator keeps its pod or slot, claim, and workspace until the coordinating replica's own release, or indefinitely when that replica holds no binding either.
 **Suggested resolution:** Forward a release to the replica that holds the binding, or release from the persisted pod assignment when no local binding exists, and add a tier-4 test with two replicas in which the watchdog on the non-coordinating replica ends a session and the pod is released. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092, which closes this finding with one durable releaser per binding keyed by session and generation, so a writer that does not hold the binding records the release for the holder or the claim-orphan path rather than returning nil (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** The coordination Sweeper hands a terminal row that this replica still binds to `ReleaseTerminalBinding` (`pkg/gateway/sessionserver/terminal_binding.go`), which releases the binding the coordinating replica holds on a row another replica moved to a terminal state, with the disposition of that state (71c212c26, 3f943f56f). Tests: `TestReleaseTerminalBindingReleasesOnlyItsOwnBinding_spec_7_2` in `pkg/gateway/sessionserver/terminal_binding_internal_test.go`, `TestSweepHandsBoundTerminalRowsToReleaser_spec_10_1_1` in `pkg/gateway/coordination/coordination/coordination_adoption_test.go`, and `TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2` in `tests/tier4_integration/session_suspension_delivery_integration_test.go`. The proposal's accepted gaps for that release stand. The release of a pod that no replica binds at the row's generation, the cases this finding already names (the Sweeper's dead-connection eviction, coordinator loss, and a failed readopt), and a suspension release that stops between clearing the row's pod assignment and releasing the pod in `ReleaseSuspendedPod` (`pkg/gateway/sessionserver/suspend_release.go`) remain with P1.
 
 ### - [ ] F-10.1.22 — No `coordination_generation` stamp or check on `CH-ATTACH` frames [High] — OPEN
 
@@ -13733,7 +13846,7 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Gap:** A transient connection loss that recovers inside the sweep interval ends the session.
 **Suggested resolution:** Let the current coordinator re-fence the pod at its own generation when it meets `coordinator_hold`, or specify another way for a coordinator to end a hold, through the proposal pipeline. Add a tier-8 test that recovers the channel inside the sweep interval and asserts the session's next message is delivered.
 
-### - [ ] F-10.1.25 — The coordination lease in `resume_pending` and `awaiting_client_action`, and the §29.3 forward of `POST /v1/sessions/{id}/resume` [High] — OPEN
+### - [x] F-10.1.25 — The coordination lease in `resume_pending` and `awaiting_client_action`, and the §29.3 forward of `POST /v1/sessions/{id}/resume` [High] — CLOSED
 
 **Spec:** §10.1.1 **Primary:** (when the coordinating replica dies, another replica picks up the lease after TTL expiry), §10.1.2 (the generation compare-and-swap), §29.3 **Off-holder matrix.** (a request that reaches a replica other than the lease holder is forwarded to the coordinator, or refused with `TARGET_NOT_READY` when the coordinator is unreachable), and §29.6.
 **Evidence:**
@@ -13743,13 +13856,15 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 - Recorded by proposal 0091, which keeps the lease with the coordinator (owner decision, 2026-10-06), filed 2026-10-07.
 **Gap:** A resume routed away from the coordinating replica fails until it reaches the holder or the lease lapses, and a session whose coordinator dies in a recovering state is picked up by no replica.
 **Suggested resolution:** Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, which designs the lease lifecycle in the recovering states and the §29.3 forward together with the resume driver (F-7.3.29).
+**Resolution (71c212c26, 3f943f56f, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). The lease half: the coordination Sweeper's `adoptedState` (`pkg/gateway/coordination/coordination/coordination.go`) adopts a lapsed lease on a `resume_pending` or `awaiting_client_action` row, and the takeover runs the §10.1.2 generation compare-and-swap through `RecordHandoff`, so a session whose coordinator dies in a recovering state is picked up and its adopter's resume driver restores it. The forward half: the specification replaces the §29.3 off-holder `POST /v1/sessions/{id}/resume` forward rows for `awaiting_client_action` and a podless `suspended` session with store-write rows, and `handleResume` (`pkg/gateway/sessionserver/resume.go`) writes `resume_pending` on any replica without claiming a pod. The held-pod `suspended` row that still requires a forward is filed as F-29.3.1. Tests: `TestSweepAdoptsSpecAdoptedStatesOnly_spec_10_1_1` and `TestRecordHandoffComparesListedRow_spec_10_1_2` in `pkg/gateway/coordination/coordination/coordination_adoption_test.go`; `TestPeerAdoptsAResumePendingSession_spec_10_1_1` in `tests/tier4_integration/session_resume_driver_integration_test.go`; `TestCoordinatorFailoverOutsideRunning_spec_10_1_1` in `tests/tier8_chaos/coordination_recovering_takeover_test.go`; and `TestResumeEndpointIsAStoreWrite_spec_7_3` in `pkg/gateway/sessionserver/resume_endpoint_internal_test.go`.
 
-### - [ ] F-10.1.26 — No replica takes over a `starting` session, or a `suspended` session whose pod is still held, after its coordinating replica dies [Medium] — OPEN
+### - [ ] F-10.1.26 — No replica takes over a `starting` session after its coordinating replica dies [Medium] — OPEN
 
-**Spec:** §10.1.1 **Primary:** (when the coordinating replica dies, another picks up after TTL expiry), §10.1.7 (every inherited session triggers a coordinator handoff), and §6.2 (`suspended → running (resume_session — no new content; pod still held)`).
-**Evidence:** The coordination Sweeper adopts a lapsed lease only for a `running` or `input_required` session with a pod assignment (`isRunningPod` in `pkg/gateway/coordination/coordination/coordination.go`). The `isRunningPod` doc comment treats a `suspended` row as never bound, although §6.2 lets a `suspended` session keep its pod. Recorded by proposal 0091 (owner-delegate answer, 2026-10-06), which writes no lease, filed 2026-10-07.
-**Gap:** A `starting` session, or a `suspended` session that still holds its pod, whose coordinating replica dies is coordinated by no replica, and its pod stays held until the watchdog.
-**Suggested resolution:** Owned by the session suspend-and-resume proposal in §10.2 of `gateway-runtime-comms-remediation.md`. Extend adoption to these states with a handoff that re-adopts the held pod, and add a tier-8 test that kills the coordinating replica of a `suspended` session with a held pod.
+**Spec:** §10.1.1 **Primary:** (when the coordinating replica dies, another picks up after TTL expiry) and §10.1.7 (every inherited session triggers a coordinator handoff).
+**Evidence:** The coordination Sweeper adopts a lapsed lease only for the states `adoptedState` admits (`pkg/gateway/coordination/coordination/coordination.go`): `resume_pending`, `awaiting_client_action`, and a `running`, `input_required`, or `suspended` row whose pod assignment names a pod. A `starting` row is excluded, and the function's doc comment states that the specification states no adoption for it. Recorded by proposal 0091 (owner-delegate answer, 2026-10-06), which writes no lease, filed 2026-10-07.
+**Gap:** A `starting` session whose coordinating replica dies is coordinated by no replica, and its pod stays held until the watchdog.
+**Suggested resolution:** State in §10.1.1, through the proposal pipeline, whether a `starting` session is adopted, and implement it in `adoptedState` with a handoff that re-adopts the pod, with a tier-8 test that kills the coordinating replica of a `starting` session.
+**Resolution note (71c212c26, 2026-10-15):** Proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) closed the held-pod `suspended` half that this finding covered until then: `adoptedState` admits a `suspended` row whose pod assignment names a pod, and the takeover re-adopts and re-fences that pod (`TestSweepAdoptsSpecAdoptedStatesOnly_spec_10_1_1` in `pkg/gateway/coordination/coordination/coordination_adoption_test.go`, `TestCoordinatorFailoverOutsideRunning_spec_10_1_1` in `tests/tier8_chaos/coordination_recovering_takeover_test.go`, and `TestHeldPodSuspendedAdopterFencesThePod_spec_10_1_2` in `tests/tier5_e2e_kind/idle_suspension_kind_test.go`). The finding now covers only `starting`.
 
 ### - [ ] F-10.1.27 — A gateway SIGTERM exits after `--shutdown-timeout` without waiting for open terminal hooks or D6 releases [High] — OPEN
 
@@ -13799,6 +13914,7 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Evidence:** `pkg/gateway/sessionserver/session_transitions.go:15-40, :59-110`; `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:607-611`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-29 (bucket B; source findings B: p14#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.25 and F-10.1.21. 0092-adjacent: D7 hook: 0092 edits the §29.3 off-holder row for these writers and keeps the local terminal write.
 **Gap:** Off-holder terminate and delete write the terminal state locally, which the §29.3 off-holder matrix forbids.
 **Suggested resolution:** Forward off-holder terminal requests to the coordinator per §29.3, or record the local write as a spec departure with the holder-side release. Proposal 0092 settles it, or records the current behavior as a departure with a named fallback; the fallback owner is proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** Proposal 0092 records the local terminal write of an off-holder terminate, delete, or `lenny/cancel_session` as a departure in its summary, and its holder-side release closes the binding the coordinator holds: the coordination Sweeper hands the terminal row to `ReleaseTerminalBinding` (`pkg/gateway/sessionserver/terminal_binding.go`), pinned by `TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2` in `tests/tier4_integration/session_suspension_delivery_integration_test.go`. The forward remains with P2.
 
 ### - [ ] F-10.1.34 — Terminal sweeps run unelected on every replica, so two replicas claim one expiry [Medium] — OPEN
 
@@ -13806,6 +13922,28 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:613-633, :1021-1043`; `cmd/lenny-gateway/workers.go:66`; `cmd/lenny-gateway/reconciler_workers.go:84-112`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:209-233`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-40 (bucket B; source findings B: p1#20, p1#79; C: p1#14, p1#26, p11#15, p14#12; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-10.1.5 (closed with this design). 0092-adjacent: Idle suspension: SuspendIdle runs from sweepIdle.
 **Gap:** Sweeps run unelected on every replica, and their nil-returning post-check cannot tell their own write, so two replicas claim one expiry (idle, pre-running, orphan cleanup, orphan-session reconciler).
 **Suggested resolution:** Leader-gate the terminal sweeps (§10.1 already makes the reconciler leader-only) and classify the applied write by a token. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** Every terminal sweep's mutator returns the sentinel of a row it does not apply to, and a sweep runs its post-terminal hook only on a nil `Update`, so a second replica's sweep of a row the first already wrote runs no second hook (6e30929db, 3f943f56f). Tests: `TestSweepMaxAgeRechecksLockedRow_spec_6_2` in `pkg/gateway/runtime/watchdog/active_age_test.go` and `TestTerminalWriterInventoryMatchesTheCode_spec_7_2` in `pkg/gateway/sessionserver/terminal_writer_inventory_test.go`. Leader-gating remains with P3.
+
+### - [ ] F-10.1.35 — A barrier sent soon after a resume commit carries a stale generation [Medium] — OPEN
+
+**Spec:** §10.1.8 step 1 (a barrier carries the session's current `coordination_generation`).
+**Evidence:** The barrier-target lister (`barrier.MirrorTargetLister`, wired in `cmd/lenny-gateway/httpsurface.go`) reads the generation from the `coordination_lease` mirror, which the coordination Sweeper refreshes from its `List` snapshot (`upsertMirror` in `pkg/gateway/coordination/coordination/coordination.go`). Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A barrier sent within one Sweeper interval of a resume commit carries a generation below the one the replacement pod holds, and the pod rejects it.
+**Suggested resolution:** Refresh the mirror at the resume commit, or read the generation from the session row.
+
+### - [ ] F-10.1.36 — Per-state sweeps list every session row of every tenant [Medium] — OPEN
+
+**Spec:** §10.1 Horizontal Scaling.
+**Evidence:** The coordination Sweeper (`pkg/gateway/coordination/coordination/coordination.go`), the checkpoint freshness reaper (`pkg/gateway/checkpoint/checkpointer/freshness.go`), and the watchdog's `sweepMaxAge` and `sweepExpiryWarning` list every session row of every tenant on every replica with an empty `ListFilter`, terminal history included, and the Sweeper marks every terminal row's mirror released on every pass. No `sessions` index keys `state`, so each watchdog per-state list, `sweepSuspended` included, reads at best every non-terminal row of the tenant. The gateway leader's backlog re-check reads the partial index `idx_sessions_podless_suspended` and is outside this finding. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** The cost of every sweep grows with the tenant's whole session history rather than with the rows in the swept state.
+**Suggested resolution:** Filter each list by the states it acts on, index `sessions` by state, and stop re-marking released mirrors of terminal rows.
+
+### - [ ] F-10.1.37 — A truncated workspace stream aborts a partial restore [Medium] — OPEN
+
+**Spec:** §10.1.7 **Reassembly on resume.** (a restore from a truncated stream resumes as `partial_workspace`).
+**Evidence:** `ExtractTree` (`pkg/adapter/workspace/tree.go`) returns an error on an end-truncated stream, and `Resume` (`pkg/adapter/resume.go`) aborts on that error and releases the session's slot. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A partial restore fails rather than resuming as `partial_workspace`.
+**Suggested resolution:** Extract what the stream carries, report the recovered fraction, and resume as `partial_workspace`.
 
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
@@ -14871,6 +15009,13 @@ the synthesis path is implemented (F-10.4-02), this design is the
 | F-10.4-11 | Medium | Replay buffer utilization metric unemitted |
 | F-10.4-12 | Low | Coordination lease holder is not persisted at handoff for §10.4 audit trail |
 | F-10.4-13 | Info | In-process event bus instead of cross-replica fan-out |
+
+### - [ ] F-10.4.14 — The replay buffer for `attach_session` reattach and the shared event relay disagree on placement [Medium] — OPEN
+
+**Spec:** §10.4 Gateway Reliability (the event replay buffer that serves `attach_session` reattach with `resumeFromSeq` is on the coordinating replica) and §29.3 (the streaming form of `GET /v1/sessions/{id}/events` is served from `CH-EVENTRELAY` on any replica).
+**Evidence:** `Bus.SubscribeForTenant` merges the relay history into every replica's backlog, so the tree serves a reattach from any replica, as §29.3 states and §10.4 does not. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** §10.4 and §29.3 state different placements for the same replay, and the tree follows only one of them.
+**Suggested resolution:** Reconcile §10.4 with §29.3 through the proposal pipeline.
 
 ---
 
@@ -18186,7 +18331,7 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 
 ---
 
-### - [ ] F-11.3.35 — `maxSuspendedPodHoldSeconds` is configured but nothing enforces it, and its flag help states the wrong outcome [Medium] — OPEN
+### - [x] F-11.3.35 — `maxSuspendedPodHoldSeconds` is configured but nothing enforces it, and its flag help states the wrong outcome [Medium] — CLOSED
 
 **Spec:** §6.2 **Graceful pod release during extended suspension** and §11.3: when a `suspended` session has held its pod for `maxSuspendedPodHoldSeconds` (900 s, the more restrictive of the deployment and tenant values), the gateway checkpoints it and releases the pod; the session stays `suspended`. On a checkpoint failure the pod is held and the checkpoint retried every 60 s.
 **Evidence:**
@@ -18196,13 +18341,15 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 - Found by the 2026-10-06 session-lifecycle review, filed 2026-10-06.
 **Gap:** A suspended session keeps its pod indefinitely, and the operator documentation describes an expiry the spec does not define.
 **Suggested resolution:** Owned by the session suspend-and-resume proposal scheduled in `gateway-runtime-comms-remediation.md` §10.2 after proposal 0091. That proposal implements the release, and it corrects the flag help text in the same change.
+**Resolution (5c5da42e6, 9a65a8f16, 0a76a24b2, c1f8bbb08, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). The watchdog's `sweepSuspended` (`pkg/gateway/runtime/watchdog/suspended.go`) hands a held-pod `suspended` session whose hold reached `maxSuspendedPodHoldSeconds` to `ReleaseSuspendedPod` (`pkg/gateway/sessionserver/suspend_release.go`), which checkpoints the workspace, clears the row's pod assignment, and releases the pod, and the session stays `suspended`. A failed checkpoint keeps the pod and the next sweep retries it. The `--max-suspended-pod-hold-seconds` help text in `cmd/lenny-gateway/flags.go` states that release and no longer names an expiry, and the per-tenant cap that no tenant field carries is filed as F-6.2.29. Tests: `TestSuspendedPodHoldReleaseAndBacklog_spec_6_2` in `pkg/gateway/runtime/watchdog/suspended_test.go`; `TestReleaseSuspendedPod_spec_6_2` in `pkg/gateway/sessionserver/suspension_internal_test.go`; `TestSuspensionFlags_spec_6_2` in `cmd/lenny-gateway/suspension_flags_test.go`; `TestGatewayFlagHelpMatchesTheSuspensionContract` in `tests/tier11_docs/suspension_flag_help_doc_consistency_test.go`; and `tests/tier4_integration/session_held_pod_integration_test.go`.
 
-### - [ ] F-11.3.36 — The idle-cap flag keeps a retired name, a wrong default, and a wrong reason in its help text [Low] — OPEN
+### - [x] F-11.3.36 — The idle-cap flag keeps a retired name, a wrong default, and a wrong reason in its help text [Low] — CLOSED
 
 **Spec:** §6.2 **`maxClientIdleSeconds` clock behavior across states** and §5.2 `sessionPolicy.maxClientIdleSeconds`: the idle cap replaced the former `runtime.limits.maxIdleTimeSeconds`. Its default is the effective `maxSessionAgeSeconds` (7200 s), and expiry carries reason `max_idle_time`.
 **Evidence:** `cmd/lenny-gateway/flags.go` declares `--max-idle-time-seconds` (env `LENNY_MAX_IDLE_TIME_SECONDS`). Its help text names `maxIdleTimeSeconds` and `limits.maxIdleTimeSeconds`, says "Default 600s", and gives the reason `expired:idle`. The compiled default (`watchdog.DefaultMaxIdleSeconds`) equals the session-age cap, so the help text and the behavior disagree. Filed 2026-10-06.
 **Gap:** Operators read a default and a reason that the gateway does not use.
 **Suggested resolution:** Owned by the session suspend-and-resume proposal, which redefines idle (no turn in flight and no traffic in either direction) and changes the default and the outcome to suspend. That proposal renames the flag to match `maxClientIdleSeconds` and corrects the help text in the same change.
+**Resolution (5c5da42e6, 0a76a24b2, 68de2959b):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). The flag is `--max-client-idle-seconds` (env `LENNY_MAX_CLIENT_IDLE_SECONDS`) in `cmd/lenny-gateway/flags.go`, the retired `--max-idle-time-seconds` name keeps no alias, and the help text states the §6.2 outcome: an idle `running` session is sealed, checkpointed, and suspended, and its pod or slot is released, rather than expired. The watchdog's `sweepIdle` (`pkg/gateway/runtime/watchdog/watchdog.go`) applies that outcome through `SuspendIdle` (`pkg/gateway/sessionserver/suspend_release.go`). Tests: `TestSuspensionFlags_spec_6_2` in `cmd/lenny-gateway/suspension_flags_test.go`; `TestIdleSweepSuspendsOrExpires_spec_6_2` in `pkg/gateway/runtime/watchdog/suspended_test.go`; `TestSuspendIdleCompletes_spec_6_2` in `pkg/gateway/sessionserver/suspension_internal_test.go`; and `TestGatewayFlagHelpMatchesTheSuspensionContract` in `tests/tier11_docs/suspension_flag_help_doc_consistency_test.go`.
 
 ### - [ ] F-11.3.37 — The ready timeout can fail a session whose client called `/start` in time [Medium] — OPEN
 
@@ -18217,6 +18364,7 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 **Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:927, :1029-1037, :1096`; `pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go:217-219`; `pkg/gateway/sessionserver/seal.go:215`. Re-confirmed against the tree at `319b80091`. Recorded by the terminal-transition table run on proposal 0092 as TT-37 (bucket B; source findings B: p1#16, p1#19, p2#19, p2#14; C: p1#15, p2#22; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Related: F-8.8.8 (closed; missed this case). 0092-adjacent: Idle suspension: CODE-6 item 5 rewrites sweepIdle's write.
 **Gap:** Expiry stamps and post-checks depend on an empty FailureReason, which a recovered session keeps, so idle expiry runs no hook and expiry writes keep a stale reason (watchdog, orphan cleanup, seal relabel).
 **Suggested resolution:** Stamp the terminal reason unconditionally on every terminal write and post-check on a write token rather than the reason. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution note (proposal 0092, 2026-10-15):** The terminal writers no longer decide whether their write applied from the row's `FailureReason`: a write applied when its `Update` returns nil, so an expiry of a row that kept an earlier `FailureReason` runs its post-terminal hook (3f943f56f). Test: `TestTerminalWriterInventoryMatchesTheCode_spec_7_2` in `pkg/gateway/sessionserver/terminal_writer_inventory_test.go`. The unconditional stamp of the terminal reason remains with P3.
 
 ### - [ ] F-11.3.39 — The idle expiry fires on a running session whose runtime is waiting in `lenny/request_input` [High] — OPEN
 
@@ -18228,7 +18376,7 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 ### - [ ] F-11.3.40 — Sweep guards re-check only the state of a stale listing [Medium] — OPEN
 
 **Spec:** §11.3 Timeouts and Cancellation (**Session expiry warning:**) and §6.2 Pod State Machine.
-**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:918, :1021`; `pkg/gateway/runtime/watchdog/watchdog.go:1142, :1149, :1165`; `pkg/gateway/sessionserver/expiry_warning.go:37, :57, :66`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-41 (bucket B; source findings B: p2#12, p2#17, p12#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Proposal 0092 records this defect as RECORDS-1 7(k). 0092-adjacent: Idle suspension: CODE-6 item 5 edits sweepIdle.
+**Evidence:** `pkg/gateway/runtime/watchdog/watchdog.go:918, :1021`; `pkg/gateway/runtime/watchdog/watchdog.go:1142, :1149, :1165`; `pkg/gateway/sessionserver/expiry_warning.go:37, :57, :66`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-41 (bucket B; source findings B: p2#12, p2#17, p12#45; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12. Proposal 0092 files nothing for this defect and leaves it with P3. 0092-adjacent: Idle suspension: CODE-6 item 5 edits sweepIdle.
 **Gap:** Sweep guards re-check only the state of a stale listing, so they expire an incarnation that re-entered or became active after the listing, and emit session_expiring_soon after a terminal write.
 **Suggested resolution:** Re-evaluate the sweep's deadline inside the locked-row mutator from the locked row rather than from the listing. Owned by proposal P3 (session timers and sweep ownership), second wave beside P2, re-derived against the landed proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
@@ -18476,6 +18624,13 @@ The remaining items are smaller — synchronous-vs-async wording mismatch (F5), 
 **Evidence:** `pkg/gateway/externalapi/admin/users.go:457-467`; `cmd/lenny-gateway/user_revocation.go:122-128`; `pkg/gateway/sessionserver/pod_claim.go:158-159`. Line numbers are from the run's classification files, which re-checked each finding against the tree. Recorded by the terminal-transition table run on proposal 0092 as TT-80 (bucket C; source findings C: p1#32, p5#24; `scratchpad/terminal-transition/distinct-defects.md`), filed 2026-10-12.
 **Gap:** A pre-running session cancelled by full_revoke keeps its pod, slot reservation, and finalize lease until the claim-orphan GC.
 **Suggested resolution:** Run the pre-running reclaim for each session full_revoke cancels. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-11.4.16 — `terminateUserSessions` leaves a pre-running claim unreleased [Medium] — OPEN
+
+**Spec:** §11.4 User Invalidation and §7.1.
+**Evidence:** `terminateUserSessions` (`pkg/gateway/externalapi/admin/users.go`) runs no post-terminal hook on its `full_revoke` write, and the fan-out sends `Shutdown` only to registry bindings. A `created`, `finalizing`, or `ready` row it cancels whose `PodAssignment` names a claim that no registry holds therefore has no releaser. The claim-orphan GC reclaims an exclusive pod, and a concurrent-workspace reservation stays counted until its pod terminates, which fails closed. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A revoked user's pre-running session keeps its concurrent-workspace reservation until the pod terminates, and an exclusive pod until the claim-orphan GC runs.
+**Suggested resolution:** Release the pre-running claim from the persisted assignment on the `full_revoke` write. Owned by proposal P1. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §11.5 Idempotency <a id="11.5"></a>
 Scope: `spec/11_policy-and-controls.md` lines 266-279. The section enumerates six "critical operations" that support idempotency keys (CreateSession, FinalizeWorkspace, StartSession, SpawnChild, Approve/DenyDelegation, Resume), a "**Mechanism.**" paragraph that fixes the wire surface (header for REST, `idempotencyKey` field for MCP), the key bound (≤128 characters, UUIDs recommended), the Postgres storage primitives (table `idempotency_keys` keyed by `(tenant_id, idempotency_key)`, 24h TTL), the replay contract ("same HTTP status and body" within the window), the reuse-detection contract (SHA-256 body hash; `422 IDEMPOTENCY_KEY_REUSED` on mismatch), garbage collection after the window, tenant-scoping, and the closing statement "Prevents duplicate sessions or children during gateway failover or client retries."
@@ -24126,6 +24281,13 @@ This makes the gaps in F2 (artifact legal-hold endpoint), F5 (pg-backed billing 
 **Gap:** The cause of the single failure is unconfirmed. A fixed wall-clock deadline that a loaded host can exceed is the suspected cause.
 **Suggested resolution:** Reproduce with `lenny-test stress --test TestEraseUserInitiatesJob` under `-race` and parallel load, then replace the wall-clock deadline with an injected clock or a completion signal from the job store. Owner: unassigned.
 
+### - [ ] F-12.8.37 — Tenant deletion erases no session message queues [High] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces (the tenant-deletion Phase 4 order erases the session message queues after `session_dlq_archive`).
+**Evidence:** The Phase 4 eraser list that `buildTenantErasers` and `tenantErasersBeforeSessions` build (`cmd/lenny-gateway/tenant_erasers.go`) has no session message queue eraser. Only the user-erasure list (`buildSessionScopedErasers` in `cmd/lenny-gateway/adminrouter.go`) erases the queues, through `Coordinator.EraseSession`, because the tenant's session identifiers that name the keys must be enumerated before the `sessions` eraser runs. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A deleted tenant's held messages stay in its Redis DLQ and durable inbox keys.
+**Suggested resolution:** Enumerate the tenant's session identifiers before the `sessions` eraser runs and erase each session's queues in the Phase 4 order.
+
 ## §12.9 Data Classification <a id="12.9"></a>
 Spec source: `spec/12_storage-architecture.md` lines 995–1057.
 Implementation root: `pkg/gateway/admin/`, `pkg/gateway/tenantstore/`,
@@ -28650,12 +28812,13 @@ in the MCP Management Server inventory.
 
 ---
 
-### - [ ] F-15.1.41 — A resume whose claim fails with a non-transient error moves the session to `failed`, although §15.1 says `RESUME_FAILED` leaves it in `awaiting_client_action` [Medium] — OPEN
+### - [x] F-15.1.41 — A resume whose claim fails with a non-transient error moves the session to `failed`, although §15.1 says `RESUME_FAILED` leaves it in `awaiting_client_action` [Medium] — CLOSED
 
 **Spec:** §15.1 `RESUME_FAILED` (the row stays in `awaiting_client_action`).
 **Evidence:** `handleResume` passes the claim error to `holdOrFailOnResumeError` and answers with the retryable 503 (`pkg/gateway/sessionserver/resume.go`); for an error `isTransientPodClaimError` does not list, `failSession` writes `failed` (`session_terminal.go`). Proposal 0079's bounded pin read adds a path to this outcome. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
 **Gap:** A retryable answer leaves a terminal row.
 **Suggested resolution:** Reclassify resume claim errors in `isTransientPodClaimError` so the row stays in `awaiting_client_action`. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+**Resolution (3f943f56f, a6f776019, d35ab8ef8):** Closed by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`). `POST /v1/sessions/{id}/resume` (`handleResume` in `pkg/gateway/sessionserver/resume.go`) is a store write that moves the row to `resume_pending` and claims no pod, so no resume exit writes `failed`. `holdOrFailOnResumeError` is deleted, and the specification no longer defines `RESUME_FAILED`; the coordinating replica's resume driver performs the restore. Tests: `TestResumeEndpointIsAStoreWrite_spec_7_3` in `pkg/gateway/sessionserver/resume_endpoint_internal_test.go`; `TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1` in `tests/tier3_contract/rest_sessions/resume_binderless_test.go`; and `TestResumeSurfacePagesNameNoRetiredRestoreFailureCode` in `tests/tier11_docs/resume_override_api_doc_reconciliation_test.go`.
 
 ### - [ ] F-15.1.42 — A derive of a `completed` source during the seal window copies the pre-seal checkpoint [Medium] — OPEN
 
@@ -28736,6 +28899,13 @@ in the MCP Management Server inventory.
 - Found by the fix run for F-8.8.20 (merge 7a240ad61), filed 2026-10-12.
 **Gap:** The specification does not state whether the webhook `error.code` is a §15.1 catalog code, the failure class, or the failure reason, and it names no catalog code for most failure reasons. Clients therefore receive lowercase class and reason strings in fields that elsewhere carry uppercase catalog codes, and `errorclassify.Classify` assigns these strings a category without a catalog entry.
 **Suggested resolution:** Decide through the proposal pipeline which value the §14 `session_failed` `error.code` carries, and add a §15.1 catalog code, or an explicit verbatim rule, for each failure reason, then map them in `session.TaskErrorCode` and `terminalCallbackEvent`. Owner: unassigned (spec gap; needs a proposal).
+
+### - [ ] F-15.1.53 — The external API returns `resuming` [Medium] — OPEN
+
+**Spec:** §15.1 REST API (`resuming` is never returned in external API responses) and §7.2 (the transition is reported as `resume_pending → running`).
+**Evidence:** `toResponse` (`pkg/gateway/sessionserver/session_response.go`) and `writePreconditionError` (`pkg/gateway/sessionserver/error_envelope.go`) write the row's state verbatim, so a session in `resuming` is returned as `resuming` by `GET /v1/sessions/{id}` and in `details.currentState` of a `409 INVALID_STATE_TRANSITION`. The F-7.3.19 resolution describes a GET normalisation that the tree does not implement. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A client sees a state §15.1 states it never sees.
+**Suggested resolution:** Map `resuming` to `resume_pending` in every external response.
 
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
@@ -44128,6 +44298,13 @@ The architectural gap is dominant: most §25.4 features depend on substrates (OI
 
 ---
 
+
+### - [ ] F-25.4.31 — `lenny-ops` panics at startup with no kubeconfig, because a typed-nil clientset passes the nil check [Medium] — OPEN
+
+**Spec:** §25.4 The `lenny-ops` Service, §25.5 Operational Event Stream (the `subscription_cache_invalidate` broadcast).
+**Evidence:** `cmd/lenny-ops/deps_setup.go` declares `var clientset *kubernetes.Clientset` and stores it in `deps.Clientset`, whose type is the `kubernetes.Interface` interface. With no kubeconfig the pointer stays nil, but the interface value is non-nil, so `deps.Clientset != nil` in `buildWebhookDelivery` (`cmd/lenny-ops/deps.go`) holds and `deps.Clientset.CoreV1()` dereferences a nil pointer. Proposal 0092's S15 full tier pass (2026-10-15) saw the panic fail tier-4 `TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E`, and the same failure is in the earlier S15 tier-4 log (`s15-t4.log`).
+**Gap:** A `lenny-ops` process started without in-cluster or file kubeconfig, with a non-empty shared key, crashes at startup instead of running with the broadcaster disabled.
+**Suggested resolution:** Assign `deps.Clientset` only when the clientset was built, leaving the interface nil otherwise, and add a tier-1 test that builds the deps with no kubeconfig and a shared key. This is a direct fix with no spec change, scheduled with the other direct fixes after proposal 0092 in `gateway-runtime-comms-remediation.md` §10.2.
 ## §25.5 Operational Event Stream <a id="25.5"></a>
 Reviewed: 2026-05-23.
 
@@ -49193,3 +49370,21 @@ No High, Medium, or Low findings.
 
 ---
 
+## §29.3 Interactive message send <a id="29.3"></a>
+Spec: `spec/29_communication-scenarios.md` §29.3 (**Off-holder matrix.**).
+
+### - [ ] F-29.3.1 — An off-holder `POST /v1/sessions/{id}/resume` to a held-pod `suspended` session fails closed instead of being forwarded [Medium] — OPEN
+
+**Spec:** §29.3 **Off-holder matrix.** (the `POST /v1/sessions/{id}/resume` row for a `suspended` session whose pod is still held requires a forward to the coordinator, with `TARGET_NOT_READY` only for an unreachable coordinator).
+**Evidence:** `handleResume` (`pkg/gateway/sessionserver/resume.go`) answers 409 `TARGET_NOT_READY` whenever the serving replica does not hold the coordination lease of a held-pod `suspended` session, because no inter-replica carrier for the forward exists. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A client resume of a held-pod `suspended` session that the load balancer routes to a replica other than the coordinator is refused although the coordinator is reachable.
+**Suggested resolution:** Name a carrier for the forward in §28.3 and §28.5.4 through the proposal pipeline, then forward the resume to the coordinator over it. No remediation step owns the carrier yet.
+
+### - [ ] F-29.3.2 — An off-holder message to an `input_required` session is buffered in the serving replica's own inbox, which the coordinator does not read under `durableInbox: false` [Medium] — OPEN
+
+**Spec:** §29.3 **Off-holder matrix.** (the `running` and `input_required` message rows: the serving replica forwards the message to the coordinator, and only on an unreachable coordinator buffers it in the session inbox and answers `queued`) and §7.2 (`durableInbox: false` keeps the inbox in the coordinating replica's memory).
+**Evidence:** `restDelivery.route` (`pkg/gateway/sessionserver/messages_delivery.go`) and the MCP `send_message` path (`pkg/gateway/mcpfabric/mcptools/send_delivery.go`) take the `ActionBufferInbox` branch for an `input_required` session, or a session with a pending input wait on the serving replica, without reading the lease holder, and `bufferIncomingMessages` enqueues the message in the serving replica's own session inbox. Under `durableInbox: false` that inbox is in-process, and `deliverBuffered` on the coordinating replica reads only its own. The message is answered `queued` and stays there until the serving replica coordinates the session or the session ends. The `running` row's missing forward, where the serving replica answers `EXECUTOR_FAILURE`, is F-7.2.38; this finding is the buffering location, which a forward does not change on an unreachable coordinator. The claim-register row "Session inbox redelivery" stays `ABSENT` under R19 for the same surface. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
+**Gap:** A `queued` receipt is answered for a message that no coordinating replica will deliver, so the message is lost to the session unless the serving replica later coordinates it.
+**Suggested resolution:** Forward the message to the coordinator, and on an unreachable coordinator hold it where the coordinator reads it (the DLQ under the path-6 custody rule) rather than in the serving replica's in-memory inbox. Owned by remediation step R19 (cross-replica message forwarding, `gateway-runtime-comms-remediation.md` §10.1), with F-7.2.38. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+---

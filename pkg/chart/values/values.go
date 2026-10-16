@@ -176,7 +176,7 @@ type Playground struct {
 	// install/upgrade time rather than as a gateway CrashLoopBackOff.
 	DevTenantID           string            `json:"devTenantId,omitempty" pattern:"^[a-zA-Z0-9_-]{1,128}$" maxLength:"128" desc:"Tenant bound to every dev-mode playground token; applies only when authMode is dev. §27.3."`
 	AllowedRuntimes       string            `json:"allowedRuntimes,omitempty" desc:"Comma-separated glob list of runtime IDs the playground runtime picker offers. Default is every visible runtime."`
-	MaxSessionMinutes     int               `json:"maxSessionMinutes,omitempty" min:"1" desc:"§27.6 hard cap on a playground-initiated session's duration."`
+	MaxSessionMinutes     int               `json:"maxSessionMinutes,omitempty" min:"1" desc:"§27.6 hard cap on a playground-initiated session's active time, which pauses while the session is suspended."`
 	MaxIdleTimeSeconds    int               `json:"maxIdleTimeSeconds,omitempty" min:"60" desc:"§27.6 hard idle-timeout override for a playground-initiated session."`
 	OIDCSessionTTLSeconds int               `json:"oidcSessionTtlSeconds,omitempty" min:"60" desc:"Lifetime of the §27.3.1 server-side playground session record and its cookie."`
 	BearerTTLSeconds      int               `json:"bearerTtlSeconds,omitempty" min:"60" max:"3600" desc:"TTL of an MCP bearer token minted by POST /v1/playground/token. The gateway bounds it to 60..3600."`

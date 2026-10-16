@@ -53,8 +53,9 @@ type fencedMessage struct {
 // CH-BARRIER), the resume, the shutdown, the three mid-session credential
 // calls the §4.9 lease machinery drives against a running session (the hot
 // rotation, the lease extension the Token Service unavailability guard sends,
-// and the emergency revocation), and the §8.7 delegation export the gateway
-// takes from the live workspace.
+// and the emergency revocation), the §8.7 delegation export the gateway
+// takes from the live workspace, and the §4.7.1 session seal and unseal the
+// idle suspension sends.
 //
 // The boundary of the set: CoordinatorFenceRequest is excluded because it
 // carries the generation as the announcement being fenced rather than as a
@@ -81,6 +82,8 @@ var fencedMessages = map[string]fencedMessage{
 	"ExtendCredentialLeaseRequest": {msg: &adapterv1.ExtendCredentialLeaseRequest{}, number: 6},
 	"RevokeCredentialsRequest":     {msg: &adapterv1.RevokeCredentialsRequest{}, number: 5},
 	"ExportPathsRequest":           {msg: &adapterv1.ExportPathsRequest{}, number: 3},
+	"SealSessionRequest":           {msg: &adapterv1.SealSessionRequest{}, number: 2},
+	"UnsealSessionRequest":         {msg: &adapterv1.UnsealSessionRequest{}, number: 2},
 }
 
 // TestBoundSessionRequestsCarryGenerationFence pins that each request message

@@ -147,6 +147,11 @@ type RuntimeOps struct {
 	// mutated per connection, so it needs no lock beyond the pointer
 	// itself being assigned before Run starts.
 	usage tokenSink
+	// activity receives the session each llm_request_completed names, after
+	// the in-flight decrement, as that session's adapter activity (§4.7.1
+	// **Session seal.**). Set once before Run starts through
+	// SetActivityObserver, as usage is; nil observes nothing.
+	activity func(sessionID string)
 }
 
 // tokenSink folds one llm_request_completed frame's direct-mode token
@@ -219,6 +224,15 @@ func (lc *RuntimeOps) SocketPath() string {
 // leaves token folding a no-op (the Basic/Standard and dev paths).
 func (lc *RuntimeOps) SetUsageSink(sink tokenSink) {
 	lc.usage = sink
+}
+
+// SetActivityObserver wires fn as the observer readLoop calls with the
+// session each llm_request_completed names, whatever its status and token
+// counts. It is set once before Run starts, as SetUsageSink is. A nil fn
+// observes nothing. spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3
+// (CH-RUNTIMEOPS).
+func (lc *RuntimeOps) SetActivityObserver(fn func(sessionID string)) {
+	lc.activity = fn
 }
 
 // Run serves the CH-RUNTIMEOPS until ctx is cancelled or the channel
@@ -460,6 +474,11 @@ func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
 			if lc.usage != nil && (frame.InputTokens != 0 || frame.OutputTokens != 0) {
 				lc.usage.AddTokens(frame.SessionID, frame.InputTokens, frame.OutputTokens)
 			}
+			// spec: §4.7.1 (Session seal) — a completion naming a session
+			// is that session's activity, read after the decrement.
+			if lc.activity != nil {
+				lc.activity(frame.SessionID)
+			}
 		}
 	}
 }
@@ -563,12 +582,21 @@ func (lc *RuntimeOps) RotateCredentials(ctx context.Context, sessionID, provider
 	})
 }
 
+// ErrUnknownDeadlineTrigger is returned by SignalDeadlineApproaching for a
+// trigger outside the CH-RUNTIMEOPS contract, which names only
+// "session_age" and "budget". No frame is written, so a runtime never reads
+// a deadline_approaching frame the published schema rejects.
+var ErrUnknownDeadlineTrigger = errors.New("deadline_approaching trigger is neither session_age nor budget")
+
 // SignalDeadlineApproaching warns the runtime that sessionID is nearing
 // expiry or budget exhaustion so it wraps up that session's work.
-// remainingMs is the time left; trigger is one of "session_age",
-// "budget", or "idle".
+// remainingMs is the time left; trigger is "session_age" or "budget", and
+// any other trigger returns ErrUnknownDeadlineTrigger without writing.
 // spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 func (lc *RuntimeOps) SignalDeadlineApproaching(sessionID string, remainingMs int32, trigger string) error {
+	if trigger != "session_age" && trigger != "budget" {
+		return fmt.Errorf("%w: %q", ErrUnknownDeadlineTrigger, trigger)
+	}
 	return lc.writeFrame(lifecycleFrame{
 		Type:        "deadline_approaching",
 		SessionID:   sessionID,

@@ -115,9 +115,11 @@ var metricCatalog = []MetricSpec{
 	{"lenny_session_resume_attempts_total", TypeCounter, "Session resume attempts by outcome"},
 	// lenny_session_expiry_total counts sessions terminated by a platform
 	// expiry clock, labeled by reason (max_session_age | max_idle_time).
-	// The max_idle_time series is the idle-termination counter keyed to the
-	// maxClientIdleSeconds bound. spec: §16.1 — session expiries; §16.1.1
-	// retirement/expiry reason vocabulary.
+	// The max_idle_time series counts both idle expiries: the
+	// maxClientIdleSeconds expiry of a session that cannot be idle-suspended
+	// and the suspended-session lifetime (maxSuspendedSessionSeconds).
+	// spec: §16.1 — session expiries; §16.1.1 retirement/expiry reason
+	// vocabulary.
 	{"lenny_session_expiry_total", TypeCounter, "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time)"},
 	{"lenny_inbox_drain_failure_total", TypeCounter, "Atomic inbox-to-DLQ drain failures"},
 	{"lenny_inbox_duplicate_suppressed_total", TypeCounter, "Inbox duplicate redeliveries suppressed"},

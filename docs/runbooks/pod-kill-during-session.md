@@ -71,7 +71,7 @@ lenny-ctl admin session get <session-id> --json | jq '.lastCheckpointAt'
 ## Verification
 
 - The replacement pod reaches `Ready` and the session transitions to `running` again.
-- `lenny_session_resume_attempts_total{pool=<pool>, outcome="success"}` advances by one for the affected pool. The spec-named counter (§16.1) covers every retry/resume attempt and yields the resume success rate as `outcome="success"` over the total.
+- `lenny_session_resume_attempts_total{pool=<pool>, outcome="success"}` advances by one for the affected pool. The counter advances at most once for each restore that the gateway starts on a claimed replacement pod. The outcome is `success` when the session returns to `running` on that pod, and `failure` when the restore fails or another restore or a session end supersedes it. A restore that a gateway shutdown interrupts, or whose start the gateway cannot confirm, is not counted. The resume success rate is the `outcome="success"` series over the total.
 
 ## Escalation
 

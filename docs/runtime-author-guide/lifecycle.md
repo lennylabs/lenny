@@ -162,8 +162,8 @@ Once a session reaches `attached`, it enters the interactive session state machi
 |-------|---------|
 | `running` | Session is active. Your binary is processing messages. |
 | `input_required` | Sub-state of `running`. Your runtime called `lenny/request_input` and is blocked waiting for a response. |
-| `suspended` | Session is paused via `interrupt_request`. Pod is held (initially). `maxSessionAge` timer is paused. |
-| `resume_pending` | Pod failed. Gateway is acquiring a new pod for recovery. |
+| `suspended` | Session is paused, either by `interrupt_request` or by idle suspension after `maxClientIdleSeconds` without activity. After an interrupt the pod is held for up to `maxSuspendedPodHoldSeconds`; an idle suspension releases the pod or slot as it suspends the session. `maxSessionAge` timer is paused. |
+| `resume_pending` | Pod failed, or a `suspended` session whose pod was released is being resumed. The gateway's resume driver is claiming a replacement pod and restoring the session onto it. |
 | `resuming` | Workspace is being restored onto a new pod. |
 | `awaiting_client_action` | Auto-retries exhausted. Client must decide: resume, terminate, or download artifacts. |
 | `completed` | Session finished normally. Terminal state. |
@@ -271,10 +271,23 @@ Full-level runtimes can handle clean interrupts via the CH-RUNTIMEOPS:
 ```
 
 While suspended:
-- Pod is held (initially) and workspace is preserved.
-- `maxSessionAge` timer is paused.
-- After `maxSuspendedPodHoldSeconds` (default: 900s / 15 minutes), the gateway checkpoints and releases the pod.
-- The session can be resumed by the client sending a new message or calling `resume_session`.
+- The workspace is preserved. After an interrupt the pod is held; after `maxSuspendedPodHoldSeconds` (default: 900s / 15 minutes), the gateway checkpoints the workspace and releases the pod or slot. When the checkpoint fails, the gateway keeps the pod held and retries the checkpoint at its next evaluation, 60 seconds later. When the hold ends and the session's dead-letter queue holds a message the gateway accepted after the session entered `suspended`, the gateway resumes the session rather than releasing the pod. Inbox entries and messages held before the interrupt do not trigger this resume. When the concurrent-session admission check refuses that resume, the gateway still checkpoints the workspace and releases the pod, the session stays `suspended`, and the gateway resumes it at a later backlog re-check once the check admits it (see `gateway.suspendedBacklogRecheckSeconds` in the [configuration reference](../reference/configuration.md#core-gateway-settings)).
+- `maxSessionAge` and `maxClientIdleSeconds` timers are paused.
+- Any message to the session, a `resume_session` call, or `POST /v1/sessions/{id}/resume` resumes the session. When the pod was released, the session is restored onto a new pod and your runtime receives a new `session_start` for it.
+- The session expires when it stays `suspended` for `gateway.maxSuspendedSessionSeconds` (default: 604800s / 7 days).
+
+### Idle suspension
+
+A session also enters `suspended` without an interrupt, at every integration level, unless the session cannot be idle-suspended. A session cannot be idle-suspended when its runtime is `type: mcp` or when its pool runs `executionMode: service`. When such a session has had no activity for `maxClientIdleSeconds`, the gateway expires it with the `max_idle_time` reason instead, and it does not ask the adapter to seal it. When any other `running` session has had no activity for `maxClientIdleSeconds` (default: 900s), the gateway asks the adapter to seal the session. The adapter seals it only when it observed no activity for the session in the same window. Once the session is sealed, the gateway checkpoints the workspace, suspends the session, and releases its pod or slot. The release ends any work your runtime did for the session without reporting it before the seal, and any work your runtime begins after the seal, even when it reports that work `busy`.
+
+Your runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for a session (see [Health Checks](#health-checks)). The runtime SDKs report it while a message for the session is pending or being handled, and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. The adapter also counts the following traffic as activity for a session without a report, and no other traffic:
+
+- each frame it writes to your runtime for the session, other than `heartbeat` and `session_end`;
+- each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from your runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot);
+- each CH-RUNTIMEOPS `llm_request_completed` that names the session; and
+- each platform or connector MCP tool call for the session, while it is in flight.
+
+When the gateway's idle clock fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. The [adapter contract](../reference/adapter-contract.md#session-seal) states the seal in full.
 
 At the Basic and Standard levels there is no clean interrupt: your runtime process receives no signal, and it keeps running.
 
@@ -418,9 +431,9 @@ The gateway routes each message to any ready tenant-pinned replica through the p
 
 The adapter implements the gRPC Health Checking Protocol. Your binary does not need to implement health checks directly --- the adapter handles it. The heartbeat mechanism serves as a liveness check:
 
-1. Adapter sends `{"type":"heartbeat"}` on stdin.
-2. Your binary MUST respond with `{"type":"heartbeat_ack"}` within **10 seconds**.
-3. A missed acknowledgment ends that session's stream, and your runtime process receives no signal. The gateway handles the session as a runtime crash, as [Resume After Pod Failure](#resume-after-pod-failure) describes.
+1. Adapter sends `{"type":"heartbeat","ts":1717430400,"sessionId":"sess_abc123"}` on stdin, once per interval for each session it holds, whether or not the gateway has a stream open for the session.
+2. Your binary MUST respond with a `heartbeat_ack` within **10 seconds**. While it does any work for the named session, the acknowledgement carries the heartbeat's `sessionId` and `busy: true`, as in `{"type":"heartbeat_ack","sessionId":"sess_abc123","busy":true}`; otherwise `{"type":"heartbeat_ack"}` is enough. [Idle suspension](#idle-suspension) describes what the `busy` report prevents.
+3. If no acknowledgment is received, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and your runtime process receives no signal. The gateway handles the session as a runtime crash, as [Resume After Pod Failure](#resume-after-pod-failure) describes.
 
 The heartbeat handler should be immediate --- do not do heavy work before responding.
 

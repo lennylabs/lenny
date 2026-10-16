@@ -58,6 +58,17 @@ type fakeRuntime struct {
 	subs    int
 	subCond *sync.Cond
 	fanOnce sync.Once
+	// tap is the adapter's activity tap, installed by NewGRPCServer through
+	// TapOutput and set on the hub when the first Output creates it.
+	tap func([]byte)
+}
+
+// TapOutput records the adapter's activity tap, as the production
+// transports do, so a server built over the fake reads its frames.
+func (f *fakeRuntime) TapOutput(fn func(line []byte)) {
+	f.mu.Lock()
+	f.tap = fn
+	f.mu.Unlock()
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -165,6 +176,9 @@ func (f *fakeRuntime) Output(ctx context.Context, _ string) (<-chan []byte, erro
 	f.mu.Lock()
 	if f.hub == nil {
 		f.hub = linefanout.New()
+		if f.tap != nil {
+			f.hub.Tap(f.tap)
+		}
 	}
 	hub := f.hub
 	f.mu.Unlock()

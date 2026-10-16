@@ -95,9 +95,16 @@ type startContext struct {
 // remaining callers consume them: the combined create-and-start path runs
 // the prepare barrier (which assigns the lease), and the resume-rebuild path
 // runs the whole Claim → Prepare → Launch sequence.
+//
+// rb carries the resume driver's post-claim hook and entry generation,
+// threaded into both the exclusive bind request and the concurrent slot
+// request, so a snapshotless resume rebuild runs the hook after its claim on
+// either pool and records the generation on every lease it mints. It is the
+// zero value on the create and start paths. spec: §7.3 (Resume driver;
+// Credential leases on the replacement pod).
 // spec: §4.1, §4.4, §5 (proposal); §4.2 — "Pod-to-session binding";
 // §7.1 — atomic-creation rollback.
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext, rb resumeBind) (*podsession.BindResult, error) {
 	// spec: §4.9 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
@@ -143,9 +150,12 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// touching the claim or slot acquisition paths, so no Sandbox is
 	// claimed and no pod is bound to the session. The session row persists
 	// with execution_mode=service; message routing reads that mode and
-	// dispatches to the stateless data plane rather than a bound pod.
+	// dispatches to the stateless data plane rather than a bound pod. On the
+	// resume path the driver's post-claim hook still runs here, before the
+	// restore returns, so the resuming entry write precedes the commit
+	// (spec: §7.3, Resume driver).
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return nil, nil
+		return nil, runClaimlessEntry(ctx, rb)
 	}
 	// spec: §4.9 — the session-start credential-delivery gate. Evaluate each
 	// resolved CredentialPool's effective deliveryMode against the bound
@@ -166,9 +176,13 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		slotReq.OnClaimed = rb.onClaimed
+		slotReq.CoordinationGeneration = rb.generation
 		return s.bindConcurrentSlot(ctx, row, match, slotReq)
 	}
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+	bindReq.OnClaimed = rb.onClaimed
+	bindReq.CoordinationGeneration = rb.generation
 	// spec: §4.7, §7.1 steps 4-13 (proposal) — the combined one-call
 	// `POST /v1/sessions/start` path (claimed is non-nil) claimed the pod in
 	// the same call but never went through /finalize, so it reconnects to the

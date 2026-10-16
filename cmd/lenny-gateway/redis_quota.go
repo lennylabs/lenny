@@ -22,6 +22,7 @@ import (
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/quota/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
@@ -236,7 +237,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// podRegistry plus the executor's cached Attach stream), evicts without
 		// any lease write a bound session a peer replica has taken over (the
 		// lease is held elsewhere and coordination_generation has advanced past
-		// the generation this replica last renewed at; spec: §10.1.1, §10.1.5),
+		// the generation stamped on the binding; spec: §10.1.1, §10.1.5),
 		// and on the
 		// crash-takeover edge re-adopts the still-running pod through a
 		// fence-first re-adopt (Readopter over the Binder's ReadoptConnect entry
@@ -244,16 +245,11 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// read their collaborators (podRegistry, the executor, the Binder, the
 		// coordFencer) lazily at sweep time because they are constructed in
 		// later build steps; the Sweeper's Run loop starts only after the whole
-		// composition root is wired.
+		// composition root is wired. HeldDeliverer and TerminalReleaser read
+		// the session server at call time the same way.
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
-			coordination.Options{
-				ReplicaID: replica,
-				Interval:  *coordInterval,
-				Mirror:    coordMirror,
-				Bindings:  coordinationBindings{w: w},
-				Readopter: coordinationReadopter{w: w},
-			},
+			coordinationOptions(w, replica, *coordInterval, coordMirror),
 		)
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
 		// lives in Redis so the quota holds across replicas; its reserve
@@ -332,4 +328,48 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	w.storageRecoveryReconciler = storageRecoveryReconciler
 	w.delegationBudgetReconciler = delegationBudgetReconciler
 	w.rateLimiter = rateLimiter
+}
+
+// coordinationOptions builds the coordination Sweeper's options. Every seam
+// reads its collaborator from the wiring accumulator at call time, because the
+// session server, the pod registry, and the binder are built after the
+// Sweeper. The held-message delivery after a takeover and the terminal binding
+// release reach the session server through seams that do nothing until it is
+// set and never block the sweep.
+//
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.1 (Stateless Replicas
+// and Per-Session Coordination), §7.2 (Message delivery routing — seven
+// paths, path 6)
+func coordinationOptions(w *gatewayWiring, replica string, interval time.Duration, mirror coordlease.Store) coordination.Options {
+	return coordination.Options{
+		ReplicaID:        replica,
+		Interval:         interval,
+		Mirror:           mirror,
+		Bindings:         coordinationBindings{w: w},
+		Readopter:        coordinationReadopter{w: w},
+		HeldDeliverer:    heldDelivererSeam{w: w},
+		TerminalReleaser: terminalReleaserSeam{w: w},
+	}
+}
+
+// heldDelivererSeam forwards the Sweeper's takeover delivery to the session
+// server once it is built. The server's method returns at once.
+type heldDelivererSeam struct{ w *gatewayWiring }
+
+// DeliverHeldAfterTakeover implements coordination.HeldDeliverer.
+func (h heldDelivererSeam) DeliverHeldAfterTakeover(tenantID, sessionID string, generation int64) {
+	if srv := h.w.sessionSrv; srv != nil {
+		srv.DeliverHeldAfterTakeover(tenantID, sessionID, generation)
+	}
+}
+
+// terminalReleaserSeam forwards the Sweeper's terminal binding release to the
+// session server once it is built. The server's method returns at once.
+type terminalReleaserSeam struct{ w *gatewayWiring }
+
+// ReleaseTerminalBinding implements coordination.TerminalReleaser.
+func (t terminalReleaserSeam) ReleaseTerminalBinding(row sessionstore.Session) {
+	if srv := t.w.sessionSrv; srv != nil {
+		srv.ReleaseTerminalBinding(row)
+	}
 }

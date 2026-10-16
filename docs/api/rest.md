@@ -44,7 +44,7 @@ In `make run` dev mode, authentication is disabled.
 | `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup           |
 | `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                    |
 | `POST`   | `/v1/sessions/{id}/interrupt` | Interrupt current agent work               |
-| `POST`   | `/v1/sessions/{id}/resume`    | Explicitly resume after retry exhaustion   |
+| `POST`   | `/v1/sessions/{id}/resume`    | Resume a session in `awaiting_client_action` or `suspended` |
 | `POST`   | `/v1/sessions/{id}/terminate` | Graceful session termination               |
 | `DELETE` | `/v1/sessions/{id}`           | Force cancel and clean up                  |
 | `GET`    | `/v1/sessions/{id}`           | Get session status and metadata            |
@@ -127,12 +127,18 @@ Pause a session mid-execution. The pod is held (up to `maxSuspendedPodHoldSecond
 
 ### POST /v1/sessions/{id}/resume
 
-Explicitly resume a session after automatic retries have been exhausted (`awaiting_client_action`). To wake a `suspended` session, send a message (optionally with `delivery: "immediate"`) instead.
+The gateway recovers a session automatically. After a pod or stream failure, the session enters `resume_pending`, and the gateway's resume driver restores it onto a replacement pod. A session whose automatic retries are exhausted, or whose `maxResumeWindowSeconds` resume window elapses, moves to `awaiting_client_action` and waits for the client.
 
-**Valid precondition states:** `awaiting_client_action` (and `suspended` when released from the pod).
-**Resulting transition:** `resume_pending` then `running`.
+This endpoint is the client override. It resumes a session in `awaiting_client_action` or a `suspended` session. A message to a `suspended` session also resumes it, whatever its `delivery` value (see [POST /v1/sessions/{id}/messages](#post-v1sessionsidmessages)).
 
-**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+The call returns `200` with the session in its new state. From `awaiting_client_action`, and from a `suspended` session whose pod was released, the session is returned in `resume_pending`: the resume driver performs the restore, and the restore's outcome arrives on the event stream as a `status_change` event. From a `suspended` session whose pod is still held, the session is returned in `running`. The internal `resuming` state between `resume_pending` and `running` is not reported.
+
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. The gateway therefore runs the admission check that session creation runs before it resumes a `suspended` session. When a limit the session counts toward is full, the call returns `429 QUOTA_EXCEEDED` with the details a refused creation carries, and the session stays `suspended`. A client that sent an `Idempotency-Key` with a refused call retries with a new key, because the gateway returns the cached refusal for the original key until that key expires.
+
+**Valid precondition states:** `awaiting_client_action`, `suspended`.
+**Resulting transition:** `awaiting_client_action` to `resume_pending`; `suspended` to `resume_pending` when the pod was released; `suspended` to `running` when the pod is still held.
+
+**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409), `QUOTA_EXCEEDED` (429).
 
 ### POST /v1/sessions/{id}/terminate
 
@@ -215,7 +221,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 ### POST /v1/sessions/{id}/messages
 
-Send a message to a running or suspended session.
+Send a message to a running or suspended session. A message to a `suspended` session resumes the session, whatever its `delivery` value. Before it holds or delivers the message, the gateway runs the concurrent-session admission check that a resume runs (see [POST /v1/sessions/{id}/resume](#post-v1sessionsidresume)). When a limit the session counts toward is full, the message is neither held nor delivered, the call returns `429 QUOTA_EXCEEDED`, and the session stays `suspended`.
 
 **Request body:**
 
@@ -227,7 +233,7 @@ Send a message to a running or suspended session.
 
 **Valid precondition states:** any non-terminal state. Delivery semantics vary by state.
 
-**Key error codes:** `INJECTION_REJECTED` (403), `SCOPE_DENIED` (403), `TARGET_TERMINAL` (409), `TARGET_NOT_READY` (409), `DUPLICATE_MESSAGE_ID` (400).
+**Key error codes:** `INJECTION_REJECTED` (403), `SCOPE_DENIED` (403), `TARGET_TERMINAL` (409), `TARGET_NOT_READY` (409), `DUPLICATE_MESSAGE_ID` (400), `QUOTA_EXCEEDED` (429).
 
 ### GET /v1/sessions/{id}/messages
 

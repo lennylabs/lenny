@@ -188,6 +188,94 @@ func (s *Store) GetByID(leaseID string) (credential.Lease, bool) {
 	return s.scanLease(row)
 }
 
+// Lookup resolves a lease by its lease ID. It reports a missing record
+// (ok false, nil error) only on pgx.ErrNoRows; a query failure, an
+// undecryptable blob, and an undecodable body are returned as errors, so the
+// §4.9 renewal retries a failed read rather than treating the lease as
+// released. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Lookup(leaseID string) (credential.Lease, bool, error) {
+	ctx := context.Background()
+	var (
+		blob       []byte
+		keyVersion int
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT lease, lease_key_version FROM credential_leases WHERE lease_id = $1`, leaseID).
+		Scan(&blob, &keyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return credential.Lease{}, false, nil
+	}
+	if err != nil {
+		return credential.Lease{}, false, fmt.Errorf("credleasestore/pgstore: look up lease %s: %w", leaseID, err)
+	}
+	doc, err := s.openLease(ctx, blob, keyVersion)
+	if err != nil {
+		return credential.Lease{}, false, err
+	}
+	var lease credential.Lease
+	if err := json.Unmarshal(doc, &lease); err != nil {
+		return credential.Lease{}, false, fmt.Errorf("credleasestore/pgstore: decode lease %s: %w", leaseID, err)
+	}
+	return lease, true, nil
+}
+
+// Advance rewrites an existing lease row with lease's ExpiresAt and
+// RenewBefore, re-sealing the body and moving the plain expires_at
+// projection, and inserts no row. It reports false when no row exists, so an
+// extension of a released lease writes nothing. The body is read and
+// rewritten in one transaction under a row lock, so a concurrent Put or
+// Remove is not lost. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Advance(lease credential.Lease) (bool, error) {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: begin advance of lease %s: %w", lease.LeaseID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var (
+		blob       []byte
+		keyVersion int
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT lease, lease_key_version FROM credential_leases WHERE lease_id = $1 FOR UPDATE`, lease.LeaseID).
+		Scan(&blob, &keyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: read lease %s for advance: %w", lease.LeaseID, err)
+	}
+	doc, err := s.openLease(ctx, blob, keyVersion)
+	if err != nil {
+		return false, err
+	}
+	var cur credential.Lease
+	if err := json.Unmarshal(doc, &cur); err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: decode lease %s for advance: %w", lease.LeaseID, err)
+	}
+	cur.ExpiresAt = lease.ExpiresAt
+	cur.RenewBefore = lease.RenewBefore
+	next, err := json.Marshal(cur)
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: encode lease %s for advance: %w", lease.LeaseID, err)
+	}
+	sealed, version, err := s.sealLease(ctx, next)
+	if err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE credential_leases SET lease = $2, lease_key_version = $3, expires_at = $4, updated_at = $5
+		 WHERE lease_id = $1`,
+		lease.LeaseID, sealed, version, cur.ExpiresAt.UTC(), time.Now().UTC())
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: advance lease %s: %w", lease.LeaseID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: commit advance of lease %s: %w", lease.LeaseID, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // Remove drops the lease with the given ID. It is a no-op when the
 // store holds no such lease. The lease_token_hash index row is dropped
 // with the table row.

@@ -21,8 +21,8 @@ import (
 // it does not reach session_start or session_end, which the adapter writes
 // itself and no Attach stream delivers, and which are listed here because
 // they still carry the session they open or release. The protocol-level
-// frames are listed separately below because they carry no address at all.
-// session_started is not listed: it is the runtime's acknowledgement, which
+// heartbeat frames are outside the rule and are pinned by
+// TestHeartbeatFramesDeclareOptionalSessionAttribution. session_started is not listed: it is the runtime's acknowledgement, which
 // requires its address on the runtime-to-adapter leg, and
 // TestSessionStartFramesRequireStartAndSessionIdentifiers pins it.
 var sessionScopedFrames = []string{
@@ -57,9 +57,6 @@ var adapterPopulated = func() map[string]bool {
 // receiving stream's own binding on a pod holding at most one slot, so the
 // published schema leaves the property optional.
 var runtimeEmittedFrames = []string{"tool_call", "response", "status", "set_tracing_context"}
-
-// protocolFrames are the frame definitions that carry no per-session address.
-var protocolFrames = []string{"heartbeat", "heartbeat_ack"}
 
 // jsonlFrameDefs reads the published JSONL schema and returns its $defs map.
 func jsonlFrameDefs(t *testing.T) map[string]any {
@@ -155,16 +152,84 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 			}
 		})
 	}
+}
 
-	for _, frame := range protocolFrames {
+// spec: 28.5.3 (CH-MSGSOCK Inbound: heartbeat, Outbound: heartbeat_ack, Addressing.)
+// diagnosis: the published JSONL schema does not declare `sessionId` on
+//
+//	`heartbeat` and `heartbeat_ack` as an optional string, or declares a
+//	`slotId` on either. The adapter heartbeats each session and names it
+//	in `sessionId`, and a runtime's `busy` report is attributed to the
+//	session its ack names, so a schema that omits the property publishes
+//	a busy report as unattributable and the adapter seals a session whose
+//	runtime is still working. Both frames stay outside the session
+//	addressing rule, so the property is optional: an ack that names no
+//	session answers the probe of every session on the pod.
+func TestHeartbeatFramesDeclareOptionalSessionAttribution(t *testing.T) {
+	t.Parallel()
+	defs := jsonlFrameDefs(t)
+
+	for _, frame := range []string{"heartbeat", "heartbeat_ack"} {
 		frame := frame
 		t.Run(frame, func(t *testing.T) {
 			t.Parallel()
 			props := frameProperties(t, defs, frame)
-			for _, key := range []string{"sessionId", "slotId"} {
-				if _, ok := props[key]; ok {
-					t.Errorf("%s declares %q; a protocol-level frame carries no per-session address", frame, key)
-				}
+			if _, ok := props["slotId"]; ok {
+				t.Errorf("%s declares `slotId`; the session attribution on this leg is `sessionId`", frame)
+			}
+			addr, ok := props["sessionId"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s declares no `sessionId` property; the heartbeat names the session it probes and the ack names the session a busy report is for", frame)
+			}
+			if addr["type"] != "string" {
+				t.Errorf("%s declares `sessionId` as %v, want a string", frame, addr["type"])
+			}
+			if frameRequired(t, defs, frame)["sessionId"] {
+				t.Errorf("%s requires `sessionId`; the heartbeat frames are outside the session addressing rule and an ack naming no session answers every session's probe", frame)
+			}
+		})
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Outbound: heartbeat_ack)
+// diagnosis: the published JSONL schema accepted a `heartbeat_ack` that
+//
+//	reports `busy: true` without naming a session, or rejected one of the
+//	acks the contract permits. The adapter attributes a busy report only to
+//	the session the ack names, so an unaddressed busy report is activity for
+//	no session; publishing it as conforming lets a runtime author believe
+//	the report keeps a working session from being sealed when it does not.
+func TestHeartbeatAckBusyRequiresSessionID(t *testing.T) {
+	t.Parallel()
+	schema := compileJSONL(t)
+
+	cases := []struct {
+		name    string
+		payload string
+		valid   bool
+	}{
+		{"bare_ack", `{"type":"heartbeat_ack"}`, true},
+		{"named_idle", `{"type":"heartbeat_ack","sessionId":"sess_abc123"}`, true},
+		{"named_busy", `{"type":"heartbeat_ack","sessionId":"sess_abc123","busy":true}`, true},
+		{"named_not_busy", `{"type":"heartbeat_ack","sessionId":"sess_abc123","busy":false}`, true},
+		{"unnamed_not_busy", `{"type":"heartbeat_ack","busy":false}`, true},
+		{"unnamed_busy", `{"type":"heartbeat_ack","busy":true}`, false},
+		{"busy_not_boolean", `{"type":"heartbeat_ack","sessionId":"sess_abc123","busy":"yes"}`, false},
+		{"session_not_string", `{"type":"heartbeat_ack","sessionId":1,"busy":true}`, false},
+		{"heartbeat_named", `{"type":"heartbeat","ts":1717430400,"sessionId":"sess_abc123"}`, true},
+		{"heartbeat_unnamed", `{"type":"heartbeat","ts":1717430400}`, true},
+		{"heartbeat_session_not_string", `{"type":"heartbeat","ts":1717430400,"sessionId":1}`, false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateFrame(t, schema, tc.payload)
+			if tc.valid && err != nil {
+				t.Errorf("frame failed the JSONL schema, want acceptance: %v\n  payload: %s", err, tc.payload)
+			}
+			if !tc.valid && err == nil {
+				t.Errorf("frame validated, want rejection: %s", tc.payload)
 			}
 		})
 	}

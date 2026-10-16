@@ -311,8 +311,10 @@ export class Client {
   }
 
   /**
-   * resume calls POST /v1/sessions/{id}/resume, transitioning a
-   * session awaiting client action back to running.
+   * resume calls POST /v1/sessions/{id}/resume for a session awaiting
+   * client action or suspended. The returned session is in
+   * resume_pending while the gateway restores it, or in running when a
+   * suspended session still held its pod.
    */
   async resume(id: string, opts: RequestOptions = {}): Promise<Session> {
     return this.transition('POST', id, 'resume', opts);

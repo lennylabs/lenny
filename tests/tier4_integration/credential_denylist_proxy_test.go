@@ -113,7 +113,7 @@ func TestUserCredentialRevocationDenyListProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register user credential: %v", err)
 	}
-	if _, err := mat.MintProto(ctx, tenant, user, session, "", string(credential.ProviderAnthropicDirect)); err != nil {
+	if _, err := mat.MintProto(ctx, tenant, user, session, "", string(credential.ProviderAnthropicDirect), 0); err != nil {
 		t.Fatalf("mint user proxy lease: %v", err)
 	}
 	credKey := credential.CredentialKey{Source: credential.SourceUser, TenantID: tenant, CredentialRef: cred.Ref}

@@ -17,26 +17,28 @@ import (
 // returns the agent output parts unchanged and does not reject.
 func TestRunPostAgentOutputNoChainPassesThrough(t *testing.T) {
 	s := &Server{}
-	rec := httptest.NewRecorder()
 	in := []executor.MessagePart{{Type: "text", Text: "hello"}}
-	out, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in)
-	if rejected {
-		t.Fatal("empty chain rejected the output")
+	out, rejected, auditErr := s.runPostAgentOutput(context.Background(), "acme", "sess_x", in)
+	if rejected != nil || auditErr != nil {
+		t.Fatalf("empty chain rejected the output: %v / %v", rejected, auditErr)
 	}
 	if len(out) != 1 || out[0].Text != "hello" {
 		t.Errorf("output mutated by empty chain: %+v", out)
 	}
 }
 
-// spec: §4.8 — a deliberate PostAgentOutput REJECT blocks
-// delivery and writes a 403 INTERCEPTOR_REJECTED envelope carrying the phase.
+// spec: §4.8 — a deliberate PostAgentOutput REJECT blocks delivery: the
+// chain's result is returned with no response written, and the REST
+// envelope half answers 403 INTERCEPTOR_REJECTED carrying the phase.
 func TestRunPostAgentOutputRejectReturns403(t *testing.T) {
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostAgentOutput, rejectInterceptor{})}
-	rec := httptest.NewRecorder()
 	in := []executor.MessagePart{{Type: "text", Text: "secret"}}
-	if _, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in); !rejected {
+	_, rejected, auditErr := s.runPostAgentOutput(context.Background(), "acme", "sess_x", in)
+	if rejected == nil {
 		t.Fatal("runPostAgentOutput admitted a REJECT")
 	}
+	rec := httptest.NewRecorder()
+	s.writeRouteRejection(rec, interceptor.PhasePostAgentOutput, *rejected, auditErr)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
@@ -55,11 +57,10 @@ func TestRunPostAgentOutputModifyRewritesParts(t *testing.T) {
 	modified, _ := json.Marshal([]executor.MessagePart{{Type: "text", Text: "redacted"}})
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostAgentOutput,
 		routeModifyInterceptor{priority: 150, out: modified})}
-	rec := httptest.NewRecorder()
 	in := []executor.MessagePart{{Type: "text", Text: "original"}}
-	out, rejected := s.runPostAgentOutput(context.Background(), rec, "acme", "sess_x", in)
-	if rejected {
-		t.Fatalf("runPostAgentOutput rejected a legal MODIFY: status %d", rec.Code)
+	out, rejected, _ := s.runPostAgentOutput(context.Background(), "acme", "sess_x", in)
+	if rejected != nil {
+		t.Fatalf("runPostAgentOutput rejected a legal MODIFY: %v", rejected)
 	}
 	if len(out) != 1 || out[0].Text != "redacted" {
 		t.Errorf("output = %+v, want a single redacted part", out)

@@ -5,9 +5,6 @@ package podsession
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
-	"strconv"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
@@ -24,7 +21,7 @@ type HoldCanceller interface {
 }
 
 // negotiated bundles the handshake-reported metadata the caller needs
-// to capture from connect. It carries the §15.5 NegotiateVersion
+// to capture from the handshake. It carries the §15.5 NegotiateVersion
 // response fields the gateway threads onto BindResult so downstream
 // users (session-row persistence, Resume-time assertion) can see them.
 type negotiated struct {
@@ -34,16 +31,17 @@ type negotiated struct {
 	WorkspaceBase string
 }
 
-// connect claims an idle pod from the pool, resolves the claimed Sandbox,
-// dials its adapter, and runs the §15.5 version handshake. On success the
-// caller owns cl and must close it once the session ends or on any later
-// failure, and owns the returned Sandbox object for chaining §6.2 phase
-// transitions. The shared claim-and-handshake path of Bind and Resume.
-// The negotiated return value carries the handshake-reported metadata
-// (workspace root, etc.) the caller threads onto BindResult. req carries the
-// pool, session, tenant, and the resolved pool's KeepsRuntime.
-func (b *Binder) connect(ctx context.Context, req podclaim.ClaimRequest) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
-	pool := req.Pool
+// claimPod claims an idle pod from the pool for the request's session,
+// trying the §4.6.1 Postgres-backed fallback claim when the Kubernetes-API
+// claim finds no idle pod, and returns the claimed Sandbox name. It opens no
+// adapter connection: the post-claim hook runs between it and handshake, so a
+// caller can record the claim before any RPC reaches the pod. A failure here
+// leaves no claim behind for the caller to release. req carries the pool,
+// session, tenant, and the resolved pool's KeepsRuntime.
+//
+// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)); §7.3 (Retry and
+// Resume).
+func (b *Binder) claimPod(ctx context.Context, req podclaim.ClaimRequest) (string, error) {
 	claimer := &podclaim.Claimer{
 		Client:    b.Client,
 		Namespace: b.Namespace,
@@ -56,7 +54,6 @@ func (b *Binder) connect(ctx context.Context, req podclaim.ClaimRequest) (sb *le
 			}
 		},
 	}
-	var sandboxName string
 	claim, err := claimer.Claim(ctx, req)
 	if errors.Is(err, podclaim.ErrNoIdlePod) {
 		// The Kubernetes-API claim found no idle pod. Attempt the §4.6.1
@@ -68,37 +65,40 @@ func (b *Binder) connect(ctx context.Context, req podclaim.ClaimRequest) (sb *le
 		if errors.As(err, &noIdle) {
 			refused = noIdle.Refused
 		}
-		sandboxName, err = b.fallbackClaim(ctx, req, refused)
-		if err != nil {
-			return nil, nil, negotiated{}, err
-		}
-	} else if err != nil {
-		return nil, nil, negotiated{}, err
-	} else {
-		sandboxName = claim.Spec.SandboxRef
+		return b.fallbackClaim(ctx, req, refused)
 	}
+	if err != nil {
+		return "", err
+	}
+	return claim.Spec.SandboxRef, nil
+}
 
-	sb, err = b.resolveSandbox(ctx, sandboxName)
+// runOnClaimed invokes a binder request's post-claim hook. A nil hook is a
+// no-op, which is the create and start paths. The hook's error is returned as
+// the hook returned it: it is never wrapped in a *SlotBindError and never
+// matches an exhaustion sentinel, so runWithQueue and the §5.2 slot retry
+// policy stop on it rather than retrying it.
+//
+// spec: §7.3 (Retry and Resume).
+func runOnClaimed(ctx context.Context, onClaimed func(context.Context) error) error {
+	if onClaimed == nil {
+		return nil
+	}
+	return onClaimed(ctx)
+}
+
+// handshake resolves the claimed Sandbox, dials its adapter, and runs the
+// §15.5 version handshake, then records the §6.3 warm-pool claim. It closes
+// any client it opened on its own failure. On success the caller owns cl and
+// must close it once the session ends or on any later failure, and owns the
+// returned Sandbox object. The negotiated return value carries the
+// handshake-reported metadata the caller threads onto BindResult.
+//
+// spec: §15.5 (version handshake); §6.3 (warm-pool claim counter).
+func (b *Binder) handshake(ctx context.Context, sandboxName, pool string) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
+	sb, cl, neg, err := b.dialAndNegotiate(ctx, sandboxName)
 	if err != nil {
 		return nil, nil, negotiated{}, err
-	}
-
-	addr := net.JoinHostPort(sb.Status.PodIP, strconv.Itoa(b.AdapterPort))
-	cl, err = b.DialAdapter(addr)
-	if err != nil {
-		return nil, nil, negotiated{}, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
-	}
-
-	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
-	if err != nil {
-		cl.Close()
-		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
-	}
-	if resp.GetIncompatible() {
-		cl.Close()
-		return nil, nil, negotiated{}, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
-		)
 	}
 	// spec: §6.3, §16.1 — record the warm-pool claim
 	// now that the idle→claimed transition has succeeded and the
@@ -113,6 +113,5 @@ func (b *Binder) connect(ctx context.Context, req podclaim.ClaimRequest) (sb *le
 			b.ClaimAccepted(pool, rc)
 		}
 	}
-	neg = negotiated{WorkspaceBase: resp.GetWorkspaceBase()}
 	return sb, cl, neg, nil
 }

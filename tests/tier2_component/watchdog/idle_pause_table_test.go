@@ -6,10 +6,11 @@
 // Postgres-backed SessionStore. The §11.3 watchdog lists session rows by
 // state from the real pgstore and idle-expires those whose idle clock has
 // run past the effective bound. This exercises the clock's own pause table
-// end-to-end: the sweep must list and expire the clock-running states
-// (running, input_required, awaiting_client_action) and must leave the
-// paused states (suspended, resume_pending, resuming, finalizing) untouched
-// by the idle path.
+// end-to-end: the sweep must list and act on the one clock-running state,
+// running, and must leave every other state (input_required,
+// awaiting_client_action, suspended, resume_pending, resuming, and
+// finalizing) untouched by the idle path. With no idle suspender wired, the
+// sweep's action on an idle running row is the idle expiry.
 package watchdog_component_test
 
 import (
@@ -63,17 +64,16 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
-// spec: 6.2 (maxClientIdleSeconds clock), 11.3 line 199 (max client idle
-// row), 9.2 (elicitation-wait idle clock)
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states), 11.3
+// (Timeouts and Cancellation)
 //
 // diagnosis: the §11.3 watchdog idle sweep did not behave as specified
-// against the Postgres-backed SessionStore. The idle clock must run in
-// running, input_required, and awaiting_client_action and reclaim an
-// abandoned session there, and must stay paused in suspended,
-// resume_pending, resuming, and finalizing so a deliberately halted or
-// recovering session is not falsely idle-terminated. A failure means the
-// state-filtered List path or the per-state idle transition diverged from
-// the spec pause table when run against real Postgres.
+// against the Postgres-backed SessionStore. The idle clock runs only in
+// running and acts on an abandoned session there, and stays paused in every
+// other state so a session waiting on its client, deliberately halted, or
+// recovering is not idle-terminated. A failure means the state-filtered
+// List path or the per-state idle transition diverged from the spec pause
+// table when run against real Postgres.
 func TestWatchdogIdleSweepPauseTable_spec_6_2(t *testing.T) {
 	t.Parallel()
 	store, pg := startStore(t)
@@ -86,10 +86,10 @@ func TestWatchdogIdleSweepPauseTable_spec_6_2(t *testing.T) {
 	// idle-reclaimed. paused: the idle clock is paused here.
 	clockRunning := []session.State{
 		session.StateRunning,
-		session.StateInputRequired,
-		session.StateAwaitingClientAction,
 	}
 	paused := []session.State{
+		session.StateInputRequired,
+		session.StateAwaitingClientAction,
 		session.StateSuspended,
 		session.StateResumePending,
 		session.StateResuming,
@@ -128,7 +128,7 @@ func TestWatchdogIdleSweepPauseTable_spec_6_2(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 	if res.IdleExpirations != len(clockRunning) {
-		t.Fatalf("IdleExpirations: got %d, want %d (running, input_required, awaiting_client_action)",
+		t.Fatalf("IdleExpirations: got %d, want %d (running only)",
 			res.IdleExpirations, len(clockRunning))
 	}
 

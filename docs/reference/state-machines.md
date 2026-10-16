@@ -34,11 +34,13 @@ stateDiagram-v2
     starting --> running : Agent session started
 
     running --> suspended : interrupt_request + acknowledged
+    running --> suspended : Idle suspension (maxClientIdleSeconds elapsed)
     running --> input_required : lenny/request_input (sub-state)
     running --> completed : Agent finishes
     running --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
     running --> cancelled : Client or parent cancels
     running --> expired : Lease/budget/deadline exhausted
+    running --> expired : Idle expiry (session cannot be idle-suspended)
     running --> resume_pending : Retryable failure (retries remain)
     running --> awaiting_client_action : Retryable failure (retries exhausted)
 
@@ -49,19 +51,19 @@ stateDiagram-v2
     input_required --> awaiting_client_action : Retryable failure (retries exhausted)
     input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
 
-    suspended --> running : resume_session (pod still held)
-    suspended --> running : delivery:immediate message (pod still held)
-    suspended --> resume_pending : resume_session (pod released)
-    suspended --> resume_pending : delivery:immediate message (pod released)
+    suspended --> running : resume_session or POST resume (pod still held)
+    suspended --> running : Any message (pod still held)
+    suspended --> resume_pending : resume_session or POST resume (pod released)
+    suspended --> resume_pending : Any message (pod released)
     suspended --> resume_pending : Retryable failure, pod still held (retries remain)
     suspended --> awaiting_client_action : Retryable failure, pod still held (retries exhausted)
     suspended --> completed : terminate
     suspended --> cancelled : Client or parent cancels
-    suspended --> expired : perChildMaxAge wall-clock expiry
+    suspended --> expired : maxSuspendedSessionSeconds or perChildMaxAge elapsed
     suspended --> failed : Non-retryable failure, pod still held / BUDGET_KEYS_EXPIRED
 
     resume_pending --> running : Pod allocated, resume successful
-    resume_pending --> awaiting_client_action : Timeout (no pod available)
+    resume_pending --> awaiting_client_action : maxResumeWindowSeconds elapsed
 
     note right of resume_pending
         resuming is an internal-only
@@ -92,8 +94,8 @@ stateDiagram-v2
 | `starting` | `StartSession` called. The runtime process becomes live for the session: in the sidecar model the kubelet starts the binary through the runtime image's entrypoint when the pod starts, the binary dials the adapter, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |
 | `input_required` | Sub-state of `running` (not a peer state). Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. The session remains logically `running` while in this sub-state. |
-| `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. |
-| `resume_pending` | Pod lost or released. Gateway is attempting to allocate a new pod. `maxResumeWindowSeconds` timer running. |
+| `suspended` | Session suspended, either by an interrupt or by idle suspension after `maxClientIdleSeconds` without activity. Workspace preserved. After an interrupt the pod is held for up to `maxSuspendedPodHoldSeconds` and then released after a checkpoint; an idle suspension checkpoints the workspace and releases the pod or slot as it suspends the session. Any message, `resume_session`, or `POST /v1/sessions/{id}/resume` resumes the session. Not counted toward the concurrent-session limits. `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. Expires after `gateway.maxSuspendedSessionSeconds` (default: 604800s / 7 days) in this state. |
+| `resume_pending` | Pod lost, or a `suspended` session whose pod was released is being resumed. The gateway's resume driver claims a replacement pod and restores the session onto it. `maxResumeWindowSeconds` timer running. |
 | `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
 | `completed` | Terminal. Agent finished normally. Workspace sealed and exported. |
@@ -112,11 +114,13 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 | `ready` | `starting` | Client calls StartSession | `POST /v1/sessions/{id}/start` |
 | `starting` | `running` | Agent runtime reaches ready | Internal |
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
+| `running` | `suspended` | Idle suspension: `maxClientIdleSeconds` elapsed with no activity, and the runtime adapter observed none in the window; workspace checkpointed and pod or slot released. Applies only to a session that can be idle-suspended, which excludes a `type: mcp` runtime and an `executionMode: service` pool | Internal timer |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
 | `running` | `failed` | Non-retryable failure or `BUDGET_KEYS_EXPIRED` | Internal |
 | `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
+| `running` | `expired` | Idle expiry: `maxClientIdleSeconds` elapsed with no activity for a session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool); reason `max_idle_time` | Internal timer |
 | `running` | `resume_pending` | Retryable failure with retries remaining | Internal |
 | `running` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond` |
@@ -125,12 +129,12 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 | `input_required` | `resume_pending` | Retryable failure with retries remaining | Internal |
 | `input_required` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `failed` | Non-retryable failure | Internal |
-| `suspended` | `running` | Resume (pod still held) | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
-| `suspended` | `resume_pending` | Resume or `delivery:immediate` message (pod released), or a retryable failure with retries remaining (pod still held) | `POST /v1/sessions/{id}/resume`, `delivery:immediate` message, or internal |
+| `suspended` | `running` | Resume or any message, whatever its `delivery` value (pod still held); subject to the concurrent-session admission check | `POST /v1/sessions/{id}/resume`, `resume_session`, or a message |
+| `suspended` | `resume_pending` | Resume or any message, whatever its `delivery` value (pod released), subject to the concurrent-session admission check; or a retryable failure with retries remaining (pod still held) | `POST /v1/sessions/{id}/resume`, `resume_session`, a message, or internal |
 | `suspended` | `awaiting_client_action` | Retryable failure with retries exhausted (pod still held) | Internal |
 | `suspended` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
 | `suspended` | `cancelled` | Cancel | `DELETE /v1/sessions/{id}` |
-| `suspended` | `expired` | `perChildMaxAge` wall-clock expiry | Internal timer |
+| `suspended` | `expired` | `gateway.maxSuspendedSessionSeconds` elapsed since entry to `suspended`, or `perChildMaxAge` wall-clock expiry | Internal timer |
 | `suspended` | `failed` | Non-retryable failure (pod still held) or `BUDGET_KEYS_EXPIRED` | Internal |
 | `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |
 | `resume_pending` | `awaiting_client_action` | `maxResumeWindowSeconds` elapsed | Internal timer |
@@ -195,12 +199,12 @@ stateDiagram-v2
     attached --> failed : Non-retryable failure
     attached --> resume_pending : Retryable failure (retries remain)
     attached --> awaiting_client_action : Retryable failure (retries exhausted)
-    attached --> suspended : Interrupt
+    attached --> suspended : Interrupt or idle suspension
     attached --> cancelled : Cancel
 
     suspended --> running_resumed : Resume
     suspended --> completed : Terminate
-    suspended --> resume_pending : Retryable failure (retries remain) or pod released
+    suspended --> resume_pending : Retryable failure (retries remain) or resume after pod release
     suspended --> awaiting_client_action : Retryable failure (retries exhausted)
     suspended --> failed : Non-retryable failure
     suspended --> cancelled : Cancel
@@ -209,6 +213,7 @@ stateDiagram-v2
     resume_pending --> awaiting_client_action : Timeout
 
     resuming --> attached : Resume successful
+    resuming --> resume_pending : Retryable failure or resuming watchdog (retries remain)
 
     state running_resumed {
         [*] --> active

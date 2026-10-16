@@ -420,7 +420,7 @@ func TestCancelChildToolRejectsTerminalChild(t *testing.T) {
 }
 
 func TestCancelChildArchivesCancelledSubtree(t *testing.T) {
-	srv, store, archive := newMCPForArchive(t)
+	srv, store, archive, hook := newMCPForArchiveHook(t)
 	mkSession(t, store, "sess_root", session.StateRunning, "")
 	mkSession(t, store, "sess_a", session.StateRunning, "sess_root")
 	mkSession(t, store, "sess_a1", session.StateRunning, "sess_a")
@@ -428,6 +428,7 @@ func TestCancelChildArchivesCancelledSubtree(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/cancel_child",
 		`{"parentSessionId":"sess_root","childSessionId":"sess_a"}`)
 	resultText(t, resp) // fails the test on a tool error
+	hook.waitSettled(t, 2)
 
 	// §8.10: every cancelled subtree node is archived under the tree
 	// root (sess_root), in original-settlement order.
@@ -755,11 +756,12 @@ func TestAwaitChildrenPrefersArchivedRichBody_spec_8_8_2(t *testing.T) {
 // the settle-path body so a resumed parent replaying either route sees
 // the same value. F-8.8.7 / F-8.8.4.
 func TestArchiveCancelledMCPSpellingAndCategory_spec_8_8_7(t *testing.T) {
-	srv, store, archive := newMCPForArchive(t)
+	srv, store, archive, hook := newMCPForArchiveHook(t)
 	mkSession(t, store, "sess_p", session.StateRunning, "")
 	mkSession(t, store, "sess_c", session.StateRunning, "sess_p")
 	call(t, srv.Handler(), "lenny/cancel_child",
 		`{"parentSessionId":"sess_p","childSessionId":"sess_c"}`)
+	hook.waitSettled(t, 1)
 	node, err := archive.GetByNode(context.Background(), "acme", "sess_c")
 	if err != nil {
 		t.Fatalf("archive GetByNode: %v", err)

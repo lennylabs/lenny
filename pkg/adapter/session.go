@@ -449,7 +449,7 @@ func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.Shutd
 		// section, and the write precedes the release of the reclaim hold
 		// that section opened.
 		if r.live {
-			s.writeSessionEnd(sessionID)
+			s.writeSessionEnd(sessionID, r.st)
 		}
 		// §4.7: flush a final usage report onto the gateway control stream
 		// so the gateway can run budget_return.lua (§8.3) with the

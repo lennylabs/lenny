@@ -17,29 +17,30 @@ import (
 //
 // spec: §12.8.
 var canonicalRank = map[string]int{
-	"leases":               10,  // step 1
-	"semantic_cache":       20,  // step 2
-	"redis_caches":         30,  // step 3
-	"experiment_sticky":    40,  // step 4
-	"billing_buffer":       50,  // step 5
-	"quota":                60,  // step 6
-	"artifacts":            70,  // step 7 (ArtifactStore, MinIO)
-	"checkpoint_manifests": 71,  // step 7 family (ArtifactStore checkpoints: checkpoint_manifest)
-	"checkpoint_retention": 72,  // step 7 family (ArtifactStore checkpoints: session_checkpoints)
-	"checkpoint_meta":      73,  // step 7 family (ArtifactStore checkpoints: session_checkpoint_meta)
-	"transcripts":          75,  // step 7 family (session transcripts)
-	"interactions":         78,  // session interaction records (FK child of sessions)
-	"memory":               80,  // step 8
-	"eviction_state":       90,  // step 9
-	"session_dlq_archive":  100, // step 10
-	"session_tree_archive": 110, // step 11
-	"eval_results":         120, // step 12
-	"audit":                130, // step 13
-	"billing":              150, // step 15
-	"delegation_budget":    160, // step 16
-	"sessions":             170, // step 17 (SessionStore, the FK parent)
-	"tokens":               180, // step 18
-	"credential_pool":      190, // step 19
+	"leases":                 10,  // step 1
+	"semantic_cache":         20,  // step 2
+	"redis_caches":           30,  // step 3
+	"experiment_sticky":      40,  // step 4
+	"billing_buffer":         50,  // step 5
+	"quota":                  60,  // step 6
+	"artifacts":              70,  // step 7 (ArtifactStore, MinIO)
+	"checkpoint_manifests":   71,  // step 7 family (ArtifactStore checkpoints: checkpoint_manifest)
+	"checkpoint_retention":   72,  // step 7 family (ArtifactStore checkpoints: session_checkpoints)
+	"checkpoint_meta":        73,  // step 7 family (ArtifactStore checkpoints: session_checkpoint_meta)
+	"transcripts":            75,  // step 7 family (session transcripts)
+	"interactions":           78,  // session interaction records (FK child of sessions)
+	"memory":                 80,  // step 8
+	"eviction_state":         90,  // step 9
+	"session_dlq_archive":    100, // step 10
+	"session_message_queues": 105, // step 10 (Redis DLQ and durable inbox)
+	"session_tree_archive":   110, // step 11
+	"eval_results":           120, // step 12
+	"audit":                  130, // step 13
+	"billing":                150, // step 15
+	"delegation_budget":      160, // step 16
+	"sessions":               170, // step 17 (SessionStore, the FK parent)
+	"tokens":                 180, // step 18
+	"credential_pool":        190, // step 19
 }
 
 // fkMustPrecede lists the (child, parent) ordering constraints the §12.8

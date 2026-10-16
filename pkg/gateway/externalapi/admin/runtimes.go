@@ -415,9 +415,6 @@ func validateSessionPolicy(p *runtimestore.SessionPolicy) error {
 		p.MaxClientIdleSeconds < 0 || p.MaxQueueWaitSeconds < 0 {
 		return errors.New("sessionPolicy numeric fields must not be negative")
 	}
-	if p.MaxSessionRetries != nil && *p.MaxSessionRetries < 0 {
-		return errors.New("sessionPolicy.maxSessionRetries must not be negative")
-	}
 	if p.SlotRetries != nil && *p.SlotRetries < 0 {
 		return errors.New("sessionPolicy.slotRetries must not be negative")
 	}

@@ -121,17 +121,17 @@ func TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState(t *testing.T
 // periodic / seal driver on a bound agent pod: the gateway opens the §10.1
 // Checkpoint stream, mints per-chunk presigned grants, the adapter PUTs each
 // chunk to the object store, and the gateway confirms each chunk with a
-// StatObject and writes the durable checkpoint_manifest row. The client then
-// loses the pod (a hard pod delete, not a graceful drain) and resumes onto a
-// fresh pod.
+// StatObject and writes the durable checkpoint_manifest row. The session then
+// loses its pod (a hard pod delete, not a graceful drain), and the resume
+// driver restores it onto a fresh pod with no client call.
 //
 // diagnosis: a failure here means the checkpoint-then-resume durability
 // guarantee is broken for a periodic / seal checkpoint on a bound pod: either
 // the gateway did not persist a completed checkpoint (no manifest row reaches
 // partial = false with chunk_count > 0 and workspace_bytes_uploaded > 0), the
-// pod-loss recovery did not surface the session as awaiting_client_action, or
-// POST /v1/sessions/{id}/resume did not restore the workspace onto the fresh
-// pod (the resumed session reports workspaceLost or the marker file is absent).
+// resume driver did not restore the session onto a fresh pod with no client
+// call, or the restore did not bring the workspace onto the fresh pod (the
+// resumed session reports workspaceLost or the marker file is absent).
 //
 // The checkpoint the resume consumes is produced by the periodic driver, whose
 // cadence is set by periodicCheckpointIntervalSeconds on the pool. When no
@@ -191,42 +191,22 @@ func TestCheckpointOnPodLossResumesWorkspace(t *testing.T) {
 	t.Logf("completed checkpoint for session %s: chunk_count=%d workspace_bytes_uploaded=%d",
 		sess.ID, chunkCount, bytesUploaded)
 
-	// Hard pod loss: delete the bound agent pod. The gateway's pod-failure
-	// detection abandons automatic recovery and holds the session in
-	// awaiting_client_action for an explicit client resume (§7.3).
-	if out, err := c.KubectlOut(t, "-n", executionModesNamespace, "delete", "pod", lostPod,
-		"--grace-period=0", "--wait=false"); err != nil {
-		t.Fatalf("delete bound pod %s: %v\n%s", lostPod, err, out)
-	}
-	if _, reached := d.WaitForState(ctx, tenant, sess.ID, 120*time.Second, "awaiting_client_action"); !reached {
-		cur, _ := d.GetSession(ctx, tenant, sess.ID)
-		state := "<unknown>"
-		if cur != nil {
-			state = cur.State
-		}
-		t.Fatalf("session %s did not reach awaiting_client_action after its pod was deleted (last state %q); "+
-			"pod-loss recovery must surface the lost session for an explicit §7.3 resume", sess.ID, state)
-	}
-
-	// Subscribe before resuming so the §7.2 session.resumed event (carrying the
-	// resolved resumeMode / workspaceLost) is not missed.
+	// Subscribe before the pod loss so the §7.2 session.resumed event
+	// (carrying the resolved resumeMode / workspaceLost) is not missed.
 	events, closeEvents, err := d.StreamEvents(ctx, tenant, sess.ID, 0)
 	if err != nil {
 		t.Fatalf("open events stream: %v", err)
 	}
 	defer closeEvents()
 
-	resumed, err := d.Resume(ctx, tenant, sess.ID)
-	if err != nil {
-		t.Fatalf("resume session %s: %v", sess.ID, err)
+	// Hard pod loss: delete the bound agent pod. The failure moves the
+	// session to resume_pending, and the coordinating replica's resume
+	// driver restores it onto a fresh pod with no client call (§7.3).
+	if out, err := c.KubectlOut(t, "-n", executionModesNamespace, "delete", "pod", lostPod,
+		"--grace-period=0", "--wait=false"); err != nil {
+		t.Fatalf("delete bound pod %s: %v\n%s", lostPod, err, out)
 	}
-	if resumed.State != "running" {
-		t.Errorf("resumed session state = %q, want running", resumed.State)
-	}
-	if resumed.PodAssignment == "" || resumed.PodAssignment == lostPod {
-		t.Errorf("resumed session podAssignment = %q, want a fresh pod distinct from the lost pod %q",
-			resumed.PodAssignment, lostPod)
-	}
+	resumed := awaitRestoredOntoAnotherPod(ctx, t, d, tenant, sess.ID, lostPod, 4*time.Minute)
 
 	mode, lost := awaitResumeMode(ctx, t, events, 60*time.Second)
 	if lost {
@@ -323,5 +303,24 @@ func awaitResumeMode(ctx context.Context, t *testing.T, events <-chan sessiondri
 		case <-ctx.Done():
 			t.Fatalf("context cancelled waiting for session.resumed: %v", ctx.Err())
 		}
+	}
+}
+
+// awaitRestoredOntoAnotherPod waits until the session runs on a pod other
+// than lostPod after a committed restore, and returns it.
+func awaitRestoredOntoAnotherPod(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant, id, lostPod string, timeout time.Duration) *sessiondriver.Session {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		cur, err := d.GetSession(ctx, tenant, id)
+		if err == nil && cur.State == "running" && cur.PodAssignment != "" && cur.PodAssignment != lostPod &&
+			cur.RecoveryGeneration >= 1 {
+			return cur
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s was not restored onto a fresh pod within %s after losing %s (last %+v, err %v)",
+				id, timeout, lostPod, cur, err)
+		}
+		time.Sleep(2 * time.Second)
 	}
 }

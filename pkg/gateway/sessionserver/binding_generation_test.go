@@ -126,10 +126,12 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 			row.ID = id
 			row.CoordinationGeneration = 5
 			seedAwaitingSession(t, store, row)
-			if rr := postSessionStep(t, srv.Handler(), "/v1/sessions/"+id+"/resume", nil); rr.Code != http.StatusOK {
+			if rr := resumeAndDrive(t, srv, id); rr.Code != http.StatusOK {
 				t.Fatalf("resume: status %d, body=%s", rr.Code, rr.Body.String())
 			}
-			assertBindingGeneration(t, store, registry, id, 5)
+			// spec: §7.3 (Resume driver) — the entry write advances the
+			// row from 5 to G = 6, and the commit stamps the binding at G.
+			assertBindingGeneration(t, store, registry, id, 6)
 		})
 	}
 }

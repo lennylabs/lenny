@@ -4,7 +4,9 @@ package runtimestore_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -438,16 +440,13 @@ func TestRuntimeMinPlatformVersionRoundTrip(t *testing.T) {
 // spec: 5.1 (sessionPolicy block), 5.2 (recycle lifecycle)
 func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 	// §5.1: a runtime carries an optional sessionPolicy. The store must
-	// deep-copy the cleanup-command slice, the recycle pointer, and the
-	// retry pointer so a caller's later mutation cannot reach the stored
-	// row.
+	// deep-copy the cleanup-command slice and the recycle pointer so a
+	// caller's later mutation cannot reach the stored row.
 	s := runtimestore.NewMemory()
-	retries := 3
 	policy := &runtimestore.SessionPolicy{
 		MaxConcurrentSessions: 1,
 		CleanupCommands:       []string{"rm -rf /tmp/x"},
 		CleanupTimeoutSeconds: 30,
-		MaxSessionRetries:     &retries,
 		Recycle: &runtimestore.RecyclePolicy{
 			Enabled:                    true,
 			AcknowledgeBestEffortScrub: true,
@@ -463,7 +462,6 @@ func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	policy.CleanupCommands[0] = "tampered"  // mutate caller's slice
-	*policy.MaxSessionRetries = 99          // mutate caller's pointee
 	policy.Recycle.MaxSessionsPerPod = 1234 // mutate caller's recycle pointee
 
 	got, err := s.Get(context.Background(), "rt")
@@ -475,9 +473,6 @@ func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 		got.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
 		got.SessionPolicy.CleanupCommands[0] != "rm -rf /tmp/x" {
 		t.Errorf("sessionPolicy not stored or not isolated: %+v", got.SessionPolicy)
-	}
-	if got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 3 {
-		t.Errorf("maxSessionRetries not isolated from caller mutation: %+v", got.SessionPolicy.MaxSessionRetries)
 	}
 }
 
@@ -676,24 +671,18 @@ func TestSessionPolicyCloneDeepCopies(t *testing.T) {
 	if (*runtimestore.RecyclePolicy)(nil).Clone() != nil {
 		t.Error("nil RecyclePolicy must clone to nil")
 	}
-	retries := 3
 	slot := 2
 	sp := &runtimestore.SessionPolicy{
-		CleanupCommands:   []string{"a"},
-		MaxSessionRetries: &retries,
-		SlotRetries:       &slot,
-		Recycle:           &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5},
+		CleanupCommands: []string{"a"},
+		SlotRetries:     &slot,
+		Recycle:         &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5},
 	}
 	cp := sp.Clone()
 	sp.CleanupCommands[0] = "tampered"
-	*sp.MaxSessionRetries = 99
 	*sp.SlotRetries = 99
 	sp.Recycle.MaxSessionsPerPod = 99
 	if cp.CleanupCommands[0] != "a" {
 		t.Error("Clone shared the cleanup-command slice")
-	}
-	if cp.MaxSessionRetries == nil || *cp.MaxSessionRetries != 3 {
-		t.Error("Clone shared the maxSessionRetries pointee")
 	}
 	if cp.SlotRetries == nil || *cp.SlotRetries != 2 {
 		t.Error("Clone shared the slotRetries pointee")
@@ -713,5 +702,28 @@ func TestValidateName(t *testing.T) {
 		if err := runtimestore.ValidateName(name); err == nil {
 			t.Errorf("ValidateName(%q) should fail", name)
 		}
+	}
+}
+
+// TestSessionPolicyDropsRetiredMaxSessionRetries_spec_7_3 pins the deletion
+// of sessionPolicy.maxSessionRetries from the runtime store: a stored or
+// submitted policy document that still names the key decodes without error,
+// and re-encoding the policy drops it, so the key is never persisted.
+//
+// spec: §7.3 (Retry and Resume), §5.2 (Pool Configuration and Execution Modes)
+func TestSessionPolicyDropsRetiredMaxSessionRetries_spec_7_3(t *testing.T) {
+	var p runtimestore.SessionPolicy
+	if err := json.Unmarshal([]byte(`{"maxSessionRetries":2,"cleanupTimeoutSeconds":30}`), &p); err != nil {
+		t.Fatalf("decode a policy carrying maxSessionRetries: %v", err)
+	}
+	if p.CleanupTimeoutSeconds != 30 {
+		t.Errorf("CleanupTimeoutSeconds = %d, want 30", p.CleanupTimeoutSeconds)
+	}
+	out, err := json.Marshal(p.Clone())
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(string(out), "maxSessionRetries") {
+		t.Errorf("re-encoded policy carries maxSessionRetries: %s", out)
 	}
 }

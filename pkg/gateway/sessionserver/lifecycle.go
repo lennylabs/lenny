@@ -241,30 +241,22 @@ func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Sess
 	s.publishEvent(sess.TenantID, sess.ID, "session_complete", s.materializeTaskResult(ctx, sess, 0))
 }
 
-// emitTerminalLifecycle fires the client- and audit-visible signals
-// every terminal session transition must produce, independent of the
-// heavier teardown (seal, executor close, cascade, billing) that only
-// the full completion path runs: the §7.2 status_change(state) and
-// session_complete(result) SSE events, the §11.7 session lifecycle
-// audit event, and the §7.1 retention-window roll. It is the
-// shared hook for both terminal paths — recordSessionCompleted (the
-// REST transitions, cancel cascade, and watchdog expiry) and
-// failSession (the start-path claim/credential failure) — so a failed
-// session emits the same lifecycle signals as a completed one. Every
-// step is best-effort. The caller must only invoke this for a terminal
-// state.
+// emitTerminalLifecycle fires the audit-visible signals every terminal
+// session transition produces: the §11.7 session lifecycle audit event, the
+// §7.1 retention-window roll, and the §16.1 terminal session metrics, and it
+// drops the §6.3 TTFT tracker entry. The client-visible terminal events
+// (status_change and session_complete) and the inbox and DLQ drain are steps
+// of the post-terminal hook (AfterTerminalWrite), which runs this function
+// through a writer's signal tail. Every step is best-effort. A non-terminal
+// row emits nothing.
 //
 // spec: §7.2; §7.1; §16.6.
 func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Session) {
 	if !session.IsTerminal(sess.State) {
-		// Defensive: the terminal signals (notably session_complete and
-		// the retention roll) are meaningless for a non-terminal state.
-		// recordSessionCompleted is only invoked for terminal states in
-		// production, but the guard keeps the helper self-consistent.
+		// Defensive: the terminal signals (notably the retention roll) are
+		// meaningless for a non-terminal state.
 		return
 	}
-	s.emitStatusChange(sess.TenantID, sess.ID, sess.State)
-	s.emitSessionComplete(ctx, sess)
 	if s.lifecycleAudit != nil {
 		if et, ok := auditEventTypeForTerminal(sess.State); ok {
 			s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
@@ -281,13 +273,6 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 	}
 	s.rollRetentionOnTerminal(ctx, sess)
 	s.recordTerminalSessionMetrics(sess)
-	// spec: §7.2 / §7.3 — drain any inbox + DLQ
-	// messages still buffered for this now-terminal session, emitting a
-	// message_expired(target_terminated) event to each registered
-	// sender so a sender that received a `queued` receipt learns its
-	// message was never consumed. Best-effort; no-op without messaging.
-	// F-7.3.12.
-	s.drainMessagingOnTerminal(ctx, sess)
 	// spec: §6.3 — the §6.3 TTFT tracker is in-memory only.
 	// On terminal, drop the entry so the map size scales with
 	// concurrently-streaming sessions rather than lifetime sessions.

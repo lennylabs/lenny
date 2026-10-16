@@ -129,24 +129,3 @@ func TestRedisInbox_DrainFIFO_spec_7_2_297(t *testing.T) {
 		t.Fatalf("len after drain = %d, want 0", n)
 	}
 }
-
-// spec: §7.2 — durable-inbox resume_pending handling applies an
-// EXPIRE to the inbox key rather than draining to the DLQ.
-func TestRedisInbox_Expire_spec_7_2_305(t *testing.T) {
-	c := newRedisT(t)
-	in := NewRedisInbox(c, 10)
-	ctx := context.Background()
-	if _, err := in.Enqueue(ctx, "acme", "s", msg("m1", "snd")); err != nil {
-		t.Fatal(err)
-	}
-	if err := in.Expire(ctx, "acme", "s", 30*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	ttl, err := c.TTL(ctx, inboxKey("acme", "s")).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ttl <= 0 || ttl > 30*time.Second {
-		t.Fatalf("ttl = %v, want (0, 30s]", ttl)
-	}
-}

@@ -102,6 +102,10 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	postByID("lenny/finalize_workspace", "Seal the session workspace and run setup.", "/finalize")
 	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate")
 	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume")
+	// spec: §15.2, §15.2.1 (REST/MCP Consistency Contract) — the interrupt
+	// runs the REST POST /v1/sessions/{id}/interrupt route, the one write of
+	// an interrupt into suspended, and answers its session body.
+	postByID("lenny/interrupt_session", "Interrupt the running agent in a session. REST equivalent: POST /v1/sessions/{id}/interrupt.", "/interrupt")
 
 	// spec: §15.2 — per-session reads.
 	getByID("lenny/get_session_status", "Query a session's state (including suspended).", "")

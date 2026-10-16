@@ -79,7 +79,8 @@ func (w *gatewayWiring) buildControlServer(
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	maxResumingSeconds := f.maxResumingSeconds
 	retryMaxRetries := f.retryMaxRetries
-	maxIdleTimeSeconds := f.maxIdleTimeSeconds
+	maxClientIdleSeconds := f.maxClientIdleSeconds
+	maxSuspendedSessionSeconds := f.maxSuspendedSessionSeconds
 	sessionExpiryWarningSeconds := f.sessionExpiryWarningSeconds
 
 	// ----- §8.6 GatewayControl gRPC server -----
@@ -229,7 +230,8 @@ func (w *gatewayWiring) buildControlServer(
 		MaxResumePendingSeconds:        *maxResumePendingSeconds,
 		MaxResumingSeconds:             *maxResumingSeconds,
 		MaxRetries:                     *retryMaxRetries,
-		MaxIdleSeconds:                 *maxIdleTimeSeconds,
+		MaxIdleSeconds:                 *maxClientIdleSeconds,
+		MaxSuspendedSessionSeconds:     *maxSuspendedSessionSeconds,
 		ExpiryWarningSeconds:           *sessionExpiryWarningSeconds,
 	}, nil).
 		WithBilling(w.billing).
@@ -241,15 +243,26 @@ func (w *gatewayWiring) buildControlServer(
 		// default) instead of expiring every session at the single baked
 		// default. F-11.3.3.
 		WithSessionAgeResolver(sessionage.New(w.runtimes, w.pools)).
-		// spec: §11.3 / §6.2 (maxClientIdleSeconds clock) — the
-		// idle sweep expires a clock-running session idle longer than its
+		// spec: §6.2 (maxClientIdleSeconds clock behavior across states) —
+		// the idle sweep acts on a `running` session idle longer than its
 		// effective `maxClientIdleSeconds`, honouring the per-runtime /
-		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the pool's
-		// effective `maxSessionAgeSeconds`) and the §27.6 playground idle
-		// override. The clock runs in `running`, `input_required`, and
-		// `awaiting_client_action`; its pause table lives in the watchdog
-		// sweep, so no separate pause predicate is wired. F-11.3.7.
-		WithIdleResolver(sessionidle.NewResolver(w.runtimes, w.pools))
+		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the
+		// --max-client-idle-seconds flag) and the §27.6 playground idle
+		// override. F-11.3.7.
+		WithIdleResolver(sessionidle.NewResolver(w.runtimes, w.pools)).
+		// spec: §6.2 (Pod State Machine) — the suspended sweep releases an
+		// interrupt suspension's pod at the hold and expires a session at
+		// its suspended lifetime; a suspended session that holds its pod and
+		// a message is resumed by the coordinating replica.
+		WithSuspendedPodReleaser(sessionSrv).
+		WithBacklogResumer(sessionSrv)
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states) — an
+	// idle session is suspended only when a pod binder is wired. Without one
+	// (no --agent-namespace) the in-process or subprocess executor claims no
+	// pod and dials no adapter, so the sweep expires every idle session.
+	if w.podBinder != nil {
+		wd = wd.WithIdleSuspender(sessionSrv)
+	}
 	// spec: §7.2 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the

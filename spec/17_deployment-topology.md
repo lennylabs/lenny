@@ -906,7 +906,9 @@ All tunable defaults collected in one place for operator convenience.
 | GC cycle interval (`gc.cycleIntervalSeconds`, min 60)                    | 900 s (15 min)                                                           | [§12.5](12_storage-architecture.md#125-artifact-store)     |
 | GC tombstone retention (`gc.tombstoneRetentionSeconds`) | 86400 s (24 h)                                                           | [§12.5](12_storage-architecture.md#125-artifact-store)     |
 | Max session age                   | 7200 s (2 h)                                                             | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
-| Max client idle time (`maxClientIdleSeconds`) | The pool's effective `maxSessionAgeSeconds` (7200 s at the default age cap) | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
+| Max client idle time (`maxClientIdleSeconds`) | 900 s (idle suspension, or expiry when the session cannot be idle-suspended)                                                  | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
+| Max suspended session lifetime (`gateway.maxSuspendedSessionSeconds`) | 604800 s (7 d)                                   | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
+| Suspended backlog re-check interval (`gateway.suspendedBacklogRecheckSeconds`) | 300 s                                  | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
 | Max resume window                 | 900 s                                                                    | [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)     |
 | Rate limit fail-open window       | 60 s                                                                     | [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)     |
 | Quota sync interval               | 30 s (min 10 s)                                                          | [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)     |
@@ -929,7 +931,7 @@ All tunable defaults collected in one place for operator convenience.
 | Effective degraded window (dual-store outage) | `max(dualStoreUnavailableMaxSeconds, coordinatorHoldTimeoutSeconds)` = 120 s | [§10.1](10_gateway-internals.md#101-horizontal-scaling)     |
 | Max tree recovery                 | 600 s (sized for ≤4-level trees; deep trees need increase — see [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery))   | [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery)     |
 | Max suspended pod hold            | 900 s (15 min); `min(deployment, tenant)` — most restrictive wins        | [§6.2](06_warm-pod-model.md#62-pod-state-machine), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation) |
-| Delegation budget key TTL         | 259200 s (72 h)                                                          | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation) |
+| Delegation budget key TTL         | 691200 s (8 d)                                                          | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation) |
 | Eval rate limit — per-session     | 100 submissions/min (`evalRateLimit.perSessionPerMinute`)                | [§10.7](10_gateway-internals.md#107-experiment-primitives)     |
 | Eval rate limit — per-tenant      | 10,000 submissions/min (`evalRateLimit.perTenantPerMinute`)              | [§10.7](10_gateway-internals.md#107-experiment-primitives)     |
 | Tracing context max size          | 4 KB serialized                                                          | [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)      |

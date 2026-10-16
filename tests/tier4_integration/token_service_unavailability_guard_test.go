@@ -101,7 +101,7 @@ type forcedOpenRenewer struct {
 }
 
 func (r *forcedOpenRenewer) Renew(_ context.Context, lease credrenewal.Lease) (credrenewal.Lease, error) {
-	_, err := r.client.Assign(r.pool, lease.SessionID, "", "acme")
+	_, err := r.client.Assign(r.pool, lease.SessionID, "", "acme", 0)
 	if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
 		return credrenewal.Lease{}, fmt.Errorf("%w: %w", credrenewal.ErrRenewInfraUnavailable, err)
 	}
@@ -358,7 +358,7 @@ func TestGuardProxyModeAdvancesLeaseStoreNoTokenServiceCall_spec_4_9(t *testing.
 		RenewBeforeSeconds: 60,
 		Credentials:        []credassign.PoolCredential{{ID: "cred-1", APIKey: "sk-upstream-secret", Healthy: true}},
 	})
-	lease, err := assign.Assign("claude-prod", "run-proxy", "", "acme")
+	lease, err := assign.Assign("claude-prod", "run-proxy", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("mint proxy lease: %v", err)
 	}

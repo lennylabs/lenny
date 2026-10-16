@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint"
@@ -457,6 +458,8 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		})
 	}
 
+	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+
 	// spec: §12.5 — drive the lenny-gateway-leader election
 	// and run every registered gateway-singleton sweep only while this
 	// replica holds the lease (or always, under the AlwaysLeader fallback).
@@ -523,4 +526,29 @@ func reclaimAbandonedManifests(ctx context.Context, release checkpointer.Backsto
 		reclaimed++
 	}
 	return reclaimed, nil
+}
+
+// addSuspendedBacklogRecheck registers the backlog re-check of podless
+// suspended sessions on the gateway-leader gate. It registers only when a pod
+// binder, the messaging coordinator, and a session store that lists podless
+// suspended rows are all wired: without a binder no suspension releases a
+// pod, and without the coordinator no message is held.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §12.5
+// (Artifact Store)
+func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run func(context.Context))) {
+	if w.podBinder == nil || w.messagingCoord == nil || w.sessionSrv == nil {
+		return
+	}
+	lister, ok := w.sessions.(sessionserver.PodlessSuspendedLister)
+	if !ok {
+		return
+	}
+	tenants := tenantsLister{w.tenants}
+	rechecker := &sessionserver.BacklogRechecker{
+		Server:   w.sessionSrv,
+		Lister:   lister,
+		Tenants:  tenants.ListTenants,
+		Interval: time.Duration(*w.f.suspendedBacklogRecheckSeconds) * time.Second,
+	}
+	add("suspended-backlog-recheck", rechecker.Run)
 }

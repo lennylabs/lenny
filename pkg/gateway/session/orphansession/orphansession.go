@@ -30,6 +30,7 @@ package orphansession
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -117,11 +118,20 @@ type PodPhaseReader interface {
 // it. Shared with pkg/gateway/orphancleanup so a force-terminated
 // session emits the same signals exactly once as a REST-terminated one.
 type TerminalHook interface {
-	// fromState is the orphan's pre-terminal state, captured before the
-	// reconciler wrote the `failed` row, so the terminal pod-release path can
-	// distinguish a pre-running claimed session from a running one (§4.6).
+	// BeginTerminal opens the writer's terminal claim before its terminal
+	// Update and returns the idempotent function that ends it.
+	// spec: §7.2 (Interactive Session Model).
+	BeginTerminal(sessionID string) (end func())
+	// fromState is the orphan's pre-terminal state, read on the locked row
+	// the reconciler wrote `failed` over, so the terminal pod-release path
+	// can distinguish a pre-running claimed session from a running one
+	// (§4.6).
 	OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
+
+// errOrphanSuperseded is failOrphan's not-applied sentinel: the locked row
+// is already terminal. spec: §7.2 (Interactive Session Model).
+var errOrphanSuperseded = errors.New("orphansession: orphan transition superseded on the locked row")
 
 // MetricsSink receives the §16.1 orphan-session observations. A nil
 // sink disables emission. spec: §10.1.4 / §16.1.
@@ -334,38 +344,54 @@ func (r *Reconciler) fallbackOrphaned(ctx context.Context, row sessionstore.Sess
 }
 
 // failOrphan transitions an orphaned session to `failed` with the §10.1
-// reason and runs the terminal pipeline. The Update mutator no-ops when
-// a concurrent writer already drove the row terminal, so two replicas
-// running this pass cannot double-fail a session. Returns true when this
-// call performed the transition.
+// reason and runs the terminal pipeline. It is a funnel terminal writer: it
+// opens the terminal claim before its Update, writes only over a locked row
+// that is still an orphan candidate naming the listed pod, and records the Terminated fact in the write, so two replicas
+// running this pass cannot double-fail a session, and it runs the terminal
+// hook with fromState from the locked row exactly when its write applied.
+// Returns true when this call performed the transition.
+//
+// spec: §10.1.4; §7.2 (Interactive Session Model).
 func (r *Reconciler) failOrphan(ctx context.Context, tenantID string, row sessionstore.Session) bool {
+	end := func() {}
+	if r.terminal != nil {
+		end = r.terminal.BeginTerminal(row.ID)
+	}
+	defer end()
+	var from session.State
+	now := r.clock()
 	updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {
-		if session.IsTerminal(s.State) {
-			return nil // concurrent terminal transition — leave it alone
+		// spec: §6.2 (Pod State Machine), §10.1.4 (Coordinator-Loss
+		// Detection and Hold State) — the locked row must still be an orphan
+		// candidate on the same pod: a suspended session whose pod the
+		// suspension released after the listing names no pod and is not an
+		// orphan of the terminated one.
+		if !eligible(*s) || s.PodAssignment != row.PodAssignment {
+			return errOrphanSuperseded
 		}
+		from = s.State
 		s.State = session.StateFailed
 		s.FailureClass = session.FailureClassRuntime
 		s.FailureReason = orphanReason
+		sessionstore.MarkTerminated(s, from, now)
 		return nil
 	})
-	if err != nil {
-		log.Printf("orphansession: fail orphan session %s: %v", row.ID, err)
+	if errors.Is(err, errOrphanSuperseded) {
 		return false
 	}
-	if updated.State != session.StateFailed || updated.FailureReason != orphanReason {
-		// A concurrent writer won the terminal transition; this Tick did
-		// not fail it, so do not double-count or re-run side effects.
+	if err != nil {
+		log.Printf("orphansession: fail orphan session %s: %v", row.ID, err)
 		return false
 	}
 	if r.metrics != nil {
 		r.metrics.IncOrphanSessionReconciliation()
 	}
 	if r.terminal != nil {
-		// row.State is the pre-terminal state captured before the failed write
-		// (§4.6); the §10.1 orphan path only fails post-attached (running)
-		// sessions, so this routes their teardown through the executor recycle
-		// path rather than the pre-running by-name reclaim.
-		r.terminal.OnSessionTerminal(ctx, row.State, updated)
+		// from is the locked row's pre-terminal state (§4.6); the §10.1
+		// orphan path only fails post-attached (running) sessions, so this
+		// routes their teardown through the executor recycle path rather
+		// than the pre-running by-name reclaim.
+		r.terminal.OnSessionTerminal(ctx, from, updated)
 	}
 	return true
 }

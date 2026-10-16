@@ -218,7 +218,7 @@ All SLO targets are **provisional first-principles estimates** that must be vali
 | Session creation success rate | 99.5% | Successful starts / total attempts (30d) |
 | Session creation latency | P99 < 500ms | Auth through session_id response (excludes upload) |
 | Time to first token | P95 < 10s | Session start to first streaming event |
-| Session availability | 99.9% | Uptime not in retry/recovery state |
+| Session availability | 99.9% | Uptime not in retry/recovery state, over the sessions the concurrent-session limits count. A `suspended` session counts as neither available nor in recovery and is not counted |
 | Gateway availability | 99.95% | Healthy replicas serving requests |
 | Startup latency (runc) | P95 < 2s | Pod claim to session ready |
 | Startup latency (gVisor) | P95 < 5s | Pod claim to session ready |

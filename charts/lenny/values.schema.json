@@ -258,7 +258,7 @@
           "type": "integer"
         },
         "maxSessionMinutes": {
-          "description": "§27.6 hard cap on a playground-initiated session's duration.",
+          "description": "§27.6 hard cap on a playground-initiated session's active time, which pauses while the session is suspended.",
           "minimum": 1,
           "type": "integer"
         },

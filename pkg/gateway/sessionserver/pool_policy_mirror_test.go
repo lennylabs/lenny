@@ -66,7 +66,7 @@ func TestBindAndResumeRequestsCarryKeepsRuntime_spec_5_2(t *testing.T) {
 		if bind.KeepsRuntime != keeps {
 			t.Errorf("exclusiveBindRequest KeepsRuntime = %v, want %v", bind.KeepsRuntime, keeps)
 		}
-		resume := checkpointResumeRequest(row, match, nil, "", 0, nil)
+		resume := checkpointResumeRequest(row, match, nil, "", 0, nil, resumeBind{})
 		if resume.KeepsRuntime != keeps {
 			t.Errorf("checkpointResumeRequest KeepsRuntime = %v, want %v", resume.KeepsRuntime, keeps)
 		}

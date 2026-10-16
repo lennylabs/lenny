@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -1313,6 +1314,154 @@ func TestSessionStoreCreateBaselinesCoordinationGeneration_spec_4_2(t *testing.T
 	}
 }
 
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: the Postgres session store did not accrue
+//
+//	accumulated_session_age_seconds in Update the way the §6.2 maxSessionAge
+//	timer requires. Either a write in a counting state (starting, running,
+//	input_required) did not add the interval since the previous write, a write
+//	in a paused state (suspended, resume_pending, resuming,
+//	awaiting_client_action) or a pre-running or terminal state added one, the
+//	column did not round-trip through Create, Get, and List, or a mutator's
+//	own write to the field was persisted. The watchdog then expires sessions
+//	on time they spent paused, or never expires them.
+func TestSessionStoreAccruesActiveAge_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	counting := map[session.State]bool{
+		session.StateStarting:      true,
+		session.StateRunning:       true,
+		session.StateInputRequired: true,
+	}
+	const (
+		seeded = 10.0
+		gap    = time.Hour
+		// The store stamps updated_at from its own clock, so the accrued
+		// interval exceeds gap by the test's own run time.
+		slack = 60.0
+	)
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		t.Run(string(st), func(t *testing.T) {
+			id := newUUID(t)
+			prev := time.Now().UTC().Add(-gap).Truncate(time.Microsecond)
+			if err := store.Create(ctx, sessionstore.Session{
+				ID: id, TenantID: tenant, State: st, RuntimeRef: "echo",
+				CreatedAt: prev.Add(-24 * time.Hour), UpdatedAt: prev,
+				AccumulatedSessionAgeSeconds: seeded,
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.AccumulatedSessionAgeSeconds != seeded {
+				t.Fatalf("Create round-trip: accumulated %v, want %v", got.AccumulatedSessionAgeSeconds, seeded)
+			}
+			// A write that keeps the state, with a mutator that tries to
+			// reset the age budget.
+			updated, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+				r.AccumulatedSessionAgeSeconds = 0
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			want := seeded
+			if counting[st] {
+				want += gap.Seconds()
+			}
+			if d := updated.AccumulatedSessionAgeSeconds - want; d < 0 || d > slack {
+				t.Fatalf("accumulated after an hour in %q = %v, want %v (within %vs)", st, updated.AccumulatedSessionAgeSeconds, want, slack)
+			}
+			reread, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if reread.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+				t.Fatalf("persisted accumulated %v, returned %v", reread.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+			}
+			listed, err := store.List(ctx, tenant, sessionstore.ListFilter{State: st})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			found := false
+			for _, r := range listed {
+				if r.ID == id {
+					found = true
+					if r.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+						t.Fatalf("List accumulated %v, want %v", r.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("List did not return %s", id)
+			}
+		})
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: a transition out of a counting state did not accrue the
+//
+//	interval up to the transition on the Postgres store, or a transition into
+//	a counting state accrued the paused interval before it. The §6.2 timer
+//	pauses on entry to suspended and the recovery states and resumes on entry
+//	to running, so the column must carry exactly the counting intervals.
+func TestSessionStoreAgeAccruesAcrossTransitions_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	setState := func(id string, st session.State) sessionstore.Session {
+		t.Helper()
+		row, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+			r.State = st
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update to %s: %v", st, err)
+		}
+		return row
+	}
+
+	// Running for an hour, then suspended: the transition accrues the hour.
+	running := newUUID(t)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: running, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		UpdatedAt: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	row := setState(running, session.StateSuspended)
+	if a := row.AccumulatedSessionAgeSeconds; a < 3600 || a > 3660 {
+		t.Fatalf("accumulated on running → suspended = %v, want about 3600", a)
+	}
+
+	// Paused for an hour in each paused state, then running: the transition
+	// accrues nothing, because the timer resumes only on entry to running.
+	for _, paused := range []session.State{
+		session.StateSuspended, session.StateResumePending,
+		session.StateResuming, session.StateAwaitingClientAction,
+	} {
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: paused, RuntimeRef: "echo",
+			UpdatedAt:                    time.Now().UTC().Add(-time.Hour),
+			AccumulatedSessionAgeSeconds: 5,
+		}); err != nil {
+			t.Fatalf("Create %s: %v", paused, err)
+		}
+		if a := setState(id, session.StateRunning).AccumulatedSessionAgeSeconds; a != 5 {
+			t.Fatalf("accumulated on %s → running = %v, want the paused row's 5", paused, a)
+		}
+	}
+}
+
 // insertMessage writes one session_messages row under the tenant
 // context required by lenny_tenant_guard.
 func insertMessage(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, sessionID string) {
@@ -1363,5 +1512,94 @@ func assertStoredPlan(t *testing.T, got, want json.RawMessage) {
 	}
 	if !reflect.DeepEqual(gotDoc, wantDoc) {
 		t.Errorf("stored WorkspacePlan = %s, want %s", got, want)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: a pgstore concurrent-session count disagrees with
+//
+//	session.CountsTowardConcurrencyCaps or with the memstore count for the
+//	same rows. The SQL predicate and the Go predicate have diverged: either a
+//	suspended row (with or without its pod) is counted, so an idle session
+//	holds an admission slot, or a resuming, resume_pending, or
+//	awaiting_client_action row is not counted, so a cap can be exceeded.
+func TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	mem := memstore.New()
+
+	rows := []sessionstore.Session{}
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		for _, user := range []string{"alice", "bob"} {
+			rows = append(rows, sessionstore.Session{
+				ID: newUUID(t), TenantID: tenant, UserID: user, State: st,
+				RuntimeRef: "echo", PodAssignment: "pod-" + user,
+			})
+		}
+	}
+	// A podless suspended row and a row on another runtime.
+	rows = append(
+		rows,
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateSuspended, RuntimeRef: "echo"},
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateRunning, RuntimeRef: "other"},
+	)
+	wantTenant, wantAlice, wantEcho := 0, 0, 0
+	for _, r := range rows {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("pgstore Create %s: %v", r.State, err)
+		}
+		if err := mem.Create(ctx, r); err != nil {
+			t.Fatalf("memstore Create %s: %v", r.State, err)
+		}
+		if !session.CountsTowardConcurrencyCaps(r.State) {
+			continue
+		}
+		wantTenant++
+		if r.UserID == "alice" {
+			wantAlice++
+		}
+		if r.RuntimeRef == "echo" {
+			wantEcho++
+		}
+	}
+
+	type count func(sessionstore.Store) (int, error)
+	scopes := []struct {
+		name string
+		fn   count
+		want int
+	}{
+		{"tenant", func(s sessionstore.Store) (int, error) { return s.CountActiveSessions(ctx, tenant) }, wantTenant},
+		{"user", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByUser(ctx, tenant, "alice") }, wantAlice},
+		{"runtime", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByRuntime(ctx, tenant, "echo") }, wantEcho},
+		// The container holds only this test's rows, so the global count
+		// equals the tenant count.
+		{"global", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsGlobal(ctx) }, wantTenant},
+	}
+	for _, sc := range scopes {
+		pgGot, err := sc.fn(store)
+		if err != nil {
+			t.Fatalf("pgstore %s count: %v", sc.name, err)
+		}
+		memGot, err := sc.fn(mem)
+		if err != nil {
+			t.Fatalf("memstore %s count: %v", sc.name, err)
+		}
+		if pgGot != sc.want || memGot != sc.want {
+			t.Errorf("%s count: pgstore %d, memstore %d, want %d", sc.name, pgGot, memGot, sc.want)
+		}
+	}
+
+	// The recovery count, the §16.5 numerator, is unchanged and stays a
+	// subset of the global count.
+	recovery, err := store.CountActiveSessionsInRecoveryGlobal(ctx)
+	if err != nil {
+		t.Fatalf("recovery count: %v", err)
+	}
+	if want := 2 * len(session.RecoveryStates()); recovery != want {
+		t.Errorf("recovery count = %d, want %d", recovery, want)
 	}
 }

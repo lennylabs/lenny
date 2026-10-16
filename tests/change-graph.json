@@ -348,6 +348,35 @@
       "component": ["tests/tier2_component/alerting/..."],
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
+    "tests/testinfra/lifecycleharness": {
+      "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],
+      "component": ["tests/tier2_component/lifecycle/..."],
+      "integration": [
+        "tests/tier4_integration/session_resume_driver_integration_test.go",
+        "tests/tier4_integration/session_suspension_delivery_integration_test.go",
+        "tests/tier4_integration/session_held_pod_integration_test.go",
+        "tests/tier4_integration/stream_failure_recycle_retire_test.go",
+        "tests/tier4_integration/delegation_tree_resume_peer_child_test.go"
+      ],
+      "load_local": [
+        "tests/tier7a_load_local/suspension_interleaving_test.go",
+        "tests/tier7a_load_local/stream_failure_release_race_test.go",
+        "tests/tier7a_load_local/lifecycle_interleaving_test.go"
+      ],
+      "chaos": [
+        "tests/tier8_chaos/lifecycle_fault_injection_test.go",
+        "tests/tier8_chaos/session_suspend_resume_chaos_test.go"
+      ]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/always-busy": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/bare-ack-while-handling": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/sdk-delayed-response": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
     "tests/testinfra/rotationgate": {
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]

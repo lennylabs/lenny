@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -98,6 +99,30 @@ type slotState struct {
 	// the entry's teardown, so it is never logged or returned in a message.
 	// spec: §4.7.1 (role and gateway RPC contract).
 	bindAttempt string
+	// lastActivity is the time of the session's last activity as §4.7.1
+	// **Session seal.** defines it, the adapter half of the idle decision.
+	// The write of the session's session_start stamps it, so each start and
+	// each restore begins a fresh window; no site clears it, and it leaves
+	// the registry with its entry, so nothing about activity crosses a
+	// checkpoint. Guarded by s.mu. spec: §4.7.1 (Role and Gateway RPC
+	// Contract).
+	lastActivity time.Time
+	// toolCalls counts the session's CH-MCP-PLATFORM and CH-MCP-CONNECTOR
+	// calls in flight. SealSession places no seal while it is above zero.
+	// Guarded by s.mu. spec: §4.7.1 (Role and Gateway RPC Contract).
+	toolCalls int
+	// sealed records that SealSession sealed the session against message
+	// delivery: writeSessionEnvelope refuses every message frame while it
+	// is set. UnsealSession clears it, and a new entry starts unsealed, so
+	// the entry's removal ends the seal. Guarded by s.mu. spec: §4.7.1
+	// (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH).
+	sealed bool
+	// hb is the session's heartbeat monitor, started when the session's
+	// session_start is written and stopped before its session_end is
+	// written or when the entry is removed. A stopped monitor stays on the
+	// entry, so a hung runtime keeps refusing Attach for the session until
+	// the entry is removed. Guarded by s.mu. spec: §28.5.3 (CH-MSGSOCK).
+	hb *heartbeatMonitor
 }
 
 // ackState is one state of an entry's session_started acknowledgement

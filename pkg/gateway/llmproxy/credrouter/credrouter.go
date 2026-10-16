@@ -3,9 +3,11 @@
 // Package credrouter implements the §4.9 CredentialRouter: the
 // selection layer that decides, for a (tenant, user, provider) triple,
 // which credential source (pool or user) and which pool the gateway
-// leases from. It is invoked at two points: session creation, when the
-// gateway assigns initial credential leases, and rotation time, when it
-// selects a replacement credential for a failed provider.
+// leases from. It is invoked at finalize, when the gateway assigns a
+// session's initial credential leases; at each restore's credential
+// assignment, when the resume driver assigns new leases on the replacement
+// pod; and at rotation time, when it selects a replacement credential for a
+// failed provider.
 //
 // The router resolves the source and the pool; the §4.9 pool
 // assignmentStrategy (in pkg/gateway/credassign) then selects the
@@ -13,9 +15,9 @@
 // provider Intersection and the §4.9 PreClaim availability check the
 // gateway runs before claiming a warm pod.
 //
-// spec: §4.9
-// (Credential Policy, Three Credential Modes, Intersection), 1216-1220
-// (Pre-Claim Credential Availability Check).
+// spec: §4.9 (Credential Policy, Three Credential Modes, Intersection);
+// §4.9 (Pre-Claim Credential Availability Check); §7.3 (Credential leases on
+// the replacement pod).
 package credrouter
 
 import (

@@ -374,18 +374,19 @@ func (s *Server) applyFinalizePrepareResult(ctx context.Context, tenantID, id, r
 
 // finalizePlanParseFailed answers a finalize call whose stored WorkspacePlan
 // could not be parsed. The parse failed before the prepare phase engaged the
-// binder, so the binder's own reclaim cannot run and the handler reclaims the
-// pod claimed at /create, but only after its failure write commits or fails
-// with a store error. When a terminal writer overtook the call, the failure
-// write loses, the terminal writer's reclaim owns the pod, and the handler
-// revokes any lease under the session and answers 409 with the terminal state
-// without deleting a claim by name.
+// binder, so the binder's own reclaim cannot run. A failure write that
+// applied runs the post-terminal hook, which reclaims the pod claimed at
+// /create by name; after a failure write that returned a store error no hook
+// ran, so the handler reclaims the pod itself. When a terminal writer
+// overtook the call, the failure write loses, the terminal writer's reclaim
+// owns the pod, and the handler revokes any lease under the session and
+// answers 409 with the terminal state without deleting a claim by name.
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
 // §7.1 step 23 (lease release)
 func (s *Server) finalizePlanParseFailed(
 	w http.ResponseWriter, r *http.Request, tenantID, id, podAssignment string, perr error,
 ) {
-	ferr := s.failFinalizing(r.Context(), tenantID, id)
+	ferr := s.failFinalizing(r.Context(), tenantID, id, false)
 	if isPreconditionError(ferr) {
 		s.revokeFinalizeLease(id)
 		s.writePreconditionError(w, ferr)
@@ -393,8 +394,8 @@ func (s *Server) finalizePlanParseFailed(
 	}
 	if ferr != nil {
 		log.Printf("sessionserver: fail finalizing session %s after plan parse failure: %v", id, ferr)
+		s.reclaimFinalizedPod(r.Context(), podAssignment, id)
 	}
-	s.reclaimFinalizedPod(r.Context(), podAssignment, id)
 	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 		"stored workspace plan could not be parsed: "+perr.Error(), nil)
 }
@@ -402,8 +403,10 @@ func (s *Server) finalizePlanParseFailed(
 // finalizePrepareFailed answers a finalize call whose prepare phase failed.
 // The failing step already reclaimed the pod: the binder's failPhase or
 // reconnect reclaim for a through-Prepare failure, or prepareAtFinalize's own
-// reclaim for a pre-Prepare failure. The handler writes `failed` only while
-// the row is still `finalizing`, and revokes the session's leases on every
+// reclaim for a pre-Prepare failure, so the failure write passes the
+// podReclaimed flag and its post-terminal hook deletes no claim by name. The
+// handler writes `failed` only while the row is still `finalizing`, and
+// revokes the session's leases on every
 // outcome, because a partial credential assignment can leave a recorded lease
 // that the binder's attempt-scoped release omits. A lost failure write means
 // a terminal writer overtook the call: the failure is still recorded, and the
@@ -415,7 +418,7 @@ func (s *Server) finalizePlanParseFailed(
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
 // §7.1 step 23 (lease release)
 func (s *Server) finalizePrepareFailed(w http.ResponseWriter, r *http.Request, tenantID, id string, err error) {
-	ferr := s.failFinalizing(r.Context(), tenantID, id)
+	ferr := s.failFinalizing(r.Context(), tenantID, id, true)
 	s.revokeFinalizeLease(id)
 	if isPreconditionError(ferr) {
 		s.recordPodClaimFailure(err)
@@ -436,9 +439,13 @@ func (s *Server) finalizePrepareFailed(w http.ResponseWriter, r *http.Request, t
 // error is ambiguous, so the handler attempts the guarded failure write and
 // branches on its outcome:
 //
-//   - The failure write commits or fails with a store error: the handler
-//     reclaims the pod and its lease when the prepare phase ran, and answers
-//     500.
+//   - The failure write commits: its post-terminal hook reclaims the pod and
+//     its lease by name when the prepare phase ran (an unprepared finalize
+//     passes the podReclaimed flag, so the hook deletes no claim by name),
+//     and the handler answers 500.
+//   - The failure write fails with a store error: no hook ran, so the
+//     handler reclaims the pod and its lease when the prepare phase ran, and
+//     answers 500.
 //   - The failure write loses to a terminal state: a terminal writer ended the
 //     session and owns the pod, so the handler revokes any lease and answers
 //     409 with that state.
@@ -457,7 +464,7 @@ func (s *Server) finalizeReadyWriteFailed(
 		s.writePreconditionError(w, err)
 		return
 	}
-	ferr := s.failFinalizing(r.Context(), tenantID, id)
+	ferr := s.failFinalizing(r.Context(), tenantID, id, !prepared)
 	var pe *session.PreconditionError
 	if errors.As(ferr, &pe) {
 		if session.IsTerminal(pe.CurrentState) {
@@ -470,9 +477,9 @@ func (s *Server) finalizeReadyWriteFailed(
 	}
 	if ferr != nil {
 		log.Printf("sessionserver: fail finalizing session %s after ready write failure: %v", id, ferr)
-	}
-	if prepared {
-		s.reclaimFinalizedPod(r.Context(), podAssignment, id)
+		if prepared {
+			s.reclaimFinalizedPod(r.Context(), podAssignment, id)
+		}
 	}
 	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 }
@@ -487,9 +494,9 @@ func isPreconditionError(err error) bool {
 
 // reclaimFinalizedPod releases the pod claimed at /create and revokes the §4.9
 // credential lease the prepare phase assigned. The finalize handler calls it
-// only on an exit whose failure write committed or failed with a store error,
-// never after a lost write, and prepareAtFinalize calls it on its pre-Prepare
-// exits. ReclaimClaimed deletes the per-pod SandboxClaim and revokes the lease
+// only on an exit whose failure write failed with a store error, where no
+// post-terminal hook ran, never after a lost or applied write, and
+// prepareAtFinalize calls it on its pre-Prepare exits. ReclaimClaimed deletes the per-pod SandboxClaim and revokes the lease
 // keyed by sessionID, so a finalize failure does not leak either.
 // Best-effort: the §4.6.1 orphan-claim GC backstops a release error.
 // spec: §7.1 steps 11-13 (finalize prepare phase), §7.1 step 23 (lease release),

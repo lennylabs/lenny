@@ -184,6 +184,7 @@ func runGateway(f *gatewayFlags) {
 	// over-budget session releases its pod and emits its terminal audit /
 	// billing / SSE signals exactly once.
 	w.budgetTerminator.onTerminal = sessionSrv.OnSessionTerminal
+	w.budgetTerminator.beginTerminal = sessionSrv.BeginTerminal
 	// spec: §28.5.1 (CH-ATTACH Degradation.) — the pod executor's reader
 	// reports a held Attach stream's failure through the §7.3 classifier as
 	// runtime_crash, after the session server confirms this replica still

@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver_test
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// terminalWriter is one row of the terminal writer inventory: the function
+// whose mutator assigns a terminal state, and, for a funnel or hook writer,
+// the function that opens the terminal claim before the write.
+type terminalWriter struct {
+	file   string
+	writer string
+	// claim is the function that calls BeginTerminal before the Update; empty
+	// for a writer on the none path.
+	claim string
+}
+
+// terminalWriterInventory is the terminal writer inventory as the code
+// spells it. A writer whose mutator lives in a helper names the helper:
+// writeTerminal is the shared mutator of expireSession, failSession,
+// failFinalizing, and cascadeToChildren; cancelNode and cancelSession are
+// the mutators of cancelSubtree and the lenny/cancel_session handler;
+// expireOrphan is sweepTenant's; expireIdle is sweepIdle's and
+// expireSuspendedIfDue is sweepSuspended's; transitionTerminate is applied
+// inside handleTerminalWrite's mutator.
+var terminalWriterInventory = []terminalWriter{
+	{"pkg/gateway/sessionserver/session_transitions.go", "handleDelete", "handleTerminalWrite"},
+	{"pkg/gateway/sessionserver/session_transitions.go", "transitionTerminate", "handleTerminalWrite"},
+	{"pkg/gateway/sessionserver/failure.go", "transitionToFailed", "transitionToFailed"},
+	{"pkg/gateway/sessionserver/session_terminal.go", "writeTerminal", ""},
+	{"pkg/gateway/sessionserver/derive.go", "persistDeriveFailure", ""},
+	{"pkg/gateway/sessionserver/seal.go", "failWorkspaceSeal", ""},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "Tick", "Tick"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepAwaitingClientAction", "sweepAwaitingClientAction"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireIdle", "expireIdle"},
+	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
+	{"pkg/gateway/runtime/watchdog/watchdog.go", "sweepMaxAge", "sweepMaxAge"},
+	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
+	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "expireOrphan", "expireOrphan"},
+	{"pkg/gateway/mcpfabric/mcptools/mcptools.go", "cancelNode", "cancelNode"},
+	{"pkg/gateway/mcpfabric/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
+	{"pkg/gateway/externalapi/admin/users.go", "terminateUserSessions", ""},
+	{"pkg/gateway/environment/translator/openai_chat.go", "handleCreateCompletion", ""},
+	{"pkg/gateway/environment/translator/open_responses.go", "handleCreate", ""},
+	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
+	{"cmd/lenny-gateway/session_budget.go", "terminate", "terminate"},
+	{"cmd/lenny-gateway/reconciler_workers.go", "startReconcilerWorkers", "startReconcilerWorkers"},
+}
+
+// writeTerminalCallers are the hook-path writers that write through
+// writeTerminal, each opening its claim before the call.
+var writeTerminalCallers = []string{"cascadeToChildren", "expireSession", "failFinalizing", "failSession"}
+
+var terminalStateNames = map[string]bool{
+	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,
+}
+
+type scannedFunc struct {
+	file string
+	decl *ast.FuncDecl
+}
+
+// scanRepo parses every non-test Go file under pkg/ and cmd/ and returns its
+// function declarations keyed by "file func".
+func scanRepo(t *testing.T) (map[string]scannedFunc, *token.FileSet) {
+	t.Helper()
+	root := filepath.Join("..", "..", "..")
+	fset := token.NewFileSet()
+	out := map[string]scannedFunc{}
+	for _, dir := range []string{"pkg", "cmd"} {
+		err := filepath.Walk(filepath.Join(root, dir), func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() && info.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			if info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return nil
+			}
+			f, perr := parser.ParseFile(fset, p, nil, 0)
+			if perr != nil {
+				return perr
+			}
+			rel, _ := filepath.Rel(root, p)
+			rel = filepath.ToSlash(rel)
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+					out[rel+" "+fd.Name.Name] = scannedFunc{file: rel, decl: fd}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan %s: %v", dir, err)
+		}
+	}
+	return out, fset
+}
+
+// terminalAssignment reports the first position at which fn assigns a
+// terminal session state, by assignment to a State field, by a State key in
+// a composite literal, or, for writeTerminal, by assigning its `to`
+// parameter.
+func terminalAssignment(fd *ast.FuncDecl) token.Pos {
+	var at token.Pos
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if at.IsValid() {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			for i, l := range x.Lhs {
+				sel, ok := l.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "State" || i >= len(x.Rhs) {
+					continue
+				}
+				switch r := x.Rhs[i].(type) {
+				case *ast.SelectorExpr:
+					if terminalStateNames[r.Sel.Name] {
+						at = x.Pos()
+					}
+				case *ast.Ident:
+					if fd.Name.Name == "writeTerminal" && r.Name == "to" {
+						at = x.Pos()
+					}
+				}
+			}
+		case *ast.KeyValueExpr:
+			if k, ok := x.Key.(*ast.Ident); ok && k.Name == "State" {
+				if v, ok := x.Value.(*ast.SelectorExpr); ok && terminalStateNames[v.Sel.Name] {
+					at = x.Pos()
+				}
+			}
+		}
+		return true
+	})
+	return at
+}
+
+// firstCall returns the position of the first call in fd whose function name
+// satisfies match.
+func firstCall(fd *ast.FuncDecl, match func(string) bool) token.Pos {
+	var at token.Pos
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok || at.IsValid() {
+			return !at.IsValid()
+		}
+		name := ""
+		switch f := c.Fun.(type) {
+		case *ast.SelectorExpr:
+			name = f.Sel.Name
+		case *ast.Ident:
+			name = f.Name
+		}
+		if match(name) {
+			at = c.Pos()
+		}
+		return true
+	})
+	return at
+}
+
+// TestTerminalWriterInventoryMatchesTheCode_spec_7_2 asserts that the
+// functions under pkg/ and cmd/ that assign a terminal session state are
+// exactly the terminal writer inventory, that every terminal assignment is
+// followed by MarkTerminated in the same function (for transitionTerminate and
+// handleDelete, in handleTerminalWrite's mutator), and that the claim
+// function of every
+// funnel and hook writer calls BeginTerminal before its Update.
+//
+// spec: §7.2 (Interactive Session Model), §8.8 (TaskRecord and TaskResult
+// Schema)
+func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
+	funcs, _ := scanRepo(t)
+	var found []string
+	for key, sf := range funcs {
+		if terminalAssignment(sf.decl).IsValid() {
+			found = append(found, key)
+		}
+	}
+	var want []string
+	for _, w := range terminalWriterInventory {
+		want = append(want, w.file+" "+w.writer)
+	}
+	sort.Strings(found)
+	sort.Strings(want)
+	if strings.Join(found, "\n") != strings.Join(want, "\n") {
+		t.Errorf("terminal writers in the code:\n  %s\nwant the inventory:\n  %s\nA new terminal writer needs an inventory row.",
+			strings.Join(found, "\n  "), strings.Join(want, "\n  "))
+	}
+
+	isMark := func(n string) bool { return n == "MarkTerminated" }
+	isClaim := func(n string) bool { return n == "BeginTerminal" || n == "beginTerminal" }
+	isWrite := func(n string) bool { return n == "Update" || n == "writeTerminal" }
+	for _, w := range terminalWriterInventory {
+		sf, ok := funcs[w.file+" "+w.writer]
+		if !ok {
+			t.Errorf("%s %s: not found", w.file, w.writer)
+			continue
+		}
+		markIn := sf.decl
+		if w.writer == "transitionTerminate" || w.writer == "handleDelete" {
+			markIn = funcs[w.file+" handleTerminalWrite"].decl
+		}
+		mark := firstCall(markIn, isMark)
+		if !mark.IsValid() || (markIn == sf.decl && mark < terminalAssignment(sf.decl)) {
+			t.Errorf("%s %s: the terminal assignment is not followed by MarkTerminated", w.file, w.writer)
+		}
+		if w.claim == "" {
+			continue
+		}
+		cf, ok := funcs[w.file+" "+w.claim]
+		if !ok {
+			t.Errorf("%s %s: claim function %s not found", w.file, w.writer, w.claim)
+			continue
+		}
+		claim, write := firstCall(cf.decl, isClaim), firstCall(cf.decl, isWrite)
+		if !claim.IsValid() || !write.IsValid() || claim > write {
+			t.Errorf("%s %s: BeginTerminal does not precede the Update", w.file, w.claim)
+		}
+	}
+	for _, name := range writeTerminalCallers {
+		sf, ok := funcs["pkg/gateway/sessionserver/session_terminal.go "+name]
+		if !ok {
+			sf, ok = funcs["pkg/gateway/sessionserver/usage.go "+name]
+		}
+		if !ok {
+			t.Errorf("writeTerminal caller %s not found", name)
+			continue
+		}
+		claim, write := firstCall(sf.decl, isClaim), firstCall(sf.decl, func(n string) bool { return n == "writeTerminal" })
+		if !claim.IsValid() || !write.IsValid() || claim > write {
+			t.Errorf("%s: BeginTerminal does not precede writeTerminal", name)
+		}
+	}
+}

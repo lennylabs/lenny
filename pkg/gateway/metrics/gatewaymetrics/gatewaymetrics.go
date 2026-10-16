@@ -498,8 +498,10 @@ func (m *Metrics) RecordSDKDemotion(pool string, teardownSeconds float64) {
 
 // IncSessionRetry increments the §16.1 / §7.3
 // `lenny_session_retry_total{failure_class}` counter for one retry of
-// a logical session. Each successful pod recovery (the v1 retry path,
-// fired by sessionserver.bumpRecoveryGeneration) bumps it once. The
+// a logical session. Each spend edge bumps it once: a reported failure
+// into resume_pending (sessionserver transitionToResumePending) and the
+// resuming watchdog's resuming → resume_pending write. A successful
+// restore does not bump it. The
 // failure_class label echoes the session's §7.1 FailureClass at retry
 // time; the caller supplies "unknown" for a session with no recorded
 // class so the label cardinality stays bounded by the §7.1 closed
@@ -523,13 +525,13 @@ func (m *Metrics) IncDeriveFailureAudit(outcome string) {
 	m.deriveFailureAudit.WithLabelValues(outcome).Inc()
 }
 
-// IncSessionResumeAttempt increments the §16.1 / §7.3
-// `lenny_session_resume_attempts_total{pool, outcome}` counter for one
-// POST /v1/sessions/{id}/resume call. Outcome is "success" when the
-// row transitions to running or "failure" when the pod-claim step
-// fails. The pool label echoes the session's §5.2 PoolRef at resume
-// time (empty for a session whose pool was never resolved). spec:
-// §7.3, §16.1. F-7.3.10.
+// IncSessionResumeAttempt increments the
+// `lenny_session_resume_attempts_total{pool, outcome}` counter once for each
+// resume attempt whose entry write the resume driver saw take effect:
+// "success" for a commit that landed, "failure" for a failure after the entry
+// write or a commit that did not land. The pool label echoes the session's
+// §5.2 PoolRef at attempt time (empty for a session whose pool was never
+// resolved). spec: §16.1 (Metrics), §7.3 (Resume driver).
 func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 	if m == nil {
 		return
@@ -540,17 +542,41 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 // IncSessionExpiry increments the §16.1
 // `lenny_session_expiry_total{pool, reason}` counter for one session the
 // watchdog terminated on a platform expiry clock. reason is the §16.1.1
-// vocabulary value the watchdog resolved from the expiry edge — "max_idle_time"
-// for the §6.2 maxClientIdleSeconds idle clock or "max_session_age" for the
-// §11.3 maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
+// vocabulary value the watchdog resolved from the expiry edge: "max_idle_time"
+// for both the §6.2 idle expiry of a session that cannot be idle-suspended and
+// the §6.2 suspended-session lifetime, or "max_session_age" for the §11.3
+// maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
 // deadline. The pool label echoes the session's §5.2 PoolRef at expiry time
-// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1.
-// F-11.3.7.
+// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1;
+// §6.2 (maxClientIdleSeconds clock behavior across states; Pod State
+// Machine). F-11.3.7.
 func (m *Metrics) IncSessionExpiry(pool, reason string) {
 	if m == nil {
 		return
 	}
 	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
+}
+
+// IncSessionPodReleasedDuringSuspension increments
+// `lenny_session_pod_released_during_suspension_total{pool, tenant_id}` once
+// for a suspended session whose pod or slot the suspension release
+// released. Nil-safe. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionPodReleasedDuringSuspension(pool, tenantID string) {
+	if m == nil || m.sessionPodReleasedDuringSuspension == nil {
+		return
+	}
+	m.sessionPodReleasedDuringSuspension.WithLabelValues(pool, tenantID).Inc()
+}
+
+// IncSessionSuspensionCheckpointFailed increments
+// `lenny_session_suspension_checkpoint_failed_total{pool, tenant_id}` once
+// for a checkpoint before a suspension release that failed. Nil-safe.
+// spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionSuspensionCheckpointFailed(pool, tenantID string) {
+	if m == nil || m.sessionSuspensionCheckpointFailed == nil {
+		return
+	}
+	m.sessionSuspensionCheckpointFailed.WithLabelValues(pool, tenantID).Inc()
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1

@@ -26,6 +26,9 @@ type expiryWarningCall struct {
 	remainingSeconds int
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*captureExpiryWarning) BeginTerminal(string) func() { return func() {} }
+
 func (c *captureExpiryWarning) OnSessionTerminal(_ context.Context, _ session.State, _ sessionstore.Session) {
 }
 

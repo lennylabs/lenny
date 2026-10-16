@@ -286,9 +286,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 
 	t.Run("sessionPolicy round-trips through jsonb", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
-		retries := 2
 		r.SessionPolicy = &runtimestore.SessionPolicy{
-			MaxSessionRetries: &retries,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -309,8 +307,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 			!got.SessionPolicy.Recycle.AcknowledgeBestEffortScrub ||
 			got.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
 			got.SessionPolicy.Recycle.ScrubProfile != runtimestore.MicrovmScrubStandard ||
-			len(got.SessionPolicy.CleanupCommands) != 1 ||
-			got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 2 {
+			len(got.SessionPolicy.CleanupCommands) != 1 {
 			t.Errorf("sessionPolicy round-trip mismatch: %+v", got.SessionPolicy)
 		}
 

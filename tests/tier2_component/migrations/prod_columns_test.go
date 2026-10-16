@@ -6,8 +6,12 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
@@ -583,13 +587,34 @@ var prodMigrationSchema = []struct {
 	{migration: "0180", table: "checkpoint_manifest"},
 	// 0181 baselines the §4.2 coordination generation: it moves
 	// sessions.coordination_generation and its coordination_lease mirror onto
-	// DEFAULT 1 and backfills the rows still carrying 0, so the first
-	// coordinator handoff mints 2 strictly above the value a replica already
-	// holds for the session. It adds no column, so the entry names none; it is
+	// DEFAULT 1 and backfills the rows still carrying 0, so each
+	// coordinator handoff mints a value strictly above the one a replica
+	// already holds for the session. It adds no column, so the entry names none; it is
 	// here so TestProdMigrationsRollBackPerStep steps through its .down.sql,
 	// and the SQL surface is asserted directly in
 	// TestCoordinationGenerationBaselineMigration_spec_4_2. spec: §4.2, §10.1.
 	{migration: "0181", table: "sessions"},
+	// 0182 adds sessions.accumulated_session_age_seconds, the §6.2 active
+	// session age the session store accrues on every row write. Its CHECK
+	// and default are asserted directly in
+	// TestAccumulatedSessionAgeMigration_spec_6_2. spec: §6.2.
+	{migration: "0182", table: "sessions", columns: []string{"accumulated_session_age_seconds"}},
+	// 0183 adds the idx_sessions_podless_suspended partial index the
+	// gateway leader's §7.2 backlog re-check pages through. It adds no
+	// column; the index and its drop are asserted directly in
+	// TestPodlessSuspendedIndexMigration_spec_7_2. spec: §7.2.
+	{migration: "0183", table: "sessions"},
+	// 0184 adds the idx_interactions_pending_elicitation_origin partial index
+	// the §9.2 elicitation expiry deletes through. It adds no column; the
+	// index and its drop are asserted directly in
+	// TestPendingElicitationOriginIndexMigration_spec_9_2. spec: §9.2.
+	{migration: "0184", table: "interactions"},
+	// 0185 replaces idx_sessions_active_by_tenant with the
+	// idx_sessions_counted_by_tenant partial index whose predicate is the
+	// §11.1 concurrent-session count predicate. It adds no column; the
+	// index swap, its reversal, and the count plans are asserted directly
+	// in TestCountedSessionIndexMigration_spec_11_1. spec: §11.1.
+	{migration: "0185", table: "sessions"},
 }
 
 // spec: 12.2, 18.5
@@ -662,6 +687,220 @@ func TestCredentialSecretEnvelopeColumn(t *testing.T) {
 	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "text" {
 		t.Errorf("credentials.secret type after 0039 rollback: got %q, want text", got)
 	}
+}
+
+// accumulatedAgePriorVersion is the schema version immediately below the
+// accumulated active-age migration.
+const accumulatedAgePriorVersion = 181
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: migration 0182 did not add sessions.accumulated_session_age_seconds
+//
+//	as a double precision NOT NULL column defaulting to 0 with a CHECK that
+//	rejects a negative value, or its .down.sql did not drop it. Without the
+//	column the session store cannot persist the active age the maxSessionAge
+//	timer evaluates, so the watchdog has no active-time value to compare with
+//	the cap. Without the CHECK a corrupt write could carry a negative age and
+//	extend a session past its cap.
+func TestAccumulatedSessionAgeMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "double precision" {
+		t.Errorf("accumulated_session_age_seconds type = %q, want double precision", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "0" {
+		t.Errorf("accumulated_session_age_seconds default = %q, want \"0\"", got)
+	}
+
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const (
+		defaulted = "11111111-1111-4111-8111-111111111111"
+		negative  = "22222222-2222-4222-8222-222222222222"
+		positive  = "33333333-3333-4333-8333-333333333333"
+	)
+	// A row that does not name the column, as an older binary's insert does
+	// not, reads back at the 0 default.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, defaulted); err != nil {
+		t.Fatalf("insert without the column: %v", err)
+	}
+	var age float64
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT accumulated_session_age_seconds FROM sessions WHERE id = $1::uuid`, defaulted).Scan(&age); err != nil {
+		t.Fatalf("read defaulted age: %v", err)
+	}
+	if age != 0 {
+		t.Errorf("defaulted accumulated_session_age_seconds = %v, want 0", age)
+	}
+
+	const insertAged = `INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, accumulated_session_age_seconds)
+		VALUES ($1, 'acme', 'running', 'echo', $1, $2)`
+	err := execTenant(ctx, pg, "acme", insertAged, negative, -0.5)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("insert of a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+	if err := execTenant(ctx, pg, "acme", insertAged, positive, 12.25); err != nil {
+		t.Fatalf("insert of a positive fractional age: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET accumulated_session_age_seconds = -1 WHERE id = $1::uuid`, positive); !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("update to a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion+1)
+	mustHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+}
+
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+// diagnosis: migration 0183 did not create idx_sessions_podless_suspended as
+//
+//	a (tenant_id, id) index restricted to podless suspended rows, or its
+//	.down.sql did not drop it. Without it the gateway leader's backlog
+//	re-check reads every session row of every tenant on each pass.
+func TestPodlessSuspendedIndexMigration_spec_7_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_sessions_podless_suspended")
+	for _, want := range []string{"(tenant_id, id)", "state = 'suspended'", "pod_assignment = ''"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_podless_suspended = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 182)
+	if got := indexDef(t, ctx, pg, "idx_sessions_podless_suspended"); got != "" {
+		t.Errorf("after rolling 0183 back the index still exists: %q", got)
+	}
+}
+
+// spec: 9.2 (Elicitation Chain)
+// diagnosis: migration 0184 did not create
+//
+//	idx_interactions_pending_elicitation_origin as a (tenant_id,
+//	detail->>'originPod') index restricted to pending elicitations, or its
+//	.down.sql did not drop it. Without it the elicitation expiry at a pod
+//	release scans every interaction the tenant keeps.
+func TestPendingElicitationOriginIndexMigration_spec_9_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin")
+	for _, want := range []string{"tenant_id", "originPod", "kind = 'elicitation'", "phase = 'pending'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_interactions_pending_elicitation_origin = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 183)
+	if got := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin"); got != "" {
+		t.Errorf("after rolling 0184 back the index still exists: %q", got)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: migration 0185 did not replace idx_sessions_active_by_tenant
+//
+//	with idx_sessions_counted_by_tenant, a (tenant_id, user_id) index whose
+//	predicate excludes the terminal states and suspended, or its .down.sql
+//	did not restore the 0102 index, or the planner no longer reads the new
+//	index for the tenant and per-user counts. Without it every admission
+//	count reads a heap tuple for each suspended row of the tenant.
+func TestCountedSessionIndexMigration_spec_11_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	def := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant")
+	for _, want := range []string{"(tenant_id, user_id)", "'suspended'", "'completed'", "'failed'", "'cancelled'", "'expired'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_counted_by_tenant = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant"); got != "" {
+		t.Errorf("idx_sessions_active_by_tenant still exists after 0185: %q", got)
+	}
+
+	seedCountedSessionPopulation(t, ctx, pg)
+	for name, query := range map[string]string{
+		"tenant": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+		"user": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme' AND user_id = 'alice'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+	} {
+		if plan := explainPlan(t, ctx, pg, query); !strings.Contains(plan, "idx_sessions_counted_by_tenant") {
+			t.Errorf("%s count plan does not read idx_sessions_counted_by_tenant:\n%s", name, plan)
+		}
+	}
+
+	pg.MigrateTo(t, dir, 184)
+	if got := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant"); got != "" {
+		t.Errorf("after rolling 0185 back the index still exists: %q", got)
+	}
+	restored := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant")
+	if !strings.Contains(restored, "(tenant_id)") || strings.Contains(restored, "'suspended'") {
+		t.Errorf("after rolling 0185 back idx_sessions_active_by_tenant = %q, want the 0102 definition", restored)
+	}
+}
+
+// seedCountedSessionPopulation fills tenant acme with many terminal and
+// suspended rows and a few counted ones, then analyzes the table, so the
+// planner's choice reflects a tenant with a long history.
+func seedCountedSessionPopulation(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const seed = `INSERT INTO sessions (id, tenant_id, user_id, state, runtime_ref, root_session_id)
+		SELECT md5(g::text)::uuid, 'acme',
+		       CASE WHEN g % 2 = 0 THEN 'alice' ELSE 'bob' END,
+		       CASE WHEN g <= 20 THEN 'running'
+		            WHEN g % 3 = 0 THEN 'suspended'
+		            WHEN g % 3 = 1 THEN 'completed'
+		            ELSE 'expired' END,
+		       'echo', md5(g::text)::uuid
+		FROM generate_series(1, 6000) AS g`
+	if err := execTenant(ctx, pg, "acme", seed); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `ANALYZE sessions`); err != nil {
+		t.Fatalf("analyze sessions: %v", err)
+	}
+}
+
+// explainPlan returns the text plan Postgres chooses for query.
+func explainPlan(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) string {
+	t.Helper()
+	rows, err := pg.Pool.Query(ctx, "EXPLAIN "+query)
+	if err != nil {
+		t.Fatalf("explain %q: %v", query, err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan line: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	return b.String()
 }
 
 // --- helpers -------------------------------------------------------------

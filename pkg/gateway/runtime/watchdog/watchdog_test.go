@@ -18,7 +18,7 @@ import (
 // idleCapDisabled is a maxIdleTime far larger than any session age these
 // maxSessionAge / resolver tests exercise, so the §11.3 idle
 // sweep never fires on their stale `running` rows. It lets a test isolate
-// the wall-clock maxSessionAge behaviour from the idle reclamation path
+// the active-time maxSessionAge behaviour from the idle reclamation path
 // (the idle sweep is covered directly in idle_test.go). F-11.3.7.
 const idleCapDisabled = 100 * 24 * 3600
 
@@ -480,6 +480,9 @@ type fakeTerminalHook struct {
 	calls      []sessionstore.Session
 	fromStates []session.State
 }
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminalHook) BeginTerminal(string) func() { return func() {} }
 
 func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, fromState session.State, sess sessionstore.Session) {
 	f.calls = append(f.calls, sess)

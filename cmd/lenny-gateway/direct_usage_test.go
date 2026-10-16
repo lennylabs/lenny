@@ -145,17 +145,17 @@ func TestDirectUsageLoopSkipsSessionRemovedMidPoll_spec_11_2(t *testing.T) {
 }
 
 // TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253 proves a hung
-// direct-mode pod still idle-terminates under the pull: the gateway polls it,
+// direct-mode pod is still idle-suspended under the pull: the gateway polls it,
 // the pull returns a zero token delta (no tokens produced by a wedged agent),
-// and the §6.2 idle clock is left untouched, so the §11.3 idle watchdog reaps
-// the session. It drives the full loop → recorder path with a zero-delta report
+// and the §6.2 idle clock is left untouched, so the §11.3 idle watchdog
+// idle-suspends the session. It drives the full loop → recorder path with a zero-delta report
 // and asserts the session's LastAgentActivityAt stays zero. It would fail
 // against a loop that stamped the idle clock on every poll (a timer tick), which
 // would keep a hung pod alive forever.
 //
 // spec: §6.2, §8.3, §11.2 (direct-mode
 // usage).
-// diagnosis: a hung direct-mode pod never idle-terminated because the poll loop reset its idle clock on every zero-delta tick, so the pod, lease, and session leaked (proposal 0024 S9 hung-pod idle bound broken).
+// diagnosis: a hung direct-mode pod was never idle-suspended because the poll loop reset its idle clock on every zero-delta tick, so its session held the pod indefinitely (§6.2 maxClientIdleSeconds: a zero-delta direct-mode poll must not stamp the idle clock).
 func TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

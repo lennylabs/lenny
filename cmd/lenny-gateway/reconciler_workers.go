@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -132,28 +133,36 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			return row.State, true
 		}
 		deadlockFail := func(ctx context.Context, tenantID, sessionID string) {
+			// spec: §7.2 — a funnel terminal writer: the claim opens before
+			// the write, the write applies only over a non-terminal locked
+			// row and records the Terminated fact, and the terminal pipeline
+			// runs exactly when it applied.
+			end := w.sessionSrv.BeginTerminal(sessionID)
+			defer end()
 			var fromState session.State
+			now := time.Now()
 			updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
 				if session.IsTerminal(s.State) {
-					return nil // a concurrent terminal transition won the race
+					return sessionstore.ErrSuperseded
 				}
 				fromState = s.State
 				s.State = session.StateFailed
 				s.FailureClass = session.FailureClassRuntime
 				s.FailureReason = string(session.FailureDeadlockTimeout)
+				sessionstore.MarkTerminated(s, fromState, now)
 				return nil
 			})
+			if errors.Is(err, sessionstore.ErrSuperseded) {
+				return
+			}
 			if err != nil {
 				log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
 				return
 			}
-			if updated.State == session.StateFailed &&
-				updated.FailureReason == string(session.FailureDeadlockTimeout) {
-				// spec: §4.6 — a deadlock-timeout fails a blocked running
-				// session, so fromState routes its teardown through the §6.2
-				// executor recycle path rather than the pre-running reclaim.
-				w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
-			}
+			// spec: §4.6 — a deadlock-timeout fails a blocked running
+			// session, so fromState routes its teardown through the §6.2
+			// executor recycle path rather than the pre-running reclaim.
+			w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
 		}
 		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
 			deadlockLookup, deadlockFail)

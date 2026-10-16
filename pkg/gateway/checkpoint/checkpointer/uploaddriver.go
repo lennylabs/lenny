@@ -124,16 +124,27 @@ type DriverMetrics interface {
 // lockFlight acquires the per-session single-flight lock so a
 // periodic checkpoint and a concurrent seal of the same workspace cannot
 // interleave their supersede / finalise manifest writes. The returned
-// func releases the lock. The lock map is lazily populated so a
-// zero-value Checkpointer needs no constructor.
+// func releases the lock. The lock is a capacity-one channel per session,
+// so a wait honors ctx: when ctx ends first, lockFlight returns ctx.Err()
+// and holds nothing. A suspension release bounds its checkpoint by the
+// §4.4.3 60 s timeout, and a wait behind a concurrent checkpoint that
+// outlives it fails the checkpoint rather than blocking the release. The
+// lock map is lazily populated so a zero-value Checkpointer needs no
+// constructor.
 //
 // spec: §10.1 supersede-on-write (the supersede set must be stable for
-// the duration of one attempt).
-func (c *Checkpointer) lockFlight(sessionID string) func() {
-	actual, _ := c.flights.LoadOrStore(sessionID, &sync.Mutex{})
-	mu := actual.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// the duration of one attempt); §4.4.3 (Checkpoint Quiescence, Timeout,
+// and Abort Handling).
+func (c *Checkpointer) lockFlight(ctx context.Context, sessionID string) (func(), error) {
+	actual, _ := c.flights.LoadOrStore(sessionID, make(chan struct{}, 1))
+	sem := actual.(chan struct{})
+	select {
+	case sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	var once sync.Once
+	return func() { once.Do(func() { <-sem }) }, nil
 }
 
 // chunkSize returns the gateway-chosen fixed chunk size, applying

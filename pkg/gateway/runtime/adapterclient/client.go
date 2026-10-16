@@ -506,7 +506,7 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 // SignalDeadline delivers the §11.3 pre-expiry warning to the
 // pod's runtime over the CH-RUNTIMEOPS. remainingMs is the wall-clock
 // left before the session's deadline; trigger names which deadline is
-// approaching ("session_age", "budget", or "idle"). The returned bool
+// approaching ("session_age" or "budget"). The returned bool
 // reports whether the adapter forwarded the warning (false when the
 // runtime has no CH-RUNTIMEOPS — Basic/Standard integration level,
 // §15). The call is one-way; the adapter does not wait for a
@@ -585,6 +585,40 @@ func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordi
 		CheckpointRef: resp.GetCheckpointRef(),
 		QuiescedMs:    resp.GetQuiescedMs(),
 	}, nil
+}
+
+// SealSession runs the §4.7.1 SealSession RPC: the adapter seals sessionID
+// against `message` delivery when it observed no activity for the session in
+// the last idleSeconds (§4.7.1 **Session seal.**). sealed reports whether the
+// session is sealed; when it is not, idleAge is the time since the session's
+// last activity, zero while a platform or connector call is in flight. The
+// request carries the caller's coordination generation, which the adapter
+// compares against the generation it last fenced for the session.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) SealSession(ctx context.Context, sessionID string, generation int64, idleSeconds int) (sealed bool, idleAge time.Duration, err error) {
+	resp, err := c.rpc.SealSession(ctx, &adapterv1.SealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+		IdleSeconds:            int64(idleSeconds),
+	})
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.GetSealed(), time.Duration(resp.GetIdleAgeSeconds()) * time.Second, nil
+}
+
+// UnsealSession runs the §4.7.1 UnsealSession RPC, lifting sessionID's seal
+// (§4.7.1 **Session seal.**). The request carries the caller's coordination
+// generation, which the adapter compares as it does for SealSession.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) UnsealSession(ctx context.Context, sessionID string, generation int64) error {
+	_, err := c.rpc.UnsealSession(ctx, &adapterv1.UnsealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+	})
+	return err
 }
 
 // ExportSpec is one §8.7 fileExport entry passed to the adapter's

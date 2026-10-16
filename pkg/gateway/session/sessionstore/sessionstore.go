@@ -59,12 +59,15 @@ type Session struct {
 	TerminatedAt     time.Time
 	TerminatedReason string
 
-	// SuspendedAt and SuspendedReason carry the §7.2 interrupt-suspension
-	// Suspended session-condition fact, relocated off
-	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
-	// is the wall-clock instant the session entered `suspended`; it is the
-	// zero time while the session is not suspended. SuspendedReason is the
-	// coded interrupt reason. spec: §7.2; §8.8.
+	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
+	// session-condition fact, relocated off Sandbox.status.conditions
+	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
+	// the session entered `suspended`; it is the zero time while the
+	// session is not suspended. SuspendedReason is the coded reason the
+	// session was suspended for: SuspendedReasonInterruptAcknowledged or
+	// SuspendedReasonInterruptTimeout for an interrupt, and
+	// SuspendedReasonIdle for an idle suspension, whose row names no pod.
+	// spec: §7.2; §8.8; §6.2 (Pod State Machine).
 	SuspendedAt     time.Time
 	SuspendedReason string
 
@@ -315,9 +318,11 @@ type Session struct {
 	// spec: §4.2.
 	RecoveryGeneration int64
 
-	// CoordinationGeneration is the §4.2 coordinator-handoff counter,
+	// CoordinationGeneration is the §4.2 coordination counter,
 	// incremented when a different gateway replica becomes the
-	// authoritative coordinator for this session. Internal-only —
+	// authoritative coordinator for this session and by the §7.3 resume
+	// driver's resume_pending → resuming write (§10.1.1 Generation
+	// counters). Internal-only —
 	// used for split-brain fencing. Monotonically non-decreasing.
 	// Bumped under a mid-resume terminal write per §7.2 to fence any
 	// stale coordinator still attempting resume.
@@ -370,6 +375,15 @@ type Session struct {
 	// internal state writes that are not agent activity.
 	// spec: §6.2; §11.3. F-11.3.7.
 	LastAgentActivityAt time.Time
+
+	// AccumulatedSessionAgeSeconds is the §6.2 accumulated_session_age_seconds
+	// column: the active time, in seconds, the session spent in a state whose
+	// maxSessionAge timer runs (starting, running, input_required) up to the
+	// row's last write. Both stores accrue it inside Update through
+	// AccrueSessionAge, so no caller writes it directly; ActiveAge adds the
+	// interval since the last write when the row is still in a counting state.
+	// spec: §6.2 (maxSessionAge timer behavior across states).
+	AccumulatedSessionAgeSeconds float64
 
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
@@ -1024,38 +1038,42 @@ type Store interface {
 	// spec: §15.1.
 	PoolDrainStats(ctx context.Context, poolRef string) (active int, oldestCreatedAt time.Time, err error)
 
-	// CountActiveSessions returns the number of live (non-terminal)
-	// sessions belonging to tenantID. It backs the §11.2 per-tenant
-	// concurrent-session quota check on the session-creation path so the
-	// gateway counts active sessions without materializing every
-	// historical row. A tenant with no live sessions returns (0, nil).
-	// spec: §11.2 (per-tenant concurrent-session quota with hard
-	// rejection).
+	// CountActiveSessions returns the number of non-terminal sessions
+	// other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// belonging to tenantID. It backs the §11.2 per-tenant
+	// concurrent-session quota check on the session-creation path and on
+	// every resume of a suspended session, so the gateway counts without
+	// materializing every historical row. A tenant with no counted
+	// sessions returns (0, nil).
+	// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 	CountActiveSessions(ctx context.Context, tenantID string) (int, error)
 
-	// CountActiveSessionsByUser returns the number of live (non-terminal)
-	// sessions owned by userID within tenantID. It backs the §11.1
-	// per-user concurrent-session admission limit so a single user cannot
+	// CountActiveSessionsByUser returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// owned by userID within tenantID. It backs the §11.1 per-user
+	// concurrent-session admission limit so a single user cannot
 	// monopolize the tenant's concurrent-session capacity. An empty
-	// tenant or user, or a user with no live sessions, returns (0, nil).
-	// spec: §11.1.
+	// tenant or user, or a user with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error)
 
-	// CountActiveSessionsByRuntime returns the number of live
-	// (non-terminal) sessions targeting runtimeRef within tenantID. It
-	// backs the §11.1 per-runtime concurrent-session admission limit so a
-	// single runtime cannot be flooded with concurrent sessions. An empty
-	// tenant or runtime, or a runtime with no live sessions, returns
-	// (0, nil).
-	// spec: §11.1.
+	// CountActiveSessionsByRuntime returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// targeting runtimeRef within tenantID. It backs the §11.1 per-runtime
+	// concurrent-session admission limit so a single runtime cannot be
+	// flooded with concurrent sessions. An empty tenant or runtime, or a
+	// runtime with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error)
 
-	// CountActiveSessionsGlobal returns the number of live (non-terminal)
-	// sessions across every tenant. It backs the §11.1 global
-	// concurrent-session admission limit (the gateway-wide ceiling). The
-	// count is cross-tenant by design; the global cap bounds total live
-	// sessions regardless of tenant attribution.
-	// spec: §11.1.
+	// CountActiveSessionsGlobal returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// across every tenant. It backs the §11.1 global concurrent-session
+	// admission limit (the gateway-wide ceiling) and is the denominator of
+	// the §16.5 session-availability ratio. The count is cross-tenant by
+	// design; the global cap bounds the counted sessions regardless of
+	// tenant attribution.
+	// spec: §11.1 (Concurrent-session count), §16.5 (Alerting Rules and SLOs)
 	CountActiveSessionsGlobal(ctx context.Context) (int, error)
 
 	// CountActiveSessionsInRecoveryGlobal returns the number of live
@@ -1063,8 +1081,11 @@ type Store interface {
 	// (resume_pending, resuming, awaiting_client_action). The gateway
 	// export loop divides it by CountActiveSessionsGlobal to publish the
 	// §16.5 lenny_session_unavailability_ratio SLI the
-	// SessionAvailabilityBurnRate alert reads.
-	// spec: §16.5. F-16.5.3.
+	// SessionAvailabilityBurnRate alert reads. Every recovery state is a
+	// counted state, so the numerator is a subset of the denominator, and
+	// a suspended session, which runs no turn and is in no recovery
+	// state, is in neither.
+	// spec: §16.5 (Alerting Rules and SLOs), §11.1 (Concurrent-session count). F-16.5.3.
 	CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error)
 
 	// CountActiveDelegatedChildrenByUser returns the number of live
@@ -1108,4 +1129,74 @@ type ListFilter struct {
 var (
 	ErrNotFound      = errors.New("sessionstore: session not found")
 	ErrAlreadyExists = errors.New("sessionstore: session already exists")
+)
+
+// SessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.
+// The timer runs in starting (as a secondary bound behind the starting
+// watchdog), running, and input_required. It is paused in suspended and in
+// the recovery states (resume_pending, resuming, awaiting_client_action),
+// does not run in the pre-running states created, finalizing, and ready, and
+// is stopped in the terminal states.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func SessionAgeCounts(st session.State) bool {
+	switch st {
+	case session.StateStarting, session.StateRunning, session.StateInputRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+// AccrueSessionAge adds to row.AccumulatedSessionAgeSeconds the active time
+// between the previous write and now, when the row was in a counting state
+// (starting, running, or input_required) at the previous write. prev and
+// prevUpdatedAt are the state and UpdatedAt the row carried before the write;
+// now is the instant the write stamps as the new UpdatedAt. A now at or before
+// prevUpdatedAt accrues nothing.
+//
+// Both stores call it inside Update, after the mutator returns and before the
+// UpdatedAt stamp, with the same now the stamp uses. Because UpdatedAt
+// strictly advances on every write, the column then sums exactly the
+// intervals the row spent in a counting state. A write that leaves the row in
+// a counting state still accrues, because the row stayed in that state across
+// the interval; a write that moves the row out of a counting state accrues
+// the interval up to the transition and nothing after it.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session, now time.Time) {
+	if !SessionAgeCounts(prev) || !now.After(prevUpdatedAt) {
+		return
+	}
+	row.AccumulatedSessionAgeSeconds += now.Sub(prevUpdatedAt).Seconds()
+}
+
+// ActiveAge returns the §6.2 active session age of row at now: the
+// accumulated value plus, when the row is in a counting state, the time
+// elapsed since its last write. The elapsed part is clamped at zero, so a now
+// that precedes the row's UpdatedAt (a sweep instant taken before a
+// concurrent write) adds nothing. This is the value the maxSessionAge timer
+// compares with the effective cap, periodically and on entry to running.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func ActiveAge(row Session, now time.Time) time.Duration {
+	age := time.Duration(row.AccumulatedSessionAgeSeconds * float64(time.Second))
+	if SessionAgeCounts(row.State) && now.After(row.UpdatedAt) {
+		age += now.Sub(row.UpdatedAt)
+	}
+	return age
+}
+
+// Suspension reasons recorded in Session.SuspendedReason. An interrupt
+// suspension keeps its pod for the hold window (§6.2
+// maxSuspendedPodHoldSeconds); an idle suspension releases its pod in the
+// same sequence that writes it, so an Idle row names no pod.
+//
+// spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model).
+const (
+	// SuspendedReasonInterruptAcknowledged is an interrupt the runtime
+	// acknowledged before the deadline.
+	SuspendedReasonInterruptAcknowledged = "InterruptAcknowledged"
+	// SuspendedReasonInterruptTimeout is an interrupt whose deadline elapsed
+	// without an acknowledgement.
+	SuspendedReasonInterruptTimeout = "InterruptTimeout"
+	// SuspendedReasonIdle is an idle suspension (§6.2 Idle suspension.).
+	SuspendedReasonIdle = "Idle"
 )

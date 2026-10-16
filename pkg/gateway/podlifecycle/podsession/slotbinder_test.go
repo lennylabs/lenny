@@ -814,8 +814,15 @@ func TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	if err := binder.ReleaseSlot(context.Background(), r1); err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
-	if len(assigner.released) != 1 || assigner.released[0] != "slot-sess" {
-		t.Errorf("ReleaseSession calls = %v, want [slot-sess]", assigner.released)
+	// spec: §7.3 (Credential leases on the replacement pod) — the slot
+	// release returns the binding's leases through its stamp, with no
+	// session-wide release.
+	if len(assigner.through) != 1 || assigner.through[0].session != "slot-sess" ||
+		assigner.through[0].generation != r1.CoordinationGeneration {
+		t.Errorf("ReleaseThrough calls = %v, want one for slot-sess at %d", assigner.through, r1.CoordinationGeneration)
+	}
+	if len(assigner.released) != 0 {
+		t.Errorf("ReleaseSession calls = %v, want none", assigner.released)
 	}
 }
 
@@ -1320,7 +1327,7 @@ func TestSlotBindCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
 			assigner := &fakeAssigner{numbered: true}
 			// A successor attempt already holds a lease for sess-1; it must
 			// survive the failed attempt's release.
-			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme")
+			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme", 0)
 			assigner.calls, assigner.minted = nil, nil
 			assigner.failFrom = tc.failFrom
 			req := slotBindReq()

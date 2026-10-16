@@ -181,7 +181,7 @@ curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/interrupt" \
   | jq .
 ```
 
-### Resume (After Retry Exhaustion)
+### Resume
 
 ```bash
 curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/resume" \

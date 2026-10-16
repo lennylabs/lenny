@@ -16,6 +16,7 @@ package orphancleanup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -57,8 +58,12 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 // spec: §5.2 — slot release on session end / expiry; §8.10 —
 // orphan cascade.
 type TerminalHook interface {
-	// fromState is the orphan's pre-terminal state, captured before the sweep
-	// forced the row terminal, so the terminal pod-release path can
+	// BeginTerminal opens the writer's terminal claim before its terminal
+	// Update and returns the idempotent function that ends it.
+	// spec: §7.2 (Interactive Session Model).
+	BeginTerminal(sessionID string) (end func())
+	// fromState is the orphan's pre-terminal state, read on the locked row
+	// the sweep forced terminal, so the terminal pod-release path can
 	// distinguish a pre-running claimed session from a running one (§4.6).
 	OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
@@ -205,38 +210,65 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 		if now.Sub(root.UpdatedAt) <= s.cascadeTimeout {
 			continue // still inside the cascade window
 		}
-		updated, err := s.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
-			if session.IsTerminal(r.State) {
-				return nil // concurrent transition — leave it alone
-			}
-			r.State = session.StateExpired
-			// spec: §8.8 — orphan cleanup is a wall-clock
-			// deadline (the cascade window after a root settles), so
-			// the MCP boundary surfaces `failed` with code
-			// `expired:deadline`. F-8.8.8.
-			if r.FailureReason == "" {
-				r.FailureReason = string(session.FailureExpiredDeadline)
-			}
-			return nil
-		})
+		applied, err := s.expireOrphan(ctx, tenant, row, root.ID, now)
 		if err != nil {
 			return terminated, activeOrphans, err
 		}
-		if updated.State == session.StateExpired {
+		if applied {
 			terminated++
 			// The row left the active-orphan set as part of this Tick.
 			activeOrphans--
-			if s.terminal != nil {
-				// Gateway-side terminal pipeline — release the executor
-				// (drains the pod, returns concurrent-mode slots per §5.2), emit SSE/audit/billing, and archive the child.
-				// row.State is the pre-terminal state (§4.6).
-				s.terminal.OnSessionTerminal(ctx, row.State, updated)
-			} else {
-				s.archiveOrphan(ctx, updated, root.ID)
-			}
 		}
 	}
 	return terminated, activeOrphans, nil
+}
+
+// expireOrphan is the sweep's funnel terminal write for one orphan: it opens
+// the terminal claim before its Update, writes expired only over a
+// non-terminal locked row with the Terminated fact recorded in the write, and
+// runs the terminal pipeline with fromState from the locked row when the
+// write applied. A row another writer already ended is not applied and the
+// sweep goes on to the next child; a store error ends the tenant's pass.
+//
+// spec: §8.10; §7.2 (Interactive Session Model).
+func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionstore.Session, rootID string, now time.Time) (bool, error) {
+	end := func() {}
+	if s.terminal != nil {
+		end = s.terminal.BeginTerminal(row.ID)
+	}
+	defer end()
+	var from session.State
+	updated, err := s.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+		if session.IsTerminal(r.State) {
+			return sessionstore.ErrSuperseded
+		}
+		from = r.State
+		r.State = session.StateExpired
+		// spec: §8.8 — orphan cleanup is a wall-clock deadline (the
+		// cascade window after a root settles), so the MCP boundary
+		// surfaces `failed` with code `expired:deadline`. F-8.8.8.
+		if r.FailureReason == "" {
+			r.FailureReason = string(session.FailureExpiredDeadline)
+		}
+		sessionstore.MarkTerminated(r, from, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if s.terminal != nil {
+		// Gateway-side terminal pipeline — release the executor (drains the
+		// pod, returns concurrent-mode slots per §5.2), emit SSE/audit/
+		// billing, and archive the child. from is the locked row's
+		// pre-terminal state (§4.6).
+		s.terminal.OnSessionTerminal(ctx, from, updated)
+	} else {
+		s.archiveOrphan(ctx, updated, rootID)
+	}
+	return true, nil
 }
 
 // treeRoot walks the ParentSessionID chain up from row to the tree

@@ -457,7 +457,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 			row.PoolRef = createClaim.Pool
 			startCtx.PodClaim = createClaim.PodClaim
 		}
-		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx)
+		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx, resumeBind{})
 		if err != nil {
 			// spec: §7.1 — a create-step failure rolls back without
 			// persisting the row, releasing the create-time claim. The

@@ -649,3 +649,43 @@ func TestTickFiresExpiryWarningEvenWhenRenewalSucceeds_spec_11_3_215(t *testing.
 		t.Errorf("OnRenewed fired for a lease whose renewBefore is in the future")
 	}
 }
+
+// releasedRenewer reports every lease released.
+type releasedRenewer struct{ calls int }
+
+func (r *releasedRenewer) Renew(context.Context, credrenewal.Lease) (credrenewal.Lease, error) {
+	r.calls++
+	return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
+}
+
+// TestTickForgetsAReleasedLease_spec_4_9 asserts that a renewal or an
+// extension that reports credrenewal.ErrLeaseReleased stops tracking the
+// lease with no OnExhausted and no OnRenewed.
+//
+// spec: §4.9 (Proactive Lease Renewal)
+func TestTickForgetsAReleasedLease_spec_4_9(t *testing.T) {
+	t.Run("renewal", func(t *testing.T) {
+		exhausted, renewed := 0, 0
+		w := credrenewal.New(&releasedRenewer{}, credrenewal.Options{
+			OnExhausted: func(credrenewal.Lease) { exhausted++ },
+			OnRenewed:   func(credrenewal.Lease) { renewed++ },
+		})
+		w.Track(credrenewal.Lease{LeaseID: "cl-1", RenewBefore: base, ExpiresAt: base.Add(time.Hour)})
+		w.Tick(context.Background(), base.Add(time.Second))
+		if w.Tracked() != 0 || exhausted != 0 || renewed != 0 {
+			t.Errorf("tracked %d exhausted %d renewed %d, want 0/0/0", w.Tracked(), exhausted, renewed)
+		}
+	})
+	t.Run("extension", func(t *testing.T) {
+		exhausted := 0
+		w := credrenewal.New(&fakeRenewer{err: credrenewal.ErrRenewInfraUnavailable}, credrenewal.Options{
+			OnExhausted: func(credrenewal.Lease) { exhausted++ },
+			OnExtend:    func(credrenewal.Lease, time.Time) error { return credrenewal.ErrLeaseReleased },
+		})
+		w.Track(credrenewal.Lease{LeaseID: "cl-1", RenewBefore: base, ExpiresAt: base.Add(time.Hour), LeaseTTL: time.Hour})
+		w.Tick(context.Background(), base.Add(time.Second))
+		if w.Tracked() != 0 || exhausted != 0 {
+			t.Errorf("tracked %d exhausted %d, want the released lease forgotten", w.Tracked(), exhausted)
+		}
+	})
+}

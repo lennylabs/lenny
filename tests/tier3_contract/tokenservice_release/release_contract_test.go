@@ -117,7 +117,7 @@ func TestReleaseFreesTokenServiceLeaseEveryTenancyConfig_spec_7_1(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			l := newLink(t, tc.replicaTenant)
-			lease, err := l.client.Assign("healthy", "s_1", "", tc.sessionTenant)
+			lease, err := l.client.Assign("healthy", "s_1", "", tc.sessionTenant, 0)
 			if err != nil {
 				t.Fatalf("Assign: %v", err)
 			}
@@ -148,7 +148,7 @@ func TestReleaseWithoutTenantIsRejectedAndSurfaced_spec_4_3(t *testing.T) {
 	l := newLink(t, "")
 	// Mint a lease for acme; the client's local copy is stripped of its
 	// tenant below so the client holds a tenantless lease.
-	lease, err := l.client.Assign("healthy", "s_1", "", "acme")
+	lease, err := l.client.Assign("healthy", "s_1", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestReleaseWithoutTenantIsRejectedAndSurfaced_spec_4_3(t *testing.T) {
 func TestExhaustedPoolDoesNotOpenBreaker_spec_4_3(t *testing.T) {
 	l := newLink(t, "default")
 	for i := 0; i < 5; i++ {
-		_, err := l.client.Assign("exhausted", "s_x", "", "default")
+		_, err := l.client.Assign("exhausted", "s_x", "", "default", 0)
 		if !errors.Is(err, credential.ErrPoolExhausted) {
 			t.Fatalf("call %d: Assign from exhausted pool = %v, want ErrPoolExhausted", i, err)
 		}
@@ -190,11 +190,11 @@ func TestExhaustedPoolDoesNotOpenBreaker_spec_4_3(t *testing.T) {
 	if st := l.sub.State(); st != subsystem.StateClosed {
 		t.Fatalf("breaker state = %s after exhausted-pool answers, want closed", st)
 	}
-	if _, err := l.client.Assign("healthy", "s_y", "", "default"); err != nil {
+	if _, err := l.client.Assign("healthy", "s_y", "", "default", 0); err != nil {
 		t.Fatalf("Assign from a healthy pool after exhausted answers: %v", err)
 	}
 	// An unregistered pool (NotFound) is a healthy answer as well.
-	if _, err := l.client.Assign("missing", "s_z", "", "default"); !errors.Is(err, credassign.ErrPoolNotFound) {
+	if _, err := l.client.Assign("missing", "s_z", "", "default", 0); !errors.Is(err, credassign.ErrPoolNotFound) {
 		t.Fatalf("Assign from a missing pool = %v, want ErrPoolNotFound", err)
 	}
 	if st := l.sub.State(); st != subsystem.StateClosed {

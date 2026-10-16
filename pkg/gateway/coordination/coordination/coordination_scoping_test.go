@@ -19,18 +19,34 @@ import (
 // have; ConnAlive defaults to live and is set false to model a dead
 // gateway-to-pod channel; EvictBinding records the eviction and drops the
 // binding, mirroring the production seam that removes the podRegistry
-// entry and the executor's cached Attach stream in one call.
+// entry and the executor's cached Attach stream in one call. gen holds the
+// coordination_generation stamped on each binding, which BindingGeneration
+// reports while the session is bound.
 type fakeBindings struct {
 	bound   map[string]bool
 	alive   map[string]bool
 	evicted map[string]bool
+	gen     map[string]int64
 }
 
 func newFakeBindings() *fakeBindings {
-	return &fakeBindings{bound: map[string]bool{}, alive: map[string]bool{}, evicted: map[string]bool{}}
+	return &fakeBindings{bound: map[string]bool{}, alive: map[string]bool{}, evicted: map[string]bool{}, gen: map[string]int64{}}
 }
 
 func (f *fakeBindings) Bound(sessionID string) bool { return f.bound[sessionID] }
+
+// bind publishes a live binding stamped at generation.
+func (f *fakeBindings) bind(sessionID string, generation int64) {
+	f.bound[sessionID] = true
+	f.gen[sessionID] = generation
+}
+
+func (f *fakeBindings) BindingGeneration(sessionID string) int64 {
+	if !f.bound[sessionID] {
+		return 0
+	}
+	return f.gen[sessionID]
+}
 
 func (f *fakeBindings) ConnAlive(sessionID string) bool {
 	v, ok := f.alive[sessionID]
@@ -43,6 +59,7 @@ func (f *fakeBindings) ConnAlive(sessionID string) bool {
 func (f *fakeBindings) EvictBinding(sessionID string) {
 	f.evicted[sessionID] = true
 	delete(f.bound, sessionID)
+	delete(f.gen, sessionID)
 }
 
 func (f *fakeLeases) held(tenantID, sessionID string) (string, bool) {
@@ -311,26 +328,26 @@ func mirrorSnapshot(t *testing.T, mirror coordlease.Store, replicas ...string) m
 // spec: 10.1.1 (Stateless Replicas and Per-Session Coordination), 10.1.5
 // (Stale Replica Behavior). A bound session whose lease a peer replica now
 // holds, and whose coordination_generation has advanced past the generation
-// this replica last renewed it at, has been taken over: the Sweeper evicts
+// stamped on this replica's binding, has been taken over: the Sweeper evicts
 // its binding and cached Attach stream and writes no lease, mirror, or
-// session row. A foreign lease at an unchanged generation, which
-// leasestore.Failover reports for a stale Redis holder after a Redis
-// outage, is not evicted, and neither is a binding this replica never
-// renewed. Regression: the pre-fix Sweep skipped every ErrHeld, so a stale
-// coordinator kept its binding and stream indefinitely.
+// session row. A foreign lease at the stamped generation, which
+// leasestore.Failover reports for a stale Redis holder after a Redis outage,
+// is not evicted, and neither is an unstamped binding or an unbound session.
 func TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	for _, id := range []string{"taken", "stale", "unbound"} {
+	for _, id := range []string{"taken", "stale", "unstamped", "unbound"} {
 		mustCreate(t, sessions, sessionstore.Session{ID: id, TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-" + id, CoordinationGeneration: 1})
 	}
 	leases := newFakeLeases()
-	leases.holders[lk("acme", "taken")] = "rep-1"
-	leases.holders[lk("acme", "stale")] = "rep-1"
-	leases.holders[lk("acme", "unbound")] = "rep-2"
 	bindings := newFakeBindings()
-	bindings.bound["taken"] = true
-	bindings.bound["stale"] = true
+	bindings.bind("taken", 1)
+	bindings.bind("stale", 1)
+	bindings.bind("unstamped", 0)
+	for _, id := range []string{"taken", "stale", "unstamped"} {
+		leases.holders[lk("acme", id)] = "rep-1"
+	}
+	leases.holders[lk("acme", "unbound")] = "rep-2"
 	mirror := coordlease.NewMemoryStore(nil)
 	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases,
 		Options{ReplicaID: "rep-1", Mirror: mirror, Bindings: bindings})
@@ -339,16 +356,18 @@ func TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Sweep: %v", err)
 	}
-	if held != 2 {
-		t.Fatalf("first Sweep held = %d, want 2 (both bound sessions renewed)", held)
+	if held != 3 {
+		t.Fatalf("first Sweep held = %d, want 3 (the bound sessions renewed)", held)
 	}
 
-	// rep-2 now holds every lease. Only "taken" advanced its generation, as
-	// a peer's takeover does; "stale" models a stale foreign Redis holder.
-	for _, id := range []string{"taken", "stale", "unbound"} {
+	// rep-2 now holds every lease. Every row advanced its generation except
+	// "stale", which models a stale foreign Redis holder.
+	for _, id := range []string{"taken", "stale", "unstamped", "unbound"} {
 		leases.holders[lk("acme", id)] = "rep-2"
 	}
 	setGeneration(t, sessions, "taken", 2)
+	setGeneration(t, sessions, "unstamped", 2)
+	setGeneration(t, sessions, "unbound", 2)
 	before := mirrorSnapshot(t, mirror, "rep-1", "rep-2")
 
 	held, err = sw.Sweep(ctx)
@@ -361,15 +380,14 @@ func TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5(t *testing.T) {
 	if !bindings.evicted["taken"] {
 		t.Errorf("taken-over session was not evicted")
 	}
-	if bindings.evicted["stale"] {
-		t.Errorf("session held elsewhere at an unchanged generation was evicted")
-	}
-	if bindings.evicted["unbound"] {
-		t.Errorf("unbound session was evicted")
+	for _, id := range []string{"stale", "unstamped", "unbound"} {
+		if bindings.evicted[id] {
+			t.Errorf("session %s was evicted, want kept", id)
+		}
 	}
 	// fakeLeases.Release ignores the holder, so a stray Release removes the
 	// peer's lease and fails here.
-	for _, id := range []string{"taken", "stale", "unbound"} {
+	for _, id := range []string{"taken", "stale", "unstamped", "unbound"} {
 		if h, ok := leases.held("acme", id); !ok || h != "rep-2" {
 			t.Errorf("session %s holder = %q ok=%v, want rep-2", id, h, ok)
 		}
@@ -386,36 +404,62 @@ func TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5(t *testing.T) {
 			}
 		}
 	}
-	for id, want := range map[string]int64{"taken": 2, "stale": 1, "unbound": 1} {
+	for id, want := range map[string]int64{"taken": 2, "stale": 1, "unstamped": 2, "unbound": 2} {
 		if got := generationOf(t, sessions, id); got != want {
 			t.Errorf("session %s generation = %d, want %d (no session-row write)", id, got, want)
 		}
 	}
+}
 
-	// An unbound sweep forgets the renewed generation, so a rebind at a
-	// generation advanced while unbound is not mistaken for a takeover.
-	delete(bindings.bound, "stale")
+// spec: 10.1.5 (Stale Replica Behavior), 10.1.1 (Stateless Replicas and
+// Per-Session Coordination)
+// diagnosis: the peer-takeover check compared the row with a per-replica
+// record of the generation a session was last renewed at, rather than with
+// the generation stamped on the current binding. A session released and
+// rebound on this replica at a new generation between two sweeps was then
+// compared with its earlier binding's value, and a stale foreign lease
+// evicted the live binding.
+func TestSweepPeerTakeoverComparesBindingStamp_spec_10_1_5(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	mustCreate(t, sessions, sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1", CoordinationGeneration: 1})
+	leases := newFakeLeases()
+	leases.holders[lk("acme", "s")] = "rep-1"
+	bindings := newFakeBindings()
+	bindings.bind("s", 1)
+	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases, Options{ReplicaID: "rep-1", Bindings: bindings})
 	if _, err := sw.Sweep(ctx); err != nil {
-		t.Fatalf("third Sweep: %v", err)
+		t.Fatalf("renew Sweep: %v", err)
 	}
-	bindings.bound["stale"] = true
-	setGeneration(t, sessions, "stale", 2)
+
+	// Between two sweeps the session is released and rebound on this replica
+	// at generation 2, and a stale foreign lease appears.
+	bindings.bind("s", 2)
+	setGeneration(t, sessions, "s", 2)
+	leases.holders[lk("acme", "s")] = "rep-2"
 	if _, err := sw.Sweep(ctx); err != nil {
-		t.Fatalf("fourth Sweep: %v", err)
+		t.Fatalf("stale-lease Sweep: %v", err)
 	}
-	if bindings.evicted["stale"] {
-		t.Errorf("rebound session with no renewed generation was evicted")
+	if bindings.evicted["s"] || !bindings.bound["s"] {
+		t.Fatalf("binding rebound at generation 2 was evicted under a foreign lease at generation 2")
 	}
-	if !bindings.bound["stale"] {
-		t.Errorf("rebound session lost its binding")
+
+	// A peer advances the row past the stamp: the binding is evicted.
+	setGeneration(t, sessions, "s", 3)
+	if _, err := sw.Sweep(ctx); err != nil {
+		t.Fatalf("takeover Sweep: %v", err)
+	}
+	if !bindings.evicted["s"] {
+		t.Fatalf("binding stamped at 2 was kept after a peer advanced the row to 3")
 	}
 }
 
 // spec: 10.1.1 (Stateless Replicas and Per-Session Coordination), 10.1.5
-// (Stale Replica Behavior). The crash-takeover edge records the generation
-// RecordHandoff returned, so a foreign lease observed on the next sweep at
-// that same generation does not evict the published binding. Recording the
-// pre-bump row value would make the takeover's own bump read as a peer's.
+// (Stale Replica Behavior). The crash-takeover readopt publishes its binding
+// stamped at the generation RecordHandoff returned, so a foreign lease
+// observed on the next sweep at that same generation does not evict the
+// published binding. A stamp of the pre-bump row value would make the
+// takeover's own bump read as a peer's.
 func TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
@@ -437,8 +481,8 @@ func TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5(t *testing.T) {
 		t.Fatalf("binding not published by the takeover")
 	}
 
-	// No renew sweep runs before the foreign lease appears, so the entry the
-	// takeover edge recorded is the one compared.
+	// No renew sweep runs before the foreign lease appears, so the stamp the
+	// takeover's publish wrote is the one compared.
 	leases.holders[lk("acme", "orphan")] = "rep-2"
 	held, err := sw.Sweep(ctx)
 	if err != nil {

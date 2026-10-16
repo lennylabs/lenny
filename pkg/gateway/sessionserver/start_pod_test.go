@@ -1308,7 +1308,7 @@ type recordingLeaseAssigner struct {
 	released []string
 }
 
-func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.assigns = append(a.assigns, sessionID)
 	return &adapterv1.CredentialLease{
 		LeaseId:  "cl-" + pool,
@@ -1319,6 +1319,14 @@ func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*ada
 }
 
 func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) error {
+	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingLeaseAssigner) ReleaseThrough(sessionID string, _ int64) error {
 	a.released = append(a.released, sessionID)
 	return nil
 }
@@ -1515,7 +1523,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-1/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-1")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1559,7 +1567,7 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 		}`),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nockpt/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-nockpt")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1602,7 +1610,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 		}`),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-stale/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-stale")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1648,7 +1656,7 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-bad/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-bad")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("resume of a running session: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1665,7 +1673,11 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 	}
 }
 
-func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
+// spec: §7.3 (Resume driver) — a restore whose pool resolution fails fails
+// before its claim, so the attempt writes nothing: the row stays in
+// resume_pending at its generation with RetryCount unchanged, no binding is
+// published, and the window ends the retries rather than the failure.
+func TestResumeWithNoMatchingPoolWritesNothing_spec_7_3(t *testing.T) {
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-nopool")
 	// The cluster serves only the "echo" runtime; the session targets a
 	// runtime no warm pool covers, so the pod claim cannot resolve.
@@ -1678,26 +1690,30 @@ func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nopool/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume with no matching pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-resume-nopool")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume with no matching pool: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-
 	row, err := store.Get(context.Background(), "acme", "sess-resume-nopool")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if row.State != session.StateFailed {
-		t.Errorf("state = %q, want failed after the resume claim failure", row.State)
+	// memstore stamps a created row at generation 1; the pre-claim
+	// failure leaves it there.
+	if row.State != session.StateResumePending || row.RetryCount != 0 || row.CoordinationGeneration != 1 {
+		t.Errorf("row = %q retry %d gen %d, want resume_pending retry 0 gen 1: a pre-claim failure writes nothing",
+			row.State, row.RetryCount, row.CoordinationGeneration)
 	}
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 after a failed resume", registry.Len())
 	}
 }
 
-// spec: §8.10 — a child session that the gateway fails on the resume
-// path is archived to the session_tree_archive.
-func TestResumeArchivesFailedChild(t *testing.T) {
+// spec: §7.3 (Resume driver), §8.10 (Delegation Tree Recovery) — a child
+// session whose restore cannot claim a pod is neither failed nor archived: the
+// pre-claim failure writes nothing, so the child stays resume_pending for the
+// next attempt.
+func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1718,8 +1734,6 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 		TreeArchive:             archive,
 	})
 
-	// A child session targeting a runtime no warm pool covers: resume
-	// cannot claim a pod, so the gateway fails the session.
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID:              "sess-child",
 		RuntimeRef:      "no-such-runtime",
@@ -1730,20 +1744,15 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-child/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-child")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-
-	got, err := archive.GetByNode(context.Background(), "acme", "sess-child")
-	if err != nil {
-		t.Fatalf("the failed child was not archived: %v", err)
+	if row, _ := store.Get(context.Background(), "acme", "sess-child"); row.State != session.StateResumePending {
+		t.Errorf("state = %q, want resume_pending", row.State)
 	}
-	if got.State != string(session.StateFailed) {
-		t.Errorf("archived state = %q, want failed", got.State)
-	}
-	if got.ParentSessionID != "sess-parent" {
-		t.Errorf("archived ParentSessionID = %q, want sess-parent", got.ParentSessionID)
+	if _, err := archive.GetByNode(context.Background(), "acme", "sess-child"); err == nil {
+		t.Error("a child whose restore failed before its claim was archived")
 	}
 }
 
@@ -1802,12 +1811,12 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	}
 }
 
-// TestResumeKeepsAwaitingOnTransientPoolExhaustion covers F-7.3.23 /
-// §7.3: a transient warm-pool exhaustion during the client's
-// explicit `POST /resume` retry must leave the row in
-// `awaiting_client_action` so the next retry can succeed once an idle
-// pod is available. The §15.1 envelope still surfaces a retryable 503.
-func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
+// TestResumeKeepsPendingOnTransientPoolExhaustion covers F-7.3.23 /
+// §7.3 (Resume driver): a transient warm-pool exhaustion fails the restore
+// before its claim, so the row stays resume_pending with RetryCount
+// unchanged and the next watchdog tick attempts again once an idle pod is
+// available. The POST /resume itself is a store write that answers 200.
+func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1840,20 +1849,19 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-transient-pool/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-transient-pool")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume on empty pool: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// spec: §7.3 — the row must stay in awaiting_client_action
-	// so a retry can succeed once an idle pod returns to the pool.
-	// F-7.3.23.
+	// spec: §7.3 — the row stays in resume_pending so the driver's next
+	// attempt can succeed once an idle pod returns to the pool. F-7.3.23.
 	row, err := store.Get(context.Background(), "acme", "sess-transient-pool")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if row.State != session.StateAwaitingClientAction {
-		t.Errorf("state = %q, want awaiting_client_action (§7.3; transient pool exhaustion should not demote to failed)", row.State)
+	if row.State != session.StateResumePending || row.RetryCount != 0 {
+		t.Errorf("row = %q retry %d, want resume_pending retry 0 (§7.3; transient pool exhaustion writes nothing)", row.State, row.RetryCount)
 	}
 }
 
@@ -1909,7 +1917,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-rg-hints/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-rg-hints")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1935,7 +1943,7 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 		t.Fatalf("baseline RecoveryGeneration = %d, want 0", row.RecoveryGeneration)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-recovery-bump/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-recovery-bump")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}

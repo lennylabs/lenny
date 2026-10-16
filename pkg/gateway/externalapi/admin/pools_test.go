@@ -1005,7 +1005,6 @@ func TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559(t *testing.T) {
 func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-code"})
-	mt := 2
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name:             "recycle-pool",
 		RuntimeRef:       "claude-code",
@@ -1013,7 +1012,6 @@ func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 		ExecutionMode:    "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
 			AcknowledgeProcessLevelIsolation: true,
-			MaxSessionRetries:                &mt,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                         true,
 				AcknowledgeBestEffortScrub:      true,
@@ -1055,9 +1053,6 @@ func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 	}
 	if got.SessionPolicy.Recycle.ScrubProfile != "in-place" {
 		t.Errorf("ScrubProfile = %q", got.SessionPolicy.Recycle.ScrubProfile)
-	}
-	if got.SessionPolicy.MaxSessionRetries == nil || *got.SessionPolicy.MaxSessionRetries != 2 {
-		t.Errorf("MaxSessionRetries = %#v", got.SessionPolicy.MaxSessionRetries)
 	}
 	if !got.SessionPolicy.Recycle.AllowCrossTenantReuse {
 		t.Error("recycle.allowCrossTenantReuse not preserved")

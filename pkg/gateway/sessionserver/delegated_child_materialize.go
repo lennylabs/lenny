@@ -131,7 +131,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		// §6.3 binder and launch against the claimed pod. On failure release the
 		// create-time claim (unless the binder already owns its release) and
 		// return the typed sentinel; the row stays StateCreated, so no pod leaks.
-		bound, err = s.startOnPod(ctx, row, plan, startCtx)
+		bound, err = s.startOnPod(ctx, row, plan, startCtx, resumeBind{})
 		if err != nil {
 			if createClaimNeedsRollback(createClaim, err) {
 				s.rollbackClaim(ctx, createClaim, row.ID)
@@ -166,6 +166,12 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 	// renew branch would keep renewing the orphaned lease for a session that
 	// will never serve, holding a lease with no binding.
 	updated, err := s.store.Update(ctx, tenantID, childID, func(rr *sessionstore.Session) error {
+		// spec: §7.2, §8.2 — the running-commit is guarded on the locked row
+		// still being created, so a child a parent's cascade cancelled
+		// before the commit stays cancelled and holds no binding.
+		if rr.State != session.StateCreated {
+			return errStartSuperseded
+		}
 		transitionStart(rr)
 		if claimed {
 			rr.ExecutionMode = level.ExecutionMode

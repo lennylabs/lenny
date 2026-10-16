@@ -64,20 +64,35 @@ type sessionLifecycleMetrics struct {
 	// per §7.1 derive rule 2 opt-in derive_failure audit-row write, labelled
 	// by outcome (persisted | fenced | error). F-15.1.14.
 	deriveFailureAudit *prometheus.CounterVec
-	// sessionResumeAttempts counts the §16.1 / §7.3
-	// `lenny_session_resume_attempts_total{pool, outcome}` counter:
-	// every POST /v1/sessions/{id}/resume that passes the precondition
-	// gate bumps it once with outcome "success" or "failure". F-7.3.10.
+	// sessionResumeAttempts is the
+	// `lenny_session_resume_attempts_total{pool, outcome}` counter: one
+	// bump per resume attempt whose entry write the resume driver saw take
+	// effect, "success" for a commit that landed and "failure" for a
+	// failure after the entry write or a commit that did not land.
+	// spec: §16.1 (Metrics), §7.3 (Resume driver).
 	sessionResumeAttempts *prometheus.CounterVec
 	// sessionExpiry counts the §16.1
 	// `lenny_session_expiry_total{pool, reason}` counter: a session
 	// terminated by a platform expiry clock, by reason. The watchdog's
 	// expiry sweeps bump it once per `→ expired` transition with reason
-	// `max_idle_time` (the §6.2 maxClientIdleSeconds idle clock) or
+	// `max_idle_time` (the §6.2 idle expiry of a session that cannot be
+	// idle-suspended, and the §6.2 suspended-session lifetime) or
 	// `max_session_age` (the §11.3 maxSessionAge age cap and the §7.3
 	// awaiting_client_action wall-clock deadline). spec: §16.1; §16.1.1
 	// (reason vocabulary). F-11.3.7.
 	sessionExpiry *prometheus.CounterVec
+	// sessionPodReleasedDuringSuspension is the §16.1
+	// `lenny_session_pod_released_during_suspension_total{pool, tenant_id}`
+	// counter: one bump per suspended session whose pod or slot the
+	// suspension release released. spec: §16.1 (Metrics), §6.2 (Pod State
+	// Machine).
+	sessionPodReleasedDuringSuspension *prometheus.CounterVec
+	// sessionSuspensionCheckpointFailed is the §16.1
+	// `lenny_session_suspension_checkpoint_failed_total{pool, tenant_id}`
+	// counter: one bump per failed checkpoint before a suspension release,
+	// after which the pod is held and the release retries in 60s.
+	// spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+	sessionSuspensionCheckpointFailed *prometheus.CounterVec
 	// warmpoolWarmupFailure is the §16.1
 	// `lenny_warmpool_warmup_failure_total{error_type}` counter:
 	// incremented whenever a warm-pool-side §6.3 startup phase
@@ -211,10 +226,11 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §7.3 — `lenny_session_resume_attempts_total{pool, outcome}`
-	// counts every POST /v1/sessions/{id}/resume call that passes the
-	// precondition gate. Outcome is "success" when the row transitions
-	// to running or "failure" when the pod-claim step fails. F-7.3.10.
+	// spec: §16.1 (Metrics), §7.3 (Resume driver) —
+	// `lenny_session_resume_attempts_total{pool, outcome}` counts each
+	// resume attempt whose entry write the resume driver saw take effect,
+	// "success" for a commit that landed and "failure" for a failure after
+	// the entry write or a commit that did not land.
 	sessionResumeAttempts, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_session_resume_attempts_total",
 		Help: "Session resume attempts by outcome (§7.3, §16.1).",
@@ -230,6 +246,22 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 		Name: "lenny_session_expiry_total",
 		Help: "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time) (§16.1).",
 	}, []string{"pool", "reason"})
+	if err != nil {
+		return m, err
+	}
+	// spec: §16.1 (Metrics), §6.2 (Pod State Machine) — the suspension
+	// release's success and checkpoint-failure counters.
+	sessionPodReleasedDuringSuspension, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_pod_released_during_suspension_total",
+		Help: "Suspended sessions whose pod or slot the suspension release released (§6.2, §16.1).",
+	}, []string{"pool", "tenant_id"})
+	if err != nil {
+		return m, err
+	}
+	sessionSuspensionCheckpointFailed, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_session_suspension_checkpoint_failed_total",
+		Help: "Checkpoints before a suspension release that failed; the pod is held and the release retries (§6.2, §16.1).",
+	}, []string{"pool", "tenant_id"})
 	if err != nil {
 		return m, err
 	}
@@ -310,6 +342,8 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 		sessionRetryTotal,
 		sessionResumeAttempts,
 		sessionExpiry,
+		sessionPodReleasedDuringSuspension,
+		sessionSuspensionCheckpointFailed,
 		warmpoolWarmupFailure,
 		injectionGateFailClosed,
 		workspaceSealDuration,
@@ -325,6 +359,8 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	m.deriveFailureAudit = deriveFailureAudit
 	m.sessionResumeAttempts = sessionResumeAttempts
 	m.sessionExpiry = sessionExpiry
+	m.sessionPodReleasedDuringSuspension = sessionPodReleasedDuringSuspension
+	m.sessionSuspensionCheckpointFailed = sessionSuspensionCheckpointFailed
 	m.warmpoolWarmupFailure = warmpoolWarmupFailure
 	m.injectionGateFailClosed = injectionGateFailClosed
 	m.workspaceSealDuration = workspaceSealDuration

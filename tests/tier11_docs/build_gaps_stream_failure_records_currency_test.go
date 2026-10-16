@@ -216,11 +216,34 @@ type filedStreamGap struct {
 	present func(t testing.TB, root string) bool
 }
 
-// isRunningPodAdoptsOnly matches the body of the Sweeper's adoption predicate
-// when it admits only running and input_required rows.
-var isRunningPodAdoptsOnly = regexp.MustCompile(
-	`(?s)func isRunningPod\(row sessionstore\.Session\) bool \{\s*return \(row\.State == session\.StateRunning \|\| row\.State == session\.StateInputRequired\) && row\.PodAssignment != ""\s*\}`,
-)
+// adoptionPredicate is the function in the Sweeper that decides which states
+// a lapsed coordination lease is adopted in.
+const adoptionPredicate = "adoptedState"
+
+// funcMentionsSelector reports whether the body of the top-level function
+// named fn in file references pkg.sel. It fails the test when file declares no
+// such function, so a rename does not turn the probe vacuous.
+func funcMentionsSelector(t testing.TB, file *ast.File, fn, pkg, sel string) bool {
+	t.Helper()
+	for _, decl := range file.Decls {
+		d, ok := decl.(*ast.FuncDecl)
+		if !ok || d.Recv != nil || d.Name.Name != fn || d.Body == nil {
+			continue
+		}
+		found := false
+		ast.Inspect(d.Body, func(n ast.Node) bool {
+			if se, ok := n.(*ast.SelectorExpr); ok && se.Sel.Name == sel {
+				if id, ok := se.X.(*ast.Ident); ok && id.Name == pkg {
+					found = true
+				}
+			}
+			return !found
+		})
+		return found
+	}
+	t.Fatalf("no top-level function %s with a body; update the probe to the predicate that decides adoption", fn)
+	return false
+}
 
 // filedStreamGaps lists the filed findings whose gap a declaration probe can
 // observe.
@@ -234,9 +257,10 @@ var filedStreamGaps = []filedStreamGap{
 	},
 	{
 		id:   "F-10.1.26",
-		what: "the Sweeper adopts a lapsed lease only for a running or input_required session",
+		what: "the Sweeper's adoption predicate does not admit a starting session",
 		present: func(t testing.TB, root string) bool {
-			return sourceMatches(t, filepath.Join(root, "pkg", "gateway", "coordination", "coordination", "coordination.go"), isRunningPodAdoptsOnly)
+			file := parseGoFile(t, filepath.Join(root, "pkg", "gateway", "coordination", "coordination", "coordination.go"))
+			return !funcMentionsSelector(t, file, adoptionPredicate, "session", "StateStarting")
 		},
 	},
 	{
@@ -342,11 +366,21 @@ func TestStreamFailureRecordProbes_spec_28_5_1(t *testing.T) {
 		}
 	}
 
-	if !isRunningPodAdoptsOnly.MatchString("func isRunningPod(row sessionstore.Session) bool {\n\treturn (row.State == session.StateRunning || row.State == session.StateInputRequired) && row.PodAssignment != \"\"\n}") {
-		t.Error("isRunningPodAdoptsOnly misses the shipped predicate")
+	predSrc := "package x\n" +
+		"func adoptedState(row S) bool {\n\tswitch row.State {\n\tcase session.StateResumePending, session.StateAwaitingClientAction:\n\t\treturn true\n\t}\n\treturn podHeld(row)\n}\n" +
+		"func other() { _ = session.StateStarting }\n"
+	if err := os.WriteFile(path, []byte(predSrc), 0o600); err != nil {
+		t.Fatalf("write predicate fixture: %v", err)
 	}
-	if isRunningPodAdoptsOnly.MatchString("func isRunningPod(row sessionstore.Session) bool {\n\treturn (row.State == session.StateRunning || row.State == session.StateInputRequired || row.State == session.StateSuspended) && row.PodAssignment != \"\"\n}") {
-		t.Error("isRunningPodAdoptsOnly matches a predicate that also adopts suspended rows")
+	if funcMentionsSelector(t, parseGoFile(t, path), adoptionPredicate, "session", "StateStarting") {
+		t.Error("funcMentionsSelector reads a selector outside the predicate's body")
+	}
+	predSrc = strings.Replace(predSrc, "session.StateAwaitingClientAction:", "session.StateAwaitingClientAction, session.StateStarting:", 1)
+	if err := os.WriteFile(path, []byte(predSrc), 0o600); err != nil {
+		t.Fatalf("write predicate fixture: %v", err)
+	}
+	if !funcMentionsSelector(t, parseGoFile(t, path), adoptionPredicate, "session", "StateStarting") {
+		t.Error("funcMentionsSelector misses a predicate that admits starting")
 	}
 	if !proposalStepLabel.MatchString("and, from the step-2 test commits (cd554fe18)") || !proposalStepLabel.MatchString("Step 1 test commits") {
 		t.Error("proposalStepLabel misses a numbered build-step label")

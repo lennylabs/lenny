@@ -113,8 +113,10 @@ func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 		}
 		if r.SessionID == "s1" {
 			sawS1 = true
-			if r.CoordinationGeneration != 2 {
-				t.Errorf("s1 mirrored generation = %d, want 2", r.CoordinationGeneration)
+			// The sweep took s1 over from generation 2, so its mirror row
+			// carries the post-handoff generation 3. spec: §10.1.2.
+			if r.CoordinationGeneration != 3 {
+				t.Errorf("s1 mirrored generation = %d, want the post-handoff generation 3", r.CoordinationGeneration)
 			}
 		}
 	}

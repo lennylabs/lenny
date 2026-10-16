@@ -46,6 +46,16 @@ const DefaultMaxExtensions = 3
 // spec: §4.9.
 var ErrRenewInfraUnavailable = errors.New("credrenewal: renewal infrastructure transiently unavailable")
 
+// ErrLeaseReleased reports that the tracked lease was released on purpose:
+// the lease store holds no record of it, or it has no pool binding to re-mint
+// from. A Renewer or the OnExtend hook returns it, and the worker then stops
+// tracking the lease with no retry counted, no OnExhausted, and no OnRenewed,
+// so renewal never re-mints a released lease and a release never starts the
+// Fallback Flow.
+// spec: §4.9 (Proactive Lease Renewal), §7.3 (Credential leases on the
+// replacement pod).
+var ErrLeaseReleased = errors.New("credrenewal: lease was released")
+
 // maxExtensions returns the number of renewBeforeBuffer intervals that
 // fit in one leaseTTLSeconds, the §4.9 cumulative-extension cap. Because
 // each extension sets RenewBefore = old ExpiresAt and ExpiresAt = old +
@@ -301,6 +311,10 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 			continue
 		}
 		next, err := w.renewer.Renew(ctx, tl.lease)
+		if errors.Is(err, ErrLeaseReleased) {
+			w.Forget(tl.lease.LeaseID)
+			continue
+		}
 		if err != nil {
 			// spec: §4.9 — Token Service unavailability guard.
 			// The breaker is open and the lease is still valid (the
@@ -328,7 +342,12 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 					// than extend past the cap.
 				} else {
 					newExpiresAt := tl.lease.ExpiresAt.Add(buffer)
-					if extErr := w.onExtend(tl.lease, newExpiresAt); extErr == nil {
+					extErr := w.onExtend(tl.lease, newExpiresAt)
+					if errors.Is(extErr, ErrLeaseReleased) {
+						w.Forget(tl.lease.LeaseID)
+						continue
+					}
+					if extErr == nil {
 						w.mu.Lock()
 						tl.lease.RenewBefore = tl.lease.ExpiresAt
 						tl.lease.ExpiresAt = newExpiresAt

@@ -106,7 +106,7 @@ type recordingAssigner struct {
 	released []string // session ids passed to ReleaseSession
 }
 
-func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.assigns = append(a.assigns, sessionID)
 	a.mu.Unlock()
@@ -119,6 +119,16 @@ func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv
 }
 
 func (a *recordingAssigner) ReleaseSession(sessionID string) error {
+	a.mu.Lock()
+	a.released = append(a.released, sessionID)
+	a.mu.Unlock()
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
 	a.mu.Lock()
 	a.released = append(a.released, sessionID)
 	a.mu.Unlock()

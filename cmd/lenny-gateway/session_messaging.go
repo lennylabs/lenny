@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
@@ -140,7 +141,11 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	var treeBudgetConcrete *treebudget.Reserver
 	if redisClient != nil {
 		// §12.4 Delegation concern: tree-budget keys {root_session_id}:dlg:*.
-		r := treebudget.New(concernRedis.For(storerouter.RedisConcernDelegation), 0)
+		// spec: §8.3 (Delegation Policy and Lease) — the budget keys carry
+		// the --delegation-budget-key-ttl-seconds TTL, which startup holds
+		// above the suspended lifetime.
+		r := treebudget.New(concernRedis.For(storerouter.RedisConcernDelegation),
+			time.Duration(*w.f.delegationBudgetKeyTTLSeconds)*time.Second)
 		treeBudgetReserver = r
 		hwmReader = r
 		treeBudgetConcrete = r

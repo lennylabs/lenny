@@ -209,12 +209,17 @@ func (s *Server) failWorkspaceSeal(ctx context.Context, sess sessionstore.Sessio
 	if sess.State == session.StateFailed && sess.FailureClass == session.FailureClassWorkspaceSealTimeout {
 		return sess
 	}
+	now := s.clock()
 	updated, err := s.store.Update(ctx, sess.TenantID, sess.ID, func(row *sessionstore.Session) error {
+		from := row.State
 		row.State = session.StateFailed
 		row.FailureClass = session.FailureClassWorkspaceSealTimeout
 		if row.FailureReason == "" {
 			row.FailureReason = "workspace_seal_timeout"
 		}
+		// spec: §7.2, §8.8 — the relabel keeps the first TerminatedAt and
+		// rewrites the reason; from is terminal, so no generation bump.
+		sessionstore.MarkTerminated(row, from, now)
 		return nil
 	})
 	if err != nil {

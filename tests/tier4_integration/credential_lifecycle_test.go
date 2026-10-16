@@ -192,7 +192,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// ---- stage 1: assignment ----
 	// Mint a direct-mode lease and materialize it into the runtime
 	// credential file. The runtime now holds v1.
-	v1, err := assign.AssignProto(clPool, clSession, "", clTenant)
+	v1, err := assign.AssignProto(clPool, clSession, "", clTenant, 0)
 	if err != nil {
 		t.Fatalf("assign direct-mode lease v1: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 			{ID: clCredID, APIKey: clUpstreamV2, Healthy: true},
 		},
 	})
-	v2, err := assign.AssignProto(clPool, clSession, "", clTenant)
+	v2, err := assign.AssignProto(clPool, clSession, "", clTenant, 0)
 	if err != nil {
 		t.Fatalf("assign replacement lease v2: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// (spec line 1649), so with it the pool's only member the replacement mint
 	// fails with pool-exhausted and the session terminates.
 	assign.RevokeCredential(clPool, clCredID)
-	if _, err := assign.Assign(clPool, clSession, "", clTenant); !errors.Is(err, credential.ErrPoolExhausted) {
+	if _, err := assign.Assign(clPool, clSession, "", clTenant, 0); !errors.Is(err, credential.ErrPoolExhausted) {
 		t.Fatalf("step-5 replacement mint after revoke: err = %v, want ErrPoolExhausted (session cannot continue)", err)
 	}
 

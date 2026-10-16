@@ -138,7 +138,7 @@ func (r *FreshnessReaper) Sweep(ctx context.Context) {
 		}
 		for i := range sessions {
 			s := &sessions[i]
-			if !isActiveForFreshness(s.State) {
+			if !isActiveForFreshness(*s) {
 				continue
 			}
 			pool, level := resolve(s)
@@ -198,17 +198,21 @@ func (r *FreshnessReaper) reportError(tenantID string, err error) {
 }
 
 // isActiveForFreshness reports whether the §4.4 freshness SLO applies
-// to a session in the given state. The SLO covers active sessions
-// only: terminal sessions cannot be checkpointed and their lack of
-// `last_successful_checkpoint_at` should not skew the gauge.
-// spec: §4.4 — "Every active session MUST have a successful
-// checkpoint recorded within the last periodicCheckpointIntervalSeconds".
-func isActiveForFreshness(state session.State) bool {
-	switch state {
+// to a session row. The SLO covers active sessions only: terminal sessions
+// cannot be checkpointed and their lack of `last_successful_checkpoint_at`
+// should not skew the gauge. A `suspended` session counts only while it
+// names a pod: a podless suspended session was checkpointed at its
+// suspension release and holds no pod whose workspace an eviction can lose.
+// spec: §4.4 (Event / Checkpoint Store) — "Every active session MUST have a
+// successful checkpoint recorded within the last
+// periodicCheckpointIntervalSeconds"; §6.2 (Pod State Machine).
+func isActiveForFreshness(row sessionstore.Session) bool {
+	switch row.State {
 	case session.StateRunning, session.StateStarting,
-		session.StateAwaitingClientAction, session.StateResumePending,
-		session.StateSuspended:
+		session.StateAwaitingClientAction, session.StateResumePending:
 		return true
+	case session.StateSuspended:
+		return row.PodAssignment != ""
 	default:
 		return false
 	}

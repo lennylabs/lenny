@@ -329,7 +329,11 @@ func (w *gatewayWiring) buildAdminRouter(
 		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
 		WithSessions(w.sessions).
-		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal}).
+		// spec: §11.4 — the full_revoke step cancels each session's
+		// same-replica resume attempt and drains its inbox and DLQ right
+		// after the write that cancelled it.
+		WithRevokeHook(sessionSrv).
+		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}).
 		WithInteractions(w.interactions).
 		WithExperiments(w.experiments).
 		WithStickyFlusher(adminStickyFlusher).
@@ -497,39 +501,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// Session-scoped stores (transcripts, artifacts) are erased per
 	// session before the session-keyed user-scoped stores.
 	{
-		sessionScoped := []erasure.SessionEraser{}
-		if te, ok := w.transcripts.(sessionArtifactDeleter); ok {
-			sessionScoped = append(sessionScoped,
-				erasure.SessionEraser{Name: "transcripts", DeleteBySession: te.DeleteBySession})
-		}
-		if be, ok := w.blobs.(sessionArtifactDeleter); ok {
-			sessionScoped = append(sessionScoped,
-				erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
-		}
-		sessionScoped = append(sessionScoped,
-			erasure.SessionEraser{Name: "eval_results", DeleteBySession: w.evals.DeleteBySession})
-		// §12.8 step 11: the session_tree_archive holds settled child
-		// TaskResults keyed by root_session_id with a Postgres FK into
-		// sessions(id) (migration 0100, no ON DELETE action), so it is
-		// erased per owned session before SessionStore. session_dlq_archive
-		// (step 10) is omitted deliberately: its FK is ON DELETE CASCADE
-		// (migration 0056), so the step-17 SessionStore delete cleans it up.
-		sessionScoped = append(sessionScoped,
-			erasure.SessionEraser{Name: "session_tree_archive", DeleteBySession: w.treeArchive.DeleteBySession})
-		// §12.8 step 16: purge the tree-wide Redis delegation-budget keys
-		// ({root_session_id}:dlg:*) for each of the user's root sessions
-		// before SessionStore deletion makes the root ids irrecoverable.
-		// The keys carry no tenant prefix (the {root} hash tag scopes
-		// them); PurgeRoot no-ops on a non-root session id.
-		if w.treeBudgetConcrete != nil {
-			tb := w.treeBudgetConcrete
-			sessionScoped = append(sessionScoped, erasure.SessionEraser{
-				Name: "delegation_budget",
-				DeleteBySession: func(ctx context.Context, _ string, sessionID string) (int, error) {
-					return tb.PurgeRoot(ctx, sessionID)
-				},
-			})
-		}
+		sessionScoped := w.buildSessionScopedErasers()
 
 		// §12.8 user-scoped stores, appended in dependency-rank order so
 		// the orchestrator runs them in the sequence ValidateOrder pins.
@@ -987,6 +959,58 @@ func (w *gatewayWiring) buildAdminRouter(
 	w.userPodTerminateProp = userPodTerminateProp
 	w.immediateGCSweep = immediateGCSweep
 	return connectorAuthorizer, connectorInvoker, ruStore, erasureSemanticCache
+}
+
+// buildSessionScopedErasers returns the §12.8 session-scoped erasers, which
+// the orchestrator runs for each of the erased user's sessions before the
+// user-scoped stores. Each is wired only when its backend is present.
+//
+// spec: §12.8 (Compliance Interfaces).
+func (w *gatewayWiring) buildSessionScopedErasers() []erasure.SessionEraser {
+	sessionScoped := []erasure.SessionEraser{}
+	if te, ok := w.transcripts.(sessionArtifactDeleter); ok {
+		sessionScoped = append(sessionScoped,
+			erasure.SessionEraser{Name: "transcripts", DeleteBySession: te.DeleteBySession})
+	}
+	if be, ok := w.blobs.(sessionArtifactDeleter); ok {
+		sessionScoped = append(sessionScoped,
+			erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
+	}
+	sessionScoped = append(sessionScoped,
+		erasure.SessionEraser{Name: "eval_results", DeleteBySession: w.evals.DeleteBySession})
+	// §12.8 step 10: a podless suspended session's held messages can stay in
+	// its Redis DLQ and durable inbox for up to the suspended-session
+	// lifetime, so the erasure deletes both keys for each of the user's
+	// sessions.
+	// spec: §12.8 (Compliance Interfaces).
+	if w.messagingCoord != nil {
+		sessionScoped = append(sessionScoped, erasure.SessionEraser{
+			Name: "session_message_queues", DeleteBySession: w.messagingCoord.EraseSession,
+		})
+	}
+	// §12.8 step 11: the session_tree_archive holds settled child
+	// TaskResults keyed by root_session_id with a Postgres FK into
+	// sessions(id) (migration 0100, no ON DELETE action), so it is
+	// erased per owned session before SessionStore. session_dlq_archive
+	// (step 10) is omitted deliberately: its FK is ON DELETE CASCADE
+	// (migration 0056), so the step-17 SessionStore delete cleans it up.
+	sessionScoped = append(sessionScoped,
+		erasure.SessionEraser{Name: "session_tree_archive", DeleteBySession: w.treeArchive.DeleteBySession})
+	// §12.8 step 16: purge the tree-wide Redis delegation-budget keys
+	// ({root_session_id}:dlg:*) for each of the user's root sessions
+	// before SessionStore deletion makes the root ids irrecoverable.
+	// The keys carry no tenant prefix (the {root} hash tag scopes
+	// them); PurgeRoot no-ops on a non-root session id.
+	if w.treeBudgetConcrete != nil {
+		tb := w.treeBudgetConcrete
+		sessionScoped = append(sessionScoped, erasure.SessionEraser{
+			Name: "delegation_budget",
+			DeleteBySession: func(ctx context.Context, _ string, sessionID string) (int, error) {
+				return tb.PurgeRoot(ctx, sessionID)
+			},
+		})
+	}
+	return sessionScoped
 }
 
 // buildHTTPSurface is an extracted §4.1 composition-root build step (R1).

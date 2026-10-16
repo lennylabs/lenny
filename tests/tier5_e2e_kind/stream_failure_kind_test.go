@@ -15,8 +15,9 @@
 // with maxConcurrentSessions: 1 the replica releases the pod with the failed
 // disposition, so a recycling pool retires the pod rather than recycling it,
 // and the adapter writes session_end to the runtime. A session the §7.3
-// classifier moves to resume_pending reaches awaiting_client_action when its
-// maxResumeWindowSeconds elapses. On a concurrent pool each failed slot is
+// classifier moves to resume_pending is restored by the coordinating
+// replica's resume driver onto another warm pod of the pool within its
+// maxResumeWindowSeconds. On a concurrent pool each failed slot is
 // counted toward the whole-pod replacement trigger, and the pod is drained at
 // ceil(maxConcurrentSessions / 2) failed slots. The drain deletes the pod, so a
 // sibling slot whose own heartbeat deadline has not yet passed loses its stream
@@ -51,8 +52,10 @@ const (
 	// escalation and the gateway's report: one heartbeat interval, the ack
 	// timeout, and margin for the report and a slow node.
 	streamFailureEscalation = 3 * time.Minute
-	// streamFailureResumeWindow is the session's maxResumeWindowSeconds.
-	streamFailureResumeWindow = 5
+	// streamFailureResumeWindow is the session's maxResumeWindowSeconds,
+	// long enough for the resume driver to restore the session onto another
+	// warm pod.
+	streamFailureResumeWindow = 180
 
 	// silenceRecyclePoolName and silenceEchoRuntimeRef name the recycling
 	// pool with maxConcurrentSessions: 1 on the heartbeat-silence fixture
@@ -162,20 +165,21 @@ func awaitSessionEndLogged(t *testing.T, log *syncBuffer, sessionID string, time
 	}
 }
 
-// spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume), 6.2 (Pod State
-// Machine), 5.2 (Pool Configuration and Execution Modes)
+// spec: 28.5.1 (Gateway-to-pod), 7.3 (Resume driver; Retry and Resume), 6.2
+// (Pod State Machine), 5.2 (Pool Configuration and Execution Modes)
 // diagnosis: a runtime on a recycling pool with maxConcurrentSessions: 1
 // stopped answering heartbeats between turns, and the gateway did not report
 // it as runtime_crash, recycled the pod instead of retiring it, sent the
-// runtime no session_end, or left the session in resume_pending past its
-// maxResumeWindowSeconds. The session must reach resume_pending, the pod's
-// claim must be deleted without passing through recycling, the runtime must
-// receive session_end, and the session must reach awaiting_client_action once
-// the resume window elapses with no replacement pod.
-func TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5_1(t *testing.T) {
+// runtime no session_end, or did not restore the session. The report must
+// spend one retry, the pod's claim must be deleted without passing through
+// recycling, the runtime must receive session_end, and the resume driver must
+// restore the session onto another warm pod of the pool within its resume
+// window, with no client call.
+func TestStreamFailureRetiresTheExclusivePodAndRestoresOntoAnotherPod_spec_28_5_1(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
-	requirePoolReadyPods(t, c, silenceRecyclePoolName, 1)
+	// The restore claims the pool's second warm pod.
+	requirePoolReadyPods(t, c, silenceRecyclePoolName, 2)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -218,18 +222,43 @@ func TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5
 	}
 	sendSilenceDirective(ctx, t, d, tenant, sess.ID)
 
-	got, ok := d.WaitForState(ctx, tenant, sess.ID, streamFailureEscalation, "resume_pending", "awaiting_client_action")
-	if !ok {
-		t.Fatalf("session %s state = %+v after %s, want resume_pending once the heartbeat escalation is reported",
-			sess.ID, got, streamFailureEscalation)
+	// The report spends one retry; the restore that follows may already
+	// have committed when the first read lands.
+	reported := awaitRetrySpent(ctx, t, d, tenant, sess.ID, streamFailureEscalation)
+	if reported.State == "awaiting_client_action" {
+		t.Fatalf("session %s reached awaiting_client_action, want a restore within its resume window", sess.ID)
 	}
 	awaitPodRetired(t, c, pod, 2*time.Minute)
 	awaitSessionEndLogged(t, log, sess.ID, 30*time.Second)
 
-	got, ok = d.WaitForState(ctx, tenant, sess.ID, time.Minute, "awaiting_client_action")
+	// spec: §7.3 (Resume driver) — the coordinating replica's driver
+	// restores the session onto another warm pod with no client call.
+	got, ok := d.WaitForState(ctx, tenant, sess.ID, 3*time.Minute, "running")
 	if !ok {
-		t.Fatalf("session %s state = %+v, want awaiting_client_action after its %ds resume window",
+		t.Fatalf("session %s state = %+v, want running on another pod within its %ds resume window",
 			sess.ID, got, streamFailureResumeWindow)
+	}
+	if got.PodAssignment == "" || got.PodAssignment == pod || got.RecoveryGeneration < 1 {
+		t.Errorf("restored session = pod %q recovery generation %d, want another pod than %q and a committed restore",
+			got.PodAssignment, got.RecoveryGeneration, pod)
+	}
+}
+
+// awaitRetrySpent waits until the session's report spent a retry and returns
+// the session as last read.
+func awaitRetrySpent(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant, id string, timeout time.Duration) sessiondriver.Session {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		s, err := d.GetSession(ctx, tenant, id)
+		if err == nil && s.RetryCount >= 1 {
+			return *s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s spent no retry within %s (last %+v, err %v): the heartbeat escalation was not reported",
+				id, timeout, s, err)
+		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -381,10 +410,10 @@ func awaitAnySessionReported(ctx context.Context, t *testing.T, d *sessiondriver
 	}
 }
 
-// reportedSessions returns the sessions whose row is in a state the
-// stream-failure report writes: resume_pending, or awaiting_client_action
-// once the resume window has elapsed. A session the driver cannot read is
-// left out.
+// reportedSessions returns the sessions a stream-failure report moved out of
+// running: those whose row spent a retry, which a restore that has since
+// committed keeps, or that are in resume_pending or awaiting_client_action.
+// A session the driver cannot read is left out.
 func reportedSessions(ctx context.Context, d *sessiondriver.Driver, tenant string, ids []string) []string {
 	var out []string
 	for _, id := range ids {
@@ -392,7 +421,7 @@ func reportedSessions(ctx context.Context, d *sessiondriver.Driver, tenant strin
 		if err != nil {
 			continue
 		}
-		if s.State == "resume_pending" || s.State == "awaiting_client_action" {
+		if s.RetryCount >= 1 || s.State == "resume_pending" || s.State == "awaiting_client_action" {
 			out = append(out, id)
 		}
 	}

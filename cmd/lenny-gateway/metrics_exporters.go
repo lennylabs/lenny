@@ -137,12 +137,18 @@ func exportHPAGauges(ctx context.Context, sessions sessionstore.Store, lister te
 }
 
 // exportSessionAvailabilityRatio refreshes the §16.5 Session availability
-// SLI: lenny_session_unavailability_ratio is the fraction of active
-// sessions currently in a retry/recovery state (resume_pending, resuming,
-// awaiting_client_action), the inverse of "uptime of sessions not in
-// retry/recovery state". The SessionAvailabilityBurnRate alert reads it.
-// The ratio is 0 when there are no active sessions (an idle gateway is
-// fully available). F-16.5.3.
+// SLI: lenny_session_unavailability_ratio is the fraction of the sessions
+// the §11.1 concurrent-session count counts that are currently in a
+// retry/recovery state (resume_pending, resuming, awaiting_client_action),
+// the inverse of "uptime of sessions not in retry/recovery state". The
+// SessionAvailabilityBurnRate alert reads it. The denominator is
+// CountActiveSessionsGlobal, which excludes suspended sessions: a
+// suspended session runs no turn and is in no recovery state, so it is in
+// neither the numerator nor the denominator. The ratio is 0 when no session
+// is counted, including when only suspended sessions exist (an idle gateway
+// is fully available). F-16.5.3.
+//
+// spec: §16.5 (Alerting Rules and SLOs), §11.1 (Concurrent-session count)
 func exportSessionAvailabilityRatio(ctx context.Context, sessions sessionstore.Store, m *gatewaymetrics.Metrics) {
 	active, err := sessions.CountActiveSessionsGlobal(ctx)
 	if err != nil {

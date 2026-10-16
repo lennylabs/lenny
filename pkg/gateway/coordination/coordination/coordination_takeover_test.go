@@ -39,11 +39,17 @@ type fakeReadopter struct {
 	replicaID string
 	bindings  *fakeBindings
 	calls     []*readoptCall
+	// onReadopt, when set, runs inside ReadoptAndFence before the outcome,
+	// so a test can model a write that lands during the dial and fence.
+	onReadopt func(sessionID string)
 }
 
 func (r *fakeReadopter) ReadoptAndFence(_ context.Context, tenantID, sessionID string, generation int64) (func(), error) {
 	call := &readoptCall{sessionID: sessionID, generation: generation}
 	r.calls = append(r.calls, call)
+	if r.onReadopt != nil {
+		r.onReadopt(sessionID)
+	}
 	if r.fail[sessionID] {
 		// Terminal fence failure: coordfence relinquishes the lease.
 		_ = r.leases.Release(context.Background(), tenantID, sessionID, r.replicaID)
@@ -52,7 +58,7 @@ func (r *fakeReadopter) ReadoptAndFence(_ context.Context, tenantID, sessionID s
 	return func() {
 		call.published = true
 		if r.bindings != nil {
-			r.bindings.bound[sessionID] = true
+			r.bindings.bind(sessionID, generation)
 			r.bindings.alive[sessionID] = true
 		}
 	}, nil

@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -97,6 +98,25 @@ type Inbox interface {
 
 	// Len reports the buffered message count.
 	Len(ctx context.Context, tenantID, sessionID string) (int, error)
+
+	// Peek returns the oldest buffered message without removing it, with
+	// an opaque handle that Ack accepts. ok is false when the inbox is
+	// empty. It backs the delivery of held messages, which removes an
+	// entry only after the runtime consumed it.
+	// spec: §7.2 (Message delivery routing — seven paths, path 6).
+	Peek(ctx context.Context, tenantID, sessionID string) (msg Message, handle string, ok bool, err error)
+
+	// Ack removes the one entry handle names and reports whether it found
+	// it. A missing entry is not an error.
+	// spec: §7.2 (Message delivery routing — seven paths, path 6).
+	Ack(ctx context.Context, tenantID, sessionID, handle string) (removed bool, err error)
+
+	// Delete removes every buffered message of (tenantID, sessionID) and
+	// reports how many it removed. It backs the §12.8 user erasure of the
+	// session's message queues; it emits nothing. A memory inbox removes
+	// this replica's entries.
+	// spec: §12.8 (Compliance Interfaces).
+	Delete(ctx context.Context, tenantID, sessionID string) (int, error)
 }
 
 // inboxKey is the §12.4 durable-inbox Redis key
@@ -161,6 +181,55 @@ func (m *MemoryInbox) Len(_ context.Context, tenantID, sessionID string) (int, e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.byKey[inboxKey(tenantID, sessionID)]), nil
+}
+
+// Peek implements Inbox. The handle names the entry by its message ID and
+// enqueue instant.
+func (m *MemoryInbox) Peek(_ context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	q := m.byKey[inboxKey(tenantID, sessionID)]
+	if len(q) == 0 {
+		return Message{}, "", false, nil
+	}
+	return q[0], memoryHandle(q[0]), true, nil
+}
+
+// Ack implements Inbox. It removes the first entry the handle names.
+func (m *MemoryInbox) Ack(_ context.Context, tenantID, sessionID, handle string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := inboxKey(tenantID, sessionID)
+	q := m.byKey[key]
+	for i, msg := range q {
+		if memoryHandle(msg) != handle {
+			continue
+		}
+		q = append(q[:i:i], q[i+1:]...)
+		if len(q) == 0 {
+			delete(m.byKey, key)
+		} else {
+			m.byKey[key] = q
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// Delete implements Inbox. It removes this replica's entries for the
+// session.
+func (m *MemoryInbox) Delete(_ context.Context, tenantID, sessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := inboxKey(tenantID, sessionID)
+	n := len(m.byKey[key])
+	delete(m.byKey, key)
+	return n, nil
+}
+
+// memoryHandle is the in-memory inbox's entry handle.
+func memoryHandle(msg Message) string {
+	return msg.MessageID + "@" + strconv.FormatInt(msg.EnqueuedAt.UnixNano(), 10)
 }
 
 // enqueueInboxScript enforces the §7.2 cap atomically: it
@@ -264,14 +333,42 @@ func (r *RedisInbox) Len(ctx context.Context, tenantID, sessionID string) (int, 
 	return int(n), err
 }
 
-// Expire sets the §7.2 recovery-window TTL on the durable
-// inbox key. On `resume_pending` the durable inbox is left in Redis
-// (rather than drained to the DLQ), so the gateway applies an EXPIRE to
-// clean up stale messages if the session never resumes.
-//
-// spec: §7.2.
-func (r *RedisInbox) Expire(ctx context.Context, tenantID, sessionID string, ttl time.Duration) error {
-	return r.client.Expire(ctx, inboxKey(tenantID, sessionID), ttl).Err()
+// Peek implements Inbox. The handle is the list member, LINDEX 0.
+func (r *RedisInbox) Peek(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	raw, err := r.client.LIndex(ctx, inboxKey(tenantID, sessionID), 0).Result()
+	if errors.Is(err, redis.Nil) {
+		return Message{}, "", false, nil
+	}
+	if err != nil {
+		return Message{}, "", false, err
+	}
+	var msg Message
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		return Message{}, "", false, err
+	}
+	return msg, raw, true, nil
+}
+
+// Ack implements Inbox. It removes one occurrence of the member handle names
+// (LREM count 1).
+func (r *RedisInbox) Ack(ctx context.Context, tenantID, sessionID, handle string) (bool, error) {
+	n, err := r.client.LRem(ctx, inboxKey(tenantID, sessionID), 1, handle).Result()
+	return n > 0, err
+}
+
+// Delete implements Inbox. It reads the list length and deletes the key in
+// one transaction.
+func (r *RedisInbox) Delete(ctx context.Context, tenantID, sessionID string) (int, error) {
+	key := inboxKey(tenantID, sessionID)
+	var lenCmd *redis.IntCmd
+	if _, err := r.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		lenCmd = p.LLen(ctx, key)
+		p.Del(ctx, key)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return int(lenCmd.Val()), nil
 }
 
 // ErrInboxUnavailable reports that a durable-inbox operation failed

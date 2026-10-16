@@ -447,17 +447,15 @@ var table = map[string]entry{
 
 	// spec: §15.1 — the session-lifecycle generic
 	// fallback codes the gateway emits when an atomic create, the
-	// two-step start, or a resume fails for a reason without a more
-	// specific code, plus the JWT-signer-unavailable code. All are
-	// TRANSIENT and retryable: the failing unit rebinds a fresh pod
-	// (creation/start) or the row stays in awaiting_client_action for
-	// an explicit resume retry, and the signer recovers when the
-	// backend does. Adding these as explicit table entries replaces
+	// two-step start fails for a reason without a more specific code,
+	// plus the JWT-signer-unavailable code. All are TRANSIENT and
+	// retryable: the failing unit rebinds a fresh pod, and the signer
+	// recovers when the backend does. A resume is a store write with no
+	// claim, so no resume fallback code exists. Adding these as explicit table entries replaces
 	// the per-call-site hardcoded pairs and the unknown-code fallback
 	// these codes relied on before (W2). F-15.2.6.
 	"SESSION_CREATION_FAILED": {CategoryTransient, true}, // spec: 15:1101
 	"STARTING_FAILED":         {CategoryTransient, true}, // spec: 15:1102
-	"RESUME_FAILED":           {CategoryTransient, true}, // spec: 15:1103
 	"KMS_SIGNING_UNAVAILABLE": {CategoryTransient, true}, // spec: 15:1104
 
 	// spec: §15.1 — two non-retryable session/admin
@@ -470,7 +468,7 @@ var table = map[string]entry{
 	// with setup_command_failed under retryPolicy.nonRetryableFailures
 	// in §7.3 (F-CS6). The retryable complement (every non-
 	// FailedPrecondition setup-window failure) stays the TRANSIENT
-	// SESSION_CREATION_FAILED/STARTING_FAILED/RESUME_FAILED fallback.
+	// SESSION_CREATION_FAILED/STARTING_FAILED fallback.
 	"CONFIRMATION_REQUIRED": {CategoryPermanent, false}, // spec: 15:1105
 	"SETUP_COMMAND_FAILED":  {CategoryPermanent, false}, // spec: 15:1106
 }

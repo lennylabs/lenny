@@ -47,6 +47,10 @@ func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
 		grpc.ChainStreamInterceptor(s.holdStateStreamInterceptor),
 	}, opts...)
 	gs := grpc.NewServer(opts...)
+	// spec: §4.7.1 (Session seal) — the adapter reads every runtime frame
+	// for the session activity clock, whether or not an Attach stream is
+	// open, so the tap is installed once before the server serves.
+	s.installActivityTap()
 	adapterv1.RegisterAdapterServer(gs, s)
 
 	hs := health.NewServer()

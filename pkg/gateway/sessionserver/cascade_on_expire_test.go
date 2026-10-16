@@ -104,7 +104,9 @@ func TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11(t *testing.T) {
 		t.Fatalf("seed child: %v", err)
 	}
 
-	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{}, nil).
+	// The idle bound is raised past the tick so the child's own idle firing
+	// (900s by default) does not end it; the test isolates the cascade.
+	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{MaxIdleSeconds: 7200}, nil).
 		WithTerminalHook(srv)
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)

@@ -11,9 +11,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// stubFencer records its invocation and returns a fixed disposition.
+// stubFencer records its invocations and returns a fixed disposition.
 type stubFencer struct {
 	calls        int
+	fenceAtCalls int
+	generations  []int64
 	relinquished bool
 	err          error
 }
@@ -23,11 +25,18 @@ func (f *stubFencer) Fence(_ context.Context, _ *adapterclient.Client, _, _ stri
 	return f.relinquished, f.err
 }
 
+func (f *stubFencer) FenceAt(_ context.Context, _ *adapterclient.Client, _, _ string, generation int64) (bool, error) {
+	f.calls++
+	f.fenceAtCalls++
+	f.generations = append(f.generations, generation)
+	return f.relinquished, f.err
+}
+
 // spec: §10.1 — a nil fencer (dev / in-memory mode) makes the
 // resume fence a no-op rather than a panic.
 func TestFenceResumedPodNilFencerIsNoOp(t *testing.T) {
 	s := &Server{}
-	if err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1"); err != nil {
+	if err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1", 4); err != nil {
 		t.Fatalf("nil fencer: want nil error, got %v", err)
 	}
 }
@@ -37,7 +46,7 @@ func TestFenceResumedPodNilFencerIsNoOp(t *testing.T) {
 func TestFenceResumedPodNilAdapterSkips(t *testing.T) {
 	f := &stubFencer{}
 	s := &Server{fencer: f}
-	if err := s.fenceResumedPod(context.Background(), nil, "acme", "s1"); err != nil {
+	if err := s.fenceResumedPod(context.Background(), nil, "acme", "s1", 4); err != nil {
 		t.Fatalf("nil adapter: want nil error, got %v", err)
 	}
 	if f.calls != 0 {
@@ -45,19 +54,23 @@ func TestFenceResumedPodNilAdapterSkips(t *testing.T) {
 	}
 }
 
-// spec: §11.3 — a relinquish propagates as an error so the
-// caller aborts the resume (another replica owns the session).
-func TestFenceResumedPodRelinquishAbortsResume(t *testing.T) {
+// TestFenceResumedPodRelinquishAbortsResume_spec_10_1_2 asserts that a
+// relinquish propagates as an error, so the resume driver takes the
+// Relinquished exit (the adopter owns the pod), and that the resume fences at
+// the generation it committed at, through FenceAt rather than a re-read
+// value.
+//
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica
+// Behavior), §11.3.
+func TestFenceResumedPodRelinquishAbortsResume_spec_10_1_2(t *testing.T) {
 	f := &stubFencer{relinquished: true, err: coordfence.ErrRelinquished}
 	s := &Server{fencer: f}
-	err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1")
+	err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1", 7)
 	if !errors.Is(err, coordfence.ErrRelinquished) {
 		t.Fatalf("relinquish: want ErrRelinquished, got %v", err)
 	}
-	// spec: §7.3 — the relinquish must classify transient so the
-	// row holds in awaiting_client_action for the client's resume retry.
-	if !isTransientPodClaimError(err) {
-		t.Errorf("ErrRelinquished should classify as a transient pod-claim error")
+	if f.fenceAtCalls != 1 || len(f.generations) != 1 || f.generations[0] != 7 {
+		t.Errorf("FenceAt calls = %d at generations %v, want one call at generation 7", f.fenceAtCalls, f.generations)
 	}
 }
 
@@ -66,7 +79,7 @@ func TestFenceResumedPodRelinquishAbortsResume(t *testing.T) {
 func TestFenceResumedPodBestEffortFailureSwallowed(t *testing.T) {
 	f := &stubFencer{relinquished: false, err: errors.New("generation read failed")}
 	s := &Server{fencer: f}
-	if err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1"); err != nil {
+	if err := s.fenceResumedPod(context.Background(), adapterclient.New(nil), "acme", "s1", 3); err != nil {
 		t.Fatalf("best-effort failure: want nil error, got %v", err)
 	}
 	if f.calls != 1 {

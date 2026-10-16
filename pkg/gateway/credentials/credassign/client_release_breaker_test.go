@@ -168,7 +168,7 @@ func TestClientAssignBreakerEveryStatusCode_spec_4_3(t *testing.T) {
 		t.Run(code.String(), func(t *testing.T) {
 			h := newScriptedHarness(t, "acme", 1)
 			h.server.setAssign(code)
-			if _, err := h.client.Assign("pool-a", "s_1", "", "acme"); err == nil {
+			if _, err := h.client.Assign("pool-a", "s_1", "", "acme", 0); err == nil {
 				t.Fatalf("Assign succeeded against a %s answer", code)
 			}
 			wantOpen := faultCodes[code]
@@ -191,7 +191,7 @@ func TestClientExhaustedPoolKeepsBreakerClosedForHealthyPools_spec_4_3(t *testin
 	h := newScriptedHarness(t, "acme", 3)
 	h.server.setAssign(codes.ResourceExhausted)
 	for i := 0; i < 10; i++ {
-		_, err := h.client.Assign("exhausted-pool", "s_1", "", "acme")
+		_, err := h.client.Assign("exhausted-pool", "s_1", "", "acme", 0)
 		if !errors.Is(err, credential.ErrPoolExhausted) {
 			t.Fatalf("call %d: got %v, want credential.ErrPoolExhausted", i, err)
 		}
@@ -200,7 +200,7 @@ func TestClientExhaustedPoolKeepsBreakerClosedForHealthyPools_spec_4_3(t *testin
 		t.Fatalf("after 10 exhausted-pool answers: breaker state = %s, want closed", st)
 	}
 	h.server.setAssign(codes.OK)
-	if _, err := h.client.Assign("healthy-pool", "s_2", "", "acme"); err != nil {
+	if _, err := h.client.Assign("healthy-pool", "s_2", "", "acme", 0); err != nil {
 		t.Fatalf("healthy pool after exhausted answers: %v", err)
 	}
 }
@@ -224,7 +224,7 @@ func TestClientAssignLimiterRefusalReturnsError_spec_4_3(t *testing.T) {
 	h.sub.Breaker = nil
 	// The Client builds its own timeout context, so a saturated limiter
 	// blocks until that timeout and then refuses.
-	_, aerr := h.client.Assign("pool-a", "s_1", "", "acme")
+	_, aerr := h.client.Assign("pool-a", "s_1", "", "acme", 0)
 	if aerr == nil {
 		t.Fatal("Assign succeeded while the limiter refused the call")
 	}
@@ -234,7 +234,7 @@ func TestClientAssignLimiterRefusalReturnsError_spec_4_3(t *testing.T) {
 func assignLease(t *testing.T, h *scriptedHarness, session, tenant string) credential.Lease {
 	t.Helper()
 	h.server.setAssign(codes.OK)
-	lease, err := h.client.Assign("pool-a", session, "", tenant)
+	lease, err := h.client.Assign("pool-a", session, "", tenant, 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestClientReleaseBreakerOpenFailsFast_spec_4_3(t *testing.T) {
 	h := newScriptedHarness(t, "acme", 1)
 	lease := assignLease(t, h, "s_1", "acme")
 	h.server.setAssign(codes.Unavailable)
-	if _, err := h.client.Assign("pool-a", "s_2", "", "acme"); err == nil {
+	if _, err := h.client.Assign("pool-a", "s_2", "", "acme", 0); err == nil {
 		t.Fatal("Assign succeeded against Unavailable")
 	}
 	if st := h.sub.State(); st != subsystem.StateOpen {

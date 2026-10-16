@@ -627,6 +627,12 @@ spec:
                   --agent-namespace is set. */}}
             - --checkpoint-interval={{ .Values.gateway.periodicCheckpointIntervalSeconds }}s
             - --checkpoint-jitter-fraction={{ .Values.gateway.periodicCheckpointJitterFraction }}
+            {{- /* §6.2 / §7.2 — the suspension bounds: the interrupt
+                  pod hold, the suspended-session lifetime, and the leader's
+                  backlog re-check interval. */}}
+            - --max-suspended-pod-hold-seconds={{ .Values.gateway.maxSuspendedPodHoldSeconds | default 900 }}
+            - --max-suspended-session-seconds={{ .Values.gateway.maxSuspendedSessionSeconds | default 604800 }}
+            - --suspended-backlog-recheck-seconds={{ .Values.gateway.suspendedBacklogRecheckSeconds | default 300 }}
             # §10.4 — per-session SSE replay buffer depth.
             # F-10.4.5.
             - --session-event-replay-buffer-depth={{ .Values.gateway.sessionEventReplayBufferDepth }}
@@ -915,9 +921,11 @@ spec:
             {{- end }}
             {{- end }}
             # §11.1 — global, per-user, and per-runtime
-            # concurrent-session admission caps (live non-terminal session
-            # counts). The per-tenant scope is enforced separately against
-            # the tenant record. Zero leaves a scope unlimited. F-11.1.3.
+            # concurrent-session admission caps (counts of non-terminal
+            # sessions other than suspended ones). A resume of a suspended
+            # session is also refused with 429 QUOTA_EXCEEDED at a cap. The
+            # per-tenant scope is enforced separately against the tenant
+            # record. Zero leaves a scope unlimited. F-11.1.3.
             {{- with .Values.gateway.concurrentSessions }}
             {{- if gt (int .global) 0 }}
             - name: LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL
@@ -942,6 +950,12 @@ spec:
             {{- if hasKey . "maxTreeRecoverySeconds" }}
             - name: LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS
               value: {{ .maxTreeRecoverySeconds | quote }}
+            {{- end }}
+            # §8.3 — the delegation budget key TTL, which the gateway holds
+            # above gateway.maxSuspendedSessionSeconds.
+            {{- if hasKey . "budgetKeyTTLSeconds" }}
+            - name: LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS
+              value: {{ .budgetKeyTTLSeconds | quote }}
             {{- end }}
             # §8.10 — cascadeTimeoutSeconds. F-8.10.9.
             {{- if hasKey . "cascadeTimeoutSeconds" }}

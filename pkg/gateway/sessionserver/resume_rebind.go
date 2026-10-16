@@ -13,66 +13,67 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// resumeOnPod restores a session onto a fresh §5 warm pod. When the
-// session carries a §7.1 WorkspaceSnapshot it is restored from that
-// checkpoint via the adapter Resume RPC. A session that never
+// resumeBind carries the resume driver's post-claim hook and the generation
+// its entry write commits, G, into a restore. onClaimed writes the session's
+// resuming incarnation once the replacement pod is claimed; generation is
+// recorded on every lease the restore mints. The zero value runs no hook and
+// mints at generation 0.
+type resumeBind struct {
+	onClaimed  func(context.Context) error
+	generation int64
+}
+
+// resumeOutcome is a restore that reached its replacement pod and has not yet
+// committed. result is the unpublished binding, nil for a claimless
+// service-mode rebuild; mode is the adapter-reported resume mode, empty on the
+// rebuild branch; rebuild reports the snapshotless rebuild branch.
+type resumeOutcome struct {
+	result  *podsession.BindResult
+	mode    string
+	rebuild bool
+}
+
+// resumeOnPod restores a session onto a fresh §5 warm pod. When the session
+// carries a §7.1 WorkspaceSnapshot it is restored from that checkpoint via the
+// adapter Resume RPC, with the session's credential leases assigned on the
+// replacement pod before its runtime starts. A session that never
 // checkpointed has no snapshot to restore; it is rebuilt from the §14
 // WorkspacePlan recorded at create by reusing the start path.
 //
-// On a successful resume the gateway publishes a §7.2 / §4.4
-// `session.resumed` event with the derived `resumeMode` (full,
-// partial_workspace, or conversation_only) and `workspaceLost`
-// (derived from the resume mode) so clients can detect a degraded
-// resume.
+// resumeOnPod publishes nothing. Until the commit, no session-row field and no
+// published binding names the replacement pod: both branches return the
+// unpublished BindResult and the adapter-reported mode, and the caller,
+// completeResume, commits, fences, and publishes. It acquires no coordination
+// lease; the resume driver acquires it once before the restore. rb carries
+// the driver's post-claim hook, which runs after the claim and before any RPC
+// reaches the pod on both branches, and its entry generation.
 //
-// The returned adapterReportedResumeMode is the §4.4 / §7.2 mode the
-// adapter signalled (empty when the snapshot path was not taken or the
-// adapter is on an older protocol). The caller passes it to
-// `classifyResume` so a gateway-side eviction / partial-manifest record
-// can upgrade `full` to `conversation_only` / `partial_workspace` while
-// still letting the adapter signal a stronger classification when it
-// has one. F-7.3.22.
+// The checkpoint branch resolves the session's credential pools and user
+// before ResolvePool and runs the credential-delivery isolation check after
+// it, as the start path does, and returns either error before the binder's
+// Resume, so both are pre-claim failures.
 //
-// spec: §4.4, §7.2, §10.1 partial-manifest path.
-func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
+// spec: §7.3 (Resume driver; Credential leases on the replacement pod); §4.9
+// (Pre-Claim Credential Availability Check); §4.4, §10.1.7 (partial-manifest
+// path).
+func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session, rb resumeBind) (resumeOutcome, error) {
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		plan, err := storedWorkspacePlan(row)
 		if err != nil {
-			return "", err
+			return resumeOutcome{}, err
 		}
 		// spec: §7.3 (snapshotless resume-rebuild) — the resume path holds no
 		// create-time claim or credential resolution (it claims a fresh pod via
 		// the whole-sequence Bind), so startOnPod resolves credentials itself.
-		result, err := s.startOnPod(ctx, row, plan, nil)
+		result, err := s.startOnPod(ctx, row, plan, nil, rb)
 		if err != nil {
-			return "", err
+			return resumeOutcome{}, err
 		}
-		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
-		// (per-session coordination lease) — the row is still `ready` here,
-		// so registerBinding's at-bind acquire precedes the running-commit.
-		// On ErrHeld a live foreign holder still coordinates this session
-		// (handleResume applies no upstream holder gate), so publish no
-		// competing binding, skip fenceResumedPod, release the fresh pod
-		// claim startOnPod made, and fail the resume closed rather than
-		// double-bind. A successful resume writes no generation, so the
-		// binding carries the generation of the row resumeOnPod received
-		// (spec: §10.1.1, §10.1.5).
-		stampBindingGeneration(result, row.CoordinationGeneration)
-		if berr := s.registerBinding(ctx, result); berr != nil {
-			s.rollbackBinding(ctx, result)
-			return "", berr
-		}
-		// spec: §5.2 — a service-mode session is claimless, so startOnPod
-		// returns a nil BindResult with no pod to fence. Service mode has no
-		// Lenny-managed lifecycle and never reaches a resumable state, so this
-		// guard is defensive: skip the resumed-pod fence when no pod was bound.
-		if result == nil {
-			return "", nil
-		}
-		if ferr := s.fenceResumedPod(ctx, result.Adapter, row.TenantID, row.ID); ferr != nil {
-			return "", ferr
-		}
-		return "", nil
+		return resumeOutcome{result: result, rebuild: true}, nil
+	}
+	credPools, poolDeliveryModes, userProviders, err := s.resolveCredentialPools(ctx, row)
+	if err != nil {
+		return resumeOutcome{}, err
 	}
 	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
 	// (row.Pool) on the resume-rebuild path; empty resolves by runtime + §5.3
@@ -80,7 +81,10 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
-		return "", err
+		return resumeOutcome{}, err
+	}
+	if err := s.checkCredentialDeliveryIsolation(match, poolDeliveryModes); err != nil {
+		return resumeOutcome{}, err
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	// spec: §7.3 — surface last_checkpoint_workspace_bytes and the
@@ -99,99 +103,95 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	// last successful full checkpoint; an unresolvable manifest (dev mode,
 	// a checkpoint predating the chunked model) leaves the chunk set empty.
 	chunks := s.resolveResumeChunks(ctx, row)
-	result, err := s.podBinder.Resume(ctx, checkpointResumeRequest(row, match, agentInterface, minPlatformVersion, expectedBytes, chunks))
+	req := checkpointResumeRequest(row, match, agentInterface, minPlatformVersion, expectedBytes, chunks, rb)
+	req.CredentialPools = credPools
+	req.UserCredentialProviders = userProviders
+	req.UserID = row.UserID
+	result, err := s.podBinder.Resume(ctx, req)
 	if err != nil {
 		accountResumeSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement,
 			s.slotLeakGauge, match, err)
-		return "", err
+		return resumeOutcome{}, err
 	}
-	// spec: §4.6.1 (coordinating replica holds the lease), §10.1
-	// (per-session coordination lease) — the checkpoint-restore branch
-	// publishes the serving binding directly through podRegistry.Put below
-	// without going through registerBinding, so acquire the coordination
-	// lease here, ahead of that Put. On ErrHeld a live foreign holder still
-	// coordinates this session (handleResume applies no upstream holder
-	// gate), so skip the Put, the recovery-generation bump, and the fence,
-	// release the restored pod, and fail the resume closed rather than
-	// double-bind.
-	if lerr := s.acquireCoordinationLease(ctx, row.TenantID, row.ID); lerr != nil {
-		s.rollbackBinding(ctx, result.Result)
-		return "", lerr
-	}
-	// spec: §10.1.1, §10.1.5 — stamp the generation of the row resumeOnPod
-	// received; a successful resume writes no generation.
-	stampBindingGeneration(result.Result, row.CoordinationGeneration)
-	s.podRegistry.Put(result.Result)
-	// spec: §4.2 — recovery_generation is incremented on each
-	// pod recovery. Persist the new pod assignment in the same update
-	// so a fresh replica picks up the recovered binding without
-	// re-running resume.
-	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.Result.SandboxName)
-	// spec: §10.1 / §4.2 — announce the session's
-	// coordination_generation to the (re-)bound pod so it rejects any
-	// straggler RPC from a prior coordinator. A relinquish aborts the
-	// resume; a best-effort failure is logged and swallowed.
-	if ferr := s.fenceResumedPod(ctx, result.Result.Adapter, row.TenantID, row.ID); ferr != nil {
-		return "", ferr
-	}
-	return result.Mode, nil
+	return resumeOutcome{result: result.Result, mode: result.Mode}, nil
 }
 
-// releaseThenResumeOnPod releases any earlier binding of the session and
-// then restores it onto a fresh pod. handleResume calls it after its
-// `resuming` write. A context error while it waits for the session's
-// slot-accounting lock is returned before any pod is claimed, on the same
-// failure exit as a resumeOnPod error.
-func (s *Server) releaseThenResumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
-	if err := s.releaseEarlierBinding(ctx, row); err != nil {
-		return "", err
+// runClaimlessEntry runs the resume driver's post-claim hook for a restore
+// that claims no pod, a service-mode session. Such a restore has no claim for
+// the binder to follow with the hook, so the hook runs at the point the claim
+// would have been, before the restore returns, and the resume_pending to
+// resuming entry write stays the hook's write on every path. The hook's error
+// is returned unwrapped, as the binder returns it, so the driver reads a
+// superseded or failed entry write the same way for both kinds of restore. A
+// zero resumeBind, the create and start paths, runs nothing.
+//
+// spec: §7.3 (Resume driver), §5.2 (Pool Configuration and Execution Modes)
+func runClaimlessEntry(ctx context.Context, rb resumeBind) error {
+	if rb.onClaimed == nil {
+		return nil
 	}
-	return s.resumeOnPod(ctx, row)
+	return rb.onClaimed(ctx)
+}
+
+// releaseThenResumeOnPod releases any earlier binding of the session and then
+// restores it onto a fresh pod. The resume driver calls it once per attempt,
+// holding the coordination lease it acquired before the call, with its
+// post-claim hook and entry generation. A context error while it waits for
+// the session's slot-accounting lock is returned before any pod is claimed,
+// as a pre-claim failure.
+//
+// spec: §7.3 (Resume driver).
+func (s *Server) releaseThenResumeOnPod(ctx context.Context, row sessionstore.Session, rb resumeBind) (resumeOutcome, error) {
+	if err := s.releaseEarlierBinding(ctx, row); err != nil {
+		return resumeOutcome{}, err
+	}
+	return s.resumeOnPod(ctx, row, rb)
 }
 
 // releaseEarlierBinding releases, with the failed disposition, any binding
-// this replica still holds for the session before a `POST /resume` rebinds
+// this replica still holds for the session before the resume driver rebinds
 // it. Such a binding belongs to an earlier bind of the session, such as one
 // whose fence relinquished after its publish, and a resume that published a
-// new binding over it would leak its pod or slot. The release runs under the
-// session's slot-accounting lock, so a slot binding the failure funnel is
-// accounting is released only after the funnel has counted it and stamped any
-// drain. A release error is logged and the resume proceeds: the executor
+// new binding over it would leak its pod or slot. It waits for the session's
+// slot-accounting lock on ctx, so a binding the failure funnel is accounting
+// and releasing is released only after the funnel has finished, and then
+// releases on the server-lifetime context, so the attempt bound or a
+// CancelResumeAttempt call cannot cut the release short after the executor's
+// unbind. A release error is logged and the resume proceeds: the executor
 // evicts the stream and removes the registry entry before it calls the
 // binder, so the new bind does not overwrite a live entry. It writes no
-// coordination lease; the bind that follows acquires the lease, or renews this
-// replica's lease through the idempotent Acquire. The §8.10 tree-recovery
-// caller reaches resumeOnPod directly and runs no release.
+// coordination lease.
 //
-// spec: §10.1.1 (one coordinating replica per session); §7.3 (retry and
-// resume); §5.2 (whole-pod replacement trigger).
+// spec: §10.1.1 (one coordinating replica per session); §7.3 (Resume driver;
+// Credential leases on the replacement pod); §5.2 (whole-pod replacement
+// trigger).
 func (s *Server) releaseEarlierBinding(ctx context.Context, row sessionstore.Session) error {
 	unlock, err := s.slotAccountLocks.Lock(ctx, row.ID)
 	if err != nil {
 		return fmt.Errorf("sessionserver: wait for slot accounting of session %s: %w", row.ID, err)
 	}
 	defer unlock()
-	if rerr := releaseExecutor(ctx, s.executor, row.ID, executor.DispositionFailed); rerr != nil {
+	if rerr := releaseExecutor(s.lifetime(), s.executor, row.ID, executor.DispositionFailed); rerr != nil {
 		log.Printf("sessionserver: release earlier binding of session %s before resume: %v", row.ID, rerr)
 	}
 	return nil
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a
-// resume just (re-)bound, announcing the session's current
-// coordination_generation so the pod rejects straggler RPCs from a prior
-// coordinator. A relinquish (the coordinator gave up the session after
-// exhausting its §11.3 fence retries, releasing the lease) is returned so
-// the caller aborts the resume; a best-effort fence failure (the
-// generation could not be read) is logged and swallowed because the
-// coordination lease still guards exclusive ownership.
+// resume just committed onto, at generation, the resume's entry generation G.
+// A relinquish (the pod accepted a higher generation, so a takeover raced the
+// commit; or the fence retries were exhausted and the lease released) is
+// returned so the caller takes the Relinquished exit; a best-effort fence
+// failure is logged and swallowed because the coordination lease still
+// guards exclusive ownership.
 //
-// spec: §10.1, §4.2, §11.3.
-func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) error {
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica
+// Behavior), §11.3.
+func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string, generation int64) error {
 	if s.fencer == nil || adapter == nil {
 		return nil
 	}
-	relinquished, err := s.fencer.Fence(ctx, adapter, tenantID, sessionID)
+	relinquished, err := s.fencer.FenceAt(ctx, adapter, tenantID, sessionID, generation)
 	if relinquished {
 		return err
 	}
@@ -204,8 +204,11 @@ func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Cli
 // checkpointResumeRequest assembles the §7.1 ResumeRequest that restores row
 // from its checkpoint onto a pod of the resolved pool match. KeepsRuntime is
 // copied from the pool match so the resume's claim applies the §5.2
-// process-reuse rule the session's pool configuration resolves to.
-func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant) podsession.ResumeRequest {
+// process-reuse rule the session's pool configuration resolves to. rb
+// carries the resume driver's post-claim hook and its entry generation, which
+// the restore records on every lease it mints (§7.3 (Resume driver;
+// Credential leases on the replacement pod)).
+func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant, rb resumeBind) podsession.ResumeRequest {
 	return podsession.ResumeRequest{
 		Pool:                    match.Pool,
 		SessionID:               row.ID,
@@ -238,9 +241,11 @@ func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatc
 		// carries them onto a bind. The resumed session's release reads
 		// them off the bind result, so a resume that dropped them would
 		// retire a recycling pod instead of recycling it.
-		Recycle:               match.Recycle,
-		CleanupCommands:       match.CleanupCommands,
-		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
-		Chunks:                chunks,
+		Recycle:                match.Recycle,
+		CleanupCommands:        match.CleanupCommands,
+		CleanupTimeoutSeconds:  match.CleanupTimeoutSeconds,
+		Chunks:                 chunks,
+		OnClaimed:              rb.onClaimed,
+		CoordinationGeneration: rb.generation,
 	}
 }

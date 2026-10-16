@@ -22,7 +22,9 @@ import (
 // runtimes use in their fixtures.
 const DefaultInterruptDeadline = 5 * time.Second
 
-// handleInterrupt implements POST /v1/sessions/{id}/interrupt per §7.2. It is a richer
+// handleInterrupt implements POST /v1/sessions/{id}/interrupt per §7.2. It is
+// the one write of an interrupt into `suspended`; lenny/interrupt_session
+// dispatches to it. It is a richer
 // transition than the shared handleTransition helper covers: the
 // gateway signals the runtime through the pod's adapter and waits for
 // `interrupt_acknowledged` within `deadlineMs`. The transition to
@@ -82,12 +84,27 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	// acknowledged interrupt from a forced (timeout) one. F-6.2.12.
 	reason := suspendReason(timedOut)
 	now := s.clock()
+	// spec: §7.2 — the precondition is re-evaluated on the locked row, so
+	// a row the read pool still shows as running but that left it (to a
+	// recovering state, or an idle suspension that released its pod) is
+	// refused with 409 and left unchanged.
 	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+		if verr := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointInterrupt,
+			CurrentState: row.State,
+		}); verr != nil {
+			return verr
+		}
 		transitionInterrupt(row)
 		row.SuspendedAt = now
 		row.SuspendedReason = reason
 		return nil
 	})
+	var perr *session.PreconditionError
+	if errors.As(err, &perr) {
+		s.writePreconditionError(w, err)
+		return
+	}
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -95,6 +112,9 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.2 — surface the running → suspended transition
 	// on the SSE stream alongside the row update.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §8.3 (Delegation Policy and Lease) — a committed write into
+	// suspended re-arms the tree's delegation budget keys.
+	s.rearmBudgetKeys(r.Context(), updated)
 	if timedOut {
 		// spec: §7.2 / §4.7 InterruptResponse.Status.
 		// Surface INTERRUPT_TIMEOUT to the caller so a UI can flag that
@@ -150,9 +170,9 @@ func (s *Server) signalAdapterInterrupt(r *http.Request, row sessionstore.Sessio
 // condition history. F-6.2.12.
 func suspendReason(timedOut bool) string {
 	if timedOut {
-		return "InterruptTimeout"
+		return sessionstore.SuspendedReasonInterruptTimeout
 	}
-	return "InterruptAcknowledged"
+	return sessionstore.SuspendedReasonInterruptAcknowledged
 }
 
 // interruptDeadline returns the §4.7 deadline the gateway grants the

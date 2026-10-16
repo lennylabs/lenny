@@ -107,7 +107,7 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-alo-resume/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-alo-resume")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}

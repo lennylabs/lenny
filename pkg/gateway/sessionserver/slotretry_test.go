@@ -881,14 +881,6 @@ func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 			wantHTTP: 503, wantRetry: true, setupStage: true,
 		},
 		{
-			name: "session-mode setup stage, snapshotless resume",
-			err: func(*testing.T) error {
-				return &podsession.SetupCommandFailure{Pod: "pod-b", Cause: startedRefusal()}
-			},
-			fallback: "RESUME_FAILED", wantCode: "RESUME_FAILED",
-			wantHTTP: 503, wantRetry: true, setupStage: true,
-		},
-		{
 			name:     "concurrent-slot setup stage",
 			err:      func(*testing.T) error { return concurrentSetup(startedRefusal()) },
 			fallback: "STARTING_FAILED", wantCode: "STARTING_FAILED",

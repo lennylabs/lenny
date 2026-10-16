@@ -28,19 +28,27 @@ func (b *Binder) reconnect(ctx context.Context, req BindRequest) (*lennyv1.Sandb
 		// fresh one and orphaning the pod claimed at /create.
 		return nil, nil, negotiated{}, fmt.Errorf("podsession: reconnect for session %s has no claimed sandbox binding", req.SessionID)
 	}
-	sb, cl, err := b.dialSandbox(ctx, req.SandboxName)
+	return b.dialAndNegotiate(ctx, req.SandboxName)
+}
+
+// dialAndNegotiate resolves the named Sandbox, dials its adapter, and runs the
+// §15.5 version handshake, closing the client it opened on a handshake
+// failure. It is the connection step shared by the post-claim handshake and
+// the reconnect from a persisted binding. spec: §15.5 (version handshake).
+func (b *Binder) dialAndNegotiate(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
+	sb, cl, err := b.dialSandbox(ctx, sandboxName)
 	if err != nil {
 		return nil, nil, negotiated{}, err
 	}
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", req.SandboxName, err)
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
 		return nil, nil, negotiated{}, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", req.SandboxName,
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		)
 	}
 	return sb, cl, negotiated{WorkspaceBase: resp.GetWorkspaceBase()}, nil

@@ -133,10 +133,10 @@ const operationalFenceSentence = "A pod validates the generation on every gatewa
 // operationalFenceSites is how many request messages carry that sentence:
 // SendMessage, Attach, RotateCredentials, ExtendCredentialLease,
 // RevokeCredentials, Interrupt, Checkpoint, SignalDeadline, Resume,
-// ExportPaths, ReportUsage, and Shutdown.
-const operationalFenceSites = 12
+// ExportPaths, ReportUsage, Shutdown, SealSession, and UnsealSession.
+const operationalFenceSites = 14
 
-// podWideConsequences are the unconditional consequence clauses those twelve
+// podWideConsequences are the unconditional consequence clauses the operational
 // comments carried. Each is false for a bound session the pod holds no fenced
 // generation for, which is the ordinary state of a session that has neither
 // resumed nor been taken over.
@@ -256,7 +256,7 @@ message CoordinatorFenceRequest {}
 	for _, want := range []string{
 		"CoordinatorFenceRequest message: carries carrying a strictly older generation",
 		"CoordinatorFence RPC: comment not found",
-		"operational-RPC field comments: 0 carry the session-scoped validation sentence, want 12",
+		"operational-RPC field comments: 0 carry the session-scoped validation sentence, want 14",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("gate did not report %q, got:\n%s", want, joined)

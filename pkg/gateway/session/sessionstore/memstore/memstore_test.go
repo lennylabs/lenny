@@ -307,8 +307,8 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 
 // spec: §4.2, §10.1 — newly created sessions are written at
 // schema_version=1 by default. The recovery generation starts at zero and the
-// coordination generation is baselined at 1, so the first coordinator handoff
-// mints 2 strictly above the value a replica already holds for the session.
+// coordination generation is baselined at 1, so each coordinator handoff
+// mints a value strictly above the one a replica already holds for the session.
 // Cwd and PodAssignment are empty.
 func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	s := memstore.New()

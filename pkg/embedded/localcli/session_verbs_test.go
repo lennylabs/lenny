@@ -66,7 +66,7 @@ func fakeGateway(t *testing.T) *httptest.Server {
 			case "lenny/send_message":
 				write(text("echo: " + a.Message))
 			case "lenny/interrupt_session":
-				write(text(`{"sessionId":"` + a.SessionID + `","state":"suspended"}`))
+				write(text(`{"id":"` + a.SessionID + `","tenantId":"acme","state":"suspended"}`))
 			case "lenny/cancel_session":
 				write(text(`{"sessionId":"` + a.SessionID + `","state":"cancelled"}`))
 			default:

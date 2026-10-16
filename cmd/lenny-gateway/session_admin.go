@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -24,6 +26,10 @@ type sessionAdminAdapter struct {
 	// state so the terminal pod-release path can distinguish a pre-running
 	// claimed session from a running one (§4.6). spec: §5.2; §4.6.
 	onTerminal func(ctx context.Context, fromState session.State, sess sessionstore.Session)
+	// beginTerminal opens the session server's terminal-writer claim before
+	// the forced write; nil opens none. spec: §7.2 (Interactive Session
+	// Model).
+	beginTerminal func(sessionID string) (end func())
 }
 
 func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
@@ -35,20 +41,31 @@ func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionsto
 // lookup (the operator supplies only the id), then performs the
 // transition under the tenant's row lock so a concurrent natural
 // transition is serialized: if the row has already reached a terminal
-// state the mutate is a no-op and transitioned is false (idempotent).
-// The pre-force state is captured inside the mutate so it reflects the
-// state at commit time. spec: §24.11.
+// state the mutate refuses (sessionstore.ErrSuperseded) and ForceTerminate
+// returns the locked row, its state, false, and nil (idempotent). The
+// pre-force state is captured inside the mutate so it reflects the state at
+// commit time, and the forced write records the Terminated fact. It opens the
+// terminal claim before the write and ends it after the terminal pipeline,
+// or at once on a refusal or error. spec: §24.11; §7.2 (Interactive Session
+// Model).
 func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (sessionstore.Session, session.State, bool, error) {
 	sess, err := a.store.GetByID(ctx, id)
 	if err != nil {
 		return sessionstore.Session{}, "", false, err
 	}
+	end := func() {}
+	if a.beginTerminal != nil {
+		end = a.beginTerminal(sess.ID)
+	}
+	defer end()
 	var prev session.State
-	var transitioned bool
+	var locked sessionstore.Session
+	now := time.Now()
 	updated, err := a.store.Update(ctx, sess.TenantID, sess.ID, func(s *sessionstore.Session) error {
 		prev = s.State
+		locked = *s
 		if session.IsTerminal(s.State) {
-			return nil
+			return sessionstore.ErrSuperseded
 		}
 		// §24.11: the session transitions immediately to failed.
 		// FailureClass uses the §7.1 runtime_failure bucket (the operator
@@ -59,17 +76,20 @@ func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (ses
 		s.State = session.StateFailed
 		s.FailureClass = session.FailureClassRuntime
 		s.FailureReason = "FORCE_TERMINATED"
-		transitioned = true
+		sessionstore.MarkTerminated(s, prev, now)
 		return nil
 	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return locked, locked.State, false, nil
+	}
 	if err != nil {
 		return sessionstore.Session{}, "", false, err
 	}
-	if transitioned && a.onTerminal != nil {
+	if a.onTerminal != nil {
 		// spec: §4.6 — prev is the pre-force state, so a force-terminate of a
 		// created/finalizing/ready session reclaims its claimed pod by name
 		// while a running session is released through the §6.2 executor path.
 		a.onTerminal(ctx, prev, updated)
 	}
-	return updated, prev, transitioned, nil
+	return updated, prev, true, nil
 }

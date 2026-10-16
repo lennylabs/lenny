@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
@@ -26,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
@@ -197,6 +199,7 @@ type gatewayFlags struct {
 	messagingMaxDLQSize                           *int
 	toolApprovalTimeout                           *time.Duration
 	streamFailureReportTimeout                    *time.Duration
+	sessionPrimaryReadTimeout                     *time.Duration
 	treeArchiveCacheEntries                       *int
 	adapterTLSCert                                *string
 	adapterTLSKey                                 *string
@@ -268,7 +271,10 @@ type gatewayFlags struct {
 	maxSessionAgeSeconds                          *int
 	maxAwaitingClientActionSeconds                *int
 	maxSuspendedPodHoldSeconds                    *int
-	maxIdleTimeSeconds                            *int
+	maxSuspendedSessionSeconds                    *int
+	maxClientIdleSeconds                          *int
+	delegationBudgetKeyTTLSeconds                 *int
+	suspendedBacklogRecheckSeconds                *int
 	sessionExpiryWarningSeconds                   *int
 	adapterKeepaliveTimeMs                        *int
 	adapterKeepaliveTimeoutMs                     *int
@@ -587,13 +593,13 @@ func (f *gatewayFlags) registerStorageFlags() {
 		"§11.1 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
 	f.maxConcSessGlobal = flag.Int("max-concurrent-sessions-global",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL", 0),
-		"§11.1 global concurrent-session admission cap (live non-terminal sessions across every tenant). Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
+		"§11.1 global concurrent-session admission cap (non-terminal sessions other than suspended ones across every tenant). A resume of a suspended session is checked against the cap. Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
 	f.maxConcSessPerUser = flag.Int("max-concurrent-sessions-per-user",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_USER", 0),
-		"§11.1 per-user concurrent-session admission cap (live non-terminal sessions a single user holds in their tenant). Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
+		"§11.1 per-user concurrent-session admission cap (non-terminal sessions other than suspended ones a single user holds in their tenant). A resume of a suspended session is checked against the cap. Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
 	f.maxConcSessPerRuntime = flag.Int("max-concurrent-sessions-per-runtime",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME", 0),
-		"§11.1 per-runtime concurrent-session admission cap (live non-terminal sessions targeting a single runtime in a tenant). Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
+		"§11.1 per-runtime concurrent-session admission cap (non-terminal sessions other than suspended ones targeting a single runtime in a tenant). A resume of a suspended session is checked against the cap. Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
 	f.evalRLPerSessionPerMin = flag.Int("eval-rate-limit-per-session-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
 		"§10.7 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
@@ -822,7 +828,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§6.2 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
 	f.maxResumingSeconds = flag.Int("max-resuming-seconds",
 		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
-		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS.")
+		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. A restore whose pod claim is older than the controller's --claim-orphan-timeout is drained by the orphan-claim GC and fails, so keep this value at or below that timeout.")
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -857,6 +863,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
 	f.streamFailureReportTimeout = flag.Duration("stream-failure-report-timeout", envDuration("LENNY_STREAM_FAILURE_REPORT_TIMEOUT", sessionserver.DefaultStreamFailureReportTimeout),
 		"§28.5.1 CH-ATTACH stream-failure report bound: operator-tunable time a runtime_crash report on a failed Attach stream has for the binding release, parent notification, and cascade beyond the workspace seal window (the report's deadline is this value plus the seal window). Default 30s. Override via LENNY_STREAM_FAILURE_REPORT_TIMEOUT.")
+	f.sessionPrimaryReadTimeout = flag.Duration("session-primary-read-timeout", envDuration("LENNY_SESSION_PRIMARY_READ_TIMEOUT", sessionstore.DefaultPrimaryReadTimeout),
+		"§12.3 bound on each session-row read from the Postgres primary that a one-shot decision makes (a route, a skip, or a compare-and-swap's expected value), so a primary partition bounds the read rather than stalling it until the request ends. Operator-tunable; must be positive. Default 5s. Override via LENNY_SESSION_PRIMARY_READ_TIMEOUT.")
 	f.treeArchiveCacheEntries = flag.Int("tree-archive-cache-entries", envInt("LENNY_TREE_ARCHIVE_CACHE_ENTRIES", 128),
 		"§8.10 per-replica LRU cache size fronting the Postgres session_tree_archive (default 128 entries). Override via LENNY_TREE_ARCHIVE_CACHE_ENTRIES.")
 	f.adapterTLSCert = flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
@@ -1057,16 +1065,26 @@ func (f *gatewayFlags) registerArtifactFlags() {
 		"§11.3 maxStartingTimeoutSeconds: the deadline on the `starting` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 120s. Override via LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS.")
 	f.maxSessionAgeSeconds = flag.Int("max-session-age-seconds",
 		envInt("LENNY_MAX_SESSION_AGE_SECONDS", watchdog.DefaultMaxSessionAgeSeconds),
-		"§11.3 / §6.2 platform-wide maxSessionAgeSeconds: the total non-terminal lifetime cap of a session, measured from its creation. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
+		"§11.3 / §6.2 platform-wide maxSessionAgeSeconds: the active-time session age cap. Age counts only while the session is starting, running, or input_required, and is paused while it is suspended, resume_pending, resuming, or awaiting_client_action; no age cap expires a suspended session. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
 	f.maxAwaitingClientActionSeconds = flag.Int("max-awaiting-client-action-seconds",
 		envInt("LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS", watchdog.DefaultMaxAwaitingClientActionSeconds),
 		"§11.3 maxAwaitingClientActionSeconds: the deadline on the `awaiting_client_action` state. A session that has waited this long for client action is transitioned to `expired`. Default 900s. Override via LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS.")
+	// spec: §6.2 (Pod State Machine), §11.3 (Timeouts and Cancellation).
 	f.maxSuspendedPodHoldSeconds = flag.Int("max-suspended-pod-hold-seconds",
 		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
-		"§11.3 maxSuspendedPodHoldSeconds: the wall-clock window a `suspended` session may hold its pod before the watchdog transitions it to `expired`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
-	f.maxIdleTimeSeconds = flag.Int("max-idle-time-seconds",
-		envInt("LENNY_MAX_IDLE_TIME_SECONDS", watchdog.DefaultMaxIdleSeconds),
-		"§11.3 / §6.2 maxIdleTimeSeconds: the platform-default idle cap on a `running` session — one with no qualifying agent activity (agent_output / tool_use, await_children poll, proxied LLM response) for longer than this is transitioned to `expired` with reason expired:idle. The per-runtime `limits.maxIdleTimeSeconds` and the §27.6 playground idle override tighten this default. Default 600s. Override via LENNY_MAX_IDLE_TIME_SECONDS.")
+		"§6.2 / §11.3 maxSuspendedPodHoldSeconds: the wall-clock window an interrupt-suspended session holds its pod. When it ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. This deploy-wide flag is the only hold source; no per-tenant hold cap applies. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
+	f.maxSuspendedSessionSeconds = flag.Int("max-suspended-session-seconds",
+		envInt("LENNY_MAX_SUSPENDED_SESSION_SECONDS", watchdog.DefaultMaxSuspendedSessionSeconds),
+		"§6.2 maxSuspendedSessionSeconds: the wall-clock lifetime of a `suspended` session. A session suspended this long, with or without its pod, is transitioned to `expired`. Default 604800s (7 days). Override via LENNY_MAX_SUSPENDED_SESSION_SECONDS.")
+	f.maxClientIdleSeconds = flag.Int("max-client-idle-seconds",
+		envInt("LENNY_MAX_CLIENT_IDLE_SECONDS", watchdog.DefaultMaxIdleSeconds),
+		"§6.2 maxClientIdleSeconds: the platform-default idle bound on a `running` session. A session with no qualifying activity for longer than this is suspended: the gateway seals it on the adapter, checkpoints the workspace, and releases the pod, and the session stays `suspended` until a message or a resume. A session that cannot be suspended (service mode or an MCP runtime) is transitioned to `expired` with reason expired:idle instead. The per-pool `sessionPolicy.maxClientIdleSeconds` and the §27.6 playground idle override tighten this default. Default 900s. Override via LENNY_MAX_CLIENT_IDLE_SECONDS.")
+	f.delegationBudgetKeyTTLSeconds = flag.Int("delegation-budget-key-ttl-seconds",
+		envInt("LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS", int(treebudget.DefaultTTL/time.Second)),
+		"§8.3 delegation budget key TTL: the Redis TTL on a delegation tree's budget counters, re-armed at each transition into or out of `suspended`. Startup fails unless it exceeds --max-suspended-session-seconds, so a suspended session's keys outlive its suspended lifetime. Default 691200s (8 days). Override via LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS.")
+	f.suspendedBacklogRecheckSeconds = flag.Int("suspended-backlog-recheck-seconds",
+		envInt("LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS", int(sessionserver.DefaultSuspendedBacklogRecheckInterval/time.Second)),
+		"§7.2 suspended backlog re-check interval: how often the gateway leader resumes a podless `suspended` session that holds a message. Minimum 30s. Default 300s. Override via LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS.")
 	f.sessionExpiryWarningSeconds = flag.Int("session-expiry-warning-seconds",
 		envInt("LENNY_SESSION_EXPIRY_WARNING_SECONDS", watchdog.DefaultExpiryWarningSeconds),
 		"§11.3 session-expiry warning lead time: the gateway sends a `session_expiring_soon` SSE event to the client and a `DEADLINE_APPROACHING` CH-RUNTIMEOPS signal to the pod this many seconds before a session's effective maxSessionAge deadline so the agent can checkpoint and the client can extend or wrap up. Default 300s (5 minutes). Override via LENNY_SESSION_EXPIRY_WARNING_SECONDS.")
@@ -1212,7 +1230,7 @@ func (f *gatewayFlags) registerOpsFlags() {
 	f.playgroundAllowedRuntimes = flag.String("playground-allowed-runtimes", envOr("LENNY_PLAYGROUND_ALLOWED_RUNTIMES", "*"),
 		"§27.2 playground.allowedRuntimes: a comma-separated glob list of runtime IDs visible in the playground runtime picker. Override via LENNY_PLAYGROUND_ALLOWED_RUNTIMES.")
 	f.playgroundMaxSessionMinutes = flag.Int("playground-max-session-minutes", envInt("LENNY_PLAYGROUND_MAX_SESSION_MINUTES", 30),
-		"§27.2 playground.maxSessionMinutes: the hard cap on playground-initiated session duration. Override via LENNY_PLAYGROUND_MAX_SESSION_MINUTES.")
+		"§27.6 playground.maxSessionMinutes: the hard cap on a playground-initiated session's active time, which pauses while the session is `suspended`. Override via LENNY_PLAYGROUND_MAX_SESSION_MINUTES.")
 	f.playgroundMaxIdleTimeSeconds = flag.Int("playground-max-idle-time-seconds", envInt("LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS", 300),
 		"§27.2 playground.maxIdleTimeSeconds: the hard idle-timeout override for playground-initiated sessions. Override via LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS.")
 	f.playgroundOIDCSessionTTL = flag.Int("playground-oidc-session-ttl-seconds", envInt("LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS", 3600),

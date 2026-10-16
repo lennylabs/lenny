@@ -438,8 +438,8 @@ func (r *proxyUsageRecorder) recordAccounting(rec usagestore.Record, tenantID, s
 // The §6.2 idle clock is stamped only when the pulled delta is non-zero.
 // A gateway ReportUsage pull is a timer tick rather than direct evidence of
 // agent work, so a zero-delta poll must not reset the idle clock, or a hung or
-// wedged direct-mode pod that emits no tokens would never idle-terminate and
-// its pod, lease, and session would leak. A non-zero delta is direct evidence
+// wedged direct-mode pod that emits no tokens would never be idle-suspended and
+// its session would hold the pod indefinitely. A non-zero delta is direct evidence
 // the agent issued LLM work during the interval, so it resets the clock. This
 // is the §6.2 direct-mode idle reconciliation under the gateway pull.
 //
@@ -468,8 +468,8 @@ func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease creden
 
 	// spec: §6.2 — reset the direct-mode idle clock only on a
 	// non-zero pulled delta. A zero-delta poll is a bare timer tick, not
-	// evidence of agent work, so a hung pod that emits no tokens still
-	// idle-terminates. A non-zero delta is direct evidence of LLM work.
+	// evidence of agent work, so a hung pod that emits no tokens is still
+	// idle-suspended. A non-zero delta is direct evidence of LLM work.
 	if r.activity != nil && lease.SessionID != "" && (u.InputTokens > 0 || u.OutputTokens > 0) {
 		r.activity.Stamp(lease.TenantID, lease.SessionID)
 	}

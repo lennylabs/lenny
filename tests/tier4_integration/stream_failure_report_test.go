@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -83,11 +84,18 @@ const (
 // session_end frame the adapter writes. A message whose text is
 // streamFailureHang stops the heartbeat acks and is not answered, which is a
 // runtime that hangs mid-turn.
+//
+// It implements the adapter's output tap, as every production transport
+// does: the adapter runs a session's heartbeat monitor only for a runtime
+// whose output it taps, and the tap is where each heartbeat_ack reaches the
+// monitor (§28.5.3, §4.7.1). A runtime without the tap gets no monitor, so
+// heartbeat silence would end no stream.
 type heartbeatRuntime struct {
 	out     chan []byte
 	silent  atomic.Bool
 	mu      sync.Mutex
 	endings []string
+	tap     func(line []byte)
 }
 
 func newHeartbeatRuntime() *heartbeatRuntime {
@@ -120,7 +128,7 @@ func (r *heartbeatRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	switch in.Type {
 	case "heartbeat":
 		if !r.silent.Load() {
-			r.emit(map[string]any{"type": "heartbeat_ack"})
+			r.emit(map[string]any{"type": "heartbeat_ack", "sessionId": in.SessionID})
 		}
 	case "session_end":
 		r.mu.Lock()
@@ -143,8 +151,22 @@ func (r *heartbeatRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	return nil
 }
 
+// TapOutput records fn as the adapter's activity tap. emit calls it with
+// each frame before the frame reaches an Output subscriber.
+func (r *heartbeatRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
+}
+
 func (r *heartbeatRuntime) emit(frame map[string]any) {
 	b, _ := json.Marshal(frame)
+	r.mu.Lock()
+	tap := r.tap
+	r.mu.Unlock()
+	if tap != nil {
+		tap(b)
+	}
 	select {
 	case r.out <- b:
 	default:
@@ -211,6 +233,8 @@ type streamFailureReplica struct {
 	leases    leasestore.LeaseStore
 	replicaID string
 	binder    *podsession.Binder
+	// interactions is the replica's interaction store; nil serves none.
+	interactions interactionstore.Store
 }
 
 // newStreamFailureFixture serves rt over an adapter with its heartbeat monitor
@@ -247,6 +271,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 		CoordinationLeaseStore:  rep.leases,
 		ReplicaID:               rep.replicaID,
 		IDFunc:                  func() string { return id },
+		Interactions:            rep.interactions,
 	})
 	f.exec.SetStreamFailureHandler(f.srv.ReportAttachStreamFailure)
 	hs := httptest.NewServer(f.srv.Handler())
@@ -532,17 +557,18 @@ func resumeOn(t *testing.T, base, id string) *http.Response {
 	return resp
 }
 
-// spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume), 7.2 (Interactive
-// Session Model)
+// spec: 28.5.1 (Gateway-to-pod), 7.3 (Resume driver; Retry and Resume), 7.2
+// (Interactive Session Model)
 // diagnosis: after a stream-failure report moved a session with exhausted
 // retries to awaiting_client_action on its coordinating replica, a POST
-// /resume served by another replica demoted the row or bound a pod against
-// the coordinator's lease. The second replica must answer the retryable 503
-// RESUME_FAILED with Retry-After, publish no binding, and hold the row in
-// awaiting_client_action; a row left in failed means the client's retry meets
-// a terminal row. The coordinating replica's own resume must then reach
-// running.
-func TestCrossReplicaResumeAfterStreamFailureHoldsTheRow_spec_7_3(t *testing.T) {
+// /resume served by another replica is a store write: it answers 200 with the
+// row in resume_pending. The resume driver on the replica without the
+// coordination lease writes nothing and binds no pod; the driver on the
+// coordinating replica restores the session to running and publishes its
+// binding. A failure means the non-coordinating replica bound a pod against
+// the coordinator's lease, refused a resume any replica can record, or the
+// coordinator never restored the session.
+func TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3(t *testing.T) {
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	leases := streamFailureLeases(t)
@@ -581,35 +607,38 @@ func TestCrossReplicaResumeAfterStreamFailureHoldsTheRow_spec_7_3(t *testing.T) 
 	}
 
 	resp := resumeOn(t, secondHS.URL, id)
-	var env struct {
-		Error struct {
-			Code      string `json:"code"`
-			Retryable bool   `json:"retryable"`
-		} `json:"error"`
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("resume on rep-2 = %d %s, want 200", resp.StatusCode, body)
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&env)
-	if resp.StatusCode != http.StatusServiceUnavailable || env.Error.Code != "RESUME_FAILED" || !env.Error.Retryable {
-		t.Fatalf("resume on rep-2 = %d %+v, want 503 retryable RESUME_FAILED", resp.StatusCode, env.Error)
+	pending := first.row(t)
+	if pending.State != session.StateResumePending {
+		t.Fatalf("state after rep-2's resume = %s, want resume_pending", pending.State)
 	}
-	if resp.Header.Get("Retry-After") == "" {
-		t.Error("resume on rep-2 carries no Retry-After")
-	}
-	if st := first.row(t).State; st != session.StateAwaitingClientAction {
-		t.Fatalf("state after rep-2's resume = %s, want awaiting_client_action", st)
+
+	// The driver on rep-2 does not hold the lease, so it starts nothing.
+	second.DriveResume(context.Background(), pending)
+	if got := first.row(t); got.State != session.StateResumePending || got.CoordinationGeneration != pending.CoordinationGeneration {
+		t.Fatalf("row after rep-2's driver = %s gen %d, want resume_pending gen %d unchanged",
+			got.State, got.CoordinationGeneration, pending.CoordinationGeneration)
 	}
 	if _, ok := secondRegistry.Get(id); ok {
 		t.Error("rep-2 published a binding against rep-1's coordination lease")
 	}
 
-	resp = resumeOn(t, first.base, id)
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("resume on rep-1 = %d %s, want 200", resp.StatusCode, body)
+	first.srv.DriveResume(context.Background(), pending)
+	running := first.awaitState(t, session.StateRunning)
+	if running.CoordinationGeneration != pending.CoordinationGeneration+1 {
+		t.Errorf("coordination_generation = %d, want %d", running.CoordinationGeneration, pending.CoordinationGeneration+1)
 	}
-	if st := first.row(t).State; st != session.StateRunning {
-		t.Fatalf("state after rep-1's resume = %s, want running", st)
-	}
-	if _, ok := first.registry.Get(id); !ok {
-		t.Error("rep-1 published no binding for the resumed session")
+	deadline := time.Now().Add(streamFailureWait)
+	for {
+		if _, ok := first.registry.Get(id); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rep-1 published no binding for the resumed session")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

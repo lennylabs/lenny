@@ -3,7 +3,9 @@
 package sessionserver
 
 import (
+	"context"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -111,15 +113,55 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+	updated, err := s.commitStart(r.Context(), tenantID, id)
+	if err != nil {
+		s.writePreconditionError(w, err)
+		return
+	}
+	s.writeSession(w, http.StatusOK, updated)
+}
+
+// errStartSuperseded is the not-applied sentinel of a running-commit whose
+// locked row no longer admits the start: a terminal write, or a racing second
+// start that committed first, landed after the entry read.
+var errStartSuperseded = errors.New("sessionserver: start superseded on the locked row")
+
+// commitStart commits a started session to running and delivers the messages
+// held for it before running. It takes the session's delivery lock before the
+// commit and releases it after the delivery. The commit re-runs the start
+// precondition on the locked row and refuses with the §15.1 precondition
+// error carrying the locked row's state, so a terminal write that landed after
+// the binding was registered stays terminal (the terminal binding release
+// reclaims that binding) and a second start racing one that committed gets
+// the answer a sequential second start gets; a refused commit emits no status
+// change and delivers nothing. A delivery error is logged, and the start
+// still answers running.
+//
+// spec: §7.2 (Interactive Session Model; Message delivery routing — seven
+// paths, path 6), §15.1 (REST API)
+func (s *Server) commitStart(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	unlock, err := s.deliveryLocks.Lock(ctx, id)
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	defer unlock()
+	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+		if verr := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointStart,
+			CurrentState: row.State,
+		}); verr != nil {
+			return verr
+		}
 		transitionStart(row)
 		return nil
 	})
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
+		return sessionstore.Session{}, err
 	}
 	// spec: §7.2 — surface the ready → running transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-	s.writeSession(w, http.StatusOK, updated)
+	if derr := s.deliverBuffered(ctx, updated); derr != nil {
+		log.Printf("sessionserver: deliver held messages after start of session %s: %v", id, derr)
+	}
+	return updated, nil
 }

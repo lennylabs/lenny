@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -34,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -305,10 +307,20 @@ func (w *gatewayWiring) buildSessionServer(
 		LeaseRegistrar:         sessionLeaseRegistrar,
 		LeaseExtensionDefaults: leaseExtDefaults,
 		QuotaCheckpointer:      quotaCheckpointSvc,
-		HighWatermarkReader:    w.hwmReader,
-		HighWatermarkObserver:  gwMetrics,
-		Interceptors:           policyChain,
-		PolicyAuditSink:        policyAuditSink,
+		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
+		// the workspace before it releases a suspended session's pod; with no
+		// checkpoint service the pod stays held.
+		SuspensionCheckpointer: suspensionCheckpointer(w.checkpointSvc),
+		// spec: §8.3 (Delegation Policy and Lease) — re-arm a suspended
+		// tree's delegation budget keys on each transition into or out of
+		// suspended.
+		BudgetKeyRearmer:                      budgetKeyRearmer(w.treeBudgetConcrete),
+		IncSessionPodReleasedDuringSuspension: gwMetrics.IncSessionPodReleasedDuringSuspension,
+		IncSessionSuspensionCheckpointFailed:  gwMetrics.IncSessionSuspensionCheckpointFailed,
+		HighWatermarkReader:                   w.hwmReader,
+		HighWatermarkObserver:                 gwMetrics,
+		Interceptors:                          policyChain,
+		PolicyAuditSink:                       policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
@@ -352,6 +364,16 @@ func (w *gatewayWiring) buildSessionServer(
 		// §28.5.1 — the CH-ATTACH stream-failure report's bound beyond the
 		// seal window.
 		StreamFailureReportTimeout: *f.streamFailureReportTimeout,
+		// §12.3 — the bound on every primary session-row read a one-shot
+		// decision makes.
+		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
+		// §7.3 (Resume driver) — the resume driver bounds an attempt by the
+		// resume_pending window and the resuming watchdog the watchdog
+		// applies, and refuses an over-cap row against the watchdog's own
+		// maxSessionAge resolver.
+		MaxResumePending: time.Duration(*f.maxResumePendingSeconds) * time.Second,
+		MaxResuming:      time.Duration(*f.maxResumingSeconds) * time.Second,
+		AgeCap:           w.sessionAgeCap,
 		// §10.7, §16.1 — variant-labelled
 		// rollback-trigger metric family emitted at terminal session
 		// transition and at each built-in eval submission.
@@ -410,10 +432,10 @@ func (w *gatewayWiring) buildSessionServer(
 		// blocklist; the platform default is always merged in first.
 		// F-14.1.12.
 		EnvVarBlocklist: splitCSV(*envVarBlocklistCSV),
-		// §7.3 / §16.1 — retry + resume metric emitters. The
-		// watchdog/coordinator path bumps retryCount on each pod
-		// recovery (the v1 retry path); the explicit /resume endpoint
-		// counts every attempt with its outcome. F-7.3.10.
+		// spec: §16.1 (Metrics), §7.3 (Resume driver) — retry + resume
+		// metric emitters. A retry is counted on each failure edge that
+		// spends one; the resume driver counts each attempt with its outcome
+		// through recordResumeAttempt. F-7.3.10.
 		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
 		IncSessionRetry:         gwMetrics.IncSessionRetry,
 		// spec: §16.1 / §16.1.1 — the watchdog's expiry sweeps fire
@@ -439,4 +461,35 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+}
+
+// sessionAgeCap resolves a row's effective maxSessionAge cap through the
+// watchdog's own resolver, so the resume driver and the maxSessionAge sweep
+// apply one value. Before the watchdog is built it applies the platform
+// default. spec: §6.2 (maxSessionAge timer behavior across states).
+func (w *gatewayWiring) sessionAgeCap(ctx context.Context, row sessionstore.Session) time.Duration {
+	if w.wd != nil {
+		return w.wd.AgeCap(ctx, row)
+	}
+	return watchdog.EffectiveAgeCap(ctx, nil, time.Duration(*w.f.maxSessionAgeSeconds)*time.Second, row)
+}
+
+// suspensionCheckpointer returns the checkpoint service as the session
+// server's SuspensionCheckpointer, or an untyped nil for a nil service so the
+// server's nil guard holds. spec: §6.2 (Pod State Machine).
+func suspensionCheckpointer(svc *checkpointer.Checkpointer) sessionserver.SuspensionCheckpointer {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+// budgetKeyRearmer returns the delegation budget Reserver as the session
+// server's BudgetKeyRearmer, or an untyped nil for a nil Reserver.
+// spec: §8.3 (Delegation Policy and Lease).
+func budgetKeyRearmer(r *treebudget.Reserver) sessionserver.BudgetKeyRearmer {
+	if r == nil {
+		return nil
+	}
+	return r
 }

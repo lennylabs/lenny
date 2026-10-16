@@ -35,6 +35,9 @@ type captureLifecycleHook struct {
 	retryAttempts []sessionstore.Session
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*captureLifecycleHook) BeginTerminal(string) func() { return func() {} }
+
 func (c *captureLifecycleHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminalCalls = append(c.terminalCalls, sess)
 }
@@ -288,6 +291,9 @@ func TestConfigDefaultsForResumeAndResumingMatchSpec_spec_6_2(t *testing.T) {
 type terminalOnlyForResume struct {
 	terminalCalls []sessionstore.Session
 }
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*terminalOnlyForResume) BeginTerminal(string) func() { return func() {} }
 
 func (t *terminalOnlyForResume) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	t.terminalCalls = append(t.terminalCalls, sess)

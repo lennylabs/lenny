@@ -685,8 +685,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	var handler http.Handler = mux
 
 	// The §11.2 per-tenant concurrent-session quota is enforced inside
-	// the session-creation handlers (sessionserver.requireSessionQuota)
-	// against each tenant's configured MaxConcurrentSessions.
+	// the session-creation handlers (sessionserver.requireSessionQuota),
+	// and on every resume of a suspended session, against each tenant's
+	// configured MaxConcurrentSessions. The quota counts non-terminal
+	// sessions other than suspended ones.
 
 	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).

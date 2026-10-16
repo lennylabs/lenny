@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -35,6 +36,10 @@ type budgetSessionTerminator struct {
 	// session's pre-terminal state so the terminal pod-release path can
 	// distinguish a pre-running claimed session from a running one (§4.6).
 	onTerminal func(ctx context.Context, fromState session.State, sess sessionstore.Session)
+	// beginTerminal opens the session server's terminal-writer claim before
+	// the budget write; set with onTerminal, nil opens none. spec: §7.2
+	// (Interactive Session Model).
+	beginTerminal func(sessionID string) (end func())
 }
 
 // TerminateSession transitions sessionID to `expired` with the given
@@ -61,11 +66,16 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		log.Printf("lenny-gateway: budget-terminate lookup session=%s: %v", sessionID, err)
 		return
 	}
-	var transitioned bool
+	end := func() {}
+	if t.beginTerminal != nil {
+		end = t.beginTerminal(sess.ID)
+	}
+	defer end()
 	var fromState session.State
+	now := time.Now()
 	updated, err := t.store.Update(ctx, sess.TenantID, sess.ID, func(s *sessionstore.Session) error {
 		if session.IsTerminal(s.State) {
-			return nil
+			return sessionstore.ErrSuperseded
 		}
 		// spec: §7.1 — running → expired (budget exhausted). The
 		// store does not validate the transition, matching the watchdog /
@@ -74,14 +84,17 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		fromState = s.State
 		s.State = session.StateExpired
 		s.FailureReason = reason
-		transitioned = true
+		sessionstore.MarkTerminated(s, fromState, now)
 		return nil
 	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return
+	}
 	if err != nil {
 		log.Printf("lenny-gateway: budget-terminate session=%s: %v", sessionID, err)
 		return
 	}
-	if transitioned && t.onTerminal != nil {
+	if t.onTerminal != nil {
 		// spec: §4.6 — a budget terminate runs against a running session, so
 		// fromState (running) routes its teardown through the §6.2 executor
 		// recycle path rather than the pre-running by-name reclaim.
