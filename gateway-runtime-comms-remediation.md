@@ -2636,6 +2636,14 @@ Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 e
   branch).
 - [ ] F-10.1.31 (TT-25): clear `backoffUntil` for a terminal or absent row (0092's CODE-5 edits the
   Sweeper).
+- [ ] F-25.4.31: assign the `lenny-ops` clientset only when one was built, so a process with no
+  kubeconfig does not panic on a typed-nil clientset. Found by 0092's S15 full tier pass; it blocks tier 4's
+  ops tests.
+
+F-4.6.30 (SandboxClaims that stay bound after their sessions are gone, seen in tier-5 `TestPodLifecycle`
+and possibly the cause of the never-passing tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash`) is
+triaged with P1: P1's opening defect list decides whether the claim-orphan GC owns it or the tests leak
+cluster state.
 
 Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
 

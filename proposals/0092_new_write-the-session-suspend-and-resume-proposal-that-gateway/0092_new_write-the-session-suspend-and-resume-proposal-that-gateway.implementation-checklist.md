@@ -38,5 +38,5 @@ Every step lands after proposal 0091 is implemented. Every step fixes or files e
       Tiers 0, 11. Depends on: S1, S2, S3, S4, S5, S6, S8
 - [x] **S18 · test** — TEST-1. Lands the new tests at tier 2 and above and the tier-0 and tier-11 checks, except the cells, operations, and pairs that Testing **Expansive lifecycle tests** **Step placement.** places in an earlier step.
       Tiers 0, 2, 3, 4, 5, 7a, 8, 9, 10, 11. Depends on: S8, S9, S14, S15, S17
-- [ ] **S19 · docs** — RECORDS-1. Lands the finding closures, the new findings, the claim rows, and the remediation-plan tick. It confirms that every `blocked:` skip this proposal's steps added names an OPEN finding and that each such finding has a matching entry in the deviations file.
+- [x] **S19 · docs** — RECORDS-1. Lands the finding closures, the new findings, the claim rows, and the remediation-plan tick. It confirms that every `blocked:` skip this proposal's steps added names an OPEN finding and that each such finding has a matching entry in the deviations file.
       Tiers 0, 11. Depends on: S16, S18

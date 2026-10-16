@@ -1510,6 +1510,13 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 **Gap:** A process exit between the terminal commit and the in-process release leaks credential-lease slots and concurrent-workspace slots, because peers skip terminal rows and the claim-orphan GC skips a pod with a live sibling.
 **Suggested resolution:** Persist a pending-release marker with the terminal write and let the Sweeper or the GC complete it. Owned by proposal P1 (release ownership for pods, slots, and credential leases), first wave after proposal 0092 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-4.6.30 — SandboxClaims stay bound after their sessions are gone, and nothing reclaims them [Medium] — OPEN
+
+**Spec:** §4.6.1 Warm Pool Controller (Pod Lifecycle) (the claim-orphan GC), §6.2 Pod State Machine.
+**Evidence:** Proposal 0092's S15 full tier pass (2026-10-15) found tier-5 `TestPodLifecycle` failing with `backing Sandbox phase = claimed, want idle` for `echo-pool-sidecar` and `heartbeat-silence-concurrent-pool` pods on the long-lived e2e cluster. Their SandboxClaims stay bound although the sessions that held them no longer exist. One claim was created by `TestSessionContinuesAfterCoordinatingGatewayReplicaLoss`, which kills a gateway replica. The same failure appears in worklogs from 2026-08-26 (`tier5b.log`), 2026-10-03 (`impl0088-t5.log`), and 2026-10-05 (`s20-t5c.log`). The tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash` has failed in every tier-8 log since 2026-08-26 (`reserved claim ... was not reclaimed by the orphan GC`) and may share the cause. The namespace also holds about 16,000 failed or terminated Sandbox objects, which makes `TestPodLifecycle` take about 11 minutes.
+**Gap:** After the session that holds a claim is gone (its replica was killed, or the test ended without cleanup), the claim stays bound and its pod stays `claimed`. Neither the claim-orphan GC nor a test start-time sweep reclaims it.
+**Suggested resolution:** Establish first whether the claim-orphan GC should have reclaimed these claims (a product defect, related to F-4.6.29) or whether the tests leak cluster-scoped state, which `.claude/rules/test-coverage.md` check 6 requires a start-time sweep for. Triage with proposal P1 (release ownership for pods, slots, and credential leases) in `gateway-runtime-comms-remediation.md` §10.2. Also prune the terminal Sandbox objects from the e2e namespace.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
@@ -44291,6 +44298,13 @@ The architectural gap is dominant: most §25.4 features depend on substrates (OI
 
 ---
 
+
+### - [ ] F-25.4.31 — `lenny-ops` panics at startup with no kubeconfig, because a typed-nil clientset passes the nil check [Medium] — OPEN
+
+**Spec:** §25.4 The `lenny-ops` Service, §25.5 Operational Event Stream (the `subscription_cache_invalidate` broadcast).
+**Evidence:** `cmd/lenny-ops/deps_setup.go` declares `var clientset *kubernetes.Clientset` and stores it in `deps.Clientset`, whose type is the `kubernetes.Interface` interface. With no kubeconfig the pointer stays nil, but the interface value is non-nil, so `deps.Clientset != nil` in `buildWebhookDelivery` (`cmd/lenny-ops/deps.go`) holds and `deps.Clientset.CoreV1()` dereferences a nil pointer. Proposal 0092's S15 full tier pass (2026-10-15) saw the panic fail tier-4 `TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E`, and the same failure is in the earlier S15 tier-4 log (`s15-t4.log`).
+**Gap:** A `lenny-ops` process started without in-cluster or file kubeconfig, with a non-empty shared key, crashes at startup instead of running with the broadcaster disabled.
+**Suggested resolution:** Assign `deps.Clientset` only when the clientset was built, leaving the interface nil otherwise, and add a tier-1 test that builds the deps with no kubeconfig and a shared key. This is a direct fix with no spec change, scheduled with the other direct fixes after proposal 0092 in `gateway-runtime-comms-remediation.md` §10.2.
 ## §25.5 Operational Event Stream <a id="25.5"></a>
 Reviewed: 2026-05-23.
 
