@@ -7,7 +7,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
-	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
@@ -160,19 +159,24 @@ func (w *controllerWiring) registerOptionalControllers() {
 
 // registerLeaderRunnables registers the §4.6.1 leader-elected background
 // runnables: the agent_pod_state mirror reconciler and the orphan-claim GC
-// (Postgres + agent-namespace gated), the §4.6.2/§10.7 PoolScalingController
 // (Postgres + agent-namespace gated), the §13.2 NET-022 cluster-CIDR drift
 // detector (agent-namespace or release-namespace gated), and the §4.6.1
 // leader-lease renewal monitor (leader-election gated). Each runs only on the
 // replica holding the controller Lease.
 //
+// The §4.6.2 PoolScalingController is not registered here. It runs as its own
+// workload (cmd/lenny-pool-scaling-controller) under its own ServiceAccount and
+// leader-election lease, because the §4.6.3 pool-config-validator admits the
+// derived SandboxTemplate and SandboxWarmPool spec writes only from the PSC
+// ServiceAccount. A second in-process copy here would run as soon as
+// --agent-namespaces is set and contend with the dedicated workload.
+//
 // spec: §4.6.1 — mirror reconciliation on recovery and orphan-claim GC are
-// leader-elected runnables scoped to the agent namespaces; §4.6.2/§10.7 — the
-// PoolScalingController reconciles the admin API's Postgres pool definitions
-// into their SandboxTemplate + SandboxWarmPool CRD pair and manages the A/B
-// experiment variant-pool lifecycle; §13.2 — the cluster-CIDR drift detector
-// audits the broad-internet egress NetworkPolicies; §16.5 — the leader-lease
-// monitor publishes lenny_controller_leader_lease_renewal_age_seconds.
+// leader-elected runnables scoped to the agent namespaces; §4.6.2 — the
+// PoolScalingController is separate from the WarmPoolController; §13.2 — the
+// cluster-CIDR drift detector audits the broad-internet egress
+// NetworkPolicies; §16.5 — the leader-lease monitor publishes
+// lenny_controller_leader_lease_renewal_age_seconds.
 func (w *controllerWiring) registerLeaderRunnables() {
 	f := w.f
 	mgr := w.mgr
@@ -182,7 +186,8 @@ func (w *controllerWiring) registerLeaderRunnables() {
 	// require Postgres: mirror recovery converges the agent_pod_state
 	// table, and the GC loop checks the session store before reclaiming a
 	// claim. They are registered only when both --postgres-dsn and
-	// --agent-namespaces are set.
+	// --agent-namespaces are set; the chart renders both in every install
+	// that configures postgres.dsn (F-4.6.30).
 	if w.mirror != nil && len(w.agentNamespaces) > 0 {
 		if err := mgr.Add(&warmpool.MirrorReconciler{
 			Client:     mgr.GetClient(),
@@ -200,36 +205,13 @@ func (w *controllerWiring) registerLeaderRunnables() {
 		}); err != nil {
 			log.Fatalf("lenny-controller: set up orphan-claim GC: %v", err)
 		}
-	}
-
-	// §4.6.2 / §10.7 PoolScalingController: reconcile the admin API's
-	// Postgres pool definitions into their SandboxTemplate +
-	// SandboxWarmPool CRD pair on a 30s timer, and manage the A/B
-	// experiment variant-pool lifecycle (active sizing, paused drain,
-	// concluded drain-and-delete) plus the base-pool adjustment. It is a
-	// leader-elected Runnable that needs the Postgres pool registry and a
-	// single target agent namespace for the derived CRDs (§5.1 pools are
-	// platform-global; their CRDs materialize in the agent namespace).
-	if w.poolScalingPools != nil && len(w.agentNamespaces) > 0 {
-		poolSource := poolscaling.PoolConfigSource(&poolscaling.PoolStoreSource{
-			Store:     w.poolScalingPools,
-			Namespace: w.agentNamespaces[0],
-		})
-		if w.poolScalingExperiments != nil {
-			poolSource = &poolscaling.ExperimentVariantSource{
-				Inner:       poolSource,
-				Experiments: w.poolScalingExperiments,
-				BasePools:   poolscaling.PoolStoreBasePoolResolver{Store: w.poolScalingPools},
-			}
-		}
-		if err := mgr.Add(&poolscaling.Runnable{
-			Reconciler: &poolscaling.Reconciler{
-				Client: mgr.GetClient(),
-				Source: poolSource,
-			},
-		}); err != nil {
-			log.Fatalf("lenny-controller: set up PoolScalingController: %v", err)
-		}
+		log.Printf("lenny-controller: §4.6.1 mirror reconciler and orphan-claim GC registered for agent namespaces %v", w.agentNamespaces)
+	} else {
+		// A silent skip here is how F-4.6.30 went unnoticed: the chart never
+		// rendered --agent-namespaces, so no install ran the GC. Name the
+		// missing input so the controller log states why the backstop is off.
+		log.Printf("lenny-controller: §4.6.1 mirror reconciler and orphan-claim GC not registered (postgres configured: %t, agent namespaces: %v)",
+			w.mirror != nil, w.agentNamespaces)
 	}
 
 	// The §13.2 NET-022 / NET-065 cluster-CIDR drift detector is a

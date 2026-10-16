@@ -2730,11 +2730,15 @@ Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 e
   kubeconfig does not panic on a typed-nil clientset. Found by 0092's S15 full tier pass; it blocks tier 4's
   ops tests. Landed 2026-10-16 on `fix/post-0092-direct`: the clientset is an interface left nil without a
   cluster.
-
-F-4.6.30 (SandboxClaims that stay bound after their sessions are gone, seen in tier-5 `TestPodLifecycle`
-and possibly the cause of the never-passing tier-8 `TestOrphanGCReclaimsReservedClaimAfterHolderCrash`) is
-triaged with P1: P1's opening defect list decides whether the claim-orphan GC owns it or the tests leak
-cluster state.
+- [x] F-4.6.30: render `--agent-namespaces` on the `lenny-controller` Deployment, so the §4.6.1
+  orphan-claim GC and the agent_pod_state mirror reconciler run in every install with Postgres. The chart
+  had never rendered the flag, so neither had run in a chart install. Landed 2026-10-16 on
+  `fix/controller-agent-namespaces` (commits 835127775 and eb8105d0f), with the in-process
+  PoolScalingController removed from `lenny-controller`, the mirror's full list no longer deep-copied, and
+  start-time sweeps on the tier-5 and tier-8 claim fixtures. On `lenny-e2e` the GC reclaimed the 48 leaked
+  claims, and tier-5 `TestPodLifecycle` and both tier-8 orphan-GC tests pass. P1's and 0092's departures
+  that name the GC as their fallback are now bounded: a claim that no replica releases is reclaimed within
+  `claimOrphanTimeout` plus one sweep interval. The leak source, F-10.1.21, stays with P1.
 
 Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
 
@@ -2779,7 +2783,22 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Overlapping plan steps.** None; no plan step owns erasure, tenant deletion, or tenant suspension.
   - **Drafting.** Under the drafting rules and the test instruction above.
 
-Proposal 0087 part 1 (Phase 2 above) follows P1 and P5.
+- [ ] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
+  foreign key, and full_revoke** (not yet written). Split from P5 on 2026-10-16 (proposal 0094 decision D20,
+  confirmed by the owner).
+  - **Scope.** The Phase 3 credential-lease revoker and token-cache flush, and the Phase 4 and user-erasure
+    erasers the store table lists and the tree omits, including the session message queues, the checkpoint
+    manifest, retention, and metadata rows, the coordination mirror rows, and the user registry row.
+    Also the `audit_redaction_receipts` foreign key that blocks an audit eraser, and the full_revoke session
+    loop, listing, and error handling.
+  - **Members.** F-11.4.12, F-11.4.13, the F-11.4.14 remainder (0094's fence closes its creation race),
+    F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, and the P5 dossier's N-3 and N-4
+    (`scratchpad/p1-p5/p5-dossier.md`).
+  - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
+    and release mechanism, and after P5 (0094), whose fence and drain it builds on.
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 and does not block 0087 part 1.
 
 Proposals, second wave:
 

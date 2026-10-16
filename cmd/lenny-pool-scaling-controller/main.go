@@ -43,6 +43,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
+	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
 	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/metrics"
 )
@@ -164,10 +165,7 @@ func main() {
 	}
 	defer pgPool.Close()
 
-	source := &poolscaling.PoolStoreSource{
-		Store:     poolstorepg.New(pgPool),
-		Namespace: agentNS,
-	}
+	source := buildPoolSource(pgPool, agentNS)
 	// spec: §6.1 — when a Prometheus backend is configured the
 	// SDK-warm circuit breaker reads the rolling demotion rate from it and
 	// auto-trips at 90%; the SDKWarmDemotionRateHigh event fires at the
@@ -229,6 +227,27 @@ func main() {
 	log.Printf("lenny-pool-scaling-controller: starting manager (leader-election=%t)", leaderElect)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		log.Fatalf("lenny-pool-scaling-controller: manager exited: %v", err)
+	}
+}
+
+// buildPoolSource returns the pool-configuration source the reconciler reads:
+// the §5.2 pool registry, decorated with the §10.7 experiment variant-pool
+// lifecycle (active sizing, paused drain, concluded drain-and-delete, and the
+// base-pool adjustment). This dedicated workload is the only
+// PoolScalingController a chart install runs, so the decoration lives here;
+// lenny-controller registers no in-process copy.
+//
+// spec: §4.6.2 (PoolScalingController responsibilities), §10.7 (experiment
+// variant-pool lifecycle).
+func buildPoolSource(pgPool *pgxpool.Pool, agentNS string) poolscaling.PoolConfigSource {
+	pools := poolstorepg.New(pgPool)
+	return &poolscaling.ExperimentVariantSource{
+		Inner: &poolscaling.PoolStoreSource{
+			Store:     pools,
+			Namespace: agentNS,
+		},
+		Experiments: experimentstorepg.New(pgPool),
+		BasePools:   poolscaling.PoolStoreBasePoolResolver{Store: pools},
 	}
 }
 

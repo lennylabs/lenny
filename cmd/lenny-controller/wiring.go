@@ -27,7 +27,7 @@ import (
 // spec: §4.1 — the gateway and its sibling binaries are each one component
 // whose composition root constructs each subsystem in dependency order; §4.6.1
 // — the lenny-controller hosts the WarmPoolController, the Sandbox reconciler,
-// and the leader-elected mirror / GC / pool-scaling / CIDR-drift runnables.
+// and the leader-elected mirror / GC / CIDR-drift runnables.
 func runController(f *controllerFlags) {
 	w := &controllerWiring{f: f}
 
@@ -92,14 +92,13 @@ func (w *controllerWiring) runManager() {
 //     §4.6.1 rate-limited REST config, the controller-runtime manager, and the
 //     §10 CRD schema-version self-check) — buildManagerSetup.
 //   - stores.go: the §4.6.1 Postgres-backed stores (the agent_pod_state mirror,
-//     the session lookup, the Runtime CRD registry, and the §10.7 pool-scaling
-//     pool/experiment registries), the §16.6 / §25.5 ops emitter, and the
-//     bounded reconciliation work-queue factory — buildStores.
+//     the session lookup, and the Runtime CRD registry), the §16.6 / §25.5 ops
+//     emitter, and the bounded reconciliation work-queue factory — buildStores.
 //   - controllers.go: the §4.6.1 WarmPoolController, Sandbox reconciler, per-pod
 //     reconciler, and occupancy-projection reconciler (always registered), the
 //     §5.1 RuntimeReconciler (Postgres-gated), and the leader-elected §4.6.1
-//     mirror / orphan-claim GC, §4.6.2/§10.7 PoolScalingController, §13.2 CIDR
-//     drift detector, and §4.6.1 leader-lease monitor runnables —
+//     mirror / orphan-claim GC, §13.2 CIDR drift detector, and §4.6.1
+//     leader-lease monitor runnables —
 //     registerCoreControllers, registerOptionalControllers, and
 //     registerLeaderRunnables.
 //   - probes.go: the §4.6.1 healthz/readyz probe registration — registerProbes.
@@ -109,8 +108,8 @@ func (w *controllerWiring) runManager() {
 // per-subsystem build steps use this shared accumulator rather than a
 // (component, error) return per subsystem, because the composition root threads
 // many cross-step locals between subsystems (the manager feeds every
-// controller; the stores feed the warm-pool mirror, the orphan-claim GC, the
-// RuntimeReconciler, and the PoolScalingController; the queue factory feeds
+// controller; the stores feed the warm-pool mirror, the orphan-claim GC, and the
+// RuntimeReconciler; the queue factory feeds
 // every controller). The accumulator keeps each step a focused unit that reads
 // the inputs earlier steps recorded and records the outputs later steps consume.
 //

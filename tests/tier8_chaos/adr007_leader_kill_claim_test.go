@@ -58,6 +58,7 @@ const leaderKillTestLabel = "lenny.dev/test=chaos-leaderkill-claim"
 // not proceed.
 func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
 
 	// Precondition: the controller Deployment is fully Ready with the two
 	// replicas leader-election failover needs, so the kill under test
