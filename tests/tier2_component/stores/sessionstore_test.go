@@ -1541,7 +1541,8 @@ func TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1(t *testing.T) {
 		}
 	}
 	// A podless suspended row and a row on another runtime.
-	rows = append(rows,
+	rows = append(
+		rows,
 		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateSuspended, RuntimeRef: "echo"},
 		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateRunning, RuntimeRef: "other"},
 	)
