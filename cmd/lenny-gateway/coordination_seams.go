@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -81,13 +82,26 @@ func (c coordinationBindings) ConnAlive(sessionID string) bool {
 // required because the executor consults its stream cache before the registry,
 // so a registry-only eviction would let a same-replica re-adopt keep serving
 // over the stale dead cached stream instead of Attaching over the freshly
-// published binding. spec: §4.7 (single content consumer per session), §10.1.
+// published binding. It then closes the removed binding's adapter connection:
+// on both Sweeper triggers (a dead held channel, and a peer takeover) nothing
+// on this replica reaches the pod over it again, and a dropped connection that
+// is never closed leaks its gRPC channel and background goroutines. Only the
+// binding Remove returned is closed, so a concurrent evictor that removed it
+// first is the one that closes it, and each connection is closed once.
+// spec: §4.7 (single content consumer per session), §10.1, §10.1.1 (Stateless
+// Replicas and Per-Session Coordination), §10.1.5 (Stale Replica Behavior).
 func (c coordinationBindings) EvictBinding(sessionID string) {
+	var removed *podsession.BindResult
 	if c.w.podRegistry != nil {
-		c.w.podRegistry.Remove(sessionID)
+		if b, ok := c.w.podRegistry.Remove(sessionID); ok {
+			removed = b
+		}
 	}
 	if se, ok := c.w.exec.(streamEvicter); ok {
 		se.EvictStream(sessionID)
+	}
+	if err := removed.CloseAdapter(); err != nil {
+		slog.Warn("lenny-gateway: close evicted adapter connection", "session_id", sessionID, "error", err)
 	}
 }
 

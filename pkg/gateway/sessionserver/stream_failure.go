@@ -127,14 +127,21 @@ func reportSupersededByPeer(row sessionstore.Session, bind *podsession.BindResul
 // reopened over the binding. It runs only while the registry still returns
 // bind, so a binding published since is left alone. It makes no binder call,
 // so the pod the new coordinator serves is not drained, and it writes no row,
-// lease, or generation, because this replica does not hold the lease.
-// spec: §10.1.5.
+// lease, or generation, because this replica does not hold the lease. It
+// closes this replica's adapter connection to the pod, which the removal
+// makes unreachable: the new coordinator holds its own connection. The
+// compare-and-remove makes this call the connection's single closer when the
+// Sweeper evicts the same binding concurrently.
+// spec: §10.1.5 (Stale Replica Behavior); §10.1.1 (Stateless Replicas and
+// Per-Session Coordination).
 func (s *Server) evictStaleBinding(sessionID string, bind *podsession.BindResult) {
-	if cur, ok := s.podRegistry.Get(sessionID); !ok || cur != bind {
+	if !s.podRegistry.RemoveIf(sessionID, bind) {
 		return
 	}
-	s.podRegistry.Remove(sessionID)
 	if se, ok := s.executor.(streamEvicter); ok {
 		se.EvictStream(sessionID)
+	}
+	if err := bind.CloseAdapter(); err != nil {
+		slog.Warn("sessionserver: close evicted adapter connection", "session_id", sessionID, "error", err)
 	}
 }
