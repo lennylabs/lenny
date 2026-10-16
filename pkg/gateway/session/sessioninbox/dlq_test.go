@@ -114,7 +114,8 @@ func TestDLQ_SweepExpired_NoneExpired_spec_7_2_341(t *testing.T) {
 // the reverse of their enqueue order, and checks that PeekOldest and
 // DrainAll return them in enqueue order, that an entry enqueued after the
 // head of a tie was removed still sorts last, and that CountAcceptedAfter
-// does not count a tied entry as accepted after its own millisecond.
+// counts every tied entry from its own millisecond onward and none from the
+// next millisecond.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6)
 func TestDLQSameMillisecondEntriesKeepEnqueueOrder_spec_7_2(t *testing.T) {
@@ -140,8 +141,11 @@ func TestDLQSameMillisecondEntriesKeepEnqueueOrder_spec_7_2(t *testing.T) {
 		t.Fatal(err)
 	}
 	enq("m-a")
-	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at); err != nil || n != 0 {
-		t.Fatalf("CountAcceptedAfter(the shared millisecond) = %d err=%v, want 0", n, err)
+	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at); err != nil || n != 3 {
+		t.Fatalf("CountAcceptedAfter(the shared millisecond) = %d err=%v, want 3", n, err)
+	}
+	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at.Add(time.Millisecond)); err != nil || n != 0 {
+		t.Fatalf("CountAcceptedAfter(the millisecond after) = %d err=%v, want 0", n, err)
 	}
 	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at.Add(-time.Millisecond)); err != nil || n != 3 {
 		t.Fatalf("CountAcceptedAfter(the millisecond before) = %d err=%v, want 3", n, err)

@@ -233,18 +233,21 @@ func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (b
 	return n > 0, err
 }
 
-// CountAcceptedAfter counts the DLQ entries the gateway accepted strictly
-// after since. Every held entry is scored by its acceptance time plus
-// DefaultDLQTTL, so the count is the entries whose score exceeds since plus
-// that TTL. It backs the backlog check of an interrupt suspension, which
-// counts only messages accepted after the suspension.
+// CountAcceptedAfter counts the DLQ entries the gateway accepted at or after
+// the millisecond that contains since. Every held entry is scored by its
+// whole acceptance millisecond plus DefaultDLQTTL, with an enqueue-order
+// tie-break fraction below the next millisecond, so the score cannot say
+// whether an entry in since's own millisecond was accepted before or after
+// since. The count includes that whole millisecond: counting an entry
+// accepted just before since costs at most one extra resume, which delivers
+// that held message, while excluding one accepted just after since would
+// leave it in the DLQ of a podless suspended session for the session's
+// whole lifetime. It backs the backlog check of an interrupt suspension,
+// which resumes for messages accepted after the suspension.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
 func (d *DLQ) CountAcceptedAfter(ctx context.Context, tenantID, sessionID string, since time.Time) (int, error) {
-	// An entry accepted in since's own millisecond can carry a tie-break
-	// fraction above that millisecond, so the count starts at the next whole
-	// millisecond rather than just above since's.
-	floor := since.Add(DefaultDLQTTL).UnixMilli() + 1
+	floor := since.Add(DefaultDLQTTL).UnixMilli()
 	n, err := d.client.ZCount(ctx, dlqKey(tenantID, sessionID), strconv.FormatInt(floor, 10), "+inf").Result()
 	return int(n), err
 }

@@ -1968,6 +1968,7 @@
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
         "tests/tier4_integration/suspended_resume_admission_test.go::TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestHeldMessagesReachTheRuntimeInOrder_spec_7_2",
+        "tests/tier2_component/gateway_subsystems/suspended_backlog_millisecond_test.go::TestSuspendedBacklogCountsTheSuspensionMillisecond_spec_7_2",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestBacklogRecheckResumesAStrandedPodlessSession_spec_7_2",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2",
         "tests/tier4_integration/session_held_pod_integration_test.go::TestHeldPodSuspendedMessageWaitsInTheDLQ_spec_7_2",

@@ -55,9 +55,9 @@ func TestHeldLenCountsTheBacklog_spec_7_2(t *testing.T) {
 	}{
 		{"DLQ alone", false, time.Time{}, 3},
 		{"DLQ and inbox", true, time.Time{}, 4},
-		{"accepted strictly after the first", false, base, 2},
-		{"accepted after the second, with the inbox", true, base.Add(time.Minute), 2},
-		{"accepted after the last", false, base.Add(2 * time.Minute), 0},
+		{"accepted after the first", false, base.Add(time.Second), 2},
+		{"accepted after the second, with the inbox", true, base.Add(time.Minute + time.Second), 2},
+		{"accepted after the last", false, base.Add(2*time.Minute + time.Second), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -69,6 +69,28 @@ func TestHeldLenCountsTheBacklog_spec_7_2(t *testing.T) {
 	}
 	if got, err := (*Coordinator)(nil).HeldLen(ctx, "acme", "s", true, time.Time{}); got != 0 || err != nil {
 		t.Fatalf("nil Coordinator HeldLen = %d, %v; want 0", got, err)
+	}
+}
+
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+// An interrupt suspension stamps SuspendedAt partway through a millisecond,
+// and a message held later in that same millisecond was accepted after the
+// session entered suspended. HeldLen must count it, or no backlog check ever
+// resumes the podless session for it.
+func TestHeldLenCountsAMessageHeldInTheSuspensionMillisecond_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	co, _ := heldCoordinator(t, false)
+	ms := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	suspendedAt := ms.Add(400 * time.Microsecond)
+	if _, err := co.EnqueueDLQ(ctx, "acme", "s", acceptedAt("before", ms.Add(-time.Millisecond)), 0); err != nil {
+		t.Fatalf("EnqueueDLQ before: %v", err)
+	}
+	if _, err := co.EnqueueDLQ(ctx, "acme", "s", acceptedAt("held", ms.Add(900*time.Microsecond)), 0); err != nil {
+		t.Fatalf("EnqueueDLQ held: %v", err)
+	}
+	got, err := co.HeldLen(ctx, "acme", "s", false, suspendedAt)
+	if err != nil || got != 1 {
+		t.Fatalf("HeldLen(acceptedAfter=SuspendedAt) = %d, %v; want 1, the message held in the suspension millisecond", got, err)
 	}
 }
 

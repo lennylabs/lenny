@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // postMessage sends one REST message and returns the receipt status.
@@ -324,4 +325,73 @@ func TestBacklogRecheckerRunPassesAtStart_spec_7_2(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop with its context")
 	}
+}
+
+// TestBacklogResumeCountsAMessageHeldInTheSuspensionMillisecond_spec_7_2 pins
+// the backlog condition of an interrupt suspension at sub-millisecond
+// resolution: a message the gateway held later in the millisecond that
+// contains SuspendedAt was accepted after the session entered suspended, so
+// the coordinating replica's ResumeBacklog resumes the session on its pod for
+// it, and once the pod is released the leader's re-check moves the podless
+// row to resume_pending. Neither evaluation may leave the message in the DLQ
+// until the suspended lifetime expires the session.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestBacklogResumeCountsAMessageHeldInTheSuspensionMillisecond_spec_7_2(t *testing.T) {
+	ctx := context.Background()
+	suspendedAt := time.Date(2026, 10, 14, 11, 0, 0, 400_000, time.UTC)
+	held := sessioninbox.Message{
+		MessageID: "m1", Payload: []byte(`{"role":"user","content":"x"}`),
+		EnqueuedAt: suspendedAt.Add(500 * time.Microsecond),
+	}
+
+	t.Run("coordinating replica resumes on the pod", func(t *testing.T) {
+		r := newSuspensionRig(t, true)
+		row := r.seedSuspended(t, "s1", suspendedAt)
+		if _, err := r.coord.EnqueueDLQ(ctx, "acme", "s1", held, 0); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := r.srv.heldLen(ctx, row); err != nil || n != 1 {
+			t.Fatalf("heldLen = %d, %v; want 1", n, err)
+		}
+		if !r.srv.ResumeBacklog(ctx, row) {
+			t.Fatal("ResumeBacklog answered false for a message held in the suspension millisecond")
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for r.srv.backlogResumes.has("s1") {
+			if time.Now().After(deadline) {
+				t.Fatal("backlog resume did not finish")
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		if got := r.get(t, "s1").State; got != session.StateRunning {
+			t.Fatalf("state = %q, want running", got)
+		}
+	})
+
+	t.Run("leader re-check moves the podless row to resume_pending", func(t *testing.T) {
+		r := newSuspensionRig(t, true)
+		store := r.store.(*memstore.Store)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: "s2", TenantID: "acme", State: session.StateSuspended, SuspendedAt: suspendedAt,
+			SuspendedReason: sessionstore.SuspendedReasonInterruptAcknowledged,
+			CreatedAt:       suspendedAt, UpdatedAt: suspendedAt,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.coord.EnqueueDLQ(ctx, "acme", "s2", held, 0); err != nil {
+			t.Fatal(err)
+		}
+		rc := &BacklogRechecker{
+			Server:  r.srv,
+			Lister:  store,
+			Tenants: func(context.Context) ([]string, error) { return []string{"acme"}, nil },
+		}
+		if n := rc.Pass(ctx); n != 1 {
+			t.Fatalf("Pass resumed %d, want 1", n)
+		}
+		if got := r.get(t, "s2").State; got != session.StateResumePending {
+			t.Fatalf("state = %q, want resume_pending", got)
+		}
+	})
 }
