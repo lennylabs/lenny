@@ -21,13 +21,13 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S9 · code** — CODE-3. Lands the primary listing field, the tenant-scoped `ForceTerminate`, and `DrainSessions`.
       Tiers 0, 1, 2. Depends on: S1
 - [ ] **S10 · code** — CODE-4. Lands the suspend handler.
-      Tiers 0, 1, 7a. Depends on: S4, S9
+      Tiers 0, 1, 7a. Depends on: S1, S4, S9
 - [ ] **S11 · code** — CODE-5. Lands the Phase 2 terminator wiring and the in-phase retry.
-      Tiers 0, 1. Depends on: S3, S9
+      Tiers 0, 1. Depends on: S1, S3, S9
 - [ ] **S12 · code** — CODE-6. Lands the Postgres erasure job store, the users restriction helper, and the sampler change.
-      Tiers 0, 1, 2. Depends on: S2, S5
+      Tiers 0, 1, 2. Depends on: S2, S4, S5
 - [ ] **S13 · code** — CODE-7. Lands the runner's phase dispatch and completion order, the handler changes, and execution in the lifecycle tick.
-      Tiers 0, 1, 4, 8. Depends on: S2, S4, S7, S9, S12
+      Tiers 0, 1, 4, 8. Depends on: S1, S2, S4, S7, S9, S12
 - [ ] **S14 · code** — CODE-8. Lands the route removal and its test updates.
       Tiers 0, 1, 3, 4. Depends on: —
 - [ ] **S15 · docs** — DOCS-1. Lands every reader page edit.

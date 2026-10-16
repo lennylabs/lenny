@@ -76,8 +76,8 @@ Spec sites that state part of this table, each regenerated from it:
 |:--|:--|:--|
 | §12.8 **Lifecycle fence and drain** *Creation fence* | The path list (C1 to C11), the owner, the delegated-child rule, the response scope (C9 excluded), the early check, and the reservation and undo (C8, C11) | Edit 1a |
 | §16.1 `lenny_session_derive_failure_audit_total` | C9 | Edit 1d |
-| §12.8 **Processing restriction during erasure (GDPR Article 18)** items (1) and (2) | `ERASURE_IN_PROGRESS` on every row | Edits 2b and 2c |
 | §15.1 `USER_INVALIDATED` catalog row | The paths that return it | Edit 4c |
+| §15.1 `ERASURE_IN_PROGRESS` catalog row | The reservation-ended refusal (C8, C11) | Edit 4k |
 
 **One drain.** `admin.DrainSessions` (CODE-3) is the only drain. Suspension (CODE-4), tenant-deletion Phase 2 (CODE-5), and the erasure runner (CODE-7) call it. What a successful drain proves is stated once, in the doc comment CODE-3 item 4 specifies.
 
@@ -187,11 +187,12 @@ Spec sites that state part of this table, each regenerated from it:
    ReservedSessionIDs(ctx context.Context, tenantID, ownerUserID string) ([]string, error)
    // CreateReserved is Create for a row whose ID was reserved: in the insert
    // transaction it deletes the reservation for the row's ID and owner and
-   // returns *CreationRefusal when no reservation was deleted.
+   // returns *CreationRefusal when the row has an owner and no reservation
+   // was deleted. A row with no owner inserts as Create does.
    CreateReserved(ctx context.Context, s Session) error
    ```
 
-   `CreateReserved` runs `Create`'s fence and insert and deletes the reservation with `DELETE ... RETURNING`. When no row is returned, it aborts the transaction and returns `*CreationRefusal{Code: "ERASURE_IN_PROGRESS"}` with details `userId` and `jobId` (from the user row), because only the owner's erasure or the tenant's deletion removes a reservation its writer still holds, and the tenant deletion's markers refuse first.
+   `CreateReserved` runs `Create`'s fence and insert and deletes the reservation with `DELETE ... RETURNING`. When no row is returned and the row's `UserID` is non-empty, it aborts the transaction and returns `*CreationRefusal{Code: "ERASURE_IN_PROGRESS"}` with detail `userId` only (Edit 4k), because only the owner's erasure or the tenant's deletion removes a reservation its writer still holds, and the tenant deletion's markers refuse first. A row whose `UserID` is empty skips the reservation check and inserts as `Create` does, because `Reserve` records nothing for an empty owner and SPEC-1 Edit 1a refuses only an insert whose reservation has ended.
 
    `pgstore.Reserve` takes the same `FOR SHARE` reads as `Create`, applies `Refusal` with `IsDelegatedChild` equal to `delegatedChild`, and inserts into `session_reservations` (MIG-2). An empty `ownerUserID` runs the tenant half and inserts nothing. `DeleteByUser` deletes the user's reservations and `DeleteByTenant` deletes the tenant's, each in the transaction that deletes the session rows. `memstore` keeps a reservation map under `s.mu` with the same semantics and applies `WithCreationMarkers` in `Reserve`. Update the two test doubles.
 
@@ -415,8 +416,8 @@ DROP TABLE IF EXISTS session_reservations;
 
 1. `docs/operator-guide/multi-tenancy.md`, tenant deletion phase table: leave the Phase 1 row unchanged. Replace the Actions cell of the `2. Drain active sessions` row with: "Force-terminate every active session in the tenant. The phase completes when no active session remains. When a session cannot be terminated, the phase stays incomplete and the controller retries it on its next pass." Do not describe locks or atomicity. Leave the page's existing phase count alone.
 2. Error tables: add `TENANT_SUSPENDED` (403, `details.tenantId`), `TENANT_NOT_ACTIVE` (403, `details.tenantId` and `details.state`), and `USER_INVALIDATED` (403, not retryable) as session-creation rejections, worded after the §15.1 catalog rows:
-   - `docs/reference/error-catalog.md`, beside `ERASURE_IN_PROGRESS`;
-   - `docs/api/index.md`, beside `ERASURE_IN_PROGRESS`, with category `POLICY` and retryable `No`;
+   - `docs/reference/error-catalog.md`, beside `ERASURE_IN_PROGRESS`, and reword its `ERASURE_IN_PROGRESS` row after the §15.1 catalog row as Edit 4k leaves it;
+   - `docs/api/index.md`, beside `ERASURE_IN_PROGRESS`, with category `POLICY` and retryable `No`, and reword its `ERASURE_IN_PROGRESS` row after the §15.1 catalog row as Edit 4k leaves it;
    - `docs/api/mcp.md`, in the `create_session` error table;
    - optionally the key error codes list in `docs/api/rest.md`.
 3. `docs/operator-guide/security.md`, **Erasure Process**: add one sentence stating that before any data is deleted, the erasure job force-terminates the user's running sessions, and that a failure to terminate them fails the job and leaves the restriction set.
