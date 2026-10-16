@@ -92,7 +92,7 @@ The trigger exempts the `lenny_erasure` database role and the explicit `clear-pr
 **Edit 2g.** In the paragraph that opens `**User-level erasure invocation.**`, append after the sentence `These endpoints are listed in [Section 15.1](15_external-api-surface.md#151-rest-api).`:
 
 ```markdown
-At most one erasure job per user is in progress at a time. An erase request for a user who already has a job in progress returns that job's ID and starts no second job. A retry runs the legal-hold preflight (step 0 of **`DeleteByUser` dependency-ordered deletion sequence**) and then moves the job to `initiated` and sets `processing_restricted` again in one transaction. The retry is rejected with `409 INVALID_STATE_TRANSITION` while another job for the same user is in progress.
+At most one erasure job per user is in progress at a time. An erase request for a user who already has a job in progress runs the legal-hold preflight (step 0 of **`DeleteByUser` dependency-ordered deletion sequence**) like any erase request and, when the preflight admits it, returns that job's ID and starts no second job. A retry runs the same preflight and then moves the job to `initiated` and sets `processing_restricted` again in one transaction. The retry is rejected with `409 INVALID_STATE_TRANSITION` while another job for the same user is in progress.
 ```
 
 **Edit 2h.** In the paragraph that opens `**Erasure job phase field (crash recovery).**`, replace `` it reads the persisted `phase` to determine the safe resume point: jobs in `store_deleting` re-run `` with:

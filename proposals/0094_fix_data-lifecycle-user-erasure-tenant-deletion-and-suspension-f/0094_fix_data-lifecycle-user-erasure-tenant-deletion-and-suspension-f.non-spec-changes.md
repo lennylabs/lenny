@@ -225,9 +225,11 @@ Spec sites that state part of this table, each regenerated from it:
        Start(ctx context.Context, j Job) (Job, error)
        Get(ctx context.Context, id string) (Job, error)
        Update(ctx context.Context, id string, mutate func(*Job) error) (Job, error)
-       // Restart moves a `failed` job to `initiated`, clears ErasedAt and the
-       // recorded Billing outcome, keeps OverrideReceipt for the receipt, and
-       // re-sets the restriction in one transaction (row E3 of the
+       // Restart moves a `failed` job to `initiated`, clears Failure,
+       // CompletedAt, ErasedAt, and the recorded Billing outcome, appends
+       // `initiated` to PhaseLog without dropping the earlier `failed` entry
+       // (the runner's hold re-check reads it), keeps OverrideReceipt for the
+       // receipt, and re-sets the restriction in one transaction (row E3 of the
        // Erasure entry-point table). Returns *ErrActiveJob when
        // another job for the user is in progress, and ErrNotFailed when the job
        // is not `failed`.
@@ -320,7 +322,7 @@ Register `{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}
    - `docs/api/mcp.md`, in the `create_session` error table;
    - optionally the key error codes list in `docs/api/rest.md`.
 3. `docs/operator-guide/security.md`, **Erasure Process**: add one sentence stating that before any data is deleted, the erasure job force-terminates the user's running sessions, and that a failure to terminate them fails the job and leaves the restriction set.
-4. `docs/api/admin.md`: under `POST /v1/admin/users/{userId}/erase`, state that a request for a user with an erasure job already in progress returns that job's ID and starts no second job. On the erasure-job retry row, state that it returns `409 INVALID_STATE_TRANSITION` when the user already has another job in progress, and `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when a legal hold on the user's sessions or artifacts blocks it.
+4. `docs/api/admin.md`: under `POST /v1/admin/users/{userId}/erase`, state that a request for a user with an erasure job already in progress returns that job's ID and starts no second job when no legal hold blocks it. On the erasure-job retry row, state that it returns `409 INVALID_STATE_TRANSITION` when the user already has another job in progress, and `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when a legal hold on the user's sessions or artifacts blocks it.
 5. `docs/api/admin.md`, Tenants section: add a `POST /v1/admin/tenants/{id}/suspend` entry. It drains active sessions; a repeat request on a suspended tenant re-runs the drain; the response reports `drainedSessions` and `failedSessions`, and a non-empty `failedSessions` means the drain is incomplete and the request can be repeated; a listing failure returns `500 INTERNAL_ERROR`.
 6. Apply `doc-style.md` and `doc-content.md`. Quote no log line and cite no spec section number in prose. `docs/api/open-responses.md` documents no `DELETE`, so CODE-8 needs no docs edit.
 
@@ -439,7 +441,7 @@ These scenarios exercise the deliverables together and land after the code steps
 - `pkg/gateway/environment/translator/singleshot.go`, `pkg/gateway/environment/translator/open_responses.go`, `pkg/gateway/environment/translator/open_responses_test.go`
 - `pkg/gateway/mcpfabric/mcptools/mcptools.go`, `pkg/gateway/mcpfabric/mcptools/mcptools_register.go`
 - `pkg/gateway/externalapi/errorclassify/errorclassify.go`, `pkg/gateway/externalapi/openapi/openapi.json`
-- `pkg/gateway/externalapi/admin/sessions.go`, `tenant_suspend.go`, `erasure.go`, and the file holding `DrainSessions`
+- `pkg/gateway/externalapi/admin/sessions.go`, `tenant_suspend.go`, `erasure.go`, `legalhold.go`, and the file holding `DrainSessions`
 - `pkg/controller/tenantdeletion/controller.go`, `pkg/controller/tenantdeletion/lifecycle.go`
 - `pkg/gateway/storage/erasurejob/erasurejob.go`, `runner.go`, `sampler.go`, and the new `pkg/gateway/storage/erasurejob/pgstore/`
 - `pkg/gateway/environment/userstore/pgstore/pgstore.go`
