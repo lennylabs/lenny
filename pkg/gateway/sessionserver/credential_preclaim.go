@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -99,13 +100,26 @@ func (s *Server) CheckDelegationCredentialAvailability(ctx context.Context, q De
 // USER_CREDENTIAL_NOT_FOUND), surfaced by writePodClaimError before any
 // pod is claimed.
 //
-// When the tenant configures no credentialPolicy, or the tenant /
-// runtime / credential-pool registries are not all wired, the
-// intersection is empty and the session assigns no upstream LLM
-// credentials — preserving the pre-§4.9 behavior for deployments
-// without credential pools.
+// When the tenant configures no credentialPolicy (including a tenant with
+// no registry row), or the tenant / runtime / credential-pool registries
+// are not all wired, no provider is eligible and the session assigns no
+// upstream LLM credentials, preserving the pre-§4.9 behavior for
+// deployments without credential pools.
 //
-// spec: §4.9.
+// A lookup that cannot give a definite answer fails closed. A tenant,
+// runtime, or credential-origin read that fails with anything other than
+// not-found returns a *CredentialLookupError, so no caller starts, resumes,
+// or materializes a session without the credential its policy requires.
+// Every caller runs this before it claims a pod, so the error leaves
+// nothing to release: a start answers the retryable §7.1 atomic-unit
+// fallback, and a resume attempt is a pre-claim failure the §7.3 resume
+// driver retries. A runtime that does not exist declares no providers, so
+// under a configured policy it yields the empty intersection and
+// CREDENTIAL_POOL_EXHAUSTED, as a runtime that declares none does.
+//
+// spec: §4.9 (Pre-Claim Credential Availability Check; Intersection at
+// session creation); §7.1 (Atomicity of session creation); §7.3 (Resume
+// driver; Credential leases on the replacement pod).
 func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
 		return nil, nil, nil, nil
@@ -119,20 +133,29 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		return nil, nil, nil, nil
 	}
 	tenant, err := s.tenants.Get(ctx, row.TenantID)
-	if err != nil {
-		// The §10.2 tenant-claim extractor already gated the request; an
-		// unresolvable tenant row here means no credentialPolicy applies.
+	switch {
+	case errors.Is(err, tenantstore.ErrNotFound):
+		// The §10.2 tenant-claim extractor already gated the request; a
+		// tenant with no registry row has no credentialPolicy to apply.
 		return nil, nil, nil, nil
+	case err != nil:
+		// spec: §4.9, §7.1 — an unreadable tenant row is not "no policy".
+		// Fail closed rather than start the session with no credential.
+		return nil, nil, nil, &CredentialLookupError{Lookup: "tenant credentialPolicy", Err: err}
 	}
 	policy := tenant.CredentialPolicy
 	if !policy.Configured() {
 		return nil, nil, nil, nil
 	}
 	rt, err := runtimestore.Resolve(ctx, s.runtimes, row.RuntimeRef)
-	if err != nil {
-		// Runtime-resolution failure is surfaced by the pool-resolution
-		// path; the §4.9 layer contributes no credentials.
-		return nil, nil, nil, nil
+	switch {
+	case errors.Is(err, runtimestore.ErrNotFound):
+		// spec: §4.9 (Intersection at session creation) — a runtime that
+		// does not exist declares no supportedProviders, so the intersection
+		// is empty and PreClaim answers CREDENTIAL_POOL_EXHAUSTED.
+		rt = runtimestore.Runtime{}
+	case err != nil:
+		return nil, nil, nil, &CredentialLookupError{Lookup: "runtime supportedProviders", Err: err}
 	}
 	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
 
@@ -143,30 +166,21 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	// (or empty) id leaves the top-level/independent path unchanged.
 	// Constrain the child's eligible providers to the origin runtime's
 	// eligible set, live-resolved at this hop so a mid-tree change to the
-	// origin runtime's providers takes effect here. An unresolvable
-	// origin session or origin runtime fails closed (empty intersection →
+	// origin runtime's providers takes effect here. An absent origin
+	// session or origin runtime fails closed (empty intersection →
 	// CREDENTIAL_POOL_EXHAUSTED at assignment) rather than falling back to
 	// the child's own unconstrained set, which would defeat the inherit
 	// guarantee. A deny origin row also fails closed: a deny hop holds no
 	// origin pool (§8.3), so an inherit hop whose origin
 	// traces to a deny session has nothing to inherit and must not derive
-	// eligibility from the deny runtime's supportedProviders.
+	// eligibility from the deny runtime's supportedProviders. A transient
+	// read of either fails closed with a retryable *CredentialLookupError.
 	if row.CredentialOriginSessionID != "" && row.CredentialOriginSessionID != row.ID {
-		originRow, originErr := s.store.Get(ctx, row.TenantID, row.CredentialOriginSessionID)
-		if originErr != nil {
-			intersection = nil
-		} else if originRow.CredentialDeny {
-			// spec: §8.3 — a deny session holds no origin pool, so
-			// an inherit hop from it has nothing to inherit and fails closed to
-			// CREDENTIAL_POOL_EXHAUSTED rather than deriving eligibility from the
-			// deny runtime's supportedProviders.
-			intersection = nil
-		} else if originRt, rtErr := runtimestore.Resolve(ctx, s.runtimes, originRow.RuntimeRef); rtErr != nil {
-			intersection = nil
-		} else {
-			originEligible := credrouter.Intersection(originRt.SupportedProviders, policy)
-			intersection = intersectProviders(intersection, originEligible)
+		originEligible, err := s.originEligibleProviders(ctx, row, policy)
+		if err != nil {
+			return nil, nil, nil, err
 		}
+		intersection = intersectProviders(intersection, originEligible)
 	}
 
 	allPools, err := s.credPools.List(ctx, row.TenantID, credentialpoolstore.ListFilter{})
@@ -268,6 +282,65 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	}
 	return res.PoolAssignments, poolDeliveryModes, res.UserProviders, nil
 }
+
+// originEligibleProviders returns the eligible provider set of an inherit
+// hop's credential origin: the origin runtime's supportedProviders
+// intersected with the tenant policy. An absent origin, a deny origin, or
+// an origin whose runtime is absent yields the empty set, which fails the
+// hop closed to CREDENTIAL_POOL_EXHAUSTED. A read of the origin row or the
+// origin runtime that fails with anything other than not-found returns a
+// *CredentialLookupError, so a transient store fault is retried rather
+// than answered as a definite exhaustion.
+//
+// spec: §8.3 (credential origin; a deny hop holds no origin pool); §4.9.
+func (s *Server) originEligibleProviders(ctx context.Context, row sessionstore.Session, policy credential.CredentialPolicy) ([]string, error) {
+	originRow, err := s.store.Get(ctx, row.TenantID, row.CredentialOriginSessionID)
+	switch {
+	case errors.Is(err, sessionstore.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, &CredentialLookupError{Lookup: "credential origin session", Err: err}
+	case originRow.CredentialDeny:
+		// spec: §8.3 — a deny session holds no origin pool, so an inherit
+		// hop from it has nothing to inherit, rather than deriving
+		// eligibility from the deny runtime's supportedProviders.
+		return nil, nil
+	}
+	originRt, err := runtimestore.Resolve(ctx, s.runtimes, originRow.RuntimeRef)
+	switch {
+	case errors.Is(err, runtimestore.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, &CredentialLookupError{Lookup: "credential origin runtime", Err: err}
+	}
+	return credrouter.Intersection(originRt.SupportedProviders, policy), nil
+}
+
+// CredentialLookupError reports that the §4.9 pre-claim credential
+// resolution could not read a record it needs (the tenant credentialPolicy,
+// the session runtime, or an inherit hop's credential origin) because the
+// read failed with an error other than not-found. Such a read gives no
+// definite answer about the credential the session requires, so the
+// resolution fails closed. The error is retryable: writePodClaimError
+// answers it with the endpoint's §7.1 atomic-unit fallback and a
+// Retry-After header, and the §7.3 resume driver treats it as a pre-claim
+// failure and attempts again. Err carries the cause and never carries
+// credential material.
+//
+// spec: §4.9; §7.1 (Atomicity of session creation); §7.3 (Resume driver).
+type CredentialLookupError struct {
+	// Lookup names the record the resolution could not read.
+	Lookup string
+	// Err is the store or context error the read returned.
+	Err error
+}
+
+func (e *CredentialLookupError) Error() string {
+	return fmt.Sprintf("sessionserver: credential pre-claim could not read the %s: %v", e.Lookup, e.Err)
+}
+
+// Unwrap exposes the cause so errors.Is matches a context error.
+func (e *CredentialLookupError) Unwrap() error { return e.Err }
 
 // intersectProviders returns the order-stable (a-ordered) set
 // intersection of two provider lists: an element of a is emitted at most

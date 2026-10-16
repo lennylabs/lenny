@@ -2593,6 +2593,12 @@ other while their code proceeds in parallel.
   proposal 0087 part 1 (owner decision, 2026-10-12). It is a release prerequisite: without a resume driver, the failure
   handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
   session holds its pod or slot for up to two hours before it ends for good.
+  - [x] **Credential fail-open fix (F-4.9.36).** Done 2026-10-16 on `fix/credential-fail-closed`
+    (`66be1a642`), not yet merged. `resolveCredentialPools` returns a retryable `*CredentialLookupError`
+    when the tenant, runtime, or credential-origin read fails with anything other than not-found, so a
+    start answers `SESSION_CREATION_FAILED` or `STARTING_FAILED` and a resume attempt is a pre-claim failure
+    the driver retries. The fix also closes the same fail-open read in the per-session `credentialPolicy`
+    override check. Two related misclassifications are filed as F-4.9.38 and F-8.3.7. P1 and P5 are next.
   - **Resume driver.** Nothing in the tree moves a session from `resume_pending` to `resuming`, claims a
     replacement pod, and restores the checkpoint (§7.3 **Resume flow after pod failure**, §29.6). This
     proposal builds that path, which both failure recovery and idle suspension use.

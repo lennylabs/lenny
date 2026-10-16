@@ -74,6 +74,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var deliveryIso *CredentialDeliveryIsolationError
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
 	var archiveLimit *upload.ValidationError
+	var credLookup *CredentialLookupError
 	s.recordPodClaimFailure(err)
 	switch {
 	case adapterclient.IsSlotBindRefusal(err):
@@ -194,6 +195,17 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		// extraction runs before setup commands or credential assignment. The
 		// §13.4 sub-code rides on details.reason. F-CS1.
 		s.writeUploadArchiveLimitExceeded(w, archiveLimit)
+	case errors.As(err, &credLookup):
+		// spec: §4.9, §7.1 (Atomicity of session creation) — the pre-claim
+		// credential resolution could not read the tenant policy, the
+		// runtime, or the credential origin. No pod was claimed, and the
+		// read gave no definite answer, so this is the retryable atomic-unit
+		// fallback rather than CREDENTIAL_POOL_EXHAUSTED. details.reason
+		// separates it from a claim or setup failure under the same code.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(),
+			map[string]any{"reason": "credential_lookup_unavailable"})
 	default:
 		// spec: §7.1 / §15.1 — the atomic-unit fallback
 		// is always retryable; include Retry-After so a client backs off
