@@ -827,7 +827,7 @@ func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 //
 // spec: §6.2, §11.2
 // (direct-mode usage).
-// diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens is never idle-suspended and its session holds the pod indefinitely (proposal 0024 S4 idle-gate broken).
+// diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens is never idle-suspended and its session holds the pod indefinitely (§6.2 maxClientIdleSeconds: only a non-zero direct-mode usage delta stamps the idle clock).
 func TestRecordDirectUsageIdleClockGate_spec_6_2_253(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

@@ -155,7 +155,7 @@ func TestDirectUsageLoopSkipsSessionRemovedMidPoll_spec_11_2(t *testing.T) {
 //
 // spec: §6.2, §8.3, §11.2 (direct-mode
 // usage).
-// diagnosis: a hung direct-mode pod was never idle-suspended because the poll loop reset its idle clock on every zero-delta tick, so its session held the pod indefinitely (proposal 0024 S9 hung-pod idle bound broken).
+// diagnosis: a hung direct-mode pod was never idle-suspended because the poll loop reset its idle clock on every zero-delta tick, so its session held the pod indefinitely (§6.2 maxClientIdleSeconds: a zero-delta direct-mode poll must not stamp the idle clock).
 func TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
