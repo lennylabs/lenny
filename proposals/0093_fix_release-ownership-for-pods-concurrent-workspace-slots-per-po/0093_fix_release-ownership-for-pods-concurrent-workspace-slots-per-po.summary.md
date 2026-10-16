@@ -6,7 +6,7 @@
 
 **What changes.**
 - Slot occupancy register: `REG-SLOTCOUNT` becomes a per-pod set keyed by session, with an idempotent keyed release and an occupancy-zero disposition gated on the removing release (SPEC-1, CODE-1).
-- Pre-running releases: one slot-aware `Binder.ReclaimClaimed`; the finalize exits and the deleted created sweeper stop deleting a claim by name; the SandboxClaim writer set in §4.6.3 names the gateway's occupancy-end delete (SPEC-2, CODE-2, CODE-3, CODE-4).
+- Pre-running releases: one slot-aware `Binder.ReclaimClaimed`; the finalize exits and the deleted created sweeper stop deleting a claim by name; the SandboxClaim writer set in §4.6.3 names the delete by a release that ends the occupancy without reuse, and every other claim-outcome site points at it (SPEC-2, CODE-2, CODE-3, CODE-4). The non-spec **SandboxClaim end-of-occupancy disposition table** states the claim and slot effect of every gateway release path.
 - Post-terminal hook: a stale-binding step before the seal, and the slot-accounting lock on the release step (CODE-5, CODE-6).
 - full_revoke: the deny-list step first, then the pre-running reclaim and the D6 release body, with §11.4 stating the release and dropping the `USER_REVOKED` reason (SPEC-3, CODE-7).
 - Tests across tiers 1, 2, 3, 4, 5, 7a, 8, 9, and 11 (TEST-1 and the per-deliverable tests), and the BUILD-GAPS records (REC-1).
@@ -29,9 +29,10 @@
 15. The hook's stale-binding step evicts only for `running`, `input_required`, and `suspended`, and releases with the failed disposition for the resume family, because `MarkTerminated`'s `resuming` bump makes the earlier pod's binding look stale and no adopter holds that pod.
 16. Standing test clusters get a test-infrastructure cleanup of string-valued `active_slots` keys rather than a key rename, because the platform has no deployments and the project forbids migration shims.
 17. Existing spec text does not suffice. A slot-aware reclaim over the decrement-only counter double-decrements after a failed `/start` followed by DELETE and after a terminal write racing a peer's `/start`, and §5.2 specifies the counter's script, so the idempotent keyed release is a spec change.
-18. Scope boundaries: P5 owns the deny-list granularity, the session set, and C3; P3 owns the retention of the `failed` rows the watchdog now leaves and the created-expiry state mismatch; R16 owns S16, S17, and the generation checks on operational RPCs; F-7.1.30 owns the session-end order. The edits to `cmd/lenny-gateway/user_revocation.go` land before P5's.
+18. Scope boundaries: P5b owns the full_revoke deny-list granularity (C3), the full_revoke session set and listing, and the remaining halves of F-11.4.10, because the owner split P5 on 2026-10-16 (0094 decision D20): 0094 covers the lifecycle fence, the session drain, the durable erasure job, and the removal of the `DELETE /v1/responses/{id}` route, and changes no full_revoke code. P3 owns the retention of the `failed` rows the watchdog now leaves and the created-expiry state mismatch; R16 owns S16, S17, and the generation checks on operational RPCs; F-7.1.30 owns the session-end order. The edits to `cmd/lenny-gateway/user_revocation.go` and the full_revoke handler land before P5b's.
 
 **Watch out for.**
+- The non-spec **SandboxClaim end-of-occupancy disposition table** is the only statement of which release deletes, patches, or leaves the claim. A change to that disposition starts at the table, then SPEC-2c, then the pointer sites. A universal that covers every acquisition undo is wrong for the CREATE loser, whose withdrawal must leave the winner's claim intact (row D8).
 - CODE-2 must not land before CODE-1. A slot-aware reclaim over the decrement-only counter double-decrements after a failed `/start` followed by DELETE and after a hook reclaim followed by a peer's D6 release, and an under-count that reaches zero deletes the shared claim under live siblings.
 - The leaked arm of the release script adds the `leaked:` member whether or not `SREM` removed one. Gating it on the removal looks tidier and loses the leak after a clean pre-running reclaim, which fails open.
 - `SlotClaimer.ReleaseSlot` must gate the disposition on `removed`. A gate on `remaining == 0` alone re-runs the disposition when a duplicate release finds the set already empty.
@@ -46,7 +47,7 @@
 - No terminal write of a session that has not started deletes the claim of a live sibling on a concurrent-workspace pool.
 - Every slot reservation is returned once, however many paths release it, and every leaked slot stays counted, apart from the Redis-restart departures.
 - Each resource on each terminal path has one releaser, as the non-spec resource-to-owner table states.
-- The spec states the slot set and its keyed release, the gateway's claim delete at the end of an occupancy, and the full_revoke release.
+- The spec states the slot set and its keyed release, the gateway's claim delete by a release that ends the occupancy without reuse, and the full_revoke release.
 - Every release no replica can perform is recorded as a departure with its bound.
 - The tests cover every writer, path, and state the change touches, with randomized interleavings, fault injection, and invariant checks.
 
@@ -76,7 +77,7 @@
 - **A per-session tombstone key with a TTL.** The TTL bounds idempotency while the duplicate window has no fixed bound, and the key blocks a legitimate re-reservation.
 - **Forwarding a release to the binding replica over pub/sub.** 0092's Sweeper already hands every bound terminal row to the holder, and a forward is not durable.
 - **Moving every claim delete to the controller GC.** It adds up to `claimOrphanTimeout` to every session end and breaks the gateway-coordinated recycle disposition.
-- **Reassigning F-10.1.28, F-11.4.11, and the full_revoke halves to R16 or P5.** The validated scope keeps the mechanism of release in P1.
+- **Reassigning F-10.1.28, F-11.4.11, and the full_revoke halves to R16 or P5b.** The validated scope keeps the mechanism of release in P1.
 - **S16** (the coordination lease and mirror row at a terminal write). R16 owns it.
 - **The members the problem statement moved out**: the credential-accounting findings (N4, F-4.9.32, F-4.9.34, F-4.9.37), F-4.9.33, F-10.1.30, F-10.1.32, F-5.2.50, and the deny-list and session-set halves of F-11.4.10 with C3.
 
@@ -89,11 +90,13 @@ None at drafting. The review loops write this section.
 - **A retried `/start` materializes an uncounted slot.** `BindReservedSlot` releases the reservation on a failed `/start` while the row stays `ready` with its pod, so a retry binds without a reservation. The fix changes `/start` retry semantics, which is outside release ownership. REC-1 files it.
 - **The occupancy-zero claim delete races a concurrent reservation on another replica.** A release that empties the set can delete the claim while a peer's reservation on the same pod is in flight. It predates this proposal, and closing it needs a fence on the claim that release ownership does not provide. REC-1 files it.
 - **`Counter.Reset` has no production caller**, so the §10.1.4 whole-pod reset does not run. It belongs with the whole-pod connection-loss reaction. REC-1 files it.
-- **The claim-orphan GC is unregistered in a chart install**, because the chart passes `--agent-namespaces` only to the preflight job. It is a precondition owned by the controller chart fix, and REC-1 gives it an owner.
 - **Token Service pool counts are per replica (N4).** A release that reaches the wrong replica, or a Token Service restart, drifts the counts. The credential-accounting proposal owns it.
 - **Created-state expiry ends `failed` with `CREATED_TIMEOUT`, while §15.1 names `expired` and §7.2 has no timeout edge out of `created`.** The mismatch predates the created sweeper's deletion and belongs to P3. REC-1 files it.
 - **§10.1.1 says a `created` or `ready` session holds no coordination lease**, while `/start` acquires the lease on a `ready` row, delegated-child materialization acquires it on a `created` row, and three §29 rows say no acquisition point is stated (S17). It goes to R16 or a standalone spec proposal.
-- **full_revoke deny-lists a pool credential without the user** (the deny-list half of F-11.4.10, C3). P5 owns it.
+- **full_revoke deny-lists a pool credential without the user** (the deny-list half of F-11.4.10, C3). P5b owns it. After CODE-7, step 1 also returns each such lease to its pool through `Release` while the same step deny-lists the pool credential, so the pool can hand out a lease whose credential every replica rejects; P5b's granularity change settles it.
+- **A concurrent slot can land on a pod whose whole-pod scrub is running.** `SlotClaimer.ClaimSlot` Pass 1 skips only a missing claim and the terminal binding states, so it reserves onto a claim in `recycling` after the last release emptied the set. The recycling follow-up owns it. REC-1 files it.
+- **A terminal write on a replica without the binding can reclaim a `running` slot as pre-`running`.** `/start` registers the binding before `commitStart`, so the row still reads `ready`, and the writer's hook runs the pre-running reclaim (disposition table, **Races the table does not close**). R16 owns it with S17. REC-1 files it.
+- **An exclusive acquisition leaves a `bound` claim when the tenant stamp fails.** `Claimer.claimIdle` returns the `StampPodTenant` error without deleting the claim it created, and no caller of `claimPod` releases on that error (disposition table row D10). The claim-orphan GC deletes it within `claimOrphanTimeout` plus one sweep interval. The non-spec loop decides whether CODE-2 deletes it, as the fallback claim path already does, or REC-1 files it.
 
 ## Impacts on other proposals
 
@@ -101,15 +104,16 @@ None at drafting. The review loops write this section.
 |:--|:--|:--|:--|
 | 0092 | Implemented | Adds a stale-binding step and a release lock to the post-terminal hook, extracts D6's generation predicate, removes `failFinalizing`'s `podReclaimed` flag, adds a synchronous entry over D6's release body, and closes the gaps 0092 handed to P1. | Nothing. The record stands. |
 | 0091 | Implemented | Reuses `slotAccountLocks`, `evictStaleBinding`, and `releaseEarlierBinding`, and replaces the predicate copy in `reportSupersededByPeer` with the shared helper. | Nothing. |
-| 0079 | Implemented | Adds one occupancy-zero case on a recycling pool: a pre-running release deletes the claim (SPEC-2e). | Nothing. |
+| 0079 | Implemented | Adds one occupancy-zero case on a recycling pool: a pre-running release deletes the claim (SPEC-2c; SPEC-2e points to it). | Nothing. |
 | 0060 | Implemented | Leaves D1's at-bind lease acquisition unchanged and stages no S17 text. | Nothing. |
 | 0085 | Draft | Changes the signatures its pre-attached seam and `/start` slot reservation would call: `ReclaimClaimed` takes a per-slot flag, and the slot counter and `SlotClaimer.ReleaseSlot` take the session identifier. | When re-baselined, release a pre-running claim or slot through the slot-aware `ReclaimClaimed`, key every slot release by session, and stage no by-name claim delete on a concurrent pool. |
-| 0094 | Draft | Changes `cmd/lenny-gateway/user_revocation.go` and the full_revoke fan-out first: `RevokeUserLeases` returns each lease through the assigner's `Release` after its deny-list write, `terminateUserSessions` runs the deny-list step before its first cancel write and returns the pre-revoke state with each row, and `podTerminateFanOut` releases through `ReleaseRevokedBinding`. | Re-baseline its full_revoke edits on CODE-7, and keep the deny-list granularity and session-set changes it owns. |
+| 0094 | Draft | No full_revoke edit remains in 0094: the owner split P5 on 2026-10-16 (0094 decision D20), and 0094 covers the lifecycle fence, the session drain, the durable erasure job, and the removal of the `DELETE /v1/responses/{id}` route. | Nothing for full_revoke. Its own impact row on 0093 covers `SessionAdmin.ForceTerminate`. |
+| P5b | Not written | Changes `cmd/lenny-gateway/user_revocation.go` and the full_revoke fan-out first: `RevokeUserLeases` returns each lease through the assigner's `Release` after its deny-list write, `terminateUserSessions` runs the deny-list step before its first cancel write and returns the pre-revoke state with each row, and `podTerminateFanOut` releases through `ReleaseRevokedBinding`. CODE-7 step 1 returns a pool lease to its pool even though the same step deny-lists that pool credential, because `lease.CredentialKey()` carries no user. | Build its full_revoke edits on CODE-7. Settle the deny-list granularity (C3, Decision 18), including the pool lease that step 1 returns while its credential is deny-listed, and own the session set, the listing, and the remaining halves of F-11.4.10. |
 
 ## Deliverable index
 
 - SPEC-1 — `spec/05_runtime-registry-and-pool-model.md`, `spec/12_storage-architecture.md`, `spec/28_communication-channels.md`, `spec/10_gateway-internals.md`, `spec/06_warm-pod-model.md`, `spec/29_communication-scenarios.md`, `spec/04_system-components.md` — state `REG-SLOTCOUNT` as a per-pod set keyed by session with a keyed, idempotent release, and align the sites that define the register as a counter.
-- SPEC-2 — `spec/04_system-components.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/06_warm-pod-model.md`, `spec/28_communication-channels.md` — name the gateway's claim delete at the end of an occupancy without reuse in the §4.6.3 writer set, and point the other SandboxClaim writer sites at it.
+- SPEC-2 — `spec/04_system-components.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/06_warm-pod-model.md`, `spec/07_session-lifecycle.md`, `spec/28_communication-channels.md`, `spec/29_communication-scenarios.md` — name the gateway's claim delete by a release that ends the occupancy without reuse in the §4.6.3 writer set, and point every other claim-outcome site at it.
 - SPEC-3 — `spec/11_policy-and-controls.md` — state full_revoke's release after the cancel write, the pre-running reclaim, and the deny-list ordering, and drop the `USER_REVOKED` reason.
 - CODE-1 — `pkg/gateway/storage/slotcounter/`, `pkg/gateway/session/sessionstore/`, `pkg/gateway/podlifecycle/podclaim/slotclaimer.go`, `pkg/gateway/podlifecycle/podsession/slotbinder.go`, `cmd/lenny-controller/main.go` — the slot set primitive, the keyed callers, the removal-gated disposition, the detached rollbacks, and the bounded retry.
 - CODE-2 — `pkg/gateway/podlifecycle/podsession/reclaim.go`, `pkg/gateway/sessionserver/usage.go`, `pkg/gateway/sessionserver/bind_rollback.go` — the slot-aware pre-running reclaim.
