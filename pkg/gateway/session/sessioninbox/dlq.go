@@ -66,8 +66,23 @@ func NewDLQ(client redis.UniversalClient, maxSize int) *DLQ {
 // lowest-scored (oldest-to-expire, i.e. earliest-enqueued for a fixed
 // TTL) member and returns it for the caller to surface as a
 // `message_dropped` receipt (`reason: "dlq_overflow"`), then adds the
-// new member. KEYS[1] is the DLQ key; ARGV[1] is the cap; ARGV[2] is the
-// expiry score; ARGV[3] is the serialized member.
+// new member.
+//
+// The score is a whole millisecond, so two messages accepted in the same
+// millisecond would tie, and Redis orders tied members by their bytes, which
+// for a JSON member means by message ID rather than by acceptance. The
+// script breaks the tie in enqueue order instead: when the set already holds
+// a member scored inside the new member's millisecond, the new member takes
+// the next thousandth above the highest of them, up to .999, so the delivery
+// of held messages takes same-millisecond entries in the order the gateway
+// accepted them. A float64 score near the current Unix-millisecond epoch
+// resolves about four decimal places, so a thousandth step is exact enough
+// to order, and every fraction stays below the next whole millisecond, so
+// expiry and CountAcceptedAfter still read the millisecond.
+//
+// KEYS[1] is the DLQ key; ARGV[1] is the cap; ARGV[2] is the expiry score in
+// whole Unix-milliseconds; ARGV[3] is the serialized member; ARGV[4] is
+// ARGV[2] plus one.
 var enqueueDLQScript = redis.NewScript(`
 local dropped = false
 if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
@@ -77,14 +92,25 @@ if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
     redis.call('ZREM', KEYS[1], low[1])
   end
 end
-redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
+local score = ARGV[2]
+local top = redis.call('ZREVRANGEBYSCORE', KEYS[1], '(' .. ARGV[4], ARGV[2], 'WITHSCORES', 'LIMIT', 0, 1)
+if top[2] then
+  local step = math.floor((tonumber(top[2]) - tonumber(ARGV[2])) * 1000 + 0.5) + 1
+  if step > 999 then
+    step = 999
+  end
+  score = ARGV[2] .. '.' .. string.sub('00' .. tostring(step), -3)
+end
+redis.call('ZADD', KEYS[1], score, ARGV[3])
 return dropped
 `)
 
 // Enqueue adds msg to the (tenantID, sessionID) DLQ with the given TTL.
 // The entry's score is the absolute expiry (msg.EnqueuedAt + ttl) in
-// Unix-milliseconds, so a later SweepExpired removes it once the wall
-// clock passes the score. A non-positive ttl selects DefaultDLQTTL. On
+// Unix-milliseconds, plus the enqueue-order fraction enqueueDLQScript adds
+// to a member that ties an earlier one in the same millisecond, so a later
+// SweepExpired removes it once the wall clock passes the score. A
+// non-positive ttl selects DefaultDLQTTL. On
 // overflow the oldest entry is evicted and returned as dropped.
 //
 // spec: §7.2.
@@ -96,9 +122,10 @@ func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Messa
 	if err != nil {
 		return nil, err
 	}
-	score := float64(msg.EnqueuedAt.Add(ttl).UnixMilli())
+	score := msg.EnqueuedAt.Add(ttl).UnixMilli()
 	res, err := enqueueDLQScript.Run(ctx, d.client,
-		[]string{dlqKey(tenantID, sessionID)}, d.max, score, payload).Result()
+		[]string{dlqKey(tenantID, sessionID)}, d.max,
+		strconv.FormatInt(score, 10), payload, strconv.FormatInt(score+1, 10)).Result()
 	if errors.Is(err, redis.Nil) {
 		// The Lua script returned `false` (no eviction); nothing dropped.
 		return nil, nil
@@ -214,8 +241,11 @@ func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (b
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
 func (d *DLQ) CountAcceptedAfter(ctx context.Context, tenantID, sessionID string, since time.Time) (int, error) {
-	floor := since.Add(DefaultDLQTTL).UnixMilli()
-	n, err := d.client.ZCount(ctx, dlqKey(tenantID, sessionID), "("+strconv.FormatInt(floor, 10), "+inf").Result()
+	// An entry accepted in since's own millisecond can carry a tie-break
+	// fraction above that millisecond, so the count starts at the next whole
+	// millisecond rather than just above since's.
+	floor := since.Add(DefaultDLQTTL).UnixMilli() + 1
+	n, err := d.client.ZCount(ctx, dlqKey(tenantID, sessionID), strconv.FormatInt(floor, 10), "+inf").Result()
 	return int(n), err
 }
 
