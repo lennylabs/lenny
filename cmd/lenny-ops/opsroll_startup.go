@@ -18,9 +18,9 @@ import (
 )
 
 // configMapsGetter returns the CoreV1 ConfigMaps getter for cs, or nil for
-// a nil clientset. Returning an untyped nil avoids the typed-nil interface
-// trap a direct cs.CoreV1() on a nil *kubernetes.Clientset would create.
-func configMapsGetter(cs *kubernetes.Clientset) corev1client.ConfigMapsGetter {
+// a nil clientset, so the startup hook reads a missing cluster connection as
+// an untyped nil getter.
+func configMapsGetter(cs kubernetes.Interface) corev1client.ConfigMapsGetter {
 	if cs == nil {
 		return nil
 	}

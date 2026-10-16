@@ -2222,7 +2222,7 @@ func setPlatformVersionDrift(count int) {
 //
 // spec: §25.8 Version Aggregation.
 func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, pool *pgxpool.Pool,
-	clientset *kubernetes.Clientset, apiextClient apiextensionsclientset.Interface,
+	clientset kubernetes.Interface, apiextClient apiextensionsclientset.Interface,
 	namespace, helmReleaseName string,
 ) *upgradeservice.VersionAggregator {
 	sources := []upgradeservice.VersionSource{
