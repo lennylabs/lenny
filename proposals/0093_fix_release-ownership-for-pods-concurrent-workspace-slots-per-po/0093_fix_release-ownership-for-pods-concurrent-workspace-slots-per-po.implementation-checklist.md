@@ -1,11 +1,11 @@
 ## Implementation checklist
 
 - [ ] **S1 · spec** — SPEC-1. Lands the REG-SLOTCOUNT set and its keyed release, all of SPEC-1.
-      Tiers 0, 11. Depends on: —
+      Tiers 0. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. Lands the SandboxClaim writer edge and its citing sites, all of SPEC-2.
-      Tiers 0, 11. Depends on: S1
+      Tiers 0. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the §11.4 full_revoke release steps and **Note** edits, all of SPEC-3.
-      Tiers 0, 11. Depends on: —
+      Tiers 0. Depends on: —
 - [ ] **S4 · code** — CODE-1. Lands the slot set primitive and its callers, with the tests **Testing** assigns to CODE-1.
       Tiers 0, 1, 2, 4, 7a. Depends on: S1, S2
 - [ ] **S5 · code** — CODE-2. Lands the slot-aware `ReclaimClaimed`, with the tests **Testing** assigns to CODE-2.
