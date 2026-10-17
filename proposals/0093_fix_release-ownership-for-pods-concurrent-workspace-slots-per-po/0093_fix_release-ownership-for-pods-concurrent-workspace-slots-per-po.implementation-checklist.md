@@ -7,13 +7,13 @@
 - [ ] **S3 · spec** — SPEC-3. Lands the §11.4 full_revoke release steps and **Note** edits, all of SPEC-3.
       Tiers 0, 11. Depends on: —
 - [ ] **S4 · code** — CODE-1. Lands the slot set primitive and its callers, with the tests **Testing** assigns to CODE-1.
-      Tiers 0, 1, 2, 4, 7a. Depends on: S1
+      Tiers 0, 1, 2, 4, 7a. Depends on: S1, S2
 - [ ] **S5 · code** — CODE-2. Lands the slot-aware `ReclaimClaimed`, with the tests **Testing** assigns to CODE-2.
       Tiers 0, 1, 2. Depends on: S1, S2, S4
 - [ ] **S6 · code** — CODE-3. Lands the finalize exits, with the tests **Testing** assigns to CODE-3.
       Tiers 0, 1. Depends on: S2, S5
 - [ ] **S7 · code** — CODE-4. Lands the created sweeper deletion, with the tests **Testing** assigns to CODE-4.
-      Tiers 0, 1. Depends on: S5
+      Tiers 0, 1. Depends on: S2, S5
 - [ ] **S8 · code** — CODE-5. Lands the hook's stale-binding step, with the tests **Testing** assigns to CODE-5.
       Tiers 0, 1. Depends on: —
 - [ ] **S9 · code** — CODE-6. Lands the slot-accounting lock on the hook's release step, with the tests **Testing** assigns to CODE-6.

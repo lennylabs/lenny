@@ -5,7 +5,7 @@
 The specification states three things this proposal changes.
 
 1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a).
-2. **The SandboxClaim writer set names the gateway's delete by a release that ends the occupancy without reuse.** §4.6.3's ownership row is the home of the rule (SPEC-2c). The non-spec **SandboxClaim end-of-occupancy disposition table** derives it path by path from the tree. Every other spec site that states a claim outcome at the end of an occupancy cites §4.6.3 with the same predicate wording and states no pod outcome, or is recorded as out of scope with an owner (SPEC-2 **Site classification.**).
+2. **The SandboxClaim writer set names the gateway's delete by a release that ends the occupancy without reuse.** §4.6.3's ownership row is the home of the rule (SPEC-2c). The non-spec **SandboxClaim end-of-occupancy disposition table** derives it path by path from the tree. SPEC-2 **Site classification.** lists the other spec sites SPEC-2 edits or leaves to an owner.
 3. **full_revoke revokes the user's sessions' credential leases before it cancels the sessions, and releases each cancelled session through the session release.** §11.4 steps 1, 2, 4, and 6 and the **Note** state it (SPEC-3).
 
 ## Edge cases and accepted failure modes
@@ -13,6 +13,7 @@ The specification states three things this proposal changes.
 - **Clean release, then leaked release of the same session.** A pre-running reclaim releases clean, and a peer's in-flight `/start` later releases the same slot with a cleanup that was not acknowledged clean. The second release finds no session member and still adds the `leaked` member, so the leaked slot stays counted (SPEC-1a).
 - **A reseed drops leaked members and unpersisted reservations (departure).** A rehydration, or the §10.1.4 whole-pod reset, rebuilds the set from the non-terminal session rows. Those rows carry no leaked slots, and a create reserves its slot before it persists the row that names the pod. A leaked slot is therefore uncounted after a Redis restart or a whole-pod reset. A release-path rehydration (SPEC-1a) that empties the set runs the occupancy-zero disposition under a reservation the reseed dropped: the release deletes the claim or patches it to `recycling` (non-spec disposition table rows D2, D4, and D6) while that session binds. Both gaps predate this proposal (§6.2 **`leaked` slot semantics.** says a leaked slot persists until pod termination, today's reseed already drops it, and today's release reports zero occupancy on a counter a restart emptied).
 - **A duplicate release after a Redis restart (departure).** When a session's first release emptied the set and ran the occupancy-zero disposition before a Redis restart, a duplicate release of that session after the restart and before any reservation seeds its own member (SPEC-1a), removes it, and runs the disposition again. On a recycling pod in the reserved hold, a recycling release patches the claim back to `recycling`, and the pod is scrubbed again or retires on the missing-report timeout, which fails closed. A release that does not recycle deletes the held claim.
+- **A release delete before the pod projects `claimed` (departure).** A claim the gateway deletes before the WarmPoolController has projected the acquisition or the `reserved → bound` rebind is projected from the pod's earlier `idle` or `reserved` level (§4.6.1 **Occupancy projection**). The pod therefore returns to `idle` without the whole-pod scrub, including after a failed or crashed session on a pool with `maxConcurrentSessions: 1`. The pod keeps its `lenny.dev/tenant-id` label, so it is a pinned idle pod, and §5.2 **Pinned idle inventory.** and **Deployer acknowledgment (runtime process kept across sessions).** govern its reuse. The gap predates this proposal: the tree deletes on these paths, and nothing implements the §4.6.3 `failed` write that SPEC-2d removes.
 - **A repeated reservation for a session already in the set.** The reservation adds nothing and succeeds (SPEC-1a). One session does not hold two slots on one pod.
 - **Standing test clusters.** A Redis that holds a string value under `lenny:pod:*:active_slots` from a run before this change answers `WRONGTYPE` to the set scripts. The test-infrastructure preflight in CODE-1 deletes those keys. No production shim exists, because the platform has no deployments.
 - **full_revoke of a session bound on a peer replica.** The handling replica publishes the release request, and the peer releases asynchronously. The response counts only the handling replica's local releases, as the §11.4 **Note** already states for its other effects.
@@ -161,24 +162,16 @@ with
 
 **SPEC-1j. §4.6.1 **Pod claim mechanism (per-pod occupancy claim):**.** Replace "is gated by the atomic Redis slot counter, with a Postgres fallback" with "is gated by the Redis slot set, with a Postgres fallback".
 
-### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.2; spec/28_communication-channels.md § 28.3, § 28.5.1; spec/29_communication-scenarios.md § 29.4
+### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3, § 4.7, § 4.9; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.1, § 7.2; spec/08_recursive-delegation.md § 8.3; spec/15_external-api-surface.md § 15.1; spec/24_lenny-ctl-command-reference.md § 24.11; spec/28_communication-channels.md § 28.3, § 28.5.1; spec/29_communication-scenarios.md § 29.4
 
-SPEC-2 is regenerated from the non-spec **SandboxClaim end-of-occupancy disposition table**, which maps every gateway release path to its claim effect. SPEC-2c states the rule in §4.6.3. Every other edit cites §4.6.3 with the one predicate wording "ends the occupancy without reuse", and no edit states the pod's resulting phase, which the §4.6.1 **Occupancy projection** owns.
+SPEC-2 is regenerated from the non-spec **SandboxClaim end-of-occupancy disposition table**, which maps every gateway release path to its claim effect. SPEC-2c states the rule in §4.6.3. An edit that states the predicate uses the one wording "ends the occupancy without reuse", and no edit states the pod's resulting phase, which the §4.6.1 **Occupancy projection** owns.
 
-**Site classification.** Every spec site that states what happens to the SandboxClaim, or to the pod through its claim, when an occupancy ends is listed here once.
+**Site classification.** Every spec site whose statement of the claim's or the pod's outcome at the end of an occupancy contradicts §4.6.3 once SPEC-2c and SPEC-2d land is listed here once, as an edit or as out of scope with an owner. A site that contradicts it only through a departure that **Edge cases and accepted failure modes** records is not listed.
 
 - Home: the §4.6.3 SandboxClaim ownership row (SPEC-2c).
-- Edits: the §4.6 CRD row (SPEC-2a); §4.6.1 **Pod claim mechanism** and **Reserved hold** (SPEC-2b); the §4.6.3 `failed` binding-state bullet (SPEC-2d); §5.2 **Recycle lifecycle** (SPEC-2e); the §6.2 concurrent-occupancy diagram note (SPEC-2f); the §28.3 `REG-CLAIM` writer cell (SPEC-2g); the §6.2 Recycle edges header and recycle-disposition label, **`reserved` hold semantics.**, and **Concurrent pod lifecycle** (SPEC-2h); §28.5.1 `CH-ATTACH` **Degradation.** (SPEC-2i); §29.4 step 17 (SPEC-2j); §29.4 step 12 (SPEC-2k); §7.2 **Mid-resume terminal transitions** step 3 (SPEC-2l).
-- Pointers that stay as they are: the §5.2 **Recycle lifecycle** sentence and the last sentence of §6.2 **One-session-per-pod default and the recycle opt-in.**, which both send a failed or crashed session to the **Pod retirement policy (recycling pools).** paragraph.
+- Edits: the §4.6 CRD row (SPEC-2a); §4.6.1 **Pod claim mechanism** and **Reserved hold** (SPEC-2b); the §4.6.3 `failed` binding-state bullet (SPEC-2d); §5.2 **Recycle lifecycle** (SPEC-2e); the §6.2 concurrent-occupancy diagram note (SPEC-2f); the §28.3 `REG-CLAIM` writer cell (SPEC-2g); the §6.2 Recycle edges header and recycle-disposition label, **`reserved` hold semantics.**, and **Concurrent pod lifecycle** (SPEC-2h); §28.5.1 `CH-ATTACH` **Degradation.** (SPEC-2i); §29.4 step 17 (SPEC-2j); §29.4 step 12 (SPEC-2k); §7.2 **Mid-resume terminal transitions** step 3 (SPEC-2l); the §4.7 `Shutdown` row (SPEC-2m); the §6.2 `resuming → cancelled` bullet (SPEC-2n); the §7.1 `scrubPolicy` row (SPEC-2o); §4.9 **Pre-Claim Credential Availability Check** (SPEC-2p); §8.3 **Credential availability pre-check at delegation time:** (SPEC-2q); the §15.1 `created` row (SPEC-2r); the §24.11 `force-terminate` row (SPEC-2s); the §5.2 `sessionPolicy` common-configurations row `Concurrent` (SPEC-2t).
 - Out of scope, each with its owner:
-  - §5.2 **Pod retirement policy (recycling pools).**, "On a pool with `maxConcurrentSessions: 1`, a session that ends in failure or a crash also retires the pod, regardless of recycle settings." Owner: §5.2, as the retirement policy that SPEC-2c's failed-or-crashed clause implements. It is a policy statement rather than a releasing site, and table rows D1, D3c, D14, and D15 agree with it.
-  - §6.2 **One-session-per-pod default and the recycle opt-in.**, "after the session completes or fails, the pod is terminated and replaced". Owner: the §4.6.1 **Occupancy projection**, which this sentence summarizes for the default pool. Every `mcs 1` non-recycling row deletes a claim the pod projects `claimed` under, so the sentence holds.
   - §6.2 **Pre-attached failure retry policy:**, "The pod is marked `failed` and released back to the pool (or terminated if unhealthy)." Owner: draft proposal 0085, because the problem statement excludes the pre-attached seam disposition. The code deletes the claim on that path (table row D15) and never writes `failed`, so 0085 must re-baseline this sentence on §4.6.3 (summary **Impacts on other proposals**).
-  - §4.6.1 **Occupancy projection** and **Orphaned `SandboxClaim` detection:**, the §28.3 `REG-CLAIM` WarmPoolController clause, and the §16 `lenny_orphaned_claims_total` row. Owner: §4.6.1. They state the pod outcome of a claim delete and the controller's own deletes, and no gateway release.
-  - The §4.6.3 `recycling` bullet, §5.2 **Scrub model.** and **Lenny scrub procedure.**, and the §4.7 `ReportPodScrub` row. Owner: §5.2 **Recycle lifecycle**, which SPEC-2e qualifies. Each describes the scrub on a claim already in `recycling` or before a reuse, so none states which release recycles.
-  - The §5.2 sessionPolicy preset row "Concurrent", "recycles when occupancy reaches zero". Owner: §5.2. The row summarizes the preset's configured disposition, and §4.6.3 states the releases that end an occupancy without reuse on it.
-  - §12.8 tenant deletion Phase 5 ("Clean CRDs"). Owner: 0094 and P5b. It removes a deleted tenant's claims and is no release.
-  - §7.3 **Exits from `resuming`.**, which leaves an orphaned replacement-pod claim to the claim-orphan GC. Owner: §7.3. It agrees with table rows D13 and D17.
 
 **SPEC-2a. §4.6 CRD table, row `SandboxClaim`.** Make two in-place substitutions in the row.
 
@@ -233,7 +226,7 @@ When occupancy reaches zero on a recycling pod, unless the release ends the occu
 **SPEC-2c. §4.6.3 CRD Field Ownership table, row `SandboxClaim`.** This row is the home of the gateway's claim-delete edges, and the non-spec disposition table is its derivation. Replace the row that begins "| `SandboxClaim`    | `spec.*`, `status.*`" with
 
 ```
-| `SandboxClaim`    | `spec.*`, `status.*`                               | Gateway (not a controller) | Created by the gateway at pod acquisition; binding state written via the status subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A release ends the occupancy without reuse when the pool does not recycle, when the released slot is pre-`running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), or, on a pool with `maxConcurrentSessions: 1`, when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the WarmPoolController at pod termination and orphan GC |
+| `SandboxClaim`    | `spec.*`, `status.*`                               | Gateway (not a controller) | Created by the gateway at pod acquisition; binding state written via the status subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A release ends the occupancy without reuse when the pool does not recycle, when no gateway replica published the session's binding to the pod, the gateway step that follows the pod's acceptance of the session's start or resume and from which the session's message delivery and its release reach the pod ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), or, on a pool with `maxConcurrentSessions: 1`, when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the WarmPoolController at pod termination and orphan GC |
 ```
 
 **SPEC-2d. §4.6.3 **`SandboxClaim.status.phase` enumeration**, bullet `failed`.** Replace
@@ -401,6 +394,102 @@ with
 before the gateway releases the half-claimed replacement pod ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) states what that release does to the pod's claim).
 ```
 
+**SPEC-2m. §4.7 *Gateway → Adapter RPCs:* table, row `Shutdown`.** The row is one physical table line and stays one. Replace
+
+```
+The request carries the recycle disposition beside that teardown rather than selecting a scope. On the default disposition the pod is replaced. On the **recycle disposition** (occupancy zero on a recycling pod, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the request
+```
+
+with
+
+```
+The request carries the recycle disposition beside that teardown rather than selecting a scope. On the **recycle disposition** (occupancy zero on a recycling pod unless the release ends the occupancy without reuse, [Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)) the request
+```
+
+**SPEC-2n. §6.2 Pod State Machine, **Client / parent / admin cancel mid-resume (`resuming → cancelled`):**.** Replace
+
+```
+the half-claimed replacement pod, which is then released to the pool,
+```
+
+with
+
+```
+the half-claimed replacement pod, which the gateway then releases ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
+```
+
+**SPEC-2o. §7.1 `sessionIsolationLevel` table, row `scrubPolicy`.** The row is one physical table line and stays one. Replace
+
+```
+and a whole-pod scrub runs when occupancy reaches zero on a recycling pool
+```
+
+with
+
+```
+and a whole-pod scrub runs when occupancy reaches zero on a recycling pool unless the release ends the occupancy without reuse ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries))
+```
+
+**SPEC-2p. §4.9 **Pre-Claim Credential Availability Check**, finalize mismatch.** Replace
+
+```
+it releases the claimed pod back to the warm pool and returns
+```
+
+with
+
+```
+it releases the claimed pod ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)) and returns
+```
+
+**SPEC-2q. §8.3 **Credential availability pre-check at delegation time:**.** Replace
+
+```
+the gateway releases the pod back to the warm pool and returns
+```
+
+with
+
+```
+the gateway releases the pod ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) and returns
+```
+
+**SPEC-2r. §15.1 session-state table, row `created`.** The row is one physical table line and stays one. Replace
+
+```
+releases the pod claim back to the pool,
+```
+
+with
+
+```
+releases the pod claim ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
+```
+
+**SPEC-2s. §24.11 Session Investigation table, row `lenny-ctl admin sessions force-terminate <id>`.** The row is one physical table line and stays one. Replace
+
+```
+and the assigned pod is released to the pool
+```
+
+with
+
+```
+and the gateway releases the assigned pod ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries))
+```
+
+**SPEC-2t. §5.2 `sessionPolicy` common-configurations table, row `Concurrent`.** The row is one physical table line and stays one. Replace
+
+```
+and recycles when occupancy reaches zero.
+```
+
+with
+
+```
+and recycles when occupancy reaches zero unless the release ends the occupancy without reuse ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)).
+```
+
 ### SPEC-3 · spec/11_policy-and-controls.md § 11.4
 
 **SPEC-3a. §11.4 User Invalidation, **Full revoke propagation mechanism:**, steps 1 to 4 and 6.** Steps 5 and 7 are unchanged, and the step numbers do not change. Replace
@@ -444,7 +533,7 @@ it cancels the user's non-terminal sessions in the SessionStore, sends the [§4.
 with
 
 ```
-it revokes the credential leases of the user's non-terminal sessions, cancels those sessions in the SessionStore, releases the bindings that replica holds for the cancelled sessions, reclaims what the cancelled pre-running sessions claimed,
+it revokes the credential leases of the user's non-terminal sessions, cancels those sessions in the SessionStore, releases the bindings that replica holds for the cancelled sessions,
 ```
 
 Replace
@@ -479,12 +568,15 @@ The reported lease count is the number of leases step 1 adds to the deny list.
 
 ## Spec files touched
 
-- spec/04_system-components.md (SPEC-1j, SPEC-2a, SPEC-2b, SPEC-2c, SPEC-2d)
-- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-2e)
-- spec/06_warm-pod-model.md (SPEC-1g, SPEC-2f, SPEC-2h)
-- spec/07_session-lifecycle.md (SPEC-2l)
+- spec/04_system-components.md (SPEC-1j, SPEC-2a, SPEC-2b, SPEC-2c, SPEC-2d, SPEC-2m, SPEC-2p)
+- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-2e, SPEC-2t)
+- spec/06_warm-pod-model.md (SPEC-1g, SPEC-2f, SPEC-2h, SPEC-2n)
+- spec/07_session-lifecycle.md (SPEC-2l, SPEC-2o)
+- spec/08_recursive-delegation.md (SPEC-2q)
 - spec/10_gateway-internals.md (SPEC-1f)
 - spec/11_policy-and-controls.md (SPEC-3a, SPEC-3b)
 - spec/12_storage-architecture.md (SPEC-1c, SPEC-1d)
+- spec/15_external-api-surface.md (SPEC-2r)
+- spec/24_lenny-ctl-command-reference.md (SPEC-2s)
 - spec/28_communication-channels.md (SPEC-1e, SPEC-1h, SPEC-2g, SPEC-2i)
 - spec/29_communication-scenarios.md (SPEC-1i, SPEC-2j, SPEC-2k)
