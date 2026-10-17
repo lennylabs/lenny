@@ -82,7 +82,7 @@
 
 ## Open decisions for human to make
 
-None at drafting. The review loops write this section.
+None. The review loops and the open-decisions firings left no decision open for the human.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -92,6 +92,7 @@ None at drafting. The review loops write this section.
 - **Created-state expiry ends `failed` with `CREATED_TIMEOUT`, while §15.1 names `expired` and §7.2 has no timeout edge out of `created`.** The mismatch predates the created sweeper's deletion and belongs to P3. REC-1 files it.
 - **§10.1.1 says a `created` or `ready` session holds no coordination lease**, while `/start` acquires the lease on a `ready` row, delegated-child materialization acquires it on a `created` row, and three §29 rows say no acquisition point is stated (S17). It goes to R16 or a standalone spec proposal.
 - **full_revoke deny-lists a pool credential without the user** (the deny-list half of F-11.4.10, C3). P5b owns it. After CODE-7, step 1 also returns each such lease to its pool through `Release` while the same step deny-lists the pool credential, so the pool can hand out a lease whose credential every replica rejects; P5b's granularity change settles it.
+- **`Claimer.claimIdle` leaves a `bound` claim when `StampPodTenant` fails (disposition table row D10).** The function returns the stamp error and deletes nothing (`pkg/gateway/podlifecycle/podclaim/claimer.go:228-229`), and neither `Binder.Claim` (`pkg/gateway/podlifecycle/podsession/bindclaim.go:64-69`) nor `Binder.Resume` (`pkg/gateway/podlifecycle/podsession/resume.go:183-188`) releases on a `claimPod` error. The `claimPod` doc comment's statement that a failure leaves no claim behind (`pkg/gateway/podlifecycle/podsession/claimconnect.go:38-39`) is therefore false for this path. This proposal stages no delete because a by-name delete is unsafe on a `maxConcurrentSessions` greater than 1 pool reached through `Binder.Resume`, where a Pass 1 sibling of the same tenant can join the claim (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:428`). The claim-orphan GC drains a `bound` claim once its binding-state-transition time is older than `claimOrphanTimeout` and no live session backs the pod (`pkg/controller/warmpool/gc.go:233-241`, `:276-288`), which bounds the leak as it bounds N2 (row D13). REC-1 item 5 files it as an accepted departure.
 - **Races the disposition table does not close**, listed in the non-spec disposition table's **Races the table does not close**.
 
 ## Impacts on other proposals
