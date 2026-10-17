@@ -6,7 +6,7 @@ The specification states three things this proposal changes.
 
 1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a).
 2. **The SandboxClaim writer set names the gateway's delete by a release that ends the occupancy without reuse.** §4.6.3's ownership row is the home of the rule (SPEC-2c). The non-spec **SandboxClaim end-of-occupancy disposition table** derives it path by path from the tree. SPEC-2 **Site classification.** lists the other spec sites SPEC-2 edits or leaves to an owner.
-3. **full_revoke revokes the user's sessions' credential leases before it cancels the sessions, and releases each cancelled session through the session release.** §11.4 steps 1, 2, 4, and 6 and the **Note** state it (SPEC-3).
+3. **full_revoke returns and deny-lists the credential leases of the sessions it cancels, and releases each cancelled session through the session release.** §11.4 steps 1, 2, 4, and 6 and the **Note** state it (SPEC-3). The non-spec **full_revoke release table** derives it for each pre-revoke session state.
 
 ## Edge cases and accepted failure modes
 
@@ -504,7 +504,7 @@ and recycles when occupancy reaches zero unless the release ends the occupancy w
 with
 
 ```
-1. The gateway looks up all active sessions for the user (via SessionStore) and, before it writes any cancel in step 2, adds the credential leases those sessions hold to the credential deny list ([Section 4.9](04_system-components.md#49-credential-leasing-service)) and returns each of those leases to its pool.
+1. The gateway looks up all active sessions for the user (via SessionStore) and, before it writes any cancel in step 2, returns every credential lease those sessions hold to its pool and, after the last return, adds those leases to the credential deny list ([Section 4.9](04_system-components.md#49-credential-leasing-service)).
 2. The gateway marks each of those sessions `cancelled` in the SessionStore. After the write that cancels a session, the gateway releases the session's pod binding on the replica that holds it, which sends the pod the [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` RPC.
 3. The pod's runtime adapter tears down the session ([Section 4.7](04_system-components.md#47-runtime-adapter), `Shutdown`), which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
 4. For a cancelled session that never started, the gateway instead reclaims the pod or the slot that the session claimed.
