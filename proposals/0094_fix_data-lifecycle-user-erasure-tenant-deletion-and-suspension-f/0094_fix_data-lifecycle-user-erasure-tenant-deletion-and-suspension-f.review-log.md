@@ -51,6 +51,7 @@ DECISION (OD1, decided 2026-10-18 under the owner's delegation): the terminal-ta
 DECISION (OD2, decided 2026-10-18 under the owner's delegation): Edit 4l adds the §15.1 `ERASURE_JOB_NOT_FAILED` row (409, `PERMANENT`), Edit 4i names the code, CODE-7 item 10 adds the `errorclassify` entry, and T8.14 covers the E3 and E5 cells; old REC-1 item 14 is dropped (D31).
 FACT: every staged spec anchor, including Edits 2b, 2l, 4i, 4k, and 4l, was checked by script on 2026-10-18 to match its target spec file exactly once.
 WATCHOUT: the **Erasure executor resource table** is the only rule site for the erasure runner's resources (connections, locks, context, job writes, and alert). A later round that changes any of them changes the row first and regenerates D16, D27, D28, CODE-6 item 7, CODE-7 items 4, 5, and 11, REC-1 item 14, and the tests the table names from it, as the other two tables' watch-outs require.
+FACT (independent review of this remedy, 2026-10-18): anchors, rows EX1 to EX7, the derive and replay order, the claim-register fields, and the in-process evaluation of the new alert expression were confirmed against the tree. Fixed: the `gatewaymetrics_erasure_test.go` retarget now covers the deleted deadline gauge, and the summary's problem statement and `errorclassify` watch-out count `ERASURE_JOB_NOT_FAILED`.
 WATCHOUT: `issuedtokenstore.Store.WithSubjectLock` keeps the shipped pattern and cites the old saltlockpg idiom in a comment. REC-1 item 15 files it; it is outside this proposal's code.
 
 ## Ledger
