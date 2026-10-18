@@ -27,3 +27,5 @@ The run fixed 10 findings across both loops.
 The spec loop converged on the spec changes staged in this proposal. Convergence does not record approval, and the approval fields in the frontmatter are unchanged.
 
 The non-spec loop did not converge. Findings that loop had not closed remain open, and the non-spec changes in this proposal are not settled.
+
+After the run, on 2026-10-18, the owner chose option C for the slot-set recovery rebuild, and the proposal was edited to apply it: the rebuild removes the members of sessions whose rows are terminal in place of replaying failed releases. That edit rewrote non-spec content and one edge-case bullet in the spec-changes file, and it changed no staged spec edit. No review loop has run on the edited content, so the non-spec changes remain unsettled, and the spec loop's convergence predates the edited bullet.
