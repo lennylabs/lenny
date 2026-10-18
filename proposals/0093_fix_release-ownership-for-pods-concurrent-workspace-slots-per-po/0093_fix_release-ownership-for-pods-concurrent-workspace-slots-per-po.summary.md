@@ -37,7 +37,7 @@
 - The leaked arm of the release script adds the `leaked:` member whether or not `SREM` removed one. Gating it on the removal looks tidier and loses the leak after a clean pre-running reclaim, which fails open.
 - `SlotClaimer.ReleaseSlot` must gate the disposition on `removed`. A gate on `remaining == 0` alone re-runs the disposition when a duplicate release finds the set already empty.
 - A disposition error after the member is removed must not be retried. The retry finds no member and skips the disposition, leaving a bound claim on an empty pod.
-- The non-spec **full_revoke release table** is the only statement of full_revoke's order and response accounting. A change to either starts at that table.
+- The non-spec **full_revoke release table** is the only full statement of full_revoke's order and response accounting. A change to either starts at that table, then SPEC-3.
 - The unconditional `revokeFinalizeLease` in `finalizePrepareFailed` looks redundant after CODE-3 and is the only lease return when `failFinalizing` commits and reports a store error.
 - Holding `slotAccountLocks` across the seal looks safer and blocks the failure funnel for up to the seal window.
 - On a standing cluster, a tier-2-or-higher failure that reports `WRONGTYPE` on `active_slots` is an environment failure until the CODE-1 cleanup has run. Existing tests that `SET` the key to force exhaustion fail the same way and are retargeted in CODE-1's step.
