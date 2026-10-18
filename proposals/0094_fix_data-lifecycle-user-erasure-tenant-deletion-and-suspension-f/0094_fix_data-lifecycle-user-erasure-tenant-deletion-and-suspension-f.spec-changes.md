@@ -29,7 +29,7 @@ Each case below is owned by the staged text named in parentheses.
 10. **A legal hold set after the erase or retry request is accepted** (SPEC-2, Edit 2j).
 11. **A crash between a write keyed to a new session ID and the insert** (SPEC-1, *Creation fence*, the reservation sentences).
 12. **An operator clear while the job is not failed, or while the flag records another job** (SPEC-4, Edits 4i and 4l).
-13. **A derive or replay of a restricted user's session into a session another user owns** (SPEC-2, Edits 2b and 2l).
+13. **A derive of a restricted user's session into a session another user owns** (SPEC-2, Edits 2b and 2l).
 
 ## Staged edits
 
