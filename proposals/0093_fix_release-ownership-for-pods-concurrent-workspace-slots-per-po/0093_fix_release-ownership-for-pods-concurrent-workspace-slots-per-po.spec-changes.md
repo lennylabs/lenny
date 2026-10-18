@@ -30,7 +30,7 @@ Every table row this proposal edits is one physical line, and it stays one physi
 The gateway keeps a pod's slot occupancy in a Redis set, `lenny:pod:{pod_id}:active_slots`. The set holds one member per session that holds a slot on the pod, named by the session identifier, and one member `leaked:<sessionId>` per slot whose cleanup was not acknowledged clean ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) **`leaked` slot semantics.**). The set's cardinality is the pod's slot occupancy. A reservation runs a Lua script. When the session's member is already present, the script adds nothing and returns the cardinality, whatever the cardinality is. Otherwise, when the cardinality is below `maxConcurrentSessions`, it adds the member and returns the new cardinality, and when the cardinality has reached `maxConcurrentSessions`, it adds nothing and returns `nil` (slot unavailable). Because the check and the add run in one script, two concurrent assignments cannot both observe the same free slot. A release runs a Lua script keyed by the session identifier. It removes the session's member, and it returns whether it removed the member and the remaining cardinality. A release that finds the pod's `rehydrated` flag absent first rehydrates the set as **Post-recovery rehydration atomicity.** below states, adding its own session's member to the seed, and then removes that member. A release of a slot whose cleanup was not acknowledged clean removes the session's member, if present, and adds a `leaked` member for the session, so a leak reported after a clean release of the same session is still counted. A second leaked release changes nothing. A clean release that finds no member for the session changes nothing, so every path that releases the same reservation can run and, while Redis keeps the set, the reservation is returned once. The occupancy-zero disposition (**Recycle lifecycle (`recycle.enabled: true`).** above, and [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) for the claim delete) runs only on a release that removed the session's member and left the set empty. The set is the intra-pod capacity gate;
 ```
 
-**SPEC-1b. §5.2 **Post-recovery rehydration atomicity.**** Make four in-place substitutions in the paragraph.
+**SPEC-1b. §5.2 **Post-recovery rehydration atomicity.**** Make five in-place substitutions in the paragraph.
 
 Replace
 
@@ -53,7 +53,7 @@ Replace
 with
 
 ```
-(indicating the set has not been rehydrated since the last Redis restart)
+(indicating the set must be rehydrated)
 ```
 
 Replace
@@ -80,11 +80,25 @@ with
 could both observe an empty set and succeed
 ```
 
+Replace
+
+```
+it persists until the next Redis restart, at which point all flags are naturally cleared and rehydration is triggered again on first access
+```
+
+with
+
+```
+a Redis restart clears it, the [Section 10.1.4](10_gateway-internals.md#1014-coordinator-loss-detection-and-hold-state) whole-pod reset deletes it, and the gateway deletes it for each pod a non-terminal session names when a Redis outage ends ([Section 12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)); the pod's next slot reservation or release then rehydrates the set
+```
+
 **SPEC-1c. §12.4 Redis HA and Failure Modes, key table.** Replace the row that begins "| `lenny:pod:{pod_id}:active_slots` | Session-mode slot counter |" with
 
 ```
 | `lenny:pod:{pod_id}:active_slots` | Session-mode slot set | **Pod-scoped** (not tenant-prefixed — intentional, as pod IDs are already globally unique within the cluster). A Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot; its cardinality is the pod's slot occupancy, and the atomic Lua reservation that adds a member only while the cardinality is below `sessionPolicy.maxConcurrentSessions` is the intra-pod capacity gate for session-mode pools ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Slot assignment atomicity"). On Redis restart, the set is lost; the gateway performs **blocking rehydration** from `SessionStore.GetActiveSlotsByPod(pod_id)` before accepting new slot assignments — see [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) ("Post-recovery rehydration atomicity") for the full protocol. The Lua script checks a per-pod `rehydrated` flag (`lenny:pod:{pod_id}:rehydrated`) atomically; if absent, all slot allocation attempts for that pod block until rehydration completes, preventing concurrent requests from observing a stale empty set. During a Redis outage the set has a Postgres fallback — see the failure-behavior table below. |
 ```
+
+In the row that begins "| `lenny:pod:{pod_id}:rehydrated` |", replace "from Postgres post-Redis-restart. No TTL — naturally cleared on next Redis restart." with "from Postgres. No TTL."
 
 **SPEC-1d. §12.4 failure-behavior table.** In the row that begins "| Session slot counter (`lenny:pod:{pod_id}:active_slots`) |", make two in-place substitutions. Replace "Session slot counter (`lenny:pod:{pod_id}:active_slots`)" with "Session slot set (`lenny:pod:{pod_id}:active_slots`)", and replace "On Redis recovery, the counter is rebuilt" with "On Redis recovery, the slot set is rebuilt". The rest of the row is unchanged.
 

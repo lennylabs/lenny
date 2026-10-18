@@ -1,6 +1,6 @@
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the REG-SLOTCOUNT set and its keyed release, all of SPEC-1.
+- [ ] **S1 · spec** — SPEC-1. Lands the REG-SLOTCOUNT set, its keyed release, and the `rehydrated` flag lifetime, all of SPEC-1.
       Tiers 0. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. Lands the SandboxClaim writer edge and its citing sites, all of SPEC-2.
       Tiers 0. Depends on: S1
