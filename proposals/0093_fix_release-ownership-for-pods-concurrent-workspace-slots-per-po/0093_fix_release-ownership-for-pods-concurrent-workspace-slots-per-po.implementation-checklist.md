@@ -25,6 +25,6 @@
 - [ ] **S12 · code** — CODE-7. Lands the full_revoke release routing, with the tests **Testing** assigns to CODE-7.
       Tiers 0, 1, 2, 3, 9. Depends on: S3, S7, S11
 - [ ] **S13 · test** — TEST-1. Lands the harness extension and the cross-tier tests.
-      Tiers 0, 2, 4, 5, 7a, 8, 9, 11. Depends on: S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12
+      Tiers 0, 1, 2, 4, 5, 7a, 8, 9, 11. Depends on: S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12
 - [ ] **S14 · docs** — REC-1. Lands the BUILD-GAPS closures, annotations, and filings.
       Tiers 0, 11. Depends on: S13
