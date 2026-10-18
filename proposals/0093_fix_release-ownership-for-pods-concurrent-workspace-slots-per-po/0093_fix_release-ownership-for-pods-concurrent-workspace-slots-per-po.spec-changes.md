@@ -162,14 +162,14 @@ with
 
 **SPEC-1j. §4.6.1 **Pod claim mechanism (per-pod occupancy claim):**.** Replace "is gated by the atomic Redis slot counter, with a Postgres fallback" with "is gated by the Redis slot set, with a Postgres fallback".
 
-### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3, § 4.7, § 4.9; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.1, § 7.2; spec/08_recursive-delegation.md § 8.3; spec/15_external-api-surface.md § 15.1; spec/24_lenny-ctl-command-reference.md § 24.11; spec/28_communication-channels.md § 28.3, § 28.5.1; spec/29_communication-scenarios.md § 29.4
+### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3, § 4.7, § 4.9; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.1, § 7.2; spec/08_recursive-delegation.md § 8.3; spec/15_external-api-surface.md § 15.1; spec/24_lenny-ctl-command-reference.md § 24.11; spec/28_communication-channels.md § 28.3, § 28.5.1, § 28.8; spec/29_communication-scenarios.md § 29.4
 
 SPEC-2 is regenerated from the non-spec **SandboxClaim end-of-occupancy disposition table**, which maps every gateway release path to its claim effect. SPEC-2c states the rule in §4.6.3. An edit that states the predicate uses the one wording "ends the occupancy without reuse", and no edit states the pod's resulting phase, which the §4.6.1 **Occupancy projection** owns.
 
 **Site classification.** Every spec site whose statement of the claim's or the pod's outcome at the end of an occupancy contradicts §4.6.3 once SPEC-2c and SPEC-2d land is listed here once, as an edit or as out of scope with an owner. A site that contradicts it only through a departure that **Edge cases and accepted failure modes** records is not listed.
 
 - Home: the §4.6.3 SandboxClaim ownership row (SPEC-2c).
-- Edits: the §4.6 CRD row (SPEC-2a); §4.6.1 **Pod claim mechanism** and **Reserved hold** (SPEC-2b); the §4.6.3 `failed` binding-state bullet (SPEC-2d); §5.2 **Recycle lifecycle** (SPEC-2e); the §6.2 concurrent-occupancy diagram note (SPEC-2f); the §28.3 `REG-CLAIM` writer cell (SPEC-2g); the §6.2 Recycle edges header and recycle-disposition label, **`reserved` hold semantics.**, and **Concurrent pod lifecycle** (SPEC-2h); §28.5.1 `CH-ATTACH` **Degradation.** (SPEC-2i); §29.4 step 17 (SPEC-2j); §29.4 step 12 (SPEC-2k); §7.2 **Mid-resume terminal transitions** step 3 (SPEC-2l); the §4.7 `Shutdown` row (SPEC-2m); the §6.2 `resuming → cancelled` bullet (SPEC-2n); the §7.1 `scrubPolicy` row (SPEC-2o); §4.9 **Pre-Claim Credential Availability Check** (SPEC-2p); §8.3 **Credential availability pre-check at delegation time:** (SPEC-2q); the §15.1 `created` row (SPEC-2r); the §24.11 `force-terminate` row (SPEC-2s); the §5.2 `sessionPolicy` common-configurations row `Concurrent` (SPEC-2t).
+- Edits: the §4.6 CRD row (SPEC-2a); §4.6.1 **Pod claim mechanism** and **Reserved hold** (SPEC-2b); the §4.6.3 `failed` binding-state bullet (SPEC-2d); §5.2 **Recycle lifecycle** (SPEC-2e); the §6.2 concurrent-occupancy diagram note (SPEC-2f); the §28.3 `REG-CLAIM` writer cell (SPEC-2g); the §6.2 Recycle edges header and recycle-disposition label, **`reserved` hold semantics.**, and **Concurrent pod lifecycle** (SPEC-2h); §28.5.1 `CH-ATTACH` **Degradation.** (SPEC-2i); §29.4 step 17 (SPEC-2j); §29.4 step 12 (SPEC-2k); §7.2 **Mid-resume terminal transitions** step 3 (SPEC-2l); the §4.7 `Shutdown` row (SPEC-2m); the §6.2 `resuming → cancelled` bullet (SPEC-2n); the §7.1 `scrubPolicy` row (SPEC-2o); §4.9 **Pre-Claim Credential Availability Check** (SPEC-2p); §8.3 **Credential availability pre-check at delegation time:** (SPEC-2q); the §15.1 `created` row (SPEC-2r); the §24.11 `force-terminate` row (SPEC-2s); the §5.2 `sessionPolicy` common-configurations row `Concurrent` (SPEC-2t); the §28.8 `CH-ATTACH` matrix row (SPEC-2u).
 - Out of scope, each with its owner:
   - §6.2 **Pre-attached failure retry policy:**, "The pod is marked `failed` and released back to the pool (or terminated if unhealthy)." Owner: draft proposal 0085, because the problem statement excludes the pre-attached seam disposition. The code deletes the claim on that path (table row D15) and never writes `failed`, so 0085 must re-baseline this sentence on §4.6.3 (summary **Impacts on other proposals**).
 
@@ -490,6 +490,18 @@ with
 and recycles when occupancy reaches zero unless the release ends the occupancy without reuse ([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)).
 ```
 
+**SPEC-2u. §28.8 Failure and degradation matrix, row `CH-ATTACH`.** The row is one physical table line and stays one. Replace
+
+```
+names no retirement-counter reason for a `failed`-disposition retirement of a pod serving one session
+```
+
+with
+
+```
+names no retirement-counter reason for the retirement of a pod serving one session whose session failed or crashed
+```
+
 ### SPEC-3 · spec/11_policy-and-controls.md § 11.4
 
 **SPEC-3a. §11.4 User Invalidation, **Full revoke propagation mechanism:**, steps 1 to 4 and 6.** Steps 5 and 7 are unchanged, and the step numbers do not change. Replace
@@ -578,5 +590,5 @@ The reported lease count is the number of leases step 1 adds to the deny list.
 - spec/12_storage-architecture.md (SPEC-1c, SPEC-1d)
 - spec/15_external-api-surface.md (SPEC-2r)
 - spec/24_lenny-ctl-command-reference.md (SPEC-2s)
-- spec/28_communication-channels.md (SPEC-1e, SPEC-1h, SPEC-2g, SPEC-2i)
+- spec/28_communication-channels.md (SPEC-1e, SPEC-1h, SPEC-2g, SPEC-2i, SPEC-2u)
 - spec/29_communication-scenarios.md (SPEC-1i, SPEC-2j, SPEC-2k)
