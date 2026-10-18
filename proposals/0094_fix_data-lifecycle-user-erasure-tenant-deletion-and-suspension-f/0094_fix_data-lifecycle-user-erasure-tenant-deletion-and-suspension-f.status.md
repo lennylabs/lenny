@@ -14,9 +14,10 @@ implemented-by:
 ---
 ## Review history
 
-On 2026-10-18, an adversarial review run covered this proposal. The run did not converge.
+On 2026-10-18, an adversarial review run covered this proposal.
 
-- Spec loop: 15 rounds ran. The loop did not converge. The run performed 5 full-pool sweeps. The run fixed 6 findings.
-- Non-spec loop: not run. The non-spec deliverables have not been reviewed.
+- Spec loop: 17 rounds ran. The loop converged. The run performed 6 full-pool sweeps.
+- Non-spec loop: 10 rounds ran. The loop did not converge. The run performed 2 full-pool sweeps.
+- Findings fixed: 19 across both loops.
 
-Findings that the spec loop had not closed when it stopped remain open. The proposal has not converged, and the spec lane is not settled.
+The non-spec loop stopped before it converged. Findings it had not closed remain open, and the non-spec deliverables are not settled.
