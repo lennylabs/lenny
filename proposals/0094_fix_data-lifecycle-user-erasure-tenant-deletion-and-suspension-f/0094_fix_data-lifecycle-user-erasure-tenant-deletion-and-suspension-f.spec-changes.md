@@ -4,7 +4,7 @@
 
 The specification gains one mechanism, the lifecycle fence and drain, and states it once in a new §12.8 paragraph (SPEC-1). Every other staged edit cites that paragraph by its bold label, **Lifecycle fence and drain**, and adds only what its own operation decides.
 
-- User erasure uses the fence through `processing_restricted` and runs the drain before any store deletion. The Article 18 paragraph, the invocation paragraph, the phase-field paragraph, step 0 of the deletion sequence, and the §24.12 retry row state the erasure-specific parts: the one-transaction start and retry, the single in-progress job per user, the drain step and its failure label, the legal-hold preflight and its re-check, the completion order, and what the restriction refuses beyond the fence: a derive or replay of the user's sessions, and the user's own creation, derive, replay, and interaction-resolution requests (SPEC-2).
+- User erasure uses the fence through `processing_restricted` and runs the drain before any store deletion. The Article 18 paragraph, the invocation paragraph, the phase-field paragraph, step 0 of the deletion sequence, and the §24.12 retry row state the erasure-specific parts: the one-transaction start and retry, the single in-progress job per user, the drain step and its failure label, the legal-hold preflight and its re-check, the completion order, and what the restriction refuses beyond the fence: a derive or replay of the user's sessions, and the user's own creation, derive, replay, and interaction-resolution requests (SPEC-2). Every staged sentence about those refusals (Edits 2b, 2l, 4c, and 4k) is generated from the non-spec **Article 18 refusal table**, whose map of spec sites lists them.
 - The legal-hold preflight is a handler check. The erase and retry handlers run it before they write or restart the job, and a blocked request writes nothing. The job re-checks the holds after the drain and fails through the ordinary failed-job path. Every staged sentence about the preflight (Edits 2g, 2h, 2i, 2j, and 4e to 4h) is generated from the non-spec **Erasure entry-point table**, and step 0 (Edit 2j) is the one spec site that states the rule. The other sites cite step 0.
 - The fence's per-path behavior (the owner it reads, the delegated-child rule, the response, the early check, and the reservation) is generated from the non-spec **Creation-path table**. The non-spec map of spec sites below that table lists every staged edit that states part of it.
 - Tenant deletion uses the fence from Phase 1 and runs the drain as Phase 2. A Phase 2 drain that does not succeed keeps the job in Phase 2 (SPEC-3).
@@ -67,6 +67,12 @@ Replace `` had advanced since derive admission. See `` with:
 had advanced since derive admission; `error` counts writes the session store refused or failed, including a refusal by the creation fence of [§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**. See
 ```
 
+**Edit 1e.** In the `**Storage backends in erasure scope:**` table, in the `SessionStore` row, replace `Sessions, task trees, delegation lineage, retry state` with the text below. The row stays one physical line.
+
+```markdown
+Sessions, task trees, delegation lineage, retry state, and the session-ID reservations of **Lifecycle fence and drain**
+```
+
 ### SPEC-2 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: Article 18, invocation, phase field, and deletion-sequence step 0; spec/24_lenny-ctl-command-reference.md § 24.12 Erasure Job Management
 
 Every edit in SPEC-2 keeps its paragraph one physical line.
@@ -80,7 +86,7 @@ When an erasure job is initiated, the platform sets `processing_restricted: true
 **Edit 2b.** In the same paragraph, replace `` (1) all session creation endpoints (`POST /v1/sessions` and `POST /v1/sessions/start`) are rejected with `403 ERASURE_IN_PROGRESS` for the affected `user_id`; (2) the error body includes `{"code": "ERASURE_IN_PROGRESS", "userId": "<user_id>", "jobId": "<job_id>", "message": "This user has a pending erasure request. New sessions cannot be created until erasure completes."}`. `` with:
 
 ```markdown
-(1) the creation fence (**Lifecycle fence and drain** above) refuses new sessions owned by the affected `user_id`; (2) a derive or replay of a session that the affected `user_id` owns is rejected with `403 ERASURE_IN_PROGRESS`, whoever would own the new session: the reservation of the new session's ID, when one is taken, and the insert of the new session also read the source session owner's row under the creation fence's shared lock, and erasure of the source owner treats such a reserved ID as one of that owner's sessions and ends the reservation; (3) each session-creation, derive, replay, or interaction-resolution request the affected user makes is rejected with `403 ERASURE_IN_PROGRESS`, and the [§11.4](11_policy-and-controls.md#114-user-invalidation) check on the requesting user runs before (2) and (3), so an invalidated requester gets `403 USER_INVALIDATED`; (4) an `ERASURE_IN_PROGRESS` refusal carries the details that the [Section 15.1](15_external-api-surface.md#151-rest-api) **Error code catalog** lists for that code.
+(1) the creation fence (**Lifecycle fence and drain** above) refuses new sessions owned by the affected `user_id`; (2) a derive or replay request whose source session the affected `user_id` owns is rejected with `403 ERASURE_IN_PROGRESS` before any copy, whoever would own the new session, and a derive or replay admitted before the flag is set is refused only as (1) refuses it; (3) each session-creation, derive, replay, or interaction-resolution request the affected user makes is rejected with `403 ERASURE_IN_PROGRESS`, and the [§11.4](11_policy-and-controls.md#114-user-invalidation) check on the requesting user runs before (2) and (3), so an invalidated requester gets `403 USER_INVALIDATED`; (4) an `ERASURE_IN_PROGRESS` refusal carries the details that the [Section 15.1](15_external-api-surface.md#151-rest-api) **Error code catalog** lists for that code.
 ```
 
 **Edit 2c.** In the same paragraph, delete `The restriction is enforced at the session creation gate upstream of endpoint-specific logic — both endpoints share the same gate.` and the space that follows it.
@@ -146,7 +152,7 @@ If **any** active hold is present, the handler rejects the request with error co
 **Edit 2l.** In the paragraph that opens `**Processing restriction during erasure (GDPR Article 18).**`, replace `` The restriction is scoped to the specific `user_id`; other users in the same tenant are unaffected. `` with:
 
 ```markdown
-The restriction is scoped to the specific `user_id`. Other users in the same tenant are unaffected, except that no caller can derive or replay a session the restricted user owns.
+The restriction is scoped to the specific `user_id`. Other users in the same tenant are unaffected, except as item (2) states.
 ```
 
 ### SPEC-3 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: tenant deletion phases 1 and 2
@@ -246,7 +252,7 @@ Manually clear the `processing_restricted` flag for a user after a failed erasur
 **Edit 4k.** In the §15.1 **Error code catalog:** table, in the row for `ERASURE_IN_PROGRESS`, replace `` Session creation rejected because the target `user_id` has a pending GDPR erasure job and `processing_restricted: true` is set. `details.userId` and `details.jobId` are included. `` with the text below. The row's leading code cell is unchanged, because Edit 4c anchors on it.
 
 ```markdown
-The request is rejected because a user has a pending GDPR erasure job and `processing_restricted: true` is set ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Processing restriction during erasure (GDPR Article 18)**): the user makes the request, owns the session being created, or owns the source session of a derive or replay. A session creation is also rejected with this code when an erasure ended the reservation of the new session's ID ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**). `details.userId` names the restricted user, or, for an ended reservation, the new session's owner, and `details.jobId` is included when `processing_restricted` is set.
+The request is rejected because a user has a pending GDPR erasure job and `processing_restricted: true` is set ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Processing restriction during erasure (GDPR Article 18)**): the user makes the request, owns the session being created, or owns the source session of a derive or replay. A session creation is also rejected with this code when the erasure of the new session's owner ended the reservation of its ID ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**). `details.userId` names that user, and `details.jobId` is included when `processing_restricted` is set.
 ```
 
 **Edit 4l.** In the §15.1 **Error code catalog:** table, insert this row immediately after the row for `ERASURE_BLOCKED_BY_LEGAL_HOLD`:
