@@ -41,7 +41,7 @@ Erasure entry points (E rows)
 - **No users eraser**: user erasure never deletes the registry row, so "no registry row carries no user marker" opens no window mid-erasure; erasing the row is P5b's.
 
 Erasure executor (EX rows)
-- **Executor placement (D16)**: erasure runs as its own sweep, `Runner.Poll(ctx, interval)` registered on the §12.5 leader gate through `addErasureSweep(gate, runner, interval)` at `--tenant-deletion-interval`; one goroutine per job; no budget.
+- **Executor placement (D16)**: erasure runs as its own sweep, `Runner.Poll(ctx, interval)` registered on the §12.5 leader gate through `addErasureSweep(gate, runner, sampler, interval)` at `--tenant-deletion-interval`, which also registers the sampler (D34); one goroutine per job; no budget.
 - **Ended context (rows EX4, EX5)**: on lease loss or shutdown `fail` writes, observes, and counts nothing, and the job stays in its phase (T8.10).
 - **Admission (EX1 Locks)**: in-flight map of job to tenant; a job starts only when no run of its tenant is in flight and fewer than `--erasure-max-concurrent-jobs` (env `LENNY_ERASURE_MAX_CONCURRENT_JOBS`, default 2, unset runner limit 1) are; oldest `StartedAt` first; reason: one tenant's backlog cannot hold every slot.
 - **Tenant-deletion tick**: stays off the gate and polls `gatewayleader.Elector.IsLeader`; its `pg_try_advisory_lock`, `pool`, and `advisoryLockKey` are deleted; the runner crosses from `buildAdminRouter` on a `gatewayWiringFields` field.
