@@ -92,7 +92,7 @@
 
 ## Open decisions for human to make
 
-None. The review loops and the open-decisions firings left no decision open for the human.
+1. **A replay that removes another replica's re-reservation (register row A26, case table row O17).** Replica A's outage ledger holds a failed release of session S on pod P. Replica B re-reserves S on P, by a fallback admission or a fast-path reservation after Redis returns, before S's row names P (for example a resume after the coordination lease moved to B). Replica A's later rebuild replays the release and removes S's live member, so S is uncounted and P can admit one session over its cap, with no bound in time short of S's end. The staging records this as an A26 case. The alternative replays a failed release only when the session's row is terminal or names another pod: it keeps the member in this case, and also in every failed release whose session's row names no pod at the rebuild (the failure-funnel, suspension, and resume-compensation releases), which become A27 cases (counted, failing closed, ended by the GC after the pod's last live session). Restricting the skip to `resuming` rows does not close the case, because the resume driver's binder reserves before its `resuming` write. Choose between accepting the A26 case as staged and widening A27 with the alternative.
 
 ## Defects in the shipped tree that this proposal does not stage
 
