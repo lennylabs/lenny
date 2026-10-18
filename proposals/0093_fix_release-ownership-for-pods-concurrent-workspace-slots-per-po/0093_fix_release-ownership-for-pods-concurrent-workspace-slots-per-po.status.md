@@ -17,9 +17,9 @@ implemented-by:
 
 Recorded 2026-10-18.
 
-An adversarial review run covered this proposal with two loops. The run fixed 4 findings.
+An adversarial review run covered this proposal in two loops.
 
-- Spec loop: ran 25 rounds and did not converge. It ran 12 full-pool sweeps.
+- Spec loop: ran 25 rounds, ran 12 full-pool sweeps, and did not converge. The run fixed 0 findings.
 - Non-spec loop: not run.
 
-The spec loop did not converge. Findings the spec loop had not closed remain open, and the spec changes in this proposal are not settled by that run. The non-spec changes have not been reviewed.
+The spec loop did not converge. Findings the spec loop had not closed remain open. The spec changes staged in this proposal are not settled by that run. The non-spec changes have not been reviewed.
