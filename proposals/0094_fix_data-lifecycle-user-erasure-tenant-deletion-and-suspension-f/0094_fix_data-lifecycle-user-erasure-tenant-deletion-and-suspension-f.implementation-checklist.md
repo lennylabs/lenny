@@ -19,7 +19,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S8 · code** — CODE-1. Lands the creation predicate, both store fences, the session reservation, and `CreateWithTranscript` with its transcript copiers.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S4, S6, S7
 - [ ] **S9 · code** — CODE-2. Lands the creation gates, the source-owner check, the reservations and undo, the replay's in-transaction transcript copy, the refusal mapping, and the classifier entries.
-      Tiers 0, 1, 3, 7a. Depends on: S1, S2, S4, S8
+      Tiers 0, 1, 3, 4, 7a. Depends on: S1, S2, S4, S8
 - [ ] **S10 · code** — CODE-4. Lands the suspend handler.
       Tiers 0, 1, 3, 7a. Depends on: S1, S4, S7
 - [ ] **S11 · code** — CODE-5. Lands the Phase 2 terminator wiring and the in-phase retry.
