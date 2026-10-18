@@ -11,7 +11,7 @@
 - [ ] **S5 · code** — CODE-8. Lands the comment edits and the `make generate` and `make generate-proto` regenerations.
       Tiers 0, 1. Depends on: S2
 - [ ] **S6 · code** — CODE-1. Lands the slot set primitive and its callers, with the tests **Testing** assigns to CODE-1.
-      Tiers 0, 1, 2, 4, 7a. Depends on: S1, S2
+      Tiers 0, 1, 2, 4, 7a, 8. Depends on: S1, S2
 - [ ] **S7 · code** — CODE-2. Lands the slot-aware `ReclaimClaimed`, with the tests **Testing** assigns to CODE-2.
       Tiers 0, 1, 2. Depends on: S1, S2, S6
 - [ ] **S8 · code** — CODE-3. Lands the finalize exits, with the tests **Testing** assigns to CODE-3.
