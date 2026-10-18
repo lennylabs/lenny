@@ -507,7 +507,7 @@ with
 1. The gateway looks up all active sessions for the user (via SessionStore) and, before it writes any cancel in step 2, returns every credential lease those sessions hold to its pool and, after the last return, adds those leases to the credential deny list ([Section 4.9](04_system-components.md#49-credential-leasing-service)).
 2. The gateway marks each of those sessions `cancelled` in the SessionStore. After the write that cancels a session, the gateway releases the session's pod binding on the replica that holds it, which sends the pod the [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` RPC.
 3. The pod's runtime adapter tears down the session ([Section 4.7](04_system-components.md#47-runtime-adapter), `Shutdown`), which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
-4. For a cancelled session that never started, the gateway instead reclaims the pod or the slot that the session claimed.
+4. For a cancelled session that never started and whose pod binding the handling gateway replica does not hold, the gateway reclaims the pod or the slot that the session claimed, before that replica's step-2 releases.
 ```
 
 Replace
