@@ -40,7 +40,6 @@
 - `SlotClaimer.ReleaseSlot` must gate the disposition on `removed`. A gate on `remaining == 0` alone re-runs the disposition when a duplicate release finds the set already empty.
 - A disposition error after the member is removed must not be retried. The retry finds no member and skips the disposition, leaving a bound claim on an empty pod.
 - The non-spec **Accepted-departure register** is the only rule site for accepted departures: each departure's bound, BUILD-GAPS record, doc site, and pinning test. A new or changed departure starts at its row; REC-1, DOCS-1, and TEST-1 follow it, and no other site restates a bound.
-- full_revoke opens each listed session's terminal claim before its cancel write and ends it after the pre-running reclaim, so the handling replica's own Sweeper cannot release a binding before that reclaim runs. Dropping the claim, or ending it before step 4(a), lets the reclaim delete by name a claim the Sweeper's release just patched to `recycling`.
 - The non-spec **full_revoke release table** is the only full statement of full_revoke's order and response accounting. A change to either starts at that table, then SPEC-3.
 - The unconditional `revokeFinalizeLease` in `finalizePrepareFailed` looks redundant after CODE-3 and is the only lease return when `failFinalizing` commits and reports a store error.
 - Holding `slotAccountLocks` across the seal looks safer and blocks the failure funnel for up to the seal window.
