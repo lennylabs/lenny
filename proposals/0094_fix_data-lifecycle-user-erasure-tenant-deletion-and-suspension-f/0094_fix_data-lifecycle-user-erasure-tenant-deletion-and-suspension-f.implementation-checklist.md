@@ -19,12 +19,12 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S8 · code** — CODE-1. Lands the creation predicate, both store fences, and the session reservation.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S4, S6, S7
 - [ ] **S9 · code** — CODE-2. Lands the creation gates, the source-owner check, the reservations and undo, the refusal mapping, and the classifier entries.
-      Tiers 0, 1, 3. Depends on: S1, S2, S4, S8
+      Tiers 0, 1, 3, 7a. Depends on: S1, S2, S4, S8
 - [ ] **S10 · code** — CODE-4. Lands the suspend handler.
       Tiers 0, 1, 3, 7a. Depends on: S1, S4, S7
 - [ ] **S11 · code** — CODE-5. Lands the Phase 2 terminator wiring and the in-phase retry.
       Tiers 0, 1. Depends on: S1, S3, S7
-- [ ] **S12 · code** — CODE-6. Lands the Postgres erasure job store, the users restriction helper, the sampler change, and the `ErasureJobOverdue` expression.
+- [ ] **S12 · code** — CODE-6. Lands the Postgres erasure job store, the users restriction helper, the clear handler, the sampler change, and the `ErasureJobOverdue` expression.
       Tiers 0, 1, 2, 4, 11. Depends on: S2, S4, S5
 - [ ] **S13 · code** — CODE-7. Lands the runner's phase dispatch and completion order, the handler changes, the leader-gated erasure sweep, and the salt lock.
       Tiers 0, 1, 2, 3, 4, 7a, 8. Depends on: S1, S2, S4, S7, S8, S11, S12
