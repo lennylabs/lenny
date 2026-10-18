@@ -9,7 +9,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S3 · spec** — SPEC-3. Lands both phase-table row edits.
       Tiers 0, 11. Depends on: S1
 - [ ] **S4 · spec** — SPEC-4. Lands every SPEC-4 edit.
-      Tiers 0, 11. Depends on: S1
+      Tiers 0, 11. Depends on: S1, S2
 - [ ] **S5 · migration** — MIG-1. Lands migration 0186 and its tier-2 test.
       Tiers 0, 2. Depends on: S2
 - [ ] **S6 · migration** — MIG-2. Lands migration 0187 and its tier-2 test.
@@ -19,7 +19,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S8 · code** — CODE-1. Lands the creation predicate, both store fences, and the session reservation.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S4, S6, S7
 - [ ] **S9 · code** — CODE-2. Lands the creation gates, the source-owner check, the reservations and undo, the refusal mapping, and the classifier entries.
-      Tiers 0, 1, 3. Depends on: S1, S4, S8
+      Tiers 0, 1, 3. Depends on: S1, S2, S4, S8
 - [ ] **S10 · code** — CODE-4. Lands the suspend handler.
       Tiers 0, 1, 3, 7a. Depends on: S1, S4, S7
 - [ ] **S11 · code** — CODE-5. Lands the Phase 2 terminator wiring and the in-phase retry.

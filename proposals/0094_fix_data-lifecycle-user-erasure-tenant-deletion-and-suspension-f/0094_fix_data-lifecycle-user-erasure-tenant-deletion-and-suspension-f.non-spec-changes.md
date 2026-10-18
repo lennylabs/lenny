@@ -309,7 +309,7 @@ Each item implements the cells of the **Creation-path table** or **Article 18 re
 
    The body follows SPEC-1 *Drain*: list with `ListFilter{UserID: userID, Primary: true}`; for each non-terminal row, return the partial result with `ctx.Err()` wrapped when `ctx` has ended, and otherwise call `ForceTerminate(context.WithoutCancel(ctx), tenantID, row.ID)`, so a caller's deadline stops the drain between sessions and never inside a session's terminal pipeline; treat `ErrNotFound` as nothing to drain, record any other error in `Failed` and continue, and count `transitioned`; list again with the same filter and record each non-terminal id not already in `Failed` in `Remaining`; return `ErrDrainIncomplete` wrapped with both counts when either slice is non-empty. A listing error returns the wrapped listing error and the partial result.
 4. The doc comment of `DrainSessions` states three things: a nil error means every scoped row is terminal on the primary; a nil error does not mean the scope's pods are released, with the release outcomes REC-1 item 6 lists; and the verifying listing is a fence invariant check that can report a session legitimately created after a concurrent tenant resume.
-5. **IMPLEMENTOR'S CHOICE:** the file in package `admin` that holds `DrainSessions` — it must be one function in package `admin` with no second drain anywhere in the tree.
+5. **IMPLEMENTOR'S CHOICE:** the file in package `admin` that holds `DrainSessions`. It must be one function in package `admin` with no second drain anywhere in the tree.
 
 ### CODE-4 · Suspend handler: locked newness, detached audit, repeat drain, and reported failures
 
