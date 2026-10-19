@@ -512,7 +512,8 @@
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryInputsFieldHasAProductionProducer",
         "tests/tier7a_load_local/adapter_grace_budget_test.go",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3",
-        "tests/testinfra/lifecycleharness/crashclient_test.go::TestCrashableClientRecordsAcceptedClaimCreates_spec_4_6_1"
+        "tests/testinfra/lifecycleharness/crashclient_test.go::TestCrashableClientRecordsAcceptedClaimCreates_spec_4_6_1",
+        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1504,7 +1505,8 @@
         "tests/tier4_integration/stream_failure_recycle_retire_test.go::TestStreamFailureRetiresARecyclingPod_spec_5_2",
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSessionOnRecyclingPoolIsSuspendedAndResumed_spec_6_2",
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSlotReleaseKeepsTheOtherSessionAnswering_spec_5_2",
-        "tests/tier7a_load_local/stream_failure_release_race_test.go::TestStreamFailureRacingReleaseRetiresExactlyMarkedPods_spec_28_5_1"
+        "tests/tier7a_load_local/stream_failure_release_race_test.go::TestStreamFailureRacingReleaseRetiresExactlyMarkedPods_spec_28_5_1",
+        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",

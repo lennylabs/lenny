@@ -386,6 +386,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/slot_compensation_metric_reference_test.go",
 	"tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
 	"tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
+	"tests/tier11_docs/stale_slot_reaper_config_doc_test.go",
 	"tests/tier11_docs/successor_pointer_test.go",
 	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",
 	"tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
