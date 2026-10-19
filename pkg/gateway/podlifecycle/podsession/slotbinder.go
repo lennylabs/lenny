@@ -157,8 +157,9 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 //
 // The slot is the concurrent-pool analog of the exclusive Claim: reserving
 // it at create makes the §15.1 created-state invariant hold uniformly (a
-// warm pod has been claimed) and gives the §4.5 created-expiry sweeper and
-// the §4.6 /terminate path a durable binding to release the slot from.
+// warm pod has been claimed) and gives the post-terminal hook's pre-running
+// reclaim (a watchdog CREATED_TIMEOUT write, a DELETE, or a /terminate) a
+// durable binding to release the slot from (§4.6).
 // SlotID equals SessionID, so the binding is reconstructable from
 // SandboxName + Pool + the session id, exactly like the exclusive path. A
 // reservation-exhaustion sentinel (ErrNoConcurrentSlot, ErrTenantMismatch,

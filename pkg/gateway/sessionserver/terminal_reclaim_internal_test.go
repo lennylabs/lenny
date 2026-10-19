@@ -234,7 +234,8 @@ func TestTerminalReclaimPreRunningNoBinderIsSkipped(t *testing.T) {
 // spec: §4.6 — a created session that holds a pod claim but is force-terminated
 // while the gateway has a binder reclaims the pod by name. This pins the
 // created state (the most common pre-running abandon case) to the by-name
-// reclaim path so the §4.5 created-expiry sweeper and /terminate share it.
+// reclaim path, which the watchdog's CREATED_TIMEOUT write and /terminate
+// both reach through the post-terminal hook.
 func TestTerminalReclaimPreRunningCreatedStateReclaims(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-created")
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
-	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
@@ -19,7 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
-	"github.com/lennylabs/lenny/pkg/gateway/session/createdsweeper"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -44,7 +42,6 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	gatewayNamespace := f.gatewayNamespace
 	gatewayPDBName := f.gatewayPDBName
 	gatewayServiceName := f.gatewayServiceName
-	maxCreatedStateTimeoutSeconds := f.maxCreatedStateTimeoutSeconds
 	memoryRecordCountInterval := f.memoryRecordCountInterval
 	minioAccessKey := f.minioAccessKey
 	minioEndpoint := f.minioEndpoint
@@ -169,42 +166,6 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 			}
 		}
 	}(w.impersonationSvc)
-
-	// ----- §7.1 abandoned `created`-state row sweep -----
-	// Drops Session rows that stay in `created` past
-	// maxCreatedStateTimeoutSeconds (default 300s). The §7.1
-	// uploadToken TTL closes the upload window at that instant; without
-	// this sweep the row itself lived forever, so abandoned creates
-	// accumulated under repeated client retries.
-	// spec: §7.1.
-	createdGC := createdsweeper.New(w.sessions, tenantsLister{w.tenants}, createdsweeper.Options{
-		// F-7.4.7: pinned to the same maxCreatedStateTimeoutSeconds the
-		// watchdog and the uploadToken issuer use.
-		// spec: §7.1.
-		Timeout: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
-		Clock:   clockinject.Now,
-		// §15.1: an abandoned `created`-state row
-		// holds a pod claimed at /create; releasing the row must return that
-		// pod to the pool and revoke any lease. Wire the sweep to the same
-		// claimless reclaim /terminate runs (Binder.ReclaimClaimed), closing
-		// over the kube Client, Namespace, and CredentialAssigner the binder
-		// already carries. ReclaimClaimed releases by pod name, so the poolRef
-		// the Reclaimer carries is unused here; it is part of the §4.6
-		// persisted binding the contract mirrors. Nil when the gateway runs
-		// without a pod binder (in-memory mode), where the sweep drops the row
-		// without a pod release.
-		Reclaim: createdSweeperReclaim(w.podBinder),
-	})
-	go createdGC.Run(w.watchdogCtx, func(dropped int, err error) {
-		if err != nil {
-			log.Printf("lenny-gateway: §7.1 created-state sweep error: %v", err)
-			return
-		}
-		if dropped > 0 {
-			log.Printf("lenny-gateway: §7.1 created-state sweep dropped %d abandoned rows past the upload-token deadline",
-				dropped)
-		}
-	})
 
 	w.startReconcilerWorkers()
 	// ----- §25.11 ArtifactStore cross-region replication -----

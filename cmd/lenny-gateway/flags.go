@@ -1050,7 +1050,7 @@ func (f *gatewayFlags) registerArtifactFlags() {
 		"§12.5 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
 	f.maxCreatedStateTimeoutSeconds = flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
-		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
+		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL and the watchdog's `created`-state budget so the two deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
 	f.maxDeadlockWaitSeconds = flag.Int("max-deadlock-wait-seconds",
 		envInt("LENNY_MAX_DEADLOCK_WAIT_SECONDS", 120),
 		"§8.8 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")

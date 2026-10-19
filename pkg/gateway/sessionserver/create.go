@@ -367,8 +367,7 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	// `created`-state row when the mint failed.
 	// spec: §7.1 — TTL = maxCreatedStateTimeoutSeconds; the
 	// gateway threads the configured value through s.uploadTokenTTL so
-	// the token deadline matches the watchdog's MaxCreatedSeconds and the
-	// createdsweeper's Timeout. F-7.4.7.
+	// the token deadline matches the watchdog's MaxCreatedSeconds. F-7.4.7.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		// spec: §7.1 — the mint failed before the row persist, so roll

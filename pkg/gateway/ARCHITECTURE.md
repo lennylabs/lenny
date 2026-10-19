@@ -114,10 +114,10 @@ authorization boundary, secret resolution, invocation, and tool bridging.
 Session state, routing cache, session-scoped lifecycle workers, interactive
 input and tool-approval registries, message routing, and §9.4 agent memory.
 
-`createdsweeper`, `executor`, `inputwait`, `interactionstore`, `memorystore`,
-`messagerouting`, `orphansession`, `recycle`, `routingcache`, `sessionage`,
-`sessionbudget`, `sessioncallback`, `sessioncheckpointmeta`, `sessionevents`,
-`sessionidle`, `sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
+`executor`, `inputwait`, `interactionstore`, `memorystore`, `messagerouting`,
+`orphansession`, `recycle`, `routingcache`, `sessionage`, `sessionbudget`,
+`sessioncallback`, `sessioncheckpointmeta`, `sessionevents`, `sessionidle`,
+`sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
 `toolapproval`.
 
 ### `runtime/` — §5 runtime and data plane

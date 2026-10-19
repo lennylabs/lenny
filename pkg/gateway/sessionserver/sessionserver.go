@@ -851,9 +851,9 @@ type Options struct {
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
 	// minted token. Per §7.1 the token TTL equals
 	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
-	// configured timeout through this field, the watchdog's
-	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
-	// budgets never drift. A non-positive value falls through to
+	// configured timeout through this field and the watchdog's
+	// MaxCreatedSeconds so the two budgets never drift. A non-positive
+	// value falls through to
 	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	UploadTokenTTL time.Duration
 

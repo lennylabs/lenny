@@ -263,7 +263,6 @@ prefixes:
   - pkg/gateway/runtime/tenantaffinity/
   - pkg/gateway/runtime/watchdog/
   - pkg/gateway/serviceidentity/
-  - pkg/gateway/session/createdsweeper/
   - pkg/gateway/session/executor/
   - pkg/gateway/session/inputwait/
   - pkg/gateway/session/interactionstore/

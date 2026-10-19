@@ -245,10 +245,10 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 // runs the full terminal-side-effects pipeline (workspace seal, executor
 // release — which drains the pod and releases concurrent-mode slots per
 // §5.2 — audit, SSE, billing, archive). It adapts the private
-// recordSessionCompleted so background sweepers force-terminating a
-// session emit the same signals exactly once as a session terminated by
-// REST. fromState is the session's pre-terminal state, which the sweeper
-// captured before it forced the row terminal; the terminal pod-release path
+// recordSessionCompleted so the watchdog and the orphan reconciler, when they
+// force a session terminal, emit the same signals exactly once as a session
+// terminated by REST. fromState is the session's pre-terminal state, which the
+// writer read on the row it forced terminal; the terminal pod-release path
 // keys off it so a maxSessionAge-expired running session is released through
 // the §6.2 executor recycle path rather than the by-name reclaim (§4.6).
 // spec: §5.2; §6.2; §11.7; §7.2. Closes F-5.2.26.
