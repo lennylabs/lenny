@@ -178,9 +178,9 @@ state that the READY signal is one of them.
    acknowledgment (runtime process kept across sessions)").
 
 8. On a pool whose `sessionPolicy.maxConcurrentSessions` is greater than 1: `gateway` → `redis`,
-   `REG-SLOTCOUNT`, Redis. The gateway reserves the intra-pod slot with a Lua script that checks the
-   counter and increments it only when the result would not exceed `maxConcurrentSessions`, returning a
-   slot-unavailable result otherwise. The counter is the intra-pod capacity gate and the per-pod claim
+   `REG-SLOTCOUNT`, Redis. The gateway reserves the intra-pod slot through the atomic reservation of
+   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+   **Slot assignment atomicity**, which is the intra-pod capacity gate, and the per-pod claim
    `REG-CLAIM` guards pod acquisition; a pod whose slots are all taken is skipped and the gateway falls
    through to the next pod in the pool, claiming a further warm pod when every pod is at its limit
    ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.3). During
@@ -1524,8 +1524,8 @@ independent in them.
   `sessionIsolationLevel.residualStateWarning` on the session creation response
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
   [§7.1](07_session-lifecycle.md#71-normal-flow)).
-- The occupancy and claim primitives. `REG-SLOTCOUNT` is an atomic per-pod counter that ceilings
-  concurrent slots and is the occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
+- The occupancy and claim primitives. `REG-SLOTCOUNT` ceilings a pod's concurrent slots and is the
+  occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
   on first claim (§28.3, [§6.2](06_warm-pod-model.md#62-pod-state-machine)). The specification states no
   per-slot claim object.
 - The shared asset tree. `/workspace/shared/` is populated by the adapter at warm time, before the pod

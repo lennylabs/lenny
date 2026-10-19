@@ -136,7 +136,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 |:--|:--|:--|:--|:--|:--|:--|
 | `REG-COORDLEASE` | Redis | `t:<tenant>:lease:session:<session>` | Gateway replicas | Gateway replicas | One holder per tenant and session, on a compare-and-set with a 60 second expiry | C14 |
 | `REG-COORDMIRROR` | Postgres | `coordination_lease` | Gateway sweeper | Gateway replicas | A single-valued row per tenant and session, and a projection rather than an exclusion primitive | C15 |
-| `REG-SLOTCOUNT` | Redis | `lenny:pod:<pod>:active_slots` | Gateway replicas | Gateway replicas | An atomic per-pod counter that ceilings concurrent slots | C18 |
+| `REG-SLOTCOUNT` | Redis | `lenny:pod:<pod>:active_slots` | Gateway replicas | Gateway replicas | An atomic per-pod set of the sessions holding slots and of the leaked slots, whose cardinality ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) | C18 |
 | `REG-PODSTATE` | Postgres | `agent_pod_state` | WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas for `sessions_served` and `scrub_failure_count` | Gateway replicas | One row per pod. A read-optimized mirror carrying the pod phase the orphan-session reconciler reads, together with the gateway-written reuse counters the recycle disposition evaluates ([§12.6](12_storage-architecture.md#126-interface-design), [§4.7](04_system-components.md#47-runtime-adapter)) | C21 |
 | `REG-CLAIM` | Kubernetes API | `SandboxClaim` named `claim-<podName>` | Gateway replicas for the create, the status-subresource binding-state writes, and the deletes at hold expiry and when an acquisition ends the hold, and the WarmPoolController leader for the deletes at pod termination and orphan garbage collection | Gateway replicas and controllers | Cluster-wide per-pod acquisition on first claim. The object carries no owner reference, so the controller's delete is the reclamation path for a claim its holder did not remove ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) | C17 |
 
@@ -1887,7 +1887,7 @@ holds a connection to the pod (§28.5.2, §28.3).
 
 **Units carried outside the channel register.** The exclusion primitives themselves are register entries and
 link lifetimes rather than channels. `REG-COORDLEASE` admits one holder per tenant and session,
-`REG-SLOTCOUNT` is an atomic per-pod counter that ceilings concurrent slots, and `REG-CLAIM` is a
+`REG-SLOTCOUNT` ceilings a pod's concurrent slots, and `REG-CLAIM` is a
 cluster-wide per-pod acquisition on first claim, while `REG-COORDMIRROR` is a projection rather than an
 exclusion primitive (§28.3). At the link level, `LNK-POD-GRPC` carries one connection per gateway replica
 per pod and `LNK-GWCONTROL` one connection per pod process to one replica, so the per-replica unit is a
