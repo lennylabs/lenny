@@ -5999,7 +5999,9 @@ type ShutdownRequest struct {
 	// (§5.2): the adapter tears the named session down, keeps the pod
 	// process alive, runs the §5.2 whole-pod scrub with the carried
 	// parameters, and reports the binary outcome asynchronously via
-	// ReportPodScrub. Absent on the terminate path (the pod is replaced).
+	// ReportPodScrub. Absent on every other release, whose claim effect
+	// §4.6.3 assigns; the WarmPoolController projects the pod's phase from
+	// the claim (§4.6.1).
 	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
 	Recycle *RecycleScrub `protobuf:"bytes,5,opt,name=recycle,proto3" json:"recycle,omitempty"`
 	// coordination_generation is the gateway's view of the active

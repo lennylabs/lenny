@@ -1054,8 +1054,8 @@ type RecycleScrub struct {
 // before this call bounds it. The returned bool reports whether the ending
 // session's runtime exited cleanly.
 //
-// The plain Shutdown helper leaves the recycle sub-message nil (the
-// terminate path, on which the pod is replaced).
+// The plain Shutdown helper leaves the recycle sub-message nil, and the
+// claim effect of that release is the one §4.6.3 assigns.
 //
 // spec: §4.7 Shutdown recycle disposition; §5.2 whole-pod scrub trigger.
 func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc RecycleScrub) (bool, error) {

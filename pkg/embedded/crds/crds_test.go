@@ -175,3 +175,49 @@ func TestEmbeddedCRDsPreserveUnknownFields_spec_10_437(t *testing.T) {
 		}
 	}
 }
+
+// TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3 pins
+// the SandboxClaim CRD descriptions that operators read with `kubectl
+// explain` to the §4.6.3 end-of-occupancy outcome. The `failed` phase is
+// the scrub-failure retirement under `onScrubFailure: fail` only: a
+// crashed session no longer writes it, because a release that ends the
+// occupancy without reuse deletes the claim instead. The `spec`
+// description lists that delete among the claim's deletion steps. A
+// failure means the generated description drifted from the Go doc
+// comments on SandboxClaimSpec and SandboxClaimStatus.Phase, or those
+// comments regressed to the retired outcome; re-run `make generate` and
+// re-copy the chart manifest.
+//
+// spec: §4.6.3 (SandboxClaim.status.phase enumeration), §4.6.3 (CRD field
+// ownership).
+func TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3(t *testing.T) {
+	var claim *apiextensionsv1.CustomResourceDefinition
+	for _, crd := range embeddedCRDs(t) {
+		if crd.Name == "sandboxclaims.lenny.dev" {
+			claim = &crd
+			break
+		}
+	}
+	if claim == nil || len(claim.Spec.Versions) == 0 || claim.Spec.Versions[0].Schema == nil {
+		t.Fatal("embedded sandboxclaims.lenny.dev CRD with a schema not found")
+	}
+	root := claim.Spec.Versions[0].Schema.OpenAPIV3Schema
+	specDesc := strings.Join(strings.Fields(root.Properties["spec"].Description), " ")
+	phaseDesc := strings.Join(strings.Fields(root.Properties["status"].Properties["phase"].Description), " ")
+
+	cases := []struct {
+		name, desc, want string
+		present          bool
+	}{
+		{"spec lists the release delete", specDesc, "a release that ends the occupancy without reuse", true},
+		{"phase failed is scrub failure only", phaseDesc, "`failed` on a scrub-failure retirement (`onScrubFailure: fail`)", true},
+		{"phase omits crashed-session retirement", phaseDesc, "crashed-session", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Contains(tc.desc, tc.want); got != tc.present {
+				t.Errorf("description contains %q = %v; want %v\ndescription: %s", tc.want, got, tc.present, tc.desc)
+			}
+		})
+	}
+}
