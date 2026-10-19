@@ -4,7 +4,7 @@
 
 The specification states three things this proposal changes.
 
-1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. The gateway leader releases a member that its session's release left behind once the session has been terminal for longer than `claimOrphanTimeout`, after the pod's adapter confirms a clean stop of the session. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a). For that confirmation, an adapter `Shutdown` that finds no entry reports an unclean exit while the session's identifier is under the §5.2 reclaim hold (SPEC-1k).
+1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. The gateway leader releases a member that its session's release left behind once the session has been terminal for longer than `claimOrphanTimeout`, after the pod's adapter confirms a clean stop of the session. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a). For that confirmation, an adapter `Shutdown` that finds no entry reports an unclean exit while another `Shutdown`'s teardown of the session is in flight or after the last one reported an unclean exit (SPEC-1k).
 2. **The SandboxClaim writer set names the gateway's delete by a release that ends the occupancy without reuse.** §4.6.3's ownership row is the home of the rule (SPEC-2c). The non-spec **SandboxClaim end-of-occupancy disposition table** derives it path by path from the tree. SPEC-2 **Site classification.** lists the other spec sites SPEC-2 edits or leaves to an owner.
 3. **full_revoke returns and deny-lists the credential leases of the sessions it cancels, and releases each cancelled session through the session release.** §11.4 steps 1, 2, 4, and 6 and the **Note** state it (SPEC-3). The non-spec **full_revoke release table** derives it for each pre-revoke session state.
 
@@ -178,7 +178,7 @@ with
 
 **SPEC-1j. §4.6.1 **Pod claim mechanism (per-pod occupancy claim):**.** Replace "is gated by the atomic Redis slot counter, with a Postgres fallback" with "is gated by the Redis slot set, with a Postgres fallback".
 
-**SPEC-1k. §4.7.1 rules 11 and 15, §5.2 **Slot-identifier reclaim hold.**, and §7.1 **Pod-side reclaim on a failed bind.**: the `absent` answer under the reclaim hold.** The stale-slot release of SPEC-1a removes a member only on a clean exit, and today an `absent` answer reports a clean exit even when a cleanup that did not complete still holds the identifier, so the runtime may still run. Make four in-place substitutions.
+**SPEC-1k. §4.7.1 rules 11 and 15, and §7.1 **Pod-side reclaim on a failed bind.**: the `absent` answer after an unclean or in-flight teardown.** The stale-slot release of SPEC-1a removes a member only on a clean exit, and today an `absent` answer reports a clean exit even after a `Shutdown` teardown of the session reported an unclean exit, so the slot's runtime may still run. A release outside a `Shutdown` changes no answer, so the §5.2 disposition-table rows whose `leaked` cell is "Not entered" stay true. Make three in-place substitutions.
 
 In spec/04_system-components.md §4.7.1, replace
 
@@ -189,7 +189,7 @@ In spec/04_system-components.md §4.7.1, replace
 with
 
 ```
-11. **The no-entry rule.** A request for a session the adapter holds no entry for removes nothing, performs neither teardown, and answers `absent`. It reaches a request of either form. Its answer reports an unclean exit while the session's identifier is under the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold, because a cleanup of the slot is then in flight or did not complete, and a clean exit otherwise.
+11. **The no-entry rule.** A request for a session the adapter holds no entry for removes nothing, performs neither teardown, and answers `absent`. It reaches a request of either form. Its answer reports an unclean exit while another `Shutdown` that removed the session's entry is still performing its teardown, and after the last `Shutdown` that removed the session's entry reported an unclean exit, because the session's runtime may then still run. It reports a clean exit otherwise.
 ```
 
 In the same file, rule 15, replace
@@ -204,18 +204,6 @@ with
 Rule 11 and rule 13 remove no entry and perform neither teardown. A response reporting `superseded` reports a clean exit, and a response reporting `absent` reports the exit rule 11 states. A response reporting `reclaimed` reports a clean or an unclean exit on the terms the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) disposition table states.
 ```
 
-In spec/05_runtime-registry-and-pool-model.md §5.2 **Slot-identifier reclaim hold.**, replace
-
-```
-A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure.
-```
-
-with
-
-```
-A refusal, and the unclean exit that a `Shutdown` answered under [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 11 reports for a held identifier, are the only records the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure.
-```
-
 In spec/07_session-lifecycle.md §7.1 **Pod-side reclaim on a failed bind.**, replace
 
 ```
@@ -225,7 +213,7 @@ whatever outcome the answer carries, so a reclaim answered `superseded` or `abse
 with
 
 ```
-whatever outcome the answer carries, so a reclaim answered `superseded` is acknowledged clean, and a reclaim answered `absent` is acknowledged clean unless the identifier is under the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 11).
+whatever outcome the answer carries, so a reclaim answered `superseded` is acknowledged clean, and a reclaim answered `absent` is acknowledged clean unless its answer reports the unclean exit [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 11 states.
 ```
 
 ### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3, § 4.7, § 4.9; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.1, § 7.2; spec/08_recursive-delegation.md § 8.3; spec/15_external-api-surface.md § 15.1; spec/24_lenny-ctl-command-reference.md § 24.11; spec/28_communication-channels.md § 28.3, § 28.5.1, § 28.8; spec/29_communication-scenarios.md § 29.4
@@ -647,7 +635,7 @@ The reported lease count is the number of leases step 1 adds to the deny list.
 ## Spec files touched
 
 - spec/04_system-components.md (SPEC-1j, SPEC-1k, SPEC-2a, SPEC-2b, SPEC-2c, SPEC-2d, SPEC-2m, SPEC-2p)
-- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-1k, SPEC-2e, SPEC-2t)
+- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-2e, SPEC-2t)
 - spec/06_warm-pod-model.md (SPEC-1g, SPEC-2f, SPEC-2h, SPEC-2n)
 - spec/07_session-lifecycle.md (SPEC-1k, SPEC-2l, SPEC-2o)
 - spec/08_recursive-delegation.md (SPEC-2q)
