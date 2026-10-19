@@ -17,12 +17,12 @@ implemented-by:
 
 This section was written on 2026-10-19 from the output of an adversarial review run on this proposal.
 
-The run converged in both loops. Counts are for this run.
+The run did not converge. Counts are for this run.
 
-- Spec loop: ran 29 rounds and converged. The loop ran 15 full-pool sweeps.
-- Non-spec loop: ran 4 rounds and converged. The loop ran 1 full-pool sweep.
+- Spec loop: ran 32 rounds and did not converge. The loop ran 17 full-pool sweeps.
+- Non-spec loop: not run.
 
-The run fixed 10 findings. No finding from the run remains open.
+The run fixed 4 findings. Findings the spec loop had not closed when it stopped remain open. The run did not settle the spec questions it reviewed.
 
 Convergence does not record approval. The approval fields in the frontmatter are not set by the run.
 
