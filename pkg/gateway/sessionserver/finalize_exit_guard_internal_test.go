@@ -352,8 +352,9 @@ func TestFinalizePlanParseFailureStoreErrorReclaims_spec_7_1(t *testing.T) {
 
 // A prepare failure whose failure write loses to a terminal writer answers 409
 // with the terminal state instead of the prepare-phase error, and revokes the
-// session's lease. The pool-resolution failure here is a pre-Prepare exit, so
-// prepareAtFinalize's own reclaim released the lease once before the revoke.
+// session's lease. The pool-resolution failure here is a pre-Prepare exit,
+// which releases nothing itself, so the handler's revoke is the only lease
+// release and the claim stays with the terminal writer.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizePrepareFailureOvertakenAnswers409_spec_15_1(t *testing.T) {
 	f := newExitFixture(t, Options{})
@@ -368,9 +369,11 @@ func TestFinalizePrepareFailureOvertakenAnswers409_spec_15_1(t *testing.T) {
 	if got := f.state(t, "s1"); got != session.StateCancelled {
 		t.Errorf("state = %q, want cancelled kept", got)
 	}
-	if !reflect.DeepEqual(f.assigner.released, []string{"s1", "s1"}) {
-		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (pre-Prepare reclaim, then the handler's revoke)",
-			f.assigner.released)
+	if !reflect.DeepEqual(f.assigner.released, []string{"s1"}) {
+		t.Errorf("ReleaseSession calls = %v, want [s1] (the handler's revoke only)", f.assigner.released)
+	}
+	if !f.claimPresent(t) {
+		t.Errorf("claim-%s deleted by an overtaken call, want it left to the terminal writer", exitPod)
 	}
 	if n := f.auditCount(auditSessionFailed); n != 0 {
 		t.Errorf("session.failed rows = %d, want 0", n)
@@ -393,7 +396,7 @@ func TestFinalizePrepareFailureCommittedRevokes_spec_7_1(t *testing.T) {
 		t.Errorf("state = %q, want failed", got)
 	}
 	if !reflect.DeepEqual(f.assigner.released, []string{"s1", "s1"}) {
-		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (pre-Prepare reclaim, then the handler's revoke)",
+		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (the failure write's hook reclaim, then the handler's revoke)",
 			f.assigner.released)
 	}
 	if n := f.auditCount(auditSessionFailed); n != 1 {

@@ -580,9 +580,6 @@ type preClaimCaller struct {
 	// call runs the caller and reports how many times a resume driver's
 	// post-claim hook ran.
 	call func(ctx context.Context, f *lookupFixture, row sessionstore.Session) (hookRuns int, err error)
-	// reclaimsCreateClaim reports that the caller holds a create-time claim
-	// that a failure must return.
-	reclaimsCreateClaim bool
 }
 
 func preClaimCallers() []preClaimCaller {
@@ -612,7 +609,7 @@ func preClaimCallers() []preClaimCaller {
 			},
 		},
 		{
-			name: "finalize lease assignment", runtime: lookupExclusiveRT, reclaimsCreateClaim: true,
+			name: "finalize lease assignment", runtime: lookupExclusiveRT,
 			row: func(r *sessionstore.Session) {
 				r.State = session.StateFinalizing
 				r.PodAssignment = lookupSandbox
@@ -688,7 +685,8 @@ func preClaimCallers() []preClaimCaller {
 // failed lookup fails the caller closed: it returns the retryable
 // *CredentialLookupError, mints no credential lease, issues no claim or slot
 // write to the cluster, runs no resume entry hook, and leaves a delegated
-// child in created. A finalize-time row returns its create-time claim. The
+// child in created. A finalize-time row leaves its create-time claim to the
+// applied failure write's post-terminal hook. The
 // definite answers keep their meaning: no tenant row proceeds with no policy,
 // an absent runtime or origin is CREDENTIAL_POOL_EXHAUSTED, and the no-fault
 // control moves past the credential stage.
@@ -748,11 +746,9 @@ func TestCredentialPreClaimCallersFailClosed_spec_4_9(t *testing.T) {
 				if hookRuns != 0 {
 					t.Errorf("resume entry hook ran %d times, want 0 (the failure is pre-claim)", hookRuns)
 				}
-				claimsAfter := f.claimCount(t)
-				switch {
-				case caller.reclaimsCreateClaim && claimsAfter != claimsBefore-1:
-					t.Errorf("claims %d -> %d, want the create-time claim returned", claimsBefore, claimsAfter)
-				case !caller.reclaimsCreateClaim && claimsAfter != claimsBefore:
+				// A finalize-time row keeps its create-time claim here: the caller's
+				// applied failure write releases it through the post-terminal hook.
+				if claimsAfter := f.claimCount(t); claimsAfter != claimsBefore {
 					t.Errorf("claims %d -> %d, want unchanged", claimsBefore, claimsAfter)
 				}
 				if caller.seed {

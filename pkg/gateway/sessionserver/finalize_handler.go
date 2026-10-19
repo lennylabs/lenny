@@ -47,10 +47,11 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // or WorkspacePlan write. The pre-lock Get and Validate remain as an early
 // rejection, because resolveFinalizePlan needs the row.
 //
-// A failure in any prepare step reclaims the claimed pod via the §6.2
-// pre-attached disposition (the binder's failPhase or reconnect reclaim, or
-// prepareAtFinalize's own reclaim before Prepare runs), revokes any lease
-// recorded under the session, and surfaces the failure through
+// A failure in any prepare step writes `failed`, whose post-terminal hook
+// releases the claimed pod or slot by the row's pool kind (the binder's
+// failPhase or reconnect reclaim has already released an exclusive pod after
+// a through-Prepare failure), revokes any lease recorded under the session,
+// and surfaces the failure through
 // writePodClaimError (§6.2 client visibility). A
 // deterministic setup-command exit surfaces as the non-retryable 422
 // SETUP_COMMAND_FAILED, and a transient setup-window failure as the
@@ -72,8 +73,10 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // deletes no claim (the terminal writer's reclaim owns the pod), and
 // answers 409 INVALID_STATE_TRANSITION with the terminal state, even when
 // its own prepare phase also failed. A ready write that fails with a store
-// error after AssignCredentials succeeded reclaims the pod and revokes the
-// lease, so a post-assignment finalize failure does not leak the lease.
+// error may have committed, so the handler releases the pod only through an
+// applied failure write's hook; when that write also reports a store error,
+// the finalizing watchdog's terminal write and hook release the pod if the row
+// is still `finalizing`.
 //
 // The single-use uploadToken invalidation, upload-channel/limits close,
 // SSE status-change, plan-warning publish, and the §16.6 finalize audit
@@ -150,7 +153,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// mode, a concurrent-workspace slot, or a row with no live binding).
 	plan, perr := storedWorkspacePlanForFinalize(updated, hasPlan, planJSON)
 	if perr != nil {
-		s.finalizePlanParseFailed(w, r, tenantID, id, updated.PodAssignment, perr)
+		s.finalizePlanParseFailed(w, r, tenantID, id, updated.PodAssignment, updated.ScrubPolicy, perr)
 		return
 	}
 	prep, err := s.prepareAtFinalize(r.Context(), updated, plan)
@@ -165,11 +168,6 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if prep != nil {
 		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
 	}
-	// Capture the pod↔session binding from the finalizing-write result before
-	// the ready write below: a failed Update returns the zero Session, so
-	// reading PodAssignment off its result would lose the binding the
-	// store-error branch reclaims.
-	podAssignment := updated.PodAssignment
 	uploadTokenDigest := updated.UploadTokenDigest
 	uploadTokenExpiry := updated.UploadTokenExpiry
 	// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal
@@ -184,7 +182,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		s.finalizeReadyWriteFailed(w, r, tenantID, id, podAssignment, prep != nil, err)
+		s.finalizeReadyWriteFailed(w, r, tenantID, id, err)
 		return
 	}
 	// spec: §7.1 (single-use uploadToken invalidation) — once the upload

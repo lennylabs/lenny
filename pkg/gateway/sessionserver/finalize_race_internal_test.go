@@ -111,7 +111,7 @@ func TestFailFinalizingCommitsAndEmitsTerminalTail_spec_7_2(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
 
-	if err := srv.failFinalizing(context.Background(), "acme", "s", false); err != nil {
+	if err := srv.failFinalizing(context.Background(), "acme", "s"); err != nil {
 		t.Fatalf("failFinalizing = %v, want nil", err)
 	}
 	if got := rowState(t, store, "s"); got != session.StateFailed {
@@ -139,7 +139,7 @@ func TestFailFinalizingLosesToTerminalWriter_spec_15_1(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
 
-	err := srv.failFinalizing(context.Background(), "acme", "s", false)
+	err := srv.failFinalizing(context.Background(), "acme", "s")
 	var pe *session.PreconditionError
 	if !errors.As(err, &pe) || pe.CurrentState != session.StateCancelled {
 		t.Fatalf("failFinalizing = %v, want *session.PreconditionError with currentState cancelled", err)
