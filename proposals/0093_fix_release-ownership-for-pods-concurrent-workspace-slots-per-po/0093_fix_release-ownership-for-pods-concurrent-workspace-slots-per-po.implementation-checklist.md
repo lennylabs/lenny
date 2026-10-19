@@ -24,7 +24,7 @@
       Tiers 0, 1, 7a. Depends on: S6, S10
 - [ ] **S12 · code** — CODE-7. Lands the full_revoke release routing, with the tests **Testing** assigns to CODE-7.
       Tiers 0, 1, 2, 3, 9. Depends on: S3, S7, S11
-- [ ] **S13 · code** — CODE-9. Lands the stale-slot reaper, its flags and chart values, the shared claim-orphan timeout with its default and its checks, the launch bound, and the adapter's `absent` answer after an unclean or in-flight `Shutdown` teardown, with the tests **Testing** assigns to CODE-9.
+- [ ] **S13 · code** — CODE-9. Lands the stale-slot reaper, its flags and chart values, the shared claim-orphan timeout with its default and its checks, the launch bound, the per-row terminal stamp, and the adapter's `absent` answer after an unclean or in-flight `Shutdown` teardown, with the tests **Testing** assigns to CODE-9.
       Tiers 0, 1, 2, 3, 4, 5, 10. Depends on: S1, S6
 - [ ] **S14 · test** — TEST-1. Lands the harness extension and the cross-tier tests.
       Tiers 0, 1, 2, 4, 5, 7a, 8, 9, 11. Depends on: S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13
