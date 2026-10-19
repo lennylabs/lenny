@@ -76,7 +76,14 @@ Redis loss is recoverable because all durable state lives in Postgres:
 1. **Quota counters** -- rehydrated from Postgres checkpoints using the MAX rule
 2. **Routing cache** -- rebuilt from SessionStore pod assignments
 3. **Delegation budget counters** -- reconstructed from `delegation_tree_budget` table
-4. **Slot counters** -- blocking rehydration from Postgres before accepting slot assignments
+4. **Slot sets** -- rebuilt from the active sessions recorded in Postgres before slot assignments resume.
+
+   After a Redis restart that loses the data, the rebuild does not restore leaked slots, which are slots whose cleanup the runtime adapter did not report as clean. The rebuild also drops a slot that a session reserved before the session's record named the pod, so until that session ends, the session can lose its pod or the pod can run one session more than `maxConcurrentSessions`. A release repeated after the rebuild can scrub or retire a pod held for reuse.
+
+   When an outage ends and Redis kept its data, the gateway keeps each pod's slots and adds the active sessions recorded on the pod and the sessions it admitted during the outage. The gateway frees no slot at that point. A gateway replica that did not see the outage can admit more sessions than `maxConcurrentSessions` allows for a few seconds, until a replica that saw it rebuilds the sets. A session admitted during the outage can stay uncounted until it ends when the gateway replica that admitted it restarts before it rebuilds the sets. While such a session is uncounted, the pod can admit sessions over the limit, and the session can lose its pod when another session's release empties the pod's slot set.
+
+   A slot whose release failed during the outage stays counted, whether or not the gateway replica that failed to release it still runs, and the pod admits one session fewer while it does. The same holds for a session admitted during the outage that ended before the replica that admitted it rebuilt the sets. The gateway's stale slot reaper frees each such slot after `controller.claimOrphanTimeoutSeconds`, its pass interval, and its drain time, which at the default settings is within about 20 minutes of the session's end, while the pod's other sessions keep running ([Stale slot reaper](configuration#stale-slot-reaper)). A slot the reaper cannot free, because the pod's runtime adapter does not answer or reports that the session's runtime may still be running, stays counted, and the controller drains the pod once the pod's last active session ends.
+
 5. **Rate limit counters** -- reset (brief fail-open window, bounded by per-replica ceiling)
 
 ---

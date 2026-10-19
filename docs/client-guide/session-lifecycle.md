@@ -422,7 +422,7 @@ When `residualStateWarning: true`, the session runs on a pool configured to reus
 
 ### Session mode with recycling
 
-In session mode the platform binds the session to a pod and preserves conversation context for the session's lifetime (`conversationContinuity: "platform"`). When the pool sets `recycle.enabled: true`, the pod is reused across sequential sessions of the same tenant; a whole-pod scrub runs when occupancy reaches zero, and the pod is held for the tenant for a short window before returning to the idle pool. Recycling is transparent to the client: the session API is unchanged, and the only client-visible signal is `podReuse: true` / `residualStateWarning: true` in the response.
+In session mode the platform binds the session to a pod and preserves conversation context for the session's lifetime (`conversationContinuity: "platform"`). When the pool sets `recycle.enabled: true`, the pod is reused across sequential sessions of the same tenant; a whole-pod scrub runs when occupancy reaches zero, and the pod is held for the tenant for a short window before returning to the idle pool, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). Recycling is transparent to the client: the session API is unchanged, and the only client-visible signal is `podReuse: true` / `residualStateWarning: true` in the response.
 
 ```mermaid
 sequenceDiagram

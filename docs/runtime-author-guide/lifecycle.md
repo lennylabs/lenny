@@ -399,7 +399,7 @@ ASCII fallback for the diagram above (recycle-lifecycle):
 
 The gateway drives the recycle boundary; your runtime sees only each session's messages, keyed by `sessionId`:
 
-1. When occupancy reaches zero, the gateway patches the pod's `SandboxClaim` to `recycling`.
+1. When occupancy reaches zero, the gateway patches the pod's `SandboxClaim` to `recycling`, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)); such a release deletes the claim, and steps 2 to 4 do not run.
 2. The adapter purges the credential file, runs deployer `cleanupCommands`, and runs the whole-pod scrub (files removed, processes in the adapter's container killed, `/tmp` flushed), then reports the outcome and whether your runtime process can serve the next session. The scrub does not reach your runtime process.
 3. On a `preConnect` pool the SDK re-warm runs after a successful scrub (the pod projects `sdk_connecting`); on other pools the claim moves straight to `reserved`.
 4. The pod is held for its tenant in `reserved` for the hold TTL. A same-tenant session arriving within the window rebinds with no acquisition. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. If the hold expires, the pod returns to `idle`.

@@ -97,7 +97,7 @@ lenny-ctl admin sessions force-terminate <session-id> \
   --reason "workspace_seal_failed"
 ```
 
-The session transitions to `failed` and its pod is released to the pool (§24.11). The platform retains any partial upload under the object-store forensic-retention policy; do not delete the partial object until the seal failure is diagnosed.
+The session transitions to `failed`, and the gateway releases its pod. The platform retains any partial upload under the object-store forensic-retention policy; do not delete the partial object until the seal failure is diagnosed.
 
 ### Step 4 — Credential
 

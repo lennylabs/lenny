@@ -1086,6 +1086,27 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		from:       "and the hold-expiry delete,",
 		to:         "and the deletes at hold expiry and when an acquisition ends the hold,",
 	},
+	{
+		// The REG-SLOTCOUNT purpose cell follows §5.2, where the per-pod
+		// slot counter became a set of the sessions holding slots and of
+		// the leaked slots, with a keyed, idempotent release.
+		proposal:   "0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po",
+		linePrefix: "| `REG-SLOTCOUNT` |",
+		from:       "An atomic per-pod counter that ceilings concurrent slots",
+		to: "An atomic per-pod set of the sessions holding slots and of the leaked slots, whose cardinality " +
+			"ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes))",
+	},
+	{
+		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// ownership row, which gained the gateway delete by a release that
+		// ends the occupancy without reuse. It applies after the rewrite
+		// above, so its replaced text is that rewrite's result.
+		proposal:   "0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po",
+		linePrefix: "| `REG-CLAIM` |",
+		from:       "and the deletes at hold expiry and when an acquisition ends the hold,",
+		to: "and the deletes at hold expiry, when an acquisition ends the hold, and when a release ends the " +
+			"occupancy without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),",
+	},
 }
 
 // applySupersessions returns a copy of staged with every register entry
