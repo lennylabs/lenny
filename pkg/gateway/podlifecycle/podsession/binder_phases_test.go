@@ -392,7 +392,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 		CredentialPools: map[string]string{"anthropic": "claude-prod"},
 	})
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-ttl"); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-ttl", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
@@ -433,7 +433,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-created"); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-created", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
@@ -493,7 +493,7 @@ func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
 	sw := createdsweeper.New(store, createdsweeper.StaticTenants{"acme"}, createdsweeper.Options{
 		Clock: func() time.Time { return now },
 		Reclaim: func(ctx context.Context, podName, _, sessionID string) error {
-			return binder.ReclaimClaimed(ctx, podName, sessionID)
+			return binder.ReclaimClaimed(ctx, podName, sessionID, false)
 		},
 	})
 	dropped, err := sw.Tick(context.Background(), now)

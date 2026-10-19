@@ -505,7 +505,9 @@ func (s *Server) reclaimFinalizedPod(ctx context.Context, sandboxName, sessionID
 	if s.podBinder == nil || sandboxName == "" {
 		return
 	}
-	if err := s.podBinder.ReclaimClaimed(ctx, sandboxName, sessionID); err != nil {
+	// perSlot is false: this exit still deletes the claim by name on every
+	// pool kind, until the finalize exits pass the row's scrubPolicy here.
+	if err := s.podBinder.ReclaimClaimed(ctx, sandboxName, sessionID, false); err != nil {
 		log.Printf("sessionserver: reclaim finalized pod %s for session %s after finalize failure: %v",
 			sandboxName, sessionID, err)
 	}

@@ -89,8 +89,8 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 // drops an abandoned `created`-state row. It closes over the binder (which
 // carries the kube Client, Namespace, and CredentialAssigner) so the sweep
 // releases the pod claimed at /create and revokes any assigned lease through
-// the same ReclaimClaimed call /terminate uses. ReclaimClaimed releases by pod
-// name, so the poolRef the Reclaimer carries is dropped here. Returns nil when
+// ReclaimClaimed with perSlot false, which deletes the claim by pod name, so
+// the poolRef the Reclaimer carries is dropped here. Returns nil when
 // the gateway runs without a pod binder (in-memory mode), leaving the sweep to
 // drop the row without a pod release.
 //
@@ -100,7 +100,9 @@ func createdSweeperReclaim(binder *podsession.Binder) createdsweeper.Reclaimer {
 		return nil
 	}
 	return func(ctx context.Context, podName, _ /* poolRef */, sessionID string) error {
-		return binder.ReclaimClaimed(ctx, podName, sessionID)
+		// perSlot is false: the sweep deletes the claim by name on every
+		// pool kind, as it did before ReclaimClaimed became slot-aware.
+		return binder.ReclaimClaimed(ctx, podName, sessionID, false)
 	}
 }
 
