@@ -1,10 +1,10 @@
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the `REG-SLOTCOUNT` set, its keyed release, the merging rehydration, and the `rehydrated` flag lifetime, all of SPEC-1.
+- [ ] **S1 · spec** — SPEC-1. Lands the staged edits SPEC-1a to SPEC-1j.
       Tiers 0. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the SandboxClaim writer edge and its citing sites, all of SPEC-2.
+- [ ] **S2 · spec** — SPEC-2. Lands the staged edits SPEC-2a to SPEC-2u.
       Tiers 0. Depends on: S1
-- [ ] **S3 · spec** — SPEC-3. Lands the §11.4 full_revoke release steps and **Note** edits, all of SPEC-3.
+- [ ] **S3 · spec** — SPEC-3. Lands the staged edits SPEC-3a and SPEC-3b.
       Tiers 0. Depends on: —
 - [ ] **S4 · docs** — DOCS-1. Lands the reader-page edits and the tier-11 gate retargets the spec steps and those edits need.
       Tiers 0, 11. Depends on: S1, S2, S3
