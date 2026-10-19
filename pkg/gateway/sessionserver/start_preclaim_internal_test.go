@@ -978,11 +978,11 @@ func TestWritePodClaimErrorAssignmentRaceEmitsMetric(t *testing.T) {
 // createClaimNeedsRollback decides whether the handler must release the
 // create-time claim itself or whether the binder already released it. The
 // reservation-leak regression: a slot reservation's create-time active_slots
-// increment is leaked when startOnPod fails in its pre-bind ResolvePool /
-// PoolWarmingUp / manifest lookups (before BindReservedSlot, which owns the
-// non-idempotent slot-count release), so the predicate must release for a
-// non-SlotBindError slot failure and skip a SlotBindError to avoid a
-// double-decrement.
+// member is leaked when startOnPod fails in its pre-bind ResolvePool /
+// PoolWarmingUp / manifest lookups (before BindReservedSlot, which releases
+// the member on its own failures), so the predicate must release for a
+// non-SlotBindError slot failure and skip a SlotBindError, whose member the
+// binder already released.
 func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
 	exclusive := &podsession.ClaimResult{SandboxName: "pod-a"} // SlotID == "" → exclusive
 	slot := &podsession.ClaimResult{SandboxName: "pod-a", SlotID: "sess-1"}
@@ -992,7 +992,7 @@ func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
 	// reservation is then unreleased and must be rolled back here.
 	preBindWarming := &podsession.PoolWarmingError{Pool: "p", PodsWarming: 1}
 	// BindReservedSlot already released the reservation on its own failure,
-	// surfaced as a *podsession.SlotBindError; releasing again double-decrements.
+	// surfaced as a *podsession.SlotBindError; a second release is redundant.
 	binderFailure := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
 
 	cases := []struct {
@@ -1011,7 +1011,7 @@ func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
 		{"slot reservation, wrapped SlotBindError", slot, fmt.Errorf("dispatch: %w", binderFailure), false},
 		// The §5.2 client-error classification keeps the bind error in its
 		// chain, so the binder-owned release is still recognized and the
-		// reservation is not decremented twice. The classifier only rewrites
+		// reservation is not released twice. The classifier only rewrites
 		// a non-retryable reason, so this case carries an InvalidArgument
 		// (workspace_validation) failure.
 		{

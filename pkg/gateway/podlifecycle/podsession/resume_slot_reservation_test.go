@@ -5,6 +5,8 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -33,18 +35,18 @@ func resumeSlotFixture(t *testing.T, c client.Client, dial func(string) (*adapte
 	return b, mr
 }
 
-// resumeActiveSlots reads the pod's §5.2 occupancy counter.
+// resumeActiveSlots reads the cardinality of the pod's §5.2 slot set.
 func resumeActiveSlots(t *testing.T, mr *miniredis.Miniredis, sandboxName string) string {
 	t.Helper()
-	key := "lenny:pod:" + sandboxName + ":active_slots"
+	key := "lenny:pod:{" + sandboxName + "}:active_slots"
 	if !mr.Exists(key) {
 		return "0"
 	}
-	v, err := mr.Get(key)
+	v, err := mr.Members(key)
 	if err != nil {
 		t.Fatalf("read %s: %v", key, err)
 	}
-	return v
+	return strconv.Itoa(len(v))
 }
 
 // resumeRequest is the concurrent-pool resume the reservation cases drive.
@@ -239,7 +241,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 		// A sibling slot's occupancy, held by a co-tenant session that
 		// landed on the pod after connect's claim CREATE.
-		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", 4); err != nil {
+		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", "sibling", 4); err != nil {
 			t.Fatalf("seed sibling occupancy: %v", err)
 		}
 
@@ -273,7 +275,7 @@ func TestResumeOntoAFullPodReservesAndReleasesNothing_spec_5_2(t *testing.T) {
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 	for i := 0; i < 2; i++ {
-		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", 2); err != nil {
+		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", fmt.Sprintf("co-%d", i), 2); err != nil {
 			t.Fatalf("seed co-tenant occupancy %d: %v", i, err)
 		}
 	}

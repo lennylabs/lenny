@@ -79,10 +79,10 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 	const pod = "pod-outage-1"
 	const maxConcurrent = 4
 
-	// Fast path: Redis is healthy, so the reservation increments the Redis
-	// counter. The rehydrated flag is absent on a fresh counter, so the first
+	// Fast path: Redis is healthy, so the reservation adds the session's
+	// member to the pod's Redis slot set. The rehydrated flag is absent on a fresh counter, so the first
 	// reservation seeds from Postgres (zero live sessions) and admits.
-	if count, _, err := counter.Reserve(ctx, pod, maxConcurrent); err != nil {
+	if count, _, err := counter.Reserve(ctx, pod, "outage-fast", maxConcurrent); err != nil {
 		t.Fatalf("Reserve on the Redis fast path: %v", err)
 	} else if count != 1 {
 		t.Fatalf("fast-path count = %d, want 1", count)
@@ -100,7 +100,7 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 
 	// Degraded path: the Redis-only outage must not reject all dispatch. The
 	// gate admits via Postgres (2 live + this admission = 3, below the bound).
-	count, _, err := counter.Reserve(ctx, pod, maxConcurrent)
+	count, _, err := counter.Reserve(ctx, pod, "outage-degraded", maxConcurrent)
 	if err != nil {
 		t.Fatalf("Reserve during the Redis outage must degrade to the Postgres fallback, got: %v", err)
 	}
@@ -124,9 +124,9 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(racers)
 		for i := 0; i < racers; i++ {
-			go func() {
+			go func(i int) {
 				defer wg.Done()
-				c, _, rErr := counter.Reserve(ctx, racerPod, maxConcurrent)
+				c, _, rErr := counter.Reserve(ctx, racerPod, fmt.Sprintf("outage-racer-%d", i), maxConcurrent)
 				if rErr != nil {
 					return // ErrSlotsExhausted once the bound is reached.
 				}
@@ -134,7 +134,7 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 					mustSeedSlotSession(t, ctx, store, "acme", racerPod)
 					atomic.AddInt32(&admitted, 1)
 				}
-			}()
+			}(i)
 		}
 		wg.Wait()
 		if got := atomic.LoadInt32(&admitted); got != 1 {
@@ -147,7 +147,7 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 	// next reservation fails closed.
 	t.Run("fails closed after the bounded outage window", func(t *testing.T) {
 		clk.advance(61 * time.Second)
-		_, _, fErr := counter.Reserve(ctx, "pod-window", maxConcurrent)
+		_, _, fErr := counter.Reserve(ctx, "pod-window", "outage-window", maxConcurrent)
 		if fErr == nil {
 			t.Fatal("Reserve after the bounded outage window must fail closed, got nil")
 		}

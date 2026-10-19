@@ -34,7 +34,6 @@ package slotrelease_test
 import (
 	"context"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 
@@ -166,20 +165,20 @@ func (f *releaseFixture) bindSlot(t *testing.T, sessionID string) *podsession.Bi
 	return result
 }
 
-// activeSlots reads the pod's §5.2 occupancy counter. A missing key is
-// zero, which is the state the counter reaches when the last slot
+// activeSlots reads the cardinality of the pod's §5.2 slot set. A missing
+// key is zero, which is the state the set reaches when the last slot
 // releases.
 func (f *releaseFixture) activeSlots(t *testing.T) int {
 	t.Helper()
-	v, err := f.redis.Get("lenny:pod:" + releasePod + ":active_slots")
-	if err != nil {
+	key := "lenny:pod:{" + releasePod + "}:active_slots"
+	if !f.redis.Exists(key) {
 		return 0
 	}
-	n, cerr := strconv.Atoi(v)
-	if cerr != nil {
-		t.Fatalf("pod occupancy counter is not a number: %q", v)
+	members, err := f.redis.Members(key)
+	if err != nil {
+		t.Fatalf("read the pod's slot set: %v", err)
 	}
-	return n
+	return len(members)
 }
 
 // claimExists reports whether the per-pod occupancy claim is still there.

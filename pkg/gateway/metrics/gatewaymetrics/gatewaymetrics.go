@@ -1250,7 +1250,8 @@ func (m *Metrics) IncSlotPodReplacement(pool string) {
 
 // SetAdapterLeakedSlots sets the §6.2
 // gauge for podID to count: the number of slots on the pod whose cleanup
-// timed out and remain counted in active_slots until the pod terminates.
+// timed out and remain counted in the active_slots set as leaked:<sessionId>
+// members until the pod terminates.
 // Called by the concurrent-workspace slot path when a slot is leaked (and
 // to zero a pod's series when it terminates). spec: §6.2.
 func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {

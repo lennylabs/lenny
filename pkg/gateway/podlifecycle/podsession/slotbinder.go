@@ -148,8 +148,8 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 
 // ClaimSlot performs the §7.1 step-4 claim at session create for a §5.2
 // concurrent-workspace pool (sessionPolicy.maxConcurrentSessions > 1). It
-// reserves one of a pod's slots (the SandboxClaim plus the atomic
-// active_slots increment) and runs the §15.5 version handshake to confirm
+// reserves one of a pod's slots (the SandboxClaim plus the session's member
+// of the pod's active_slots set) and runs the §15.5 version handshake to confirm
 // the slot's pod is usable, then closes the handshake connection. It does
 // not materialize the workspace, run setup, assign credentials, or start
 // the runtime; those run at /finalize and /start through BindReservedSlot,
@@ -175,9 +175,9 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 	sandboxName, slotID, podIP, _, cl, err := b.connectSlot(ctx, req)
 	if err != nil {
 		// connectSlot returns a SlotBindError once the slot has been reserved
-		// (a resolveSandbox/dial/handshake failure after the active_slots
-		// increment); release the reservation so a failed create-time claim does
-		// not leak the pod's active_slots. An exhaustion sentinel
+		// (a resolveSandbox/dial/handshake failure after the session's
+		// active_slots member was added); release the reservation so a failed
+		// create-time claim does not leave the member counted. An exhaustion sentinel
 		// (ErrNoConcurrentSlot/ErrTenantMismatch/ErrNoIdlePod) reserved no slot
 		// and is returned unwrapped for the create handler's exhaustion mapping.
 		// The slot was reserved before any workspace RPC, so the adapter holds
@@ -213,10 +213,9 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 // On any failure after the reconnect it releases the reserved slot
 // (ReleaseSlotReservation) before returning the error, the slot analog of
 // the exclusive Prepare/Launch reclaim: a start that cannot reach `running`
-// reclaims the slot the create-time reservation held, so the pod's
-// active_slots is not leaked. The release runs exactly once here; the
-// callers therefore do not release the create-time slot reservation again on
-// a BindReservedSlot failure. The slot is not re-reserved and retried here,
+// reclaims the slot the create-time reservation held, so the session's
+// active_slots member is not left counted. The release is keyed by the
+// session, so a later release of the same session removes nothing. The slot is not re-reserved and retried here,
 // unlike BindSlot under the §5.2 retry policy; the start handler surfaces
 // the failure to the client.
 //
@@ -225,9 +224,8 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
 	res, err := b.bindReservedSlot(ctx, req, sandboxName, slotID)
 	if err != nil {
-		// Release the reserved slot so a failed start does not leak the pod's
-		// active_slots; the create-time reservation increment is rolled back by
-		// the matching release. The pod-side reclaim already ran at the failure
+		// Release the reserved slot so a failed start does not leave the
+		// session's active_slots member counted. The pod-side reclaim already ran at the failure
 		// site (materializeSlot), so the release carries the disposition it
 		// produced: a reclaim not acknowledged clean keeps the slot counted.
 		//
@@ -656,14 +654,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 // handler can map it to WARM_POOL_EXHAUSTED with the §5.2
 // "concurrent_slots_exhausted" reason.
 func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, err error) {
-	claimer := &podclaim.SlotClaimer{
-		Client:         b.Client,
-		Namespace:      b.Namespace,
-		Counter:        b.SlotCounter,
-		OnSlotConflict: b.SlotConflict,
-		OnRehydrate:    b.Rehydration,
-	}
-	res, err := claimer.ClaimSlot(ctx, podclaim.SlotRequest{
+	res, err := b.slotClaimer().ClaimSlot(ctx, podclaim.SlotRequest{
 		Pool:                  req.Pool,
 		SessionID:             req.SessionID,
 		TenantID:              req.TenantID,
@@ -741,14 +732,100 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 	return &SlotBindError{Pod: sandboxName, SlotID: slotID, Stage: stage, Err: err}
 }
 
-// ReleaseSlotReservation releases a §5.2 slot reservation (the SandboxClaim
-// and the active_slots count) without an adapter Shutdown. The §5.2 retry
-// policy calls it after a failed bind so the retry lands on a genuinely
-// fresh slot and the pod's active_slots is not leaked by the failed
-// attempt. It is the slot-count half of ReleaseSlot. It sends nothing to the
-// adapter because the pod-side reclaim already ran at the failure site, on
-// the connection the failed attempt held (materializeSlot, Binder.Resume);
-// this function releases the reservation afterwards.
+// slotClaimer returns the SlotClaimer every slot reservation and release of
+// this binder runs through. Its reservation rollbacks run on a detached
+// context bounded by the §5.2 per-slot cleanup floor, and a rehydration that
+// a reservation or a release performs is recorded through b.Rehydration.
+// spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
+// atomicity).
+func (b *Binder) slotClaimer() *podclaim.SlotClaimer {
+	return &podclaim.SlotClaimer{
+		Client:          b.Client,
+		Namespace:       b.Namespace,
+		Counter:         b.SlotCounter,
+		OnSlotConflict:  b.SlotConflict,
+		OnRehydrate:     b.Rehydration,
+		RollbackTimeout: slotCleanupFloor,
+		// §4.7: a recycling concurrent-session pool arms the missing-report
+		// timeout on the occupancy-zero edge (the last slot draining), the
+		// same gateway-side timeout session-mode Release arms.
+		RecycleBoundary: b.RecycleBoundary,
+	}
+}
+
+// slotReleaser is the slot release releaseSlotRetrying repeats.
+// *podclaim.SlotClaimer satisfies it.
+type slotReleaser interface {
+	ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (bool, error)
+}
+
+// slotReleaseFirstPause and slotReleaseMaxPause bound the pause between
+// releaseSlotRetrying attempts. The pause doubles from the first value up to
+// the second, so at least two attempts run within the detached release bound
+// when the first fails fast.
+const (
+	slotReleaseFirstPause = 100 * time.Millisecond
+	slotReleaseMaxPause   = time.Second
+)
+
+// releaseSlotRetrying runs claimer.ReleaseSlot on a detached context bounded
+// by the §5.2 per-slot cleanup floor and repeats it while the failure is a
+// slot-set release failure (podclaim.ErrSlotCounterRelease) and that context
+// has not ended. The keyed release is idempotent, so a repeat after a lost
+// reply removes nothing and skips the disposition. A disposition failure is
+// returned at once: the member is already removed, and a repeat would find no
+// member and skip the disposition.
+//
+// spec: §5.2 (Slot assignment atomicity); §6.2 (leaked slot semantics).
+func (b *Binder) releaseSlotRetrying(ctx context.Context, claimer slotReleaser, sandboxName, sessionID string, recycle, leaked bool) (bool, error) {
+	rctx, cancel := detachedReleaseContext(ctx)
+	defer cancel()
+	pause := b.slotReleasePause
+	if pause == nil {
+		pause = sleepContext
+	}
+	for attempt := 0; ; attempt++ {
+		recycled, err := claimer.ReleaseSlot(rctx, sandboxName, sessionID, recycle, leaked)
+		if err == nil || !errors.Is(err, podclaim.ErrSlotCounterRelease) {
+			return recycled, err
+		}
+		if perr := pause(rctx, retryPause(attempt)); perr != nil {
+			return false, err
+		}
+	}
+}
+
+// retryPause returns the pause after the given zero-based attempt.
+func retryPause(attempt int) time.Duration {
+	d := slotReleaseFirstPause
+	for i := 0; i < attempt && d < slotReleaseMaxPause; i++ {
+		d *= 2
+	}
+	return min(d, slotReleaseMaxPause)
+}
+
+// sleepContext waits d or until ctx ends, returning ctx's error in the
+// latter case.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// ReleaseSlotReservation releases a §5.2 slot reservation (the session's
+// member of the pod's slot set, and the per-pod SandboxClaim when this
+// release ends the occupancy) without an adapter Shutdown. The §5.2 retry
+// policy calls it after a failed bind so the retry lands on a fresh slot and
+// the failed attempt's member is not left counted. It is the slot-set half
+// of ReleaseSlot. It sends nothing to the adapter because the pod-side
+// reclaim already ran at the failure site, on the connection the failed
+// attempt held (materializeSlot, Binder.Resume); this function releases the
+// reservation afterwards. slotID is the session identifier.
 //
 // leaked is the disposition that reclaim produced. It is false for the
 // connect stage, where the slot was reserved before any workspace RPC and
@@ -756,35 +833,32 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 // for a reclaim not acknowledged clean, which keeps the slot counted so the
 // gateway does not over-assign into occupancy the adapter may still hold.
 //
-// The release runs on a context detached from the caller's and bounded by
-// the §5.2 per-slot cleanup floor, because §7.1 requires it even when the
-// failing RPC's context is already cancelled or past its deadline.
+// The release runs through releaseSlotRetrying, on a context detached from
+// the caller's and bounded by the §5.2 per-slot cleanup floor, because §7.1
+// requires it even when the failing RPC's context is already cancelled or
+// past its deadline.
 //
 // spec: §7.1 (normal flow); §5.2 (slot retry releases the reservation);
 // §4.7 (recycle disposition); §6.2 (leaked slot remains counted).
 func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error {
-	rctx, cancel := detachedReleaseContext(ctx)
-	defer cancel()
-	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
-	// recycle=false: a released reservation after a failed bind is a slot-count
-	// rollback, not the occupancy-zero recycle edge, so it never patches the
-	// claim to `recycling` or arms the missing-report timeout. The recycled
-	// signal is discarded: recycle=false never returns it.
-	_, err := claimer.ReleaseSlot(rctx, sandboxName, false, leaked)
+	// recycle=false: a released reservation after a failed bind is a
+	// slot-set rollback, not the occupancy-zero recycle edge, so it never
+	// patches the claim to `recycling` or arms the missing-report timeout.
+	_, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), sandboxName, slotID, false, leaked)
 	return err
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
-// It shuts the slot's runtime down through the adapter and decrements the
-// pod's §5.2 Redis slot counter; when the last slot drains cleanly (the counter
-// reaches zero) on a recycling pool the per-pod SandboxClaim is patched
+// It shuts the slot's runtime down through the adapter and runs the §5.2
+// keyed slot release; when this release removes the session's member and
+// leaves the set empty on a recycling pool the per-pod SandboxClaim is patched
 // bound → recycling and the adapter runs the §5.2 whole-pod scrub, and on a
 // non-recycling pool the claim is deleted so the pod returns to the pool.
 //
 // Unlike session-mode Release, ReleaseSlot does not delete the claim while
 // sibling slots remain: a concurrent-session pod hosts up to
 // maxConcurrentSessions slots on one per-pod claim, and the claim spans the
-// whole occupancy episode. The Redis-counter decrement and the
+// whole occupancy episode. The keyed slot release and the
 // claim-delete-on-last edge are handled by podclaim.SlotClaimer.ReleaseSlot.
 // The adapter Shutdown is best-effort.
 //
@@ -819,16 +893,10 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// stamp, the same teardown session-mode Release runs. The pod and its
 	// sibling slots stay live.
 	b.releasePodCredentials(result)
-	claimer := &podclaim.SlotClaimer{
-		Client:    b.Client,
-		Namespace: b.Namespace,
-		Counter:   b.SlotCounter,
-		// §4.7: a recycling concurrent-session pool arms the missing-report
-		// timeout on the occupancy-zero edge (the last slot draining), the same
-		// gateway-side timeout session-mode Release arms.
-		RecycleBoundary: b.RecycleBoundary,
-	}
-	recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.Recycle, leaked)
+	// spec: §5.2 (Slot assignment atomicity) — the keyed release is
+	// repeated on a detached context while the slot-set call fails; the
+	// adapter Shutdown above keeps the caller's context.
+	recycled, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), result.SandboxName, result.SessionID, result.Recycle, leaked)
 	if err != nil {
 		return err
 	}

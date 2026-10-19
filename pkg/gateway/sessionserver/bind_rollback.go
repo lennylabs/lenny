@@ -48,15 +48,15 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 //     Launch already reclaimed the pod, and the only release on a pre-bind
 //     ResolvePool/pool-warming/manifest failure inside startOnPod.
 //   - Slot reservation (SlotID set): release only when the binder did not
-//     reach BindReservedSlot. BindReservedSlot owns the non-idempotent
-//     active_slots release on its own failures (slotbinder.go), surfaced as a
-//     *podsession.SlotBindError, so releasing again would double-decrement the
-//     counter. But startOnPod runs ResolvePool, the PoolWarmingUp gate, and
+//     reach BindReservedSlot. BindReservedSlot releases the session's
+//     active_slots member on its own failures (slotbinder.go), surfaced as a
+//     *podsession.SlotBindError, and a second keyed release would remove
+//     nothing. But startOnPod runs ResolvePool, the PoolWarmingUp gate, and
 //     runtimeManifestFields BEFORE BindReservedSlot; a failure there (a
 //     transient kube-API error on the second ResolvePool of the same request,
 //     a pool that warmed down) returns a non-SlotBindError without ever
 //     releasing the create-time reservation. Releasing it here keeps the
-//     active_slots increment from leaking to the §4.6.1 orphan-GC backstop,
+//     session's active_slots member from leaking to the §4.6.1 orphan-GC backstop,
 //     matching the §7.1 atomicity envelope the decomposed createSession path
 //     already honors through its own rollbackClaim.
 //
@@ -85,7 +85,7 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 // claim kind: an exclusive Claim is released through ReclaimClaimed, which
 // deletes the per-pod SandboxClaim and revokes any lease; a §5.2
 // concurrent-slot reservation (SlotID set) is released through
-// ReleaseSlotReservation, which decrements the pod's active_slots without
+// ReleaseSlotReservation, which removes the session's active_slots member without
 // deleting the per-pod claim or disturbing sibling slots. No lease is
 // assigned at create (§4.4 of the proposal), so the lease revoke is a
 // no-op here. Best-effort: the §4.6.1 orphan-claim GC reclaims a claim a

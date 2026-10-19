@@ -87,7 +87,7 @@ func TestReserveFallsBackToPostgresOnRedisOutage(t *testing.T) {
 	fb := newFakeFallback()
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	count, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	count, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if err != nil {
 		t.Fatalf("Reserve under Redis outage: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestReserveFallbackCapsAtBound(t *testing.T) {
 	fb.active["pod-1"] = 2 // already at the cap of 2.
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	_, _, err := c.Reserve(context.Background(), "pod-1", 2)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 2)
 	if !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 		t.Errorf("error = %v, want ErrSlotsExhausted when the pod is at its bound in the fallback gate", err)
 	}
@@ -119,7 +119,7 @@ func TestReserveFallbackCapsAtBound(t *testing.T) {
 // rather than failing closed.
 func TestReserveFailsClosedWithoutFallback(t *testing.T) {
 	c := downedCounter(t) // no WithFallbackSource.
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed when no Postgres fallback is wired", err)
 	}
@@ -134,7 +134,7 @@ func TestReserveFailsClosedOnDualStoreOutage(t *testing.T) {
 	fb.failWith = errors.New("postgres unavailable")
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed on a dual-store outage", err)
 	}
@@ -158,12 +158,12 @@ func TestReserveFailsClosedAfterOutageWindow(t *testing.T) {
 
 	// First reservation during the outage stamps the window start and is
 	// admitted.
-	if _, _, err := c.Reserve(context.Background(), "pod-1", 4); err != nil {
+	if _, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4); err != nil {
 		t.Fatalf("Reserve at outage start: %v", err)
 	}
 	// Advance past the bounded window: the next reservation fails closed.
 	clock.advance(61 * time.Second)
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed after the bounded outage window", err)
 	}

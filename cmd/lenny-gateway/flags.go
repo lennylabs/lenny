@@ -101,6 +101,7 @@ type gatewayFlags struct {
 	dualStoreMaxSeconds                           *int
 	claimHoldTTLSeconds                           *int
 	slotCounterPostgresFallbackMaxSeconds         *int
+	slotCounterRecoveryProbeInterval              *time.Duration
 	shutdownTimeout                               *time.Duration
 	deprecatedAPIVersionsCSV                      *string
 	recommendationsDisabledRules                  *string
@@ -553,6 +554,9 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.slotCounterPostgresFallbackMaxSeconds = flag.Int("slot-counter-postgres-fallback-max-seconds",
 		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
 		"§12.4 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
+	f.slotCounterRecoveryProbeInterval = flag.Duration("slot-counter-recovery-probe-interval",
+		envDuration("LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL", slotcounter.DefaultRecoveryProbeInterval),
+		"§12.4 slot-set recovery probe cadence: how often the gateway probes Redis so that, when an outage ends, a replica with no slot traffic still rebuilds the per-pod slot sets (adds its fallback admissions and leaked marks, and deletes the rehydrated flag of every pod a non-terminal concurrent-workspace session names) before fast-path enforcement resumes. A non-positive value keeps the default. Default 2s. Override via LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds

@@ -199,7 +199,20 @@ var (
 	// through to a fresh idle pod, and ErrTenantMismatch is surfaced only
 	// when no fresh pod is available either.
 	ErrTenantMismatch = errors.New("podclaim: candidate pods are pinned to a different tenant")
+
+	// ErrSlotCounterRelease marks a SlotClaimer.ReleaseSlot failure in the
+	// slot-set release itself, before any disposition ran. The member's
+	// state is unknown, and the keyed release is idempotent, so a caller may
+	// repeat the release. A disposition failure after the member was removed
+	// is returned without this sentinel and must not be repeated: a repeat
+	// finds no member and skips the disposition.
+	// spec: §5.2 (Slot assignment atomicity).
+	ErrSlotCounterRelease = errors.New("podclaim: slot counter release failed")
 )
+
+// defaultRollbackTimeout bounds a reserveSlot rollback when the claimer sets
+// no RollbackTimeout.
+const defaultRollbackTimeout = 5 * time.Second
 
 // SlotRequest identifies the session a concurrent-session slot is claimed
 // for, the pool to claim from, and the concurrent-session parameters of
@@ -298,6 +311,22 @@ type SlotClaimer struct {
 	// coordinator); the orphan GC remains the crash backstop.
 	// (missing-report timeout).
 	RecycleBoundary RecycleBoundaryArmer
+	// RollbackTimeout bounds the slot release that undoes a reservation
+	// reserveSlot made when a later step of the reservation fails. The
+	// rollback runs on a context detached from the caller's, so a cancelled
+	// attempt still returns its slot. Zero selects 5 seconds. The podsession
+	// binder sets the §5.2 per-slot cleanup floor.
+	RollbackTimeout time.Duration
+}
+
+// rollbackContext returns the detached, bounded context a reserveSlot
+// rollback runs on. spec: §5.2 (Slot assignment atomicity).
+func (c *SlotClaimer) rollbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := c.RollbackTimeout
+	if d <= 0 {
+		d = defaultRollbackTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // RecycleBoundaryArmer arms the missing-report timeout for a pod at the
@@ -378,7 +407,7 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 //     §5.2 maps this to WARM_POOL_EXHAUSTED / "concurrent_slots_exhausted".
 //
 // Slot reservation is atomic against competing gateway replicas through the
-// §5.2 Redis Lua GET-compare-INCR counter (with the §12.4 Postgres-fallback
+// §5.2 Redis Lua slot set (with the §12.4 Postgres-fallback
 // gate during a Redis outage); pod acquisition is atomic through the
 // deterministic per-pod claim CREATE. The gateway does not write
 // Sandbox.status; the WarmPoolController projects the pod's occupancy phase
@@ -658,37 +687,38 @@ func (c *SlotClaimer) sandbox(ctx context.Context, sandboxName string) (*lennyv1
 	return &sb, nil
 }
 
-// reserveSlot reserves one Redis-counter slot on sb for the request and, on
-// a fresh acquisition, CREATEs the per-pod claim and writes its first
+// reserveSlot reserves the request's session member in sb's slot set and,
+// on a fresh acquisition, CREATEs the per-pod claim and writes its first
 // `bound` status. existing is the live per-pod claim on a Pass-1 placement
 // and nil on a fresh acquisition; freshPod selects which path runs.
 //
 // Ordering:
 //
-//   - The §5.2 Redis counter reservation runs first (with the §12.4
+//   - The §5.2 keyed slot reservation runs first (with the §12.4
 //     Postgres-fallback gate during a Redis outage). A pod at its
 //     maxConcurrentSessions bound returns the conflict signal so the caller
 //     skips it; a Redis-outage fail-closed surfaces as an error.
 //   - On a fresh acquisition the per-pod claim is then CREATEd (the §4.6.1
-//     acquisition guard) and its first `bound` status is written. An
-//     AlreadyExists collision (a competing replica acquired the pod first)
-//     undoes the counter reservation and returns the conflict signal.
+//     acquisition guard) and its first `bound` status is written
+//     (acquireFreshClaim).
+//   - A failure after the reservation rolls it back on a detached context
+//     (rollbackReservation), so a cancelled attempt still returns its slot.
 //
 // The gateway does not write Sandbox.status; the WarmPoolController projects
 // the pod's occupancy phase from the claim binding state (§4.6.1). On a
 // successful reservation reserveSlot stamps the lenny.dev/tenant-id label on
 // the pod (best-effort) for the §13.2 NET-003 NetworkPolicy selector.
 func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, existing *lennyv1.SandboxClaim, req SlotRequest, freshPod bool) (res *SlotResult, conflict bool, err error) {
-	// §5.2 atomic slot reservation. The Redis Lua GET-compare-INCR
-	// enforces the maxConcurrentSessions cap atomically across gateway
+	// §5.2 atomic slot reservation. The Redis Lua script adds the session's
+	// member under the maxConcurrentSessions cap atomically across gateway
 	// replicas; during a Redis outage the §12.4 Postgres-fallback gate
 	// serializes the count-and-decide under a per-pod advisory lock and
 	// fails closed after a bounded outage window.
-	newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrentSessions)
+	newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.SessionID, req.MaxConcurrentSessions)
 	if rehydrated {
-		// §5.2: this reservation seeded the pod's slot counter from
-		// Postgres after a Redis restart. Emit the rehydration event
-		// regardless of the reservation outcome.
+		// §5.2: this reservation seeded the pod's slot set from Postgres
+		// after a Redis restart. Emit the rehydration event regardless of
+		// the reservation outcome.
 		c.recordRehydration(sb.Name, req.Pool)
 	}
 	if errors.Is(err, slotcounter.ErrSlotsExhausted) {
@@ -702,25 +732,9 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 
 	claim := existing
 	if freshPod {
-		// §4.6.1 fresh acquisition: CREATE the per-pod claim (the acquisition
-		// guard) and write its first `bound` status. An AlreadyExists or
-		// Forbidden means a competing replica acquired the pod first — undo
-		// the counter reservation and report the conflict so the caller
-		// retries on another pod.
-		created, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
-			Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
-		})
-		if err != nil {
-			_, _ = c.Counter.Release(ctx, sb.Name)
-			if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
-				return nil, true, nil
-			}
-			return nil, false, err
-		}
-		if err := writeBoundStatus(ctx, c.Client, c.Namespace, created.Name, c.now); err != nil {
-			_, _ = c.Counter.Release(ctx, sb.Name)
-			_ = c.Client.Delete(ctx, created)
-			return nil, false, err
+		created, conflict, err := c.acquireFreshClaim(ctx, sb, req)
+		if err != nil || conflict {
+			return nil, conflict, err
 		}
 		claim = created
 	}
@@ -735,15 +749,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// §13.2 NET-003 NetworkPolicies select. Best-effort: a missing pod is
 	// tolerated and the next assignment re-stamps it.
 	if err := StampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
-		// spec: §5.2 — Counter.Reserve has already incremented
-		// lenny:pod:{pod_id}:active_slots, so a reservation that fails here
-		// retains no increment on either arm. The claim DELETE stays
-		// fresh-only: a non-fresh reservation did not create the claim and
-		// must not delete the one its caller holds.
-		_, _ = c.Counter.Release(ctx, sb.Name)
-		if freshPod {
-			_ = c.Client.Delete(ctx, claim)
-		}
+		c.rollbackReservation(ctx, sb.Name, req.SessionID)
 		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 	}
 
@@ -755,17 +761,9 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// it delivers the tenant pin, alongside the same slot claim. A non-positive
 	// cap (a pool that sets no maxPodUptimeSeconds) stamps nothing, matching the
 	// field's optional status. Best-effort: a missing pod is tolerated and the
-	// next assignment re-stamps it. Without this write the annotation is never
-	// present in production, so the controller's uptime check stays disabled and
-	// the §5.2 maxPodUptimeSeconds drain never fires.
+	// next assignment re-stamps it.
 	if err := StampMaxPodUptime(ctx, c.Client, sb.Namespace, sb.Name, req.MaxPodUptimeSeconds); err != nil {
-		// spec: §5.2 — as on the tenant-stamp branch above, the counter
-		// increment is undone unconditionally while the claim DELETE stays
-		// fresh-only.
-		_, _ = c.Counter.Release(ctx, sb.Name)
-		if freshPod {
-			_ = c.Client.Delete(ctx, claim)
-		}
+		c.rollbackReservation(ctx, sb.Name, req.SessionID)
 		return nil, false, fmt.Errorf("stamp max-pod-uptime on pod %s: %w", sb.Name, err)
 	}
 
@@ -778,89 +776,125 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	}, false, nil
 }
 
-// ReleaseSlot releases a concurrent-session slot when its session ends or
-// fails. It decrements the pod's §5.2 Redis slot counter and, when the last
-// slot drains (the counter reaches zero), disposes of the per-pod SandboxClaim
-// per the recycle disposition. While other slots remain the claim is
-// left in place: the per-pod claim spans the whole occupancy episode, and
-// the session-to-pod binding the released session held is cleared on its
-// Postgres session row by the session server. The gateway does not write
-// Sandbox.status; the WarmPoolController projects the pod's occupancy phase
-// from claim existence and binding state (§4.6.1, §6.2).
+// acquireFreshClaim CREATEs the per-pod claim of a fresh acquisition (the
+// §4.6.1 acquisition guard) and writes its first `bound` status, after
+// reserveSlot reserved the session's member.
 //
-// recycle selects the occupancy-zero disposition for a recycling pool (the
-// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
-// true) on a clean terminal: the last-slot-drain edge patches the per-pod
-// claim bound → recycling (WriteRecyclingStatus) rather than deleting it, so
-// the adapter runs the whole-pod scrub when occupancy reaches zero and its
-// §4.7 ReportPodScrub drives the recycle-vs-retire disposition. This is the
-// concurrent-session counterpart of the session-mode Binder.Release recycle
-// branch and closes the §6.2 concurrent-workspace residue gap (shared /tmp,
-// /dev/shm, surviving processes across cohorts). When recycle is false (a
-// non-recycling "Bounded cohort" pool, or a failed/crashed concurrent session
-// the caller maps to the drain path) the claim is deleted directly so the
-// §4.6.1 occupancy projection moves the pod claimed → draining → terminated.
+// A CREATE that fails withdraws the reservation with a raw keyed counter
+// release and no disposition: this call holds no occupancy of the pod, and
+// an AlreadyExists or Forbidden means a competing replica's claim exists and
+// must stay intact, whatever the withdrawal leaves in the set. AlreadyExists
+// and Forbidden report the conflict so the caller tries another pod.
 //
-// The counter decrement is clamped at zero so a double release cannot drive
-// the count negative; a release that reaches zero disposes of the claim
-// idempotently (a NotFound from either the recycling patch or the DELETE is a
-// no-op).
+// A `bound` write that fails rolls the reservation back through ReleaseSlot,
+// which deletes the fresh claim only when the release empties the set, so a
+// sibling that reserved onto the fresh claim keeps it.
 //
-// leaked reports that the slot's adapter cleanup did not complete cleanly (§6.2
-// leaked-slot semantics). A leaked slot's resources are not reclaimed until pod
-// termination, so its occupancy must remain counted: ReleaseSlot skips the
-// Redis-counter decrement and the occupancy-zero disposition entirely, leaving
-// the counter at its current value so the gateway does not over-assign a new
-// slot into the leaked slot's unreleased resources. A pod carrying a leaked
-// slot is by definition not at occupancy zero, so it takes neither the recycle
-// patch nor the claim DELETE; it is retired by the §5.2/§6.2 liveness paths
-// (the ceil-threshold drain, the per-release maxSessionsPerPod drain, or the
-// WarmPoolController uptime drain) rather than at this release.
+// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// reuse), §5.2 (Slot assignment atomicity).
+func (c *SlotClaimer) acquireFreshClaim(ctx context.Context, sb *lennyv1.Sandbox, req SlotRequest) (*lennyv1.SandboxClaim, bool, error) {
+	created, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
+		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
+	})
+	if err != nil {
+		rctx, cancel := c.rollbackContext(ctx)
+		_, _, _, _ = c.Counter.Release(rctx, sb.Name, req.SessionID, false)
+		cancel()
+		if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
+			return nil, true, nil
+		}
+		return nil, false, err
+	}
+	if err := writeBoundStatus(ctx, c.Client, c.Namespace, created.Name, c.now); err != nil {
+		c.rollbackReservation(ctx, sb.Name, req.SessionID)
+		return nil, false, err
+	}
+	return created, false, nil
+}
+
+// rollbackReservation undoes a reservation whose later step failed, on a
+// context detached from the caller's and bounded by RollbackTimeout. It
+// releases through ReleaseSlot, so the claim is deleted only when this
+// release removed the session's member and left the set empty, on a fresh
+// claim, a joined claim, or a resume's claim alike. The rollback error is
+// dropped and the reservation's own error is returned: a failed counter call
+// leaves the member counted, which fails closed.
 //
-// recycled reports that this release crossed the occupancy-zero edge of a
-// recycling pool: the last slot released cleanly, the Redis counter reached
-// zero, and the per-pod claim was patched bound → recycling. A caller that
-// sends the adapter a request acts on it, which is what triggers the §5.2
-// whole-pod scrub. It is false on every other release (a sibling slot
-// remains, the slot leaked, the pool does not recycle, or the claim had
-// already vanished), so Binder.ReleaseSlotReservation, which passes recycle
-// false, never receives it.
+// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// reuse), §5.2 (Slot assignment atomicity).
+func (c *SlotClaimer) rollbackReservation(ctx context.Context, sandboxName, sessionID string) {
+	rctx, cancel := c.rollbackContext(ctx)
+	defer cancel()
+	_, _ = c.ReleaseSlot(rctx, sandboxName, sessionID, false, false)
+}
+
+// ReleaseSlot releases sessionID's concurrent-session slot on sandboxName
+// when the session ends or fails, and runs the occupancy-zero disposition of
+// the per-pod SandboxClaim when this release ends the occupancy.
 //
-// spec: §5.2 (occupancy-zero recycle disposition); §6.2 (leaked slot
-// remains counted); §6.2; §5.2 (whole-pod scrub trigger, threaded to the
-// binder via recycled).
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName string, recycle, leaked bool) (recycled bool, err error) {
+// It first runs the §5.2 keyed slot release, which removes the session's
+// member and reports whether it removed one and the remaining cardinality.
+// Only a clean release that removed the member and left the set empty
+// reaches the disposition: on a recycling pool (recycle true) the claim is
+// patched bound → recycling, the missing-report timeout is armed, and
+// recycled is true so the binder sends the whole-pod recycle Shutdown; on a
+// non-recycling pool, or for a failed or crashed session the caller maps to
+// the drain path, the claim is deleted so the pod retires. A duplicate
+// release that finds no member, a release that leaves a sibling, and a
+// leaked release return (false, nil) with no claim write, so a duplicate can
+// never patch or delete a claim that a later occupancy holds.
+//
+// leaked reports that the slot's adapter cleanup did not complete cleanly
+// (§6.2 leaked slot semantics). The release script then removes the
+// session's member and adds leaked:<sessionId>, so the slot stays counted
+// until pod termination and the pod is never at occupancy zero while the
+// leak persists.
+//
+// A failure of the slot-set release is returned wrapped in
+// ErrSlotCounterRelease; a disposition failure after the member was removed
+// is returned without it. ReleaseSlot makes a single attempt.
+//
+// spec: §5.2 (Slot assignment atomicity, occupancy-zero recycle
+// disposition); §6.2 (leaked slot semantics); §4.6.3 (SandboxClaim: a
+// release that ends the occupancy without reuse).
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
-		// The Redis counter (with its §12.4 Postgres fallback) is the only
-		// intra-pod occupancy record now that the gateway does not mirror the
-		// slot count onto Sandbox.status. Without it, release cannot tell
+		// The Redis set (with its §12.4 Postgres fallback) is the only
+		// intra-pod occupancy record. Without it, release cannot tell
 		// whether sibling slots remain, so deleting the per-pod claim would
-		// over-release a pod that still hosts live slots. Fail closed, the same
-		// posture ClaimSlot takes on a nil counter. spec: §12.4 (every
-		// Redis-backed role has a durable fallback; the gate fails closed when
-		// it cannot decide).
+		// over-release a pod that still hosts live slots. Fail closed, the
+		// same posture ClaimSlot takes on a nil counter.
 		return false, errors.New("podclaim: slot counter is required for concurrent-session slot release")
 	}
-	if leaked {
-		// §6.2: a leaked slot remains counted in the pod's Redis slot-counter
-		// occupancy until pod termination, so the gateway does not over-assign
-		// a new slot into its unreleased resources. Skip the decrement and the
-		// occupancy-zero disposition: the slot's occupancy stays, and the pod is
-		// not at occupancy zero while the leak persists.
-		return false, nil
+	removed, remaining, rehydrated, err := c.Counter.Release(ctx, sandboxName, sessionID, leaked)
+	if rehydrated {
+		c.recordRehydration(sandboxName, c.sandboxPool(ctx, sandboxName))
 	}
-	// §5.2 atomic slot release. The Redis counter is the source of truth —
-	// DECR clamped at zero.
-	remaining, err := c.Counter.Release(ctx, sandboxName)
 	if err != nil {
-		return false, fmt.Errorf("podclaim: release slot via counter on sandbox %s: %w", sandboxName, err)
+		return false, fmt.Errorf("%w: sandbox %s session %s: %w", ErrSlotCounterRelease, sandboxName, sessionID, err)
 	}
-
-	if remaining > 0 {
-		// Sibling slots remain on the pod; the per-pod claim stays.
+	if leaked || !removed || remaining > 0 {
+		// A leak keeps its slot counted, a duplicate release removed
+		// nothing, or a sibling remains: the per-pod claim stays.
 		return false, nil
 	}
+	return c.disposeAtZero(ctx, sandboxName, recycle)
+}
 
+// sandboxPool returns the warm-pool label of sandboxName, the pool label
+// reserveSlot records for the same pod, for the rehydration metric. A read
+// failure yields the empty label rather than dropping the event.
+func (c *SlotClaimer) sandboxPool(ctx context.Context, sandboxName string) string {
+	sb, err := c.sandbox(ctx, sandboxName)
+	if err != nil {
+		return ""
+	}
+	return sb.Labels[warmpool.LabelPool]
+}
+
+// disposeAtZero runs the occupancy-zero disposition of the per-pod claim
+// after a clean release that removed the last member.
+func (c *SlotClaimer) disposeAtZero(ctx context.Context, sandboxName string, recycle bool) (bool, error) {
 	if recycle {
 		// §5.2 recycle disposition on the occupancy-zero edge of a recycling
 		// concurrent pool: patch the per-pod claim bound → recycling so the

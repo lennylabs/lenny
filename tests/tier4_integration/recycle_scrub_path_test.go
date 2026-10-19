@@ -29,6 +29,7 @@ package tier4_integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -913,18 +914,15 @@ func (r *reclaimInterceptor) shutdownReasons() []string {
 	return append([]string(nil), r.reasons...)
 }
 
-// activeSlots reads the pod's §5.2 Redis slot counter, treating an absent key
-// as zero.
+// activeSlots reads the cardinality of the pod's §5.2 slot set; an absent
+// key reads as zero.
 func activeSlots(t *testing.T, rc *redis.Client, pod string) int {
 	t.Helper()
-	n, err := rc.Get(context.Background(), "lenny:pod:"+pod+":active_slots").Int()
-	if errors.Is(err, redis.Nil) {
-		return 0
-	}
+	n, err := rc.SCard(context.Background(), "lenny:pod:{"+pod+"}:active_slots").Result()
 	if err != nil {
 		t.Fatalf("read active_slots for %s: %v", pod, err)
 	}
-	return n
+	return int(n)
 }
 
 // TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2 drives a reserved-slot
@@ -1217,7 +1215,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	counter := slotcounter.New(rc)
-	if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+	if _, _, err := counter.Reserve(ctx, podName, "leaked-floor", 4); err != nil {
 		t.Fatalf("reserve leaked slot: %v", err)
 	}
 
@@ -1227,10 +1225,11 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// release reports the per-slot cleanup outcome through the real handler,
 	// which advances sessions_served and drives the per-release retirement.
 	for i := 1; i <= 3; i++ {
-		if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+		live := fmt.Sprintf("live-%d", i)
+		if _, _, err := counter.Reserve(ctx, podName, live, 4); err != nil {
 			t.Fatalf("reserve live slot %d: %v", i, err)
 		}
-		if _, err := counter.Release(ctx, podName); err != nil {
+		if _, _, _, err := counter.Release(ctx, podName, live, false); err != nil {
 			t.Fatalf("release live slot %d: %v", i, err)
 		}
 		if err := reporter.RecordSessionScrub(ctx, podName, "sess", false); err != nil {
@@ -1262,7 +1261,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// The leaked slot still holds occupancy above zero: total occupancy never
 	// reached zero, so no whole-pod scrub fired. The drain came purely from the
 	// per-release path.
-	if occ, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+	if occ, _, err := counter.Reserve(ctx, podName, "probe", 4); err != nil {
 		t.Fatalf("probe occupancy: %v", err)
 	} else if occ < 2 {
 		t.Fatalf("post-flow occupancy = %d, want >= 2 (the leaked slot never released, so occupancy never hit zero)", occ)

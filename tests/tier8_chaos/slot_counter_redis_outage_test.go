@@ -33,9 +33,8 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: 3.2 (Redis slot counter intra-pod gate with Postgres fallback), 6.57
-// (durable fallback for every Redis-backed role), 12.4 (Redis HA and failure
-// modes, bounded fail-closed window).
+// spec: 5.2 (Slot assignment atomicity), 12.4 (Redis HA and failure modes,
+// bounded fail-closed window; durable fallback for every Redis-backed role).
 // diagnosis: a failure means the §5.2 slot counter did not survive a Redis
 // outage per §12.4. Either a Redis-only outage rejected all slot dispatch
 // instead of degrading to the Postgres advisory-lock gate, concurrent
@@ -66,7 +65,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 
 	// Healthy: the first reservation seeds the counter from Postgres (zero
 	// live sessions) and admits via Redis.
-	if c, _, err := counter.Reserve(ctx, pod, maxConcurrent); err != nil || c != 1 {
+	if c, _, err := counter.Reserve(ctx, pod, "chaos-healthy", maxConcurrent); err != nil || c != 1 {
 		t.Fatalf("healthy Reserve = (%d, %v), want (1, nil)", c, err)
 	}
 
@@ -77,7 +76,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	// reads a real occupancy; the gate admits the third (below the bound of 4).
 	mustSeedChaosSlot(t, ctx, store, "acme", pod)
 	mustSeedChaosSlot(t, ctx, store, "acme", pod)
-	if c, _, err := counter.Reserve(ctx, pod, maxConcurrent); err != nil {
+	if c, _, err := counter.Reserve(ctx, pod, "chaos-outage", maxConcurrent); err != nil {
 		t.Fatalf("Reserve during the Redis outage must degrade to Postgres, got: %v", err)
 	} else if c != 3 {
 		t.Errorf("outage fallback count = %d, want 3 (2 live + this admission)", c)
@@ -96,9 +95,9 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(racers)
 		for i := 0; i < racers; i++ {
-			go func() {
+			go func(i int) {
 				defer wg.Done()
-				c, _, err := counter.Reserve(ctx, racePod, maxConcurrent)
+				c, _, err := counter.Reserve(ctx, racePod, fmt.Sprintf("chaos-racer-%d", i), maxConcurrent)
 				if err != nil {
 					return
 				}
@@ -106,7 +105,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 					mustSeedChaosSlot(t, ctx, store, "acme", racePod)
 					atomic.AddInt32(&admitted, 1)
 				}
-			}()
+			}(i)
 		}
 		wg.Wait()
 		if got := atomic.LoadInt32(&admitted); got != 1 {
@@ -118,7 +117,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	// down; the gate fails closed.
 	t.Run("fails closed after the bounded outage window", func(t *testing.T) {
 		clk.advance(61 * time.Second)
-		if _, _, err := counter.Reserve(ctx, "pod-chaos-window", maxConcurrent); err == nil {
+		if _, _, err := counter.Reserve(ctx, "pod-chaos-window", "chaos-window", maxConcurrent); err == nil {
 			t.Fatal("Reserve after the bounded outage window must fail closed, got nil")
 		}
 	})
@@ -137,7 +136,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 
 	const recoveredPod = "pod-recovered"
 	mustSeedChaosSlot(t, ctx, store, "acme", recoveredPod)
-	c, rehydrated, err := counter2.Reserve(ctx, recoveredPod, maxConcurrent)
+	c, rehydrated, err := counter2.Reserve(ctx, recoveredPod, "chaos-recovered-1", maxConcurrent)
 	if err != nil {
 		t.Fatalf("post-recovery Reserve: %v", err)
 	}
@@ -151,7 +150,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	// rejected with ErrSlotsExhausted, confirming the Redis cap enforcement
 	// resumed.
 	mustSeedChaosSlot(t, ctx, store, "acme", recoveredPod) // now 2 live + 1 reserved.
-	if _, _, err := counter2.Reserve(ctx, recoveredPod, 2); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+	if _, _, err := counter2.Reserve(ctx, recoveredPod, "chaos-recovered-2", 2); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 		t.Errorf("post-recovery over-bound Reserve = %v, want ErrSlotsExhausted (Redis cap enforcement resumed)", err)
 	}
 }

@@ -70,7 +70,7 @@ type credentialMetrics struct {
 	// the ceil(maxConcurrent/2) fail-or-leak threshold. Labeled by pool.
 	slotPodReplacement *prometheus.CounterVec
 	// slotRehydration counts the §5.2 post-recovery slot-counter
-	// rehydration events: a pod's active_slots counter was seeded from
+	// rehydration events: a pod's active_slots set was seeded from
 	// Postgres after a Redis restart. Labels: `pod` and `pool` (both
 	// bounded — at most one rehydration per pod per Redis restart).
 	slotRehydration *prometheus.CounterVec
@@ -214,7 +214,7 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	}
 	// §5.2 / §12.4 — `lenny_slot_rehydration_total` counts
 	// post-recovery slot-counter rehydration events (seeding a pod's
-	// active_slots from Postgres after a Redis restart). `pod` and `pool`
+	// active_slots set from Postgres after a Redis restart). `pod` and `pool`
 	// are bounded: at most one rehydration per pod per Redis restart.
 	slotRehydration, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_slot_rehydration_total",
@@ -236,7 +236,8 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 		return m, err
 	}
 	// §6.2 — `lenny_adapter_leaked_slots` is the per-pod count of leaked
-	// concurrent-workspace slots, which remain counted in active_slots until
+	// concurrent-workspace slots, which remain counted in the active_slots
+	// set as leaked:<sessionId> members until
 	// the pod terminates. Labels: `pod_id`, `pool`.
 	adapterLeakedSlots, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_adapter_leaked_slots",

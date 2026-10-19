@@ -91,22 +91,33 @@ func TestOutageWindowStampsThenExceeds_spec_12_4(t *testing.T) {
 	}
 }
 
-// TestClearOutageResetsWindow pins the §12.4 recovery path: once Redis answers
-// the outage window is cleared, so a later outage measures a fresh window from
-// its own first-observed time rather than the prior outage's start. clearOutage
-// on an already-clear window is a no-op.
+// TestClearOutageResetsWindow pins the §12.4 recovery path: a rebuild that
+// leaves the ledger empty clears the outage window it read, so a later outage
+// measures a fresh window from its own first-observed time. A clear against a
+// window that was restamped after the rebuild read it, or while the ledger
+// still holds an entry, keeps the window.
 //
 // spec: 12.4 (on Redis recovery the counter resumes fast-path enforcement)
 func TestClearOutageResetsWindow_spec_12_4(t *testing.T) {
 	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
 	now := base
-	c := &Counter{fallbackMaxWindow: 60 * time.Second, now: func() time.Time { return now }}
+	c := &Counter{fallbackMaxWindow: 60 * time.Second, now: func() time.Time { return now }, ledger: map[ledgerEntry]uint64{}}
 
 	// clearing a window that was never stamped is a no-op.
-	c.clearOutage()
+	c.clearOutage(time.Time{})
 
 	c.outageExceeded() // stamps the window at base
-	c.clearOutage()    // Redis recovered; the window resets
+	c.record(entryAdmission, "pod-a", "s1")
+	c.clearOutage(base)
+	if c.outageSince.IsZero() {
+		t.Fatal("a clear while the ledger holds an entry must keep the window")
+	}
+	delete(c.ledger, ledgerEntry{kind: entryAdmission, podID: "pod-a", sessionID: "s1"})
+	c.clearOutage(base.Add(-time.Second))
+	if c.outageSince.IsZero() {
+		t.Fatal("a clear against a window the rebuild did not read must keep the window")
+	}
+	c.clearOutage(base) // Redis recovered; the window resets
 
 	now = base.Add(120 * time.Second)
 	if c.outageExceeded() {

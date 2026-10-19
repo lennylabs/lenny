@@ -383,7 +383,7 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 // concurrent-workspace pool, so the §15.1 created-state pod-claim invariant
 // holds uniformly; a failure means the create path admitted a `created`
 // session with no claimed pod. ClaimSlot reserves the slot (the per-pod
-// SandboxClaim plus the active_slots increment) and runs the handshake, but
+// SandboxClaim plus the session's active_slots member) and runs the handshake, but
 // does not materialize the workspace or start the runtime.
 func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
 	a := newConcurrentAdapter()

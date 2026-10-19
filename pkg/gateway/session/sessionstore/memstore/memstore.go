@@ -342,23 +342,45 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 	return deleted, nil
 }
 
-// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
-// source. It counts live (non-terminal) sessions bound to podID across
-// every tenant. An empty podID matches no slot (sessions with no pod
-// binding carry an empty pod_assignment and are never counted).
-func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error) {
+// GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
+// It returns the identifiers of the non-terminal sessions whose
+// pod_assignment names podID across every tenant (the slot-holder
+// predicate). An empty podID matches no session.
+func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, error) {
 	if podID == "" {
-		return 0, nil
+		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	count := 0
+	var ids []string
 	for _, row := range s.sessions {
 		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
-			count++
+			ids = append(ids, row.ID)
 		}
 	}
-	return count, nil
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// ListPodsWithActiveSlots implements Store: the distinct pods that a
+// non-terminal best-effort-per-slot session row names, across tenants.
+// spec: §12.4 (Redis failure behavior).
+func (s *Store) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]bool{}
+	var pods []string
+	for _, row := range s.sessions {
+		if row.PodAssignment == "" || row.ScrubPolicy != "best-effort-per-slot" || session.IsTerminal(row.State) {
+			continue
+		}
+		if !seen[row.PodAssignment] {
+			seen[row.PodAssignment] = true
+			pods = append(pods, row.PodAssignment)
+		}
+	}
+	sort.Strings(pods)
+	return pods, nil
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity

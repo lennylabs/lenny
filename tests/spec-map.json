@@ -192,7 +192,8 @@
         "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway",
         "pkg/adapter/coordination_test.go",
         "pkg/gateway/sessionserver/start_pod_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go"
       ],
       "packages": [
         "pkg/session",
@@ -595,7 +596,10 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3",
         "pkg/gateway/session/recycle/retire_log_test.go::TestClaimDispositionReleasedRetireLogsReasonAtInfo_spec_5_2",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_release_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -1506,7 +1510,13 @@
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSessionOnRecyclingPoolIsSuspendedAndResumed_spec_6_2",
         "tests/tier5_e2e_kind/idle_suspension_kind_test.go::TestIdleSlotReleaseKeepsTheOtherSessionAnswering_spec_5_2",
         "tests/tier7a_load_local/stream_failure_release_race_test.go::TestStreamFailureRacingReleaseRetiresExactlyMarkedPods_spec_28_5_1",
-        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go"
+        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_release_test.go",
+        "pkg/gateway/podlifecycle/podsession/release_retry_internal_test.go",
+        "pkg/gateway/podlifecycle/podsession/slot_release_rehydration_test.go",
+        "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
+        "tests/tier4_integration/slot_holder_pgstore_test.go",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1719,7 +1729,10 @@
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestWatchdogsTickingOnOneStoreExitResumingOnce_spec_7_3",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestAdopterDoesNotSuspendABusyRuntime_spec_6_2",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestSealedSessionMessageDuringPrimaryPartition_spec_6_2",
-        "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestIdleSuspensionFaultInjection_spec_6_2"
+        "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestIdleSuspensionFaultInjection_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_release_test.go",
+        "pkg/gateway/podlifecycle/podsession/release_retry_internal_test.go",
+        "pkg/gateway/storage/slotcounter/slotcounter_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2100,7 +2113,9 @@
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestWatchdogsTickingOnOneStoreExitResumingOnce_spec_7_3",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3",
         "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestTreeReattachRacingWatchdogDriverClaimsOnePod_spec_8_10",
-        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3"
+        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
+        "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
+        "tests/tier4_integration/slot_holder_pgstore_test.go"
       ],
       "packages": [
         "pkg/session/resume",
@@ -3453,7 +3468,10 @@
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRequiresCounter",
         "pkg/gateway/session/sessionstore/memstore/reserve_slot_under_lock_test.go",
-        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go"
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go",
+        "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
+        "pkg/gateway/storage/slotcounter/hashslot_test.go",
+        "tests/tier4_integration/slot_holder_pgstore_test.go"
       ],
       "packages": [
         "pkg/store/lease",

@@ -203,6 +203,15 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 		go w.storageRecoveryReconciler.Run(w.watchdogCtx)
 	}
 
+	// ----- §12.4 slot-set recovery probe -----
+	// Probes Redis on the recovery interval; when an outage ends it runs
+	// the add-only rebuild of the per-pod slot sets, so a replica with no
+	// slot traffic still restores them before fast-path enforcement
+	// resumes. Active only when the slot counter is wired.
+	if w.slotCounter != nil {
+		go w.slotCounter.RunRecovery(w.watchdogCtx)
+	}
+
 	// ----- §11.2 delegation tree budget checkpoint + reconstruction -----
 	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
 	// active tree's Redis dlg:* counters to the delegation_tree_budget

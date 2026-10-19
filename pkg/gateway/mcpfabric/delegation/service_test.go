@@ -454,8 +454,12 @@ func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (in
 	return c.inner.DeleteByTenant(ctx, tenantID)
 }
 
-func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
+}
+
+func (c *countingStore) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
+	return c.inner.ListPodsWithActiveSlots(ctx)
 }
 
 func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {

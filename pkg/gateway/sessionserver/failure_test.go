@@ -322,29 +322,53 @@ func TestReportSessionFailureUsesPerSessionMaxRetries(t *testing.T) {
 	}
 }
 
-// PodAssignment is stamped onto the row when supplied so the §15.1
-// /resume handler can correlate the new pod's claim with the failed
-// pod's name on the audit chain.
+// TestReportSessionFailureStampsPodAssignment pins the slot-holder
+// predicate on the failure funnel's edge writes: the resume_pending and
+// awaiting_client_action edges clear pod_assignment, because the funnel
+// releases the pod's slot and a resume claims a fresh pod, while the failed
+// edge still stamps the supplied pod on the terminal row, which no
+// slot-holder reader counts.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
+// pod failure)
 func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
-	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
-	row := sessionstore.Session{
-		ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateRunning, PodAssignment: "old-pod",
+	cases := []struct {
+		name       string
+		retryCount int64
+		reason     string
+		wantState  session.State
+		wantPod    string
+	}{
+		{"resume_pending edge clears", 0, "pod_evicted", session.StateResumePending, ""},
+		{"awaiting_client_action edge clears", 2, "pod_evicted", session.StateAwaitingClientAction, ""},
+		{"failed edge stamps the supplied pod", 0, "workspace_validation_failed", session.StateFailed, "evicted-pod-1"},
 	}
-	seedRow(t, store, row)
-	_, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
-		TenantID: "acme", SessionID: "sess-r8", Reason: "pod_evicted",
-		PodAssignment: "evicted-pod-1",
-	})
-	if err != nil {
-		t.Fatalf("ReportSessionFailure: %v", err)
-	}
-	got, err := store.Get(context.Background(), "acme", "sess-r8")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.PodAssignment != "evicted-pod-1" {
-		t.Errorf("PodAssignment = %q, want evicted-pod-1", got.PodAssignment)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
+			row := sessionstore.Session{
+				ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateRunning, PodAssignment: "old-pod", RetryCount: tc.retryCount,
+			}
+			seedRow(t, store, row)
+			disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-r8", Reason: tc.reason,
+				PodAssignment: "evicted-pod-1",
+			})
+			if err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if disp.To != tc.wantState {
+				t.Fatalf("To = %q, want %q", disp.To, tc.wantState)
+			}
+			got, err := store.Get(context.Background(), "acme", "sess-r8")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.PodAssignment != tc.wantPod {
+				t.Errorf("PodAssignment = %q, want %q", got.PodAssignment, tc.wantPod)
+			}
+		})
 	}
 }
 

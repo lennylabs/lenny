@@ -4,9 +4,11 @@ package sessionserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -151,28 +153,64 @@ func (s *Server) releaseThenResumeOnPod(ctx context.Context, row sessionstore.Se
 // releaseEarlierBinding releases, with the failed disposition, any binding
 // this replica still holds for the session before the resume driver rebinds
 // it. Such a binding belongs to an earlier bind of the session, such as one
-// whose fence relinquished after its publish, and a resume that published a
-// new binding over it would leak its pod or slot. It waits for the session's
-// slot-accounting lock on ctx, so a binding the failure funnel is accounting
-// and releasing is released only after the funnel has finished, and then
-// releases on the server-lifetime context, so the attempt bound or a
-// CancelResumeAttempt call cannot cut the release short after the executor's
-// unbind. A release error is logged and the resume proceeds: the executor
-// evicts the stream and removes the registry entry before it calls the
-// binder, so the new bind does not overwrite a live entry. It writes no
-// coordination lease.
+// whose fence relinquished after its publish, or one that
+// MarkBudgetUnrecoverable left on an awaiting_client_action root, and a
+// resume that published a new binding over it would leak its pod or slot. It
+// waits for the session's slot-accounting lock on ctx, so a binding the
+// failure funnel is accounting and releasing is released only after the
+// funnel has finished.
+//
+// Before the release it clears the row's pod_assignment with a guarded write
+// that applies only while the row is in a recovery state and names the
+// binding's sandbox, so the row stops naming a pod whose slot this call
+// releases. A store error on that write returns before any claim with the
+// binding kept, so the next attempt repeats it; a guard miss writes nothing
+// and the release still runs. The release runs on the server-lifetime
+// context, so the attempt bound or a CancelResumeAttempt call cannot cut it
+// short after the executor's unbind. A release error is logged and the
+// resume proceeds: the executor evicts the stream and removes the registry
+// entry before it calls the binder, so the new bind does not overwrite a live
+// entry. It writes no coordination lease.
 //
 // spec: §10.1.1 (one coordinating replica per session); §7.3 (Resume driver;
-// Credential leases on the replacement pod); §5.2 (whole-pod replacement
-// trigger).
+// Credential leases on the replacement pod; Resume flow after pod failure);
+// §5.2 (whole-pod replacement trigger; Post-recovery rehydration atomicity).
 func (s *Server) releaseEarlierBinding(ctx context.Context, row sessionstore.Session) error {
 	unlock, err := s.slotAccountLocks.Lock(ctx, row.ID)
 	if err != nil {
 		return fmt.Errorf("sessionserver: wait for slot accounting of session %s: %w", row.ID, err)
 	}
 	defer unlock()
+	if bind := s.snapshotBinding(row.ID); bind != nil {
+		if err := s.clearRecoveryPod(ctx, row, bind.SandboxName); err != nil {
+			return err
+		}
+	}
 	if rerr := releaseExecutor(s.lifetime(), s.executor, row.ID, executor.DispositionFailed); rerr != nil {
 		log.Printf("sessionserver: release earlier binding of session %s before resume: %v", row.ID, rerr)
+	}
+	return nil
+}
+
+// errRecoveryPodGuardMiss reports that clearRecoveryPod's guard did not
+// match the locked row, so the write changed nothing.
+var errRecoveryPodGuardMiss = errors.New("sessionserver: recovery row does not name the binding's pod")
+
+// clearRecoveryPod clears pod_assignment on row when the locked row is in a
+// recovery state and names sandboxName. A guard miss is not an error.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
+// pod failure).
+func (s *Server) clearRecoveryPod(ctx context.Context, row sessionstore.Session, sandboxName string) error {
+	_, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
+		if !session.IsRecovery(r.State) || sandboxName == "" || r.PodAssignment != sandboxName {
+			return errRecoveryPodGuardMiss
+		}
+		r.PodAssignment = ""
+		return nil
+	})
+	if err != nil && !errors.Is(err, errRecoveryPodGuardMiss) {
+		return fmt.Errorf("sessionserver: clear the pod of recovering session %s: %w", row.ID, err)
 	}
 	return nil
 }
