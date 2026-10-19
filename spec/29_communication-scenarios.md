@@ -723,9 +723,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
-    `Shutdown`, the graceful end-of-session teardown of the named session. On the default disposition the
-    pod is replaced. On the recycle disposition, which applies
-    when occupancy reaches zero on a recycling pod, the request also carries the pod identity and the
+    `Shutdown`, the graceful end-of-session teardown of the named session. On the recycle disposition,
+    which applies when occupancy reaches zero on a recycling pod unless the release ends the occupancy
+    without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
+    the request also carries the pod identity and the
     whole-pod scrub parameters, and the adapter keeps its own process and the runtime process alive across
     the recycle boundary and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter),
@@ -770,9 +771,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 
 17. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway releases the
-    pod. On the default disposition the claim is deleted and the pod projects `draining` and then
-    `terminated` ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
-    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3). On the recycle
+    pod. When the release ends the occupancy without reuse, the gateway deletes the claim
+    ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries), §28.3), and the
+    pod's phase follows the [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)
+    occupancy projection. On the recycle
     disposition the gateway patches the claim's binding state from `bound` to `recycling`, the whole-pod
     scrub runs while the pod projects `claimed`, the adapter reports its outcome with `ReportPodScrub`,
     and the gateway then patches the claim to `reserved`, coordinates the SDK re-warm on a preConnect

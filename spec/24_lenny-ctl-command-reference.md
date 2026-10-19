@@ -134,7 +134,7 @@ Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kube
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
 | `lenny-ctl admin sessions get <id>` | Show session state, metadata, and assigned pod. Use to investigate stuck, orphaned, or unexpectedly terminated sessions. | `GET /v1/admin/sessions/{id}` | `platform-admin` |
-| `lenny-ctl admin sessions force-terminate <id>` | Force-terminate a session that is stuck or unresponsive. The session transitions immediately to `failed` and the assigned pod is released to the pool. | `POST /v1/admin/sessions/{id}/force-terminate` | `platform-admin` |
+| `lenny-ctl admin sessions force-terminate <id>` | Force-terminate a session that is stuck or unresponsive. The session transitions immediately to `failed` and the gateway releases the assigned pod ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)). | `POST /v1/admin/sessions/{id}/force-terminate` | `platform-admin` |
 
 ### 24.12 Erasure Job Management
 
