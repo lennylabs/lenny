@@ -30,4 +30,4 @@ On 2026-10-18 the owner chose option C for the slot-set recovery rebuild. On 202
 
 On 2026-10-19 a prune removed restated and withdrawn-design text from the non-spec changes and the summary. The prune changed no design, owner decision, or staged spec edit.
 
-On 2026-10-19, after the run, the owner added the leader-run stale-slot reaper (summary Decision 23). The change added staged spec text to SPEC-1a and a new staged edit, SPEC-1k, and added CODE-9, register rows A32 and A33, and failure-outcome row F21. No review loop has read these additions, so a recheck of both lanes is due before sign-off.
+On 2026-10-19, after the run, the owner added the leader-run stale-slot reaper (summary Decision 23). The change added staged spec text to SPEC-1a and a new staged edit, SPEC-1k, and added CODE-9, register rows A32 to A34, and failure-outcome row F21. No review loop has read these additions, so a recheck of both lanes is due before sign-off.
