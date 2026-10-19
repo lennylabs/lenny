@@ -100,7 +100,7 @@
 
 ## Open decisions for human to make
 
-None.
+1. **Should register rows A34 and A35 name the rolling-upgrade window as a cause?** The gateway leader runs the stale-slot reaper, and the reaper waits `claimOrphanTimeout` after a session's terminal write before it sends the slot's `Shutdown`. That wait must exceed the launch, restore, and seal windows. Each gateway replica's startup gate checks only that replica's own flags. During a rolling upgrade that changes `claimOrphanTimeoutSeconds` or one of those deadlines (for example, a raised `--max-resuming-seconds`), a leader still running the old configuration can reap at the old age while a replica running the new configuration still has a launch, restore, or seal in flight. The result is the residue A34 and A35 record (the slot runs uncounted, or the seal fails with `workspace_seal_timeout`), reached without clock skew. Both rows currently describe the residue as reachable only through replica clock skew, and the owner's delegated decision of 2026-10-19 sets them as misconfiguration-only. The review loop did not file the case because that decision is settled, and one round judged it below the bar under the owner's corner-case directive. The choice is between keeping the rows as misconfiguration-only and widening them to name the rollout window. The loop derived no recommendation; the open-decisions-and-impact-review phase supplies one. Source: review log non-spec.7.review-mechanism.1 OPEN and non-spec-recheck.1.review-mechanism.1 WATCHOUT.
 
 ## Defects in the shipped tree that this proposal does not stage
 
