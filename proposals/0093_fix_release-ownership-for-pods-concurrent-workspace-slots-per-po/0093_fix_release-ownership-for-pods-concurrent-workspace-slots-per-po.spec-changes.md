@@ -4,7 +4,7 @@
 
 The specification states three things this proposal changes.
 
-1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a).
+1. **REG-SLOTCOUNT is a per-pod set keyed by session.** The key `lenny:pod:{pod_id}:active_slots` and the register identifier stay. The value is a Redis set with one member per session holding a slot on the pod and one `leaked:<sessionId>` member per leaked slot. A reservation adds the session's member under the cap. A release removes the session's member. The occupancy-zero disposition runs only on the release that removed the last member. The gateway leader releases a member that its session's release left behind once the session has been terminal for longer than `claimOrphanTimeout`, after the pod's adapter confirms a clean stop of the session. §5.2 **Slot assignment atomicity** is the home of these rules (SPEC-1a). For that confirmation, an adapter `Shutdown` that finds no entry reports an unclean exit while the session's identifier is under the §5.2 reclaim hold (SPEC-1k).
 2. **The SandboxClaim writer set names the gateway's delete by a release that ends the occupancy without reuse.** §4.6.3's ownership row is the home of the rule (SPEC-2c). The non-spec **SandboxClaim end-of-occupancy disposition table** derives it path by path from the tree. SPEC-2 **Site classification.** lists the other spec sites SPEC-2 edits or leaves to an owner.
 3. **full_revoke returns and deny-lists the credential leases of the sessions it cancels, and releases each cancelled session through the session release.** §11.4 steps 1, 2, 4, and 6 and the **Note** state it (SPEC-3). The non-spec **full_revoke release table** derives it for each pre-revoke session state.
 
@@ -12,7 +12,7 @@ The specification states three things this proposal changes.
 
 - **Clean release, then leaked release of the same session.** A pre-running reclaim releases clean, and a peer's in-flight `/start` later releases the same slot with a cleanup that was not acknowledged clean. The second release finds no session member and still adds the `leaked` member, so the leaked slot stays counted (SPEC-1a).
 - **A reseed drops leaked members and unpersisted reservations (departure).** A rehydration after a Redis restart, or the §10.1.4 whole-pod reset, rebuilds an emptied set from the non-terminal session rows. Those rows carry no leaked slots, and a reservation precedes the row that names the pod: a create reserves its slot before it persists the row, and a resume reserves before its commit names the pod. Both drops predate this proposal (§6.2 **`leaked` slot semantics.** says a leaked slot persists until pod termination, today's reseed already drops it, and today's release reports zero occupancy on a counter a restart emptied). The rebuild that follows a Redis outage drops neither (non-spec **Slot-set outage recovery case table**, **Outage ledger and add-only rebuild.**). Their bounds are non-spec **Accepted-departure register** rows A11 and A12.
-- **A member whose release failed during a Redis outage stays counted (departure).** The rebuild that follows a Redis outage adds the members its replica's outage ledger records and removes no member, as the non-spec **Slot-set outage recovery case table** states. A member whose release failed during the outage therefore stays counted after the session stopped using the pod, which fails closed. Its bound is non-spec **Accepted-departure register** row A27.
+- **A member whose release failed during a Redis outage stays counted (departure).** The rebuild that follows a Redis outage adds the members its replica's outage ledger records and removes no member, as the non-spec **Slot-set outage recovery case table** states. A member whose release failed during the outage therefore stays counted after the session stopped using the pod, which fails closed, until the gateway leader releases it once the session has been terminal for longer than `claimOrphanTimeout` (SPEC-1a). Its bound is non-spec **Accepted-departure register** row A27.
 - **Fast-path enforcement before the rebuild after a Redis outage (departure).** §12.4 rebuilds the slot set before fast-path enforcement resumes (SPEC-1d). A gateway replica that did not observe the outage resumes the fast path when Redis answers it, before a replica that observed the outage has run the rebuild. Its cases and bound are non-spec **Accepted-departure register** row A26.
 - **A duplicate release after a Redis restart (departure).** When a session's first release emptied the set and ran the occupancy-zero disposition before a Redis restart, a duplicate release of that session after the restart and before any reservation seeds its own member (SPEC-1a), removes it, and runs the disposition again. The rebuild that follows a Redis outage (non-spec CODE-1 item 8) exposes the same duplicate. Its bound is non-spec **Accepted-departure register** row A13.
 - **A release delete before the pod projects `claimed` (departure).** A claim the gateway deletes before the WarmPoolController has projected the acquisition or the `reserved → bound` rebind is projected from the pod's earlier `idle` or `reserved` level (§4.6.1 **Occupancy projection**). This includes the delete after a failed or crashed session on a pool with `maxConcurrentSessions: 1`. Its bound is non-spec **Accepted-departure register** row A15. The gap predates this proposal: the tree deletes on these paths, and nothing implements the §4.6.3 `failed` write that SPEC-2d removes.
@@ -24,12 +24,12 @@ The specification states three things this proposal changes.
 
 Every table row this proposal edits is one physical line, and it stays one physical line after the edit. Anchors are quoted from the tree at 85c9ab19a, and each matches its target file exactly once.
 
-### SPEC-1 · spec/05_runtime-registry-and-pool-model.md § 5.2; spec/12_storage-architecture.md § 12.4; spec/28_communication-channels.md § 28.3, § 28.6; spec/10_gateway-internals.md § 10.1.4; spec/06_warm-pod-model.md § 6.2; spec/29_communication-scenarios.md § 29.2, § 29.10; spec/04_system-components.md § 4.6.1
+### SPEC-1 · spec/05_runtime-registry-and-pool-model.md § 5.2; spec/12_storage-architecture.md § 12.4; spec/28_communication-channels.md § 28.3, § 28.6; spec/10_gateway-internals.md § 10.1.4; spec/06_warm-pod-model.md § 6.2; spec/29_communication-scenarios.md § 29.2, § 29.10; spec/04_system-components.md § 4.6.1, § 4.7.1; spec/07_session-lifecycle.md § 7.1
 
 **SPEC-1a. §5.2 **Slot assignment atomicity (`maxConcurrentSessions > 1`).**** Replace the text that begins "The gateway uses an atomic Redis `INCR` with a cap check:" and ends "The counter is the intra-pod capacity gate;" with the block below. The rest of the paragraph, from "pod acquisition itself is guarded by the deterministic per-pod `SandboxClaim` CREATE" onward, is unchanged.
 
 ```
-The gateway keeps a pod's slot occupancy in a Redis set, `lenny:pod:{pod_id}:active_slots`. The set holds one member per session that holds a slot on the pod, named by the session identifier, and one member `leaked:<sessionId>` per slot whose cleanup was not acknowledged clean ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) **`leaked` slot semantics.**). The set's cardinality is the pod's slot occupancy. A reservation runs a Lua script. When the session's member is already present, the script adds nothing and returns the cardinality, whatever the cardinality is. Otherwise, when the cardinality is below `maxConcurrentSessions`, it adds the member and returns the new cardinality, and when the cardinality has reached `maxConcurrentSessions`, it adds nothing and returns `nil` (slot unavailable). Because the check and the add run in one script, two concurrent assignments cannot both observe the same free slot. A release runs a Lua script keyed by the session identifier. It removes the session's member, and it returns whether it removed the member and the remaining cardinality. A release that finds the pod's `rehydrated` flag absent first rehydrates the set as **Post-recovery rehydration atomicity.** below states, adding its own session's member to the seed, and then removes that member. A release of a slot whose cleanup was not acknowledged clean removes the session's member, if present, and adds a `leaked` member for the session, so a leak reported after a clean release of the same session is still counted. A second leaked release changes nothing. A clean release that finds no member for the session changes nothing, so every path that releases the same reservation can run and, while Redis keeps the set and its `rehydrated` flag, the reservation is returned once. The occupancy-zero disposition (**Recycle lifecycle (`recycle.enabled: true`).** above, and [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) for the claim delete) runs only on a release that removed the session's member and left the set empty. The set is the intra-pod capacity gate;
+The gateway keeps a pod's slot occupancy in a Redis set, `lenny:pod:{pod_id}:active_slots`. The set holds one member per session that holds a slot on the pod, named by the session identifier, and one member `leaked:<sessionId>` per slot whose cleanup was not acknowledged clean ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine) **`leaked` slot semantics.**). The set's cardinality is the pod's slot occupancy. A reservation runs a Lua script. When the session's member is already present, the script adds nothing and returns the cardinality, whatever the cardinality is. Otherwise, when the cardinality is below `maxConcurrentSessions`, it adds the member and returns the new cardinality, and when the cardinality has reached `maxConcurrentSessions`, it adds nothing and returns `nil` (slot unavailable). Because the check and the add run in one script, two concurrent assignments cannot both observe the same free slot. A release runs a Lua script keyed by the session identifier. It removes the session's member, and it returns whether it removed the member and the remaining cardinality. A release that finds the pod's `rehydrated` flag absent first rehydrates the set as **Post-recovery rehydration atomicity.** below states, adding its own session's member to the seed, and then removes that member. A release of a slot whose cleanup was not acknowledged clean removes the session's member, if present, and adds a `leaked` member for the session, so a leak reported after a clean release of the same session is still counted. A second leaked release changes nothing. A clean release that finds no member for the session changes nothing, so every path that releases the same reservation can run and, while Redis keeps the set and its `rehydrated` flag, the reservation is returned once. The occupancy-zero disposition (**Recycle lifecycle (`recycle.enabled: true`).** above, and [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries) for the claim delete) runs only on a release that removed the session's member and left the set empty. A session member whose session has been in a terminal state for longer than `claimOrphanTimeout` ([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle) **Orphaned `SandboxClaim` detection:**) is stale, because the session's own release did not remove it. The gateway leader, which is the replica holding the `lenny-gateway-leader` Lease ([Section 12.5](12_storage-architecture.md#125-artifact-store)), periodically releases the stale members of the pods that a non-terminal session names, at a rate it limits. For each stale member it sends the pod's adapter an unconditional `Shutdown` for the session, and it removes the member only when that `Shutdown` reports a clean exit, the pod's `rehydrated` flag is present, and the set holds another member, so the leader never runs the occupancy-zero disposition. The leader never removes a `leaked` member. A stale member it does not remove stays counted and is retried. The set is the intra-pod capacity gate;
 ```
 
 **SPEC-1b. §5.2 **Post-recovery rehydration atomicity.**** Make five in-place substitutions in the paragraph.
@@ -177,6 +177,56 @@ with
 ```
 
 **SPEC-1j. §4.6.1 **Pod claim mechanism (per-pod occupancy claim):**.** Replace "is gated by the atomic Redis slot counter, with a Postgres fallback" with "is gated by the Redis slot set, with a Postgres fallback".
+
+**SPEC-1k. §4.7.1 rules 11 and 15, §5.2 **Slot-identifier reclaim hold.**, and §7.1 **Pod-side reclaim on a failed bind.**: the `absent` answer under the reclaim hold.** The stale-slot release of SPEC-1a removes a member only on a clean exit, and today an `absent` answer reports a clean exit even when a cleanup that did not complete still holds the identifier, so the runtime may still run. Make four in-place substitutions.
+
+In spec/04_system-components.md §4.7.1, replace
+
+```
+11. **The no-entry rule.** A request for a session the adapter holds no entry for removes nothing, performs neither teardown, and answers `absent`. It reaches a request of either form.
+```
+
+with
+
+```
+11. **The no-entry rule.** A request for a session the adapter holds no entry for removes nothing, performs neither teardown, and answers `absent`. It reaches a request of either form. Its answer reports an unclean exit while the session's identifier is under the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold, because a cleanup of the slot is then in flight or did not complete, and a clean exit otherwise.
+```
+
+In the same file, rule 15, replace
+
+```
+Rule 11 and rule 13 remove no entry and perform neither teardown, so a response reporting `absent` or `superseded` reports a clean exit; only a response reporting `reclaimed` can report an unclean exit, on the terms the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) disposition table states.
+```
+
+with
+
+```
+Rule 11 and rule 13 remove no entry and perform neither teardown. A response reporting `superseded` reports a clean exit, and a response reporting `absent` reports the exit rule 11 states. A response reporting `reclaimed` reports a clean or an unclean exit on the terms the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) disposition table states.
+```
+
+In spec/05_runtime-registry-and-pool-model.md §5.2 **Slot-identifier reclaim hold.**, replace
+
+```
+A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure.
+```
+
+with
+
+```
+A refusal, and the unclean exit that a `Shutdown` answered under [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 11 reports for a held identifier, are the only records the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure.
+```
+
+In spec/07_session-lifecycle.md §7.1 **Pod-side reclaim on a failed bind.**, replace
+
+```
+whatever outcome the answer carries, so a reclaim answered `superseded` or `absent` is acknowledged clean.
+```
+
+with
+
+```
+whatever outcome the answer carries, so a reclaim answered `superseded` is acknowledged clean, and a reclaim answered `absent` is acknowledged clean unless the identifier is under the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 11).
+```
 
 ### SPEC-2 · spec/04_system-components.md § 4.6, § 4.6.1, § 4.6.3, § 4.7, § 4.9; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.1, § 7.2; spec/08_recursive-delegation.md § 8.3; spec/15_external-api-surface.md § 15.1; spec/24_lenny-ctl-command-reference.md § 24.11; spec/28_communication-channels.md § 28.3, § 28.5.1, § 28.8; spec/29_communication-scenarios.md § 29.4
 
@@ -596,10 +646,10 @@ The reported lease count is the number of leases step 1 adds to the deny list.
 
 ## Spec files touched
 
-- spec/04_system-components.md (SPEC-1j, SPEC-2a, SPEC-2b, SPEC-2c, SPEC-2d, SPEC-2m, SPEC-2p)
-- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-2e, SPEC-2t)
+- spec/04_system-components.md (SPEC-1j, SPEC-1k, SPEC-2a, SPEC-2b, SPEC-2c, SPEC-2d, SPEC-2m, SPEC-2p)
+- spec/05_runtime-registry-and-pool-model.md (SPEC-1a, SPEC-1b, SPEC-1k, SPEC-2e, SPEC-2t)
 - spec/06_warm-pod-model.md (SPEC-1g, SPEC-2f, SPEC-2h, SPEC-2n)
-- spec/07_session-lifecycle.md (SPEC-2l, SPEC-2o)
+- spec/07_session-lifecycle.md (SPEC-1k, SPEC-2l, SPEC-2o)
 - spec/08_recursive-delegation.md (SPEC-2q)
 - spec/10_gateway-internals.md (SPEC-1f)
 - spec/11_policy-and-controls.md (SPEC-3a, SPEC-3b)
