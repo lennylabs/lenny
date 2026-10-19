@@ -18,15 +18,15 @@ Every step lands the tests the non-spec Testing section places under its deliver
       Tiers 0, 1, 2. Depends on: S1
 - [ ] **S8 · code** — CODE-1. Lands the creation predicate, both store fences, the session reservation, and `CreateWithTranscript` with its transcript copiers.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S4, S6, S7
-- [ ] **S9 · code** — CODE-2. Lands the creation gates, the source-owner check, the reservations and undo, the replay's in-transaction transcript copy, the refusal mapping, and the classifier entries.
+- [ ] **S9 · code** — CODE-2. Lands the creation gates, the interaction-resolution caller check, the source-owner check, the reservations and undo, the replay's in-transaction transcript copy, the refusal mapping, and the classifier entries.
       Tiers 0, 1, 3, 4, 7a. Depends on: S1, S2, S4, S8
 - [ ] **S10 · code** — CODE-4. Lands the suspend handler.
       Tiers 0, 1, 3, 7a. Depends on: S1, S4, S7
 - [ ] **S11 · code** — CODE-5. Lands the Phase 2 terminator wiring and the in-phase retry.
       Tiers 0, 1. Depends on: S1, S3, S7
-- [ ] **S12 · code** — CODE-6. Lands the Postgres erasure job store, the `Memory` store's Source Mode snapshot and restore rule, the users restriction helper, the clear handler, the sampler change, and the `ErasureJobOverdue` expression.
+- [ ] **S12 · code** — CODE-6. Lands the Postgres erasure job store, the `Memory` store's Source Mode snapshot and restore rule, the one-transaction SQLite flush, the users restriction helper, the clear handler, the sampler change, and the `ErasureJobOverdue` expression.
       Tiers 0, 1, 2, 4, 11. Depends on: S2, S4, S5, S8
-- [ ] **S13 · code** — CODE-7. Lands the runner's phase dispatch and completion order, the handler changes, the leader-gated erasure sweep and sampler, the `cross_tenant_read` events, and the salt lock.
+- [ ] **S13 · code** — CODE-7. Lands the runner's phase dispatch and completion order, the handler changes, the leader-gated erasure sweep and sampler, the `cross_tenant_read` events, the salt lock, and the `ERASURE_JOB_NOT_FAILED` classifier entry.
       Tiers 0, 1, 2, 3, 4, 7a, 8. Depends on: S1, S2, S4, S7, S8, S11, S12
 - [ ] **S14 · code** — CODE-8. Lands the route removal and its test updates.
       Tiers 0, 1, 3, 4. Depends on: —

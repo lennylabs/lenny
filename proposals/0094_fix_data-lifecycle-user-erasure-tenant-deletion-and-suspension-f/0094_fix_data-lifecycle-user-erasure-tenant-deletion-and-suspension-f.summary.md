@@ -24,7 +24,7 @@
 - D8. The drain makes one pass, continues past per-session errors, and verifies with a second primary listing. The fence fixes the scope's set once the marker commits, and a repeat-until-empty loop could run without bound and terminate sessions created after a concurrent resume.
 - D9. A successful drain proves only that every scoped row is terminal on the primary. It does not wait for the pod release of a session bound on another replica (REC-1 item 6). This residual is filed as a P2-owned finding and recorded as an `ABSENT` claim-register row (REC-1 items 6 and 8), and this proposal adds no quiesce mechanism. The claim row is OD1, decided 2026-10-18 under the owner's delegation, because §28.4 gives every normative mechanism statement a claim row.
 - D10. User erasure drains the user's sessions before any eraser (SG-1). A wait cannot meet the T4 one-hour SLA when `maxSessionAge` defaults to 7200 seconds. This replaces the §12.8 "complete naturally" sentence. Confirmed 2026-10-16 under the owner's standing delegation.
-- D11. Phase 2 is narrowed to the drain. No session-level graceful-shutdown signal is defined, the 5-minute timeout knob was never implemented, and drained sessions still run their terminal pipeline. A drain failure keeps the job in Phase 2 and the next tick retries, because `Reconciler.Retry` has no production caller and a failed job is terminal. Confirmed 2026-10-16 under the owner's standing delegation.
+- D11. Phase 2 is narrowed to the drain. No session-level graceful-shutdown signal is defined, the 5-minute timeout knob was never implemented, and drained sessions still run their terminal pipeline. A drain failure keeps the job in Phase 2 and the next tick retries, because `Reconciler.Retry` has no production caller and a failed job is terminal. Each Phase 2 drain runs under the operator-tunable `--lifecycle-tick-budget` (CODE-5 item 1), and a budget expiry is a drain failure that keeps the job in Phase 2. Confirmed 2026-10-16 under the owner's standing delegation.
 - D12. The Phase 1 row keeps its API-key issuance and user sign-up requirement. Only the session clause cites the fence. The missing issuance gate is filed for a later fix, because Phase 3.5 can hold a tenant in `deleting` after Phase 3 revoked its tokens.
 - D13. Lifecycle listings read the primary through one new field, `ListFilter.Primary`. §12.3 is not amended, because SPEC-1 states the primary-read requirement and §12.3's replica routing is a recommendation for read-heavy queries.
 - D14. The erasure job store is Postgres over migration 0042 with one jsonb `detail` column and a partial unique index allowing one in-progress job per user. Without the index, the 0042 trigger rejects one job's completion while a second job for the user is in progress.
@@ -49,6 +49,7 @@
 - D33. The replay transcript copy commits in the replayed session's insert transaction, under the fence, and a copy error fails the replay with no row, as row K5 of the non-spec **Session-keyed write table** states. It closes the race that row K5's verification note states. No spec edit is needed, because §15.1 already requires the copy. Owner decision 2026-10-18 (OD5).
 - D34. Every erasure-job path that reads under the all-tenants sentinel emits one `cross_tenant_read` event with category `erasure_job` per invocation, including an empty read, and the erasure sampler runs on the leader gate beside the runner, as CODE-7 items 5 and 12 state. §12.3 already requires the event, so no spec edit is needed. The §4.2 sentence that restricts the sentinel to the `platform-admin` path governs requests, and the runner and the sampler read under it as background workers, as the SIEM forwarder and the OCSF translation worker already do. Owner decision 2026-10-18 (OD8).
 - D35. A Source Mode restart re-sets `processing_restricted`, naming the job, for the user of every restored erasure job in a non-terminal phase, before the gateway serves a request or the runner starts, and a restore error stops the gateway, as CODE-6 item 9 states. The restore clears no flag. Owner decision 2026-10-18 (seventh remedy).
+- D36. The terminal-tail claim row (REC-1 item 8) names `R21` (the off-holder eviction leg) as its `deferral_id`. R21 is the step that releases a pod bound on another gateway replica, which is what a drain would wait for; R18 only builds the transport and R19 only forwards messages. Decided 2026-10-19 under the owner's standing delegation.
 
 **Watch out for.**
 - `FOR KEY SHARE` looks sufficient and is not: it lets `userstore.SoftDelete` and `tenantstore.SoftDelete` race the insert. T1.4's `SoftDelete` cases are the discriminating assertions.
@@ -68,7 +69,7 @@
 - The source-owner check of D29 reads the source session's owner, while the fence reads the new session's owner. Do not fold it into `CreationMarkers.Refusal`.
 - `Router.emit` drops an audit append error, so a completion receipt written through it lets `Complete` clear the restriction with no receipt. CODE-7 item 8 names the sink.
 - `heldResourcesForUser` lists every tenant session from the read pool today. The exported enumeration lists the user's sessions from the primary, or a hold set just before the request can be missed.
-- `scripts/lint-migrations.sh` rule 3 fails tier 0 unless a tier-2 test names migration 0186. The migration number is provisional.
+- `scripts/lint-migrations.sh` rule 3 fails tier 0 unless a tier-2 test names each of migrations 0186 and 0187. Both numbers are provisional, and 0187 follows 0186.
 - `tests/claim-map.json` is generated by `scripts/seed-claim-register.py` and is never hand-edited.
 
 ## Goals
@@ -135,9 +136,7 @@
 
 ## Open decisions for human to make
 
-One decision is open, OD9. OD1 to OD5 and OD8 are decided, as D9, D31, D30, D29, D33, and D34 record, OD6 and OD7 were resolved as already staged, and OD10 was resolved as REC-1 item 17. The open decision changes no staged spec edit.
-
-- **OD9. Which remediation step does the terminal-tail claim row name as its deferral?** A successful drain does not wait for the release of a pod bound on another gateway replica (D9). OD1 decided that this residual gets an `ABSENT` row in the claim register, and REC-1 item 8 stages it in `scripts/seed-claim-register.py`, regenerated into `tests/claim-map.json`, with `spec_anchor` `#2854-inter-replica` (the §28.5.4 Inter-replica heading) and `deferral_id` `R19`. The seed script's deferral rules map the pattern "inter.replica" to step R18 and "cross.replica|forward" to step R19, and neither step builds a cross-replica release of a drained session's pod. The tier-0 claim validator accepts `R19` as staged. The choice is to keep `R19`, to name `R18`, or to name another step. The review loop asked for a human confirmation and derived no recommendation beyond the staged `R19`; the open-decisions-and-impact-review phase supplies one. Evidence: `scripts/seed-claim-register.py` lines 62 and 63, and `gateway-runtime-comms-remediation.md` lines 1608 and 1636.
+None is open. OD1 to OD5 and OD8 are decided, as D9, D31, D30, D29, D33, and D34 record, OD6 and OD7 were resolved as already staged, OD10 was resolved as REC-1 item 17, and OD9 is decided as D36.
 
 ## Defects in the shipped tree that this proposal does not stage
 
