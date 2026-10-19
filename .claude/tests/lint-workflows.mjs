@@ -216,16 +216,29 @@ for (const file of targets) {
     });
     // Only top-level uses can run before the declaration; a use inside a
     // function body runs when that function is called, which is later.
+    //
+    // A workflow may wrap its body in one top-level `try { // workflow body`
+    // block so that a stop thrown anywhere in it is caught and returned as a
+    // status. The statements in that block run in order exactly as top-level
+    // statements do, so the block's own depth is the top level here. The
+    // marker is read from the source line, because stripCode removes comments.
+    const srcLines = src.split("\n");
     let depth = 0;
+    let base = 0;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      if (depth === 0 && /^try \{\s*\/\/ workflow body\b/.test(srcLines[i] || "")) {
+        depth = 1;
+        base = 1;
+        continue;
+      }
       // A function signature's parameter list is a set of BINDINGS, not uses,
       // and a parameter may deliberately shadow an outer name. Skipping the
       // line is cruder than parsing it and is right for these files, where a
       // signature carries no other reference.
       const isSignature = /\b(?:function\s+[A-Za-z_$][\w$]*\s*)?\([^)]*\)\s*(?:=>\s*)?\{?\s*$/.test(line) &&
         /\bfunction\b|=>/.test(line);
-      if (depth === 0 && !isSignature) {
+      if (depth === base && !isSignature) {
         for (const m of line.matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) {
           const at = declLine.get(m[1]);
           if (at !== undefined && at > i && !/\b(?:const|let|var|function|class)\s+$/.test(line.slice(0, m.index))) {
@@ -238,6 +251,8 @@ for (const file of targets) {
         else if (ch === "}") depth--;
       }
       if (depth < 0) depth = 0;
+      // The block's closing brace returns the scan to the file's own top level.
+      if (base > 0 && depth < base) base = 0;
     }
   }
 
