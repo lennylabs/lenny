@@ -143,6 +143,64 @@ const rejected = Array.isArray(input.rejected) ? input.rejected : [];
 // control over the run and it is honoured here rather than reasoned around.
 const lockSpecChanges = !!input.lockSpecChanges;
 
+// ---- The dead-agent breaker ----------------------------------------------
+//
+// The parent's breaker, continued across the seam. An account usage limit makes
+// every agent() call return null; counted alone, a firing would retry and
+// record dead agents through every stage, and the parent would go on to the
+// next round. The parent passes its consecutive-dead count and its threshold,
+// this firing keeps counting from that count, and a live attempt resets it.
+// When the count reaches the threshold every later robustAgent call throws a
+// dead-agent stop instead of calling agent(), so no baseline commit and no
+// Apply runs after the trip. The stop is caught at the end of this file
+// and returned as status `stopped-dead-agents`, which the parent honours by
+// stopping its own run. A finished firing returns its count as
+// `deadAgentStreak`, so a run of dead agents that spans the seam is one run.
+const maxConsecutiveDeadAgents =
+  Number.isFinite(input.maxConsecutiveDeadAgents) && input.maxConsecutiveDeadAgents >= 1
+    ? Math.floor(Number(input.maxConsecutiveDeadAgents))
+    : 8;
+let deadAgentStreak =
+  Number.isFinite(input.deadAgentStreak) && input.deadAgentStreak > 0 ? Math.floor(Number(input.deadAgentStreak)) : 0;
+let deadAgentStop = null;
+// The labels of the agents that died, for the stop's report. The firing's own
+// deadAgents list is declared inside the body, which the catch cannot see.
+const deadLabels = [];
+function deadAgentError() {
+  const e = new Error(
+    "change-proposal-decisions stopped: " + deadAgentStop.consecutive + " consecutive dead agent(s)",
+  );
+  e.deadAgentStop = true;
+  return e;
+}
+const isDeadAgentStop = (e) => !!(e && e.deadAgentStop === true);
+function haltOnDeadAgents() {
+  if (deadAgentStop) throw deadAgentError();
+}
+function noteAgentDead(label) {
+  if (deadAgentStop) return;
+  if (!deadLabels.includes(label)) deadLabels.push(label);
+  deadAgentStreak++;
+  if (deadAgentStreak >= maxConsecutiveDeadAgents) {
+    deadAgentStop = { consecutive: deadAgentStreak, threshold: maxConsecutiveDeadAgents, lastLabel: label };
+    log(
+      "DEAD-AGENT STOP: " + deadAgentStreak + " consecutive agent call(s) returned nothing (threshold " +
+        maxConsecutiveDeadAgents + "), last " + label + ". The firing stops before committing or applying " +
+        "anything more and returns the stop to the parent.",
+    );
+  }
+}
+function noteAgentLive() {
+  if (!deadAgentStop) deadAgentStreak = 0;
+}
+
+// The firing's body. A dead-agent stop thrown anywhere inside it is caught at
+// the end of the file and returned to the parent as status
+// `stopped-dead-agents`; every other throw propagates as before. It opens
+// here, ahead of every declaration that follows, so the body keeps one scope;
+// the lint treats the block as top level.
+try { // workflow body
+
 // ---- Where a proposal's parts live ---------------------------------------
 //
 // Verbatim from change-proposal.js, so a path resolves the same way in the
@@ -262,6 +320,10 @@ const ARG_CLASS = {
   humanReadings: "forward",
   collectorModel: "launch",
   collectorEffort: "launch",
+  // forward: the parent's dead-agent breaker, read at every agent call and in
+  // no prompt. The streak is the parent's count when it fired this phase.
+  maxConsecutiveDeadAgents: "forward",
+  deadAgentStreak: "forward",
 };
 
 // ---- Agent plumbing -------------------------------------------------------
@@ -306,9 +368,23 @@ async function robustAgent(prompt, opts, attempts = 4) {
   opts = based;
   const fallbackAt = 3;
   for (let i = 1; i <= attempts; i++) {
+    // A tripped breaker runs no further agent, retries included.
+    haltOnDeadAgents();
     const callOpts = i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
-    const r = await agent(prompt, callOpts);
-    if (r !== null && r !== undefined) {
+    // A throw is a dead attempt, as in the parent: it is caught, counted, and
+    // retried rather than taking the firing down.
+    let r = null;
+    try {
+      r = await agent(prompt, callOpts);
+    } catch (e) {
+      log("  " + (opts.label || "agent") + ": threw on attempt " + i + "/" + attempts + " — " + String((e && e.message) || e).slice(0, 140));
+      r = null;
+    }
+    if (r === null || r === undefined) {
+      noteAgentDead(opts.label || "agent");
+      haltOnDeadAgents();
+    } else {
+      noteAgentLive();
       const missing = missingRequired(r, opts.schema);
       if (missing.length === 0) return r;
       log(
@@ -3996,6 +4072,7 @@ if (commit.outcome === "failed") {
     periodicBudgetSpent,
     unadjudicated,
     deadAgents,
+    deadAgentStreak,
   };
 }
 log(
@@ -4061,6 +4138,10 @@ for (const f of (changed && changed.outsideProposal) || []) {
   if (!outsideProposal.includes(f)) outsideProposal.push(f);
 }
 
+// A stop that tripped inside a parallel stage was absorbed there as null
+// results; the firing reports the stop rather than a finished firing.
+haltOnDeadAgents();
+
 log(
   "Firing " + firing + " done: " + items.length + " item(s) adjudicated, " + survivors.length +
     " through the gate (" + matched.carried.length + " carried forward, " + matched.contestedItems.length +
@@ -4112,4 +4193,29 @@ return {
   // rather than clear of it.
   unadjudicated,
   deadAgents,
+  // The dead-agent count as this firing left it, for the parent to continue.
+  deadAgentStreak,
 };
+} catch (e) {
+  if (!isDeadAgentStop(e)) throw e;
+  // Nothing is committed or saved past this point, and the phase state is not
+  // handed back: the firing did not finish, and the parent stops without
+  // saving.
+  return {
+    status: "stopped-dead-agents",
+    firing,
+    trigger,
+    deadAgentStop,
+    deadAgentStreak,
+    items: [],
+    applied: [],
+    failedItems: [],
+    recordedForOperator: [],
+    decisionsResolved: [],
+    decisionsLeftToHuman: [],
+    contested: [],
+    changedFiles: null,
+    unadjudicated: [],
+    deadAgents: deadLabels,
+  };
+}

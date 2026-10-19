@@ -187,6 +187,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `decisionsFirst` | launch | false | fire the open-decisions phase before the spec review as well as after it |
 | `impactWindow` | forward | 15 | how far, in proposal numbers, the impacts sweep reaches from this proposal |
 | `firstCompactionAtLines` | forward | 400 | the ledger length at which the first compaction pass runs, before the standing context can trigger one |
+| `maxConsecutiveDeadAgents` | forward | 8 | consecutive agent attempts that return nothing, counted across the whole run and the decisions subworkflow, before the run stops with `stopped-dead-agents`. Any live answer resets the count |
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. The introspection pass itself takes no injected text. To add text to every review lens, use `lensPrompt`. Injected text is framed as added context that lowers no bar.
 
@@ -268,6 +269,7 @@ Agents do NOT inherit the session's model or effort: the tier is `baseModel` and
    - `spec-not-converged` and `recheck-budget-exhausted` are the stops the remedy section covers.
    - `stopped-redesign`, `stopped-prune`, `stopped-reframe`, and `stopped-halt` are introspection stops: report the run as stopped with its findings open.
    - `migration-failed`, `not-viable`, `no-change-needed`, and `interrupted` end a run before it reviews anything; report the reason the result carries.
+   - `stopped-dead-agents` means `maxConsecutiveDeadAgents` agent attempts in a row returned nothing. The usual cause is an account usage limit. The run stopped without committing, saving state, or certifying any loop, and `resume` names the run tag and the last completed loop and round. Re-login or wait for the limit to reset, then relaunch with `resumeFromRunId` (or with `resumeState: true` and the same `runTag` when the run is no longer addressable); do not raise a budget.
 5. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
 6. Do not apply any staged edit. This workflow does commit: it commits the proposal directory before each firing of the open-decisions-and-impact-review phase, because that phase reads the tree to tell what it changed, and a migration commits its own changes at startup. Commit nothing else unless asked.
 

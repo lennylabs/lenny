@@ -135,6 +135,132 @@ const runTag =
     .replace(/^.*\//, "")
     .replace(/\.md$/, "")
     .replace(/[^A-Za-z0-9._-]/g, "-");
+
+// ---- The dead-agent breaker -------------------------------------------------
+//
+// An account usage limit makes EVERY agent() call return null, and nothing else
+// in this script reads that as a reason to stop. robustAgent retries each call,
+// the caller's null guard records one dead agent, and the loop moves on to the
+// next round, firing, recheck, or state save. Twice that loop ran until the
+// runtime's 1000-agent cap ended it, after hundreds of dead calls, with a
+// status of `recheck-budget-exhausted` or a cap error that named neither the
+// cause nor the way back.
+//
+// The breaker counts CONSECUTIVE agent() attempts that produced nothing, across
+// the whole run. A dead attempt is one that returned null or undefined or
+// threw; a return that is missing a required field came from an agent that ran,
+// so it is live, and so is a text reply that is an empty string, which several
+// bookkeeping agents legitimately give. Any live attempt resets the count. When
+// the count reaches maxConsecutiveDeadAgents the breaker trips: every later
+// robustAgent call throws a dead-agent stop instead of calling agent(), so no
+// further agent runs, nothing is committed, and no state is written, because
+// every commit and every save in this workflow is an agent. The throw is caught
+// at the end of this file and returned as status `stopped-dead-agents` with a
+// resume hint.
+//
+// A throw inside parallel() resolves to null rather than propagating, so a
+// stop that trips inside a review round surfaces at the next sequential agent
+// call or at an explicit haltOnDeadAgents() check, whichever comes first. The
+// breaker is sticky, so neither path can run another agent in between.
+//
+// The open-decisions subworkflow is a separate script. It receives the count
+// and the threshold as arguments, keeps counting from there, returns its count
+// when it finishes, and returns a `stopped-dead-agents` marker instead of
+// throwing when it trips. fireDecisionsPhase honours the marker.
+//
+// It follows implement-proposal-build.js's maxDeadAttempts, which stops a step
+// after consecutive dead implementers. That guard counts per step; this one is
+// run-wide, because the failure it answers is the account rather than a step.
+const maxConsecutiveDeadAgents =
+  Number.isFinite(input.maxConsecutiveDeadAgents) && input.maxConsecutiveDeadAgents >= 1
+    ? Math.floor(Number(input.maxConsecutiveDeadAgents))
+    : 8;
+let deadAgentStreak = 0;
+// Null until the breaker trips; then the record the result reports.
+let deadAgentStop = null;
+// Where the run is, for the resume hint. `lastCompleted` is the last round
+// whose boundary ran, which is the round a `resumeState` relaunch continues
+// after; `current` is the round the stop interrupted.
+const runProgress = { current: null, lastCompleted: null, loopsFinished: [] };
+
+function deadAgentError() {
+  const e = new Error(
+    "change-proposal stopped: " + deadAgentStop.consecutive + " consecutive dead agent(s), threshold " +
+      deadAgentStop.threshold,
+  );
+  e.deadAgentStop = true;
+  return e;
+}
+const isDeadAgentStop = (e) => !!(e && e.deadAgentStop === true);
+function haltOnDeadAgents() {
+  if (deadAgentStop) throw deadAgentError();
+}
+function tripDeadAgentBreaker(record) {
+  deadAgentStop = {
+    consecutive: deadAgentStreak,
+    threshold: maxConsecutiveDeadAgents,
+    at: runProgress.current ? { ...runProgress.current } : null,
+    ...record,
+  };
+  log(
+    "DEAD-AGENT STOP: " + deadAgentStop.consecutive + " consecutive agent call(s) returned nothing (threshold " +
+      maxConsecutiveDeadAgents + "), last " + deadAgentStop.lastLabel + " in " + deadAgentStop.source +
+      ". The usual cause is an account usage limit. The run stops without committing, saving, or " +
+      "certifying anything; re-login or wait for the limit to reset, then resume.",
+  );
+}
+function noteAgentDead(label) {
+  if (deadAgentStop) return;
+  deadAgentStreak++;
+  if (deadAgentStreak >= maxConsecutiveDeadAgents) {
+    tripDeadAgentBreaker({ lastLabel: label, source: "change-proposal" });
+  }
+}
+function noteAgentLive() {
+  if (!deadAgentStop) deadAgentStreak = 0;
+}
+// The proposal path for the result. `path` is declared inside the workflow
+// body, which the catch cannot see, so the body points this at it once it
+// exists.
+let reportPath = () => input.proposalPath || null;
+// The result a dead-agent stop returns. It reads only what is declared above
+// the workflow body, because the stop is caught outside it.
+function deadAgentStopResult() {
+  const last = runProgress.lastCompleted;
+  return {
+    mode,
+    status: "stopped-dead-agents",
+    path: reportPath(),
+    runTag,
+    deadAgentStop,
+    // No loop is certified by a run that stopped here, whatever it had reached.
+    review: { converged: false, loopsFinished: runProgress.loopsFinished },
+    // Every save in this workflow is an agent, so the stop saves nothing and the
+    // last state on disk is what the last completed round boundary wrote.
+    stateSaved: false,
+    committed: false,
+    resume: {
+      runTag,
+      lastCompleted: last,
+      stoppedIn: deadAgentStop && deadAgentStop.at,
+      resumeFromRunId:
+        "Relaunch with {scriptPath, resumeFromRunId: <this run's id>} and the same arguments. The journal " +
+        "replays every agent that returned before the stop and the run continues from the call that died.",
+      resumeState:
+        "Or relaunch fresh with resumeState: true and runTag \"" + runTag + "\": each loop continues from " +
+        "its last saved round" +
+        (last ? " (the last completed round was " + last.loop + " round " + last.round + ")" : "") +
+        ", and the decisions phase loads its last saved state.",
+      action: "Re-login or wait for the account usage limit to reset, then resume.",
+    },
+  };
+}
+
+// The workflow body. A dead-agent stop thrown anywhere inside it is caught at
+// the end of the file and returned as status `stopped-dead-agents`; every other
+// throw propagates as before. It opens here, ahead of every declaration that
+// follows, so the body keeps one scope; the lint treats the block as top level.
+try { // workflow body
 // The review log's ledger is compacted when it passes either threshold. The
 // figures are carriage cost rather than taste: every lens prompt already
 // carries several thousand tokens of standing text, and a 400-line ledger adds
@@ -560,6 +686,8 @@ const ARG_CLASS = {
   judgesPerVerdict: "forward",
   judgesHealthy: "forward",
   falsificationBar: "forward",
+  // forward: read at every agent call by the dead-agent breaker and in no prompt.
+  maxConsecutiveDeadAgents: "forward",
 };
 
 const READ_ONLY =
@@ -1520,6 +1648,7 @@ const VERDICT_MERGED = {
 // file and re-enters at Validate.
 
 let path;
+reportPath = () => path || input.proposalPath || null;
 let P;
 let draftTitle = null;
 let premiseStats = null;
@@ -1794,6 +1923,9 @@ if (mode === "new") {
   ).filter(Boolean);
 
   if (lensOut.length === 0) {
+    // Every lens dying together is what a tripped breaker looks like from
+    // inside parallel(), so the stop is reported before this status is.
+    haltOnDeadAgents();
     return { mode, status: "interrupted", phase: "validate", reason: "every validation lens failed after retries" };
   }
   const refutedLenses = lensOut.filter((v) => v.verdict === "refuted");
@@ -1879,6 +2011,9 @@ if (mode === "new") {
   ).filter(Boolean);
 
   if (stances.length === 0) {
+    // Every lens dying together is what a tripped breaker looks like from
+    // inside parallel(), so the stop is reported before this status is.
+    haltOnDeadAgents();
     return { mode, status: "interrupted", phase: "draft", reason: "every design stance failed after retries" };
   }
   const dissent = stances.filter((s) => !s.viable);
@@ -4805,6 +4940,11 @@ function missingRequired(r, schema) {
 // unavailable in workflow scripts). A genuine thrown exception (e.g. the token
 // budget is exhausted) propagates immediately and is not retried, since retrying
 // cannot help it.
+//
+// Every attempt reports to the dead-agent breaker declared above the workflow
+// body: a null or a throw counts toward maxConsecutiveDeadAgents, any return
+// resets the count, and once the breaker trips this function throws a
+// dead-agent stop instead of calling agent().
 async function robustAgent(prompt, opts, attempts = 4) {
   prompt = RELAY_GUARD + prompt;
   // Every agent runs at the configured base unless it names its own model. This
@@ -4827,6 +4967,8 @@ async function robustAgent(prompt, opts, attempts = 4) {
   // that still requires the account switch or waiting for the reset.
   const fallbackAt = 3;
   for (let i = 1; i <= attempts; i++) {
+    // A tripped breaker runs no further agent, retries included.
+    haltOnDeadAgents();
     const callOpts =
       i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
     // `agent()` does not always signal failure by returning null: a subagent
@@ -4845,7 +4987,14 @@ async function robustAgent(prompt, opts, attempts = 4) {
       );
       r = null;
     }
-    if (r !== null && r !== undefined) {
+    if (r === null || r === undefined) {
+      // A dead attempt, counted by the run-wide breaker. The throw lands before
+      // the retry log line, so a tripped run says why it stopped and not that it
+      // is retrying.
+      noteAgentDead(opts.label || "agent");
+      haltOnDeadAgents();
+    } else {
+      noteAgentLive();
       const missing = missingRequired(r, opts.schema);
       if (missing.length === 0) return r;
       log(
@@ -5119,8 +5268,18 @@ function saveDecisionsState() {
   const json = stateText(persisted);
   const transfer = transferText(persisted);
   pendingStateSave = (async () => {
-    if (prior) await prior;
-    await writeStateChunks(json, transfer);
+    // A save in flight when the dead-agent breaker trips stops at its next
+    // agent call. The save runs beside the run and nothing awaits it on that
+    // path, so the stop is absorbed here rather than left as an unhandled
+    // rejection; the previous state file stands, because the join that
+    // replaces it is the save's last agent.
+    try {
+      if (prior) await prior;
+      await writeStateChunks(json, transfer);
+    } catch (e) {
+      if (!isDeadAgentStop(e)) throw e;
+      log("The open-decisions phase state was NOT saved: the dead-agent breaker stopped the run. The previous file stands");
+    }
   })();
   return pendingStateSave;
 }
@@ -5208,6 +5367,9 @@ async function firingDigest(at) {
 }
 
 async function fireDecisionsPhase(trigger) {
+  // The firing below is a workflow() call rather than an agent, so the breaker
+  // is read here as well as in robustAgent.
+  haltOnDeadAgents();
   if (!decisionsStateLoaded) await loadDecisionsState();
   if (lastFiringDigest !== null) {
     const now = await firingDigest("before:" + trigger);
@@ -5259,11 +5421,53 @@ async function fireDecisionsPhase(trigger) {
         humanReadings: input.humanReadings,
         collectorModel: input.collectorModel,
         collectorEffort: input.collectorEffort,
+        // The run-wide dead-agent count and its threshold. The child keeps
+        // counting from here and hands the count back.
+        maxConsecutiveDeadAgents,
+        deadAgentStreak,
       },
     );
   } catch (e) {
+    if (isDeadAgentStop(e)) throw e;
     failure = (e && e.message) || "threw with no message";
   }
+  // The child tripped the breaker. Its marker stops this run exactly as a trip
+  // here would: the firing is recorded as stopped, and the stop is thrown to
+  // the end of the workflow body. The child's phase state is not adopted,
+  // because the firing did not finish and nothing would save it.
+  if (res && res.status === "stopped-dead-agents") {
+    const child = res.deadAgentStop || {};
+    decisionRuns.push({
+      firing: n,
+      trigger,
+      ran: false,
+      status: "stopped-dead-agents",
+      reason: "the decisions subworkflow stopped on consecutive dead agents",
+      applied: [],
+      failed: [],
+      contested: [],
+      setAside: [],
+      recordedForOperator: [],
+      decisionsResolved: [],
+      decisionsLeftToHuman: [],
+      deadAgents: res.deadAgents || [],
+      unadjudicated: res.unadjudicated || [],
+      changedFiles: null,
+    });
+    if (!deadAgentStop) {
+      deadAgentStreak = Number.isFinite(child.consecutive) ? child.consecutive : deadAgentStreak;
+      tripDeadAgentBreaker({
+        lastLabel: child.lastLabel || "unknown",
+        source: "change-proposal-decisions",
+        firing: n,
+        trigger,
+      });
+    }
+    haltOnDeadAgents();
+  }
+  // A firing that returned carries the count as it left it, so a run of dead
+  // agents that spans the seam is counted as one run.
+  if (res && Number.isFinite(res.deadAgentStreak) && !deadAgentStop) deadAgentStreak = res.deadAgentStreak;
   // A subworkflow that RETURNS null did not throw, so the catch above never
   // sees it and every read below would dereference null. A null result is the
   // same condition as a throw and takes the same exit, following
@@ -6057,6 +6261,9 @@ async function runReviewLoop(cfg) {
       );
     }
     boundaryFailStreak = 0;
+    // The boundary wrote this round's resume state, so this is the round a
+    // `resumeState` relaunch continues after; the dead-agent stop reports it.
+    runProgress.lastCompleted = { loop: LOOP.name, round: rnd };
     if (boundary.targetRaises !== undefined) standingRaises = boundary.targetRaises;
     compactionRan = false;
     if (boundary.compactionDue) {
@@ -6083,7 +6290,11 @@ async function runReviewLoop(cfg) {
       LOOP.bookkeepingFailed = boundaryFailStreak;
       break;
     }
+    // A stop that tripped inside the last round's parallel stage was absorbed
+    // there as null results; it ends the loop here before another round starts.
+    haltOnDeadAgents();
     round++;
+    runProgress.current = { loop: LOOP.name, round };
     // No snapshot is taken here. One was, into a variable nothing read: the
     // lenses diff against `lensDiffAnchor` and the post-fix review against the
     // pre-fix snapshot below, which are the same copy. It cost one agent a round, at that agent's full opening
@@ -7296,6 +7507,8 @@ async function runReviewLoop(cfg) {
     if (stoppedByIntrospection) break;
   }
 
+  // A loop never reports convergence over a round the breaker cut short.
+  haltOnDeadAgents();
   LOOP.round = round;
   if (fixersFailed.length) {
     log(
@@ -7324,6 +7537,7 @@ async function runReviewLoop(cfg) {
       (LOOP.converged ? "converged" : "did NOT converge") +
       " after " + round + " round(s) and " + sweeps + " sweep(s)",
   );
+  runProgress.loopsFinished.push({ loop: LOOP.name, rounds: round, converged: LOOP.converged });
   return LOOP;
 }
 
@@ -8143,6 +8357,10 @@ log(
 // The last state save runs beside the rest of the run; wait for it, so a
 // relaunch finds the state this run ended with.
 if (pendingStateSave) await pendingStateSave;
+// The last agents of the run may have tripped the breaker inside a parallel
+// stage, which absorbs the throw; the result is the stop's rather than a status
+// that reads as a finished run.
+haltOnDeadAgents();
 return {
   mode,
   // A run stopped by the spec gate says so, rather than reporting "reviewed"
@@ -8347,3 +8565,7 @@ return {
     history,
   },
 };
+} catch (e) {
+  if (!isDeadAgentStop(e)) throw e;
+  return deadAgentStopResult();
+}

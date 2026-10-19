@@ -558,7 +558,10 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 
   // All three dead is not two dead: there is no reading at all, so sub-task 1's
   // population is unadjudicated rather than swept clean.
-  const allDead = await fire3({}, { "f1:human-decisions:*": null });
+  // Twelve dead attempts in a row would trip the dead-agent breaker, which is a
+  // different behaviour with its own section; the threshold is raised so this
+  // case reads the per-population handling it pins.
+  const allDead = await fire3({ maxConsecutiveDeadAgents: 100 }, { "f1:human-decisions:*": null });
   t.check(
     "three dead adjudicators leave the population unadjudicated",
     (allDead.result.unadjudicated || []).includes("human-decisions"),
@@ -2516,6 +2519,55 @@ t.section("D41. the reversal check counts only staged and summary edits");
   t.check("it counts a recorded removal as standing while the thing stays removed",
     rc && /A REMOVAL STANDS WHILE THE THING STAYS REMOVED/.test(rc.prompt));
   t.check("and matches on content rather than exact characters", rc && /differs only in capitalisation, whitespace, punctuation/.test(rc.prompt));
+}
+
+
+t.section("D-DEAD. consecutive dead agents stop the firing with a marker the parent honours");
+{
+  // Every agent dead: the firing returns the marker rather than recording dead
+  // agents through every stage, and it never reaches its baseline commit.
+  const all = await runWorkflow(WF, ARGS(), () => null);
+  t.check("an all-dead firing returns rather than throwing", !all.error, all.error && all.error.message);
+  t.check("with status stopped-dead-agents", all.result && all.result.status === "stopped-dead-agents", all.result && all.result.status);
+  t.check("naming its count and threshold",
+    all.result.deadAgentStop.consecutive === 8 && all.result.deadAgentStop.threshold === 8 && all.result.deadAgentStreak === 8,
+    JSON.stringify(all.result.deadAgentStop));
+  t.check("and the agents that died", (all.result.deadAgents || []).length > 0, JSON.stringify(all.result.deadAgents));
+  t.check("the baseline commit never runs", never(all.calls, "f1:commit"));
+  t.check("nor any Apply", never(all.calls, "f1:apply"));
+  t.check("only the in-flight collectors pass the threshold", all.calls.length <= 8 + 3, String(all.calls.length));
+  t.check("the phase state is not handed back, because the firing did not finish", all.result.phaseState === undefined);
+
+  // The parent's count continues here: seven already dead in the parent, so the
+  // eighth is this firing's first dead attempt.
+  const carried = await runWorkflow(WF, ARGS({ deadAgentStreak: 7 }), () => null);
+  t.check("the parent's count carries into the firing",
+    carried.result.status === "stopped-dead-agents" && carried.result.deadAgentStop.consecutive === 8,
+    JSON.stringify(carried.result.deadAgentStop));
+  t.check("so no agent retries past the first dead batch", carried.calls.length <= 3, String(carried.calls.length));
+
+  // The threshold is the parent's.
+  const low = await runWorkflow(WF, ARGS({ maxConsecutiveDeadAgents: 2 }), () => null);
+  t.check("maxConsecutiveDeadAgents sets the threshold",
+    low.result.status === "stopped-dead-agents" && low.result.deadAgentStop.threshold === 2, JSON.stringify(low.result.deadAgentStop));
+
+  // A thrown call is a dead attempt, counted and retried rather than fatal.
+  const thrown = await runWorkflow(WF, ARGS(), () => {
+    throw new Error("the subagent finished without calling StructuredOutput");
+  });
+  t.check("throwing agents trip the breaker too", !thrown.error && thrown.result.status === "stopped-dead-agents",
+    thrown.error ? thrown.error.message : thrown.result.status);
+
+  // A live firing resets the count and hands it back for the parent to continue.
+  const live = await fire({ deadAgentStreak: 5 }, {});
+  t.check("a live firing finishes", live.result && live.result.status === "done", live.result && live.result.status);
+  t.check("and returns the count reset to zero", live.result.deadAgentStreak === 0, String(live.result.deadAgentStreak));
+
+  // Deaths short of the threshold, with live answers between them, do not stop.
+  const some = await fire({}, { "f1:other-proposals": null });
+  t.check("dead agents short of the threshold do not stop the firing",
+    some.result && some.result.status === "done", some.result && some.result.status);
+  t.check("and are still recorded as dead", (some.result.deadAgents || []).length > 0, JSON.stringify(some.result.deadAgents));
 }
 
 t.done();
