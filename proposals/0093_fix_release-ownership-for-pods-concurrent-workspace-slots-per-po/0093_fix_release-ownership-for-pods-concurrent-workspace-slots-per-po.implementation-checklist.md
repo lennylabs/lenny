@@ -21,7 +21,7 @@
 - [ ] **S10 · code** — CODE-5. Lands the hook's stale-binding step, with the tests **Testing** assigns to CODE-5.
       Tiers 0, 1. Depends on: —
 - [ ] **S11 · code** — CODE-6. Lands the slot-accounting lock on the hook's release step, with the tests **Testing** assigns to CODE-6.
-      Tiers 0, 1, 7a. Depends on: S10
+      Tiers 0, 1, 7a. Depends on: S6, S10
 - [ ] **S12 · code** — CODE-7. Lands the full_revoke release routing, with the tests **Testing** assigns to CODE-7.
       Tiers 0, 1, 2, 3, 9. Depends on: S3, S7, S11
 - [ ] **S13 · test** — TEST-1. Lands the harness extension and the cross-tier tests.
