@@ -2742,7 +2742,31 @@ Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 e
 
 Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
 
-- [ ] **P1. Release ownership for pods, slots, and credential leases** (not yet written).
+- [x] **P1. Release ownership for pods, slots, and credential leases** (proposal 0093, implemented 2026-10-20).
+  - **Outcome.** Proposal 0093
+    (`proposals/0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po/`) makes the per-pod
+    slot occupancy a Redis set keyed by session with an idempotent keyed release, makes the pre-running
+    reclaim slot-aware, deletes the created sweeper, adds the post-terminal hook's stale-binding step and
+    release lock, releases full_revoke's sessions through the existing releasers, and adds the leader-run
+    stale-slot reaper. It closes F-4.6.26, F-4.6.27, F-4.6.28, F-5.2.49, F-7.3.33, F-7.3.34, F-10.1.28,
+    F-11.4.11, F-11.4.15, and F-11.4.16 (a duplicate of F-11.4.15), and closes F-4.9.35 as resolved by
+    proposal 0092's post-terminal hook. F-4.6.29, F-10.1.21, F-10.1.33, and F-11.4.10 stay open with the
+    accepted departures recorded on them; F-11.4.10 keeps its deny-list granularity and session-set halves,
+    which P5b owns. The proposal adds no durable pending-release record; the releases no replica performs
+    are bounded by the claim-orphan GC, a counted slot, the stale-slot reaper, and lease expiry. It filed
+    F-4.6.33 to F-4.6.36, F-4.9.39, F-5.2.51 to F-5.2.56, F-7.2.43, F-8.8.21, F-10.1.38, F-10.1.39,
+    F-10.5.15, F-11.4.17, and F-12.4.28.
+  - **Members moved out, pending owner confirmation.** Proposal 0093 moved these members out of P1, each
+    with a proposed destination:
+    - F-4.9.34 and F-4.9.37, with the per-replica Token Service counts filed as F-4.9.39: a separate
+      credential-leasing accounting proposal that derives each credential's active-lease count from the
+      shared lease store. F-4.9.37 was not on this entry's member list.
+    - F-4.9.32: a direct BUILD-GAPS fix, because §4.9 already requires the session-liveness check.
+    - F-4.9.33: the terminal-writer half goes to P2, and the chain seeding and the persisted rotation count
+      go to a direct BUILD-GAPS fix.
+    - F-10.1.30 and F-10.1.32: the coordination fencing work, with F-10.1.22 or R16.
+    - F-5.2.50: the recycling or concurrent-pool health follow-up. It was not on this entry's member list.
+    - The deny-list and session-set halves of F-11.4.10: P5b.
   - **Scope.** Every path that releases a pod, a concurrent-workspace slot, a per-pod claim, or a
     credential lease at or after a terminal write. One rule: exactly one releaser owns each binding (the
     binding replica's binder release, D6, or `ReleaseUncommitted`); a writer that does not hold the binding

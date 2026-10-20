@@ -124,6 +124,9 @@ func TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise(t *testing.T)
 var documentConsistencyGates = map[string]string{
 	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go": "TEST-GAPS.md, whose resolved " +
 		"findings cite the case that closed them as a `path::TestName` reference",
+	"tests/tier11_docs/build_gaps_release_ownership_records_currency_test.go": "BUILD-GAPS.md and " +
+		"gateway-runtime-comms-remediation.md, whose release-ownership closures, departure records, " +
+		"filings, and plan item cite the code and test files that back them",
 	creditGateFile: "tests/spec-map.json, whose per-case registrations must name a section the " +
 		"registered case annotates and whose credit rules this file's cases compute",
 }
