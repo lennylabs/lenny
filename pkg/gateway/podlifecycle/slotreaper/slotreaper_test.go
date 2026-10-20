@@ -3,11 +3,14 @@
 package slotreaper_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,16 +105,14 @@ func (w *world) ReapStaleSlots(ctx context.Context, pod string, ids []string, wa
 		block(pod)
 	}
 	released := 0
-	var firstErr error
+	var errs []error
 	for _, id := range ids {
 		if err := wait(ctx); err != nil {
-			return released, err
+			return released, errors.Join(append(errs, err)...)
 		}
 		w.mu.Lock()
 		if err := w.releaseErr[id]; err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			errs = append(errs, &memberErr{id: id, err: err})
 			w.mu.Unlock()
 			continue
 		}
@@ -119,8 +120,19 @@ func (w *world) ReapStaleSlots(ctx context.Context, pod string, ids []string, wa
 		w.mu.Unlock()
 		released++
 	}
-	return released, firstErr
+	return released, errors.Join(errs...)
 }
+
+// memberErr is one member's release failure, naming its session as the
+// binder's failure does.
+type memberErr struct {
+	id  string
+	err error
+}
+
+func (e *memberErr) Error() string     { return e.id + ": " + e.err.Error() }
+func (e *memberErr) Unwrap() error     { return e.err }
+func (e *memberErr) SessionID() string { return e.id }
 
 func remove(set []string, id string) []string {
 	out := set[:0:0]
@@ -433,4 +445,90 @@ func TestNewRejectsAnInvalidConfig_spec_5_2(t *testing.T) {
 			t.Errorf("New(%s) returned no error", name)
 		}
 	}
+}
+
+// spec: §5.2 (Slot assignment atomicity)
+//
+// A pass logs each member's release failure against the pod and that
+// member's session, including failures after the first on the same pod. A
+// failure that names no session (a dial or negotiation failure) is logged
+// once against the pod's whole eligible list.
+func TestReaperLogsEachReleaseFailureWithItsSession_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("injected")
+	w := newWorld()
+	for _, id := range []string{"s1", "s2", "s3"} {
+		w.seedStale("pod-a", id)
+	}
+	w.seedStale("pod-b", "s4")
+	w.releaseErr["s1"] = boom
+	w.releaseErr["s3"] = boom
+	var buf syncBuffer
+	clk := &fakeClock{now: t0.Add(time.Hour)}
+	r, err := slotreaper.New(slotreaper.Config{
+		Pods: w, Members: w, Sessions: w, Releaser: podFailer{world: w, fail: map[string]error{"pod-b": boom}},
+		Rate: 50, Interval: time.Minute, TerminalAge: terminalAge,
+		Limiter: &countingLimiter{}, Now: clk.Now,
+		Logger: slog.New(slog.NewJSONHandler(&buf, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Pass(ctx)
+
+	perSession := map[string]string{}
+	var podWide []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if rec["msg"] != "stale-slot reaper: release failed" {
+			continue
+		}
+		if id, ok := rec["session_id"].(string); ok {
+			perSession[id], _ = rec["pod"].(string)
+			continue
+		}
+		pod, _ := rec["pod"].(string)
+		podWide = append(podWide, pod)
+	}
+	if len(perSession) != 2 || perSession["s1"] != "pod-a" || perSession["s3"] != "pod-a" {
+		t.Errorf("per-session failure lines = %v, want s1 and s3 on pod-a", perSession)
+	}
+	if len(podWide) != 1 || podWide[0] != "pod-b" {
+		t.Errorf("pod-wide failure lines = %v, want one for pod-b", podWide)
+	}
+}
+
+// podFailer fails the whole release of the named pods with an error that
+// names no session, as a dial failure does, and delegates the rest.
+type podFailer struct {
+	*world
+	fail map[string]error
+}
+
+func (p podFailer) ReapStaleSlots(ctx context.Context, pod string, ids []string, wait func(context.Context) error) (int, error) {
+	if err := p.fail[pod]; err != nil {
+		return 0, err
+	}
+	return p.world.ReapStaleSlots(ctx, pod, ids, wait)
+}
+
+// syncBuffer is a bytes.Buffer safe for the concurrent release goroutines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

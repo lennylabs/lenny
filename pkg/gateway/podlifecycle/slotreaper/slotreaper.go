@@ -73,7 +73,9 @@ type StaleResolver interface {
 }
 
 // Releaser tears the named stale slots of one pod down and removes their
-// members, calling wait once before each identifier.
+// members, calling wait once before each identifier. Its error may join
+// several failures; a failure with a SessionID method names the one member
+// it kept, and the reaper logs it against that session.
 type Releaser interface {
 	ReapStaleSlots(ctx context.Context, sandboxName string, sessionIDs []string, wait func(context.Context) error) (int, error)
 }
@@ -288,10 +290,7 @@ func (r *Reaper) release(ctx context.Context, pods []string, eligible map[string
 			defer wg.Done()
 			defer func() { <-sem }()
 			n, err := r.cfg.Releaser.ReapStaleSlots(ctx, pod, ids, r.limiter.Wait)
-			if err != nil {
-				r.cfg.Logger.Warn("stale-slot reaper: release failed",
-					"pod", pod, "session_ids", ids, "released", n, "error", err)
-			}
+			r.logReleaseErrors(pod, ids, n, err)
 			mu.Lock()
 			released += n
 			mu.Unlock()
@@ -299,4 +298,34 @@ func (r *Reaper) release(ctx context.Context, pods []string, eligible map[string
 	}
 	wg.Wait()
 	return released
+}
+
+// sessionScoped is a release failure that names the one session it kept.
+type sessionScoped interface {
+	error
+	SessionID() string
+}
+
+// logReleaseErrors logs each failure a release returned. A failure that
+// names its session is logged against that session; any other failure (a
+// Sandbox read, dial, negotiation, or limiter error) applies to every
+// identifier offered for the pod and is logged against the whole list.
+func (r *Reaper) logReleaseErrors(pod string, ids []string, released int, err error) {
+	if err == nil {
+		return
+	}
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	for _, e := range errs {
+		var scoped sessionScoped
+		if errors.As(e, &scoped) {
+			r.cfg.Logger.Warn("stale-slot reaper: release failed",
+				"pod", pod, "session_id", scoped.SessionID(), "error", e)
+			continue
+		}
+		r.cfg.Logger.Warn("stale-slot reaper: release failed",
+			"pod", pod, "session_ids", ids, "released", released, "error", e)
+	}
 }

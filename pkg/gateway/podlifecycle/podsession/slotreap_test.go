@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -33,9 +34,19 @@ type reapAdapter struct {
 	answers   map[string]*adapterv1.ShutdownResponse
 	errs      map[string]error
 	shutdowns []string
+	// hang, when set, makes NegotiateVersion accept the call and never
+	// answer until the caller's deadline ends it or hang is closed.
+	hang chan struct{}
 }
 
-func (a *reapAdapter) NegotiateVersion(context.Context, *adapterv1.NegotiateVersionRequest) (*adapterv1.NegotiateVersionResponse, error) {
+func (a *reapAdapter) NegotiateVersion(ctx context.Context, _ *adapterv1.NegotiateVersionRequest) (*adapterv1.NegotiateVersionResponse, error) {
+	if a.hang != nil {
+		select {
+		case <-ctx.Done():
+			return nil, status.FromContextError(ctx.Err()).Err()
+		case <-a.hang:
+		}
+	}
 	return &adapterv1.NegotiateVersionResponse{SelectedProtocolVersion: adapter.ProtocolVersionV1}, nil
 }
 
@@ -233,4 +244,95 @@ func TestReapStaleSlotsRemovesOnlyAfterACleanTeardown_spec_5_2(t *testing.T) {
 			t.Fatal("ReapStaleSlots with no counter returned no error")
 		}
 	})
+}
+
+// spec: §5.2 (Slot assignment atomicity)
+//
+// The Sandbox read, the adapter dial, and the version negotiation run under
+// the per-slot cleanup floor. An adapter that accepts the connection and
+// never answers the negotiation ends the call with an error once the floor
+// elapses, even though the pass context carries no deadline; the member is
+// kept and no Shutdown or Reap follows.
+func TestReapStaleSlotsBoundsTheNegotiationByTheCleanupFloor_spec_5_2(t *testing.T) {
+	f := newReapFixture(t, "s-live", "s1")
+	f.adp.hang = make(chan struct{})
+	t.Cleanup(func() { close(f.adp.hang) })
+
+	type result struct {
+		released int
+		err      error
+	}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		n, err := f.binder.ReapStaleSlots(context.Background(), reapPod, []string{"s1"}, (&countingWait{}).wait)
+		done <- result{n, err}
+	}()
+	limit := podsession.SlotCleanupFloorForTest + 5*time.Second
+	select {
+	case r := <-done:
+		if r.err == nil || r.released != 0 {
+			t.Fatalf("ReapStaleSlots = %d, %v, want an error and nothing released", r.released, r.err)
+		}
+		if !errors.Is(r.err, context.DeadlineExceeded) && !isDeadline(r.err) {
+			t.Errorf("error %v does not report the floor's deadline", r.err)
+		}
+	case <-time.After(limit):
+		t.Fatalf("ReapStaleSlots did not return within %s of a hung negotiation", limit)
+	}
+	if elapsed := time.Since(start); elapsed < podsession.SlotCleanupFloorForTest-time.Second {
+		t.Errorf("ReapStaleSlots returned after %s, before the floor elapsed", elapsed)
+	}
+	if !f.isMember(t, "s1") {
+		t.Error("a member was removed after a failed negotiation")
+	}
+	f.adp.mu.Lock()
+	defer f.adp.mu.Unlock()
+	if len(f.adp.shutdowns) != 0 {
+		t.Errorf("shutdowns = %v, want none after a failed negotiation", f.adp.shutdowns)
+	}
+}
+
+// isDeadline reports whether any error in err's chain carries the gRPC
+// DeadlineExceeded code.
+func isDeadline(err error) bool {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if status.Code(e) == codes.DeadlineExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+// spec: §5.2 (Slot assignment atomicity)
+//
+// Every member's failure is returned, each naming its own session, so the
+// reaper can log a failure against the session that produced it. A failure
+// on the second member is not dropped behind the first.
+func TestReapStaleSlotsReturnsEveryMemberFailure_spec_5_2(t *testing.T) {
+	f := newReapFixture(t, "s-live", "s1", "s2", "s3")
+	f.adp.errs["s1"] = status.Error(codes.Unavailable, "adapter busy")
+	f.adp.errs["s3"] = status.Error(codes.Internal, "teardown failed")
+	released, err := f.binder.ReapStaleSlots(context.Background(), reapPod, []string{"s1", "s2", "s3"}, (&countingWait{}).wait)
+	if released != 1 || err == nil {
+		t.Fatalf("ReapStaleSlots = %d, %v, want 1 released and the failures", released, err)
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		t.Fatalf("error %T is not a joined error", err)
+	}
+	var got []string
+	for _, e := range joined.Unwrap() {
+		var se *podsession.StaleSlotError
+		if !errors.As(e, &se) {
+			t.Fatalf("failure %v names no session", e)
+		}
+		got = append(got, se.SessionID())
+	}
+	if len(got) != 2 || got[0] != "s1" || got[1] != "s3" {
+		t.Errorf("failed sessions = %v, want [s1 s3]", got)
+	}
+	if !f.isMember(t, "s1") || f.isMember(t, "s2") || !f.isMember(t, "s3") {
+		t.Error("want s1 and s3 kept and s2 removed")
+	}
 }
