@@ -4,7 +4,6 @@ package sessionserver
 
 import (
 	"context"
-	"log"
 	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -44,8 +43,9 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //  4. Drain the session's inbox and DLQ, sending message_expired.
 //  5. On a terminal row, emit one status_change carrying the row's state and
 //     one session_complete, then run signals.
-//  6. Release the pod: a pre-running claim by name, otherwise the executor's
-//     binding with the disposition of the row's state.
+//  6. Release the pod under the session's slot-accounting lock
+//     (releaseAfterTerminal): a pre-running claim by name, otherwise the
+//     executor's binding with the disposition of the row's state.
 //  7. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
@@ -75,17 +75,58 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 	if signals != nil {
 		signals(ctx, sess)
 	}
-	if !s.terminalReclaimPreRunning(ctx, fromState, sess) && s.executor != nil {
-		if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
-			// The release is best-effort, but a failed teardown leaves a
-			// claim or slot counted, so it is logged for an operator.
-			log.Printf("lenny-gateway: executor release session=%s: %v", sess.ID, err)
-		}
-	}
+	s.releaseAfterTerminal(ctx, fromState, sess)
 	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// releaseAfterTerminal is the post-terminal hook's release step. It takes
+// the session's slot-accounting lock before it releases, so a failure funnel
+// that committed a resume_pending or awaiting_client_action edge before this
+// terminal write, and still holds the lock through its slot accounting and
+// its failed-disposition release, finishes first: the drain its accounting
+// requests is stamped before any release of the slot, and this step's
+// executor release then finds no binding. Ordering on the lock replaces any
+// deferral of the funnel to an open terminal claim, which would drop the
+// failure from the whole-pod replacement trigger.
+//
+// The wait runs on the server-lifetime context rather than the writer's, so
+// a writer request that ends while the funnel holds the lock still releases
+// once the funnel unlocks. When the wait ends because the server is shutting
+// down, the step is skipped and logged, and the claim, slot, and binding
+// stay, as they do when the process exits between the terminal write and
+// the release. The release itself keeps the writer's
+// context: Binder.Release and the keyed slot release make their claim and
+// slot writes on a detached context, so a writer context that ends during
+// the release cuts only the adapter Shutdown, and a slot whose Shutdown was
+// cut stays counted through its leaked member.
+//
+// The seal runs before this step and outside the lock, because a seal can
+// run for the whole seal window and would block the funnel for that long.
+// The funnel's failed edge unlocks before it runs this hook, and no other
+// holder of the lock runs the hook, so the wait adds no lock cycle.
+//
+// spec: §5.2 (whole-pod replacement trigger), §7.3 (Resume flow after pod
+// failure), §7.2 (Interactive Session Model)
+func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
+	unlock, err := s.slotAccountLocks.Lock(s.lifetime(), sess.ID)
+	if err != nil {
+		slog.Warn("sessionserver: post-terminal release skipped; the server is shutting down",
+			"session_id", sess.ID, "state", string(sess.State), "error", err)
+		return
+	}
+	defer unlock()
+	if s.terminalReclaimPreRunning(ctx, fromState, sess) || s.executor == nil {
+		return
+	}
+	if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
+		// The release is best-effort, but a failed teardown leaves a claim
+		// or slot counted, so it is logged for an operator.
+		slog.Warn("sessionserver: post-terminal executor release failed",
+			"session_id", sess.ID, "state", string(sess.State), "error", err)
+	}
 }
 
 // settleStaleBinding is the post-terminal hook's stale-binding step. It runs

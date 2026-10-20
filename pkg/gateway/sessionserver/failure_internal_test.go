@@ -506,10 +506,12 @@ func TestFailureFunnelDrainsBeforeSlotRelease_spec_5_2(t *testing.T) {
 // releaseEarlierBinding, which waits for the lock, never runs between the
 // funnel's accounting and its release. On the failed edge the funnel releases
 // the lock before the terminal pipeline (seal, executor release, cascade,
-// billing, and audit) runs, so the post-terminal hook never waits while
-// holding it. A failure means a resume can claim a replacement pod while the
-// funnel's release of the old binding is still pending, or the terminal
-// pipeline's I/O runs under the lock.
+// billing, and audit) runs, and the post-terminal hook's release step then
+// takes the lock itself, so the release runs with one reference, the hook's;
+// a funnel that still held the lock would leave the hook waiting. A failure
+// means a resume can claim a replacement pod while the funnel's release of
+// the old binding is still pending, or the hook's release ran outside the
+// lock or behind a funnel that never unlocked.
 func TestFailureFunnelSlotAccountingLockScope_spec_5_2(t *testing.T) {
 	for _, tc := range []struct {
 		name, reason string
@@ -517,7 +519,7 @@ func TestFailureFunnelSlotAccountingLockScope_spec_5_2(t *testing.T) {
 		want         session.State
 		heldRefs     int
 	}{
-		{"failed edge", "workspace_validation_failed", 0, session.StateFailed, 0},
+		{"failed edge", "workspace_validation_failed", 0, session.StateFailed, 1},
 		{"resume_pending edge", "runtime_crash", 0, session.StateResumePending, 1},
 		{"awaiting_client_action edge", "runtime_crash", 2, session.StateAwaitingClientAction, 1},
 	} {

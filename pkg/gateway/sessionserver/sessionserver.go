@@ -388,8 +388,9 @@ type Server struct {
 	// replacement binding and a drain the accounting requests is stamped
 	// before the release can reach the occupancy-zero recycle edge. The
 	// failure funnel holds it on both pool kinds from before its edge
-	// through its release; releaseEarlierBinding and the terminal binding
-	// release take it before they release. Never take it while holding
+	// through its release; releaseEarlierBinding, the terminal binding
+	// release, and the post-terminal hook's release step take it before
+	// they release. Never take it while holding
 	// deliveryLocks. The zero value is ready to use. spec: §5.2 "whole-pod
 	// replacement trigger"; §7.3 (Credential leases on the replacement pod).
 	slotAccountLocks sessionLocks
