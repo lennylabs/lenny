@@ -548,17 +548,15 @@ func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 // spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
 //
 // The teardown clause is conditional rather than guarded, so a request
-// naming a session the registry holds no bound entry for is a no-op. It
-// reports a clean exit when no other Shutdown that removed the session's
-// entry is still tearing it down and the last such Shutdown did not report
-// an unclean exit, which holds here because the session never started.
-// Returning an error there would make every revoked session hold its slot
-// for the life of the pod, because the gateway's slot release records a
-// leaked outcome as a leaked:<sessionId> member of the pod's slot set.
+// naming a session the registry holds no bound entry for is a no-op that
+// reports a clean exit. Returning an error there would make every revoked
+// session hold its slot for the life of the pod, because the gateway's
+// slot release returns early on a leaked outcome without decrementing the
+// occupancy counter.
 //
 // diagnosis: a failure means a second teardown for an already-released
-// session is refused again, which the occupancy-zero recycle edge produces
-// on every release.
+// session is refused again, which the §11.4 full revoke and the
+// occupancy-zero recycle edge both produce on every release.
 func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {

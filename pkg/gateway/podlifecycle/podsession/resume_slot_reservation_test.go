@@ -207,12 +207,10 @@ func TestResumeStampsMaxPodUptimeOnTheReplacementPod_spec_4_6_1(t *testing.T) {
 }
 
 // spec: 5.2 (the reservation carries its compensating release), 7.3
-// diagnosis: a failed adapter Resume left the session's member in the pod's
-// slot set. A checkpoint-restore failure is the retryable case the resume slot
-// reservation exists to enable, so the stale member holds a slot the pod
-// could otherwise fill until the gateway leader's stale-member release removes
-// it, which happens only after the session has been terminal for longer than
-// claimOrphanTimeout.
+// diagnosis: a failed adapter Resume left the pod's occupancy increment
+// behind. A checkpoint-restore failure is the retryable case the resume slot
+// reservation exists to enable, so the leak compounds per attempt and caps
+// the pod's real capacity until a Redis restart rehydrates the counter.
 func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testing.T) {
 	t.Run("no co-tenant: the claim is disposed at occupancy zero", func(t *testing.T) {
 		srv := adapter.New("adapter-test")

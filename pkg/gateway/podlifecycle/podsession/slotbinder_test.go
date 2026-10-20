@@ -503,9 +503,8 @@ func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
 		t.Fatal("BindReservedSlot succeeded, want a StartSession failure")
 	}
 	// The reserved slot was the only slot on the pod, so releasing it on the
-	// failure deletes the per-pod claim, and the pod's phase then follows the
-	// §4.6.1 occupancy projection. A surviving claim would mean the session's
-	// active_slots member leaked.
+	// failure deletes the per-pod claim and returns the pod to the pool. A
+	// surviving claim would mean the active_slots count leaked.
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("BindReservedSlot did not release the reserved slot on a start failure (active_slots leaked)")
 	}

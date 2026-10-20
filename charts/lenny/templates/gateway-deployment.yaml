@@ -170,7 +170,7 @@ rules:
   # hold-expiry DELETE precondition, and deletes it on the claim-lifecycle
   # edges (hold expiry, session-mode Release, and §5.2
   # SlotClaimer.ReleaseSlot all do Client.Delete on the SandboxClaim).
-  # Intra-pod capacity is gated by the §5.2 Redis slot set with
+  # Intra-pod capacity is gated by the §5.2 atomic Redis slot counter with
   # a §12.4 Postgres SessionStore.GetActiveSlotsByPod fallback under a
   # per-pod advisory lock during a Redis outage, so the gateway does not
   # list or watch claims to gate capacity. The §4.6.3 grant is

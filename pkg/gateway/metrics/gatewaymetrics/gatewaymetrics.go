@@ -1224,10 +1224,9 @@ func (m *Metrics) IncSlotCompensationSuperseded(outcome, cause, pool, podName st
 
 // IncSlotRehydration increments the §5.2
 // `lenny_slot_rehydration_total` counter for the (pod, pool) pair.
-// Called by the concurrent-mode slot claimer when a pod's slot set was
-// seeded from Postgres because the pod's rehydrated flag was absent, once
-// per rehydration. A Redis restart, the §10.1.4 whole-pod reset, and the
-// end of a Redis outage each clear the flag.
+// Called by the concurrent-mode slot claimer when a pod's slot counter
+// was seeded from Postgres after a Redis restart — once per pod per
+// Redis restart.
 // spec: §5.2 ("lenny_slot_rehydration_total counter (labeled
 // by pod, pool) is emitted on each rehydration event").
 func (m *Metrics) IncSlotRehydration(pod, pool string) {

@@ -293,12 +293,10 @@ type SlotClaimer struct {
 	// operators can detect pool under-sizing. Nil is a no-op.
 	OnSlotConflict func(pool string)
 	// OnRehydrate records a §5.2 post-recovery rehydration
-	// event: the slot set for a pod was seeded from Postgres because the
-	// pod's rehydrated flag was absent, which a Redis restart, the §10.1.4
-	// whole-pod reset, or the end of a Redis outage causes. It backs the
-	// lenny_slot_rehydration_total counter (labeled by pod and pool) and
-	// fires once per rehydration of a pod, on the replica whose reservation
-	// or release performed it. Nil is a no-op.
+	// event: the slot counter for a pod was seeded from Postgres after a
+	// Redis restart. It backs the lenny_slot_rehydration_total counter
+	// (labeled by pod and pool) and fires exactly once per pod per Redis
+	// restart (the replica that won the rehydration). Nil is a no-op.
 	OnRehydrate func(podID, pool string)
 	// Now supplies the wall clock for the §6.2 pod-uptime
 	// retirement check. Nil defaults to time.Now.

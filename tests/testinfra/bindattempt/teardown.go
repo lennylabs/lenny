@@ -46,10 +46,8 @@ func TeardownPairingRule(t *testing.T, transport Transport) {
 }
 
 // NoEntryRule drives rule 11. A Shutdown of either form for a session the
-// adapter holds no entry for, and that no Shutdown has removed, answers ABSENT
-// on a successful call reporting a clean exit, removes nothing a co-tenant
-// holds, and runs neither teardown. NoEntryAfterUncleanTeardown drives the
-// unclean arm.
+// adapter holds no entry for answers ABSENT on a successful call reporting a
+// clean exit, removes nothing a co-tenant holds, and runs neither teardown.
 func NoEntryRule(t *testing.T, transport Transport) {
 	forms := map[string]*adapterv1.ShutdownRequest{
 		"naming an attempt":        fencedReq(alice, TokenA),
@@ -192,9 +190,7 @@ func AttemptMatchRule(t *testing.T, transport Transport) {
 
 // ReclaimOutcomeRule drives rule 15. One Shutdown reaching each of rules 11,
 // 12, 13 and 14 answers on a successful call carrying the matching
-// slot_reclaim value. The SUPERSEDED arm reports a clean exit, and the ABSENT
-// arm reports the exit rule 11 states, which is clean here because no
-// Shutdown removed the session's entry.
+// slot_reclaim value, and the arms that remove nothing report a clean exit.
 func ReclaimOutcomeRule(t *testing.T, transport Transport) {
 	arms := []struct {
 		name  string

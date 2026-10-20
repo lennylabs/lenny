@@ -402,8 +402,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
-	// The pod's per-pod claim is deleted, and the pod's phase then follows
-	// the §4.6.1 occupancy projection.
+	// The pod's per-pod claim is deleted (returned to the pool).
 	var sc lennyv1.SandboxClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
