@@ -52,8 +52,10 @@ type teardownAdapter struct {
 	session string
 	delay   time.Duration
 	fails   bool
-	// stillCounted reports whether the session's plain member is in the
-	// pod's slot set; it is read when a teardown ends, before the answer.
+	// stillCounted reports whether the session still holds a slot in the
+	// pod's set, as its plain member or as the leaked member a release
+	// swaps in when its Shutdown meets this teardown in flight (§6.2); it
+	// is read when a teardown ends, before the answer.
 	stillCounted func() bool
 
 	mu       sync.Mutex
@@ -139,7 +141,10 @@ func newReapRace(t *testing.T, stale string, delay time.Duration, fails bool) *r
 	t.Helper()
 	e := newSlotRaceEnv(t, "claimed")
 	f := &reapRace{slotRaceEnv: e, store: memstore.New(), lis: bufconn.Listen(1 << 20)}
-	f.adapter = newTeardownAdapter(stale, delay, fails, func() bool { return f.members(t)[stale] })
+	f.adapter = newTeardownAdapter(stale, delay, fails, func() bool {
+		set := f.members(t)
+		return set[stale] || set[slotcounter.LeakedMember(stale)]
+	})
 	srv := adapter.New("reap-race")
 	srv.WorkspaceBase = t.TempDir()
 	gs := adapter.NewGRPCServer(srv, grpc.ChainUnaryInterceptor(f.adapter.intercept))
