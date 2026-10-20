@@ -18,9 +18,11 @@ package tier4_integration_test
 import (
 	"context"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
@@ -131,13 +133,28 @@ func TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2(t *testing.T) {
 	if st := h.Row(created).State; st != session.StateCreated {
 		t.Fatalf("created session = %s, want created", st)
 	}
+	// The created session shares the sibling's pod, so the slot-set and
+	// claim checks below discriminate a release of the created slot alone
+	// from a release that took the sibling's slot or its claim.
+	if got := h.Row(created).PodAssignment; got != pod {
+		t.Fatalf("the created session reserved on %q, want the sibling's pod %q", got, pod)
+	}
+	requireMembers(t, h, pod, sibling, created)
 	row := h.AwaitState(created, session.StateFailed, 20)
 	if row.State != session.StateFailed {
 		t.Fatalf("abandoned created row = %s, want failed", row.State)
 	}
+	// Only the watchdog's created-state terminal write ends the row with
+	// CREATED_TIMEOUT; another writer's failure would carry its own reason.
+	if row.FailureReason != watchdog.ReasonCreatedTimeout {
+		t.Fatalf("abandoned created row failed with reason %q, want %s", row.FailureReason, watchdog.ReasonCreatedTimeout)
+	}
 	h.RunToQuiescence()
 	requireMembers(t, h, pod, sibling)
 	requireClaim(t, h, pod, string(claimstate.Bound))
+	if n := h.Slots.Removals(pod, created); n != 1 {
+		t.Errorf("removals of the created session's member = %d, want 1", n)
+	}
 	h.Check(t)
 }
 
@@ -180,10 +197,27 @@ func TestSupersededCoordinatorEvictsAndTheAdopterReleasesOnce_spec_10_1_5(t *tes
 	id := h.StartSession(old)
 	pod := h.Row(id).PodAssignment
 	supersede(t, h, old, adopter, id)
+	shutdowns := h.Cluster.PodOf(pod).UnaryCalls("Shutdown")
 	deleteSession(t, h, old, id)
 	h.Settle()
 	if _, ok := old.Registry.Get(id); ok {
 		t.Error("the superseded coordinator kept its stale binding after the terminal write")
+	}
+	// Settle ticks no Sweeper, so the adopter has not released yet: any
+	// removal, or any Shutdown to the pod, at this point came from the
+	// superseded coordinator's hook releasing through its stale binding.
+	members, err := h.SlotMembers(context.Background(), pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(members, id) {
+		t.Errorf("slot set of %s = %v after the superseded coordinator's DELETE, want %s still counted for the adopter's release", pod, members, id)
+	}
+	if n := h.Slots.Removals(pod, id); n != 0 {
+		t.Errorf("removals of %s's member after the superseded coordinator's DELETE = %d, want 0", id, n)
+	}
+	if n := h.Cluster.PodOf(pod).UnaryCalls("Shutdown") - shutdowns; n != 0 {
+		t.Errorf("the superseded coordinator sent %d Shutdowns to %s, want none", n, pod)
 	}
 	h.RunToQuiescence()
 	if n := h.Slots.Removals(pod, id); n != 1 {

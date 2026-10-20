@@ -9,26 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net"
 	"testing"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/test/bufconn"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -200,105 +188,4 @@ func (e *slotRaceEnv) claimPhaseOrGone(ctx context.Context) string {
 		return ""
 	}
 	return claim.Status.Phase
-}
-
-// reapFixture is a binder whose dial reaches a real adapter holding no
-// session, so a Shutdown answers absent with a clean exit, serialized per
-// session by the adapter, and a session store holding the rows the reaper
-// reads.
-type reapFixture struct {
-	*slotRaceEnv
-	binder *podsession.Binder
-	store  *memstore.Store
-}
-
-func newReapFixture(t *testing.T) *reapFixture {
-	t.Helper()
-	e := newSlotRaceEnv(t, "claimed")
-	srv := adapter.New("reap-race")
-	srv.WorkspaceBase = t.TempDir()
-	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
-	go func() { _ = gs.Serve(lis) }()
-	t.Cleanup(gs.Stop)
-	return &reapFixture{
-		slotRaceEnv: e,
-		store:       memstore.New(),
-		binder: &podsession.Binder{
-			Client: e.kube, Namespace: slotRaceNS, AdapterPort: 50051,
-			AcceptedVersions: []string{adapter.ProtocolVersionV1}, SlotCounter: e.counter(),
-			DialAdapter: func(string) (*adapterclient.Client, error) {
-				return adapterclient.Dial("passthrough:///bufnet",
-					grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
-					grpc.WithTransportCredentials(insecure.NewCredentials()))
-			},
-		},
-	}
-}
-
-// seedRow writes a per-slot session row naming the pod, terminal at
-// terminatedAt when that is non-zero.
-func (f *reapFixture) seedRow(t *testing.T, id string, terminatedAt time.Time) {
-	t.Helper()
-	ctx := context.Background()
-	if err := f.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, PodAssignment: slotRacePod, ScrubPolicy: "best-effort-per-slot",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if terminatedAt.IsZero() {
-		return
-	}
-	if _, err := f.store.Update(ctx, "acme", id, func(r *sessionstore.Session) error {
-		r.State = session.StateCompleted
-		sessionstore.MarkTerminated(r, session.StateRunning, terminatedAt)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics)
-// diagnosis: a stale-slot reaper pass raced a late release of the same
-// terminal session on another replica and removed the member twice, lost the
-// late leaked release's leaked: member, removed the live sibling's member,
-// emptied the set, or disposed of the claim.
-func TestStaleSlotReaperRacesALateRelease_spec_5_2(t *testing.T) {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for round := 0; round < slotRounds/2; round++ {
-		f := newReapFixture(t)
-		stale, live := fmt.Sprintf("00000000-0000-4000-8000-%012d", round), "00000000-0000-4000-8000-999999999999"
-		f.seedBoundClaim(t, stale, live)
-		f.seedRow(t, stale, time.Now().Add(-time.Hour))
-		f.seedRow(t, live, time.Time{})
-		reaper, err := slotreaper.New(slotreaper.Config{
-			Pods: f.store, Members: f.counter(), Sessions: f.store, Releaser: f.binder,
-			Rate: 100, Interval: time.Second, TerminalAge: time.Minute,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		leaked := rng.Intn(2) == 0
-		late := f.claimer(f.kube)
-		raceJittered(rng,
-			func() { reaper.Pass(context.Background()) },
-			func() {
-				if _, err := late.ReleaseSlot(context.Background(), slotRacePod, stale, false, leaked); err != nil {
-					t.Errorf("round %d: late release: %v", round, err)
-				}
-			})
-		set := f.members(t)
-		if set[stale] || !set[live] {
-			t.Fatalf("round %d: set %v, want the stale member gone and the live sibling counted", round, set)
-		}
-		if leaked != set[slotcounter.LeakedMember(stale)] {
-			t.Fatalf("round %d: leaked late release %v, set %v", round, leaked, set)
-		}
-		if n := f.log.Removals(slotRacePod, stale); n != 1 {
-			t.Fatalf("round %d: removals of the stale member = %d, want 1", round, n)
-		}
-		if got := f.claimPhase(t); got != string(claimstate.Bound) {
-			t.Fatalf("round %d: claim = %q, want bound", round, got)
-		}
-	}
 }

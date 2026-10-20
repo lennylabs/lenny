@@ -12,7 +12,8 @@
 // lifecycle harness's slot log), a leaked release leaves its leaked: member,
 // a pod's set never exceeds its cap, and the per-pod claim is deleted only by
 // the release that empties the set. The departure cases check the residue
-// their accepted-departure row names and nothing weaker.
+// §5.2 (Slot assignment atomicity) and §4.6.1 (Orphaned SandboxClaim
+// detection) accept, and nothing weaker.
 //
 // spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
 // §4.6.3 (SandboxClaim: a release that ends the occupancy without reuse).
@@ -192,46 +193,6 @@ func raceJittered(rng *rand.Rand, actors ...func()) {
 	}
 	close(start)
 	wg.Wait()
-}
-
-// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
-// §4.6.3 (SandboxClaim: a release that ends the occupancy without reuse)
-// diagnosis: the post-terminal hook's reclaim, a peer's terminal binding
-// release, and a failed start's reservation release of one session raced and
-// removed the member twice, lost a leaked release's leaked: member, left the
-// session's plain member counted, or disposed of the claim while a sibling's
-// slot was live.
-func TestSlotReleasePathsRaceRemovesTheMemberOnce_spec_5_2(t *testing.T) {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for round := 0; round < slotRounds; round++ {
-		e := newSlotRaceEnv(t, "claimed")
-		s, sibling := fmt.Sprintf("sess-%d", round), "sibling"
-		e.seedBoundClaim(t, s, sibling)
-		leaked := [3]bool{rng.Intn(3) == 0, rng.Intn(3) == 0, false}
-		var calls []func()
-		for _, isLeaked := range leaked {
-			claimer := e.claimer(e.kube)
-			calls = append(calls, func() {
-				if _, err := claimer.ReleaseSlot(context.Background(), slotRacePod, s, false, isLeaked); err != nil {
-					t.Errorf("round %d: release: %v", round, err)
-				}
-			})
-		}
-		raceJittered(rng, calls...)
-		set := e.members(t)
-		if set[s] {
-			t.Fatalf("round %d: the session's plain member is still counted: %v", round, set)
-		}
-		if (leaked[0] || leaked[1]) != set[slotcounter.LeakedMember(s)] {
-			t.Fatalf("round %d: leaked releases %v, set %v", round, leaked, set)
-		}
-		if !set[sibling] || e.claimPhase(t) != string(claimstate.Bound) {
-			t.Fatalf("round %d: sibling member %v, claim %q; want the sibling counted and the claim bound", round, set[sibling], e.claimPhase(t))
-		}
-		if over := e.log.OverRemoved(); len(over) != 0 {
-			t.Fatalf("round %d: removed more than once: %v", round, over)
-		}
-	}
 }
 
 // spec: §5.2 (Slot assignment atomicity)

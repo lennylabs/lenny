@@ -32,6 +32,11 @@ const (
 	// FaultCommitError lets an Update apply and then returns a store error,
 	// as a commit whose acknowledgement is lost does.
 	FaultCommitError
+	// FaultHold runs the onFault callback before the call and runs the call
+	// once the callback returns, so a scenario can hold a request at one
+	// store call (for example a start between its binding registration and
+	// its running commit) while other actors race it.
+	FaultHold
 )
 
 func (k FaultKind) String() string {
@@ -46,6 +51,8 @@ func (k FaultKind) String() string {
 		return "peer-takeover"
 	case FaultCommitError:
 		return "commit-error"
+	case FaultHold:
+		return "hold"
 	default:
 		return "none"
 	}
@@ -87,7 +94,8 @@ type Trace struct {
 func NewTrace() *Trace { return &Trace{faultAt: -1, recording: true} }
 
 // Arm arms one fault of kind at index. The harness calls onFault for the
-// crash and peer-takeover kinds, after the call at index completes.
+// crash and peer-takeover kinds after the call at index completes, and for
+// the hold kind before it runs.
 func (t *Trace) Arm(index int, kind FaultKind, onFault func(TraceEntry, FaultKind)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -190,6 +198,10 @@ func (s *TracedStore) before(call, id string) (TraceEntry, FaultKind, func(Trace
 		return e, f, cb, fmt.Errorf("%s %s: %w", call, id, ErrInjected)
 	case FaultContextCancel:
 		return e, f, cb, context.Canceled
+	case FaultHold:
+		if cb != nil {
+			cb(e, f)
+		}
 	}
 	return e, f, cb, nil
 }

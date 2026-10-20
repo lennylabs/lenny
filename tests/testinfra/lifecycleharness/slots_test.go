@@ -129,3 +129,68 @@ func TestSlotSetViolations_spec_5_2(t *testing.T) {
 		})
 	}
 }
+
+// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
+// §4.6.1 (Orphaned SandboxClaim detection)
+//
+// On a concurrent-workspace pool a leaked: member, or a counted member whose
+// release no replica performed, keeps the shared claim bound after the pod's
+// last session ends. The pods-and-claims invariant accepts that claim without
+// RelaxOrphanClaims and leaves the pod to the empty-pod slot invariant, while
+// a bound claim on an unoccupied pod that no row names is still a violation.
+func TestPodsClaimsAcceptsAnOccupiedConcurrentPod_spec_5_2(t *testing.T) {
+	held := map[string]bool{"p-live": true}
+	cases := []struct {
+		name     string
+		relax    bool
+		bound    map[string]bool
+		occupied map[string]bool
+		want     []string
+	}{
+		{"exclusive pool", false, nil, nil, []string{"p-leaked", "p-empty"}},
+		{"occupied pod with no row", false, nil, map[string]bool{"p-leaked": true}, []string{"p-empty"}},
+		{"unoccupied pods with no row", false, nil, map[string]bool{}, []string{"p-leaked", "p-empty"}},
+		// The crash relaxation accepts an unbound pod and keeps flagging a
+		// pod a surviving replica still binds.
+		{"crash relaxation", true, map[string]bool{"p-leaked": true}, nil, []string{"p-leaked"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Harness{RelaxOrphanClaims: tc.relax}
+			got := h.podsClaimsViolations([]string{"p-live", "p-leaked", "p-empty"}, held, tc.bound, tc.occupied)
+			if len(got) != len(tc.want) {
+				t.Fatalf("violations = %v, want %d naming %v", got, len(tc.want), tc.want)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(got[i], "claim on "+w+" ") {
+					t.Errorf("violation %q does not name %s", got[i], w)
+				}
+			}
+		})
+	}
+}
+
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset; Recycle
+// lifecycle)
+//
+// The harness registers its concurrent pool with the gateway pool registry,
+// which validates the session policy, so a recycling concurrent pool must
+// carry the reuse limit §5.2 requires, and both pool kinds must register.
+func TestConcurrentPoolStoreRegistersBothPoolKinds_spec_5_2(t *testing.T) {
+	for _, recycling := range []bool{false, true} {
+		pools, err := concurrentPoolStore(4, recycling)
+		if err != nil {
+			t.Fatalf("recycling=%v: %v", recycling, err)
+		}
+		p, err := pools.Get(context.Background(), Pool)
+		if err != nil {
+			t.Fatalf("recycling=%v: read the pool: %v", recycling, err)
+		}
+		if got := p.SessionPolicy.MaxConcurrentSessions; got != 4 {
+			t.Errorf("recycling=%v: maxConcurrentSessions = %d, want 4", recycling, got)
+		}
+		if got := p.SessionPolicy.Recycle != nil && p.SessionPolicy.Recycle.Enabled; got != recycling {
+			t.Errorf("recycling=%v: recycle enabled = %v", recycling, got)
+		}
+	}
+}

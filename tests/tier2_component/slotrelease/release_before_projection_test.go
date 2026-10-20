@@ -59,12 +59,13 @@ func (f *releaseFixture) podTenant(t *testing.T) string {
 }
 
 // spec: §4.6.1 (Occupancy projection), §5.2 (Pinned idle inventory.)
-// diagnosis: the accepted departure for a claim deleted before the warm pool
-// controller projected `claimed` changed. The pod is expected back in `idle`,
-// unscrubbed, with its lenny.dev/tenant-id pin, which the pinned-idle rules
-// govern. A pod that projects `draining` means the projection now sees the
-// deleted claim, which closes the departure and the register row; a pod that
-// lost its pin means a cross-tenant reuse of an unscrubbed pod.
+// diagnosis: the behavior of a claim deleted before the warm pool controller
+// projected `claimed` changed. §4.6.1 (Occupancy projection) and §5.2
+// (Pinned idle inventory.) accept the pod back in `idle`, unscrubbed, with its
+// lenny.dev/tenant-id pin, which the pinned-idle rules govern. A pod that
+// projects `draining` means the projection now sees the deleted claim, which
+// closes this accepted departure; a pod that lost its pin means a
+// cross-tenant reuse of an unscrubbed pod.
 func TestReleaseBeforeClaimedProjectionLeavesPinnedIdlePod_spec_4_6_1(t *testing.T) {
 	t.Run("released before the projection", func(t *testing.T) {
 		f := newReleaseFixture(t, &slotRuntime{})

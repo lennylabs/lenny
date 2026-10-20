@@ -205,7 +205,9 @@ func concurrentPoolStore(maxConcurrent int32, recycling bool) (*poolstore.Memory
 		AcknowledgeProcessLevelIsolation: true,
 	}
 	if recycling {
-		sp.Recycle = &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true}
+		// §5.2 requires an explicit reuse limit on a recycling pool; the
+		// harness pool never reaches it within a scenario.
+		sp.Recycle = &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 100}
 	}
 	pools := poolstore.NewMemory()
 	if err := pools.Create(context.Background(), poolstore.Pool{
@@ -233,6 +235,23 @@ func (h *Harness) SlotMembers(ctx context.Context, pod string) ([]string, error)
 	}
 	sort.Strings(members)
 	return members, nil
+}
+
+// occupiedPods returns the pods whose slot set holds at least one member,
+// leaked: members included, on a concurrent-workspace pool, and nil on an
+// exclusive pool. A pod whose set cannot be read is left out, so the
+// pods-and-claims invariant still checks its claim.
+func (h *Harness) occupiedPods(ctx context.Context) map[string]bool {
+	if !h.Concurrent() {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, p := range h.Cluster.Pods() {
+		if members, err := h.SlotMembers(ctx, p.Name); err == nil && len(members) > 0 {
+			out[p.Name] = true
+		}
+	}
+	return out
 }
 
 // Concurrent reports whether the harness pool is a concurrent-workspace

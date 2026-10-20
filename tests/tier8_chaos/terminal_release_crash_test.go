@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestCrashBetweenTerminalCommitAndRelease_spec_4_6_1(t *testing.T) {
 
 	t.Run("concurrent pool", func(t *testing.T) {
 		h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 3, MaxConcurrentSessions: 4, NewStore: newStore})
-		h.RelaxOrphanClaims, h.RelaxStaleSlotMembers = true, true
+		h.RelaxStaleSlotMembers = true
 		doomed, survivor := h.Replicas[0], h.Replicas[1]
 		key := terminalWriteKey(t, h, doomed)
 		sibling := h.StartSession(survivor)
@@ -152,12 +153,20 @@ func TestFailFinalizingStoreError_spec_6_2(t *testing.T) {
 			}
 			h := lifecycleharness.New(t, lifecycleharness.Options{
 				Replicas: 1, Pods: 2, MaxConcurrentSessions: 4, NewStore: newStore, MaxFinalizingSeconds: 10,
+				CredentialPool: true,
 			})
 			h.RelaxStaleSlotMembers = tc.committed
 			r := h.Replicas[0]
 			sibling := h.StartSession(r)
 			target := h.CreateSession(r)
 			pod := h.Row(target).PodAssignment
+			// A lease recorded under the session stands in for the one a
+			// partial credential assignment leaves, which only the
+			// prepare-failure exit's revoke returns once a committed failure
+			// write runs no hook.
+			if _, err := h.Creds.Assign(lifecycleharness.ProxyPool().Name, target, "", lifecycleharness.Tenant, h.Row(target).CoordinationGeneration); err != nil {
+				t.Fatalf("assign the finalize lease: %v", err)
+			}
 			// The pool no longer resolves, so finalize fails before Prepare,
 			// the only pre-Prepare exit a concurrent pool reaches.
 			if err := h.Cluster.Client.Delete(context.Background(), &lennyv1.SandboxWarmPool{
@@ -167,9 +176,16 @@ func TestFailFinalizingStoreError_spec_6_2(t *testing.T) {
 			}
 			// The fault lands on the finalize call's guarded failure write.
 			h.Trace.ArmMatching("Update", "writeTerminal", tc.fault, nil)
-			h.Do(r, http.MethodPost, "/v1/sessions/"+target+"/finalize", nil)
+			code, body := h.Do(r, http.MethodPost, "/v1/sessions/"+target+"/finalize", nil)
 			if got := h.Row(target).State == session.StateFailed; got != tc.committed {
 				t.Fatalf("target = %s after the faulted failure write, want committed %v", h.Row(target).State, tc.committed)
+			}
+			requirePrepareFailureExit(t, h, target, code, body)
+			// The prepare-failure exit revokes the session's leases on every
+			// outcome of its failure write. On the committed branch no hook
+			// runs, so this revoke is the only lease return.
+			if n := len(h.CredLeases.LeasesBySession([]string{target})); n != 0 {
+				t.Errorf("target holds %d credential leases after the prepare-failure exit, want none", n)
 			}
 			h.RunToQuiescence()
 			if st := h.Row(target).State; st != session.StateFailed {
@@ -196,5 +212,24 @@ func TestFailFinalizingStoreError_spec_6_2(t *testing.T) {
 			}
 			h.Check(t)
 		})
+	}
+}
+
+// requirePrepareFailureExit fails unless the finalize call left through the
+// prepare-failure exit: the trace holds the call's guarded failure write, and
+// the answer is the pod-claim error that exit writes rather than the 500
+// INTERNAL_ERROR the plan-parse and ready-write exits answer.
+func requirePrepareFailureExit(t *testing.T, h *lifecycleharness.Harness, id string, code int, body map[string]any) {
+	t.Helper()
+	wrote := false
+	for _, e := range h.Trace.Entries() {
+		wrote = wrote || (e.SessionID == id && e.Call == "Update" && strings.Contains(e.Site, "writeTerminal"))
+	}
+	if !wrote {
+		t.Fatalf("the finalize call made no guarded failure write (answer %d %v)", code, body)
+	}
+	envelope, _ := body["error"].(map[string]any)
+	if got, _ := envelope["code"].(string); code < http.StatusBadRequest || got == "" || got == "INTERNAL_ERROR" {
+		t.Fatalf("finalize answered %d %v, want the prepare-failure exit's pod-claim error", code, body)
 	}
 }
