@@ -2515,9 +2515,9 @@ gateway:
   # --suspended-backlog-recheck-seconds.
   suspendedBacklogRecheckSeconds: 300
   # slotCounterPostgresFallbackMaxSeconds is the §12.4 bounded
-  # window during a Redis outage in which the §5.2 atomic slot counter
-  # gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod
-  # under a per-pod advisory lock) instead of the Redis Lua counter. After
+  # window during a Redis outage in which the gateway gates intra-pod
+  # capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod
+  # advisory lock) instead of the §5.2 Redis slot set. After
   # this many seconds with Redis still unreachable, slot admission fails
   # closed so a sustained Redis outage cannot keep the gateway gating
   # capacity on the higher-latency Postgres path indefinitely. Default 60s.

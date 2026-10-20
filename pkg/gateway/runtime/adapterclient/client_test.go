@@ -577,9 +577,11 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 // spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
 //
 // The teardown is idempotent: a request naming a session the adapter holds
-// no bound entry for is a no-op reporting a clean exit, which is what
-// keeps the §11.4 revoke and the concurrent recycle edge from computing a
-// leaked outcome and holding the released slot for the life of the pod.
+// no bound entry for is a no-op. It reports a clean exit unless another
+// Shutdown that removed the session's entry is still tearing it down or the
+// last such Shutdown reported an unclean exit. The clean answer is what
+// keeps the concurrent recycle edge from computing a leaked outcome and
+// holding the released slot for the life of the pod.
 func TestShutdownIsANoOpForAnUnbboundSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceBase = t.TempDir()

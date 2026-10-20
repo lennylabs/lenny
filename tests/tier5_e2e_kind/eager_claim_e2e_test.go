@@ -380,7 +380,8 @@ func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 	})
 	waitCreatedTimeoutFailure(t, c, probe, gatewayIP, id, role)
 
-	// The reserved pod's per-pod claim is released back to the pool.
+	// The reserved pod's per-pod claim is released, and the release deletes
+	// the claim because it ends the pod's occupancy without reuse.
 	releaseDeadline := time.Now().Add(2 * time.Minute)
 	for {
 		if got := claimCount(t, c); got <= before {
