@@ -519,9 +519,15 @@
         "pkg/gateway/podlifecycle/podclaim/claimidle_stamp_departure_test.go",
         "tests/tier2_component/slotrelease/release_before_projection_test.go",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestCreateLoserWithdrawalAfterTheWinnersReleaseLeavesTheClaimForGC_spec_4_6_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestResumeClaimDeleteRacesASlotJoin_spec_5_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCReclaimsTheBoundClaimACrashLeaves_spec_4_6_1",
         "tests/tier8_chaos/orphan_gc_recovery_test.go::TestOrphanGCDrainsAConcurrentPodHoldingAnOutageMember_spec_4_6_1",
-        "tests/tier8_chaos/terminal_release_crash_test.go"
+        "tests/tier8_chaos/terminal_release_crash_test.go",
+        "tests/testinfra/lifecycleharness/slots_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -612,7 +618,13 @@
         "tests/tier2_component/slotrelease/release_slot_disposition_test.go",
         "tests/tier7a_load_local/concurrent_slot_release_race_test.go::TestClaimCreateRaceLeavesOneClaimAndTheLoserWritesNothing_spec_4_6_3",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
+        "tests/tier2_component/lifecycle/concurrent_slot_cells_test.go",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestNotStartedDeleteWithALiveSibling_spec_5_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestEmptyingReleaseRacesAReservation_spec_5_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestCreateLoserWithdrawalAfterTheWinnersReleaseLeavesTheClaimForGC_spec_4_6_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2",
+        "tests/tier7a_load_local/slot_release_paths_race_test.go"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -728,7 +740,8 @@
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go::TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2",
         "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
         "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2",
-        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestChildEnvDropsTheSocketVariable_spec_4_7"
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestChildEnvDropsTheSocketVariable_spec_4_7",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3"
       ],
       "packages": [
         "pkg/adapter",
@@ -799,7 +812,8 @@
         "tests/tier7a_load_local/abandoned_start_rollback_race_test.go",
         "pkg/adapter/shutdownrecord_test.go",
         "tests/tier3_contract/adapter_bind_attempt/absent_unclean_wire_test.go",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
+        "tests/tier7a_load_local/stale_slot_reaper_race_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -1183,7 +1197,8 @@
         "tests/tier9_security/credential_lookup_failclosed_test.go",
         "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
         "tests/tier9_security/slot_credential_reclaim_fence_test.go",
-        "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestExhaustedPoolDoesNotOpenBreaker_spec_4_3"
+        "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestExhaustedPoolDoesNotOpenBreaker_spec_4_3",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
       ],
       "packages": [
         "pkg/credential",
@@ -1553,17 +1568,23 @@
         "pkg/gateway/podlifecycle/podsession/resume_reservation_departure_test.go",
         "tests/tier4_integration/concurrent_slot_release_test.go",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestStaleSlotReaperReleasesTheOutageMember_spec_5_2",
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageRebuildKeepsEveryMember_spec_12_4",
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
         "tests/tier5_e2e_kind/concurrent_not_started_terminate_test.go",
         "tests/tier7a_load_local/concurrent_slot_release_race_test.go",
         "tests/tier7a_load_local/slot_release_departure_race_test.go",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestReleaseCounterFailuresRetryOrStayCounted_spec_5_2",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisOutageMidRehydrationAndMidRebuild_spec_12_4",
         "tests/tier8_chaos/stale_slot_reaper_netpol_test.go",
         "tests/tier8_chaos/terminal_release_crash_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
         "tests/tier7a_load_local/terminal_hook_funnel_race_test.go",
         "tests/tier7a_load_local/slot_release_paths_race_test.go",
-        "tests/tier7a_load_local/stale_slot_reaper_race_test.go"
+        "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
+        "tests/tier11_docs/redis_key_prefix_registry_test.go::TestSlotSetKeyRowsDescribeASet_spec_12_4",
+        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1704,6 +1725,9 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
         "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
         "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSetupCommandFailed_spec_7_3",
@@ -1785,7 +1809,15 @@
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go",
         "tests/tier5_e2e_kind/concurrent_not_started_terminate_test.go",
-        "tests/tier8_chaos/terminal_release_crash_test.go::TestFailFinalizingStoreError_spec_6_2"
+        "tests/tier8_chaos/terminal_release_crash_test.go::TestFailFinalizingStoreError_spec_6_2",
+        "tests/testinfra/lifecycleharness/slots_test.go",
+        "tests/tier2_component/lifecycle/concurrent_slot_cells_test.go",
+        "tests/tier2_component/slotrelease/release_slot_disposition_test.go",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestNotStartedDeleteWithALiveSibling_spec_5_2",
+        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go",
+        "tests/tier7a_load_local/slot_release_paths_race_test.go",
+        "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1962,7 +1994,10 @@
         "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestReleaseFreesTokenServiceLeaseEveryTenancyConfig_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/credentiallease_release_internal_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
-        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go"
+        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5"
       ],
       "packages": [
         "pkg/session"
@@ -2070,7 +2105,9 @@
         "tests/tier4_integration/slot_holder_pgstore_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
-        "tests/testinfra/lifecycleharness/trace_test.go"
+        "tests/testinfra/lifecycleharness/trace_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2174,7 +2211,11 @@
         "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
         "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
         "tests/tier4_integration/slot_holder_pgstore_test.go",
-        "pkg/gateway/podlifecycle/podsession/resume_credentials_test.go::TestReleaseUncommittedReturnsOnlyTheAttemptsPodAndLeases_spec_7_3"
+        "pkg/gateway/podlifecycle/podsession/resume_credentials_test.go::TestReleaseUncommittedReturnsOnlyTheAttemptsPodAndLeases_spec_7_3",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestEmptyingReleaseRacesAReservation_spec_5_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestResumeClaimDeleteRacesASlotJoin_spec_5_2",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestRecycleRebindRacesAByNameDelete_spec_5_2"
       ],
       "packages": [
         "pkg/session/resume",
@@ -2316,7 +2357,8 @@
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
-        "tests/tier7a_load_local/credential_lookup_flapping_race_test.go"
+        "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -2789,6 +2831,7 @@
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
         "tests/tier0_static/coordinator_hold_allowlist_test.go",
         "tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1",
@@ -3277,7 +3320,9 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults",
         "tests/tier8_chaos/stream_failure_chaos_test.go::TestPodGRPCPartitionEvictsWithUnavailableAndKeepsTheRow_spec_28_5_1",
-        "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract"
+        "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestGatewayFlagHelpMatchesTheSuspensionContract",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2"
       ],
       "packages": [
         "pkg/policy/timeout"
@@ -3547,8 +3592,11 @@
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageRebuildKeepsEveryMember_spec_12_4",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisOutageMidRehydrationAndMidRebuild_spec_12_4",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestReleaseCounterFailuresRetryOrStayCounted_spec_5_2",
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestSlotSetKeyRowsDescribeASet_spec_12_4",
-        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go"
+        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2"
       ],
       "packages": [
         "pkg/store/lease",
@@ -4298,7 +4346,8 @@
         "tests/tier3_contract/rest_pools/session_retries_removed_wire_test.go::TestAdminRuntimeCreateDoesNotPersistMaxSessionRetries",
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestResumeAndInterruptToolsMatchREST_spec_15_2_1",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestNoReaderPageNamesTheRetiredResumeTerms",
-        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3"
+        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5317,7 +5366,8 @@
       "title": "Session Investigation",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
       ],
       "packages": [
         "cmd/lenny-ctl"
@@ -6368,7 +6418,8 @@
         "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
         "pkg/adapter/runtimegeneration_test.go",
-        "pkg/adapter/holdstate_test.go"
+        "pkg/adapter/holdstate_test.go",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2"
       ],
       "packages": [],
       "blocked_until_phase": "0",
@@ -6422,7 +6473,9 @@
         "tests/tier0_static/matrix_completeness_test.go",
         "tests/tier11_docs/spec_28_register_writers_test.go",
         "tests/tier11_docs/spec_28_ownership_test.go",
-        "tests/tier4_integration/credential_lifecycle_test.go::TestRuntimeOpsManifestKeyResolvesTheOperationsSocket"
+        "tests/tier4_integration/credential_lifecycle_test.go::TestRuntimeOpsManifestKeyResolvesTheOperationsSocket",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3"
       ],
       "packages": [],
       "blocked_until_phase": "0",
