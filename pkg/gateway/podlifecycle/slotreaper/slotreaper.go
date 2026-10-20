@@ -230,17 +230,15 @@ func (r *Reaper) readMembers(ctx context.Context, pods []string) map[string][]st
 }
 
 // resolveEligible resolves the plain members in batches and returns, per
-// pod, the members whose row is stale. A batch whose read fails makes none
-// of its members eligible.
+// pod, the members whose row is stale. A session ID can be a member of more
+// than one pod's set (a release that failed on one pod before the session's
+// later release targeted another), so each ID maps to every pod holding it
+// and a stale ID is eligible on each of them in the same pass. Each ID is
+// sent to the store once. A batch whose read fails makes none of its
+// members eligible.
+// spec: §5.2 (Slot assignment atomicity).
 func (r *Reaper) resolveEligible(ctx context.Context, members map[string][]string) map[string][]string {
-	owner := map[string]string{}
-	var ids []string
-	for pod, ms := range members {
-		for _, m := range ms {
-			owner[m] = pod
-			ids = append(ids, m)
-		}
-	}
+	owners, ids := indexOwners(members)
 	cutoff := r.cfg.Now().Add(-r.cfg.TerminalAge)
 	eligible := map[string][]string{}
 	for start := 0; start < len(ids); start += r.cfg.BatchSize {
@@ -255,12 +253,31 @@ func (r *Reaper) resolveEligible(ctx context.Context, members map[string][]strin
 			continue
 		}
 		for _, id := range stale {
-			if pod, ok := owner[id]; ok {
+			for _, pod := range owners[id] {
 				eligible[pod] = append(eligible[pod], id)
 			}
+			// A store that returned an ID twice adds it once.
+			delete(owners, id)
 		}
 	}
 	return eligible
+}
+
+// indexOwners maps each member ID to every pod whose set holds it, and
+// returns the distinct IDs in the order first seen. A pod's set holds an ID
+// at most once, so each owner list has no duplicate pod.
+func indexOwners(members map[string][]string) (map[string][]string, []string) {
+	owners := map[string][]string{}
+	var ids []string
+	for pod, ms := range members {
+		for _, m := range ms {
+			if _, seen := owners[m]; !seen {
+				ids = append(ids, m)
+			}
+			owners[m] = append(owners[m], pod)
+		}
+	}
+	return owners, ids
 }
 
 // release calls the releaser for each pod with an eligible member, in the

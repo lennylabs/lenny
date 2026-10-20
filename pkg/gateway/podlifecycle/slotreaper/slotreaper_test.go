@@ -532,3 +532,72 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// recordingStore wraps the world's session store, records every batch the
+// reaper sends, and returns each stale ID twice, as a store that does not
+// de-duplicate its answer would.
+type recordingStore struct {
+	*world
+	batches [][]string
+}
+
+func (s *recordingStore) ListStaleTerminalSessions(ctx context.Context, ids []string, before time.Time) ([]string, error) {
+	s.batches = append(s.batches, append([]string(nil), ids...))
+	stale, err := s.world.ListStaleTerminalSessions(ctx, ids, before)
+	return append(stale, stale...), err
+}
+
+// spec: §5.2 (Slot assignment atomicity)
+//
+// A session whose release failed on one pod before its later release
+// targeted another pod is a member of both pods' sets. One pass releases
+// it from every pod that holds it, sends its ID to the store once, and
+// offers it to each pod's releaser once even when the store answers with a
+// duplicate.
+func TestReaperReleasesAMemberHeldOnSeveralPodsInOnePass_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld()
+	w.seedStale("pod-a", "s1")
+	w.seedStale("pod-b", "s1")
+	w.seedStale("pod-c", "s1")
+	// Each pod also keeps a live member, so the stale one is not its last.
+	for _, pod := range []string{"pod-a", "pod-b", "pod-c"} {
+		w.sets[pod] = append(w.sets[pod], "live-"+pod)
+		w.rows["live-"+pod] = row{}
+	}
+	store := &recordingStore{world: w}
+	lim := &countingLimiter{}
+	r, err := slotreaper.New(slotreaper.Config{
+		Pods: w, Members: w, Sessions: store, Releaser: w,
+		Rate: 50, Interval: time.Minute, TerminalAge: terminalAge,
+		BatchSize: 2, Limiter: lim, Now: func() time.Time { return t0.Add(time.Hour) },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := r.Pass(ctx)
+	if st.Eligible != 3 || st.Released != 3 {
+		t.Fatalf("pass = %+v, want s1 eligible and released on all three pods", st)
+	}
+	for _, pod := range []string{"pod-a", "pod-b", "pod-c"} {
+		if w.has(pod, "s1") {
+			t.Errorf("s1 still a member of %s after one pass", pod)
+		}
+		if !w.has(pod, "live-"+pod) {
+			t.Errorf("live member of %s was released", pod)
+		}
+	}
+	sent := map[string]int{}
+	for _, b := range store.batches {
+		for _, id := range b {
+			sent[id]++
+		}
+	}
+	if sent["s1"] != 1 {
+		t.Errorf("s1 sent to the store %d times, want once (batches %v)", sent["s1"], store.batches)
+	}
+	if lim.count() != 3 {
+		t.Errorf("limiter waits = %d, want one per pod holding s1", lim.count())
+	}
+}
