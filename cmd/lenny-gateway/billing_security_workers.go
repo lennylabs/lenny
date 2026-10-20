@@ -136,8 +136,8 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 		go w.revProp.Run(w.watchdogCtx)
 		go w.mtlsDenyProp.Run(w.watchdogCtx)
 		go w.credRenewalProp.Run(w.watchdogCtx)
-		// §11.4 step 2: apply a peer replica's full_revoke Terminate
-		// request to this replica's pods. Wired only with warm-pod
+		// §11.4 step 2: apply a peer replica's full_revoke binding-release
+		// request to the bindings this replica holds. Wired only with warm-pod
 		// placement (the propagator is nil otherwise). F-11.4.3.
 		if w.userPodTerminateProp != nil {
 			go w.userPodTerminateProp.Run(w.watchdogCtx)

@@ -329,9 +329,10 @@ func (w *gatewayWiring) buildAdminRouter(
 		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
 		WithSessions(w.sessions).
-		// spec: §11.4 — the full_revoke step cancels each session's
-		// same-replica resume attempt and drains its inbox and DLQ right
-		// after the write that cancelled it.
+		// spec: §11.4 — the full_revoke cancel writes hold each session's
+		// terminal claim, cancel its same-replica resume attempt and drain
+		// its inbox and DLQ right after the write, and reclaim a cancelled
+		// session that never started.
 		WithRevokeHook(sessionSrv).
 		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}).
 		WithInteractions(w.interactions).
@@ -838,10 +839,11 @@ func (w *gatewayWiring) buildAdminRouter(
 	// Postgres-backed issued-token index. A minimal gateway wires none
 	// of them and still soft/hard disables a user.
 	//
-	// userPodTerminateProp carries the §11.4 step-2 Terminate request to
-	// peer replicas over Redis pub/sub so a revoked user's pods bound on
-	// other replicas are terminated too. Its Run subscriber is launched
-	// alongside the other revocation propagators below. F-11.4.3.
+	// userPodTerminateProp carries the §11.4 step-2 binding-release
+	// request to peer replicas over Redis pub/sub so the bindings of a
+	// revoked user's sessions held on other replicas are released too. Its
+	// Run subscriber is launched alongside the other revocation propagators
+	// below. F-11.4.3.
 	var userPodTerminateProp *podterminateprop.Propagator
 	{
 		var (
@@ -850,10 +852,12 @@ func (w *gatewayWiring) buildAdminRouter(
 			userTokens admin.UserTokenRevoker
 		)
 		if w.podRegistry != nil {
-			fanOut := &podTerminateFanOut{registry: w.podRegistry}
+			// spec: §11.4 step 2 — each binding is released through the
+			// session server's terminal binding release body.
+			fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}
 			fanOut.prop = podterminateprop.New(fanOut, w.securityBus, w.replica,
 				podterminateprop.WithErrorHandler(func(err error) {
-					log.Printf("lenny-gateway: §11.4 full_revoke: publish pod-termination request: %v", err)
+					log.Printf("lenny-gateway: §11.4 full_revoke: publish binding-release request: %v", err)
 				}))
 			userPodTerminateProp = fanOut.prop
 			userPods = fanOut
@@ -864,9 +868,11 @@ func (w *gatewayWiring) buildAdminRouter(
 		// revocation propagator carries a revoked lease's credential
 		// across replicas — onto every replica's deny list and renewal
 		// worker — so the §11.4 full_revoke fan-out stops the lease
-		// reaching the provider fleet-wide and no replica renews it.
+		// reaching the provider fleet-wide and no replica renews it. The
+		// credential assigner returns each lease to its pool before the
+		// deny-list write (§11.4 step 1).
 		if ls, ok := w.llmLeases.(userLeaseStore); ok {
-			userLeases = &userLeaseRevoker{leases: ls, denyList: credRenewalProp}
+			userLeases = &userLeaseRevoker{leases: ls, assigner: w.credAssign, denyList: credRenewalProp}
 		}
 		if w.pgPool != nil {
 			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}

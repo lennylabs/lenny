@@ -3233,7 +3233,12 @@
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
         "pkg/adapter/session_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go"
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
+        "cmd/lenny-gateway/user_revocation_test.go",
+        "cmd/lenny-gateway/user_revocation_rotation_test.go",
+        "pkg/gateway/podlifecycle/podterminate/propagator/propagator_test.go",
+        "tests/tier3_contract/fullrevoke_release/request_contract_test.go",
+        "tests/tier9_security/full_revoke_lease_return_test.go"
       ],
       "packages": [
         "pkg/auth/invalidate"

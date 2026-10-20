@@ -5,57 +5,63 @@ package admin
 import (
 	"context"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 )
 
 // §11.4 full_revoke fan-out. handleInvalidateUser raises the user's
-// deleted_at tombstone, transitions their non-terminal sessions to
-// `cancelled` in the SessionStore, and dismisses their pending
-// elicitations. The remaining §11.4 propagation steps act on
-// infrastructure the admin Router does not own directly — the pods
-// hosting the user's sessions, the §4.9 credential leases those
-// sessions hold, and the §13.3 issued tokens the user was granted. The
-// Router reaches them through the optional dependencies below, each
-// wired by the gateway and each nil in a minimal deployment.
+// deleted_at tombstone, returns and deny-lists the credential leases of the
+// user's non-terminal sessions, transitions those sessions to `cancelled`
+// in the SessionStore, and dismisses their pending elicitations. The
+// remaining §11.4 propagation steps act on infrastructure the admin Router
+// does not own directly — the pods hosting the user's sessions, the §4.9
+// credential leases those sessions hold, and the §13.3 issued tokens the
+// user was granted. The Router reaches them through the optional
+// dependencies below, each wired by the gateway and each nil in a minimal
+// deployment.
 //
-// Every fan-out is best-effort: a pod that fails to terminate, a lease
-// that fails to revoke, or an unreachable token index does not abort
-// the rest of full_revoke. The handler records what completed and what
-// failed in the audit event and the response body, so an operator sees
-// a partial propagation rather than a silent one.
+// Every fan-out is best-effort: a binding that fails to release, a lease
+// that fails to return, or an unreachable token index does not abort the
+// rest of full_revoke. The handler records what completed and what failed
+// in the audit event and the response body, so an operator sees a partial
+// propagation rather than a silent one.
 
-// UserPodTerminator terminates the pods hosting a user's live sessions.
-// On §11.4 full_revoke the gateway sends the §4.7 `Terminate` RPC
-// (reason `USER_REVOKED`) to every pod this replica holds a binding for
-// among the user's sessions. The gateway's pod-session registry
-// satisfies it; a deployment without warm-pod placement wires nil and
-// the SessionStore transition alone ends the user's sessions.
+// UserPodTerminator releases the pod bindings of a user's cancelled
+// sessions. On §11.4 full_revoke the gateway releases the binding of every
+// cancelled session this replica holds through the session release, which
+// sends the pod the §4.7 `Shutdown` RPC, and publishes the request so each
+// peer replica releases the bindings it holds. The gateway's pod-session
+// registry satisfies it; a deployment without warm-pod placement wires nil
+// and the SessionStore transition alone ends the user's sessions.
 type UserPodTerminator interface {
-	// TerminateUserSessions terminates the pods hosting the named
-	// sessions. It is best-effort per pod: one pod failing to terminate
-	// must not stop the others. The result reports the counts and the
-	// identifiers of the sessions whose pod termination failed.
+	// TerminateUserSessions releases the bindings of the named sessions.
+	// It is best-effort per binding: one release failing must not stop
+	// the others. The result reports the count released on this replica
+	// and the identifiers of the sessions whose release failed.
 	TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) UserTerminationResult
 }
 
 // UserTerminationResult reports the outcome of the §11.4 full_revoke
-// pod-RPC `Terminate` fan-out.
+// binding release on the handling replica.
 type UserTerminationResult struct {
-	// PodsTerminated counts the pods the fan-out terminated.
+	// PodsTerminated counts the bindings this replica released.
 	PodsTerminated int
-	// FailedSessions lists the sessions whose pod termination failed.
+	// FailedSessions lists the sessions whose binding release failed.
 	// The failure is recorded and the rest of full_revoke proceeds.
 	FailedSessions []string
 }
 
-// UserLeaseRevoker revokes the §4.9 credential leases held by a user's
-// sessions. On §11.4 full_revoke the gateway drops each lease from the
-// credential-lease store and adds its credential to the §4.9 deny list,
-// so the LLM proxy rejects an in-flight request that still carries the
-// lease token. A deployment without credential leasing wires nil.
+// UserLeaseRevoker returns and deny-lists the §4.9 credential leases held
+// by a user's sessions. On §11.4 full_revoke the gateway returns every
+// lease to its pool, which removes the lease record, and then adds each
+// lease's credential to the §4.9 deny list, so the LLM proxy rejects an
+// in-flight request that still carries the lease token. A deployment
+// without credential leasing wires nil.
 type UserLeaseRevoker interface {
-	// RevokeUserLeases revokes every credential lease held by the named
-	// sessions and returns the count revoked. It is best-effort: a lease
-	// that cannot be revoked does not stop the others.
+	// RevokeUserLeases returns and deny-lists every credential lease held
+	// by the named sessions and returns the count enumerated. It is
+	// best-effort: a lease whose return fails is still deny-listed and
+	// counted.
 	RevokeUserLeases(tenantID, userID string, sessionIDs []string) int
 }
 
@@ -89,7 +95,7 @@ type UserPlaygroundRevoker interface {
 }
 
 // WithUserRevocation wires the §11.4 full_revoke fan-out dependencies
-// onto the Router: the pod terminator, the credential-lease revoker,
+// onto the Router: the binding releaser, the credential-lease revoker,
 // and the issued-token revoker. Each argument is independently
 // optional — passing nil for one leaves that fan-out step inactive
 // while the others still run. soft_disable and hard_disable do not
@@ -136,27 +142,25 @@ type fullRevokeOutcome struct {
 	playgroundRevokeError     string
 }
 
-// runFullRevokeFanOut runs the §11.4 full_revoke infrastructure
-// propagation for the named user sessions: terminate the hosting pods,
-// revoke the sessions' credential leases, and invalidate the user's
-// cached auth. Each step is independently best-effort and skipped when
-// its dependency is not wired. liveSessions is the set of the user's
-// non-terminal sessions the SessionStore step already cancelled.
-func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reason string, liveSessions []string) fullRevokeOutcome {
+// runFullRevokeFanOut runs the §11.4 full_revoke propagation that follows
+// the cancel writes, for the sessions they cancelled. It first reclaims each
+// cancelled session that never started (reclaimRevokedPreRunning), which
+// also ends every terminal claim the cancel writes opened, then releases the
+// cancelled sessions' bindings through the pod terminator, then invalidates
+// the user's cached auth and revokes their playground sessions. Each step is
+// independently best-effort and skipped when its dependency is not wired.
+// The lease step ran before the cancel writes, in terminateUserSessions.
+func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reason string, revoked []RevokedSession) fullRevokeOutcome {
 	var out fullRevokeOutcome
 
-	// §11.4 step 2-4: send the §4.7 Terminate RPC to every pod hosting
-	// one of the user's sessions. Best-effort per pod.
-	if r.userPods != nil && len(liveSessions) > 0 {
-		res := r.userPods.TerminateUserSessions(ctx, tenantID, userID, liveSessions)
+	r.reclaimRevokedPreRunning(ctx, revoked)
+
+	// spec: §11.4 step 2 — release the binding of each cancelled session
+	// on the replica that holds it. Best-effort per binding.
+	if r.userPods != nil && len(revoked) > 0 {
+		res := r.userPods.TerminateUserSessions(ctx, tenantID, userID, revokedIDs(revoked))
 		out.podsTerminated = res.PodsTerminated
 		out.podTerminateFailed = res.FailedSessions
-	}
-
-	// §11.4 step 6: revoke the credential leases the user's sessions
-	// hold and add them to the §4.9 deny list. Best-effort per lease.
-	if r.userLeases != nil && len(liveSessions) > 0 {
-		out.leasesRevoked = r.userLeases.RevokeUserLeases(tenantID, userID, liveSessions)
 	}
 
 	// §11.4 step 5: invalidate the user's cached auth. The durable
@@ -194,4 +198,38 @@ func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reas
 	}
 
 	return out
+}
+
+// reclaimRevokedPreRunning reclaims the pod or the slot of each cancelled
+// session whose pre-revoke state is created, finalizing, or ready, and then
+// ends every terminal claim the cancel writes opened. The claims keep this
+// replica's own coordination Sweeper and resume tail from releasing a
+// cancelled session's binding before the reclaim runs: the reclaim skips a
+// session bound on this replica only while the registry still holds the
+// binding, and after a release removed it the reclaim would delete by name a
+// claim the release had just patched to recycling. The claims end before the
+// binding release, which would otherwise refuse to start.
+//
+// spec: §11.4 step 4 (User Invalidation), §10.1.5 (Stale Replica Behavior)
+func (r *Router) reclaimRevokedPreRunning(ctx context.Context, revoked []RevokedSession) {
+	if r.revoked != nil {
+		for _, rs := range revoked {
+			if revokedPreRunning(rs.From) {
+				r.revoked.ReclaimRevokedPreRunning(ctx, rs.From, rs.Row)
+			}
+		}
+	}
+	endRevokeClaims(revoked)
+}
+
+// revokedPreRunning reports whether a pre-revoke state is one in which the
+// session never started: the gateway may have claimed a pod or a slot for
+// it, and no runtime session runs on it.
+func revokedPreRunning(st session.State) bool {
+	switch st {
+	case session.StateCreated, session.StateFinalizing, session.StateReady:
+		return true
+	default:
+		return false
+	}
 }

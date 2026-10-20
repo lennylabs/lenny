@@ -167,7 +167,7 @@ func TestBindingStaleCallSitesAgree_spec_10_1_1(t *testing.T) {
 
 				f := newFunnelFixture(t, funnelOpts{})
 				row, _ := bindAt(t, f, "s", session.StateCancelled, rowGen, bindGen)
-				f.srv.releaseTerminalBinding(row)
+				_, _ = f.srv.releaseTerminalBinding(context.Background(), row)
 				if evicted := !releasedIn(f.log.list()); evicted != want {
 					t.Errorf("releaseTerminalBinding evicted = %v, want %v (events %v)", evicted, want, f.log.list())
 				}

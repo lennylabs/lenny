@@ -20,7 +20,15 @@ import (
 // the coordination Sweeper never precedes the hook's seal, drain, and
 // terminal signals.
 //
-// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica Behavior)
+// The §11.4 full_revoke cancel writes also hold a claim, and they run no
+// post-terminal hook. Each opens its claim before its cancel write and holds
+// it until the full_revoke pre-running reclaim has run, so this replica's
+// coordination Sweeper and resume tail cannot release a cancelled
+// pre-running session's binding first and leave the reclaim to delete by
+// name a claim the release had just patched to recycling.
+//
+// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica Behavior),
+// §11.4 (User Invalidation)
 func (s *Server) BeginTerminal(sessionID string) (end func()) {
 	return s.terminalClaims.open(sessionID)
 }
@@ -165,9 +173,26 @@ func (s *Server) settleStaleBinding(fromState session.State, sess sessionstore.S
 // admin router calls right after each write that cancelled one of the user's
 // sessions: it cancels a same-replica resume attempt for the session and
 // drains the session's inbox and DLQ. The full_revoke write runs no
-// post-terminal hook; its fan-out sends Shutdown to each cancelled session's
-// pod. spec: §7.3 (Retry and Resume), §11.4 (User Invalidation).
+// post-terminal hook; its fan-out reclaims a session that never started
+// (ReclaimRevokedPreRunning) and releases each cancelled session's binding
+// on the replica that holds it (ReleaseRevokedBinding). spec: §7.3 (Retry
+// and Resume), §11.4 (User Invalidation).
 func (s *Server) AfterRevokeWrite(ctx context.Context, row sessionstore.Session) {
 	s.CancelResumeAttempt(row.ID)
 	s.drainMessagingOnTerminal(ctx, row)
+}
+
+// ReclaimRevokedPreRunning is the §11.4 full_revoke pre-running reclaim. The
+// admin router calls it for each session the revoke cancelled from created,
+// finalizing, or ready, while the session's terminal claim from the cancel
+// write is still open on this replica. It reclaims the pod or the slot the
+// session claimed through the post-terminal hook's pre-running reclaim,
+// which skips a session whose binding this replica holds; the full_revoke
+// binding release releases that one. It runs on the caller's context with
+// no lock, and the reclaim logs its own error.
+//
+// spec: §11.4 step 4 (User Invalidation), §4.6.3 (CRD Field Ownership and
+// Write Boundaries), §5.2 (Failure isolation)
+func (s *Server) ReclaimRevokedPreRunning(ctx context.Context, from session.State, row sessionstore.Session) {
+	s.terminalReclaimPreRunning(ctx, from, row)
 }

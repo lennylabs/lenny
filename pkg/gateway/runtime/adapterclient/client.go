@@ -946,8 +946,8 @@ func (a *AttachStream) CloseSend() error {
 // Shutdown tears the named session down: the adapter ends the session's
 // use of the pod's runtime process, which stays alive for the pod's life,
 // removes its per-slot tree, and releases the slot it held. reason is an
-// opaque cause string surfaced to the adapter — the §11.4 full_revoke
-// fan-out passes `USER_REVOKED` — and deadline bounds the graceful phase.
+// opaque cause string surfaced to the adapter, and deadline bounds the
+// graceful phase.
 // A zero deadline lets the adapter apply its default grace period. The
 // returned bool reports whether the session's close and slot teardown
 // completed cleanly.

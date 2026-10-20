@@ -136,7 +136,7 @@ func TestCrossReplicaFanOut_spec_11_4_step_2(t *testing.T) {
 
 	// miniredis drops a message published before SUBSCRIBE registers, so
 	// re-publish until replica B's terminator observes the request.
-	req := Request{TenantID: "acme", UserID: "alice@acme.com", Reason: "USER_REVOKED", SessionIDs: []string{"run_a", "run_b"}}
+	req := Request{TenantID: "acme", UserID: "alice@acme.com", SessionIDs: []string{"run_a", "run_b"}}
 	waitForCondition(t, 3*time.Second, func() bool {
 		propA.Publish(ctx, req)
 		return len(localB.applied()) > 0
@@ -152,6 +152,30 @@ func TestCrossReplicaFanOut_spec_11_4_step_2(t *testing.T) {
 	}
 	if len(last.SessionIDs) != 2 {
 		t.Errorf("replica B applied %d sessions, want 2", len(last.SessionIDs))
+	}
+}
+
+// TestRequestCarriesNoReason pins the §11.4 step-2 release request's JSON
+// encoding to the tenant, the user, the origin, and the session set. The
+// release path's own Shutdown carries its own cause, so the request carries
+// no reason field for a peer to forward.
+//
+// spec: §11.4 (User Invalidation)
+func TestRequestCarriesNoReason_spec_11_4(t *testing.T) {
+	var fields map[string]any
+	if err := json.Unmarshal(mustJSON(t, Request{
+		TenantID: "acme", UserID: "alice@acme.com", Origin: "replica-A", SessionIDs: []string{"run_a"},
+	}), &fields); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	want := map[string]bool{"tenantId": true, "userId": true, "origin": true, "sessionIds": true}
+	if len(fields) != len(want) {
+		t.Errorf("request fields = %v, want exactly %v", fields, want)
+	}
+	for k := range fields {
+		if !want[k] {
+			t.Errorf("request carries unexpected field %q", k)
+		}
 	}
 }
 

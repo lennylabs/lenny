@@ -77,11 +77,15 @@ type terminalClaimEntry struct {
 
 // terminalClaimRecord is the terminal claim record. BeginTerminal adds one
 // writer claim per terminal writer, from before its terminal Update until
-// its post-terminal hook returns; ReleaseTerminalBinding marks the one
-// binding release it runs for the session. An entry is deleted once its
+// its post-terminal hook returns. The §11.4 full_revoke cancel writes are
+// claim holders that run no post-terminal hook: each holds its claim from
+// before its cancel write until the full_revoke pre-running reclaim ends.
+// ReleaseTerminalBinding and ReleaseRevokedBinding mark the one binding
+// release they run for the session. An entry is deleted once its
 // count is zero and it marks no release. The zero value is ready to use.
 //
-// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica Behavior)
+// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica Behavior),
+// §11.4 (User Invalidation)
 type terminalClaimRecord struct {
 	mu      sync.Mutex
 	entries map[string]*terminalClaimEntry

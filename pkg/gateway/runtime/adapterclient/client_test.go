@@ -745,7 +745,7 @@ func TestTerminateSendsReasonAndDeadline(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	clean, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(context.Background(), "sess-t", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -758,8 +758,8 @@ func TestTerminateSendsReasonAndDeadline(t *testing.T) {
 	if got := rec.gotShutdown.GetSessionId().GetValue(); got != "sess-t" {
 		t.Errorf("Shutdown session id = %q, want sess-t", got)
 	}
-	if got := rec.gotShutdown.GetReason(); got != "USER_REVOKED" {
-		t.Errorf("Shutdown reason = %q, want USER_REVOKED", got)
+	if got := rec.gotShutdown.GetReason(); got != "test_reason" {
+		t.Errorf("Shutdown reason = %q, want test_reason", got)
 	}
 	if got := rec.gotShutdown.GetDeadlineMs(); got != 10_000 {
 		t.Errorf("Shutdown deadline = %d ms, want 10000", got)
@@ -770,7 +770,7 @@ func TestTerminateZeroDeadlineSendsZero(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	if _, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 0); err != nil {
+	if _, err := cl.Shutdown(context.Background(), "sess-t", "test_reason", 0); err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
 	if rec.gotShutdown.GetDeadlineMs() != 0 {
@@ -790,7 +790,7 @@ func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	clean, err := cl.Shutdown(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(ctx, "sess-x", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -811,7 +811,7 @@ func TestShutdownWithAReasonIsANoOpForAnUnboundSession(t *testing.T) {
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	clean, err := cl.Shutdown(context.Background(), "sess-absent", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(context.Background(), "sess-absent", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Errorf("Shutdown of a session the pod does not hold = %v, want a clean no-op", err)
 	}
@@ -2097,7 +2097,7 @@ func TestUnfencedShutdownFormsSetUnconditionalTeardown_spec_4_7_1(t *testing.T) 
 		call func(ctx context.Context, cl *adapterclient.Client) error
 	}{
 		{"Shutdown", func(ctx context.Context, cl *adapterclient.Client) error {
-			_, err := cl.Shutdown(ctx, "sess-1", "USER_REVOKED", 10*time.Second)
+			_, err := cl.Shutdown(ctx, "sess-1", "test_reason", 10*time.Second)
 			return err
 		}},
 		{"ShutdownRecycle", func(ctx context.Context, cl *adapterclient.Client) error {

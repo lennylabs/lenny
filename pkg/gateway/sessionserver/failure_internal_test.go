@@ -256,6 +256,10 @@ func (f *funnelFixture) binder(t *testing.T, withPool bool) *podsession.Binder {
 			f.clientCalls.add("create")
 			return cl.Create(ctx, obj, opts...)
 		},
+		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			f.clientCalls.add("delete:" + obj.GetName())
+			return cl.Delete(ctx, obj, opts...)
+		},
 	}).Build()
 	return &podsession.Binder{
 		Client:    c,

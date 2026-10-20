@@ -332,25 +332,36 @@ func slotBinding(bind *podsession.BindResult) *podsession.BindResult {
 // whole binding and is released unconditionally. It reports true only when it
 // called the executor's release and that call returned nil. A release error
 // is logged: the row has already committed and the release is best-effort.
-// Its callers are the failure funnel (failed disposition), the suspension
-// release, and the terminal binding release.
+// Its callers are the failure funnel (failed disposition) and the suspension
+// release; the terminal binding release calls releaseCurrentBinding, which
+// returns the error to its caller.
 //
 // spec: §7.3 (resume flow after pod failure); §5.2 (Failure isolation);
 // §28.5.1 (CH-ATTACH Degradation).
 func (s *Server) releaseReportedBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) bool {
+	released, err := s.releaseCurrentBinding(ctx, sessionID, bind, disposition)
+	if err != nil {
+		log.Printf("sessionserver: release session %s binding: %v", sessionID, err)
+	}
+	return released
+}
+
+// releaseCurrentBinding is releaseReportedBinding's body, which returns the
+// executor release error rather than logging it. It releases nothing and
+// returns (false, nil) when the registry no longer holds exactly bind.
+func (s *Server) releaseCurrentBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) (bool, error) {
 	if s.podRegistry != nil {
 		if bind == nil {
-			return false
+			return false, nil
 		}
 		if cur, ok := s.podRegistry.Get(sessionID); !ok || cur != bind {
-			return false
+			return false, nil
 		}
 	}
 	if err := releaseExecutor(ctx, s.executor, sessionID, disposition); err != nil {
-		log.Printf("sessionserver: release session %s binding: %v", sessionID, err)
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 // applyFailureFromResuming drives the §6.2 mid-resume failure
