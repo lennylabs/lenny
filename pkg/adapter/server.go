@@ -417,6 +417,16 @@ type Server struct {
 	// mu is never held while a channel is acquired. spec: §5.2 (slot-identifier
 	// reclaim hold); §4.7.1 (role and gateway RPC contract).
 	slotGuards map[string]chan struct{}
+	// shutdownInFlight counts, per session identifier, the Shutdown calls
+	// that removed the session's entry and have not yet answered. Guarded by
+	// mu. spec: §4.7.1 (role and gateway RPC contract), rule 11.
+	shutdownInFlight map[string]int
+	// shutdownUnclean holds the session identifiers whose last removing
+	// Shutdown answered an unclean exit. It is kept for the life of the pod,
+	// as the reclaim hold after an incomplete cleanup is. Guarded by mu.
+	// spec: §4.7.1 (role and gateway RPC contract), rule 11; §5.2
+	// (Slot-identifier reclaim hold).
+	shutdownUnclean map[string]struct{}
 	// startIDs mints the startId of each session_start this Server writes.
 	// The counter is per Server, which is per pod, and only increases, so
 	// every session_start written on the pod carries a value distinct from

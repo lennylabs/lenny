@@ -462,6 +462,10 @@ func (c *countingStore) ListPodsWithActiveSlots(ctx context.Context) ([]string, 
 	return c.inner.ListPodsWithActiveSlots(ctx)
 }
 
+func (c *countingStore) ListStaleTerminalSessions(ctx context.Context, ids []string, before time.Time) ([]string, error) {
+	return c.inner.ListStaleTerminalSessions(ctx, ids, before)
+}
+
 func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	return c.inner.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
 }

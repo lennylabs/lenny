@@ -1022,6 +1022,18 @@ type Store interface {
 	// rehydration atomicity).
 	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)
 
+	// ListStaleTerminalSessions returns the identifiers in ids whose row is
+	// in a terminal state with a terminated_at earlier than
+	// terminatedBefore, across tenants. A missing row, a non-terminal row, a
+	// terminal row with no terminated_at, and an identifier that is not a
+	// session identifier are not returned. The stale-slot reaper resolves a
+	// pod's slot set members through it: MarkTerminated stamps
+	// terminated_at in the first terminal write and keeps it on a relabel,
+	// so an eligible member's session ended at least the reaper's terminal
+	// age ago.
+	// spec: §5.2 (Slot assignment atomicity).
+	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
+
 	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
 	// per-pod session-mode slot counter. It serializes the slot-admission
 	// decision for podID under a per-pod Postgres advisory lock so two

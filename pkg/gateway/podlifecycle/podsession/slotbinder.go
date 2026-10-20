@@ -698,32 +698,14 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	// slot. The reservation-bearing failures use the slotFailureConnect
 	// stage (no lenny_slot_failure_total emission — that counter labels the
 	// four post-connection bind stages).
-	sb, err := b.resolveSandbox(ctx, sandboxName)
+	// The Sandbox resolve, the dial, and the version handshake are the
+	// connection step every pod dial shares, the stale-slot reaper's
+	// included (ReapStaleSlots).
+	sb, cl, neg, err := b.dialAndNegotiate(ctx, sandboxName)
 	if err != nil {
 		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
 	}
-	podIP = sb.Status.PodIP
-
-	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
-	cl, err = b.DialAdapter(addr)
-	if err != nil {
-		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
-			fmt.Errorf("podsession: dial slot adapter at %s: %w", addr, err))
-	}
-
-	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
-	if err != nil {
-		cl.Close()
-		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
-			fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err))
-	}
-	if resp.GetIncompatible() {
-		cl.Close()
-		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
-		))
-	}
-	return sandboxName, slotID, podIP, resp.GetWorkspaceBase(), cl, nil
+	return sandboxName, slotID, sb.Status.PodIP, neg.WorkspaceBase, cl, nil
 }
 
 // slotBindError wraps a post-reservation slot failure with the pod and

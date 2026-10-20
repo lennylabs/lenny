@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: MIT
+
+// Package slotreaper implements the gateway's stale-slot reaper: the
+// leader-run loop that releases a concurrent-workspace slot set member whose
+// release failed or never ran, once the member's session row has been
+// terminal for longer than claimOrphanTimeout.
+//
+// A pass lists the pods a non-terminal session row names, reads each pod's
+// slot set, drops the leaked: members (a leaked slot stays counted until the
+// pod drains), and resolves the plain members against the session store in
+// batches. A member whose row is terminal with a terminated_at older than
+// the terminal age is eligible. Every activity that can still act on a
+// session's slot after its terminal write has ended by then, which is why
+// the terminal age must equal claimOrphanTimeout and meet the gateway's
+// startup gate. For each pod with an eligible member the reaper calls the
+// releaser, which tears the slot down with an unconditional Shutdown and
+// removes the member only on a clean exit.
+//
+// The reaper shares no lock with the release paths. The keyed removal
+// serializes them: a late release and the reaper each remove a member at
+// most once, and the reaper never empties a set, so it never runs the
+// occupancy-zero disposition and writes no claim.
+//
+// spec: §5.2 (Slot assignment atomicity).
+package slotreaper
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
+)
+
+// The operator-tunable defaults of the gateway's --slot-reaper-interval,
+// --slot-reaper-rate, and --slot-reaper-terminal-age flags. DefaultTerminalAge
+// is the claimOrphanTimeout default the controller's --claim-orphan-timeout
+// shares.
+const (
+	DefaultInterval    = 60 * time.Second
+	DefaultRate        = 50
+	DefaultTerminalAge = 15 * time.Minute
+)
+
+// DefaultBatchSize is the number of identifiers one ListStaleTerminalSessions
+// call resolves. It bounds the size of the primary-key array a Postgres read
+// carries, so a pass over about 12,000 members (the residue a 60-second
+// Redis outage leaves at Tier 3) issues about 24 reads.
+const DefaultBatchSize = 500
+
+// leakedPrefix marks a member that keeps a leaked slot counted. The reaper
+// never releases one.
+const leakedPrefix = "leaked:"
+
+// PodLister lists the pods a non-terminal per-slot session row names.
+type PodLister interface {
+	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)
+}
+
+// MemberReader reads every member of a pod's slot set.
+type MemberReader interface {
+	Members(ctx context.Context, podID string) ([]string, error)
+}
+
+// StaleResolver returns the identifiers among ids whose row is terminal
+// with a terminated_at earlier than terminatedBefore.
+type StaleResolver interface {
+	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
+}
+
+// Releaser tears the named stale slots of one pod down and removes their
+// members, calling wait once before each identifier.
+type Releaser interface {
+	ReapStaleSlots(ctx context.Context, sandboxName string, sessionIDs []string, wait func(context.Context) error) (int, error)
+}
+
+// Limiter paces releases. *rate.Limiter satisfies it.
+type Limiter interface {
+	Wait(ctx context.Context) error
+}
+
+// Config configures a Reaper. Pods, Members, Sessions, and Releaser are
+// required; Rate, Interval, and TerminalAge must be positive.
+type Config struct {
+	Pods     PodLister
+	Members  MemberReader
+	Sessions StaleResolver
+	Releaser Releaser
+	// Rate is the most members released per second, and the most pods
+	// whose release is in flight at once.
+	Rate int
+	// Interval is the wait between the end of one pass and the start of
+	// the next.
+	Interval time.Duration
+	// TerminalAge is the gateway's copy of claimOrphanTimeout: a member is
+	// eligible once its row has been terminal for longer than this.
+	TerminalAge time.Duration
+	// BatchSize is the identifiers per ListStaleTerminalSessions call. Zero
+	// selects DefaultBatchSize.
+	BatchSize int
+	// Limiter overrides the token bucket New builds from Rate, for tests.
+	Limiter Limiter
+	// Now and After are the injected clock. Nil selects time.Now and
+	// time.After.
+	Now   func() time.Time
+	After func(time.Duration) <-chan time.Time
+	// Logger receives the pass summary and the per-pod errors. Nil selects
+	// slog.Default().
+	Logger *slog.Logger
+}
+
+// Reaper is the stale-slot reaper. Construct it with New.
+type Reaper struct {
+	cfg     Config
+	limiter Limiter
+}
+
+// New validates cfg and returns a Reaper. The default limiter is a token
+// bucket refilling Rate tokens per second with a burst of one, so releases
+// are spread across each second rather than issued in a burst.
+func New(cfg Config) (*Reaper, error) {
+	if cfg.Pods == nil || cfg.Members == nil || cfg.Sessions == nil || cfg.Releaser == nil {
+		return nil, errors.New("slotreaper: the pod lister, member reader, session resolver, and releaser are required")
+	}
+	if cfg.Rate <= 0 {
+		return nil, fmt.Errorf("slotreaper: rate must be positive, got %d", cfg.Rate)
+	}
+	if cfg.Interval <= 0 || cfg.TerminalAge <= 0 {
+		return nil, fmt.Errorf("slotreaper: interval (%s) and terminal age (%s) must be positive", cfg.Interval, cfg.TerminalAge)
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = DefaultBatchSize
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.After == nil {
+		cfg.After = time.After
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	lim := cfg.Limiter
+	if lim == nil {
+		lim = rate.NewLimiter(rate.Limit(cfg.Rate), 1)
+	}
+	return &Reaper{cfg: cfg, limiter: lim}, nil
+}
+
+// Run runs a pass, waits Interval, and repeats until ctx ends.
+// spec: §5.2 (Slot assignment atomicity).
+func (r *Reaper) Run(ctx context.Context) {
+	for {
+		r.Pass(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.cfg.After(r.cfg.Interval):
+		}
+	}
+}
+
+// PassStats is what one pass did.
+type PassStats struct {
+	// Pods is the number of pods listed.
+	Pods int
+	// Eligible is the number of members found stale.
+	Eligible int
+	// Released is the number of members the releaser removed.
+	Released int
+}
+
+// Kept is the number of eligible members the pass left in their sets.
+func (p PassStats) Kept() int { return p.Eligible - p.Released }
+
+// Pass runs one pass and returns what it did. An error on one pod, or on
+// one batch, keeps the members it affects for the next pass and does not
+// stop the pass.
+func (r *Reaper) Pass(ctx context.Context) PassStats {
+	var stats PassStats
+	pods, err := r.cfg.Pods.ListPodsWithActiveSlots(ctx)
+	if err != nil {
+		r.cfg.Logger.Warn("stale-slot reaper: list pods failed", "error", err)
+		return stats
+	}
+	stats.Pods = len(pods)
+	members := r.readMembers(ctx, pods)
+	eligible := r.resolveEligible(ctx, members)
+	for _, ids := range eligible {
+		stats.Eligible += len(ids)
+	}
+	stats.Released = r.release(ctx, pods, eligible)
+	// A pass with nothing eligible logs at debug level, so a quiet leader
+	// does not write a line every interval.
+	level := slog.LevelDebug
+	if stats.Eligible > 0 {
+		level = slog.LevelInfo
+	}
+	r.cfg.Logger.Log(ctx, level, "stale-slot reaper pass",
+		"pods", stats.Pods, "eligible", stats.Eligible, "released", stats.Released, "kept", stats.Kept())
+	return stats
+}
+
+// readMembers reads each pod's plain members. A pod whose read fails is
+// skipped for this pass.
+func (r *Reaper) readMembers(ctx context.Context, pods []string) map[string][]string {
+	out := make(map[string][]string, len(pods))
+	for _, pod := range pods {
+		if ctx.Err() != nil {
+			return out
+		}
+		all, err := r.cfg.Members.Members(ctx, pod)
+		if err != nil {
+			r.cfg.Logger.Warn("stale-slot reaper: read slot set failed", "pod", pod, "error", err)
+			continue
+		}
+		for _, m := range all {
+			if m != "" && !strings.HasPrefix(m, leakedPrefix) {
+				out[pod] = append(out[pod], m)
+			}
+		}
+	}
+	return out
+}
+
+// resolveEligible resolves the plain members in batches and returns, per
+// pod, the members whose row is stale. A batch whose read fails makes none
+// of its members eligible.
+func (r *Reaper) resolveEligible(ctx context.Context, members map[string][]string) map[string][]string {
+	owner := map[string]string{}
+	var ids []string
+	for pod, ms := range members {
+		for _, m := range ms {
+			owner[m] = pod
+			ids = append(ids, m)
+		}
+	}
+	cutoff := r.cfg.Now().Add(-r.cfg.TerminalAge)
+	eligible := map[string][]string{}
+	for start := 0; start < len(ids); start += r.cfg.BatchSize {
+		if ctx.Err() != nil {
+			return eligible
+		}
+		batch := ids[start:min(start+r.cfg.BatchSize, len(ids))]
+		stale, err := r.cfg.Sessions.ListStaleTerminalSessions(ctx, batch, cutoff)
+		if err != nil {
+			r.cfg.Logger.Warn("stale-slot reaper: resolve members failed",
+				"session_ids", batch, "error", err)
+			continue
+		}
+		for _, id := range stale {
+			if pod, ok := owner[id]; ok {
+				eligible[pod] = append(eligible[pod], id)
+			}
+		}
+	}
+	return eligible
+}
+
+// release calls the releaser for each pod with an eligible member, in the
+// listing's order, with at most Rate pods in flight. It starts no call once
+// ctx has ended.
+func (r *Reaper) release(ctx context.Context, pods []string, eligible map[string][]string) int {
+	sem := make(chan struct{}, r.cfg.Rate)
+	var (
+		mu       sync.Mutex
+		released int
+		wg       sync.WaitGroup
+	)
+	for _, pod := range pods {
+		ids := eligible[pod]
+		if len(ids) == 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+		case sem <- struct{}{}:
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(pod string, ids []string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			n, err := r.cfg.Releaser.ReapStaleSlots(ctx, pod, ids, r.limiter.Wait)
+			if err != nil {
+				r.cfg.Logger.Warn("stale-slot reaper: release failed",
+					"pod", pod, "session_ids", ids, "released", n, "error", err)
+			}
+			mu.Lock()
+			released += n
+			mu.Unlock()
+		}(pod, ids)
+	}
+	wg.Wait()
+	return released
+}

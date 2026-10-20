@@ -955,7 +955,11 @@ func (a *AttachStream) CloseSend() error {
 // The request is addressed by the session identifier alone, which under
 // §5.2 also names the slot that session holds, and the handler is
 // idempotent: a request naming a session the adapter has already released
-// is a no-op reporting a clean exit.
+// is a no-op that answers absent. That answer reports a clean exit except
+// while another Shutdown's teardown of the session is in flight, or after
+// the last Shutdown that removed the session's entry reported an unclean
+// exit; in both cases the session's runtime may still run, so the answer
+// reports an unclean exit (§4.7.1 rule 11).
 //
 // spec: §4.7 (Shutdown row); §4.7.10 (runtime process lifetime); §5.2;
 // §11.4.

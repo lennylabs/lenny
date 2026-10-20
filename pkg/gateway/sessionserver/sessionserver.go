@@ -465,6 +465,8 @@ type Server struct {
 	// driver); §6.2 (Pod State Machine).
 	maxResumePending time.Duration
 	maxResuming      time.Duration
+	// maxFinalizing is the launch bound (Options.MaxFinalizing).
+	maxFinalizing time.Duration
 	// ageCap resolves a row's effective active-age cap with the same
 	// resolver the watchdog's maxSessionAge sweep uses, so the resume
 	// driver refuses an over-cap row against the value the sweep applies.
@@ -1187,6 +1189,15 @@ type Options struct {
 	MaxResumePending time.Duration
 	MaxResuming      time.Duration
 
+	// MaxFinalizing bounds a slot launch: the two-step /start launch and a
+	// delegated child's materialization each run on a context carrying this
+	// deadline, taken before the session row is read from the primary. On a
+	// concurrent-workspace pool the launch performs the materialization and
+	// setup that finalizing performs on an exclusive pool, so the gateway
+	// wires --max-finalizing-state-timeout-seconds. Zero selects the
+	// watchdog default. spec: §5.2 (Slot assignment atomicity).
+	MaxFinalizing time.Duration
+
 	// AgeCap resolves a row's effective maxSessionAge cap. The gateway
 	// wires the resolver the watchdog's maxSessionAge sweep uses, so the
 	// resume driver and the sweep apply one value. Nil applies the platform
@@ -1778,6 +1789,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
 	s.maxResumePending = opts.MaxResumePending
 	s.maxResuming = opts.MaxResuming
+	s.maxFinalizing = opts.MaxFinalizing
 	s.ageCap = opts.AgeCap
 	s.lifetimeCtx, s.lifetimeCancel = context.WithCancel(context.Background())
 	if s.sealSleep == nil {

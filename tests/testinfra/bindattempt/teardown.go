@@ -4,6 +4,7 @@ package bindattempt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -70,6 +71,27 @@ func NoEntryRule(t *testing.T, transport Transport) {
 			f.wantTreeIntact(t, bob, true)
 			f.wantOwnedBy(t, bob, TokenA)
 		})
+	}
+}
+
+// NoEntryAfterUncleanTeardown drives rule 11's unclean arm. After a removing
+// Shutdown reported an unclean exit, because the session's Runtime.Close
+// failed, a second unconditional Shutdown for the session finds no entry and
+// answers ABSENT reporting an unclean exit, because the session's runtime
+// may still run. The gateway's stale-slot reaper frees a slot only on a
+// clean exit, so a clean report here would free a slot whose runtime runs.
+func NoEntryAfterUncleanTeardown(t *testing.T, transport Transport) {
+	f := New(t, transport)
+	f.bindAndStart(t, alice, TokenA)
+	f.Runtime.SetCloseErr(errors.New("runtime close failed"))
+	first := f.wantOutcome(t, "the first unconditional Shutdown", unconditionalReq(alice), reclaimed)
+	if first.GetExitedCleanly() {
+		t.Fatal("a Shutdown whose Runtime.Close failed reported a clean exit")
+	}
+	f.Runtime.SetCloseErr(nil)
+	second := f.wantOutcome(t, "the second unconditional Shutdown", unconditionalReq(alice), absent)
+	if second.GetExitedCleanly() {
+		t.Error("an ABSENT answer after an unclean teardown reported a clean exit")
 	}
 }
 

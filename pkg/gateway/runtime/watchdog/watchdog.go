@@ -748,7 +748,10 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 					r.State = session.StateFailed
 					r.FailureClass = w.classForReason(reason)
 					r.FailureReason = reason
-					sessionstore.MarkTerminated(r, st, now)
+					// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+					// inside this row's Update, because an earlier row's post-terminal
+					// hook, seal included, ran after the pass's now was read.
+					sessionstore.MarkTerminated(r, st, w.clock())
 					return nil
 				})
 				if errors.Is(err, sessionstore.ErrSuperseded) {
@@ -1114,7 +1117,10 @@ func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string,
 			if r.FailureReason == "" {
 				r.FailureReason = string(session.FailureExpiredDeadline)
 			}
-			sessionstore.MarkTerminated(r, session.StateAwaitingClientAction, now)
+			// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+			// inside this row's Update, because an earlier row's post-terminal
+			// hook, seal included, ran after the pass's now was read.
+			sessionstore.MarkTerminated(r, session.StateAwaitingClientAction, w.clock())
 			return nil
 		})
 		if errors.Is(err, sessionstore.ErrSuperseded) {
@@ -1254,7 +1260,10 @@ func (w *Watchdog) expireIdle(ctx context.Context, tenant string, row sessionsto
 		if r.FailureReason == "" {
 			r.FailureReason = string(session.FailureExpiredIdle)
 		}
-		sessionstore.MarkTerminated(r, from, now)
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because an earlier row's post-terminal
+		// hook, seal included, ran after the pass's now was read.
+		sessionstore.MarkTerminated(r, from, w.clock())
 		return nil
 	})
 	if errors.Is(err, sessionstore.ErrSuperseded) {
@@ -1348,7 +1357,10 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 			if r.FailureReason == "" {
 				r.FailureReason = string(session.FailureExpiredDeadline)
 			}
-			sessionstore.MarkTerminated(r, from, now)
+			// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+			// inside this row's Update, because an earlier row's post-terminal
+			// hook, seal included, ran after the pass's now was read.
+			sessionstore.MarkTerminated(r, from, w.clock())
 			return nil
 		})
 		if errors.Is(err, errMaxAgeSuperseded) {

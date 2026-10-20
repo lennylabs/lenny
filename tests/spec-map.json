@@ -514,7 +514,8 @@
         "tests/tier7a_load_local/adapter_grace_budget_test.go",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3",
         "tests/testinfra/lifecycleharness/crashclient_test.go::TestCrashableClientRecordsAcceptedClaimCreates_spec_4_6_1",
-        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go"
+        "tests/tier11_docs/stale_slot_reaper_config_doc_test.go",
+        "cmd/lenny-gateway/slot_reaper_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -599,7 +600,9 @@
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
         "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_release_test.go",
-        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2"
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -783,7 +786,9 @@
         "tests/tier8_chaos/compensation_loss_test.go",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
-        "tests/tier7a_load_local/abandoned_start_rollback_race_test.go"
+        "tests/tier7a_load_local/abandoned_start_rollback_race_test.go",
+        "pkg/adapter/shutdownrecord_test.go",
+        "tests/tier3_contract/adapter_bind_attempt/absent_unclean_wire_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -1516,13 +1521,27 @@
         "pkg/gateway/podlifecycle/podsession/slot_release_rehydration_test.go",
         "pkg/gateway/sessionserver/slot_holder_predicate_internal_test.go",
         "tests/tier4_integration/slot_holder_pgstore_test.go",
-        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers"
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers",
+        "pkg/gateway/storage/slotcounter/reap_test.go",
+        "pkg/gateway/session/sessionstore/memstore/stale_terminal_test.go",
+        "pkg/gateway/podlifecycle/podsession/slotreap_test.go",
+        "pkg/gateway/podlifecycle/slotreaper/slotreaper_test.go",
+        "pkg/gateway/sessionserver/launch_bound_test.go",
+        "pkg/gateway/runtime/watchdog/terminal_stamp_test.go",
+        "pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go",
+        "cmd/lenny-gateway/slot_reaper_test.go",
+        "tests/tier2_component/slotrelease/stale_slot_reap_test.go",
+        "pkg/adapter/shutdownrecord_test.go",
+        "tests/tier10_conformance/slot_bind_attempt_conformance_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
         "pkg/pool",
         "pkg/gateway/podlifecycle/podclaim",
-        "pkg/gateway/podlifecycle/podsession"
+        "pkg/gateway/podlifecycle/podsession",
+        "pkg/gateway/podlifecycle/slotreaper"
       ],
       "blocked_until_phase": "3",
       "notes": "Phase 3.5 ships the \u00a75.2 NET-003 / \u00a717.2 item 5 label-immutability admission-decision logic. The webhook binary that wires this to AdmissionReview transport and the Kind-based admission integration test are deferred to the K8s-integration phase. Phase 12c adds the \u00a75.2 concurrent execution modes (workspace-concurrent and stateless-concurrent): pkg/gateway/podclaim.SlotClaimer is the per-pod slot claim/assignment path, pkg/gateway/podsession.Binder.BindSlot is the concurrent-mode bind path, and poolstore.ValidateConcurrentConfig is the concurrent-pool admission enforcement. The Tier 5 concurrent_modes_test exercises the slot path against real warm pods."
@@ -1732,7 +1751,10 @@
         "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestIdleSuspensionFaultInjection_spec_6_2",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_release_test.go",
         "pkg/gateway/podlifecycle/podsession/release_retry_internal_test.go",
-        "pkg/gateway/storage/slotcounter/slotcounter_test.go"
+        "pkg/gateway/storage/slotcounter/slotcounter_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
+        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1908,7 +1930,8 @@
         "pkg/gateway/sessionserver/stream_failure_test.go::TestStreamFailureNonRetryableReleasesOnLiveContext_spec_28_5_1",
         "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestReleaseFreesTokenServiceLeaseEveryTenancyConfig_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/credentiallease_release_internal_test.go",
-        "tests/tier9_security/credential_lookup_failclosed_test.go"
+        "tests/tier9_security/credential_lookup_failclosed_test.go",
+        "pkg/gateway/sessionserver/prerunning_reclaim_internal_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -2012,7 +2035,10 @@
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeRecordProbes_spec_7_2",
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSessionInboxRedeliveryRowStaysAbsentUnderForwarding_spec_29_3",
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestOffHolderInboxFindingCrossReferencesTheForwardFinding_spec_29_3",
-        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3"
+        "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
+        "tests/tier4_integration/slot_holder_pgstore_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2763,7 +2789,8 @@
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5",
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
-        "tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2"
+        "tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2",
+        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -3515,7 +3542,8 @@
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/checkpoint/checkpointretention/checkpointretention_test.go",
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "cmd/lenny-gateway/slot_reaper_test.go"
       ],
       "packages": [
         "pkg/store/artifact"

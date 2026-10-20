@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -106,5 +107,70 @@ func TestSlotHolderPredicateOnPostgres_spec_5_2(t *testing.T) {
 	}
 	if got := sortedJoin(pods); got != "[pod-a pod-e]" {
 		t.Fatalf("ListPodsWithActiveSlots = %s, want [pod-a pod-e]", got)
+	}
+}
+
+// terminateAt moves a seeded row to state through the production stamp,
+// with the terminal write dated at.
+func terminateAt(t *testing.T, ctx context.Context, store *sessionpg.Store, tenant, id string, state session.State, at time.Time) {
+	t.Helper()
+	if _, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+		from := r.State
+		r.State = state
+		sessionstore.MarkTerminated(r, from, at)
+		return nil
+	}); err != nil {
+		t.Fatalf("terminal write of %s: %v", id, err)
+	}
+}
+
+// spec: 5.2 (Slot assignment atomicity), 7.2 (Interactive Session Model)
+// diagnosis: the stale-slot reaper's Postgres read returns the wrong
+// members. It must return exactly the identifiers whose rows are terminal
+// with terminated_at before the cutoff, across tenants, and never a
+// non-terminal row, a terminal row with no terminated_at, a missing
+// identifier, or a string that is not a UUID; a relabel to failed must keep
+// the first terminated_at, or a relabelled session's slot is reaped late.
+func TestListStaleTerminalSessionsOnPostgres_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	seedTenant(t, pg, "acme")
+	seedTenant(t, pg, "globex")
+	store := sessionpg.New(pg.Pool)
+	const perSlot = "best-effort-per-slot"
+	cutoff := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+
+	ids := seedSlotRows(t, ctx, store, []slotRow{
+		{"acme", session.StateRunning, "pod-a", perSlot},   // 0: ended before the cutoff
+		{"globex", session.StateRunning, "pod-a", perSlot}, // 1: ended before the cutoff, other tenant
+		{"acme", session.StateRunning, "pod-a", perSlot},   // 2: ended after the cutoff
+		{"acme", session.StateRunning, "pod-a", perSlot},   // 3: non-terminal
+		{"acme", session.StateRunning, "pod-a", perSlot},   // 4: terminal with no terminated_at
+		{"acme", session.StateRunning, "pod-a", perSlot},   // 5: relabelled after the cutoff
+	})
+	terminateAt(t, ctx, store, "acme", ids[0], session.StateCompleted, cutoff.Add(-time.Minute))
+	terminateAt(t, ctx, store, "globex", ids[1], session.StateCancelled, cutoff.Add(-time.Second))
+	terminateAt(t, ctx, store, "acme", ids[2], session.StateExpired, cutoff.Add(time.Second))
+	if _, err := store.Update(ctx, "acme", ids[4], func(r *sessionstore.Session) error {
+		r.State = session.StateCompleted
+		return nil
+	}); err != nil {
+		t.Fatalf("unstamped terminal write: %v", err)
+	}
+	terminateAt(t, ctx, store, "acme", ids[5], session.StateCompleted, cutoff.Add(-time.Minute))
+	terminateAt(t, ctx, store, "acme", ids[5], session.StateFailed, cutoff.Add(time.Hour))
+
+	query := append(append([]string(nil), ids...), newSessionUUID(t), "leaked:"+ids[3], "not-a-uuid", "")
+	got, err := store.ListStaleTerminalSessions(ctx, query, cutoff)
+	if err != nil {
+		t.Fatalf("ListStaleTerminalSessions: %v", err)
+	}
+	if want := sortedJoin([]string{ids[0], ids[1], ids[5]}); sortedJoin(got) != want {
+		t.Fatalf("ListStaleTerminalSessions = %s, want %s (rows 0, 1, and 5)", sortedJoin(got), want)
+	}
+	if got, err := store.ListStaleTerminalSessions(ctx, []string{"not-a-uuid"}, cutoff); err != nil || len(got) != 0 {
+		t.Fatalf("ListStaleTerminalSessions(non-UUIDs only) = (%v, %v), want none", got, err)
 	}
 }

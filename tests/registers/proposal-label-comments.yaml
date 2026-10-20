@@ -60,7 +60,6 @@ files:
   pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go: 2
   pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go: 1
   pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go: 1
-  pkg/gateway/podlifecycle/podsession/binder_phases_test.go: 1
   pkg/gateway/podlifecycle/podsession/slotbinder_test.go: 2
   pkg/gateway/runtime/adapterclient/client_test.go: 1
   pkg/gateway/runtime/slothealth/slothealth_test.go: 2

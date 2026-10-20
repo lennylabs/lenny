@@ -104,6 +104,24 @@ only the env vars it can satisfy.
 {{- fail (printf "§12.5: storage.t4KmsProbeInterval=%v is below the 60s minimum; raise it to at least 60." .Values.storage.t4KmsProbeInterval) -}}
 {{- end -}}
 {{- end -}}
+{{- /* §5.2 (Slot assignment atomicity) — the stale-slot reaper's terminal
+   age, controller.claimOrphanTimeoutSeconds, must be at least one second
+   more than the largest post-terminal slot activity window: the seal
+   window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) and the
+   gateway defaults of the finalizing (600s) and resuming (300s) deadlines,
+   which the chart does not render. The gateway's startup gate is the
+   complete check, because an operator can change those two deadlines
+   through their environment variables. */ -}}
+{{- $sealWindow := int (.Values.gateway.workspaceSealMaxDurationSeconds | default 0) -}}
+{{- if le $sealWindow 0 -}}{{- $sealWindow = 300 -}}{{- end -}}
+{{- $reaperFloor := add1 (max $sealWindow 600 300) -}}
+{{- $claimOrphanTimeout := int (.Values.controller.claimOrphanTimeoutSeconds | default 900) -}}
+{{- if lt $claimOrphanTimeout (int $reaperFloor) -}}
+{{- fail (printf "§5.2: controller.claimOrphanTimeoutSeconds=%d must be at least %d, one second more than the largest of the seal window (%ds) and the gateway's finalizing (600s) and resuming (300s) deadlines." $claimOrphanTimeout (int $reaperFloor) $sealWindow) -}}
+{{- end -}}
+{{- if le (int (.Values.gateway.slotReaper.ratePerSecond | default 0)) 0 -}}
+{{- fail (printf "§5.2: gateway.slotReaper.ratePerSecond=%v must be a positive releases/sec ceiling." .Values.gateway.slotReaper.ratePerSecond) -}}
+{{- end -}}
 {{- if and .Values.storage (hasKey .Values.storage "t4KmsProbeRateLimit") -}}
 {{- if le (.Values.storage.t4KmsProbeRateLimit | float64) 0.0 -}}
 {{- fail (printf "§12.5: storage.t4KmsProbeRateLimit=%v must be a positive probes/sec ceiling." .Values.storage.t4KmsProbeRateLimit) -}}
@@ -633,6 +651,13 @@ spec:
             - --max-suspended-pod-hold-seconds={{ .Values.gateway.maxSuspendedPodHoldSeconds | default 900 }}
             - --max-suspended-session-seconds={{ .Values.gateway.maxSuspendedSessionSeconds | default 604800 }}
             - --suspended-backlog-recheck-seconds={{ .Values.gateway.suspendedBacklogRecheckSeconds | default 300 }}
+            # §5.2 (Slot assignment atomicity) — the stale-slot reaper. The
+            # terminal age renders controller.claimOrphanTimeoutSeconds, the
+            # value the controller's --claim-orphan-timeout renders, so the
+            # two copies of claimOrphanTimeout cannot differ.
+            - --slot-reaper-interval={{ .Values.gateway.slotReaper.intervalSeconds | default 60 }}s
+            - --slot-reaper-rate={{ .Values.gateway.slotReaper.ratePerSecond }}
+            - --slot-reaper-terminal-age={{ .Values.controller.claimOrphanTimeoutSeconds | default 900 }}s
             # §10.4 — per-session SSE replay buffer depth.
             # F-10.4.5.
             - --session-event-replay-buffer-depth={{ .Values.gateway.sessionEventReplayBufferDepth }}

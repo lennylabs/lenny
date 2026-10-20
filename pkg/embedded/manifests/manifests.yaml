@@ -3893,6 +3893,9 @@ spec:
             - --leader-election-namespace=default
             - --metrics-bind-address=:9090
             - --health-probe-bind-address=:8081
+            # §4.6.1 claimOrphanTimeout. The gateway's --slot-reaper-terminal-age
+            # renders the same value (§5.2 Slot assignment atomicity).
+            - --claim-orphan-timeout=900s
             - --adapter-image=ghcr.io/lennylabs/lenny-adapter:0.1.0
             - --gateway-grpc-addr=lenny-gateway.default.svc:50051
             - --agent-namespaces=lenny-agents
@@ -4112,6 +4115,13 @@ spec:
             - --max-suspended-pod-hold-seconds=900
             - --max-suspended-session-seconds=604800
             - --suspended-backlog-recheck-seconds=300
+            # §5.2 (Slot assignment atomicity) — the stale-slot reaper. The
+            # terminal age renders controller.claimOrphanTimeoutSeconds, the
+            # value the controller's --claim-orphan-timeout renders, so the
+            # two copies of claimOrphanTimeout cannot differ.
+            - --slot-reaper-interval=60s
+            - --slot-reaper-rate=50
+            - --slot-reaper-terminal-age=900s
             # §10.4 — per-session SSE replay buffer depth.
             # F-10.4.5.
             - --session-event-replay-buffer-depth=512

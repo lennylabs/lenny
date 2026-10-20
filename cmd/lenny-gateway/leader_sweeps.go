@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
@@ -459,6 +460,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	}
 
 	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+	w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 
 	// spec: §12.5 — drive the lenny-gateway-leader election
 	// and run every registered gateway-singleton sweep only while this
@@ -551,4 +553,33 @@ func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run fun
 		Interval: time.Duration(*w.f.suspendedBacklogRecheckSeconds) * time.Second,
 	}
 	add("suspended-backlog-recheck", rechecker.Run)
+}
+
+// addStaleSlotReaper registers the stale-slot reaper on the gateway-leader
+// gate. It registers only when the pod binder, the slot counter, and the
+// session store are wired: without the counter there is no slot set to
+// reap, and the binder is the releaser that tears a stale slot down before
+// its member is removed.
+// spec: §5.2 (Slot assignment atomicity), §12.5 (Artifact Store)
+func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(context.Context))) {
+	if w.podBinder == nil || w.slotCounter == nil || w.sessions == nil {
+		return
+	}
+	f := w.f
+	reaper, err := slotreaper.New(slotreaper.Config{
+		Pods:        w.sessions,
+		Members:     w.slotCounter,
+		Sessions:    w.sessions,
+		Releaser:    w.podBinder,
+		Rate:        *f.slotReaperRate,
+		Interval:    *f.slotReaperInterval,
+		TerminalAge: *f.slotReaperTerminalAge,
+		Now:         clockinject.Now,
+	})
+	if err != nil {
+		log.Fatalf("lenny-gateway: §5.2 stale-slot reaper: %v", err)
+	}
+	log.Printf("lenny-gateway: §5.2 stale-slot reaper cadence %s, rate %d/s, terminal age %s",
+		*f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
+	add("stale-slot-reaper", reaper.Run)
 }

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -381,6 +383,30 @@ func (s *Store) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
 	}
 	sort.Strings(pods)
 	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the identifiers in ids whose
+// row is terminal with a TerminatedAt earlier than terminatedBefore, across
+// tenants, with the pgstore filter that drops identifiers that are not
+// UUIDs, because sessions.id is a UUID column there.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var stale []string
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		row, ok := s.sessions[id]
+		if !ok || !session.IsTerminal(row.State) || row.TerminatedAt.IsZero() {
+			continue
+		}
+		if row.TerminatedAt.Before(terminatedBefore) {
+			stale = append(stale, id)
+		}
+	}
+	return stale, nil
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity

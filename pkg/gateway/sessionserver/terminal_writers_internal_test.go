@@ -35,6 +35,26 @@ func (m *movingStore) Get(ctx context.Context, tenantID, id string) (sessionstor
 	return row, err
 }
 
+// GetPrimary is the entry read of a handler that reads the row from the
+// primary, such as POST /start. It moves the row after the read, as Get does,
+// so the handler's later locked write finds the moved row.
+func (m *movingStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	var row sessionstore.Session
+	var err error
+	if pr, ok := m.Store.(sessionstore.PrimaryReader); ok {
+		row, err = pr.GetPrimary(ctx, tenantID, id)
+	} else {
+		row, err = m.Store.Get(ctx, tenantID, id)
+	}
+	m.once.Do(func() {
+		_, _ = m.Update(ctx, tenantID, id, func(r *sessionstore.Session) error {
+			m.move(r)
+			return nil
+		})
+	})
+	return row, err
+}
+
 func terminalRequest(t *testing.T, srv *Server, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)

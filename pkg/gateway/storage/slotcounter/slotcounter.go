@@ -43,6 +43,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -614,4 +615,62 @@ func (c *Counter) Reset(ctx context.Context, podID string) error {
 		return fmt.Errorf("slotcounter: reset %s: %w", podID, err)
 	}
 	return nil
+}
+
+// reapScript removes one plain member of a pod's slot set for the
+// stale-slot reaper. Unlike releaseScript it never rehydrates and never
+// empties the set: a pod's last member is kept, because the reaper runs no
+// occupancy-zero disposition and the claim-orphan GC owns an idle pod.
+// It returns -2 when the rehydrated flag is absent, 0 for a non-member, -3
+// for the pod's last member, and 1 when it removed the member.
+//
+// KEYS[1] is the active-slots set, KEYS[2] the rehydrated flag. ARGV[1] is
+// the session identifier.
+// spec: §5.2 (Slot assignment atomicity).
+var reapScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 0 then return -2 end
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return 0 end
+if redis.call('SCARD', KEYS[1]) <= 1 then return -3 end
+redis.call('SREM', KEYS[1], ARGV[1])
+return 1
+`)
+
+// errLeakedMember reports a reap naming a leaked: member. A leaked member
+// keeps a slot whose teardown did not complete counted (§6.2), and only the
+// pod's drain clears it, so the reaper never removes one.
+var errLeakedMember = errors.New("slotcounter: a leaked member is not reaped")
+
+// Members returns every member of podID's slot set, leaked: members
+// included, with one SMEMBERS on the pod's hash-tagged active-slots key.
+// It runs no rehydration and no outage rebuild.
+// spec: §5.2 (Slot assignment atomicity).
+func (c *Counter) Members(ctx context.Context, podID string) ([]string, error) {
+	members, err := c.client.SMembers(ctx, activeSlotsKey(podID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("slotcounter: members %s: %w", podID, err)
+	}
+	return members, nil
+}
+
+// Reap removes sessionID's plain member from podID's slot set for the
+// stale-slot reaper, under the removal conditions reapScript states. It
+// reports removed true only when the script removed the member. It runs no
+// rehydration, no outage rebuild, and no fallback, and records no
+// outage-ledger entry: a pod whose flag is absent keeps its member until a
+// reservation or release restores the flag. An empty identifier, or one
+// naming a leaked: member, is an error and runs no script.
+// spec: §5.2 (Slot assignment atomicity).
+func (c *Counter) Reap(ctx context.Context, podID, sessionID string) (removed bool, err error) {
+	if sessionID == "" {
+		return false, fmt.Errorf("slotcounter: reap %s: %w", podID, errEmptySessionID)
+	}
+	if strings.HasPrefix(sessionID, LeakedMember("")) {
+		return false, fmt.Errorf("slotcounter: reap %s member %s: %w", podID, sessionID, errLeakedMember)
+	}
+	keys := []string{activeSlotsKey(podID), rehydratedKey(podID)}
+	res, err := reapScript.Run(ctx, c.client, keys, sessionID).Int64()
+	if err != nil {
+		return false, fmt.Errorf("slotcounter: reap %s session %s: %w", podID, sessionID, err)
+	}
+	return res == 1, nil
 }

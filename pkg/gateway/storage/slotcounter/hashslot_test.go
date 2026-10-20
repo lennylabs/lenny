@@ -106,7 +106,8 @@ func TestCRC16MatchesRedisCluster(t *testing.T) {
 }
 
 // TestEveryCounterCommandStaysInOneHashSlot_spec_12_4 drives Reserve, the
-// clean, leaked, and flag-absent releases, the recovery rebuild, and Reset,
+// clean, leaked, and flag-absent releases, the recovery rebuild, Members,
+// Reap, and Reset,
 // and asserts that every key of every command carries the pod's hash tag and
 // that all keys of one command map to one Redis Cluster slot.
 //
@@ -134,6 +135,17 @@ func TestEveryCounterCommandStaysInOneHashSlot_spec_12_4(t *testing.T) {
 		{"recovery rebuild", func(t *testing.T, c *slotcounter.Counter, mr *miniredis.Miniredis) {
 			c.RecordAdmissionForTest(pod, "s4")
 			c.ProbeTickForTest(context.Background())
+		}},
+		{"members", func(t *testing.T, c *slotcounter.Counter, _ *miniredis.Miniredis) {
+			if _, err := c.Members(context.Background(), pod); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"reap", func(t *testing.T, c *slotcounter.Counter, _ *miniredis.Miniredis) {
+			mustReserve(t, c, pod, "s5", 4)
+			if _, err := c.Reap(context.Background(), pod, "s5"); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{"reset", func(t *testing.T, c *slotcounter.Counter, _ *miniredis.Miniredis) {
 			if err := c.Reset(context.Background(), pod); err != nil {

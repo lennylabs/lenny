@@ -74,6 +74,10 @@ func (s *slowAncestorStore) ListPodsWithActiveSlots(context.Context) ([]string, 
 	panic("unused")
 }
 
+func (s *slowAncestorStore) ListStaleTerminalSessions(context.Context, []string, time.Time) ([]string, error) {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) ReserveSlotUnderLock(context.Context, string, int32) (int32, bool, error) {
 	panic("unused")
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -874,6 +875,45 @@ func (s *Store) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("pgstore: list pods with active slots: %w", err)
 	}
 	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the stale-slot reaper's
+// cross-tenant primary-key read. sessions.id is a UUID, so an identifier
+// that does not parse as one is dropped before the query rather than
+// failing the whole batch's cast; no session row can carry it.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	keys := uuidIdentifiers(ids)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	var stale []string
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		var qErr error
+		stale, qErr = collectStrings(ctx, tx,
+			`SELECT id::text FROM sessions
+			   WHERE id = ANY($1::uuid[])
+			     AND state IN ('completed', 'failed', 'cancelled', 'expired')
+			     AND terminated_at < $2`,
+			keys, terminatedBefore)
+		return qErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: list stale terminal sessions: %w", err)
+	}
+	return stale, nil
+}
+
+// uuidIdentifiers returns the members of ids that parse as UUIDs, in their
+// original spelling.
+func uuidIdentifiers(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // collectStrings runs a single-column text query and returns its values.

@@ -785,6 +785,10 @@
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"]
+    },
+    "pkg/gateway/podlifecycle/slotreaper": {
+      "unit": ["pkg/gateway/podlifecycle/slotreaper/..."],
+      "integration": ["tests/tier4_integration/slot_counter_redis_outage_fallback_test.go"]
     }
   }
 }

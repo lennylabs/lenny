@@ -319,7 +319,9 @@ type gatewayWiringFields struct {
 	podBinder                   *podsession.Binder
 	// slotCounter is the §5.2 slot set shared by every concurrent-mode
 	// reservation and release; its §12.4 recovery probe runs on
-	// watchdogCtx. Nil when no Redis is wired.
+	// watchdogCtx, and the leader-run stale-slot reaper reads and removes
+	// its members. Nil when no Redis is wired, which also leaves the reaper
+	// unregistered.
 	slotCounter         *slotcounter.Counter
 	recommendationStore *recommendations.WindowStore
 	revCache            *revocation.Cache

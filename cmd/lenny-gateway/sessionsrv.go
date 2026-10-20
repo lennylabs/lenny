@@ -373,7 +373,9 @@ func (w *gatewayWiring) buildSessionServer(
 		// maxSessionAge resolver.
 		MaxResumePending: time.Duration(*f.maxResumePendingSeconds) * time.Second,
 		MaxResuming:      time.Duration(*f.maxResumingSeconds) * time.Second,
-		AgeCap:           w.sessionAgeCap,
+		// spec: §5.2 (Slot assignment atomicity) — the launch bound.
+		MaxFinalizing: time.Duration(*f.maxFinalizingTimeoutSeconds) * time.Second,
+		AgeCap:        w.sessionAgeCap,
 		// §10.7, §16.1 — variant-labelled
 		// rollback-trigger metric family emitted at terminal session
 		// transition and at each built-in eval submission.

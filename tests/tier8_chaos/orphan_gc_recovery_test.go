@@ -124,7 +124,7 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 	if out, err := c.ApplyStdin(t, claim); err != nil {
 		t.Fatalf("failed to create the recycling claim: %v\n%s", err, out)
 	}
-	// Aged well past the default claimOrphanTimeout (5m) so the first sweep
+	// Aged well past the default claimOrphanTimeout (15m) so the first sweep
 	// after creation treats the claim as orphaned.
 	aged := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
 	statusPatch := fmt.Sprintf(

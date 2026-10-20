@@ -195,6 +195,20 @@ func TestNoEntryRuleAnswersAbsentAndRemovesNothing_spec_4_7_1(t *testing.T) {
 	bindattempt.NoEntryRule(t, bindattempt.InProcess)
 }
 
+// Rule 11, the no-entry rule's unclean arm: after a Shutdown that reported an
+// unclean exit, a second unconditional Shutdown for the same session answers
+// ABSENT reporting an unclean exit.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rule 11; §5.2 (Slot-identifier
+// reclaim hold)
+//
+// diagnosis: an adapter answered ABSENT with a clean exit after the session's last
+// teardown failed, so the gateway's stale-slot reaper frees a slot whose
+// runtime may still run.
+func TestNoEntryRuleReportsAnUncleanExitAfterAnUncleanTeardown_spec_4_7_1(t *testing.T) {
+	bindattempt.NoEntryAfterUncleanTeardown(t, bindattempt.InProcess)
+}
+
 // Rule 12, the unconditional-teardown rule: the unconditional Shutdown answers
 // RECLAIMED, releases the slot, and tears the runtime down for a started
 // session only.
