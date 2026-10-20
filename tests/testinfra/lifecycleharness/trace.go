@@ -29,6 +29,9 @@ const (
 	// FaultPeerTakeover lets the call complete and then hands the session to
 	// a peer replica, advancing the row's coordination generation.
 	FaultPeerTakeover
+	// FaultCommitError lets an Update apply and then returns a store error,
+	// as a commit whose acknowledgement is lost does.
+	FaultCommitError
 )
 
 func (k FaultKind) String() string {
@@ -41,6 +44,8 @@ func (k FaultKind) String() string {
 		return "crash"
 	case FaultPeerTakeover:
 		return "peer-takeover"
+	case FaultCommitError:
+		return "commit-error"
 	default:
 		return "none"
 	}
@@ -225,7 +230,11 @@ func (s *TracedStore) Update(ctx context.Context, tenantID, id string, mut func(
 		return sessionstore.Session{}, err
 	}
 	defer after(e, f, cb)
-	return s.Store.Update(ctx, tenantID, id, mut)
+	row, err := s.Store.Update(ctx, tenantID, id, mut)
+	if err == nil && f == FaultCommitError {
+		return row, fmt.Errorf("Update %s: %w", id, ErrInjected)
+	}
+	return row, err
 }
 
 // Create records and creates a row.

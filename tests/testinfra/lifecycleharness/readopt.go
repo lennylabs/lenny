@@ -63,6 +63,13 @@ func (a readopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID stri
 		PodIP: sb.Status.PodIP, Adapter: adapter, Recycle: a.h.recycling,
 		CoordinationGeneration: generation,
 	}
+	// spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2 — on a
+	// concurrent-workspace pool the re-adopted binding is the session's
+	// slot, so its release removes the session's member, as the gateway's
+	// re-adopt binding does.
+	if a.h.Concurrent() {
+		bind.SlotID = row.ID
+	}
 	return func() { a.r.Registry.Put(bind) }, nil
 }
 

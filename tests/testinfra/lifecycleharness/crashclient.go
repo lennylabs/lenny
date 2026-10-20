@@ -5,6 +5,7 @@ package lifecycleharness
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,6 +33,10 @@ type crashableClient struct {
 	client.Client
 	crashed *atomic.Bool
 	claims  *ClaimLog
+	// retire moves a pod's Sandbox to draining, as the occupancy
+	// projection does when the pod's claim is deleted. Nil projects
+	// nothing.
+	retire func(ctx context.Context, pod string)
 }
 
 // down reports the crash error once the replica crashed.
@@ -77,7 +82,29 @@ func (c crashableClient) Delete(ctx context.Context, obj client.Object, opts ...
 	if err := c.down(); err != nil {
 		return err
 	}
-	return c.Client.Delete(ctx, obj, opts...)
+	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if claim, ok := obj.(*lennyv1.SandboxClaim); ok && c.retire != nil {
+		c.projectRetirement(ctx, claim)
+	}
+	return nil
+}
+
+// projectRetirement stands in for the WarmPoolController's occupancy
+// projection, which the harness does not run: a claim the gateway deletes
+// retires its pod, so the pod's Sandbox moves to draining and no later claim
+// takes it. The claim names its pod in spec.sandboxRef, or, for a delete by
+// name, through the deterministic claim-<pod> name. A Sandbox already gone is
+// left alone.
+// spec: §4.6.1 (occupancy projection on claim DELETE), §6.2 (claimed →
+// draining)
+func (c crashableClient) projectRetirement(ctx context.Context, claim *lennyv1.SandboxClaim) {
+	pod := claim.Spec.SandboxRef
+	if pod == "" {
+		pod = strings.TrimPrefix(claim.Name, "claim-")
+	}
+	c.retire(ctx, pod)
 }
 
 // DeleteAllOf refuses the delete once the replica crashed.

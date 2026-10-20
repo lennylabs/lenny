@@ -318,3 +318,29 @@ func listSpecMarkdown(t *testing.T, specDir string) []string {
 	}
 	return matches
 }
+
+// spec: 12.4 (Redis HA and failure modes), 5.2 (Slot assignment atomicity)
+// diagnosis: a §12.4 row for lenny:pod:{pod_id}:active_slots describes the
+// per-pod slot occupancy as an incremented counter or a value reset to 0
+// rather than the keyed set with leaked: members that §5.2 states, so the
+// key registry and the failure-behavior table disagree with the release the
+// gateway runs.
+func TestSlotSetKeyRowsDescribeASet_spec_12_4(t *testing.T) {
+	root := repoRoot(t)
+	body := readDocPage(t, filepath.Join(root, "spec", "12_storage-architecture.md"))
+	rows := map[string]string{
+		"key registry row":     requireLine(t, body, "| `lenny:pod:{pod_id}:active_slots` |"),
+		"failure-behavior row": requireLine(t, body, "| Session slot set (`lenny:pod:{pod_id}:active_slots`) |"),
+		"rehydrated flag row":  requireLine(t, body, "| `lenny:pod:{pod_id}:rehydrated` |"),
+		"rehydrating lock row": requireLine(t, body, "| `lenny:pod:{pod_id}:rehydrating` |"),
+	}
+	requireAllContain(t, "§12.4 key registry row", rows["key registry row"], []string{"A Redis set", "`leaked:<sessionId>` member", "its cardinality is the pod's slot occupancy"})
+	requireAllContain(t, "§12.4 failure-behavior row", rows["failure-behavior row"], []string{"the slot set is rebuilt"})
+	for label, row := range rows {
+		for _, banned := range []string{"INCR", "DECR", "reset to 0", "resets to 0"} {
+			if strings.Contains(row, banned) {
+				t.Errorf("§12.4 %s names %q", label, banned)
+			}
+		}
+	}
+}

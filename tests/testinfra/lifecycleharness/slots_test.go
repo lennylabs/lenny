@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: MIT
+
+package lifecycleharness
+
+import (
+	"context"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+)
+
+// loggedCounter returns a slot counter whose commands feed a fresh SlotLog,
+// with the pod's set seeded so no rehydration runs.
+func loggedCounter(t *testing.T) (*slotcounter.Counter, *SlotLog, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	log := NewSlotLog()
+	rc.AddHook(log)
+	if err := mr.Set("lenny:pod:{p1}:rehydrated", "1"); err != nil {
+		t.Fatal(err)
+	}
+	return slotcounter.New(rc), log, mr
+}
+
+// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics)
+//
+// The checker's single-removal invariant reads the slot log, so the log must
+// count each removal a release or a reap made inside one reservation, and
+// must not count a duplicate release that removed nothing.
+func TestSlotLogCountsRemovalsPerReservation_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	c, log, mr := loggedCounter(t)
+	for _, id := range []string{"s1", "s2", "s3"} {
+		if _, _, err := c.Reserve(ctx, "p1", id, 4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, _, err := c.Release(ctx, "p1", "s1", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.Release(ctx, "p1", "s1", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.Removals("p1", "s1"); got != 1 {
+		t.Errorf("removals of s1 after a release and a duplicate = %d, want 1", got)
+	}
+	if _, _, _, err := c.Release(ctx, "p1", "s2", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.Removals("p1", "s2"); got != 1 {
+		t.Errorf("removals of s2 after a leaked release = %d, want 1", got)
+	}
+	if removed, err := c.Reap(ctx, "p1", "s3"); err != nil || !removed {
+		t.Fatalf("Reap = %v, %v", removed, err)
+	}
+	if got := log.Removals("p1", "s3"); got != 1 {
+		t.Errorf("removals of s3 after a reap = %d, want 1", got)
+	}
+	if over := log.OverRemoved(); len(over) != 0 {
+		t.Errorf("OverRemoved = %v, want none", over)
+	}
+
+	// A member a seed re-adds without a reservation, as a rehydration
+	// after a restart does, and then removes again is a double removal.
+	if _, err := mr.SAdd("lenny:pod:{p1}:active_slots", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.Release(ctx, "p1", "s1", false); err != nil {
+		t.Fatal(err)
+	}
+	if over := log.OverRemoved(); !reflect.DeepEqual(over, []string{"p1/s1"}) {
+		t.Errorf("OverRemoved = %v, want [p1/s1]", over)
+	}
+
+	// A new reservation opens a new episode.
+	if _, _, err := c.Reserve(ctx, "p1", "s1", 4); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.Removals("p1", "s1"); got != 0 {
+		t.Errorf("removals of s1 after a fresh reservation = %d, want 0", got)
+	}
+}
+
+// spec: §5.2 (Slot-holder predicate), §6.2 (leaked slot semantics)
+//
+// The slot-set invariant accepts exactly the non-terminal sessions naming
+// the pod plus leaked: members, and the stale-member relaxation accepts a
+// terminal session's member and nothing else.
+func TestSlotSetViolations_spec_5_2(t *testing.T) {
+	rows := map[string]sessionRow{
+		"live":   {state: session.StateRunning, pod: "p1"},
+		"ended":  {state: session.StateCompleted, pod: "p1"},
+		"absent": {state: session.StateRunning, pod: "p1"},
+		"other":  {state: session.StateRunning, pod: "p2"},
+	}
+	cases := []struct {
+		name    string
+		relax   bool
+		members []string
+		want    []string
+	}{
+		{"exact", false, []string{"live", "absent", "leaked:gone"}, nil},
+		{"missing live member", false, []string{"live"}, []string{"lacks absent"}},
+		{"terminal member", false, []string{"live", "absent", "ended"}, []string{"holds ended, whose session is completed"}},
+		{"terminal member relaxed", true, []string{"live", "absent", "ended"}, nil},
+		{"member of another pod", true, []string{"live", "absent", "other"}, []string{"holds other, whose running row names pod \"p2\""}},
+		{"untracked member", true, []string{"live", "absent", "stranger"}, []string{"which no tracked session is"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Harness{RelaxStaleSlotMembers: tc.relax}
+			got := h.slotSetViolations("p1", tc.members, rows)
+			if len(got) != len(tc.want) {
+				t.Fatalf("violations = %v, want %d matching %v", got, len(tc.want), tc.want)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(got[i], w) {
+					t.Errorf("violation %q does not contain %q", got[i], w)
+				}
+			}
+		})
+	}
+}

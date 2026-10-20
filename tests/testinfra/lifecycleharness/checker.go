@@ -139,6 +139,14 @@ func (h *Harness) fingerprint() string {
 	claims, _ := h.Cluster.BoundClaims(ctx)
 	sort.Strings(claims)
 	fmt.Fprintf(&b, "claims=%v", claims)
+	if h.Concurrent() {
+		pods := h.Cluster.Pods()
+		sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
+		for _, p := range pods {
+			members, _ := h.SlotMembers(ctx, p.Name)
+			fmt.Fprintf(&b, ";slots %s=%v", p.Name, members)
+		}
+	}
 	return b.String()
 }
 
@@ -201,6 +209,7 @@ func (h *Harness) Invariants() []Invariant {
 		}
 	}
 	out = append(out, podsClaims)
+	out = append(out, h.slotInvariants(ctx, rows, held)...)
 	for _, id := range ids {
 		row := rows[id]
 		if row.err != nil {

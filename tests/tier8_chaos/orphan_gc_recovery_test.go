@@ -165,3 +165,106 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 		}
 	}
 }
+
+// agedClaimResidue creates claim-<pod> on the warm pod in binding state
+// phase with a binding-state transition time older than the default
+// claimOrphanTimeout, which is the residue a gateway replica leaves when it
+// exits between a session's terminal commit and its release.
+func agedClaimResidue(t *testing.T, c *kind.Cluster, pod, phase string) string {
+	t.Helper()
+	claimName := "claim-" + pod
+	claim := sandboxClaimManifest(claimName, agentNamespace, pod, "sess-orphan-"+phase)
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, claim) })
+	if out, err := c.ApplyStdin(t, claim); err != nil {
+		t.Fatalf("create the %s claim residue: %v\n%s", phase, err, out)
+	}
+	aged := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	patch := fmt.Sprintf(`{"status":{"phase":%q,"bindingStateTransitionTime":%q}}`, phase, aged)
+	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandboxclaim", claimName,
+		"--subresource=status", "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("stamp the %s binding state: %v\n%s", phase, err, out)
+	}
+	return claimName
+}
+
+// requireDrainedWithinSweep waits for the orphan GC to delete the claim, in
+// the GC's sweep interval plus reconcile latency, and requires the pod to
+// drain rather than return to idle.
+func requireDrainedWithinSweep(t *testing.T, c *kind.Cluster, pod, claimName string) {
+	t.Helper()
+	reclaimed := pollUntil(3*time.Minute, 5*time.Second, func() bool {
+		out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxclaim", claimName, "--ignore-not-found", "-o", "name")
+		return err == nil && strings.TrimSpace(out) == ""
+	})
+	if !reclaimed {
+		t.Fatalf("the orphan GC did not reclaim %s within one sweep interval of claimOrphanTimeout (Sandbox phase %q)",
+			claimName, sandboxPhase(t, c, pod))
+	}
+	if phase := sandboxPhase(t, c, pod); phase == "idle" {
+		t.Errorf("Sandbox %s returned to idle after the reclaim; an occupied pod must drain", pod)
+	}
+}
+
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 7.2 (Interactive Session
+// Model)
+// diagnosis: the claim a gateway replica leaves bound when it exits between a
+// session's terminal commit and its release was not reclaimed by the
+// chart-installed claim-orphan GC within claimOrphanTimeout plus one sweep
+// interval, so the pod is held for good. First confirm the lenny-controller
+// renders --claim-orphan-timeout and logs the orphan-claim GC registration.
+func TestOrphanGCReclaimsTheBoundClaimACrashLeaves_spec_4_6_1(t *testing.T) {
+	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
+	if !deploymentReady(t, c, lennyControllerDeployment) {
+		t.Skipf("precondition not met: %s Deployment is not fully Ready before the test", lennyControllerDeployment)
+	}
+	pod := idleWarmSandbox(t, c, orphanGCFixturePool)
+	claimName := agedClaimResidue(t, c, pod, "bound")
+	requireDrainedWithinSweep(t, c, pod, claimName)
+}
+
+// concurrentGCFixturePool is the concurrent-workspace pool whose warm pod
+// carries the slot-set residue.
+const concurrentGCFixturePool = "concurrent-echo-pool"
+
+// redisCLI runs redis-cli against the cluster Redis.
+func redisCLI(t *testing.T, c *kind.Cluster, args ...string) string {
+	t.Helper()
+	out, err := c.KubectlOut(t, append([]string{"-n", lennySystemNamespace, "exec", "deploy/lenny-redis", "--", "redis-cli"}, args...)...)
+	if err != nil {
+		t.Fatalf("redis-cli %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(out)
+}
+
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 12.4 (Redis failure
+// behavior), 5.2 (Post-recovery rehydration atomicity)
+// diagnosis: a concurrent pod whose slot set still counts the member of a
+// session that ended during a Redis outage on a replica that then exited was
+// not drained by the claim-orphan GC once no non-terminal session named it,
+// so the stranded member holds the pod for good; or the member was dropped
+// before the drain, which would let the pod admit over its cap.
+func TestOrphanGCDrainsAConcurrentPodHoldingAnOutageMember_spec_4_6_1(t *testing.T) {
+	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
+	if !deploymentReady(t, c, lennyControllerDeployment) {
+		t.Skipf("precondition not met: %s Deployment is not fully Ready before the test", lennyControllerDeployment)
+	}
+	pod := idleWarmSandbox(t, c, concurrentGCFixturePool)
+	setKey := "lenny:pod:{" + pod + "}:active_slots"
+	flagKey := "lenny:pod:{" + pod + "}:rehydrated"
+	// The member names a session with no non-terminal row: its session
+	// ended during the outage, and its release never ran.
+	member := "00000000-0000-4000-8000-0000000a2700"
+	t.Cleanup(func() { redisCLI(t, c, "DEL", setKey, flagKey) })
+	redisCLI(t, c, "SADD", setKey, member)
+	redisCLI(t, c, "SET", flagKey, "1")
+	claimName := agedClaimResidue(t, c, pod, "bound")
+	if got := redisCLI(t, c, "SISMEMBER", setKey, member); got != "1" {
+		t.Fatalf("SISMEMBER = %q before the GC, want the stranded member counted", got)
+	}
+	requireDrainedWithinSweep(t, c, pod, claimName)
+	if got := redisCLI(t, c, "SISMEMBER", setKey, member); got != "1" {
+		t.Errorf("SISMEMBER = %q after the drain, want the member still counted until the pod terminates", got)
+	}
+}
