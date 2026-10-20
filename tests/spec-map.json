@@ -1317,6 +1317,7 @@
         "tests/tier0_static/address_rule_citation_test.go",
         "tests/tier0_static/slot_absence_claim_comment_test.go",
         "tests/tier0_static/slot_assignment_attribution_test.go",
+        "tests/tier0_static/change_graph_slotreaper_selection_test.go",
         "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
         "tests/tier11_docs/checkpoint_scoping_key_test.go",
         "tests/tier11_docs/session_policy_table_mirror_reconciliation_test.go",

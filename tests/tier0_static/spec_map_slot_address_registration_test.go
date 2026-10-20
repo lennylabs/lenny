@@ -349,6 +349,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
 	"tests/tier0_static/adapter_proto_parse_test.go",
 	"tests/tier0_static/address_rule_citation_test.go",
+	"tests/tier0_static/change_graph_slotreaper_selection_test.go",
 	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
 	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
 	"tests/tier0_static/claim_register_generator_test.go",
