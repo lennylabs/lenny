@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
@@ -15,7 +16,7 @@ import (
 // adapter here carries the deny-list propagation onto infrastructure the
 // admin layer does not own — the per-replica credential deny list and
 // the credential-lease store. It mirrors the §11.4 full_revoke
-// userLeaseRevoker and is independently optional: a minimal gateway that
+// lease step (leaserevoke.Revoker) and is independently optional: a minimal gateway that
 // wires neither still marks the store and emits the §4.9.2 audit event.
 
 // poolLeaseStore is the slice of the §4.9 credential-lease store the
@@ -43,7 +44,7 @@ type poolLeaseStore interface {
 // rejection to LEASE_TOKEN_INVALID. spec: §4.9.
 type poolCredentialRevoker struct {
 	leases   poolLeaseStore
-	denyList credentialDenyList
+	denyList leaserevoke.DenyList
 }
 
 // RevokePoolCredentials revokes each credentialID in poolID: it adds the

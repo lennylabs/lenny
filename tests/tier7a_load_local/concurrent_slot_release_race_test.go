@@ -11,9 +11,10 @@
 // removed at most once per reservation (read off the Redis commands by the
 // lifecycle harness's slot log), a leaked release leaves its leaked: member,
 // a pod's set never exceeds its cap, and the per-pod claim is deleted only by
-// the release that empties the set. The departure cases check the residue
+// the release that empties the set. The departure cases, whose residue
 // §5.2 (Slot assignment atomicity) and §4.6.1 (Orphaned SandboxClaim
-// detection) accept, and nothing weaker.
+// detection) accept, run on the lifecycle harness in
+// slot_release_departure_race_test.go.
 //
 // spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
 // §4.6.3 (SandboxClaim: a release that ends the occupancy without reuse).
@@ -255,16 +256,14 @@ func TestConcurrentReservationsNeverExceedTheCap_spec_5_2(t *testing.T) {
 	}
 }
 
-// createGate blocks one claimer's claim CREATE until released, so a case can
-// order the winner's steps before the loser's withdrawal.
+// createGate counts the SandboxClaim writes one claimer makes that reach the
+// apiserver, so a case can assert that a joining or losing claimer wrote
+// nothing.
 type createGate struct {
-	writes  atomic.Int32
-	blocked chan struct{}
-	release chan struct{}
+	writes atomic.Int32
 }
 
-// funcs counts every SandboxClaim write the claimer makes and, when the
-// gate is armed, holds its CREATE.
+// funcs counts every SandboxClaim write the claimer makes.
 func (g *createGate) funcs() interceptor.Funcs {
 	f := applyAsUpdate()
 	inner := f.SubResourcePatch
@@ -276,10 +275,6 @@ func (g *createGate) funcs() interceptor.Funcs {
 	}
 	f.Create = func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 		if _, ok := obj.(*lennyv1.SandboxClaim); ok {
-			if g.release != nil {
-				close(g.blocked)
-				<-g.release
-			}
 			err := cl.Create(ctx, obj, opts...)
 			if err == nil {
 				g.writes.Add(1)
@@ -361,47 +356,5 @@ func TestClaimCreateRaceLeavesOneClaimAndTheLoserWritesNothing_spec_4_6_3(t *tes
 				t.Fatalf("round %d: the loser's withdrawn member is still counted: %v", round, set)
 			}
 		}
-	}
-}
-
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
-// atomicity)
-// diagnosis: the accepted departure for a CREATE loser whose withdrawal
-// empties the set after the winner's last release changed. The winner's
-// release ran no disposition, because the loser's member was still counted,
-// and the loser's withdrawal is a raw keyed release with no disposition, so
-// the winner's claim stays bound on an empty set for the orphan GC. A claim
-// deleted here means a withdrawal now disposes of a claim it does not own.
-func TestCreateLoserWithdrawalAfterTheWinnersReleaseLeavesTheClaimForGC_spec_4_6_1(t *testing.T) {
-	e := newSlotRaceEnv(t, "idle")
-	if err := e.mr.Set("lenny:pod:{"+slotRacePod+"}:rehydrated", "1"); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	loserGate := &createGate{blocked: make(chan struct{}), release: make(chan struct{})}
-	loser := e.claimer(interceptor.NewClient(e.base, loserGate.funcs()))
-	winner := e.claimer(e.kube)
-	loserErr := make(chan error, 1)
-	go func() {
-		_, err := loser.ClaimSlot(ctx, podclaim.SlotRequest{Pool: slotRacePool, SessionID: "loser", TenantID: "acme", MaxConcurrentSessions: slotRaceCap})
-		loserErr <- err
-	}()
-	<-loserGate.blocked
-	res, err := winner.ClaimSlot(ctx, podclaim.SlotRequest{Pool: slotRacePool, SessionID: "winner", TenantID: "acme", MaxConcurrentSessions: slotRaceCap})
-	if err != nil || !res.FreshPod {
-		t.Fatalf("winner ClaimSlot = %+v, %v", res, err)
-	}
-	if _, err := winner.ReleaseSlot(ctx, slotRacePod, "winner", false, false); err != nil {
-		t.Fatalf("winner release: %v", err)
-	}
-	close(loserGate.release)
-	if err := <-loserErr; !errors.Is(err, podclaim.ErrNoConcurrentSlot) {
-		t.Fatalf("loser ClaimSlot = %v, want ErrNoConcurrentSlot", err)
-	}
-	if set := e.members(t); len(set) != 0 {
-		t.Errorf("slot set = %v, want empty", set)
-	}
-	if got := e.claimPhase(t); got != string(claimstate.Bound) {
-		t.Errorf("claim = %q, want bound for the orphan GC", got)
 	}
 }

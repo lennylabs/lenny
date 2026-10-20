@@ -17,7 +17,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -27,20 +26,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
-// newLocalRevocationDenyList builds the §11.4 step-1 deny list the
-// userLeaseRevoker requires: a *credrenewalprop.Propagator wrapping a
-// fresh single-replica DenyList with a nil bus. The propagator is a
-// local-only pass-through in this configuration (no pub/sub) but still
-// satisfies the cross-replica marker so the §11.4 wiring contract is
-// honored. The returned denylist.DenyList is the underlying state for
-// assertions; the propagator is what the userLeaseRevoker drives.
-// spec: §11.4 step 1.
+// newLocalRevocationDenyList builds the §11.4 step-1 deny list the lease
+// step requires: a *credrenewalprop.Propagator wrapping a fresh
+// single-replica DenyList with a nil bus. The returned denylist.DenyList is
+// the underlying state for assertions. spec: §11.4 step 1.
 func newLocalRevocationDenyList() (*credrenewalprop.Propagator, *denylist.DenyList) {
 	dl := denylist.New()
 	return credrenewalprop.New(dl, nil, nil), dl
 }
-
-// spec: §11.4 full_revoke — the gateway-side fan-out adapters.
 
 // poolLease returns a valid pool-backed proxy lease bound to session.
 func poolLease(leaseID, sessionID string) credential.Lease {
@@ -59,145 +52,6 @@ func poolLease(leaseID, sessionID string) credential.Lease {
 			ProxyDialect: "anthropic",
 			LeaseToken:   "lt-" + leaseID,
 		},
-	}
-}
-
-// orderedLeaseStep records, in one sequence, every Release the lease step
-// makes and every deny-list write it makes, so a test can assert that each
-// Release precedes the first deny-list write. Release removes the lease
-// record, as both assigners do, and fails for the leases named in failIDs.
-type orderedLeaseStep struct {
-	leases  *credleasestore.Store
-	failIDs map[string]bool
-	events  []string
-}
-
-func (o *orderedLeaseStep) Release(leaseID string) error {
-	o.events = append(o.events, "release:"+leaseID)
-	o.leases.Remove(leaseID)
-	if o.failIDs[leaseID] {
-		return errors.New("token service: revoke credentials: unavailable")
-	}
-	return nil
-}
-
-func (o *orderedLeaseStep) Revoke(key credential.CredentialKey) {
-	o.events = append(o.events, "deny:"+key.CredentialID)
-}
-
-func (o *orderedLeaseStep) IsCrossReplicaPropagator() {}
-
-// spec: §11.4 step 1 (User Invalidation), §4.9 (Credential Leasing Service)
-func TestUserLeaseRevokerRevokesAndDenies(t *testing.T) {
-	leases := credleasestore.New()
-	prop, deny := newLocalRevocationDenyList()
-	_ = leases.Put(poolLease("l1", "run_a"))
-	_ = leases.Put(poolLease("l2", "run_a"))
-	_ = leases.Put(poolLease("l4", "run_c"))
-	_ = leases.Put(poolLease("l3", "run_b")) // a session not being revoked
-	step := &orderedLeaseStep{leases: leases, failIDs: map[string]bool{"l2": true}}
-
-	revoker := &userLeaseRevoker{leases: leases, assigner: step, denyList: prop}
-	n := revoker.RevokeUserLeases("acme", "alice@acme.com", []string{"run_a", "run_c"})
-	if n != 3 {
-		t.Fatalf("RevokeUserLeases counted %d leases, want 3 (a failed Release still counts)", n)
-	}
-	// Every enumerated lease was returned through the assigner, which
-	// removed its record; the failed return's record is gone too.
-	for _, id := range []string{"l1", "l2", "l4"} {
-		if _, ok := leases.GetByID(id); ok {
-			t.Errorf("returned lease %s still in the store", id)
-		}
-		if !deny.Revoked(poolLease(id, "").CredentialKey()) {
-			t.Errorf("lease %s's credential is not on the deny list", id)
-		}
-	}
-	// The untouched session's lease survives.
-	if _, ok := leases.GetByID("l3"); !ok {
-		t.Error("lease l3 for an unrevoked session was dropped")
-	}
-	if deny.Revoked(poolLease("l3", "run_b").CredentialKey()) {
-		t.Error("lease l3's credential was wrongly added to the deny list")
-	}
-	if deny.Len() != n {
-		t.Errorf("deny list holds %d entries, want the counted %d", deny.Len(), n)
-	}
-}
-
-// TestUserLeaseRevokerReturnsEveryLeaseBeforeTheFirstDenial_spec_11_4 asserts
-// the lease step's order: every Release precedes the first deny-list write,
-// and a Release error still leaves the lease deny-listed and counted.
-//
-// spec: §11.4 step 1 (User Invalidation)
-func TestUserLeaseRevokerReturnsEveryLeaseBeforeTheFirstDenial_spec_11_4(t *testing.T) {
-	leases := credleasestore.New()
-	_ = leases.Put(poolLease("l1", "run_a"))
-	_ = leases.Put(poolLease("l2", "run_b"))
-	_ = leases.Put(poolLease("l3", "run_b"))
-	step := &orderedLeaseStep{leases: leases, failIDs: map[string]bool{"l1": true}}
-	revoker := &userLeaseRevoker{leases: leases, assigner: step, denyList: step}
-	if n := revoker.RevokeUserLeases("acme", "alice@acme.com", []string{"run_a", "run_b"}); n != 3 {
-		t.Fatalf("RevokeUserLeases counted %d, want 3", n)
-	}
-	firstDeny, lastRelease, denies := -1, -1, 0
-	for i, e := range step.events {
-		switch {
-		case strings.HasPrefix(e, "deny:"):
-			denies++
-			if firstDeny < 0 {
-				firstDeny = i
-			}
-		case strings.HasPrefix(e, "release:"):
-			lastRelease = i
-		}
-	}
-	if denies != 3 || lastRelease < 0 || firstDeny < lastRelease {
-		t.Errorf("events = %v, want three releases before three deny-list writes", step.events)
-	}
-}
-
-func TestUserLeaseRevokerNoLeases(t *testing.T) {
-	leases := credleasestore.New()
-	prop, deny := newLocalRevocationDenyList()
-	revoker := &userLeaseRevoker{leases: leases, assigner: &orderedLeaseStep{leases: leases}, denyList: prop}
-	if n := revoker.RevokeUserLeases("acme", "bob@acme.com", []string{"run_x"}); n != 0 {
-		t.Errorf("RevokeUserLeases for a session with no leases revoked %d, want 0", n)
-	}
-	if deny.Len() != 0 {
-		t.Errorf("the deny list gained %d entries for a no-lease user, want 0", deny.Len())
-	}
-}
-
-func TestUserLeaseRevokerEmptySessionSet(t *testing.T) {
-	leases := credleasestore.New()
-	prop, _ := newLocalRevocationDenyList()
-	_ = leases.Put(poolLease("l1", "run_a"))
-	revoker := &userLeaseRevoker{leases: leases, assigner: &orderedLeaseStep{leases: leases}, denyList: prop}
-	if n := revoker.RevokeUserLeases("acme", "carol@acme.com", nil); n != 0 {
-		t.Errorf("RevokeUserLeases with no sessions revoked %d, want 0", n)
-	}
-	if _, ok := leases.GetByID("l1"); !ok {
-		t.Error("an unrelated lease was dropped for an empty session set")
-	}
-}
-
-// TestUserLeaseRevokerRequiresCrossReplicaPropagator asserts the §11.4
-// step-1 wiring contract: only *credrenewalprop.Propagator satisfies
-// credentialDenyList. A bare *denylist.DenyList carries the revocation
-// only on the calling replica and is no longer accepted by the
-// interface, so an accidental future wiring downgrade fails at compile
-// time. spec: §11.4 step 1.
-func TestUserLeaseRevokerRequiresCrossReplicaPropagator_spec_11_4_step_1(t *testing.T) {
-	// Compile-time assertion that the propagator satisfies the
-	// interface; the file would not compile if it did not.
-	var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
-	// Sibling assertion in a runtime form so the test names the bare
-	// DenyList path explicitly. The line is dead code — the if check
-	// is unreachable — but `denylist.DenyList` not satisfying the
-	// interface is the entire point.
-	var d any = denylist.New()
-	if _, ok := d.(credentialDenyList); ok {
-		t.Fatalf("bare *denylist.DenyList satisfies credentialDenyList; the cross-replica marker is missing — §11.4 step 1 would be replica-local")
 	}
 }
 
@@ -519,7 +373,6 @@ func TestAdminDurableRevokeNoObserveOnAlreadyRevoked_SEC_TS_1(t *testing.T) {
 // are wired against in WithUserRevocation.
 var (
 	_ admin.UserPodTerminator = (*podTerminateFanOut)(nil)
-	_ admin.UserLeaseRevoker  = (*userLeaseRevoker)(nil)
 	_ admin.UserTokenRevoker  = (*userTokenRevoker)(nil)
 	// *issuedtokenstore.Store satisfies the consumer-side store interface
 	// the adapter now depends on, so the production wiring is type-checked.

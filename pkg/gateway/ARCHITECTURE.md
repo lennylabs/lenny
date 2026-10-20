@@ -95,11 +95,12 @@ concern, beneath the subsystem boundaries above.
 ### `credentials/` — §4.9 Credential Leasing Service
 
 End-user and pool credential storage, lease lifecycle, renewal, fallback, the
-deny list, and the §13.3 platform-admin impersonation path.
+deny list, the §11.4 full_revoke lease step, and the §13.3 platform-admin
+impersonation path.
 
 `credassign`, `credcache`, `credentialpoolstore`, `credentialserver`,
 `credentialstore`, `credfallback`, `credleasestore`, `credrenewal`, `denylist`,
-`impersonation`, `revocation`, `usercreds`.
+`impersonation`, `leaserevoke`, `revocation`, `usercreds`.
 
 ### `connectors/` — §9.3 connector access
 

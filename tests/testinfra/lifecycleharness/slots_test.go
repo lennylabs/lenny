@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
@@ -137,26 +138,37 @@ func TestSlotSetViolations_spec_5_2(t *testing.T) {
 // release no replica performed, keeps the shared claim bound after the pod's
 // last session ends. The pods-and-claims invariant accepts that claim without
 // RelaxOrphanClaims and leaves the pod to the empty-pod slot invariant, while
-// a bound claim on an unoccupied pod that no row names is still a violation.
+// a bound claim on an unoccupied pod that no row names is still a violation
+// unless RelaxEmptySetClaims accepts it on a concurrent pool.
 func TestPodsClaimsAcceptsAnOccupiedConcurrentPod_spec_5_2(t *testing.T) {
 	held := map[string]bool{"p-live": true}
 	cases := []struct {
-		name     string
-		relax    bool
-		bound    map[string]bool
-		occupied map[string]bool
-		want     []string
+		name       string
+		relax      bool
+		emptyRelax bool
+		concurrent bool
+		bound      map[string]bool
+		occupied   map[string]bool
+		want       []string
 	}{
-		{"exclusive pool", false, nil, nil, []string{"p-leaked", "p-empty"}},
-		{"occupied pod with no row", false, nil, map[string]bool{"p-leaked": true}, []string{"p-empty"}},
-		{"unoccupied pods with no row", false, nil, map[string]bool{}, []string{"p-leaked", "p-empty"}},
+		{"exclusive pool", false, false, false, nil, nil, []string{"p-leaked", "p-empty"}},
+		{"occupied pod with no row", false, false, true, nil, map[string]bool{"p-leaked": true}, []string{"p-empty"}},
+		{"unoccupied pods with no row", false, false, true, nil, map[string]bool{}, []string{"p-leaked", "p-empty"}},
 		// The crash relaxation accepts an unbound pod and keeps flagging a
 		// pod a surviving replica still binds.
-		{"crash relaxation", true, map[string]bool{"p-leaked": true}, nil, []string{"p-leaked"}},
+		{"crash relaxation", true, false, false, map[string]bool{"p-leaked": true}, nil, []string{"p-leaked"}},
+		// The empty-set relaxation accepts a bound claim on a concurrent
+		// pod whose set is empty, as the empty-pod slot invariant does, and
+		// changes nothing on an exclusive pool.
+		{"empty-set relaxation", false, true, true, nil, map[string]bool{}, nil},
+		{"empty-set relaxation on an exclusive pool", false, true, false, nil, nil, []string{"p-leaked", "p-empty"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &Harness{RelaxOrphanClaims: tc.relax}
+			h := &Harness{RelaxOrphanClaims: tc.relax, RelaxEmptySetClaims: tc.emptyRelax}
+			if tc.concurrent {
+				h.maxConcurrent = 4
+			}
 			got := h.podsClaimsViolations([]string{"p-live", "p-leaked", "p-empty"}, held, tc.bound, tc.occupied)
 			if len(got) != len(tc.want) {
 				t.Fatalf("violations = %v, want %d naming %v", got, len(tc.want), tc.want)
@@ -178,7 +190,7 @@ func TestPodsClaimsAcceptsAnOccupiedConcurrentPod_spec_5_2(t *testing.T) {
 // carry the reuse limit §5.2 requires, and both pool kinds must register.
 func TestConcurrentPoolStoreRegistersBothPoolKinds_spec_5_2(t *testing.T) {
 	for _, recycling := range []bool{false, true} {
-		pools, err := concurrentPoolStore(4, recycling)
+		pools, err := poolPolicyStore(4, recycling)
 		if err != nil {
 			t.Fatalf("recycling=%v: %v", recycling, err)
 		}
@@ -192,5 +204,28 @@ func TestConcurrentPoolStoreRegistersBothPoolKinds_spec_5_2(t *testing.T) {
 		if got := p.SessionPolicy.Recycle != nil && p.SessionPolicy.Recycle.Enabled; got != recycling {
 			t.Errorf("recycling=%v: recycle enabled = %v", recycling, got)
 		}
+	}
+}
+
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+// sessions)), §4.6.1 (within-hold rebind)
+//
+// The exclusive recycling pool a KeepRuntime harness registers keeps its
+// runtime across sessions, so an acquisition rebinds a reserved pod rather
+// than ending its hold, and stays an exclusive pool.
+func TestPoolPolicyStoreRegistersAnExclusivePoolThatKeepsItsRuntime_spec_5_2(t *testing.T) {
+	pools, err := poolPolicyStore(1, true)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	p, err := pools.Get(context.Background(), Pool)
+	if err != nil {
+		t.Fatalf("read the pool: %v", err)
+	}
+	if !poolstore.KeepsRuntimeAcrossSessions(p.SessionPolicy) {
+		t.Error("the exclusive recycling pool does not keep its runtime across sessions")
+	}
+	if h := (&Harness{maxConcurrent: 1}); h.Concurrent() {
+		t.Error("a pool with one slot per pod reads as a concurrent-workspace pool")
 	}
 }

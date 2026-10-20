@@ -7,14 +7,14 @@
 // deny-listed before any cancel write, and the reported lease count is the
 // number deny-listed.
 //
-// The case drives the admin router's full_revoke handler over a real
-// credential-assignment service, a real lease store, and a real deny list
-// behind the cross-replica revocation propagator. The lease revoker here
-// composes those the way the gateway's lease step does (return every lease,
-// then deny-list every lease); the gateway adapter's own order is pinned at
-// tier 1 in cmd/lenny-gateway. What this case pins is the handler's side:
-// which sessions reach the lease step, that it runs before the cancel
-// writes, and that the response reports the deny-listed count.
+// The case drives the admin router's full_revoke handler and the gateway's
+// lease step (leaserevoke.Revoker) over a real credential-assignment
+// service, a real lease store, and a real deny list behind the
+// cross-replica revocation propagator. The assigner the step drives is
+// observed, so the case pins which sessions reach the lease step, that
+// every Release runs before the first deny-list write and before any cancel
+// write, and that the response reports the deny-listed count read back
+// from the deny list.
 //
 // spec: §11.4; §4.9.
 package tier9_security_test
@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -44,34 +45,34 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// returnThenDeny is the full_revoke lease step over the real services: it
-// returns every enumerated lease to its pool, then deny-lists every one.
-// cancelledAtStep records how many listed sessions were already cancelled
-// when the step ran, which must be none.
-type returnThenDeny struct {
-	sessions        sessionstore.Store
-	leases          *credleasestore.Store
-	assign          *credassign.Service
-	deny            *credrenewalprop.Propagator
+// observedAssigner is the credential assigner the production lease step
+// drives. For each Release it records the lease and whether the deny list
+// already held an entry or a listed row was already cancelled, which must
+// both be never.
+type observedAssigner struct {
+	sessions  sessionstore.Store
+	assign    *credassign.Service
+	deny      *denylist.DenyList
+	ids       []string
+	released  map[string]int
+	afterDeny int
+	// cancelledAtStep counts the Releases that ran after a listed row's
+	// cancel write.
 	cancelledAtStep int
-	denyWrites      int
 }
 
-func (r *returnThenDeny) RevokeUserLeases(tenantID, _ string, ids []string) int {
-	for _, id := range ids {
-		if row, err := r.sessions.Get(context.Background(), tenantID, id); err == nil && row.State == session.StateCancelled {
-			r.cancelledAtStep++
+func (o *observedAssigner) Release(leaseID string) error {
+	o.released[leaseID]++
+	if o.deny.Len() != 0 {
+		o.afterDeny++
+	}
+	for _, id := range o.ids {
+		if row, err := o.sessions.Get(context.Background(), "acme", id); err == nil && row.State == session.StateCancelled {
+			o.cancelledAtStep++
+			break
 		}
 	}
-	got := r.leases.LeasesBySession(ids)
-	for _, l := range got {
-		_ = r.assign.Release(l.LeaseID)
-	}
-	for _, l := range got {
-		r.deny.Revoke(l.CredentialKey())
-		r.denyWrites++
-	}
-	return len(got)
+	return o.assign.Release(leaseID)
 }
 
 // spec: 11.4 (User Invalidation), 4.9 (Credential Leasing Service)
@@ -125,7 +126,8 @@ func TestFullRevokeReturnsAndDenyListsEveryListedLease_spec_11_4(t *testing.T) {
 		minted = append(minted, l)
 	}
 	deny := denylist.New()
-	step := &returnThenDeny{sessions: sessions, leases: leases, assign: svc, deny: credrenewalprop.New(deny, nil, nil)}
+	observed := &observedAssigner{sessions: sessions, assign: svc, deny: deny, ids: []string{"s_ready", "s_running", "s_suspended"}, released: map[string]int{}}
+	step := leaserevoke.New(leases, observed, credrenewalprop.New(deny, nil, nil), nil)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: time.Now}).
 		WithUsers(users).
 		WithSessions(sessions).
@@ -144,19 +146,30 @@ func TestFullRevokeReturnsAndDenyListsEveryListedLease_spec_11_4(t *testing.T) {
 	var resp map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 
-	if step.cancelledAtStep != 0 {
-		t.Errorf("the lease step saw %d cancelled rows; it must run before every cancel write", step.cancelledAtStep)
+	if observed.cancelledAtStep != 0 || observed.afterDeny != 0 {
+		t.Errorf("%d Releases ran after a cancel write and %d after a deny-list write; the lease step must return every lease first",
+			observed.cancelledAtStep, observed.afterDeny)
 	}
 	for _, l := range minted {
 		if _, ok := leases.GetByID(l.LeaseID); ok {
 			t.Errorf("lease %s of %s is still recorded; its pool slot was not returned", l.LeaseID, l.SessionID)
 		}
+		if n := observed.released[l.LeaseID]; n != 1 {
+			t.Errorf("lease %s of %s was released %d times, want once", l.LeaseID, l.SessionID, n)
+		}
 		if !deny.Revoked(l.CredentialKey()) {
 			t.Errorf("lease %s of %s: credential %s is not deny-listed", l.LeaseID, l.SessionID, l.CredentialID)
 		}
 	}
-	if got := resp["leasesRevoked"]; got != float64(step.denyWrites) || step.denyWrites != len(minted) {
-		t.Errorf("leasesRevoked = %v with %d deny-list writes, want both %d", got, step.denyWrites, len(minted))
+	keys := map[credential.CredentialKey]bool{}
+	for _, l := range minted {
+		keys[l.CredentialKey()] = true
+	}
+	if got := resp["leasesRevoked"]; got != float64(len(minted)) || len(observed.released) != len(minted) {
+		t.Errorf("leasesRevoked = %v with %d leases released, want both %d", got, len(observed.released), len(minted))
+	}
+	if deny.Len() != len(keys) {
+		t.Errorf("the deny list holds %d entries, want the %d credentials the leases name", deny.Len(), len(keys))
 	}
 	if resp["sessionsTerminated"] != float64(len(listed)) {
 		t.Errorf("sessionsTerminated = %v, want %d", resp["sessionsTerminated"], len(listed))

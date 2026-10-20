@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
@@ -871,8 +872,8 @@ func (w *gatewayWiring) buildAdminRouter(
 		// reaching the provider fleet-wide and no replica renews it. The
 		// credential assigner returns each lease to its pool before the
 		// deny-list write (§11.4 step 1).
-		if ls, ok := w.llmLeases.(userLeaseStore); ok {
-			userLeases = &userLeaseRevoker{leases: ls, assigner: w.credAssign, denyList: credRenewalProp}
+		if ls, ok := w.llmLeases.(leaserevoke.LeaseLister); ok {
+			userLeases = leaserevoke.New(ls, w.credAssign, credRenewalProp, nil)
 		}
 		if w.pgPool != nil {
 			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}

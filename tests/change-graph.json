@@ -796,6 +796,12 @@
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go",
         "tests/tier4_integration/slot_holder_pgstore_test.go"
       ]
+    },
+    "pkg/gateway/credentials/leaserevoke": {
+      "unit": ["pkg/gateway/credentials/leaserevoke/...", "cmd/lenny-gateway/..."],
+      "integration": ["tests/tier4_integration/full_revoke_two_replica_test.go"],
+      "chaos": ["tests/tier8_chaos/full_revoke_denylist_drop_test.go"],
+      "security": ["tests/tier9_security/full_revoke_lease_return_test.go"]
     }
   }
 }

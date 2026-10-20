@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/credential"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -22,11 +22,11 @@ import (
 )
 
 // Compile-time assertion that the §4.9 credential-lease revocation
-// propagator satisfies credentialDenyList. A refactor that drops the
+// propagator satisfies leaserevoke.DenyList. A refactor that drops the
 // `IsCrossReplicaPropagator()` marker on *credrenewalprop.Propagator
 // fails to build, so the §11.4 step-1 wiring contract is enforced at
 // compile time rather than runtime. spec: §11.4 step 1.
-var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
+var _ leaserevoke.DenyList = (*credrenewalprop.Propagator)(nil)
 
 // Compile-time assertion that podTerminateFanOut is the cross-replica
 // §11.4 step-2 local releaser the binding-release propagator drives.
@@ -37,7 +37,7 @@ var _ podterminateprop.LocalTerminator = (*podTerminateFanOut)(nil)
 // cancels their sessions in the SessionStore on its own; the adapters
 // here carry the remaining §11.4 propagation onto infrastructure the
 // admin layer does not own — the pod bindings, the §4.9 credential
-// leases, and the §13.3 issued tokens. Each is independently optional,
+// leases (through leaserevoke.Revoker), and the §13.3 issued tokens. Each is independently optional,
 // so a minimal gateway that wires none of them still soft/hard disables
 // a user.
 
@@ -149,78 +149,6 @@ func (p *podTerminateFanOut) releaseOne(ctx context.Context, tenantID, sessionID
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), userTerminateRPCTimeout)
 	defer cancel()
 	return p.releaser.ReleaseRevokedBinding(callCtx, tenantID, sessionID)
-}
-
-// userLeaseStore is the slice of the §4.9 credential-lease store the
-// full_revoke lease step needs: enumerate the leases held by a set of
-// sessions. The in-memory credleasestore.Store and the Postgres-backed
-// credleasestore/pgstore.Store both satisfy it.
-type userLeaseStore interface {
-	LeasesBySession(sessionIDs []string) []credential.Lease
-}
-
-// userLeaseReleaser returns a lease to its pool and removes its record.
-// The credential assigner (credassign.Assigner) satisfies it, in-process
-// or through the Token Service client.
-type userLeaseReleaser interface {
-	Release(leaseID string) error
-}
-
-// credentialDenyList is the §4.9 deny list the full_revoke fan-out adds
-// a revoked user's credentials to. The marker method
-// `IsCrossReplicaPropagator()` is intentional: §11.4 step 1 must reach
-// every replica's deny list, and a bare *denylist.DenyList carries the
-// revocation only on the calling replica. Requiring the marker bars an
-// accidental wiring downgrade — only *credrenewalprop.Propagator (which
-// applies locally and publishes on Redis pub/sub) satisfies it. A
-// Propagator built with a nil bus still satisfies the marker; that is
-// the explicit local-only single-replica posture, not the silent
-// downgrade the marker rejects. spec: §11.4 step 1.
-type credentialDenyList interface {
-	Revoke(key credential.CredentialKey)
-	IsCrossReplicaPropagator()
-}
-
-// userLeaseRevoker returns and deny-lists the §4.9 credential leases held
-// by a revoked user's sessions. It returns each lease to its pool through
-// the credential assigner and adds the lease's credential to the §4.9 deny
-// list, so the LLM proxy rejects an in-flight request still carrying the
-// lease token. It satisfies admin.UserLeaseRevoker.
-type userLeaseRevoker struct {
-	leases   userLeaseStore
-	assigner userLeaseReleaser
-	denyList credentialDenyList
-}
-
-// RevokeUserLeases runs the §11.4 full_revoke lease step for the named
-// sessions. It enumerates their leases, returns every one to its pool
-// through the assigner's Release, which removes the lease record and
-// returns the pool slot, and only then adds each lease's source-aware
-// credential identity to the §4.9 deny list. It returns the number of
-// leases enumerated, which is the number deny-listed.
-//
-// Every Release precedes the first deny-list write. The deny list's
-// in-process revoke hook rotates every direct-delivery lease it still
-// finds on a revoked credential, so a deny-list write while a later lease
-// of a revoked session is still recorded on the same pool credential would
-// push that revoked session a fresh key. A Release error is logged with
-// the lease and session identifiers, and the lease is still deny-listed
-// and counted: the assigner removes the record either way, and the deny
-// list is what stops the token.
-//
-// spec: §11.4 step 1 (User Invalidation), §4.9 (Credential Leasing Service)
-func (u *userLeaseRevoker) RevokeUserLeases(tenantID, userID string, sessionIDs []string) int {
-	leases := u.leases.LeasesBySession(sessionIDs)
-	for _, lease := range leases {
-		if err := u.assigner.Release(lease.LeaseID); err != nil {
-			log.Printf("lenny-gateway: §11.4 full_revoke: return lease %s of session %s (user %s/%s): %v",
-				lease.LeaseID, lease.SessionID, tenantID, userID, err)
-		}
-	}
-	for _, lease := range leases {
-		u.denyList.Revoke(lease.CredentialKey())
-	}
-	return len(leases)
 }
 
 // userTokenRevoker revokes a user's §13.3 issued tokens in the durable

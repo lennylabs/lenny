@@ -366,14 +366,23 @@ func (c *Cluster) Pods() []*Pod {
 // retires a pod whose runtime crashed, so no later claim takes the pod.
 // spec: §6.2 (Pod State Machine)
 func (c *Cluster) Retire(ctx context.Context, p *Pod) error {
+	return c.ProjectPhase(ctx, p, "draining")
+}
+
+// ProjectPhase writes the pod's Sandbox phase as the WarmPoolController's
+// occupancy projection does, under its field manager. A scenario uses it for
+// a projection the harness does not run, such as `reserved` after a
+// recycle's scrub completes.
+// spec: §4.6.1 (occupancy projection), §6.2 (Pod State Machine)
+func (c *Cluster) ProjectPhase(ctx context.Context, p *Pod, phase string) error {
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
 	u.SetKind("Sandbox")
 	u.SetName(p.Name)
 	u.SetNamespace(Namespace)
-	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "draining", "podIP": p.IP}, "status")
+	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": phase, "podIP": p.IP}, "status")
 	if err := c.Client.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-		return fmt.Errorf("retire sandbox %s: %w", p.Name, err)
+		return fmt.Errorf("project sandbox %s to %s: %w", p.Name, phase, err)
 	}
 	return nil
 }

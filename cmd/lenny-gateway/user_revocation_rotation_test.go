@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 )
 
 // singleCredentialPool registers a direct-delivery pool with one
@@ -35,9 +36,9 @@ func singleCredentialPool(t *testing.T) (*credassign.Service, *credleasestore.St
 // perLeaseRevoker is the interleaving the lease step must not use: it
 // returns and deny-lists one lease at a time.
 type perLeaseRevoker struct {
-	leases   userLeaseStore
-	assigner userLeaseReleaser
-	denyList credentialDenyList
+	leases   leaserevoke.LeaseLister
+	assigner leaserevoke.Releaser
+	denyList leaserevoke.DenyList
 }
 
 func (p *perLeaseRevoker) RevokeUserLeases(_, _ string, sessionIDs []string) int {
@@ -90,7 +91,7 @@ func TestFullRevokeLeaseStepRotatesNoRevokedSession_spec_11_4(t *testing.T) {
 			prop := credrenewalprop.New(denylist.New(), nil, nil, credrenewalprop.WithRevokeHook(rotator.onRevoke))
 			var step interface {
 				RevokeUserLeases(tenantID, userID string, sessionIDs []string) int
-			} = &userLeaseRevoker{leases: leases, assigner: svc, denyList: prop}
+			} = leaserevoke.New(leases, svc, prop, nil)
 			if tc.perLease {
 				step = &perLeaseRevoker{leases: leases, assigner: svc, denyList: prop}
 			}
@@ -124,7 +125,7 @@ func TestFallbackMintAfterTheLeaseStepIsReturnedByTheSessionRelease_spec_11_4(t 
 		t.Fatalf("seed Assign: %v", err)
 	}
 	prop, deny := newLocalRevocationDenyList()
-	revoker := &userLeaseRevoker{leases: leases, assigner: svc, denyList: prop}
+	revoker := leaserevoke.New(leases, svc, prop, nil)
 	if n := revoker.RevokeUserLeases("acme", "alice@acme.com", []string{"s_1"}); n != 1 || deny.Len() != 1 {
 		t.Fatalf("lease step counted %d with %d deny-list entries, want 1 and 1", n, deny.Len())
 	}

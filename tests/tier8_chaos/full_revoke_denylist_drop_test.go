@@ -21,7 +21,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -32,25 +34,32 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
 
-// handlingReplicaLeaseStep is the full_revoke lease step on the replica
-// that handles the request: it returns every lease of the listed sessions to
-// its pool, then deny-lists each on its own deny list. The publish that would
-// carry the entries to the binding replica is dropped.
-type handlingReplicaLeaseStep struct {
-	leases *credleasestore.Store
-	assign *credassign.Service
-	deny   *denylist.DenyList
+// orderObservingAssigner is the handling replica's credential assigner as
+// the production lease step sees it. It records, for each Release, whether
+// the handling replica's deny list already held an entry and whether the
+// session's row was already terminal, so the test asserts the production
+// step's order: every lease record is removed before the first deny-list
+// write and before the cancel write.
+type orderObservingAssigner struct {
+	svc      *credassign.Service
+	deny     *denylist.DenyList
+	sessions sessionstore.Store
+	id       string
+	releases int
+	// afterDeny and afterCancel count the Releases that ran after a
+	// deny-list write or after the session's cancel write.
+	afterDeny, afterCancel int
 }
 
-func (s handlingReplicaLeaseStep) RevokeUserLeases(_, _ string, ids []string) int {
-	got := s.leases.LeasesBySession(ids)
-	for _, l := range got {
-		_ = s.assign.Release(l.LeaseID)
+func (o *orderObservingAssigner) Release(leaseID string) error {
+	o.releases++
+	if o.deny.Len() != 0 {
+		o.afterDeny++
 	}
-	for _, l := range got {
-		s.deny.Revoke(l.CredentialKey())
+	if row, err := o.sessions.Get(context.Background(), "acme", o.id); err == nil && session.IsTerminal(row.State) {
+		o.afterCancel++
 	}
-	return len(got)
+	return o.svc.Release(leaseID)
 }
 
 // proxyCode sends one request through the proxy with the lease token and
@@ -122,9 +131,15 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 	if err := users.Create(ctx, userstore.User{Subject: "alice@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleUser}}); err != nil {
 		t.Fatal(err)
 	}
+	// The handling replica's lease step is the production one over its own
+	// deny list; the propagator has no bus, so the deny-list publish that
+	// would reach the binding replica is dropped.
+	handlingDeny := denylist.New()
+	assigner := &orderObservingAssigner{svc: svc, deny: handlingDeny, sessions: sessions, id: id}
+	step := leaserevoke.New(leases, assigner, credrenewalprop.New(handlingDeny, nil, nil), nil)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: time.Now}).
 		WithUsers(users).WithSessions(sessions).
-		WithUserRevocation(nil, handlingReplicaLeaseStep{leases: leases, assign: svc, deny: denylist.New()}, nil)
+		WithUserRevocation(nil, step, nil)
 	body, _ := json.Marshal(admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke})
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/users/alice@acme.com/invalidate", bytes.NewReader(body))
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
@@ -136,6 +151,10 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 		t.Fatalf("full_revoke = %d %s", rr.Code, rr.Body.String())
 	}
 
+	if assigner.releases != 1 || assigner.afterDeny != 0 || assigner.afterCancel != 0 || handlingDeny.Len() != 1 {
+		t.Errorf("lease step: %d Releases (%d after a deny-list write, %d after the cancel write), %d handling-replica deny-list entries; want one Release before both and one entry",
+			assigner.releases, assigner.afterDeny, assigner.afterCancel, handlingDeny.Len())
+	}
 	before := len(upstream.Requests())
 	code, errCode := proxyCode(t, url, lease.Proxy.LeaseToken)
 	if code == http.StatusOK || errCode != "LEASE_TOKEN_INVALID" {

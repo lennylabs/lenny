@@ -193,13 +193,16 @@ func (l *SlotLog) Removals(pod, member string) int {
 	return l.removals[pod+"/"+member]
 }
 
-// concurrentPoolStore returns the gateway pool registry that makes the
-// harness pool a concurrent-workspace pool: its session policy carries
-// maxConcurrentSessions above 1, the process-level isolation
-// acknowledgment, and, on a recycling harness, the recycle block.
+// poolPolicyStore returns the gateway pool registry that carries the
+// harness pool's session policy: maxConcurrent slots per pod, the
+// process-level isolation acknowledgment, and, on a recycling harness, the
+// recycle block with a reuse limit above 1. maxConcurrent above 1 makes the
+// pool a concurrent-workspace pool; an exclusive recycling pool registered
+// here keeps its runtime across sessions.
 //
-// spec: §5.2 (sessionPolicy block, gateway-enforced subset)
-func concurrentPoolStore(maxConcurrent int32, recycling bool) (*poolstore.Memory, error) {
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset; Deployer
+// acknowledgment (runtime process kept across sessions))
+func poolPolicyStore(maxConcurrent int32, recycling bool) (*poolstore.Memory, error) {
 	sp := &runtimestore.SessionPolicy{
 		MaxConcurrentSessions:            int(maxConcurrent),
 		AcknowledgeProcessLevelIsolation: true,
@@ -213,7 +216,7 @@ func concurrentPoolStore(maxConcurrent int32, recycling bool) (*poolstore.Memory
 	if err := pools.Create(context.Background(), poolstore.Pool{
 		Name: Pool, RuntimeRef: RuntimeRef, ExecutionMode: runtimestore.ExecutionModeSession, SessionPolicy: sp,
 	}); err != nil {
-		return nil, fmt.Errorf("lifecycleharness: register the concurrent pool: %w", err)
+		return nil, fmt.Errorf("lifecycleharness: register the pool policy: %w", err)
 	}
 	return pools, nil
 }

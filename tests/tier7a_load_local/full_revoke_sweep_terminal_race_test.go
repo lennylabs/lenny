@@ -138,7 +138,10 @@ func (rr *revokeRound) shutdownsSince(h *lifecycleharness.Harness, id string) in
 // by-name claim delete followed the recycle patch (the pre-running reclaim
 // reached a session the replica binds between its binding registration and
 // its running commit, retiring a pod the release had handed to the whole-pod
-// scrub), or a created session with no binding kept its claim.
+// scrub), a created session with no binding kept its claim, or a harness
+// invariant failed after a round (a bound claim no live row names, two
+// replicas binding one session, a replica binding a cancelled session, or a
+// lease a cancelled session still holds).
 func TestFullRevokeRacesTheSweepersTerminalRelease_spec_11_4(t *testing.T) {
 	const rounds, perRound = 4, 2
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 1, Pods: rounds * (perRound + 2), Recycling: true})
@@ -177,7 +180,9 @@ func TestFullRevokeRacesTheSweepersTerminalRelease_spec_11_4(t *testing.T) {
 		_, _ = r.Sweeper.Sweep(ctx)
 		h.Settle()
 		requireRevokeRoundReleased(t, h, r, round, rr)
+		requireNoViolations(t, h, round, "after the revoke")
 	}
+	h.Check(t)
 }
 
 // requireRevokeRoundReleased asserts the round's release outcomes: every

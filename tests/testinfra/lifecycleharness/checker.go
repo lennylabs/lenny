@@ -245,13 +245,17 @@ func (h *Harness) Invariants() []Invariant {
 }
 
 // podsClaimsViolations flags each bound claim whose pod no non-terminal row
-// names. Two cases are accepted. Under RelaxOrphanClaims a claim a crash
+// names. Three cases are accepted. Under RelaxOrphanClaims a claim a crash
 // left is accepted when no surviving replica binds its pod, because the
 // claim-orphan GC reclaims it. On a concurrent-workspace pool a claim whose
 // pod's slot set is non-empty (occupied) is accepted, because a leaked:
 // member, or a counted member whose release no replica performed, keeps the
 // shared claim bound after the pod's last session; the empty-pod slot
-// invariant governs that pod instead.
+// invariant governs that pod instead. Under RelaxEmptySetClaims a claim on a
+// concurrent pod whose set is empty is accepted, so that relaxation covers
+// this invariant and the empty-pod slot invariant together: a CREATE loser's
+// withdrawal after the winner's last release leaves exactly that claim for
+// the claim-orphan GC.
 //
 // spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3, §5.2 (Slot
 // assignment atomicity), §6.2 (leaked slot semantics)
@@ -261,6 +265,7 @@ func (h *Harness) podsClaimsViolations(claims []string, held, bound, occupied ma
 		switch {
 		case held[pod]:
 		case occupied[pod]:
+		case h.RelaxEmptySetClaims && h.Concurrent():
 		case h.RelaxOrphanClaims && !bound[pod]:
 		default:
 			out = append(out, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))

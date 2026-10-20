@@ -100,6 +100,13 @@ type Options struct {
 	// replica's binder gets its own slot counter over the shared Redis, and
 	// the gateway pool registry carries the pool's session policy.
 	MaxConcurrentSessions int32
+	// KeepRuntime, on a recycling harness with an exclusive pool, registers
+	// the pool's session policy with recycle.maxSessionsPerPod above 1 and
+	// the process-level isolation acknowledgment, so a pod keeps its runtime
+	// across the sessions it serves and a same-tenant acquisition rebinds a
+	// reserved pod rather than ending its hold (§5.2 Deployer acknowledgment
+	// (runtime process kept across sessions), §4.6.1 within-hold rebind).
+	KeepRuntime bool
 	// QueueAddr, when set, maps the shared Redis address to the address the
 	// session DLQ and inbox client dials, so a scenario can put a
 	// partitionable proxy on the held-message path alone.
@@ -192,6 +199,21 @@ type Replica struct {
 	// k8sDown fails the binder's Kubernetes writes once the replica
 	// crashed (crashableClient).
 	k8sDown atomic.Bool
+	// claimFault is the fault SetClaimFault arms on the binder's
+	// SandboxClaim writes.
+	claimFault atomic.Pointer[ClaimFault]
+}
+
+// SetClaimFault arms f on every SandboxClaim create, status write, and
+// delete the replica's binder makes, so a scenario can fail one of them or
+// hold it against another actor; nil disarms it. The fault runs on the
+// binder's goroutine.
+func (r *Replica) SetClaimFault(f ClaimFault) {
+	if f == nil {
+		r.claimFault.Store(nil)
+		return
+	}
+	r.claimFault.Store(&f)
 }
 
 // Crashed reports whether the replica crashed.
@@ -234,12 +256,16 @@ func New(t testing.TB, opts Options) *Harness {
 	h.slotClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	h.slotClient.AddHook(h.Slots)
 	t.Cleanup(func() { _ = h.slotClient.Close() })
-	if opts.MaxConcurrentSessions > 1 {
-		pools, err := concurrentPoolStore(opts.MaxConcurrentSessions, opts.Recycling)
+	if opts.KeepRuntime && !opts.Recycling && opts.MaxConcurrentSessions <= 1 {
+		t.Fatal("lifecycleharness: KeepRuntime needs a recycling pool or maxConcurrentSessions above 1")
+	}
+	if opts.MaxConcurrentSessions > 1 || opts.KeepRuntime {
+		mcs := max(opts.MaxConcurrentSessions, 1)
+		pools, err := poolPolicyStore(mcs, opts.Recycling)
 		if err != nil {
 			t.Fatal(err)
 		}
-		h.maxConcurrent, h.pools = opts.MaxConcurrentSessions, pools
+		h.maxConcurrent, h.pools = mcs, pools
 	}
 	h.Inner = opts.Store
 	switch {
@@ -282,7 +308,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 	reg := podsession.NewRegistry()
 	r := &Replica{ID: id, Registry: reg, InputWaits: inputwait.NewRegistry()}
 	binder := &podsession.Binder{
-		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims, retire: h.Cluster.retireByName},
+		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims, retire: h.Cluster.retireByName, fault: &r.claimFault},
 		Namespace:        Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
