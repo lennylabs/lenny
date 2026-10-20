@@ -14133,7 +14133,7 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Spec:** §10.1.1 Stateless Replicas and Per-Session Coordination and the §29 rows that state no acquisition point for `REG-COORDLEASE`.
 **Evidence:** `/start` acquires the coordination lease on a `ready` row (`acquireCoordinationLease` from `pkg/gateway/sessionserver/bind_registration.go`), and delegated-child materialization acquires it on a `created` row (`pkg/gateway/sessionserver/delegated_child_materialize.go`). Three §29 rows say no acquisition point is stated. Filed by proposal 0093 (`proposals/0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po/`) as a defect in the shipped tree that it does not stage, 2026-10-20.
 **Gap:** The specification does not state when a pre-running start acquires `REG-COORDLEASE`, and its §10.1.1 statement contradicts the code.
-**Suggested resolution:** State the acquisition point in §10.1.1 and the §29 rows through the proposal pipeline, covering the delegated-child `created` acquisition and the Sweeper renewal of a bound `ready` row. Owned by R16, with the S16 edit to the same §10.1.1 bullet, or by a standalone spec proposal.
+**Suggested resolution:** State the acquisition point in §10.1.1 and the §29 rows through the proposal pipeline, covering the delegated-child `created` acquisition and the Sweeper renewal of a bound `ready` row. Owned by R16, with R16's edit to the same §10.1.1 bullet that states how a terminal write treats the coordination lease and its mirror row, or by a standalone spec proposal.
 
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
