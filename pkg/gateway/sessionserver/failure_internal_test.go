@@ -289,8 +289,10 @@ func funnelPools(t *testing.T) poolstore.Store {
 
 // seed inserts a session row in st with retries already spent, gives rep-1
 // its lease, and, when slot is true, binds it to a slot on pod-a (or to the
-// whole of pod-x otherwise). It returns the snapshot the store holds and the
-// published binding.
+// whole of pod-x otherwise). The binding carries the row's committed
+// coordination_generation, as every production publish site stamps it, so
+// the post-terminal hook's stale-binding step leaves it to the release step.
+// It returns the snapshot the store holds and the published binding.
 func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries int64, slot bool) (sessionstore.Session, *podsession.BindResult) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
@@ -299,16 +301,19 @@ func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries 
 		t.Fatalf("seed %s: %v", id, err)
 	}
 	f.leases.holders[leaseK("acme", id)] = "rep-1"
-	bind := &podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-x"}
-	if slot {
-		bind = &podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-a", SlotID: id}
-	}
-	if f.registry != nil {
-		f.registry.Put(bind)
-	}
 	row, err := f.store.Get(context.Background(), "acme", id)
 	if err != nil {
 		t.Fatalf("get %s: %v", id, err)
+	}
+	bind := &podsession.BindResult{
+		SessionID: id, TenantID: "acme", SandboxName: "pod-x",
+		CoordinationGeneration: row.CoordinationGeneration,
+	}
+	if slot {
+		bind.SandboxName, bind.SlotID = "pod-a", id
+	}
+	if f.registry != nil {
+		f.registry.Put(bind)
 	}
 	return row, bind
 }

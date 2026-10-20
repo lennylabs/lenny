@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"log"
+	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -34,26 +35,31 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //
 //  1. Cancel a same-replica resume attempt, so the attempt's restoration RPCs
 //     stop before the hook touches the pod.
-//  2. Seal and export the workspace when a Sealer is wired; a seal failure
+//  2. Settle a stale local binding (settleStaleBinding): when a peer advanced
+//     the row's generation past this replica's binding, evict the binding
+//     with no binder call, so the later steps send the peer's pod nothing.
+//  3. Seal and export the workspace when a Sealer is wired; a seal failure
 //     relabels the row failed through failWorkspaceSeal, whose returned row
 //     replaces sess. With no local binding the Sealer returns nil.
-//  3. Drain the session's inbox and DLQ, sending message_expired.
-//  4. On a terminal row, emit one status_change carrying the row's state and
+//  4. Drain the session's inbox and DLQ, sending message_expired.
+//  5. On a terminal row, emit one status_change carrying the row's state and
 //     one session_complete, then run signals.
-//  5. Release the pod: a pre-running claim by name, otherwise the executor's
+//  6. Release the pod: a pre-running claim by name, otherwise the executor's
 //     binding with the disposition of the row's state.
-//  6. Expire the pending elicitations the session's pod raised.
+//  7. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
 // later steps saw.
 //
 // spec: §7.1 (Normal Flow), §7.2 (Interactive Session Model), §7.3 (Resume
-// driver), §9.2 (Elicitation Chain), §29.4 (Interrupt, terminate, and delete)
+// driver), §9.2 (Elicitation Chain), §10.1.5 (Stale Replica Behavior), §29.4
+// (Interrupt, terminate, and delete)
 func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 	signals func(context.Context, sessionstore.Session),
 ) sessionstore.Session {
 	s.CancelResumeAttempt(sess.ID)
+	s.settleStaleBinding(fromState, sess)
 	if s.sealer != nil {
 		if err := s.sealWorkspace(ctx, sess); err != nil {
 			sess = s.failWorkspaceSeal(ctx, sess, err)
@@ -80,6 +86,38 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// settleStaleBinding is the post-terminal hook's stale-binding step. It runs
+// after CancelResumeAttempt, so a same-replica resume attempt has stopped
+// before it reads the registry, and before the seal. When this replica's
+// binding for the session is stale against the terminal row
+// (bindingStale) and fromState is one a coordinator binds a pod in, from
+// running onward, it evicts the binding with no binder call: the replica
+// that advanced the generation owns the pod's release. The later seal then
+// finds no binding and sends the peer's pod no Checkpoint RPC, and the later
+// release finds no binding to release. A pre-running fromState is left to
+// the pre-running reclaim, and a binding at the row's generation is left to
+// the release step.
+//
+// spec: §10.1.1 (Generation counters:), §10.1.5 (Stale Replica Behavior),
+// §7.3 (Resume driver)
+func (s *Server) settleStaleBinding(fromState session.State, sess sessionstore.Session) {
+	if s.podRegistry == nil {
+		return
+	}
+	bind, ok := s.podRegistry.Get(sess.ID)
+	if !ok || !bindingStale(bind.CoordinationGeneration, sess.CoordinationGeneration) {
+		return
+	}
+	switch fromState {
+	case session.StateRunning, session.StateInputRequired, session.StateSuspended,
+		session.StateResumePending, session.StateResuming, session.StateAwaitingClientAction:
+		s.evictStaleBinding(sess.ID, bind)
+		slog.Info("sessionserver: post-terminal hook evicted a stale binding; a peer owns the pod",
+			"session_id", sess.ID, "from_state", string(fromState),
+			"binding_generation", bind.CoordinationGeneration, "row_generation", sess.CoordinationGeneration)
+	}
 }
 
 // AfterRevokeWrite is the §11.4 full_revoke per-session hook, which the

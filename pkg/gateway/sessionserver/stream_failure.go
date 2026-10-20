@@ -97,12 +97,8 @@ func (s *Server) reportedStreamBinding(sessionID, sandboxName string) *podsessio
 }
 
 // reportSupersededByPeer reports whether a peer replica has taken the session
-// over since this replica published bind. RecordHandoff bumps the row's
-// coordination_generation on every takeover, and the generation also
-// advances on every resume_pending → resuming write, so a row generation
-// above the binding's means another replica coordinates the session or a
-// later incarnation owns it; a zero binding generation counts as superseded,
-// so a publish site that never stamped its binding fails closed. A resume
+// over since this replica published bind, by the package's one stale-binding
+// predicate, bindingStale. A resume
 // commit stamps its binding at the generation it committed at, so a stream
 // failure on that binding is reported rather than dropped.
 //
@@ -115,7 +111,7 @@ func (s *Server) reportedStreamBinding(sessionID, sandboxName string) *podsessio
 func reportSupersededByPeer(row sessionstore.Session, bind *podsession.BindResult) bool {
 	switch row.State {
 	case session.StateRunning, session.StateInputRequired, session.StateSuspended, session.StateResuming:
-		return bind.CoordinationGeneration == 0 || row.CoordinationGeneration > bind.CoordinationGeneration
+		return bindingStale(bind.CoordinationGeneration, row.CoordinationGeneration)
 	default:
 		return false
 	}

@@ -68,7 +68,7 @@ func (s *Server) releaseTerminalBinding(row sessionstore.Session) {
 		return
 	}
 	log := slog.With("session_id", row.ID, "state", string(row.State))
-	if bind.CoordinationGeneration == 0 || row.CoordinationGeneration > bind.CoordinationGeneration {
+	if bindingStale(bind.CoordinationGeneration, row.CoordinationGeneration) {
 		s.evictStaleBinding(row.ID, bind)
 		log.Info("sessionserver: terminal binding evicted; a peer owns the pod",
 			"binding_generation", bind.CoordinationGeneration, "row_generation", row.CoordinationGeneration)
@@ -76,4 +76,20 @@ func (s *Server) releaseTerminalBinding(row sessionstore.Session) {
 	}
 	released := s.releaseReportedBinding(ctx, row.ID, bind, dispositionForState(row.State))
 	log.Info("sessionserver: terminal binding released", "released", released)
+}
+
+// bindingStale reports whether a local binding stamped at bindGen is stale
+// against a session row at rowGen. RecordHandoff raises the row's
+// coordination_generation on every takeover, and the resume driver raises it
+// on every resume_pending → resuming write, so a row generation above the
+// binding's means another replica coordinates the session or a later
+// incarnation owns it. A binding stamped 0 counts as stale, so a publish site
+// that never stamped its binding fails closed. Every stale-binding check in
+// this package uses this one predicate, so the terminal binding release, the
+// stream-failure report, and the post-terminal hook cannot disagree on which
+// bindings a peer owns.
+//
+// spec: §10.1.1 (Generation counters:), §10.1.5 (Stale Replica Behavior)
+func bindingStale(bindGen, rowGen int64) bool {
+	return bindGen == 0 || rowGen > bindGen
 }
