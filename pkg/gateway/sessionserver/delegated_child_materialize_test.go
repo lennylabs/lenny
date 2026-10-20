@@ -179,7 +179,7 @@ func (s *updateFaultStore) GetPrimary(ctx context.Context, tenantID, id string) 
 	if pr, ok := s.Store.(sessionstore.PrimaryReader); ok {
 		return pr.GetPrimary(ctx, tenantID, id)
 	}
-	return s.Store.Get(ctx, tenantID, id)
+	return s.Get(ctx, tenantID, id)
 }
 
 func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {

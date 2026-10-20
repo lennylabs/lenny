@@ -788,7 +788,7 @@
     },
     "pkg/gateway/podlifecycle/slotreaper": {
       "unit": ["pkg/gateway/podlifecycle/slotreaper/..."],
-      "integration": ["tests/tier4_integration/slot_counter_redis_outage_fallback_test.go"]
+      "integration": ["tests/tier4_integration/slot_holder_pgstore_test.go"]
     }
   }
 }
