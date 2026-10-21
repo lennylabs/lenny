@@ -2894,7 +2894,14 @@ Redis store runs on the cluster client when the chart's `redis.provider` is `clu
 be cluster-safe. The work lands after 0094 and before P5b, because P5b wires more erasers on the same
 `scanDelete` helpers.
 
-- [ ] **Direct fix: F-12.4.28 (classes A and A′) and F-12.4.29.** No spec change; the code is brought in
+- [x] **Direct fix: F-12.4.28 (classes A and A′) and F-12.4.29.** Landed 2026-10-21 (merge `4114b2c95`,
+  branch `fix/redis-cluster-readiness`) with F-12.4.30. Outcome: tenant keys and EventBus channels are built
+  by `rediskeys.TenantPrefix`; every `SCAN` goes through `redisconn.ScanKeys` or `ScanDelete`; a test-only
+  cross-slot hook (`pkg/redisconn/slotguard`) runs in every Redis store's tests except
+  `ops/coordination/redisstore`, which waits on P6; a tier-0 gate enforces both; and a three-master compose
+  profile (`compose-redis-cluster`) backs a tier-4 smoke test. Tier-4 `TestGatewayRedisCoordinationE2E`
+  fails identically on the merge base `757a997b6` (the lease never appears in Redis) and is recorded as a
+  pre-existing condition rather than a defect of this fix. No spec change; the code is brought in
   line with §12.4 and §17.8.2, which already state that the `t:{tenant_id}:` prefix keeps a tenant's keys in
   one slot.
   - Write every tenant key as `t:{<tenant>}:` through one helper (for example `rediskeys.TenantPrefix`), and
