@@ -482,7 +482,10 @@ func TestBuildIgnoresCeilingAboveDefault_spec_4_6_1(t *testing.T) {
 // TestBuildAddsPreStopDrainHook_spec_4_6_1 confirms every agent
 // container carries the §4.6.1 preStop checkpoint-drain hook with a
 // timeout below the grace period (so the kubelet does not cut the drain
-// short).
+// short), and that the hook execs the binary at the path the image
+// installs it to.
+//
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle)), 4.7.10 (Deployment Model)
 func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 	cases := []struct {
 		model     string
@@ -503,8 +506,17 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 			t.Fatalf("model %q: %s container has no preStop exec hook", tc.model, tc.container)
 		}
 		cmd := c.Lifecycle.PreStop.Exec.Command
-		if len(cmd) < 2 || cmd[0] != "lenny-adapter" || cmd[1] != "prestop" {
-			t.Fatalf("model %q: preStop command = %v, want lenny-adapter prestop", tc.model, cmd)
+		// The images are distroless with the binary installed only at
+		// /usr/local/bin/lenny, so token 0 must be that absolute path. A
+		// bare `lenny-adapter` names no executable in the image and fails
+		// the hook at every termination (F-4.6.37). The literal pins the
+		// constant; tests/tier0_static pins the constant to the Dockerfile.
+		const wantBinary = "/usr/local/bin/lenny"
+		if podspec.PlatformBinaryPath != wantBinary {
+			t.Fatalf("PlatformBinaryPath = %q, want %q", podspec.PlatformBinaryPath, wantBinary)
+		}
+		if len(cmd) < 2 || cmd[0] != wantBinary || cmd[1] != "prestop" {
+			t.Fatalf("model %q: preStop command = %v, want %s prestop", tc.model, cmd, wantBinary)
 		}
 		var sawTimeout bool
 		for _, arg := range cmd {

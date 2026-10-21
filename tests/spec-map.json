@@ -427,6 +427,9 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "tests/testinfra/lifecycleharness/crashclient_test.go::TestCrashableClientRefusesWritesAfterTheCrash_spec_4_6_1",
+        "pkg/adapter/prestop/prestop_test.go",
+        "tests/tier0_static/prestop_image_path_test.go",
+        "tests/tier5_e2e_kind/prestop_hook_exec_test.go",
         "pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
         "tests/tier2_component/postclaimrelease/postclaim_release_test.go",
         "pkg/sandboxclaim/state/state_test.go::TestStatesAndTerminals",
@@ -988,6 +991,9 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "sdks/runtime/go/runtime/runtime_test.go",
+        "pkg/controller/sandbox/podspec/podspec_test.go::TestBuildAddsPreStopDrainHook_spec_4_6_1",
+        "tests/tier0_static/prestop_image_path_test.go",
+        "tests/tier5_e2e_kind/prestop_hook_exec_test.go",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestRuntimeSDKEchoServesSequentialSessionsOnOneProcess_spec_4_7_10",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestRuntimeSDKEchoServesConcurrentSessionsOnOneProcess_spec_4_7_10",
         "tests/tier3_contract/adapter_jsonl/session_frame_wire_order_test.go",

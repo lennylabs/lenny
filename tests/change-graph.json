@@ -414,6 +414,20 @@
         "pkg/gateway/session/executor/..."
       ]
     },
+    "pkg/adapter/prestop": {
+      "static": [
+        "tests/tier0_static/prestop_image_path_test.go",
+        "tests/tier0_static/deployment_boundary_test.go"
+      ],
+      "unit": [
+        "pkg/adapter/prestop/...",
+        "pkg/controller/sandbox/podspec/...",
+        "cmd/lenny-adapter/...",
+        "cmd/runtimes/echo-embedded/...",
+        "cmd/runtimes/preconnect-echo/..."
+      ],
+      "e2e_kind": ["tests/tier5_e2e_kind/prestop_hook_exec_test.go"]
+    },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
       "component": ["tests/tier2_component/observability/..."]

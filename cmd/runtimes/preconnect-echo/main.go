@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
@@ -47,6 +48,14 @@ var version = "0.1.0"
 func main() {
 	// spec: §16.4 — structured JSON logs (component=preconnect-echo).
 	logging.Setup(os.Stderr, "preconnect-echo")
+
+	// spec: §4.6.1, §4.7 — in the embedded model the pod builder attaches
+	// the preStop drain hook to this container, so the binary dispatches
+	// the `prestop` subcommand before parsing its server flags, exactly as
+	// lenny-adapter does.
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
+	}
 
 	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the server certificate")
