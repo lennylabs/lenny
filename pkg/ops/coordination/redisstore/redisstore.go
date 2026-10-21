@@ -29,6 +29,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // Key namespaces. The scope key holds the lock; the id index maps a lock
@@ -398,25 +399,35 @@ func (s *Store) readByScope(ctx context.Context, scope string) (*coordination.Lo
 	return &lock, nil
 }
 
-// scanAll iterates the scope keyspace and decodes every live lock.
+// scanAll iterates the scope keyspace and decodes every live lock. The
+// ops:lock:{scope} keys carry no shared hash tag, so on a Redis Cluster
+// they spread over every master: the SCAN runs on each master
+// (redisconn.ScanKeys with no routing key) and each lock is read with its
+// own HGET, so the listing is complete (F-12.4.29). The lock scripts and
+// the persist transaction still span hash slots; that is F-12.4.28 class
+// B/C, which P6 resolves by renaming the lock keys under one hash tag.
+//
+// spec: §25.4; §12.4 Redis HA and Failure Modes.
 func (s *Store) scanAll(ctx context.Context) ([]coordination.Lock, error) {
-	iter := s.client.Scan(ctx, 0, scopePrefix+"*", 256).Iterator()
 	var out []coordination.Lock
-	for iter.Next(ctx) {
-		blob, err := s.client.HGet(ctx, iter.Val(), "data").Bytes()
-		if errors.Is(err, redis.Nil) {
-			continue
+	err := redisconn.ScanKeys(ctx, s.client, "", scopePrefix+"*", 256, func(keys []string) error {
+		for _, k := range keys {
+			blob, err := s.client.HGet(ctx, k, "data").Bytes()
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var lock coordination.Lock
+			if err := json.Unmarshal(blob, &lock); err != nil {
+				continue
+			}
+			out = append(out, lock)
 		}
-		if err != nil {
-			return nil, err
-		}
-		var lock coordination.Lock
-		if err := json.Unmarshal(blob, &lock); err != nil {
-			continue
-		}
-		out = append(out, lock)
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return out, nil

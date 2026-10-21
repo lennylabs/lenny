@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // fakeFallback is a test FallbackSource that gates intra-pod capacity on a
@@ -73,7 +74,7 @@ func (f *fakeFallback) callCount(podID string) int {
 func downedCounter(t *testing.T, opts ...slotcounter.Option) *slotcounter.Counter {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	mr.Close() // simulate a Redis outage: the client can no longer connect.
 	return slotcounter.New(cl, opts...)

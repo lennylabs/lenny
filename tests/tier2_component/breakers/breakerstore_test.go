@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -56,7 +57,7 @@ func runtimeBreaker(name, runtime string) circuitbreaker.Breaker {
 func TestBreakerStoreContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	store := redisstore.New(rd.Client)
+	store := redisstore.New(slotguard.Install(rd.Client))
 	ctx := context.Background()
 
 	t.Run("open and get round-trip", func(t *testing.T) {

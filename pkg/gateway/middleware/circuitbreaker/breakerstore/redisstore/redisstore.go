@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // keyPrefix is the §12.4 circuit-breaker key namespace.
@@ -153,28 +154,47 @@ func (s *Store) Snapshot(ctx context.Context) ([]circuitbreaker.Breaker, error) 
 
 // collect SCANs the cb:* keyspace and decodes every breaker, optionally
 // keeping only the open ones.
+//
+// The cb:{name} keys carry no hash tag, so on a Redis Cluster they spread
+// over every master: the SCAN runs on each master (redisconn.ScanKeys with
+// no routing key), and the values are read with a pipeline of single-key
+// GETs rather than one MGET, which a cluster rejects across slots. A
+// breaker an operator opened on any master is therefore seen by admission
+// (F-12.4.28, F-12.4.29).
+//
+// spec: §11.6 Circuit Breakers (Storage and propagation); §12.4 Redis HA
+// and Failure Modes.
 func (s *Store) collect(ctx context.Context, openOnly bool) ([]circuitbreaker.Breaker, error) {
 	var keys []string
-	iter := s.client.Scan(ctx, 0, keyPrefix+"*", 0).Iterator()
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-	}
-	if err := iter.Err(); err != nil {
+	err := redisconn.ScanKeys(ctx, s.client, "", keyPrefix+"*", 0, func(batch []string) error {
+		keys = append(keys, batch...)
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	vals, err := s.client.MGet(ctx, keys...).Result()
-	if err != nil {
+	cmds := make([]*redis.StringCmd, len(keys))
+	_, err = s.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, k := range keys {
+			cmds[i] = p.Get(ctx, k)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
-	out := make([]circuitbreaker.Breaker, 0, len(vals))
-	for _, v := range vals {
-		raw, ok := v.(string)
-		if !ok {
-			// Key vanished between SCAN and MGET; skip it.
+	out := make([]circuitbreaker.Breaker, 0, len(cmds))
+	for _, cmd := range cmds {
+		raw, gerr := cmd.Result()
+		if errors.Is(gerr, redis.Nil) {
+			// Key vanished between SCAN and GET; skip it.
 			continue
+		}
+		if gerr != nil {
+			return nil, gerr
 		}
 		b, derr := decode(raw)
 		if derr != nil {

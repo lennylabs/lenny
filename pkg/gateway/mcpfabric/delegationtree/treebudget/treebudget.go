@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // DefaultTTL is the GC safety expiry of the delegation budget keys: 8 days,
@@ -500,22 +501,6 @@ func (s *Reserver) RearmTree(ctx context.Context, rootSessionID string, parentID
 	return nil
 }
 
-// scanClient returns the client a SCAN for the tree's keys must run on. On a
-// Redis Cluster a keyless SCAN goes to an arbitrary shard (go-redis routes a
-// keyless command through its shard picker), so the scan runs on the master
-// that owns the {rootSessionID} hash slot. Any other client scans itself.
-func (s *Reserver) scanClient(ctx context.Context, rootSessionID string) (redis.Cmdable, error) {
-	cc, ok := s.client.(*redis.ClusterClient)
-	if !ok {
-		return s.client, nil
-	}
-	node, err := cc.MasterForKey(ctx, hwmKey(rootSessionID))
-	if err != nil {
-		return nil, fmt.Errorf("treebudget: resolve the node of tree %s: %w", rootSessionID, err)
-	}
-	return node, nil
-}
-
 // PurgeRoot deletes every delegation tree-budget key for rootSessionID:
 // the tree-wide counters (`tokens`, `tree_size`, `tree_memory`), the
 // per-parent reservation keys (`parallel_children:*`,
@@ -532,32 +517,12 @@ func (s *Reserver) PurgeRoot(ctx context.Context, rootSessionID string) (int, er
 	if rootSessionID == "" {
 		return 0, fmt.Errorf("treebudget: empty root session id")
 	}
-	scanner, err := s.scanClient(ctx, rootSessionID)
+	// The tree's keys share the {rootSessionID} hash tag, so on a Redis
+	// Cluster the SCAN runs on the master that owns that slot
+	// (redisconn.ScanDelete routes it by the high-watermark key).
+	deleted, err := redisconn.ScanDelete(ctx, s.client, hwmKey(rootSessionID), "{"+rootSessionID+"}:dlg:*")
 	if err != nil {
-		return 0, err
-	}
-	pattern := "{" + rootSessionID + "}:dlg:*"
-	const delBatch = 256
-	var (
-		cursor  uint64
-		deleted int
-	)
-	for {
-		keys, next, err := scanner.Scan(ctx, cursor, pattern, delBatch).Result()
-		if err != nil {
-			return deleted, fmt.Errorf("treebudget: purge scan: %w", err)
-		}
-		if len(keys) > 0 {
-			n, err := scanner.Del(ctx, keys...).Result()
-			if err != nil {
-				return deleted, fmt.Errorf("treebudget: purge del: %w", err)
-			}
-			deleted += int(n)
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+		return deleted, fmt.Errorf("treebudget: purge: %w", err)
 	}
 	return deleted, nil
 }

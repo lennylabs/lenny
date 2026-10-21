@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // spec: §8.3 (Delegation Policy and Lease)
@@ -32,7 +33,7 @@ func TestDefaultBudgetKeyTTLOutlivesTheSuspendedLifetime_spec_8_3(t *testing.T) 
 func TestRearmTreeSetsTheTreesKeyTTLs_spec_8_3(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	r := treebudget.New(cl, 3*time.Hour)
 
@@ -95,7 +96,7 @@ func TestPurgeRootScansTheOwningClusterNode_spec_8_3(t *testing.T) {
 		},
 	})
 	t.Cleanup(func() { _ = cc.Close() })
-	r := treebudget.New(cc, 0)
+	r := treebudget.New(slotguard.Install(cc), 0)
 	for round := 0; round < 8; round++ {
 		root := fmt.Sprintf("root-%d", round)
 		owner, err := cc.MasterForKey(ctx, "{"+root+"}:dlg:tokens")

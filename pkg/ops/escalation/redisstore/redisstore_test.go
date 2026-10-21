@@ -12,12 +12,14 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/escalation/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/clustertest"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newStore(t *testing.T) (*redisstore.Store, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return redisstore.New(cl), mr
 }
@@ -148,4 +150,39 @@ func ids(escs []escalation.Escalation) []string {
 		out[i] = e.ID
 	}
 	return out
+}
+
+// TestRedisStoreListCoversEveryClusterMaster asserts the escalation listing
+// reads every master of a Redis Cluster. The ops:escalations:{id} keys
+// carry no shared hash tag, so they spread over the masters, and a SCAN on
+// the cluster client alone would return one master's records (F-12.4.29).
+// spec: §25.4; §12.4 Redis HA and Failure Modes.
+func TestRedisStoreListCoversEveryClusterMaster_spec_25_4(t *testing.T) {
+	c := clustertest.New(t, 3)
+	s := redisstore.New(c.Client)
+	ctx := context.Background()
+	base := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	const n = 20
+	masters := map[string]bool{}
+	for i := 0; i < n; i++ {
+		id := "esc-" + string(rune('a'+i))
+		if err := s.Put(ctx, sample(id, escalation.SeverityWarning, escalation.StatusOpen, base.Add(time.Duration(i)*time.Minute))); err != nil {
+			t.Fatalf("put %s: %v", id, err)
+		}
+		masters[c.ServerFor("ops:escalations:"+id).Addr()] = true
+	}
+	if len(masters) < 2 {
+		t.Fatalf("fixture: records landed on %d master(s), want them spread", len(masters))
+	}
+	page, err := s.List(ctx, escalation.Filter{}, "", 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(page.Items) != n {
+		t.Fatalf("list = %d records, want %d", len(page.Items), n)
+	}
+	pending, err := s.PendingEmission(ctx)
+	if err != nil || len(pending) != n {
+		t.Fatalf("pending = %d (%v), want %d", len(pending), err, n)
+	}
 }

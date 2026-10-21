@@ -19,6 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -41,7 +42,7 @@ func tenantID(t *testing.T) string {
 func TestStorageQuotaCounterContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	counter := redisstore.New(rd.Client)
+	counter := redisstore.New(slotguard.Install(rd.Client))
 	ctx := context.Background()
 
 	t.Run("reserve accumulates and reports prior usage", func(t *testing.T) {
