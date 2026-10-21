@@ -384,8 +384,8 @@ lenny-test validate-maps                          # CI gate: maps in sync
 lenny-test validate-diagnosis                     # CI gate: diagnosis coverage
 
 # Infrastructure lifecycle (see §10)
-lenny-test infra up   --profile compose|kind|all
-lenny-test infra down --profile compose|kind|all
+lenny-test infra up   --profile compose|compose-mtls|compose-redis-cluster|kind|all
+lenny-test infra down --profile compose|compose-mtls|compose-redis-cluster|kind|all
 lenny-test infra prune
 lenny-test infra status
 
