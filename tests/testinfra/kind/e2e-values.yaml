@@ -354,8 +354,17 @@ security:
 # sslmode=disable is the simplest working setting for the in-cluster
 # e2e Postgres, which has no TLS configured. Plaintext is acceptable
 # inside the test cluster; this does not change any production default.
+#
+# billingAuditDdlDsn gives the gateway the CREATE-privileged connection it
+# provisions each new tenant's billing_seq_ and audit_seq_ sequences
+# through. The e2e Postgres has a single login role that owns the schema,
+# so the DDL connection reuses it. Without it a tenant a test bootstraps
+# has no audit sequence, and every audit append for that tenant fails,
+# including the §12.8 erasure completion receipt, so an erasure job on
+# such a tenant never completes.
 postgres:
   dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+  billingAuditDdlDsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
 
 redis:
   url: "redis://lenny-redis.lenny-system.svc:6379"

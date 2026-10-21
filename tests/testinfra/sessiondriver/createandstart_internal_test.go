@@ -11,6 +11,7 @@ package sessiondriver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -231,5 +232,39 @@ func TestCreateAndStartDoesNotWrapPoolNotReadyOnOtherFailures(t *testing.T) {
 				t.Errorf("a %s must not wrap ErrPoolNotReady; a live-session test would wrongly skip it", tc.name)
 			}
 		})
+	}
+}
+
+// TestCreateAndStartSendsTheOwnerUserID pins that CreateAndStartWithOptions
+// sends StartOptions.UserID as the body's userId, the owner of the new
+// session row, and omits the field when it is empty. The tier-5 erasure
+// case relies on it: a session started without the owner is not reached by
+// the user's erasure, so its pod claim stays bound and the case cannot
+// exercise the cross-replica release.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
+func TestCreateAndStartSendsTheOwnerUserID(t *testing.T) {
+	for _, user := range []string{"alice", ""} {
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sessionId":"s1","state":"running","podAssignment":"p1"}`))
+		}))
+		d := newTestDriver(srv.URL)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := d.CreateAndStartWithOptions(ctx, "acme", EchoRuntimeSidecar, StartOptions{UserID: user})
+		cancel()
+		srv.Close()
+		if err != nil {
+			t.Fatalf("create and start as %q: %v", user, err)
+		}
+		v, present := got["userId"]
+		if user == "" && present {
+			t.Fatalf("body carries userId %v for an empty owner", v)
+		}
+		if user != "" && v != user {
+			t.Fatalf("body userId = %v, want %q", v, user)
+		}
 	}
 }

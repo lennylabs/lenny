@@ -8,9 +8,10 @@
 // session is terminal, that each session's pod claim is released within the
 // coordination Sweeper interval plus maxWorkspaceSealDurationSeconds, and
 // that a later create on either replica is refused with TENANT_SUSPENDED.
-// The erasure case erases a user whose session is bound on the other
-// replica and asserts that the session's claim is no longer bound after
-// claimOrphanTimeout plus one orphan-GC pass, the accepted path when the
+// The erasure case lowers the controller's claimOrphanTimeout for its run,
+// erases a user whose session is bound on the other replica, and asserts
+// that the session's claim is no longer bound after claimOrphanTimeout plus
+// one orphan-GC pass, the accepted path when the
 // erasure deletes the row before the binding replica's Sweeper lists it.
 //
 // Both cases bootstrap a tenant whose name carries a per-run suffix and
@@ -25,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -177,9 +177,18 @@ func twoReplicaDrivers(t *testing.T, c *kind.Cluster) (a, b *sessiondriver.Drive
 // pool has no pod to claim.
 func startOn(t *testing.T, d *sessiondriver.Driver, tenant string) *sessiondriver.Session {
 	t.Helper()
+	return startOwnedOn(t, d, tenant, "")
+}
+
+// startOwnedOn creates and starts a session owned by user through d, or one
+// with no owner when user is empty, skipping when the warm pool has no pod
+// to claim.
+func startOwnedOn(t *testing.T, d *sessiondriver.Driver, tenant, user string) *sessiondriver.Session {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
+	sess, err := d.CreateAndStartWithOptions(ctx, tenant, sessiondriver.EchoRuntimeSidecar,
+		sessiondriver.StartOptions{UserID: user})
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 		t.Skipf("blocked: warm pool not ready: %v", err)
 	}
@@ -188,6 +197,9 @@ func startOn(t *testing.T, d *sessiondriver.Driver, tenant string) *sessiondrive
 	}
 	if sess.PodAssignment == "" {
 		t.Fatalf("session %s carries no pod assignment", sess.ID)
+	}
+	if user != "" && sess.UserID != user {
+		t.Fatalf("session %s is owned by %q, want %q", sess.ID, sess.UserID, user)
 	}
 	return sess
 }
@@ -251,29 +263,44 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 	}
 }
 
-// maxOrphanWaitEnv names the longest wait, in seconds, the erasure case
-// spends on claimOrphanTimeout plus one orphan-GC pass.
-const maxOrphanWaitEnv = "LENNY_LIFECYCLE_DRAIN_MAX_ORPHAN_WAIT_SECONDS"
+// loweredClaimOrphanTimeout is the claimOrphanTimeout the erasure case sets
+// on the controller for its run. The chart refuses any value at or below the
+// gateway's 600s finalizing deadline, because §5.2 requires the timeout to
+// exceed every post-terminal slot activity window, so the test lowers the
+// controller's flag directly instead of through the chart. Only the
+// controller's orphan GC reads it, and the GC reclaims only a claim with no
+// active session, so a live session elsewhere on the cluster is unaffected.
+const loweredClaimOrphanTimeout = 60 * time.Second
 
-// orphanWaitBudget returns the configured orphan wait budget, 300s when
-// unset.
-func orphanWaitBudget(t *testing.T) time.Duration {
+// orphanGCPass is one orphan-GC sweep. The warm-pool controller's orphan GC
+// runs once a minute and has no flag (pkg/controller/warmpool
+// defaultGCInterval).
+const orphanGCPass = 60 * time.Second
+
+// controllerLeaderSlack absorbs the leader-election handover after the
+// controller rollout, before the new leader's first orphan-GC sweep.
+const controllerLeaderSlack = 60 * time.Second
+
+// lowerClaimOrphanTimeout sets the controller's --claim-orphan-timeout to
+// loweredClaimOrphanTimeout for the test and restores it afterwards. It also
+// restores, at start, an override an earlier killed run left. It skips only
+// when the Deployment cannot be patched.
+func lowerClaimOrphanTimeout(t *testing.T, c *kind.Cluster) {
 	t.Helper()
-	v := os.Getenv(maxOrphanWaitEnv)
-	if v == "" {
-		return 300 * time.Second
+	if err := c.OverrideDeploymentFlag(t, "lenny-system", "lenny-controller",
+		"claim-orphan-timeout", loweredClaimOrphanTimeout.String()); err != nil {
+		t.Skipf("blocked: cannot lower the controller's claimOrphanTimeout: %v", err)
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		t.Fatalf("%s=%q is not a positive number of seconds", maxOrphanWaitEnv, v)
+	if got := deploymentDurationArg(t, c, "lenny-controller", "claim-orphan-timeout", 0); got != loweredClaimOrphanTimeout {
+		t.Fatalf("controller --claim-orphan-timeout = %s after the override, want %s", got, loweredClaimOrphanTimeout)
 	}
-	return time.Duration(n) * time.Second
 }
 
 // TestUserErasureReleasesClaimOnOtherReplica_spec_12_8 erases a user whose
-// session is bound on the other gateway replica. The erasure deletes the
-// session row, so the binding replica may never list it terminal; the
-// orphan GC then releases the claim after claimOrphanTimeout.
+// session is bound on the other gateway replica, with the controller's
+// claimOrphanTimeout lowered for the run. The erasure deletes the session
+// row, so the binding replica may never list it terminal; the orphan GC then
+// releases the claim after claimOrphanTimeout.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (User-level erasure invocation), 4.6.1 (Orphan claim detection)
 // diagnosis: a failure means a pod bound to an erased user's session stays
@@ -281,27 +308,19 @@ func orphanWaitBudget(t *testing.T) time.Duration {
 // strands a pod out of the warm pool, or the erasure job never completed.
 func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	c := kind.InstallLenny(t)
-	orphan := deploymentDurationArg(t, c, "lenny-controller", "claim-orphan-timeout", 15*time.Minute)
-	// The warm-pool controller's orphan GC runs once a minute and has no
-	// flag (pkg/controller/warmpool defaultGCInterval).
-	const gcPass = 60 * time.Second
-	if budget := orphanWaitBudget(t); orphan+gcPass > budget {
-		t.Skipf("blocked: the controller's claimOrphanTimeout (%s) plus one orphan-GC pass (%s) exceeds the %s wait budget; "+
-			"run against an install with a lowered claimOrphanTimeout or raise %s", orphan, gcPass, budget, maxOrphanWaitEnv)
-	}
+	lowerClaimOrphanTimeout(t, c)
 	a, b, tenant := twoReplicaDrivers(t, c)
-	sess := startOn(t, a, tenant)
-	user := sess.UserID
-	if user == "" {
-		user = "alice"
-	}
-	// The erasure target must be a registered user of the tenant.
+	// The erasure target must be a registered user of the tenant, and the
+	// session must be owned by it: the §12.8 drain and erasers act on the
+	// rows whose owner is the erased user, which is the body's userId.
+	const user = "alice"
 	if code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/bootstrap", map[string]any{
 		"tenants": []map[string]any{{"id": tenant}},
 		"users":   []map[string]any{{"subject": user, "tenantId": tenant, "email": user + "@acme.com", "roles": []string{"user"}}},
 	}); code != http.StatusOK && code != http.StatusMultiStatus {
 		t.Fatalf("register %s: %d %s", user, code, raw)
 	}
+	sess := startOwnedOn(t, a, tenant, user)
 
 	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/users/"+user+"/erase", map[string]any{"tenantId": tenant})
 	if code != http.StatusAccepted && code != http.StatusOK {
@@ -328,5 +347,6 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	waitClaimReleased(t, c, sess.PodAssignment, orphan+gcPass+lifecycleDrainSchedulingSlack)
+	waitClaimReleased(t, c, sess.PodAssignment,
+		loweredClaimOrphanTimeout+orphanGCPass+controllerLeaderSlack+lifecycleDrainSchedulingSlack)
 }

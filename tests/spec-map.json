@@ -3816,6 +3816,8 @@
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
+        "tests/testinfra/kind/deployflag_test.go::TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout",
+        "tests/testinfra/sessiondriver/createandstart_internal_test.go::TestCreateAndStartSendsTheOwnerUserID",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
         "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
       ],
