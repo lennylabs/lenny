@@ -5,6 +5,8 @@ package sessionstore
 import (
 	"errors"
 	"fmt"
+
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
 // Codes of the creation fence's refusals. Every refusal is HTTP 403, and a
@@ -111,7 +113,9 @@ func (m CreationMarkers) Refusal(tenantID, userID string) *CreationRefusal {
 			Details: map[string]any{"tenantId": tenantID},
 		}
 	}
-	if m.TenantFound && m.TenantState != "" && m.TenantState != tenantStateActive {
+	// The tenant store's own predicate decides which states accept new work,
+	// so the fence and the tenant store cannot disagree on the active set.
+	if m.TenantFound && !(tenantstore.Tenant{State: m.TenantState}).AcceptsNewWork() {
 		return &CreationRefusal{
 			Code:    RefusalTenantNotActive,
 			Message: "the tenant is being disabled or deleted and is not accepting new sessions",
@@ -120,11 +124,6 @@ func (m CreationMarkers) Refusal(tenantID, userID string) *CreationRefusal {
 	}
 	return nil
 }
-
-// tenantStateActive mirrors tenantstore.TenantStateActive. The session store
-// does not import the tenant store, so the value is repeated here; a tier-1
-// test pins the two predicates to each other.
-const tenantStateActive = "active"
 
 // ReservationEndedRefusal is the refusal CreateReserved returns when the
 // reservation of a row with an owner no longer exists, because the owner's
