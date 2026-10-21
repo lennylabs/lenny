@@ -121,6 +121,36 @@ func TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8(t *testing.T) {
 	}
 }
 
+// TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8 pins
+// the erasure case's deadline to claimOrphanTimeout plus one orphan-GC pass
+// with no added slack.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (Orphan claim detection)
+// diagnosis: a failure means the Kind erasure case measures pod release
+// against more than claimOrphanTimeout plus one orphan-GC pass, so a pod
+// that stays bound to an erased user's session past that bound still
+// passes.
+func TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8(t *testing.T) {
+	for _, tc := range []struct{ timeout, pass time.Duration }{
+		{loweredClaimOrphanTimeout, orphanGCPass},
+		{900 * time.Second, 60 * time.Second},
+		{0, 0},
+	} {
+		if got, want := erasureReleaseBound(tc.timeout, tc.pass), tc.timeout+tc.pass; got != want {
+			t.Errorf("erasureReleaseBound(%s, %s) = %s, want %s", tc.timeout, tc.pass, got, want)
+		}
+	}
+	// A pod released one poll interval past the bound fails the case.
+	start := time.Unix(1_700_000_000, 0)
+	f := &fakeClock{now: start}
+	bound := erasureReleaseBound(loweredClaimOrphanTimeout, orphanGCPass)
+	late := start.Add(bound + claimPollInterval)
+	pending := awaitAllBy(start.Add(bound), f.clock(), map[string]func() (bool, string){"pod": releasedAt(f, late)})
+	if _, ok := pending["pod"]; !ok {
+		t.Fatalf("a pod released %s after the erase passed the %s bound", bound+claimPollInterval, bound)
+	}
+}
+
 // TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8
 // pins what the Kind drain cases accept as a pod returned to the pool.
 //

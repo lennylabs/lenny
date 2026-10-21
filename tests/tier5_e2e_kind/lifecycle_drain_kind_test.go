@@ -39,13 +39,6 @@ import (
 // lifecycleDrainTenantPrefix prefixes every tenant these tests bootstrap.
 const lifecycleDrainTenantPrefix = "lifecycle-drain-"
 
-// orphanGCSchedulingSlack absorbs the controller's latency between the
-// orphan GC deciding to reclaim a claim and the SandboxClaim and Sandbox
-// objects reflecting it. Only the erasure case's orphan-GC bound adds it.
-// The suspend case measures the pod release against the §12.8 bound
-// itself, with no slack.
-const orphanGCSchedulingSlack = 30 * time.Second
-
 // suspendReleaseBound is the §12.8 bound within which every pod a suspend
 // drained returns to the pool, measured from the suspend's answer: the
 // coordination Sweeper interval plus maxWorkspaceSealDurationSeconds.
@@ -53,6 +46,17 @@ const orphanGCSchedulingSlack = 30 * time.Second
 // spec: §12.8 (Lifecycle fence and drain: Drain)
 func suspendReleaseBound(sweeperInterval, sealMax time.Duration) time.Duration {
 	return sweeperInterval + sealMax
+}
+
+// erasureReleaseBound is the bound within which a pod bound to an erased
+// user's session returns to the pool, measured from the erase request's
+// answer: claimOrphanTimeout plus one orphan-GC pass. The erasure drains
+// the session and deletes its row inside the job, after the answer, so the
+// claim is orphaned no earlier than the answer and the bound adds no slack.
+//
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §4.6.1 (Orphan claim detection)
+func erasureReleaseBound(claimOrphanTimeout, gcPass time.Duration) time.Duration {
+	return claimOrphanTimeout + gcPass
 }
 
 // adminRequest issues one platform-admin request through d's port-forward
@@ -482,6 +486,9 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	sess := startOwnedOn(t, a, tenant, user)
 
 	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/users/"+user+"/erase", map[string]any{"tenantId": tenant})
+	// The deadline is taken when the erase answers: the drain and the
+	// row deletion that orphan the claim run inside the job after it.
+	deadline := time.Now().Add(erasureReleaseBound(loweredClaimOrphanTimeout, orphanGCPass))
 	if code != http.StatusAccepted && code != http.StatusOK {
 		t.Fatalf("erase %s: %d %s", user, code, raw)
 	}
@@ -506,6 +513,5 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	waitClaimsReleasedBy(t, c,
-		time.Now().Add(loweredClaimOrphanTimeout+orphanGCPass+orphanGCSchedulingSlack), sess.PodAssignment)
+	waitClaimsReleasedBy(t, c, deadline, sess.PodAssignment)
 }
