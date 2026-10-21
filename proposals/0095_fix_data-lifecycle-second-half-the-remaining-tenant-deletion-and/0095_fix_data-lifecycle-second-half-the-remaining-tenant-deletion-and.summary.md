@@ -1,0 +1,160 @@
+# Summary: Data lifecycle second half: remaining erasure stores, Phase 3 lease revocation, audit-receipt foreign key, and full_revoke
+
+## Summary
+
+**Problem statement.** After 0094, user erasure and tenant deletion drain the sessions they cover, and two independent defects remain. In Part A, the two eraser lists are assembled by hand and validated for order only, so tenant deletion leaves most §12.8 stores in place, including below-T4 object-store artifacts, and neither path erases connector refresh tokens or registered credentials. The audit-receipt foreign key already breaks the §16.4 retention sweep and would abort Phase 4 once an audit eraser exists, and a tenant prefix delete would destroy legal-hold escrow copies, which live under the deleted tenant's own prefix. In Part B, full_revoke runs on the request context, stops at the first error, lists from the read pool, skips terminal sessions in its lease step, and deny-lists shared pool credentials for every user. Tenant-deletion Phase 3 does nothing, and a deleting tenant's bearers stay valid until the Phase 6 tombstone, without bound under a legal-hold pause. Phase 3 and Phase 4 errors also fail the job terminally.
+
+**What changes.**
+- `pkg/gateway/storage/erasure` and the two builders in `cmd/lenny-gateway`: one rank table with per-path exemptions and a startup completeness check, and every §12.8 store wired on both paths per the non-spec **Store table** (CODE-1, CODE-2, CODE-3, CODE-4).
+- `migrations/` and §12.8: the receipt foreign key is dropped (SPEC-1, MIG-1).
+- Legal-hold escrow: copies move to the configured escrow bucket, session holds escrow their artifacts, and Phase 4 deletes the originals (SPEC-5, SPEC-6, CODE-5).
+- §10.2, §12.8 tenant deletion, and the tenant registry: a `deleting` or `deleted` tenant is not registered, Phase 3 commits that state, returns the tenant's leases, and deletes its `TokenStore` rows, and a single-tenant deployment refuses to delete `default`; Phase 3 and Phase 4 errors pause in phase (SPEC-2, SPEC-3, CODE-6, CODE-8).
+- §11.4 and `pkg/gateway/externalapi/admin/users.go`: full_revoke lists from the primary, continues past failures, survives a client disconnect, and writes no deny-list entry (SPEC-4, CODE-7, CODE-9).
+- Reader documentation, records, and cross-cutting tests (DOCS-1, REC-1, TEST-1).
+
+**Decisions.**
+- D1. The design adds no RPC, endpoint, error code, tenant state, or table. It adds one migration and three store methods that complete existing pairs (`RedisCache.DeleteByTenant`, and `StreamTier.PurgeTenant` on `Tier` and `MemStream`).
+- D2. F-12.8.25: drop the receipt foreign key. `ON DELETE SET NULL` breaks the receipt signature, which covers `audit_event_id`, and no role holds `UPDATE` on the table. Verifiers locate receipts by tenant and sequence number. MIG-1 lands before or with the tenant `audit` entry.
+- D3. The tenant `artifacts` entry is the prefix delete. `cataloging.DeleteBySession` returns `(0, nil)` on s3, gcs, and azureblob, and a per-session delete misses objects with no session row.
+- D4. Escrow is written to and released from a dedicated store over the configured escrow bucket, keyed by the original tenant ID. That is §12.8 sub-step 3's existing location, and the platform-tenant alternative fails in the tenant SSE resolver and collides with a tenant an admin can name `platform`.
+- D5. Phase 4 deletes the originals of escrowed resources, and the escrow copy with its ledger record is the evidence. The marker rule has no implementation, and kept non-T4 originals of a tombstoned tenant would have no release lifecycle. The audit half has an empty domain because the setter accepts only session and artifact holds, which T1.11 pins.
+- D6. Phase 3.5 escrows every catalog record of a session-held session, and a listing error aborts Phase 3.5, because the prefix delete would otherwise destroy un-escrowed held artifacts.
+- D7. `eval_results` moves to rank 155 so the tenant order equals the §12.8 Phase 4 text with no spec edit, and the tail takes ranks 200 to 240. The user path is unaffected because `ValidateOrder` checks only `fkMustPrecede` edges.
+- D8. Completeness lives in the two validators every startup already runs: each ranked name is wired or exempt with a reason on each path, an absent backend is a nil-function entry left out of the counts, T1.2 pins the rank table's name set, and a tier-0 guard keeps each "no production writer" exemption honest.
+- D9. The `tokens` entry is the §12.8 `TokenStore` role over `connectorcredstore` and `credentialstore`, because §4.9 places registered credentials in `TokenStore`. `issuedtokenstore` is `TokenIssuanceStore` under its own rank, and user erasure keeps the rows of tokens that can still be presented or rehydrated, so a later revocation or rotation finds them (SPEC-5 step 18).
+- D10. Tenant-path session-keyed entries run over a primary listing and rank before `sessions`, so strict rank order with stop at the first error keeps a Phase 4 re-run safe without saved progress. The delegation budget entry purges root sessions only, as the spec enumerates them.
+- D11. A tenant in `deleting` or `deleted` is not registered. One predicate, `Tenant.Registered`, serves the bearer registry, the playground registry, and both `IsRegistered` implementations, and the default tenant is admitted only when it has no row. The check runs on every bearer, every replica, and every request, so it covers OIDC, Lenny-issued, and playground tokens, tokens minted after Phase 3, and a legal-hold pause. `disabling` stays admitted because Phase 1 lets sessions continue until Phase 2. A deleting tenant's own tenant-admins therefore lose API access from Phase 3, and a `platform-admin` releases its holds. In a single-tenant deployment `default` cannot be deleted (SPEC-2), because every request uses it: refusing it would lock out the bootstrap seed and the legal-hold remedies with every other caller, and admitting it would leave its bearers valid through deletion.
+- D12. A `TENANT_NOT_FOUND` auth-failure row goes to the platform chain with `target_tenant_id`, following the §11.7 cross-tenant pattern, so a refused bearer does not add a non-`gdpr.*` row to a deleted tenant's chain after Phase 4.
+- D13. Phase 3 commits `deleting` itself before its other actions, which guards against a failed `syncBack`. Its lease step reuses the §11.4 lease step over every session of the tenant, because `credential_leases` has no tenant column. The access-token cache flush stays in the spec and is recorded as a departure, because the cache has no writer.
+- D14. A Phase 3 or Phase 4 action error pauses the job in phase, generalizing Phase 2's pause, because a failed job is terminal and §12.8 **Idempotency and resumption** requires resumption. A nil `Revoker` or nil `Eraser` is a misconfiguration and fails the job.
+- D15. The lease step returns every lease and writes no deny-list entry. Returning a lease revokes it, which rejects its token fleet-wide, and a repeated call returns a lease that survived a failed step. Deny-listing a shared pool credential locks out other users without stopping an exfiltrated raw key, and a user-credential entry is neither seeded by the §4.9 startup rebuild nor kept by the expiry sweep once the user's leases are returned. CODE-7 lands before or with CODE-8.
+- D16. `LeasesBySession` and `Remove` keep their signatures, so a lease-store error stays silent in both Phase 3 and full_revoke, bounded by lease expiry, the stale-slot reaper, or a repeated call. The signature change touches every caller of the lease store and is filed.
+- D17. full_revoke applies 0094's drain semantics in place (CODE-9). Its cancel writer needs the `cancelled` state that §11.4 step 2 names and the terminal claim that 0093's pre-running reclaim uses, and `ForceTerminate` writes `failed` and runs `onTerminal`. The detached context has no overall deadline, as tenant suspension's does.
+- D18. A tenant whose `billingErasurePolicy` is `exempt` keeps its billing events after Phase 4 until `billing.retentionDays` ages them out, matching the Art. 17(3)(b) basis §12.8 gives `exempt`. Both billing entries apply the same exempt check, `tenant_config` keeps the policy column, and the billing pruner reaches tombstoned tenants.
+- D19. The tenant configuration record is nulled through `tenants.Update` with a keep list. The salt has no KMS key of its own, so §12.8's KMS destruction clause is removed and nulling the sealed ciphertext deletes it.
+- D20. The proposal lands as one proposal with two lanes that share no code: Part A is SPEC-1, SPEC-5, SPEC-6, MIG-1, CODE-1 to CODE-5, and the Phase 4 half of CODE-8, and Part B is SPEC-2, SPEC-3, SPEC-4, CODE-6, CODE-7, the Phase 3 half of CODE-8, and CODE-9.
+- D21. N-4 step 1 stays a wired `leasestore` no-op with a corrected comment, because 0094 D21 settles it and deleting a held coordination lease voids the holder's fence. `redis_caches` and `eviction_state` are exempt as having no production writer, `session_dlq_archive` as erased by cascade, and F-12.8.35 is a departure bounded by restart.
+- D22. F-12.8.42 closes by wiring the coordination mirror as `coordination_mirror`. The mirror is the §10.1.8 Postgres copy of the step-1 coordination leases, the triage rule classes the wiring as straightforward, and its entries run after the drain.
+- D23. Departures are recorded in `BUILD-GAPS.md` and the deviations file with their bounds. They add no claim-register row, because a §28.4 row needs a §28 anchor and a closing R step.
+- D24. The owner's triage rule governs failures the tests find, as non-spec Testing **Failures the tests find.** states.
+
+**Watch out for.**
+- The non-spec **Store table** is the only rule site for eraser names, ranks, wiring, and exemptions. Change a row first, then every site that implements it.
+- CODE-1, CODE-3, and CODE-4 land in one step: CODE-1's completeness check refuses startup until both paths wire or exempt every name it adds.
+- CODE-5 lands before CODE-3's tenant `artifacts` entry, and MIG-1 before its `audit` entry. Otherwise the prefix delete destroys escrow copies, and Phase 4 fails with SQLSTATE 23503 for any tenant with a redacted dead-letter row.
+- CODE-5's escrow tests on the memory and filesystem stores pass even when the escrow store would be refused by the tenant SSE resolver, because those stores ignore a tier-guard error. T2.7 on MinIO is the discriminating run.
+- After CODE-7, the full_revoke tests that order Releases against deny-list writes pass vacuously unless they are retargeted (non-spec **Tests that land with CODE-7**).
+- `BillingErasurePolicy` must stay on the `tenant_config` keep list. An empty policy reads as pseudonymize, so a Phase 4 re-run after `tenant_config` would delete an exempt tenant's billing events (T1.6).
+- A nil `Revoker` now fails the job, so every existing test that builds a `Reconciler` without one needs a revoker.
+- Do not describe CODE-8's lease step or CODE-9's lease step as failing closed on a lease-store error (D16).
+
+## Goals
+
+- Each §12.8 store is erased on each path or recorded as exempt with a reason, and startup refuses a path that does neither.
+- The §16.4 retention sweep and the Phase 4 audit eraser run without a foreign-key failure, and receipts outlive the rows they describe.
+- A deleted tenant's object-store artifacts are removed on every blob backend, and escrowed evidence survives in the escrow bucket.
+- A deleting tenant's bearers are refused on every replica from Phase 3 through the tombstone, including during a legal-hold pause.
+- Phase 3 returns the tenant's credential leases and deletes its `TokenStore` rows, and a transient Phase 3 or Phase 4 error pauses the job until the next pass.
+- full_revoke reaches every session the user has, survives a client disconnect, reports partial failure, and leaves shared pool credentials usable by other users.
+
+## Non-goals
+
+- **`ON DELETE SET NULL` on `audit_event_id`.** The receipt signature covers `audit_event_id`, so nulling it breaks verification, and it rewrites an append-only table on which no role holds `UPDATE`.
+- **`ON DELETE CASCADE` on the receipt foreign key.** It destroys a receipt that §12.8 says outlives the row.
+- **Retaining receipt-referenced audit rows in `PruneRetention` and `DeleteByTenant`.** It adds two predicates, keeps redacted rows past retention and past the tombstone, and still contradicts the survival sentence.
+- **`CredentialPoolStore.RevokeByTenant` or a tenant-wide lease enumerator.** `credential_leases` carries no `tenant_id` (migration 0038), and the §11.4 lease step over primary-listed sessions covers the case with existing code.
+- **Revoking a deleting tenant's issued tokens per `jti`.** It misses OIDC bearers and tokens minted after Phase 3, and Phase 4 deletes the rows rehydration reads, so the revocations are lost on restart.
+- **An access-token cache flush through `jti` enumeration routed to the Token Service.** The cache is constructed and discarded, so a flush deletes nothing. The spec keeps the flush and REC-1 records the departure.
+- **A Token Service issuance gate for F-12.8.44.** A token minted for a deleting tenant is refused at use after CODE-6. The Phase 1 issuance half stays filed.
+- **A separate tenant-state check in the auth middleware, a change to `Tenant.IsActive`, or a new error code.** The registry check already maps to `403 TENANT_NOT_FOUND`, and `IsActive` has many unrelated callers.
+- **Refusing `disabling` tenants at the gate.** §12.8 Phase 1 lets existing sessions continue until Phase 2.
+- **Narrowing Phase 3 to the `TokenStore` delete with no bearer gate.** It leaves API access through a legal-hold pause in place.
+- **Deny-listing in the full_revoke lease step, for every credential or for the user's own.** The reason is D15's.
+- **Moving the lease step after the cancel writes.** The pre-cancel order keeps leases findable before the terminal pipeline releases them.
+- **A per-user deny-list key dimension.** It adds a key dimension across the deny list and the proxy, while `Release` already rejects the lease token fleet-wide.
+- **Driving full_revoke through `admin.DrainSessions` with an adapter terminator.** The reason is D17's, and the adapter adds a second verifying listing.
+- **A durable full_revoke job, or moving the issued-token revoke ahead of the session loop.** A replica crash mid-call is outside the validated problem, `context.WithoutCancel` closes the disconnect case, and every step is idempotent for an operator repeat.
+- **Treating a commit-then-error cancel write as applied by matching `TerminatedAt`, or returning it as revoked.** F-11.4.17's harm is the undrained inbox and DLQ and the uncancelled resume, which `AfterRevokeWrite` on a re-read `cancelled` row closes, and the coordination sweeper releases the binding from the terminal row.
+- **Keeping F-11.4.17 as 0093 departure A25, or moving the full_revoke fixes to a separate direct fix.** P5b owns F-11.4.17, its fix is one re-read, and D20 settles the split.
+- **Per-session `ArtifactStore` erasure on the tenant path, or adding `DeleteBySession` to s3, gcs, and azureblob here.** The reason for the first is D3's, and the second fixes a user-path defect outside the members, which is filed.
+- **A keep predicate on every blob backend's prefix delete, a `legal_hold_escrow` marker column, or keeping held originals through their resources' hold flags.** Each changes several backends or adds migrations and an `audit_log` `UPDATE` grant to protect originals that duplicate the escrow copy, and kept non-T4 originals have no release lifecycle.
+- **Writing escrow under `jwtaudit.PlatformTenantID`, through `w.objectStore` or through the cataloging store.** The reason is D4's, and the cataloging store also needs a `tenants` row for the `artifact_store` foreign key (migration 0049).
+- **An escrow skip in `auditstore.DeleteByTenant`.** No audit-range hold can be created, and T1.11 forces a revisit if one becomes possible.
+- **Reordering `EvalResultStore` in the §12.8 Phase 4 text, a second rank table, or validating the tenant path by `fkMustPrecede` edges only.** D7 yields the spec order with one table, and strict rank order is what keeps Phase 4 resumable.
+- **A store registry with package lists, an absent-backend declaration list, or a `Config` field for absent backends.** Nil-function entries carry the same information with no new field.
+- **A completeness check only as a test over a synthetic full wiring.** The startup check sees every real posture.
+- **Hoisting the checkpoint metadata store into one shared instance to close F-12.8.35.** The departure is bounded by restart and needs no code.
+- **Folding the coordination mirror into the §12.8 `LeaseStore` row.** D22 wires it as the copy of the step-1 leases with no spec text.
+- **A per-session coordination-lease delete for N-4 step 1, or narrowing the §12.8 step 1 text.** The reason is D21's.
+- **A `routingcache.Invalidate` session eraser, or wiring `evictionstatestore`.** Neither has a production writer, and the tier-0 guard keeps both exemptions honest.
+- **Deleting `PhaseFailed`, `Retry`, and `firstIncompletePhase`, and adding `Reconciler.Validate`.** Pausing only the phases this proposal changes is the narrower change, and the other phases' failure semantics are filed.
+- **Persisting per-store Phase 4 progress.** The reason is D10's.
+- **`tenantstore.EraseConfig`, `tenantaccessstore.DeleteByTenant`, an `environmentstore` pgstore `DeleteByTenant`, or a tenant-wide `ReservedSessionIDs`.** `tenants.Update`, `ListForTenant` with `Revoke`, and `List` with `Delete` already cover them, and the prefix delete makes reserved-ID listing unnecessary.
+- **`Pipeline.PurgeStagedByTenant`.** `Pipeline.DeleteByTenant` already drops the buffer, and an unconditional purge at rank 50 would destroy an exempt tenant's staged events.
+- **Mapping `credentialstore` to `CredentialPoolStore`, or folding `issuedtokenstore` into the `tokens` composite.** §4.9 places registered credentials in `TokenStore`, and the composite would keep two §12.2 roles under one name.
+- **Replacing the user-path `credential_pool` no-op with a session-scoped lease return.** It is outside the members, and 0093's terminal pipeline releases the drained sessions' leases.
+- **A per-root delete of `delegation_tree_budget` rows on the user path.** It belongs to P4 and is filed.
+- **KMS `ScheduleKeyDeletion` for the erasure salt.** The reason is D19's.
+- **Changing `LeasesBySession` and `Remove` to return an error.** The reason is D16's.
+
+## Open decisions for human to make
+
+The draft stages a recommendation for four questions it could not settle alone, and the review loop decides whether each becomes an entry here: D20 (one proposal or two), D11 (a deleting tenant's tenant-admins lose API access from Phase 3), D18 (an exempt tenant keeps its billing events after the tombstone), and D5 (Phase 4 deletes the originals of escrowed resources).
+
+The spec review loop routed the decisions below to a human. It derived no recommendation for any of them, and the open-decisions-and-impact-review phase supplies one.
+
+- **OD-1. Deleting the `default` tenant in a multi-tenant deployment.** Should the gateway also refuse to delete or force-delete the built-in `default` tenant in a multi-tenant deployment, or should the proposal record the consequence as an accepted bound? The bootstrap `lenny-admin` token is minted under `--admin-token-tenant`, whose default is `default`. Once a deletion of `default` reaches Phase 3, the gateway refuses every bearer of `default` with `403 TENANT_NOT_FOUND`, the bootstrap admin token included, and the refusal stays permanent after the tombstone. A `platform-admin` authenticated through OIDC in another tenant can still act, so the deployment is not locked out. SPEC-2 Edit 2b guards only single-tenant deployments.
+- **OD-2. The admin router's default tenancy mode.** When the admin `Router` is built without the new `WithMultiTenant` setter, should it behave as single-tenant, which refuses deletion of `default` and fails closed, or as multi-tenant, which allows it and fails open? CODE-6 item 5 stages the multi-tenant default, and a `release_wiring_test.go` row pins that `buildAdminRouter` calls the setter from `--multi-tenant`, so the default applies only to a router built elsewhere, such as in a test.
+- **OD-3. Single-tenant mode reading the bearer's tenant claim.** Should single-tenant mode stop reading the tenant claim from the bearer token, as §10.2 states ("Claim is ignored")? Today, with `--multi-tenant=false`, the gateway sets the auth middleware's multi-tenant option and wires a registry that admits every tenant, so it honours the bearer's claim and admits a non-`default` tenant's bearer, including one whose tenant is being deleted. The departure predates this proposal, and no staged edit changes it.
+- **OD-4. Ownership of the issued-token expired-row GC.** Should this proposal wire the `issued_tokens` expired-row GC, or record its absence as a departure? SPEC-5 step 18 keeps an erased user's issued-token rows that are still inside the revocation-rehydration window "until the expired-row GC removes them", and no spec text fixes that GC's cutoff. Reviewers disagree on whether `issuedtokenstore.DeleteExpired` has a production caller, so the answer depends on that check: when it has none, the kept rows are never deleted.
+- **OD-5. full_revoke cancel latency for a long session history.** Is the delay acceptable? SPEC-4 Edit 4a has full_revoke return the credential leases of every session the user has, terminal sessions included, before it cancels any live session, so the cancel of live sessions waits in proportion to the user's session history. The pre-cancel order keeps leases findable before the terminal pipeline releases them (Non-goals), and the listing cost matches the existing Phase 4 enumeration. The reviewer raised it in case incident-response latency at Tier 3 matters for full_revoke.
+
+## Defects in the shipped tree that this proposal does not stage
+
+Entries marked **New** are filed by REC-1 with the owner they name.
+
+- **New. The user-path per-session artifact eraser is a no-op on s3, gcs, and azureblob**, which lack `DeleteBySession`. It is a user-path backend fix outside the members. Owner: a direct fix.
+- **New. Nothing re-checks legal holds between Phase 3.5 and Phase 4.** It predates this proposal and is outside the members. Owner: a direct fix.
+- **New. On the override path, Phase 4 deletes a held session's Postgres transcript and checkpoint rows, which Phase 3.5 does not escrow.** §12.8 must first say which Postgres rows the escrow covers. Owner: unassigned.
+- **New. Per-region escrow clients (`storage.regions.*.legalHoldEscrow`) are not built.** CODE-5 places only the single-region default, and region-scoped storage routing is unbuilt for every store (0094 REC-1 item 13). Owner: unassigned.
+- **New. `LeasesBySession` and `Remove` swallow query errors** (D16). Owner: a direct fix that changes both signatures for every caller.
+- **New. A pool deny-list key carries no tenant, and a pool name is unique only within a tenant.** It affects §4.9 emergency revocation. Owner: a direct fix.
+- **New. The per-replica semantic cache and billing buffer are erased only on the replica that runs the eraser.** A cross-replica purge needs a mechanism this proposal does not add. Owner: unassigned.
+- **New. Phases other than 2, 3, and 4 still fail terminally on an action error** (D14). Owner: a direct fix.
+- **New. `lenny_tenant_deletion_duration_seconds` is not emitted**, so a paused deletion signals only through a log line and `BlockedReason`. Owner: a direct fix.
+- **New. `SessionAdmin.ForceTerminate` skips `onTerminal` on a commit-then-error write**, leaving the drain path's inbox, DLQ, and resume tail undrained. It is the terminal pipeline. Owner: P2.
+- **New. User erasure leaves `delegation_tree_budget` rows.** It is delegation mechanics. Owner: P4.
+- **New. `usage_events`, `idempotency_keys` (which store response bodies), `billing_correction_pending`, `runtime_capability_overrides`, and `delegation_policies` are tenant-keyed tables that neither the §12.8 scope table nor `canonicalRank` names.** It is a §12.8 gap for the proposal pipeline. Owner: unassigned.
+- **F-12.8.44 (Phase 1 issuance and sign-up refusal)** stays open and is narrowed by REC-1, because a token minted for a deleting tenant is refused at use.
+- **F-12.8.45 (legal-hold preflight coverage)** stays open, because this proposal does not take on the user-path preflight.
+- **F-12.8.46 (orphaned derive and export objects after user erasure)** stays open, because the tenant prefix delete does not run on user erasure.
+
+## Impacts on other proposals
+
+| Proposal | Status | What this change does to it | What it must do |
+|:--|:--|:--|:--|
+| 0093 (P1, release ownership) | Implemented | SPEC-4 and CODE-7 remove the lease step's deny-list write, which 0093 left for P5b (its Decision 18, C3), and CODE-9 reworks the full_revoke loop 0093 edited. | Nothing. 0093's record stands, and this proposal records the change in its own text. |
+| 0094 (P5, data lifecycle first half) | Implemented | CODE-8 generalizes 0094's Phase 2 pause to Phases 3 and 4, and CODE-4 restates 0094 D21 in the lease-store comments. | Nothing. 0094's record stands. |
+| 0028 (audit-log GDPR reconciliation) | Applied | SPEC-1 removes the receipt foreign key and keeps 0028's decision that `DeleteByTenant` excludes `gdpr.%` rows and that receipts outlive the tenant. | Nothing. 0028's record stands. |
+
+## Deliverable index
+
+- SPEC-1 — `spec/12_storage-architecture.md` — the §12.8 `RedactionReceipt` `audit_event_id` bullet and grant paragraph without the foreign key.
+- SPEC-2 — `spec/12_storage-architecture.md` — the §12.8 tenant deletion single-tenant `default` refusal and Phase 3 row.
+- SPEC-3 — `spec/10_gateway-internals.md`, `spec/27_web-playground.md`, and `spec/04_system-components.md` — the §10.2 extraction scope and not-registered rule, the §27.3.1 `TENANT_NOT_FOUND` condition, and the §4.2 pointer.
+- SPEC-4 — `spec/11_policy-and-controls.md` — the §11.4 full_revoke steps 1, 2, and 6 and the Note.
+- SPEC-5 — `spec/12_storage-architecture.md` — the §12.8 `TokenStore` and `TokenIssuanceStore` scope rows, step 18, and the Phase 4 row.
+- SPEC-6 — `spec/12_storage-architecture.md` — the §12.8 tenant-scope override sub-steps 3 and 4 and the paragraph after them.
+- MIG-1 — `migrations/0188_audit_redaction_receipts_drop_fk.*.sql`, `migrations/audit_redaction_receipts_test.go`, and comments in `cmd/lenny-gateway/leader_sweeps.go` and `pkg/gateway/audit/auditstore/auditstore.go` — the dropped receipt foreign key.
+- CODE-1 — `pkg/gateway/storage/erasure/`, `cmd/lenny-gateway/tenantdeletion.go`, and `tests/tier0_static/erasure_exemption_guard_test.go` — the rank table, exemption maps, completeness check, nil-function skip, and exemption guard.
+- CODE-2 — `pkg/gateway/experiment/experimentsticky/` and `pkg/gateway/billing/billingstore/failover/` — the tenant-scope sticky delete and stream purge.
+- CODE-3 — `cmd/lenny-gateway/tenant_erasers.go`, `adminrouter.go`, `billing_pipeline.go`, and `worker_seams.go` — the tenant-path Phase 4 wiring.
+- CODE-4 — `cmd/lenny-gateway/adminrouter.go`, `pkg/gateway/storage/leasestore/`, and `pkg/gateway/storage/issuedtokenstore/` — the user-path wiring.
+- CODE-5 — `cmd/lenny-gateway/legalholdescrow.go`, `adminrouter.go`, and `pkg/legalholdescrow/` — escrow in the escrow bucket and complete session-hold escrow.
+- CODE-6 — `pkg/gateway/environment/tenantstore/`, `cmd/lenny-gateway/auth_seams.go`, `playground_seams.go`, and `adminrouter.go`, and `pkg/gateway/externalapi/admin/` — the tenant registration predicate, the auth-failure chain, and the single-tenant `default` deletion guard.
+- CODE-7 — `pkg/gateway/credentials/leaserevoke/leaserevoke.go` and its callers in `cmd/lenny-gateway` — the lease step without deny-listing.
+- CODE-8 — `cmd/lenny-gateway/tenantdeletion.go`, `adminrouter.go`, and `pkg/controller/tenantdeletion/controller.go` — the Phase 3 revoker and the in-phase pause.
+- CODE-9 — `pkg/gateway/externalapi/admin/users.go` — full_revoke continuation.
+- DOCS-1 — `docs/operator-guide/multi-tenancy.md` and `docs/operator-guide/lenny-ctl.md` — the tenant deletion and legal-hold text.
+- TEST-1 — `tests/`, including `tests/testinfra/lifecyclefence` — the cross-cutting lifecycle scenarios at tiers 4, 7a, 8, 9, and 11.
+- REC-1 — `BUILD-GAPS.md`, `scripts/seed-claim-register.py`, `tests/claim-map.json`, `tests/tier11_docs/`, the proposal deviations file, and `gateway-runtime-comms-remediation.md` — closures, departures, new findings, and the P5b bullet.
