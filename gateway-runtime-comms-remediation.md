@@ -2859,14 +2859,20 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
     Tier Transitions paragraph, and its Storage Routing table row, and confirm that acquire, release,
     extend, and steal touch only those keys. Add a §12.4 rule stating which braces in a key pattern are a
     literal hash tag (the first braced segment) and which are placeholders.
-  - **Open question for the owner.** §17.8.2 places coordination on Sentinel and quota on Redis Cluster at
-    Tier 3, but `redistopology.Build` cannot express a per-concern topology, so every store shares the
-    cluster. Whether the separation is still required is under analysis (2026-10-21); the answer decides
-    whether P6 relaxes §17.8.2 or a code finding adds per-concern topology. The 2026-10-21 analysis found
-    the split rests on throughput and latency-isolation reasons only (finding SCA-004, 2026-04-04), none of
-    them a correctness need, and recommends relaxing §17.8.2 and §12.4 so one cluster may serve every
-    concern at Tier 3; awaiting the owner's answer.
-  - **Drafting.** Under the drafting rules and the test instruction above; about 10 to 20 lines of spec text.
+  - **Topology relaxation (owner decision, 2026-10-21).** §17.8.2 places coordination on Sentinel and quota
+    on Redis Cluster at Tier 3. The 2026-10-21 analysis found the split rests on throughput and
+    latency-isolation reasons only (finding SCA-004, 2026-04-04), none of them a correctness need, and the
+    owner decided that P6 relaxes it. P6 rewrites §17.8.2 and §12.4 so one Redis Cluster may serve every
+    concern at Tier 3, under stated conditions: every store keeps each multi-key command inside one slot and
+    routes `SCAN` to every primary; coordination correctness never depends on Redis durability (the Postgres
+    `coordination_generation` fence and the ops-lock epoch hold it); every Redis failure path is bounded and
+    fails closed; and the lease TTL stays at least four renewal intervals. A per-concern endpoint remains an
+    optional operator lever, triggered by the existing ceiling signals, using the single-endpoint
+    per-concern URLs the code already has. P6 also deletes the unimplemented per-tenant
+    `redis.quotaStoreBackend` migration step from the §12.4 pre-plan and the sentence that the coordination
+    instance remains on Sentinel throughout. No per-concern Sentinel or Cluster wiring is added.
+  - **Drafting.** Under the drafting rules and the test instruction above; about 30 to 50 lines of spec
+    text with the topology relaxation.
   - **Dependencies.** Independent of P1 to P5b; its code stays inside `pkg/ops/coordination/redisstore`, its
     tests, and the tier-11 key registry check.
 
