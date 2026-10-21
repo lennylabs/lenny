@@ -46,12 +46,16 @@ type Stores struct {
 	// session row.
 	TranscriptEraser *erasure.SessionEraser
 
+	// startFault fails the restriction write inside Jobs.Start for the
+	// job IDs an Erasure arms.
+	startFault startFault
 	seedTenant func(ctx context.Context, id string) error
 }
 
 // MemoryStores builds the in-memory posture.
 func MemoryStores() *Stores {
 	tenants, users, transcripts := tenantstore.NewMemory(), userstore.NewMemory(), transcriptstore.NewMemory()
+	restrictions := newMemStartFault(users)
 	return &Stores{
 		Name: "memory",
 		Sessions: memstore.New(
@@ -60,9 +64,10 @@ func MemoryStores() *Stores {
 		),
 		Tenants:          tenants,
 		Users:            users,
-		Jobs:             erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users)),
+		Jobs:             erasurejob.NewMemory(erasurejob.WithRestrictionWriter(restrictions)),
 		Transcripts:      transcripts,
 		TranscriptEraser: &erasure.SessionEraser{Name: "transcripts", DeleteBySession: transcripts.DeleteBySession},
+		startFault:       restrictions,
 		seedTenant: func(ctx context.Context, id string) error {
 			return tenants.Create(ctx, tenantstore.Tenant{ID: id})
 		},
@@ -72,11 +77,16 @@ func MemoryStores() *Stores {
 // PostgresStores builds the Postgres posture over pool, which must carry
 // the repository's migrations. The tenant store envelope-encrypts the
 // erasure salt under a local random KMS key, as the billing
-// pseudonymization requires.
-func PostgresStores(pool *pgxpool.Pool) (*Stores, error) {
+// pseudonymization requires. It installs the start-fault trigger on users,
+// which fires only for job IDs an Erasure arms.
+func PostgresStores(ctx context.Context, pool *pgxpool.Pool) (*Stores, error) {
 	provider, err := kms.NewLocalRandom()
 	if err != nil {
 		return nil, fmt.Errorf("local kms provider: %w", err)
+	}
+	fault, err := installPGStartFault(ctx, pool)
+	if err != nil {
+		return nil, err
 	}
 	return &Stores{
 		Name:        "postgres",
@@ -85,6 +95,7 @@ func PostgresStores(pool *pgxpool.Pool) (*Stores, error) {
 		Users:       userpg.New(pool),
 		Jobs:        erasurepg.New(pool),
 		Transcripts: transcriptpg.New(pool),
+		startFault:  fault,
 		seedTenant: func(ctx context.Context, id string) error {
 			_, err := pool.Exec(ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, id, []byte{0x01})
 			return err

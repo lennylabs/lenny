@@ -44,7 +44,10 @@ type Erasure struct {
 	afterAdvance func(from, to erasurejob.Phase)
 	steps        map[Step]int
 	startFaults  int
-	failures     []string
+	// faultedStarts lists the job IDs whose Start ran with the start fault
+	// armed, in order.
+	faultedStarts []string
+	failures      []string
 }
 
 // NewErasure builds the World's erasure runner set.
@@ -68,11 +71,22 @@ func (e *Erasure) SetAfterAdvance(f func(from, to erasurejob.Phase)) {
 	e.afterAdvance = f
 }
 
-// FailStarts makes the next n job Starts fail with ErrInjected.
+// FailStarts arms the start fault for the next n job Starts: each one
+// runs the store's Start with its restriction write failing inside the
+// store, after the Postgres store has inserted the job row in the same
+// transaction, and answers an error wrapping ErrInjected.
 func (e *Erasure) FailStarts(n int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.startFaults = n
+}
+
+// FaultedStarts returns the job IDs whose Start ran with the start fault
+// armed, in order.
+func (e *Erasure) FaultedStarts() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.faultedStarts...)
 }
 
 // Steps returns how many times each step ran to completion.
@@ -307,7 +321,7 @@ func (s *watchedErasureJobs) Start(ctx context.Context, j erasurejob.Job) (erasu
 	}
 	s.e.mu.Unlock()
 	if fire {
-		return erasurejob.Job{}, ErrInjected
+		return s.e.startWithFault(ctx, s.Store, j)
 	}
 	return s.Store.Start(ctx, j)
 }

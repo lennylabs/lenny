@@ -3825,6 +3825,8 @@
         "tests/testinfra/lifecyclefence/raced_suspend_test.go::TestResumeDuringDrainViolations_spec_12_8",
         "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerHoldsRefusedDeriveManifestInsideErasureReach_spec_12_8",
         "tests/testinfra/lifecyclefence/checker_test.go::TestManifestOutsideErasureOnlyForRowsTheErasureMustDelete_spec_12_8",
+        "tests/testinfra/lifecyclefence/start_fault_test.go::TestFaultedErasureStartFailsInsideTheStore_spec_12_8",
+        "tests/testinfra/lifecyclefence/start_fault_test.go::TestStartFaultSurfacesAStartThatNeverReachedTheStore_spec_12_8",
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",

@@ -37,7 +37,7 @@ import (
 func lifecycleFaultStores(t *testing.T) *lifecyclefence.Stores {
 	t.Helper()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: schematest.RepoRoot(t) + "/migrations"})
-	s, err := lifecyclefence.PostgresStores(pg.Pool)
+	s, err := lifecyclefence.PostgresStores(context.Background(), pg.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +166,11 @@ func TestErasureFaultAtEachStep_spec_12_8(t *testing.T) {
 }
 
 // TestErasureStartAndReceiptFaults_spec_12_8 injects a store error into
-// Start, which records no job and sets no restriction, and into the
-// completion receipt, which keeps the job in progress with its restriction
-// so the next run writes the receipt and completes without re-running an
-// eraser.
+// Start's restriction write, after the Postgres store has inserted the job
+// row in the same transaction, so the failed Start must leave neither the
+// job nor the restriction. It also injects one into the completion receipt,
+// which keeps the job in progress with its restriction so the next run
+// writes the receipt and completes without re-running an eraser.
 //
 // spec: 12.8 (Processing restriction during erasure (GDPR Article 18)), 12.8 (Erasure job phase field (crash recovery))
 // diagnosis: a failure means a failed Start left a job or a restriction
@@ -184,15 +185,9 @@ func TestErasureStartAndReceiptFaults_spec_12_8(t *testing.T) {
 		e := w.NewErasure()
 		e.FailStarts(2)
 		if _, err := e.Start(ctx, "alice"); !errors.Is(err, lifecyclefence.ErrInjected) {
-			t.Fatalf("Start = %v, want the injected error", err)
+			t.Fatalf("Start = %v, want the injected error raised by the restriction write inside the store's transaction", err)
 		}
-		u, err := s.Users.Get(ctx, w.Tenant, "alice")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if u.ProcessingRestricted {
-			t.Fatal("a failed Start set the restriction")
-		}
+		lifecyclefence.RequireStartLeftNothing(ctx, t, e, w.Tenant, "alice", 2)
 		job := startErasure(t, e)
 		complete(t, e, job.ID)
 		requireStepsOnce(t, e)

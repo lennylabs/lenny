@@ -176,7 +176,7 @@ func TestLifecycleFenceInterleavings_spec_12_8(t *testing.T) {
 		{"memory", func(*testing.T) *lifecyclefence.Stores { return lifecyclefence.MemoryStores() }, 60, 6},
 		{"postgres", func(t *testing.T) *lifecyclefence.Stores {
 			pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: schematest.RepoRoot(t) + "/migrations"})
-			s, err := lifecyclefence.PostgresStores(pg.Pool)
+			s, err := lifecyclefence.PostgresStores(context.Background(), pg.Pool)
 			if err != nil {
 				t.Fatal(err)
 			}
