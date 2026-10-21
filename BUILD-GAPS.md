@@ -22407,6 +22407,13 @@ The `t:{tenant_id}:` keys are written without braces, so they carry no hash tag.
 
 ---
 
+
+### - [ ] F-12.4.29 — Redis `SCAN` on the cluster client covers one node, so erasure, breaker collection, idle-session expiry, and lock and escalation listings silently miss keys [High] — OPEN
+
+**Spec:** §12.4 Redis HA and Failure Modes (Redis Cluster at Tier 3), §12.8 (erasure scope), §11.6 (circuit breakers), §27.3.1 (playground idle sessions), §25.4 (remediation locks and escalations).
+**Evidence:** go-redis v9's cluster client sends `SCAN` to one node, so each of these covers one master of the cluster: the circuit-breaker `collect` (`pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore/redisstore.go`), the semantic cache `deletePrefix` (`pkg/gateway/llmproxy/semanticcache/redisstore/redisstore.go`), the quota store `scanDelete` (`pkg/gateway/quota/quotastore/quotastore.go`), the lease store `scanDelete` (`pkg/gateway/storage/leasestore/leasestore.go`), the experiment sticky cache `scanDelete` (`pkg/gateway/experiment/experimentsticky/experimentsticky.go`), the playground `IdleSessions` (`pkg/gateway/mcpfabric/playground/sessionrecord.go`), and the lenny-ops lock and escalation `scanAll` (`pkg/ops/coordination/redisstore/redisstore.go`, the escalation store). The delegation budget's `PurgeRoot` already routes its `SCAN` to the node `MasterForKey` returns. Found by the Redis Cluster key-co-location analysis of 2026-10-21, beside F-12.4.28.
+**Gap:** On a Redis Cluster these calls return no error and a partial result: tenant and user erasure leave keys behind, an open breaker on another node is never seen by admission, idle playground sessions on other nodes never expire, and lock and escalation listings are incomplete.
+**Suggested resolution:** Route a tenant-prefixed `SCAN` to the node `MasterForKey` returns for the tenant's hash-tagged prefix (after F-12.4.28's `t:{<tenant>}:` rename puts the tenant's keys in one slot), and run a cross-tenant or platform `SCAN` on every master with `ForEachMaster`. Lands with the F-12.4.28 direct fix in `gateway-runtime-comms-remediation.md` §10.2 (Redis Cluster readiness).
 ### Summary
 
 | Severity | Count | Items |

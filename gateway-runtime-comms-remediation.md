@@ -2822,6 +2822,50 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     and release mechanism, and after P5 (0094), whose fence and drain it builds on.
   - **Drafting.** Under the drafting rules and the test instruction above.
 
+Redis Cluster readiness (added 2026-10-21, after the analysis of F-12.4.28). Every gateway and `lenny-ops`
+Redis store runs on the cluster client when the chart's `redis.provider` is `cluster`, so each store has to
+be cluster-safe. The work lands after 0094 and before P5b, because P5b wires more erasers on the same
+`scanDelete` helpers.
+
+- [ ] **Direct fix: F-12.4.28 (classes A and A′) and F-12.4.29.** No spec change; the code is brought in
+  line with §12.4 and §17.8.2, which already state that the `t:{tenant_id}:` prefix keeps a tenant's keys in
+  one slot.
+  - Write every tenant key as `t:{<tenant>}:` through one helper (for example `rediskeys.TenantPrefix`), and
+    make the tenant-isolation guard `rediskeys.tenantOf` accept only the braced form. Rename the tenant event
+    channels with the keys. This fixes the semantic cache, quota, lease store, and experiment sticky cache
+    operations (class A, 7 operations in 4 families).
+  - Split the playground session record's transactions so the tenant-tagged keys commit together and the
+    untagged `pg:sess-tenant:` fan-in key is written in a separate step that fails closed (§27.3.1 requires
+    no atomicity across them), and replace the circuit breaker's `MGET` with a pipeline of `GET`s (class A′,
+    3 operations).
+  - Route every `SCAN` to the owning node (`MasterForKey` for a tenant prefix, `ForEachMaster` for a
+    cross-tenant pattern) (F-12.4.29, 8 call sites).
+  - Tests: a shared tier-1 go-redis hook that rejects any script, multi-key command, or `MULTI` block whose
+    keys span hash slots, installed in every Redis store's existing test constructors, with one negative
+    control; a tier-0 check that every package issuing scripts, transactions, multi-key commands, or `SCAN`
+    installs the hook and routes `SCAN` by node; switch tests that build keys by concatenation to the
+    exported builders. A three-master `redis-cluster` compose profile for a tier-4 smoke test is optional
+    and is the only check that also exercises `SCAN` on a real cluster.
+  - Size: about 15 production files and 20 test files; tiers 0, 1, 2, 4, and 9, plus 3 if the channels are
+    renamed.
+- [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule** (not yet written). F-12.4.28
+  class B/C, 3 operations in 1 family.
+  - **Scope.** §25.4 describes one Lua script over `ops:lock:{scope}` that also reads `ops:lock-epoch:current`
+    atomically; if the braces are a hash tag, those keys sit in different slots. The code also uses an
+    `ops:lockidx:<id>` key that no section documents, and reads the epoch with a separate `GET` outside the
+    script. Name the lock key, the id-index key, and the epoch key under one shared hash tag (for example
+    `ops:{lock}:<scope>`, `ops:{lock}:idx:<id>`, `ops:{lock}:epoch`) in §25.4's Tier 2 Redis paragraph, its
+    Tier Transitions paragraph, and its Storage Routing table row, and confirm that acquire, release,
+    extend, and steal touch only those keys. Add a §12.4 rule stating which braces in a key pattern are a
+    literal hash tag (the first braced segment) and which are placeholders.
+  - **Open question for the owner.** §17.8.2 places coordination on Sentinel and quota on Redis Cluster at
+    Tier 3, but `redistopology.Build` cannot express a per-concern topology, so every store shares the
+    cluster. Whether the separation is still required is under analysis (2026-10-21); the answer decides
+    whether P6 relaxes §17.8.2 or a code finding adds per-concern topology.
+  - **Drafting.** Under the drafting rules and the test instruction above; about 10 to 20 lines of spec text.
+  - **Dependencies.** Independent of P1 to P5b; its code stays inside `pkg/ops/coordination/redisstore`, its
+    tests, and the tier-11 key registry check.
+
 Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 and does not block 0087 part 1.
 
 Proposals, second wave:
