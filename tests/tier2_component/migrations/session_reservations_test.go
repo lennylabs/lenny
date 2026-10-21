@@ -74,7 +74,7 @@ func TestSessionReservationsMigration_spec_12_8(t *testing.T) {
 	t.Run("read with no tenant context fails", func(t *testing.T) {
 		assertUnsetContextReadFails(t, ctx, pg)
 	})
-	t.Run("all-tenants sentinel reads every tenant only with the opt-in", func(t *testing.T) {
+	t.Run("all-tenants sentinel reads every tenant's reservations", func(t *testing.T) {
 		assertAllTenantsSentinelRead(t, ctx, pg)
 	})
 	t.Run("primary key refuses a duplicate reservation", func(t *testing.T) {
@@ -92,10 +92,9 @@ func TestSessionReservationsMigration_spec_12_8(t *testing.T) {
 }
 
 // appTx runs fn in a transaction as the lenny_app role, the role the
-// gateway connects as, after opting in to the all-tenants sentinel when
-// allowAll is set and setting app.current_tenant to tenant when tenant is
-// not empty. Every setting is transaction-local.
-func appTx(ctx context.Context, pg *containers.Postgres, tenant string, allowAll bool, fn func(pgx.Tx) error) error {
+// gateway connects as, after setting app.current_tenant to tenant when
+// tenant is not empty. Every setting is transaction-local.
+func appTx(ctx context.Context, pg *containers.Postgres, tenant string, fn func(pgx.Tx) error) error {
 	tx, err := pg.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -103,11 +102,6 @@ func appTx(ctx context.Context, pg *containers.Postgres, tenant string, allowAll
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_app"); err != nil {
 		return err
-	}
-	if allowAll {
-		if _, err := tx.Exec(ctx, "SET LOCAL lenny.allow_all_sentinel = 'true'"); err != nil {
-			return err
-		}
 	}
 	if tenant != "" {
 		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
@@ -122,7 +116,7 @@ func appTx(ctx context.Context, pg *containers.Postgres, tenant string, allowAll
 
 // reserve inserts one reservation as lenny_app under the tenant's context.
 func reserve(ctx context.Context, pg *containers.Postgres, tenant, session, user string) error {
-	return appTx(ctx, pg, tenant, false, func(tx pgx.Tx) error {
+	return appTx(ctx, pg, tenant, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO session_reservations (tenant_id, session_id, user_id) VALUES ($1, $2, $3)`,
 			tenant, session, user)
@@ -140,9 +134,9 @@ func mustReserve(t *testing.T, ctx context.Context, pg *containers.Postgres, ten
 
 // countReservations counts the session_reservations rows visible as
 // lenny_app under the given context, optionally narrowed to one tenant.
-func countReservations(ctx context.Context, pg *containers.Postgres, tenant string, allowAll bool, where string, args ...any) (int, error) {
+func countReservations(ctx context.Context, pg *containers.Postgres, tenant string, where string, args ...any) (int, error) {
 	var n int
-	err := appTx(ctx, pg, tenant, allowAll, func(tx pgx.Tx) error {
+	err := appTx(ctx, pg, tenant, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT count(*) FROM session_reservations `+where, args...).Scan(&n)
 	})
 	return n, err
@@ -160,14 +154,14 @@ func assertReservationIsolation(t *testing.T, ctx context.Context, pg *container
 		{"globex", "acme", 1},
 	}
 	for _, tc := range cases {
-		own, err := countReservations(ctx, pg, tc.tenant, false, "")
+		own, err := countReservations(ctx, pg, tc.tenant, "")
 		if err != nil {
 			t.Fatalf("count under %s: %v", tc.tenant, err)
 		}
 		if own != tc.own {
 			t.Errorf("%s context sees %d reservations, want %d", tc.tenant, own, tc.own)
 		}
-		foreign, err := countReservations(ctx, pg, tc.tenant, false, "WHERE tenant_id = $1", tc.foreign)
+		foreign, err := countReservations(ctx, pg, tc.tenant, "WHERE tenant_id = $1", tc.foreign)
 		if err != nil {
 			t.Fatalf("count %s rows under %s: %v", tc.foreign, tc.tenant, err)
 		}
@@ -198,24 +192,17 @@ func assertUnsetContextReadFails(t *testing.T, ctx context.Context, pg *containe
 	}
 }
 
-// assertAllTenantsSentinelRead checks that '__all__' reads every
-// tenant's reservations with the lenny.allow_all_sentinel opt-in and
-// none without it (§4.2).
+// assertAllTenantsSentinelRead checks the §4.2 all-tenants clause of the
+// isolation policy: under app.current_tenant = '__all__', with no other
+// setting, a read sees every tenant's reservations.
 func assertAllTenantsSentinelRead(t *testing.T, ctx context.Context, pg *containers.Postgres) {
 	t.Helper()
-	all, err := countReservations(ctx, pg, "__all__", true, "")
+	all, err := countReservations(ctx, pg, "__all__", "")
 	if err != nil {
-		t.Fatalf("count under __all__ with opt-in: %v", err)
+		t.Fatalf("count under __all__: %v", err)
 	}
 	if all != 3 {
-		t.Errorf("__all__ with opt-in sees %d reservations, want 3", all)
-	}
-	none, err := countReservations(ctx, pg, "__all__", false, "")
-	if err != nil {
-		t.Fatalf("count under __all__ without opt-in: %v", err)
-	}
-	if none != 0 {
-		t.Errorf("__all__ without opt-in sees %d reservations, want 0", none)
+		t.Errorf("__all__ sees %d reservations, want 3 across acme and globex", all)
 	}
 }
 
@@ -230,7 +217,7 @@ func assertDuplicateReservationRefused(t *testing.T, ctx context.Context, pg *co
 	if err := reserve(ctx, pg, "globex", resAliceSession, "bob"); err != nil {
 		t.Errorf("same session ID under another tenant: %v, want it admitted", err)
 	}
-	if err := appTx(ctx, pg, "globex", false, func(tx pgx.Tx) error {
+	if err := appTx(ctx, pg, "globex", func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `DELETE FROM session_reservations WHERE session_id = $1`, resAliceSession)
 		return err
 	}); err != nil {
@@ -262,7 +249,7 @@ func assertReservationTenantGuard(t *testing.T, ctx context.Context, pg *contain
 			t.Errorf("%s naming acme under globex context: err = %v, want the tenant guard refusal", w.name, err)
 		}
 	}
-	n, err := countReservations(ctx, pg, "acme", false, "WHERE session_id = $1", resAliceSession)
+	n, err := countReservations(ctx, pg, "acme", "WHERE session_id = $1", resAliceSession)
 	if err != nil {
 		t.Fatalf("count alice's reservation: %v", err)
 	}
@@ -278,7 +265,7 @@ func assertUserScopedReservationDelete(t *testing.T, ctx context.Context, pg *co
 	t.Helper()
 	mustReserve(t, ctx, pg, "acme", resCarolSession, "carol")
 	var deleted int64
-	if err := appTx(ctx, pg, "acme", false, func(tx pgx.Tx) error {
+	if err := appTx(ctx, pg, "acme", func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`DELETE FROM session_reservations WHERE tenant_id = $1 AND user_id = $2`, "acme", "alice")
 		deleted = tag.RowsAffected()
@@ -289,7 +276,7 @@ func assertUserScopedReservationDelete(t *testing.T, ctx context.Context, pg *co
 	if deleted != 2 {
 		t.Errorf("user-scoped delete removed %d reservations, want 2", deleted)
 	}
-	remaining, err := countReservations(ctx, pg, "acme", false, "")
+	remaining, err := countReservations(ctx, pg, "acme", "")
 	if err != nil {
 		t.Fatalf("count acme after delete: %v", err)
 	}

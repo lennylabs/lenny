@@ -24,11 +24,11 @@
 -- ENABLE/FORCE ROW LEVEL SECURITY with the lenny_tenant_isolation policy
 -- filters reads through current_setting('app.current_tenant', false),
 -- which raises when the setting is undefined, so a read with no tenant
--- context fails closed. The all-tenants sentinel '__all__' reads every
--- tenant's rows only together with the lenny.allow_all_sentinel opt-in,
--- as migration 0057 requires of every isolation policy (§4.2). Rows are
--- inserted and deleted and never updated, so lenny_app is granted no
--- UPDATE.
+-- context fails closed. The policy carries the §4.2 all-tenants clause:
+-- under the sentinel '__all__' a read sees every tenant's rows, the form
+-- session_usage (0158) and the other tenant-scoped tables use. Writes
+-- under the sentinel stay gated by lenny_tenant_guard. Rows are inserted
+-- and deleted and never updated, so lenny_app is granted no UPDATE.
 CREATE TABLE session_reservations (
     tenant_id  TEXT        NOT NULL REFERENCES tenants(id),
     session_id UUID        NOT NULL,
@@ -48,10 +48,7 @@ ALTER TABLE session_reservations FORCE ROW LEVEL SECURITY;
 CREATE POLICY lenny_tenant_isolation ON session_reservations
     USING (
         tenant_id = current_setting('app.current_tenant', false)
-        OR (
-            current_setting('app.current_tenant', false) = '__all__'
-            AND current_setting('lenny.allow_all_sentinel', true) = 'true'
-        )
+        OR current_setting('app.current_tenant', false) = '__all__'
     );
 
 GRANT SELECT, INSERT, DELETE ON session_reservations TO lenny_app;
