@@ -129,23 +129,70 @@ func deploymentDurationArg(t *testing.T, c *kind.Cluster, deployment, flag strin
 	return def
 }
 
-// waitClaimReleased waits until the pod's SandboxClaim is gone or no longer
-// bound, failing after within.
-func waitClaimReleased(t *testing.T, c *kind.Cluster, pod string, within time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(within)
-	var last string
+// pollClock is the clock awaitAllBy reads and sleeps on, injected so a
+// unit test can drive the shared deadline without a cluster.
+type pollClock struct {
+	now   func() time.Time
+	sleep func(time.Duration)
+}
+
+// wallClock is the real clock the Kind cases poll on.
+var wallClock = pollClock{now: time.Now, sleep: time.Sleep}
+
+// claimPollInterval spaces the SandboxClaim reads of one polling round.
+const claimPollInterval = time.Second
+
+// awaitAllBy polls every probe in one loop until each reports done or the
+// clock passes deadline, and returns the last state of every probe still
+// pending at the deadline. Every probe shares the one deadline, so a probe
+// that finishes late cannot extend the budget of the probes polled after
+// it: the §12.8 drain bound is measured from the lifecycle action for
+// every pod at once, rather than from the release of the previous pod.
+func awaitAllBy(deadline time.Time, clk pollClock, probes map[string]func() (bool, string)) map[string]string {
+	pending := make(map[string]string, len(probes))
+	for name := range probes {
+		pending[name] = ""
+	}
 	for {
+		for name := range pending {
+			done, state := probes[name]()
+			if done {
+				delete(pending, name)
+				continue
+			}
+			pending[name] = state
+		}
+		if len(pending) == 0 || !clk.now().Before(deadline) {
+			return pending
+		}
+		clk.sleep(claimPollInterval)
+	}
+}
+
+// claimReleasedProbe reports whether the pod's SandboxClaim is gone or no
+// longer bound, with the phase it last read.
+func claimReleasedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
+	return func() (bool, string) {
 		out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
 			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
-		last = strings.TrimSpace(out)
-		if err == nil && last != "bound" && last != "Bound" {
-			return
+		phase := strings.TrimSpace(out)
+		if err != nil {
+			return false, fmt.Sprintf("read error: %v", err)
 		}
-		if !time.Now().Before(deadline) {
-			t.Fatalf("claim of pod %s is still %q %s after the session ended", pod, last, within)
-		}
-		time.Sleep(time.Second)
+		return phase != "bound" && phase != "Bound", phase
+	}
+}
+
+// waitClaimsReleasedBy fails unless every pod's SandboxClaim is gone or no
+// longer bound by the one absolute deadline.
+func waitClaimsReleasedBy(t *testing.T, c *kind.Cluster, deadline time.Time, pods ...string) {
+	t.Helper()
+	probes := make(map[string]func() (bool, string), len(pods))
+	for _, pod := range pods {
+		probes[pod] = claimReleasedProbe(t, c, pod)
+	}
+	if pending := awaitAllBy(deadline, wallClock, probes); len(pending) != 0 {
+		t.Fatalf("claims still bound at the deadline %s (pod: last phase): %v", deadline.Format(time.RFC3339), pending)
 	}
 }
 
@@ -204,12 +251,18 @@ func startOwnedOn(t *testing.T, d *sessiondriver.Driver, tenant, user string) *s
 	return sess
 }
 
-// requireTerminal asserts the session reads terminal through d.
-func requireTerminal(t *testing.T, d *sessiondriver.Driver, tenant, id string) {
+// terminalStateWait caps how long requireTerminalBy waits for a session the
+// drain already reported terminal to read terminal through a replica.
+const terminalStateWait = 20 * time.Second
+
+// requireTerminalBy asserts the session reads terminal through d within
+// terminalStateWait and before deadline, whichever comes first.
+func requireTerminalBy(t *testing.T, d *sessiondriver.Driver, tenant, id string, deadline time.Time) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	wait := min(terminalStateWait, max(time.Until(deadline), 0))
+	ctx, cancel := context.WithTimeout(context.Background(), wait+10*time.Second)
 	defer cancel()
-	if _, ok := d.WaitForState(ctx, tenant, id, 20*time.Second, "failed", "completed", "cancelled", "expired"); !ok {
+	if _, ok := d.WaitForState(ctx, tenant, id, wait, "failed", "completed", "cancelled", "expired"); !ok {
 		got, _ := d.GetSession(ctx, tenant, id)
 		t.Fatalf("session %s is not terminal after the drain: %+v", id, got)
 	}
@@ -230,7 +283,13 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 	a, b, tenant := twoReplicaDrivers(t, c)
 	sessA, sessB := startOn(t, a, tenant), startOn(t, b, tenant)
 
+	// Read the bound before the suspend so the deployment lookups do not
+	// eat into it, and start the clock when the suspend answers.
+	bound := deploymentDurationArg(t, c, "lenny-gateway", "coordination-interval", 15*time.Second) +
+		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second) +
+		lifecycleDrainSchedulingSlack
 	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/tenants/"+tenant+"/suspend", map[string]any{"reason": "tier-5 drain"})
+	deadline := time.Now().Add(bound)
 	if code != http.StatusOK {
 		t.Fatalf("suspend: %d %s", code, raw)
 	}
@@ -243,15 +302,12 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 	}
 	defer adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/tenants/"+tenant+"/resume", nil)
 
-	requireTerminal(t, b, tenant, sessA.ID)
-	requireTerminal(t, a, tenant, sessB.ID)
-
-	bound := deploymentDurationArg(t, c, "lenny-gateway", "coordination-interval", 15*time.Second) +
-		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second) +
-		lifecycleDrainSchedulingSlack
-	for _, s := range []*sessiondriver.Session{sessA, sessB} {
-		waitClaimReleased(t, c, s.PodAssignment, bound)
-	}
+	// Every check below runs against the one deadline, so a pod released
+	// after suspend time plus the bound fails the case whichever session
+	// it served and in whatever order the claims are read.
+	requireTerminalBy(t, b, tenant, sessA.ID, deadline)
+	requireTerminalBy(t, a, tenant, sessB.ID, deadline)
+	waitClaimsReleasedBy(t, c, deadline, sessA.PodAssignment, sessB.PodAssignment)
 
 	for name, d := range map[string]*sessiondriver.Driver{"replica A": a, "replica B": b} {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -391,6 +447,6 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	waitClaimReleased(t, c, sess.PodAssignment,
-		loweredClaimOrphanTimeout+orphanGCPass+lifecycleDrainSchedulingSlack)
+	waitClaimsReleasedBy(t, c,
+		time.Now().Add(loweredClaimOrphanTimeout+orphanGCPass+lifecycleDrainSchedulingSlack), sess.PodAssignment)
 }
