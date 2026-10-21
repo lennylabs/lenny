@@ -364,6 +364,53 @@ func TestSuspendDrainFaults_spec_15_1(t *testing.T) {
 	})
 }
 
+// TestSuspendDrainOvertakenByResume_spec_12_8 resumes the tenant between a
+// suspend drain's first primary listing and its verifying listing, then
+// creates one session, which the reopened fence admits.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
+// diagnosis: a failure means the suspend whose drain a resume overtook did
+// not answer 200, reported a session that predates the resume rather than
+// draining it, answered as drained while a session created after the resume
+// was still live (the verifying listing's Remaining dropped from
+// failedSessions), or wrote other than one already_suspended=false audit row
+// per marker transition.
+func TestSuspendDrainOvertakenByResume_spec_12_8(t *testing.T) {
+	s := lifecycleFaultStores(t)
+	ctx := context.Background()
+	w := lifecyclefence.NewWorld(t, s, 2)
+
+	raced := w.SuspendRacingResume(ctx)
+	if raced.Status != http.StatusOK {
+		t.Fatalf("raced suspend = %d, want 200: %s", raced.Status, raced.Body)
+	}
+	if raced.PostResume == "" {
+		t.Fatal("the create after the resume was not admitted")
+	}
+	if len(raced.FailedSessions) != 1 || raced.FailedSessions[0] != raced.PostResume {
+		t.Fatalf("failedSessions = %v, want exactly the post-resume session %s", raced.FailedSessions, raced.PostResume)
+	}
+	if tn, err := w.S.Tenants.Get(ctx, w.Tenant); err != nil || tn.Suspended {
+		t.Fatalf("after the resume the tenant reads suspended=%v (%v), want resumed", tn.Suspended, err)
+	}
+	if live, err := w.LiveInScope(ctx, ""); err != nil || len(live) != 1 || live[0] != raced.PostResume {
+		t.Fatalf("live sessions after the raced suspend = %v (%v), want only %s", live, err, raced.PostResume)
+	}
+	if got := w.SuspendTransitions(); got != 1 {
+		t.Fatalf("marker transitions = %d, want 1", got)
+	}
+
+	// A later suspend is not overtaken, so it drains the post-resume session
+	// and the strict drained-scope rule holds again.
+	if res := w.Suspend(ctx); res.Status != http.StatusOK || len(res.FailedSessions) != 0 {
+		t.Fatalf("suspend after the race = %d %v: %s", res.Status, res.FailedSessions, res.Body)
+	}
+	if got := w.SuspendTransitions(); got != 2 {
+		t.Fatalf("marker transitions = %d, want 2", got)
+	}
+	w.Check(t)
+}
+
 // requireSuspended asserts the tenant's suspension marker is committed.
 func requireSuspended(t *testing.T, w *lifecyclefence.World) {
 	t.Helper()

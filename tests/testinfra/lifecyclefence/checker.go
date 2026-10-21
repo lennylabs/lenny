@@ -20,6 +20,7 @@ func (w *World) Check(t testing.TB) {
 	ctx := context.Background()
 	w.mu.Lock()
 	violations := append([]string(nil), w.violations...)
+	raced := append([]racedObservation(nil), w.racedSuspends...)
 	erasedAt := make(map[string]int64, len(w.erasedAt))
 	for k, v := range w.erasedAt {
 		erasedAt[k] = v
@@ -35,6 +36,11 @@ func (w *World) Check(t testing.TB) {
 	for _, o := range w.Outcomes() {
 		if msg := w.checkOutcome(ctx, o, erasedAt, reserved); msg != "" {
 			t.Errorf("%s create %s of %s (err %v): %s", o.Path, o.ID, o.Owner, o.Err, msg)
+		}
+	}
+	for _, o := range raced {
+		for _, v := range w.resumeDuringDrainViolations(o) {
+			t.Error(v)
 		}
 	}
 	w.checkSuspendAudit(t)

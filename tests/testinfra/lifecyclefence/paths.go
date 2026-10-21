@@ -184,7 +184,8 @@ func (w *World) Outcomes() []CreateOutcome {
 	return append([]CreateOutcome(nil), w.outcomes...)
 }
 
-// Summary counts the recorded creates by outcome, for a test's log.
+// Summary counts the recorded creates by outcome and the suspends whose
+// drain a resume overtook, for a test's log.
 func (w *World) Summary() string {
 	var admitted, refused, crashed int
 	for _, o := range w.Outcomes() {
@@ -197,5 +198,8 @@ func (w *World) Summary() string {
 			admitted++
 		}
 	}
-	return fmt.Sprintf("creates admitted=%d refused=%d crashed=%d", admitted, refused, crashed)
+	w.mu.Lock()
+	raced := len(w.racedSuspends)
+	w.mu.Unlock()
+	return fmt.Sprintf("creates admitted=%d refused=%d crashed=%d; raced suspends=%d", admitted, refused, crashed, raced)
 }

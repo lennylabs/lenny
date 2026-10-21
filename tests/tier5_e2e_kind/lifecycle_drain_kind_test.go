@@ -5,13 +5,14 @@
 // Tier-5 e2e Kind tests for the §12.8 lifecycle drain across gateway
 // replicas. The suspend case binds one session on each of two gateway
 // replicas, suspends the tenant through one of them, and asserts that every
-// session is terminal, that each session's pod claim is released within the
+// session is terminal, that each session's pod returns to the pool (its
+// claim deleted and its Sandbox out of the occupied phases) within the
 // coordination Sweeper interval plus maxWorkspaceSealDurationSeconds, and
 // that a later create on either replica is refused with TENANT_SUSPENDED.
 // The erasure case lowers the controller's claimOrphanTimeout for its run,
 // erases a user whose session is bound on the other replica, and asserts
-// that the session's claim is no longer bound after claimOrphanTimeout plus
-// one orphan-GC pass, the accepted path when the
+// that the session's pod has returned to the pool after claimOrphanTimeout
+// plus one orphan-GC pass, the accepted path when the
 // erasure deletes the row before the binding replica's Sweeper lists it.
 //
 // Both cases bootstrap a tenant whose name carries a per-run suffix and
@@ -38,10 +39,21 @@ import (
 // lifecycleDrainTenantPrefix prefixes every tenant these tests bootstrap.
 const lifecycleDrainTenantPrefix = "lifecycle-drain-"
 
-// lifecycleDrainSchedulingSlack absorbs the kubelet and controller latency
-// between the gateway releasing a claim and the SandboxClaim object
-// reflecting it.
-const lifecycleDrainSchedulingSlack = 30 * time.Second
+// orphanGCSchedulingSlack absorbs the controller's latency between the
+// orphan GC deciding to reclaim a claim and the SandboxClaim and Sandbox
+// objects reflecting it. Only the erasure case's orphan-GC bound adds it.
+// The suspend case measures the pod release against the §12.8 bound
+// itself, with no slack.
+const orphanGCSchedulingSlack = 30 * time.Second
+
+// suspendReleaseBound is the §12.8 bound within which every pod a suspend
+// drained returns to the pool, measured from the suspend's answer: the
+// coordination Sweeper interval plus maxWorkspaceSealDurationSeconds.
+//
+// spec: §12.8 (Lifecycle fence and drain: Drain)
+func suspendReleaseBound(sweeperInterval, sealMax time.Duration) time.Duration {
+	return sweeperInterval + sealMax
+}
 
 // adminRequest issues one platform-admin request through d's port-forward
 // and returns the status and the raw body.
@@ -169,22 +181,66 @@ func awaitAllBy(deadline time.Time, clk pollClock, probes map[string]func() (boo
 	}
 }
 
-// claimReleasedProbe reports whether the pod's SandboxClaim is gone or no
-// longer bound, with the phase it last read.
-func claimReleasedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
-	return func() (bool, string) {
-		out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
-			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
-		phase := strings.TrimSpace(out)
-		if err != nil {
-			return false, fmt.Sprintf("read error: %v", err)
-		}
-		return phase != "bound" && phase != "Bound", phase
+// podReturnedToPool reports whether a pod's occupancy has ended and its
+// warm-pool slot is free again, from its per-pod SandboxClaim (claimFound
+// and claimPhase) and its Sandbox phase ("" when the Sandbox is gone).
+//
+// The release that ends an occupancy deletes the claim (§4.6.3), so a claim
+// that still exists in any phase holds the pod out of the pool: bound,
+// recycling, and reserved keep it occupied, and released and failed are the
+// retirement dispositions the controller has not yet projected. With the
+// claim gone, the Sandbox must have left the occupied phases (claimed,
+// reserved, and the re-warm sdk_connecting leg): idle is a pod returned for
+// reuse, and draining, terminated, or a deleted Sandbox is a pod retired
+// under §4.6.1, whose slot the warm pool refills with a fresh pod. A
+// failed session on a pool that does not recycle, which is every session
+// the drain force-terminates on the echo pool, takes the retire edge.
+//
+// spec: §12.8 (Lifecycle fence and drain: Drain), §4.6.1 (occupancy
+// projection on claim DELETE), §4.6.3 (SandboxClaim binding state)
+func podReturnedToPool(claimFound bool, claimPhase, sandboxPhase string) (bool, string) {
+	state := fmt.Sprintf("claim %s, sandbox %q", claimState(claimFound, claimPhase), sandboxPhase)
+	if claimFound {
+		return false, state
+	}
+	switch sandboxPhase {
+	case "", "idle", "draining", "terminated":
+		return true, state
+	default:
+		return false, state
 	}
 }
 
-// waitClaimsReleasedBy fails unless every pod's SandboxClaim is gone or no
-// longer bound by the one absolute deadline.
+// claimState names a claim's observed state for a probe's report.
+func claimState(found bool, phase string) string {
+	if !found {
+		return "deleted"
+	}
+	return fmt.Sprintf("present in phase %q", phase)
+}
+
+// claimReleasedProbe reports whether the pod has returned to the pool, as
+// podReturnedToPool defines it, with the claim and Sandbox state it last
+// read.
+func claimReleasedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
+	return func() (bool, string) {
+		claim, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
+			"-o", "jsonpath={.metadata.name}{\" \"}{.status.phase}", "--ignore-not-found")
+		if err != nil {
+			return false, fmt.Sprintf("read claim: %v", err)
+		}
+		sandbox, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox", pod,
+			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
+		if err != nil {
+			return false, fmt.Sprintf("read sandbox: %v", err)
+		}
+		name, phase, _ := strings.Cut(strings.TrimSpace(claim), " ")
+		return podReturnedToPool(name != "", strings.TrimSpace(phase), strings.TrimSpace(sandbox))
+	}
+}
+
+// waitClaimsReleasedBy fails unless every pod has returned to the pool, as
+// podReturnedToPool defines it, by the one absolute deadline.
 func waitClaimsReleasedBy(t *testing.T, c *kind.Cluster, deadline time.Time, pods ...string) {
 	t.Helper()
 	probes := make(map[string]func() (bool, string), len(pods))
@@ -192,7 +248,7 @@ func waitClaimsReleasedBy(t *testing.T, c *kind.Cluster, deadline time.Time, pod
 		probes[pod] = claimReleasedProbe(t, c, pod)
 	}
 	if pending := awaitAllBy(deadline, wallClock, probes); len(pending) != 0 {
-		t.Fatalf("claims still bound at the deadline %s (pod: last phase): %v", deadline.Format(time.RFC3339), pending)
+		t.Fatalf("pods not returned to the pool at the deadline %s (pod: last claim and sandbox state): %v", deadline.Format(time.RFC3339), pending)
 	}
 }
 
@@ -285,9 +341,10 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 
 	// Read the bound before the suspend so the deployment lookups do not
 	// eat into it, and start the clock when the suspend answers.
-	bound := deploymentDurationArg(t, c, "lenny-gateway", "coordination-interval", 15*time.Second) +
-		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second) +
-		lifecycleDrainSchedulingSlack
+	bound := suspendReleaseBound(
+		deploymentDurationArg(t, c, "lenny-gateway", "coordination-interval", 15*time.Second),
+		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second),
+	)
 	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/tenants/"+tenant+"/suspend", map[string]any{"reason": "tier-5 drain"})
 	deadline := time.Now().Add(bound)
 	if code != http.StatusOK {
@@ -304,7 +361,9 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 
 	// Every check below runs against the one deadline, so a pod released
 	// after suspend time plus the bound fails the case whichever session
-	// it served and in whatever order the claims are read.
+	// it served and in whatever order the claims are read. The poller
+	// reads every pod once more after the deadline passes, so a release
+	// completed by the deadline is observed without any slack on the bound.
 	requireTerminalBy(t, b, tenant, sessA.ID, deadline)
 	requireTerminalBy(t, a, tenant, sessB.ID, deadline)
 	waitClaimsReleasedBy(t, c, deadline, sessA.PodAssignment, sessB.PodAssignment)
@@ -448,5 +507,5 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	waitClaimsReleasedBy(t, c,
-		time.Now().Add(loweredClaimOrphanTimeout+orphanGCPass+lifecycleDrainSchedulingSlack), sess.PodAssignment)
+		time.Now().Add(loweredClaimOrphanTimeout+orphanGCPass+orphanGCSchedulingSlack), sess.PodAssignment)
 }

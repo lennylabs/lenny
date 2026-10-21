@@ -5,8 +5,8 @@
 // Tier-7a randomized interleavings of the §12.8 lifecycle operations against
 // concurrent creates on every creation path and concurrent terminal writes.
 // In each round one goroutine suspends, re-suspends, and resumes the tenant
-// in a random order and then, at random, runs tenant-deletion Phases 1 and
-// 2; a second goroutine erases alice, issuing two racing erase requests;
+// in a random order, sometimes resuming while a suspend's drain runs, and
+// then, at random, runs tenant-deletion Phases 1 and 2; a second goroutine erases alice, issuing two racing erase requests;
 // create workers create sessions of alice and bob on every creation path;
 // and terminal writers end admitted sessions. The lifecyclefence checker
 // then asserts the fence's and the drain's invariants.
@@ -32,13 +32,18 @@ func lockedRand(seed int64) func(n int) int {
 }
 
 // tenantLifecycle runs a random sequence of suspends, concurrent double
-// suspends, and resumes, then, half the time, tenant-deletion Phases 1 and
-// 2. It is the only goroutine that resumes the tenant, so a suspend's
-// drained-scope check cannot race a resume.
+// suspends, resumes, and suspends whose drain a resume overtakes, then,
+// half the time, tenant-deletion Phases 1 and 2. It is the only goroutine
+// that resumes the tenant. A resume runs during a suspend's drain only in
+// the raced branch, which asserts the resume-during-drain rule in place of
+// the drained-scope rule every other suspend keeps: a session the verifying
+// listing still sees must be reported in failedSessions or have been
+// created after the resume. The checker's one already_suspended=false row
+// per marker transition holds across every branch.
 func tenantLifecycle(ctx context.Context, w *lifecyclefence.World, pick func(int) int) {
 	for i, n := 0, 2+pick(3); i < n; i++ {
 		lifecyclefence.Sleep(pick, 1500)
-		switch pick(3) {
+		switch pick(4) {
 		case 0:
 			if res := w.Suspend(ctx); res.Status != 200 {
 				w.Violatef("suspend answered %d: %s", res.Status, res.Body)
@@ -55,6 +60,8 @@ func tenantLifecycle(ctx context.Context, w *lifecyclefence.World, pick func(int
 				}()
 			}
 			wg.Wait()
+		case 2:
+			w.SuspendRacingResume(ctx)
 		default:
 			if code := w.Resume(ctx); code != 200 {
 				w.Violatef("resume answered %d", code)
@@ -150,7 +157,11 @@ func runLifecycleScenario(t *testing.T, s *lifecyclefence.Stores, master *rand.R
 // the drain missed a row; residue under a refused or erased session ID
 // means a creation path's reservation, undo, or the erasure's reach to
 // reserved IDs is broken; an extra already_suspended=false row means
-// suspend decides newness outside the row lock; two in-progress jobs mean
+// suspend decides newness outside the row lock; a raced-suspend violation
+// means a suspend whose drain a resume overtook either left a session that
+// predates the resume live or reported it, or omitted from failedSessions a
+// session created after the resume that its verifying listing saw; two
+// in-progress jobs mean
 // the one-job-per-user rule does not hold on that store.
 func TestLifecycleFenceInterleavings_spec_12_8(t *testing.T) {
 	seed := time.Now().UnixNano()

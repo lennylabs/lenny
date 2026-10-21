@@ -71,6 +71,8 @@ type World struct {
 	// suspendTransitions counts the suspension-marker writes that moved
 	// the marker from false to true.
 	suspendTransitions int
+	// racedSuspends holds each raced suspend's observation for Check.
+	racedSuspends []racedObservation
 }
 
 // NewWorld seeds a fresh tenant with Users, one completed replay source per

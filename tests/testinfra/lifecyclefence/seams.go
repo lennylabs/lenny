@@ -76,6 +76,29 @@ type Faults struct {
 	beforeList    func()
 	beforeTerm    func()
 	beforeInsert  func()
+	// beforeTenantList is the hook of the next tenant-scope primary
+	// listing, which only a suspend's drain and a Phase 2 drain issue.
+	beforeTenantList func()
+}
+
+// BeforeTenantDrainList runs fn once, before the next primary listing of
+// the whole tenant, such as to resume the tenant while a suspend's drain
+// runs. A user erasure's drain lists one user and never fires it. fn may
+// arm the hook again, so a test can reach the drain's verifying listing.
+// A nil fn disarms the hook.
+func (f *Faults) BeforeTenantDrainList(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeTenantList = fn
+}
+
+// takeBeforeTenantList returns and disarms the tenant-scope listing hook.
+func (f *Faults) takeBeforeTenantList() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn := f.beforeTenantList
+	f.beforeTenantList = nil
+	return fn
 }
 
 // BeforeDrainList runs fn once, before the next primary listing, such as
@@ -170,6 +193,11 @@ func (f *FaultySessions) List(ctx context.Context, tenantID string, filter sessi
 	}
 	if fn := f.faults.takeBeforeList(); fn != nil {
 		fn()
+	}
+	if filter.UserID == "" {
+		if fn := f.faults.takeBeforeTenantList(); fn != nil {
+			fn()
+		}
 	}
 	if f.faults.take(&f.faults.listLeft) {
 		return nil, ErrInjected

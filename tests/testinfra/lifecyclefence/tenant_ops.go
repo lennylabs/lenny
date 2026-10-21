@@ -66,12 +66,24 @@ type SuspendResult struct {
 // Suspend issues POST /v1/admin/tenants/{id}/suspend as a platform admin on
 // ctx. A 200 with no failed sessions is a drain that succeeded, so Suspend
 // then asserts the tenant holds no non-terminal session; the caller must
-// not resume the tenant concurrently.
+// not resume the tenant concurrently. SuspendRacingResume is the suspend
+// whose drain a resume overtakes.
 func (w *World) Suspend(ctx context.Context) SuspendResult {
+	res, ok := w.suspend(ctx)
+	if ok && len(res.FailedSessions) == 0 {
+		w.assertScopeDrained(context.WithoutCancel(ctx), "", "after a suspend that answered no failed sessions")
+	}
+	return res
+}
+
+// suspend issues the suspend request and decodes a 200 answer. It reports
+// whether the answer was a well-formed 200, recording a violation for a 200
+// whose body is malformed or reports the tenant not suspended.
+func (w *World) suspend(ctx context.Context) (SuspendResult, bool) {
 	rr := w.serveAdmin(ctx, "/v1/admin/tenants/"+w.Tenant+"/suspend")
 	res := SuspendResult{Status: rr.Code, Body: rr.Body.String()}
 	if rr.Code != http.StatusOK {
-		return res
+		return res, false
 	}
 	var out struct {
 		Suspended      bool     `json:"suspended"`
@@ -79,16 +91,140 @@ func (w *World) Suspend(ctx context.Context) SuspendResult {
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		w.Violatef("suspend: decode %q: %v", res.Body, err)
-		return res
+		return res, false
 	}
 	res.FailedSessions = out.FailedSessions
 	if !out.Suspended {
 		w.Violatef("suspend answered 200 with suspended=false: %s", res.Body)
 	}
-	if len(out.FailedSessions) == 0 {
-		w.assertScopeDrained(context.WithoutCancel(ctx), "", "after a suspend that answered no failed sessions")
+	return res, true
+}
+
+// RacedSuspendResult is the answer of a suspend whose drain a tenant resume
+// overtook.
+type RacedSuspendResult struct {
+	SuspendResult
+	// ResumeSeq is the sequence number taken just before the resume was
+	// issued. A create whose CommittedSeq is higher committed after the
+	// resume reopened the creation fence.
+	ResumeSeq int64
+	// PostResume is the session of bob the race created after the resume
+	// and before the drain's verifying listing, or "" when that create
+	// failed.
+	PostResume string
+}
+
+// SuspendRacingResume issues a suspend whose drain a tenant resume
+// overtakes: after the drain's first primary listing and before its
+// verifying listing, the resume commits and one session of bob is created,
+// which the reopened fence must admit. It then asserts the resume-during-
+// drain rule in place of the drained-scope rule Suspend asserts: the
+// suspend answers 200, it reports as failed only sessions created after the
+// resume (no forced termination fails here), and every non-terminal session
+// of the tenant just after the answer is either reported in failedSessions
+// or was created after the resume. Check judges the last two once every
+// create has recorded its outcome. Every session that predates the resume is
+// therefore drained. The caller must not resume the tenant concurrently and
+// must arm no forced-termination fault.
+//
+// spec: §12.8 (Lifecycle fence and drain: Drain), §15.1 (REST API)
+func (w *World) SuspendRacingResume(ctx context.Context) RacedSuspendResult {
+	var raced RacedSuspendResult
+	w.Faults.BeforeTenantDrainList(func() {
+		w.Faults.BeforeTenantDrainList(func() { w.resumeAndCreate(ctx, &raced) })
+	})
+	res, ok := w.suspend(ctx)
+	w.Faults.BeforeTenantDrainList(nil)
+	raced.SuspendResult = res
+	if raced.ResumeSeq == 0 {
+		w.Violatef("raced suspend: the resume never ran between the drain's listings: %d %s", res.Status, res.Body)
+		return raced
 	}
-	return res
+	if !ok {
+		w.Violatef("raced suspend answered %d, want 200: %s", res.Status, res.Body)
+		return raced
+	}
+	w.observeResumeDuringDrain(context.WithoutCancel(ctx), raced)
+	return raced
+}
+
+// resumeAndCreate is the race's step between the drain's listings: it
+// resumes the tenant and creates one session of bob, which must be admitted.
+func (w *World) resumeAndCreate(ctx context.Context, raced *RacedSuspendResult) {
+	raced.ResumeSeq = w.next()
+	if code := w.Resume(ctx); code != http.StatusOK {
+		w.Violatef("raced suspend: resume during the drain answered %d", code)
+		return
+	}
+	if o := w.Create(ctx, PathCreate, "bob"); o.Err == nil {
+		raced.PostResume = o.ID
+	} else {
+		w.Violatef("raced suspend: create after the resume refused: %v", o.Err)
+	}
+}
+
+// racedObservation is what a raced suspend observed when it answered: its
+// report, the resume's sequence number, and the tenant's live sessions read
+// from the primary just after the answer. The checker judges it once every
+// create of the scenario has recorded its outcome, because a create that
+// committed after the resume can be live in the listing before its
+// outcome, and with it its commit sequence number, is recorded.
+type racedObservation struct {
+	raced RacedSuspendResult
+	live  []string
+}
+
+// observeResumeDuringDrain reads the tenant's live sessions and stores the
+// observation for the checker.
+func (w *World) observeResumeDuringDrain(ctx context.Context, raced RacedSuspendResult) {
+	live, err := w.LiveInScope(ctx, "")
+	if err != nil {
+		w.Violatef("raced suspend: %v", err)
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.racedSuspends = append(w.racedSuspends, racedObservation{raced: raced, live: live})
+}
+
+// resumeDuringDrainViolations returns what a raced suspend misreported: a
+// reported session that predates the resume, a live session that predates
+// the resume and is not reported, or the post-resume session live and not
+// reported. Call it once every create has recorded its outcome.
+func (w *World) resumeDuringDrainViolations(o racedObservation) []string {
+	var out []string
+	postResume := w.committedAfter(o.raced.ResumeSeq)
+	reported := make(map[string]bool, len(o.raced.FailedSessions))
+	for _, id := range o.raced.FailedSessions {
+		reported[id] = true
+		if !postResume[id] {
+			out = append(out, fmt.Sprintf("raced suspend reported %s in failedSessions, which predates the resume and should have been drained", id))
+		}
+	}
+	for _, id := range o.live {
+		if reported[id] {
+			continue
+		}
+		switch {
+		case id == o.raced.PostResume:
+			out = append(out, fmt.Sprintf("raced suspend: session %s created after the resume is live and absent from failedSessions", id))
+		case !postResume[id]:
+			out = append(out, fmt.Sprintf("raced suspend left %s live, neither reported in failedSessions nor created after the resume", id))
+		}
+	}
+	return out
+}
+
+// committedAfter returns the IDs of the creates whose insert committed
+// after the sequence number seq.
+func (w *World) committedAfter(seq int64) map[string]bool {
+	out := map[string]bool{}
+	for _, o := range w.Outcomes() {
+		if o.Err == nil && o.CommittedSeq > seq {
+			out[o.ID] = true
+		}
+	}
+	return out
 }
 
 // Resume issues POST /v1/admin/tenants/{id}/resume and returns its status.

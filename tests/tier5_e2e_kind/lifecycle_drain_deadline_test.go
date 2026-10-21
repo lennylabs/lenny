@@ -100,3 +100,64 @@ func TestDrainBoundPollsOnceAfterThePassedDeadline_spec_12_8(t *testing.T) {
 		t.Fatalf("poller slept past a deadline already passed: now %s", f.now.Sub(start))
 	}
 }
+
+// TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8 pins the
+// suspend case's deadline to the §12.8 bound with no added slack.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+// diagnosis: a failure means the Kind suspend case measures pod release
+// against more than the Sweeper interval plus
+// maxWorkspaceSealDurationSeconds, so a replica that releases a drained
+// session's pod late still passes.
+func TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8(t *testing.T) {
+	for _, tc := range []struct{ interval, seal time.Duration }{
+		{15 * time.Second, 300 * time.Second},
+		{5 * time.Second, 30 * time.Second},
+		{0, 0},
+	} {
+		if got, want := suspendReleaseBound(tc.interval, tc.seal), tc.interval+tc.seal; got != want {
+			t.Errorf("suspendReleaseBound(%s, %s) = %s, want %s", tc.interval, tc.seal, got, want)
+		}
+	}
+}
+
+// TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8
+// pins what the Kind drain cases accept as a pod returned to the pool.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (occupancy projection on claim DELETE), 4.6.3 (SandboxClaim binding state)
+// diagnosis: a failure means the probe accepts a pod still held out of the
+// warm pool: a claim that still exists in a non-bound phase (recycling,
+// reserved, released, or failed), or a deleted claim whose Sandbox still
+// projects an occupied phase.
+func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *testing.T) {
+	cases := []struct {
+		name         string
+		claimFound   bool
+		claimPhase   string
+		sandboxPhase string
+		want         bool
+	}{
+		{"claim bound", true, "bound", "claimed", false},
+		{"claim recycling", true, "recycling", "claimed", false},
+		{"claim reserved for its tenant", true, "reserved", "reserved", false},
+		{"claim released but not deleted", true, "released", "draining", false},
+		{"claim failed but not deleted", true, "failed", "draining", false},
+		{"claim with no phase yet", true, "", "idle", false},
+		{"claim deleted, sandbox still claimed", false, "", "claimed", false},
+		{"claim deleted, sandbox still reserved", false, "", "reserved", false},
+		{"claim deleted, sandbox re-warming", false, "", "sdk_connecting", false},
+		{"claim deleted, sandbox failed", false, "", "failed", false},
+		{"claim deleted, pod returned idle", false, "", "idle", true},
+		{"claim deleted, pod retiring", false, "", "draining", true},
+		{"claim deleted, pod retired", false, "", "terminated", true},
+		{"claim and sandbox deleted", false, "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, state := podReturnedToPool(tc.claimFound, tc.claimPhase, tc.sandboxPhase)
+			if got != tc.want {
+				t.Fatalf("podReturnedToPool = %v (%s), want %v", got, state, tc.want)
+			}
+		})
+	}
+}
