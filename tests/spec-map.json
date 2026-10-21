@@ -3694,6 +3694,7 @@
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go::TestErasureJobInProgressIndexMigration_spec_12_8",
+        "tests/tier2_component/migrations/session_reservations_test.go::TestSessionReservationsMigration_spec_12_8",
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
         "tests/tier4_integration/erasure_job_test.go",
         "tests/tier2_component/legalholdreconciler/reconciler_test.go",

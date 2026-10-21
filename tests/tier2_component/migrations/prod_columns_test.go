@@ -621,6 +621,12 @@ var prodMigrationSchema = []struct {
 	// index predicate, its uniqueness, and its drop are asserted directly
 	// in TestErasureJobInProgressIndexMigration_spec_12_8. spec: §12.8.
 	{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}},
+	// 0187 creates the §12.8 session_reservations table, which records a
+	// session ID reserved for its owner before a creation path writes data
+	// keyed to it. Its isolation policy, tenant guard, primary key, owner
+	// index, and grant are asserted directly in
+	// TestSessionReservationsMigration_spec_12_8. spec: §12.8.
+	{migration: "0187", table: "session_reservations", create: true},
 }
 
 // spec: 12.2, 18.5
