@@ -593,7 +593,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			log.Fatalf("FATAL: §12.8 erasure store ordering invalid: %v", err)
 		}
 		erasureOrch := erasure.New(erasureCfg)
-		erasureJobs := erasurejob.NewMemory()
+		erasureJobs := w.erasureJobs
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
 			// spec: §12.8 — emit the in-progress gauge and
@@ -695,13 +695,15 @@ func (w *gatewayWiring) buildAdminRouter(
 			erasureRunner = erasureRunner.WithDeadLetterRedaction(redactionSvc.RedactForUser)
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
-		// spec: §12.8 — publish the erasure-SLA gauges
-		// (lenny_erasure_job_age_seconds, lenny_erasure_job_deadline_seconds)
-		// on a periodic tick so the §16.5 ErasureJobOverdue alert can detect
-		// a stalled job before its deadline breaches. The Runner cannot
+		// spec: §12.8 (Erasure SLA enforcement) — publish the erasure-SLA
+		// gauges (lenny_erasure_job_age_seconds,
+		// lenny_erasure_job_overdue_seconds, lenny_erasure_jobs_active) on a
+		// periodic tick so the §16.5 ErasureJobOverdue alert can detect a
+		// stalled job before its deadline breaches. The Runner cannot
 		// advance a job's age while blocked inside a slow DeleteByUser, so a
-		// separate sampler reads the registry. Default deadline is the §12.9
-		// T3 72h bound the alert's scalar() compares against.
+		// separate sampler reads the registry. The default deadline is the
+		// §12.9 T3 72h bound, used for a job that recorded no deadline of
+		// its own.
 		erasureSampler := erasurejob.NewSampler(erasureJobs, gwMetrics, 72*time.Hour, clockinject.Now)
 		go erasureSampler.Run(context.Background(), 30*time.Second)
 	}

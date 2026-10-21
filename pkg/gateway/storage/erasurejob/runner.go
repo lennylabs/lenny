@@ -60,7 +60,7 @@ const (
 // errMemoryStorePreflight is the §12.8 abort cause recorded when the
 // per-job MemoryStore erasure preflight fails. The job aborts before any
 // store deletion and the target user's processing_restricted flag is left
-// set (the admin handler clears it only on PhaseCompleted).
+// set (only the job's completion clears it).
 var errMemoryStorePreflight = errors.New("memory_store_preflight_failed")
 
 // NewRunner builds a Runner over the job registry and the erasure
@@ -202,28 +202,33 @@ func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause err
 }
 
 // Start records a fresh erasure job for the user in PhaseInitiated and
-// returns its id. The job is not executed; the caller invokes Run —
-// typically in a goroutine so the §12.8 admin API returns the job id
-// immediately while erasure proceeds in the background.
+// returns its id. The store writes the job and sets the user's
+// processing_restricted flag, naming the job, in one transaction, so no
+// job exists without its restriction. When the user already has a job in
+// progress it returns the store's *ErrActiveJob and records nothing. The
+// job is not executed; the caller invokes Run.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §12.8 (User-level erasure invocation).
 func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, error) {
-	id := NewID()
 	now := r.clock()
 	var deadline time.Duration
 	if r.deadlineFor != nil {
 		deadline = r.deadlineFor(ctx, tenantID)
 	}
-	if err := r.jobs.Create(ctx, Job{
-		ID:        id,
+	job, err := r.jobs.Start(ctx, Job{
+		ID:        NewID(),
 		TenantID:  tenantID,
 		UserID:    userID,
 		Phase:     PhaseInitiated,
 		StartedAt: now,
 		Deadline:  deadline,
 		PhaseLog:  []PhaseTransition{{Phase: PhaseInitiated, At: now}},
-	}); err != nil {
+	})
+	if err != nil {
 		return "", err
 	}
-	return id, nil
+	return job.ID, nil
 }
 
 // Run executes the erasure job to completion. It transitions the job
@@ -242,7 +247,8 @@ func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, er
 // Run returns the failure cause (if any) for a synchronous caller; the
 // job record is the authoritative outcome.
 func (r *Runner) Run(ctx context.Context, jobID string) error {
-	job, err := r.jobs.Get(ctx, jobID)
+	// The runner is a background worker that reads any tenant's job.
+	job, err := r.jobs.Get(ctx, AllTenants, jobID)
 	if err != nil {
 		return err
 	}
@@ -267,7 +273,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	// 3): re-run the seeded-row check before step 8 (store deletion). On
 	// failure the job aborts as memory_store_preflight_failed before any
 	// data is touched, and the target user's processing_restricted flag is
-	// left set (the admin handler clears it only on PhaseCompleted).
+	// left set (only the job's completion clears it).
 	if r.memoryPreflight != nil {
 		if err := r.memoryPreflight(ctx); err != nil {
 			return r.fail(ctx, jobID, FailurePhaseMemoryStorePreflight,
@@ -339,15 +345,18 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		}
 	}
 
-	// Completed.
-	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		now := r.clock()
+	// Completed: record the billing outcome, then mark the job completed
+	// and clear the user's restriction where it names this job, in one
+	// store transaction. spec: §12.8 (Processing restriction during
+	// erasure (GDPR Article 18)).
+	latest, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
 		j.Billing = billing
-		j.Phase = PhaseCompleted
-		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: PhaseCompleted, At: now})
-		j.CompletedAt = now
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := r.jobs.Complete(ctx, jobID, r.clock(), latest); err != nil {
 		return err
 	}
 	// §12.5: fire the erasure-completion hook after the

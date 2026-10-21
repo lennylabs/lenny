@@ -163,6 +163,10 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		// after the erasure job is created so the event carries jobId per
 		// spec §12.8.
 	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)) — Start writes the job and sets the user's processing_restricted
+	// flag, naming the job, in one transaction, so new session creation is
+	// refused from the moment the job exists.
 	jobID, err := r.erasureRunner.Start(req.Context(), tenant, subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -187,13 +191,6 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		}
 		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, overrideEvent)
 	}
-	// §12.8 / GDPR Article 18: mark the user processing-restricted so
-	// new session creation is rejected while erasure is in progress.
-	_, _ = r.users.Update(req.Context(), tenant, subject, func(u *userstore.User) error {
-		u.ProcessingRestricted = true
-		u.ErasureJobID = jobID
-		return nil
-	})
 	// §12.8: the job runs in the background and the API returns the job
 	// id immediately. The job uses a detached context so it outlives
 	// the request. On completion the processing restriction is lifted
@@ -216,8 +213,9 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 }
 
 // runErasureToCompletion executes the erasure job and, on success,
-// lifts the §12.8 / GDPR Article 18 processing restriction and writes
-// the erasure receipt to the audit trail. overrideReceipt, when
+// writes the erasure receipt to the audit trail. The job's completion
+// lifted the §12.8 / GDPR Article 18 processing restriction in the
+// transaction that marked it completed. overrideReceipt, when
 // non-nil, merges the legal-hold override fields into the receipt. It
 // runs on a detached context so it outlives the originating request,
 // and is the shared completion path for both initial erasure
@@ -226,15 +224,10 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 // clear it explicitly. spec: §12.8.
 func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subject, jobID string, overrideReceipt map[string]any) {
 	_ = r.erasureRunner.Run(context.Background(), jobID)
-	job, err := r.erasureJobs.Get(context.Background(), jobID)
+	job, err := r.erasureJobs.Get(context.Background(), tenant, jobID)
 	if err != nil || job.Phase != erasurejob.PhaseCompleted {
 		return
 	}
-	_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
-		u.ProcessingRestricted = false
-		u.ErasureJobID = ""
-		return nil
-	})
 	// §12.8 erasure receipt: the gdpr.* audit event is the
 	// authoritative proof that the erasure was carried out. When a
 	// legal-hold override was exercised, the receipt records it.
@@ -279,49 +272,42 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 // handleRetryErasureJob implements POST
 // /v1/admin/erasure-jobs/{jobId}/retry — the §24.12 / §12.8
 // operator retry of a failed erasure job. The job must be in the
-// `failed` phase; the handler clears the transient failure fields,
-// resets the job to its first phase, and re-enqueues it on the runner.
+// `failed` phase; the store restarts it at `initiated` with the user's
+// restriction set again, and the handler re-enqueues it on the runner.
 //
 // The runner re-runs the full dependency-ordered DeleteByUser sequence
 // from the start; each step is idempotent (a second DeleteByUser
 // deletes the already-removed rows as a no-op), so resetting to
-// `initiated` is the safe resume point given the runner keeps no
-// mid-phase checkpoint. On success the shared completion path lifts the
-// processing restriction. spec: §12.8; §24.12.
+// `initiated` is the safe resume point. On success the job's completion
+// lifts the processing restriction. spec: §12.8; §24.12.
 func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request) {
 	jobID := req.PathValue("jobId")
-	job, err := r.erasureJobs.Get(req.Context(), jobID)
-	if err != nil {
-		if errors.Is(err, erasurejob.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// A job belonging to another tenant reads as not-found so its
-	// existence is not leaked across the tenant boundary.
-	if !r.callerMaySeeTenant(req, job.TenantID) {
-		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+	job, ok := r.lookupErasureJob(w, req, jobID)
+	if !ok {
 		return
 	}
 	// spec: §24.12 — "The job must be in `failed` state."
 	if job.Phase != erasurejob.PhaseFailed {
-		writeError(w, http.StatusConflict, "ERASURE_JOB_NOT_FAILED",
-			"erasure job is in phase "+string(job.Phase)+"; only a failed job can be retried", nil)
+		writeErasureJobNotFailed(w, job.Phase, "retried")
 		return
 	}
-	// Clear the transient failure fields and reset to the first phase so
-	// the runner (which short-circuits on a terminal phase) re-executes.
-	if _, err := r.erasureJobs.Update(req.Context(), jobID, func(j *erasurejob.Job) error {
-		j.Phase = erasurejob.PhaseInitiated
-		j.Failure = ""
-		j.CompletedAt = time.Time{}
-		j.PhaseLog = append(j.PhaseLog, erasurejob.PhaseTransition{Phase: erasurejob.PhaseInitiated, At: r.clock()})
-		return nil
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"erasure job could not be reset for retry: "+err.Error(), nil)
+	// spec: §12.8 (User-level erasure invocation) — Restart moves the job
+	// back to initiated and sets the user's restriction, naming the job, in
+	// one transaction. The store re-checks the phase under the job row's
+	// lock and refuses a restart while another job for the user is in
+	// progress.
+	if _, err := r.erasureJobs.Restart(req.Context(), jobID); err != nil {
+		var active *erasurejob.ErrActiveJob
+		switch {
+		case errors.Is(err, erasurejob.ErrNotFailed):
+			writeErasureJobNotFailed(w, job.Phase, "retried")
+		case errors.As(err, &active):
+			writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+				"erasure job "+active.Job.ID+" for the user is in progress", nil)
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"erasure job could not be reset for retry: "+err.Error(), nil)
+		}
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
@@ -355,10 +341,11 @@ type clearRestrictionRequest struct {
 // /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction — the
 // §24.12 / §12.8 manual clear of the GDPR Article 18
 // processing-restriction flag after a failed erasure job. It requires a
-// non-empty justification, records the operator identity and
+// non-empty justification, refuses a job that is not failed and a flag
+// that names another job, records the operator identity and
 // justification in the audit trail, and clears the flag through the
 // privileged store path that bypasses the database-level Article 18
-// trigger. spec: §12.8; §24.12.
+// trigger. spec: §12.8; §15.1; §24.12.
 func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.Request) {
 	jobID := req.PathValue("jobId")
 	var body clearRestrictionRequest
@@ -373,26 +360,30 @@ func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.
 			"clear-processing-restriction requires a non-empty justification", nil)
 		return
 	}
-	job, err := r.erasureJobs.Get(req.Context(), jobID)
-	if err != nil {
-		if errors.Is(err, erasurejob.ErrNotFound) {
+	job, ok := r.lookupErasureJob(w, req, jobID)
+	if !ok {
+		return
+	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)), §15.1 (REST API) — the store locks the job row, admits only a
+	// failed job, and clears the flag only when it names this job or no
+	// job. The handler does not decide the phase from its own read, which
+	// runs outside the clear's lock.
+	if _, err := r.erasureJobs.ClearRestriction(req.Context(), jobID); err != nil {
+		switch {
+		case errors.Is(err, erasurejob.ErrNotFailed):
+			writeErasureJobNotFailed(w, job.Phase, "cleared")
+		case errors.Is(err, userstore.ErrRestrictionHeldByOtherJob):
+			writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+				"the user's processing restriction is held by another erasure job", nil)
+		case errors.Is(err, erasurejob.ErrNotFound):
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	if !r.callerMaySeeTenant(req, job.TenantID) {
-		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
-		return
-	}
-	if _, err := r.users.ClearProcessingRestriction(req.Context(), job.TenantID, job.UserID); err != nil {
-		if errors.Is(err, userstore.ErrNotFound) {
+		case errors.Is(err, userstore.ErrNotFound):
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "user not found", nil)
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"processing restriction could not be cleared: "+err.Error(), nil)
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"processing restriction could not be cleared: "+err.Error(), nil)
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
@@ -419,23 +410,45 @@ func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.
 // counts, and any failure reason.
 func (r *Router) handleGetErasureJob(w http.ResponseWriter, req *http.Request) {
 	jobID := req.PathValue("jobId")
-	job, err := r.erasureJobs.Get(req.Context(), jobID)
-	if err != nil {
-		if errors.Is(err, erasurejob.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// A job belonging to another tenant reads as not-found so its
-	// existence is not leaked across the tenant boundary.
-	if !r.callerMaySeeTenant(req, job.TenantID) {
-		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+	job, ok := r.lookupErasureJob(w, req, jobID)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(erasureJobPayload(job, r.clock()))
+}
+
+// lookupErasureJob reads the job the request names and writes the
+// response when the caller may not see it. A platform-admin reads under
+// the all-tenants scope; any other caller reads under its own tenant, so
+// another tenant's job reads as not found and its existence is not leaked
+// across the tenant boundary. spec: §12.8 (User-level erasure invocation).
+func (r *Router) lookupErasureJob(w http.ResponseWriter, req *http.Request, jobID string) (erasurejob.Job, bool) {
+	scope := erasurejob.AllTenants
+	if p, ok := authmw.FromContext(req.Context()); ok && !p.HasRole(auth.RolePlatformAdmin) {
+		scope = p.TenantID
+	}
+	job, err := r.erasureJobs.Get(req.Context(), scope, jobID)
+	if err != nil {
+		if errors.Is(err, erasurejob.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+			return erasurejob.Job{}, false
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return erasurejob.Job{}, false
+	}
+	if !r.callerMaySeeTenant(req, job.TenantID) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
+		return erasurejob.Job{}, false
+	}
+	return job, true
+}
+
+// writeErasureJobNotFailed answers the §15.1 ERASURE_JOB_NOT_FAILED
+// refusal of a retry or a restriction clear for a job that is not failed.
+func writeErasureJobNotFailed(w http.ResponseWriter, phase erasurejob.Phase, action string) {
+	writeError(w, http.StatusConflict, "ERASURE_JOB_NOT_FAILED",
+		"erasure job is in phase "+string(phase)+"; only a failed job can be "+action, nil)
 }
 
 // callerMaySeeTenant reports whether the request's principal is

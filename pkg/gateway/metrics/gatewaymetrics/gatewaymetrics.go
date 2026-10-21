@@ -1729,10 +1729,17 @@ func (m *Metrics) ObserveErasureJobDuration(seconds float64) {
 	m.erasureJobDuration.Observe(seconds)
 }
 
-// SetErasureJobDeadlineSeconds publishes the §12.8 erasure SLA
-// deadline the §16.5 ErasureJobOverdue alert compares against.
-func (m *Metrics) SetErasureJobDeadlineSeconds(seconds float64) {
-	m.erasureJobDeadlineSeconds.Set(seconds)
+// SetErasureJobsActive sets the §12.8 in-progress erasure-job gauge to
+// the count of in-progress jobs the leader's sampler read from the job
+// store. spec: §12.8 (Erasure SLA enforcement).
+func (m *Metrics) SetErasureJobsActive(n int) { m.erasureJobsActive.Set(float64(n)) }
+
+// SetErasureJobOverdue publishes how many seconds an in-progress erasure
+// job is past its own deadline (negative before it). The §16.5
+// ErasureJobOverdue alert fires when the value is positive.
+// spec: §12.8 (Erasure SLA enforcement).
+func (m *Metrics) SetErasureJobOverdue(tenantID, jobID string, seconds float64) {
+	m.erasureJobOverdueSeconds.WithLabelValues(tenantID, jobID).Set(seconds)
 }
 
 // SetErasureJobAge publishes the age of an in-progress erasure job so
@@ -1742,10 +1749,12 @@ func (m *Metrics) SetErasureJobAge(tenantID, jobID string, ageSeconds float64) {
 	m.erasureJobAgeSeconds.WithLabelValues(tenantID, jobID).Set(ageSeconds)
 }
 
-// ClearErasureJobAge removes the age series for a terminal job so a
-// completed erasure no longer reads as in-progress.
+// ClearErasureJobAge removes both the age and the overdue series of a job
+// that is no longer in progress, so a finished erasure neither reads as
+// in progress nor keeps ErasureJobOverdue firing.
 func (m *Metrics) ClearErasureJobAge(tenantID, jobID string) {
 	m.erasureJobAgeSeconds.DeleteLabelValues(tenantID, jobID)
+	m.erasureJobOverdueSeconds.DeleteLabelValues(tenantID, jobID)
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6

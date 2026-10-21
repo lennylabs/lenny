@@ -11,6 +11,10 @@
       ],
       "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
     },
+    "pkg/gateway/storage/erasurejob/pgstore": {
+      "unit": ["pkg/gateway/storage/erasurejob/..."],
+      "component": ["tests/tier2_component/stores/erasurejobstore_test.go"]
+    },
     "pkg/store/lease": {
       "unit": ["pkg/store/lease/..."],
       "component": ["tests/tier2_component/stores/lease_store_test.go"]

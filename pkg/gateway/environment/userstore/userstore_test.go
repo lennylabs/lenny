@@ -287,3 +287,52 @@ func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 		t.Fatalf("row must survive assignment removal: %v", err)
 	}
 }
+
+// TestMemoryErasureRestrictionWrites_spec_12_8 pins the in-memory
+// restriction write path the erasure job store calls: a set names the job
+// and bumps the version, a clear guarded by requireJobID writes 0 rows when
+// the flag names another job, the operator clear refuses a flag held by
+// another job, and a missing row is ErrNotFound.
+// spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18)), 15.1 (REST API)
+func TestMemoryErasureRestrictionWrites_spec_12_8(t *testing.T) {
+	ctx := context.Background()
+	m := userstore.NewMemory()
+	if err := m.Create(ctx, userstore.User{TenantID: "acme", Subject: "alice"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	get := func() userstore.User {
+		u, err := m.Get(ctx, "acme", "alice")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		return u
+	}
+	v0 := get().Version
+	if n, err := m.SetErasureRestriction(ctx, "acme", "alice", "erasure_a", true, ""); err != nil || n != 1 {
+		t.Fatalf("set = %d, %v", n, err)
+	}
+	if u := get(); !u.ProcessingRestricted || u.ErasureJobID != "erasure_a" || u.Version != v0+1 {
+		t.Fatalf("after set = %+v", u)
+	}
+	if n, err := m.SetErasureRestriction(ctx, "acme", "alice", "", false, "erasure_b"); err != nil || n != 0 {
+		t.Fatalf("guarded clear for another job = %d, %v, want 0 rows", n, err)
+	}
+	if u := get(); !u.ProcessingRestricted {
+		t.Fatal("guarded clear for another job cleared the flag")
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "acme", "alice", "erasure_b"); !errors.Is(err, userstore.ErrRestrictionHeldByOtherJob) {
+		t.Fatalf("operator clear for another job = %v, want ErrRestrictionHeldByOtherJob", err)
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "acme", "alice", "erasure_a"); err != nil {
+		t.Fatalf("operator clear: %v", err)
+	}
+	if u := get(); u.ProcessingRestricted || u.ErasureJobID != "" || u.Version != v0+2 {
+		t.Fatalf("after operator clear = %+v", u)
+	}
+	if _, err := m.SetErasureRestriction(ctx, "acme", "nobody", "erasure_a", true, ""); !errors.Is(err, userstore.ErrNotFound) {
+		t.Fatalf("set on a missing row = %v, want ErrNotFound", err)
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "globex", "alice", "erasure_a"); !errors.Is(err, userstore.ErrNotFound) {
+		t.Fatalf("clear on another tenant = %v, want ErrNotFound", err)
+	}
+}

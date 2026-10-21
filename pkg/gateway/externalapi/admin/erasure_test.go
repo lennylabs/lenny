@@ -39,10 +39,13 @@ func userEraser(name string, n int) erasure.Eraser {
 	}
 }
 
-func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, userstore.Store, erasurejob.Store, *recordingAudit) {
+// newErasureAdmin builds the admin router over an erasure runner whose job
+// store writes the processing_restricted flag on the returned user store,
+// as the memory posture of the gateway wires it.
+func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, *userstore.Memory, *erasurejob.Memory, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	audit := &recordingAudit{}
 	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
@@ -58,7 +61,7 @@ func awaitTerminal(t *testing.T, jobs erasurejob.Store, jobID string) erasurejob
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		job, err := jobs.Get(context.Background(), jobID)
+		job, err := jobs.Get(context.Background(), erasurejob.AllTenants, jobID)
 		if err != nil {
 			t.Fatalf("Get job %q: %v", jobID, err)
 		}
@@ -162,7 +165,7 @@ func TestEraseUserEmitsCompletionReceipt(t *testing.T) {
 func newBillingErasureAdmin(t *testing.T, billingPolicy string) (*admin.Router, userstore.Store, *billingstore.Memory, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", BillingErasurePolicy: billingPolicy,
@@ -425,7 +428,7 @@ func TestGetErasureJobNotFound(t *testing.T) {
 func newErasureAdminWithSessions(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, userstore.Store, sessionstore.Store, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	sessions := memstore.New()
 	audit := &recordingAudit{}
 	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
@@ -474,7 +477,7 @@ func TestEraseUserBlockedByLegalHold(t *testing.T) {
 // itself is not held.
 func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	sessions := memstore.New()
 	audit := &recordingAudit{}
 	holder := newFakeArtifactHolder()

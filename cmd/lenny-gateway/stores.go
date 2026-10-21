@@ -41,6 +41,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"
 )
 
@@ -120,6 +122,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		capOverrides     runtimecapoverride.Store
 		transcripts      transcriptstore.Store
 		users            userstore.Store
+		erasureJobs      erasurejob.Store
 		connectors       connectorstore.Store
 		billing          billingstore.Store
 		pgPool           *pgxpool.Pool
@@ -282,11 +285,15 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		capOverrides = capoverridepg.New(pool)
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
+		// spec: §12.8 (Processing restriction during erasure (GDPR Article
+		// 18)) — the erasure job and the user's restriction flag are one
+		// transaction on the primary.
+		erasureJobs = erasurepg.New(pool)
 		connectors = connectorpg.New(pool)
 		// billing is constructed below via the §12.3 R-03 StoreRouter,
 		// once the Redis client (if any) is resolved, so the ledger never
 		// holds a raw pool. F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.7.1.
-		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, erasure jobs, connectors, and billing events to Postgres")
 	} else {
 		tenantMem := tenantstore.NewMemory()
 		runtimeMem := runtimestore.NewMemory()
@@ -303,6 +310,11 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		)
 		connectorMem := connectorstore.NewMemory()
 		billingMem := billingstore.NewMemory()
+		// spec: §12.8 (Processing restriction during erasure (GDPR Article
+		// 18)) — the in-memory job store writes the flag on this branch's
+		// user store in the same step as the job.
+		erasureMem := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(userMem))
+		erasureJobs = erasureMem
 		sessions = sessMem
 		tenants = tenantMem
 		runtimes = runtimeMem
@@ -327,6 +339,11 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 				log.Fatalf("lenny-gateway: §17.4 sqlite: %v", err)
 			}
 			sqliteDB = db
+			// erasure_jobs is registered first, so every flush exports the
+			// jobs before any store an eraser writes, and no restored job
+			// phase is ahead of the stores it erased. spec: §17.4 (Source
+			// Mode), §12.8 (Erasure job phase field (crash recovery)).
+			sqliteDB.Register("erasure_jobs", erasureMem)
 			sqliteDB.Register("sessions", sessMem)
 			sqliteDB.Register("tenants", tenantMem)
 			sqliteDB.Register("runtimes", runtimeMem)
@@ -337,6 +354,15 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			sqliteDB.Register("billing_events", billingMem)
 			if err := sqliteDB.Restore(context.Background()); err != nil {
 				log.Fatalf("lenny-gateway: §17.4 sqlite restore: %v", err)
+			}
+			// spec: §12.8 (Processing restriction during erasure (GDPR
+			// Article 18)) — the erasure_jobs and users snapshots are two
+			// exports, so a restored in-progress job can sit beside a clear
+			// flag. Re-set the flag for every in-progress job before the
+			// gateway serves a request or the runner starts, and refuse to
+			// start when that fails rather than serve the user unrestricted.
+			if err := erasureMem.ReassertRestrictions(context.Background()); err != nil {
+				log.Fatalf("lenny-gateway: §17.4 sqlite restore: re-set erasure restrictions: %v", err)
 			}
 			var flushCtx context.Context
 			flushCtx, sqliteFlushCancel = context.WithCancel(context.Background())
@@ -349,7 +375,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			sqliteDB.StartAutoFlush(flushCtx, 2*time.Second, func(err error) {
 				log.Printf("lenny-gateway: §17.4 sqlite flush: %v", err)
 			})
-			log.Printf("lenny-gateway: §17.4 Source Mode embedded SQLite store at %s (sessions, tenants, runtimes, transcripts, users, connectors, billing persist across restart)", *sqlitePath)
+			log.Printf("lenny-gateway: §17.4 Source Mode embedded SQLite store at %s (erasure jobs, sessions, tenants, runtimes, transcripts, users, connectors, billing persist across restart)", *sqlitePath)
 		} else {
 			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
 		}
@@ -501,6 +527,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.capOverrides = capOverrides
 	w.transcripts = transcripts
 	w.users = users
+	w.erasureJobs = erasureJobs
 	w.connectors = connectors
 	w.billing = billing
 	w.pgPool = pgPool

@@ -10,11 +10,11 @@ import (
 
 // erasureMetrics holds the §12.8 user-level erasure job throughput and SLA metrics.
 type erasureMetrics struct {
-	erasureJobFailed          *prometheus.CounterVec
-	erasureJobsActive         prometheus.Gauge
-	erasureJobDuration        prometheus.Observer
-	erasureJobDeadlineSeconds prometheus.Gauge
-	erasureJobAgeSeconds      *prometheus.GaugeVec
+	erasureJobFailed         *prometheus.CounterVec
+	erasureJobsActive        prometheus.Gauge
+	erasureJobDuration       prometheus.Observer
+	erasureJobOverdueSeconds *prometheus.GaugeVec
+	erasureJobAgeSeconds     *prometheus.GaugeVec
 }
 
 // newErasureMetrics constructs, registers, and materializes the erasure metric subsystem
@@ -36,12 +36,15 @@ func newErasureMetrics(reg *prometheus.Registry) (erasureMetrics, error) {
 	// spec: §12.8 — erasure throughput / SLA signals.
 	// lenny_erasure_jobs_active tracks in-progress jobs;
 	// lenny_erasure_job_duration_seconds tracks completion time;
-	// lenny_erasure_job_age_seconds and lenny_erasure_job_deadline_seconds
-	// feed the §16.5 ErasureJobOverdue alert
-	// (age_seconds > scalar(deadline_seconds)).
+	// lenny_erasure_job_age_seconds reports each in-progress job's age, and
+	// lenny_erasure_job_overdue_seconds, the age minus the job's own
+	// deadline, feeds the §16.5 ErasureJobOverdue alert
+	// (max by (tenant_id, job_id) (overdue_seconds) > 0). The leader's
+	// sampler publishes all three from the job store, so the active count
+	// is cluster-wide. spec: §12.8 (Erasure SLA enforcement).
 	erasureJobsActive, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_erasure_jobs_active",
-		Help: "§12.8 user-level erasure jobs currently in progress on this replica.",
+		Help: "§12.8 user-level erasure jobs currently in progress.",
 	}, nil)
 	if err != nil {
 		return m, err
@@ -55,10 +58,10 @@ func newErasureMetrics(reg *prometheus.Registry) (erasureMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	erasureJobDeadlineSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
-		Name: "lenny_erasure_job_deadline_seconds",
-		Help: "§12.8 erasure SLA deadline (seconds) the §16.5 ErasureJobOverdue alert compares against.",
-	}, nil)
+	erasureJobOverdueSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_erasure_job_overdue_seconds",
+		Help: "§12.8 seconds an in-progress user-level erasure job is past its deadline (negative before it), by tenant and job; ErasureJobOverdue fires above 0.",
+	}, []string{"tenant_id", "job_id"})
 	if err != nil {
 		return m, err
 	}
@@ -72,15 +75,14 @@ func newErasureMetrics(reg *prometheus.Registry) (erasureMetrics, error) {
 	reg.MustRegister(erasureJobFailed,
 		erasureJobsActive,
 		erasureJobDuration,
-		erasureJobDeadlineSeconds,
+		erasureJobOverdueSeconds,
 		erasureJobAgeSeconds)
 	erasureActive := erasureJobsActive.WithLabelValues()
 	erasureDuration := erasureJobDuration.WithLabelValues()
-	erasureDeadline := erasureJobDeadlineSeconds.WithLabelValues()
 	m.erasureJobFailed = erasureJobFailed
 	m.erasureJobsActive = erasureActive
 	m.erasureJobDuration = erasureDuration
-	m.erasureJobDeadlineSeconds = erasureDeadline
+	m.erasureJobOverdueSeconds = erasureJobOverdueSeconds
 	m.erasureJobAgeSeconds = erasureJobAgeSeconds
 	return m, nil
 }

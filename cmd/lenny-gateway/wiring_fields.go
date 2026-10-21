@@ -125,6 +125,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
@@ -440,4 +441,9 @@ type gatewayWiringFields struct {
 	uploadIssuer       *uploadtoken.Issuer
 	uploadVerifier     *uploadtoken.Verifier
 	users              userstore.Store
+	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
+	// builds for the posture: the Postgres store over the primary pool, or
+	// erasurejob.Memory writing the flag through the branch's user store.
+	// The admin router, the erasure runner, and the sampler read it.
+	erasureJobs erasurejob.Store
 }

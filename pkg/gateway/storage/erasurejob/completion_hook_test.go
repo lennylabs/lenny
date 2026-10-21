@@ -16,7 +16,7 @@ import (
 // PhaseCompleted, carrying the job's tenant and user, so the gateway can
 // trigger a tenant-scoped GC sweep for a gcPriority:high tenant. F-12.5.18.
 func TestRunnerCompletionHookFiresOnCompletion_spec_12_5_317(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 11, 0, 0, 0, time.UTC)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
 
@@ -47,7 +47,7 @@ func TestRunnerCompletionHookFiresOnCompletion_spec_12_5_317(t *testing.T) {
 // hook, so a tenant whose erasure aborts mid-store does not trigger a
 // premature immediate sweep. F-12.5.18.
 func TestRunnerCompletionHookSkippedOnFailure_spec_12_5_317(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 11, 0, 0, 0, time.UTC)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name:         "sessions",
@@ -68,7 +68,7 @@ func TestRunnerCompletionHookSkippedOnFailure_spec_12_5_317(t *testing.T) {
 	if fired {
 		t.Error("completion hook fired on a failed job, want skipped")
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}

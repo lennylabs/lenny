@@ -15,8 +15,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
 // Phase is the §12.8 erasure-job lifecycle state. It is persisted with
@@ -66,12 +67,14 @@ type Job struct {
 	UserID   string
 	// Phase is the current §12.8 lifecycle state.
 	Phase Phase
-	// StartedAt is the instant the job record was created.
+	// StartedAt is the instant the job record was created. A restart
+	// keeps it, so the overdue sampler measures from the original start.
 	StartedAt time.Time
 	// Deadline is the §12.8 tier-specific SLA window the job
 	// must complete within (T3 72h, T4 1h). Recorded at Start so the
 	// overdue sampler and the completion receipt can present it. Zero
-	// when no deadline resolver is wired into the Runner.
+	// when no deadline resolver is wired into the Runner, in which case
+	// the sampler measures against its default deadline.
 	Deadline time.Duration
 	// CompletedAt is set when Phase becomes completed or failed.
 	CompletedAt time.Time
@@ -94,120 +97,140 @@ type Job struct {
 	// PhaseLog records every §12.8 lifecycle transition in order with
 	// its timestamp, so the completion receipt presents the per-phase
 	// timeline a compliance auditor uses to reconstruct the erasure
-	// sequence. spec: §12.8.
+	// sequence. Its length also identifies the attempt a writer read
+	// (SameAttempt). spec: §12.8.
 	PhaseLog []PhaseTransition
 	// Failure carries the error reason when Phase is failed.
 	Failure string
+	// InitiatedBy is the subject of the principal that requested the
+	// erasure. The completion receipt attributes the erasure to it.
+	InitiatedBy string
+	// OverrideReceipt carries the §12.8 legal-hold override fields the
+	// erase request recorded, or is nil when no override was exercised.
+	// It is persisted with the job so the completion receipt, written on
+	// whichever replica finishes the job, still records the override.
+	OverrideReceipt map[string]any
+	// ErasedAt is the instant the job recorded the success of its last
+	// erasure step. A job with ErasedAt set has only its receipt and
+	// completion left.
+	ErasedAt time.Time
+	// ReceiptAt is the completion instant chosen once before the
+	// completion receipt is written, so a receipt written twice is
+	// byte-identical.
+	ReceiptAt time.Time
 }
+
+// AllTenants is the tenant argument of Get that reads a job in any
+// tenant. It is the §4.2 all-tenants sentinel; a background worker or a
+// platform-admin path passes it, and every other caller passes its own
+// tenant so another tenant's job reads as ErrNotFound.
+const AllTenants = pgtenant.AllTenantsSentinel
 
 // Sentinel errors.
 var (
-	// ErrNotFound — no job with the requested id exists.
+	// ErrNotFound — no job with the requested id exists in the tenant
+	// the caller may read.
 	ErrNotFound = errors.New("erasurejob: job not found")
 	// ErrAlreadyExists — a job with the same id already exists.
 	ErrAlreadyExists = errors.New("erasurejob: job already exists")
-	// ErrMissingID — Create was called with an empty job id.
+	// ErrMissingID — Start was called with an empty job id.
 	ErrMissingID = errors.New("erasurejob: job ID required")
+	// ErrInvalidTenant — Start was called with an empty tenant or the
+	// all-tenants sentinel. A job is created only under its own tenant.
+	ErrInvalidTenant = errors.New("erasurejob: a concrete tenant ID is required")
+	// ErrNotFailed — Restart or ClearRestriction found the job in a
+	// phase other than failed. Only a failed job is retried or has its
+	// restriction cleared by an operator.
+	ErrNotFailed = errors.New("erasurejob: job is not failed")
+	// ErrJobMoved — the stored job is no longer the attempt the writer
+	// read (SameAttempt failed), so the write was refused and nothing
+	// changed.
+	ErrJobMoved = errors.New("erasurejob: job moved since it was read")
+	// ErrRestrictionWriterUnwired — a Memory store with no restriction
+	// writer refused a write that sets or clears the user's
+	// processing_restricted flag together with the job. The job and the
+	// flag are one write, so the store writes neither.
+	ErrRestrictionWriterUnwired = errors.New("erasurejob: no processing-restriction writer is wired")
 )
 
+// ErrActiveJob reports that the user already has an erasure job in a
+// non-terminal phase. Job is that in-progress job. Start and Restart
+// return it and write nothing, because §12.8 allows one in-progress job
+// per user.
+//
+// spec: §12.8 (User-level erasure invocation).
+type ErrActiveJob struct {
+	Job Job
+}
+
+// Error implements error.
+func (e *ErrActiveJob) Error() string {
+	return "erasurejob: user " + e.Job.UserID + " already has erasure job " + e.Job.ID + " in progress"
+}
+
+// SameAttempt reports whether stored is still the job read was taken
+// from: equal Phase and equal len(PhaseLog). The PhaseLog length refuses a
+// writer that read `initiated` before a `fail` and a `Restart`, which a
+// Phase comparison alone admits.
+//
+// spec: §12.8 (Erasure job phase field (crash recovery)).
+func SameAttempt(stored, read Job) bool {
+	return stored.Phase == read.Phase && len(stored.PhaseLog) == len(read.PhaseLog)
+}
+
 // Store is the erasure-job registry contract. Every method is
-// goroutine-safe.
+// goroutine-safe. The methods that change the user's processing_restricted
+// flag write the job and the flag in one transaction, so no job runs
+// without its restriction and no restriction outlives its job unnoticed.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §12.8 (Erasure job phase field (crash recovery)).
 type Store interface {
-	// Create persists a fresh job record. Returns ErrAlreadyExists when
-	// a job with the same ID already exists.
-	Create(ctx context.Context, j Job) error
-	// Get returns the job whose ID equals id. Returns ErrNotFound when
-	// no matching job exists.
-	Get(ctx context.Context, id string) (Job, error)
-	// Update applies mutate to a copy of the job and persists the
-	// result. Returns ErrNotFound when the job is missing.
+	// Start inserts j and sets the user's processing_restricted flag,
+	// naming j, in one transaction. When the user already has a job in
+	// progress it writes nothing and returns *ErrActiveJob carrying that
+	// job. A missing user row returns userstore.ErrNotFound and writes
+	// nothing.
+	Start(ctx context.Context, j Job) (Job, error)
+	// Get returns the job whose ID equals id. tenantID scopes the read:
+	// AllTenants reads any tenant, and any other value answers
+	// ErrNotFound for another tenant's job.
+	Get(ctx context.Context, tenantID, id string) (Job, error)
+	// Update applies mutate to the job as read inside the write's own
+	// transaction (the row locked FOR UPDATE on Postgres) and writes
+	// nothing when mutate returns an error. Returns ErrNotFound when the
+	// job is missing.
 	Update(ctx context.Context, id string, mutate func(*Job) error) (Job, error)
-	// List returns every recorded job. The §12.8 erasure-SLA sampler
-	// uses it to publish the age of each in-progress job so the §16.5
-	// ErasureJobOverdue alert can detect a stall before the deadline
-	// breaches. spec: §12.8.
-	List(ctx context.Context) ([]Job, error)
+	// Restart moves a failed job back to initiated, clears Failure,
+	// CompletedAt, ErasedAt, ReceiptAt, and Billing, appends initiated to
+	// PhaseLog, and sets the user's flag naming the job, in one
+	// transaction. It returns ErrNotFailed when the job is not failed and
+	// *ErrActiveJob when another job for the user is in progress.
+	Restart(ctx context.Context, id string) (Job, error)
+	// ClearRestriction is the operator clear of a failed job's
+	// restriction. It returns ErrNotFailed when the job is not failed and
+	// userstore.ErrRestrictionHeldByOtherJob when the user's
+	// erasure_job_id names another job, and writes nothing in either case.
+	ClearRestriction(ctx context.Context, id string) (Job, error)
+	// Complete marks the job completed at completedAt and clears the
+	// user's restriction where erasure_job_id equals id, in one
+	// transaction. A restriction already cleared or replaced by a newer
+	// job is left as it is, and the job still completes. It returns
+	// ErrJobMoved and writes nothing unless SameAttempt(stored, expect).
+	Complete(ctx context.Context, id string, completedAt time.Time, expect Job) (Job, error)
+	// ListActive returns every job in a non-terminal phase, oldest
+	// StartedAt first.
+	ListActive(ctx context.Context) ([]Job, error)
 }
 
-// Memory is the in-memory Store implementation.
-type Memory struct {
-	mu   sync.RWMutex
-	jobs map[string]Job
-}
-
-// NewMemory returns an empty Memory store.
-func NewMemory() *Memory {
-	return &Memory{jobs: map[string]Job{}}
-}
-
-// Create implements Store.
-func (m *Memory) Create(_ context.Context, j Job) error {
-	if j.ID == "" {
-		return ErrMissingID
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.jobs[j.ID]; ok {
-		return ErrAlreadyExists
-	}
-	m.jobs[j.ID] = cloneJob(j)
-	return nil
-}
-
-// Get implements Store.
-func (m *Memory) Get(_ context.Context, id string) (Job, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	j, ok := m.jobs[id]
-	if !ok {
-		return Job{}, ErrNotFound
-	}
-	return cloneJob(j), nil
-}
-
-// Update implements Store.
-func (m *Memory) Update(_ context.Context, id string, mutate func(*Job) error) (Job, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	j, ok := m.jobs[id]
-	if !ok {
-		return Job{}, ErrNotFound
-	}
-	j = cloneJob(j)
-	if err := mutate(&j); err != nil {
-		return Job{}, err
-	}
-	m.jobs[id] = cloneJob(j)
-	return cloneJob(j), nil
-}
-
-// List implements Store.
-func (m *Memory) List(_ context.Context) ([]Job, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := make([]Job, 0, len(m.jobs))
-	for _, j := range m.jobs {
-		out = append(out, cloneJob(j))
-	}
-	return out, nil
-}
-
-// cloneJob deep-copies the Deleted map and PhaseLog slice so a stored
-// job and a returned copy never share mutable state.
-func cloneJob(j Job) Job {
-	if j.Deleted != nil {
-		d := make(map[string]int, len(j.Deleted))
-		for k, v := range j.Deleted {
-			d[k] = v
-		}
-		j.Deleted = d
-	}
-	if j.PhaseLog != nil {
-		pl := make([]PhaseTransition, len(j.PhaseLog))
-		copy(pl, j.PhaseLog)
-		j.PhaseLog = pl
-	}
-	return j
+// RestrictionWriter is the processing_restricted write path the Memory
+// store calls inside its own lock, so a job write and its flag write are
+// one step. *userstore.Memory satisfies it. SetErasureRestriction has the
+// semantics of the Postgres store's SetErasureRestrictionTx, and
+// ClearProcessingRestrictionForJob those of ClearProcessingRestrictionTx.
+type RestrictionWriter interface {
+	SetErasureRestriction(ctx context.Context, tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error)
+	ClearProcessingRestrictionForJob(ctx context.Context, tenantID, subject, jobID string) error
 }
 
 // NewID returns a fresh erasure-job identifier — 8 random bytes

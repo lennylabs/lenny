@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
@@ -16,14 +17,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"
 )
 
-// registerAll wires the same eight session/metadata stores cmd/lenny-gateway
-// registers in Source Mode, under the same names, so the test exercises
-// the production registration. It returns a struct of the concrete
+// registerAll wires the same session/metadata stores cmd/lenny-gateway
+// registers in Source Mode, under the same names and in the same order
+// (erasure_jobs first), so the test exercises the production registration. It returns a struct of the concrete
 // stores so the caller can drive each store's API.
 type stores struct {
+	erasureJobs *erasurejob.Memory
 	sessions    *memstore.Store
 	tenants     *tenantstore.Memory
 	runtimes    *runtimestore.Memory
@@ -35,19 +38,22 @@ type stores struct {
 }
 
 func newStores() *stores {
+	users := userstore.NewMemory()
 	return &stores{
+		erasureJobs: erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users)),
 		sessions:    memstore.New(),
 		tenants:     tenantstore.NewMemory(),
 		runtimes:    runtimestore.NewMemory(),
 		caps:        runtimecapoverride.NewMemory(),
 		transcripts: transcriptstore.NewMemory(),
-		users:       userstore.NewMemory(),
+		users:       users,
 		connectors:  connectorstore.NewMemory(),
 		billing:     billingstore.NewMemory(),
 	}
 }
 
 func (s *stores) register(db *sqlitestore.DB) {
+	db.Register("erasure_jobs", s.erasureJobs)
 	db.Register("sessions", s.sessions)
 	db.Register("tenants", s.tenants)
 	db.Register("runtimes", s.runtimes)
@@ -62,7 +68,7 @@ func (s *stores) register(db *sqlitestore.DB) {
 // storage. Populate every session/metadata store through its real API,
 // flush+close the SQLite file (the graceful-shutdown path), reopen the
 // file into a fresh set of stores (the restart), restore, and verify
-// each store recovered its row. This proves the eight ExportState /
+// each store recovered its row. This proves the ExportState /
 // ImportState implementations and the persistence manager compose into
 // a durable Source-Mode store without a Postgres dependency.
 func TestAllStores_DurableAcrossRestart_spec_17_4_199(t *testing.T) {
@@ -88,6 +94,12 @@ func TestAllStores_DurableAcrossRestart_spec_17_4_199(t *testing.T) {
 	}
 	if err := a.users.Create(ctx, userstore.User{TenantID: "acme", Subject: "alice@acme.com"}); err != nil {
 		t.Fatalf("user create: %v", err)
+	}
+	if _, err := a.erasureJobs.Start(ctx, erasurejob.Job{
+		ID: "erasure_s1", TenantID: "acme", UserID: "alice@acme.com",
+		Phase: erasurejob.PhaseStoreDeleting, StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("erasure job start: %v", err)
 	}
 	if err := a.sessions.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "echo"}); err != nil {
 		t.Fatalf("session create: %v", err)
@@ -128,8 +140,13 @@ func TestAllStores_DurableAcrossRestart_spec_17_4_199(t *testing.T) {
 	if got, err := b.runtimes.Get(ctx, "echo"); err != nil || got.Image != "lenny/echo@sha256:abc" {
 		t.Fatalf("runtime after restore = %+v, err %v", got, err)
 	}
-	if got, err := b.users.Get(ctx, "acme", "alice@acme.com"); err != nil || got.Subject != "alice@acme.com" {
+	if got, err := b.users.Get(ctx, "acme", "alice@acme.com"); err != nil || got.Subject != "alice@acme.com" ||
+		!got.ProcessingRestricted || got.ErasureJobID != "erasure_s1" {
 		t.Fatalf("user after restore = %+v, err %v", got, err)
+	}
+	if active, err := b.erasureJobs.ListActive(ctx); err != nil || len(active) != 1 ||
+		active[0].ID != "erasure_s1" || active[0].Phase != erasurejob.PhaseStoreDeleting {
+		t.Fatalf("erasure jobs after restore = %+v, err %v", active, err)
 	}
 	if got, err := b.sessions.Get(ctx, "acme", "s1"); err != nil || got.RuntimeRef != "echo" || got.TenantID != "acme" {
 		t.Fatalf("session after restore = %+v, err %v", got, err)
@@ -164,7 +181,7 @@ func TestStores_EmptySnapshotIsEmpty_spec_17_4_199(t *testing.T) {
 		ExportState() ([]byte, error)
 		ImportState([]byte) error
 	}
-	all := []sn{s.sessions, s.tenants, s.runtimes, s.caps, s.transcripts, s.users, s.connectors, s.billing}
+	all := []sn{s.erasureJobs, s.sessions, s.tenants, s.runtimes, s.caps, s.transcripts, s.users, s.connectors, s.billing}
 	for i, st := range all {
 		data, err := st.ExportState()
 		if err != nil {

@@ -3692,6 +3692,10 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreUpdateSerializesAndRoundTrips_spec_12_8",
+        "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreRestart_spec_12_8",
+        "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreCompleteAndClear_spec_12_8",
+        "tests/tier2_component/stores/erasurejobstore_test.go::TestErasureJobStoreStart_spec_12_8",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
         "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
         "tests/tier2_component/stores/sessionstore_list_primary_test.go::TestSessionStoreListPrimaryReadsPastReplicaLag_spec_12_8",

@@ -424,11 +424,12 @@ var mainMuxRoutes = []string{
 func registeredRouteTemplates(t *testing.T) []string {
 	t.Helper()
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	users := userstore.NewMemory()
 
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: clock}).
 		WithRuntimes(runtimestore.NewMemory()).
 		WithPools(poolstore.NewMemory()).
-		WithUsers(userstore.NewMemory()).
+		WithUsers(users).
 		WithConnectors(connectorstore.NewMemory()).
 		WithEnvironments(environmentstore.NewMemory()).
 		WithExperiments(experimentstore.NewMemory()).
@@ -443,7 +444,7 @@ func registeredRouteTemplates(t *testing.T) []string {
 		WithRuntimeCapabilityOverrides(runtimecapoverride.NewMemory()).
 		WithDeploymentConfig(deploymentconfigstore.NewMemory()).
 		WithErasureSaltRotation(saltRotatorStub{}).
-		WithErasure(erasureRunnerStub{}, erasurejob.NewMemory()).
+		WithErasure(erasureRunnerStub{}, erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))).
 		WithImpersonation(impersonationStub{}).
 		WithBillingCorrections(billingstore.NewMemory(), correctionstore.NewMemory(), 0).
 		WithMigrationManager(migrationStub{}).
