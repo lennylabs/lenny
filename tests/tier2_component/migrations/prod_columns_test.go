@@ -615,6 +615,12 @@ var prodMigrationSchema = []struct {
 	// index swap, its reversal, and the count plans are asserted directly
 	// in TestCountedSessionIndexMigration_spec_11_1. spec: §11.1.
 	{migration: "0185", table: "sessions"},
+	// 0186 adds erasure_jobs.detail, the §12.8 erasure-job fields no query
+	// filters on, and the idx_erasure_jobs_in_progress_per_user partial
+	// unique index that holds one in-progress erasure job per user. The
+	// index predicate, its uniqueness, and its drop are asserted directly
+	// in TestErasureJobInProgressIndexMigration_spec_12_8. spec: §12.8.
+	{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}},
 }
 
 // spec: 12.2, 18.5
@@ -852,6 +858,175 @@ func TestCountedSessionIndexMigration_spec_11_1(t *testing.T) {
 	if !strings.Contains(restored, "(tenant_id)") || strings.Contains(restored, "'suspended'") {
 		t.Errorf("after rolling 0185 back idx_sessions_active_by_tenant = %q, want the 0102 definition", restored)
 	}
+}
+
+// erasureDetailPriorVersion is the schema version immediately below the
+// erasure-job detail and in-progress index migration.
+const erasureDetailPriorVersion = 185
+
+// spec: 12.8 (Compliance Interfaces)
+// diagnosis: migration 0186 did not add erasure_jobs.detail as a jsonb
+//
+//	NOT NULL column defaulting to an empty object, or did not create
+//	idx_erasure_jobs_in_progress_per_user as a unique (tenant_id, user_id)
+//	index over exactly the in-progress phases, or its .down.sql did not
+//	drop both. Without the index two replicas can each start an erasure
+//	job for the same user, and the erasure-job store's ON CONFLICT start
+//	has no arbiter. A predicate that covers a terminal phase blocks a
+//	retry or a new job beside a completed or failed one.
+func TestErasureJobInProgressIndexMigration_spec_12_8(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "erasure_jobs", "detail"); got != "jsonb" {
+		t.Errorf("erasure_jobs.detail type = %q, want jsonb", got)
+	}
+	def := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user")
+	for _, want := range []string{"UNIQUE", "(tenant_id, user_id)", "'initiated'", "'store_deleting'", "'pseudonymizing'", "'verifying'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, want it to contain %q", def, want)
+		}
+	}
+	for _, terminal := range []string{"'completed'", "'failed'"} {
+		if strings.Contains(def, terminal) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, covers terminal phase %s", def, terminal)
+		}
+	}
+
+	seedErasureTenants(t, ctx, pg)
+	assertErasureDetailDefault(t, ctx, pg)
+	assertOneInProgressErasureJob(t, ctx, pg)
+
+	pg.MigrateTo(t, dir, erasureDetailPriorVersion)
+	if got := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user"); got != "" {
+		t.Errorf("after rolling 0186 back the index still exists: %q", got)
+	}
+	mustNotHaveColumn(t, ctx, pg, "erasure_jobs", "detail")
+	// With the index gone the schema admits a second in-progress row, so
+	// the refusal asserted above came from 0186.
+	if err := insertErasureJob(ctx, pg, "acme", "job-after-down", "alice", "verifying"); err != nil {
+		t.Errorf("second in-progress job after rolling 0186 back: %v, want it admitted", err)
+	}
+}
+
+// seedErasureTenants creates the tenants the erasure-job cases write under.
+func seedErasureTenants(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	for _, id := range []string{"acme", "globex"} {
+		if _, err := pg.Pool.Exec(ctx,
+			`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
+	}
+}
+
+// insertErasureJob writes one erasure_jobs row under the tenant context.
+func insertErasureJob(ctx context.Context, pg *containers.Postgres, tenant, id, user, status string) error {
+	return execTenant(ctx, pg, tenant,
+		`INSERT INTO erasure_jobs (id, tenant_id, user_id, status) VALUES ($1, $2, $3, $4)`,
+		id, tenant, user, status)
+}
+
+// assertErasureDetailDefault checks that a row inserted without naming
+// detail, as a binary predating the column does, reads back an empty object.
+func assertErasureDetailDefault(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-detail-default", "dave", "completed"); err != nil {
+		t.Fatalf("insert without detail: %v", err)
+	}
+	var detail string
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT detail::text FROM erasure_jobs WHERE id = 'job-detail-default'`).Scan(&detail); err != nil {
+		t.Fatalf("read defaulted detail: %v", err)
+	}
+	if detail != "{}" {
+		t.Errorf("defaulted erasure_jobs.detail = %q, want {}", detail)
+	}
+}
+
+// assertOneInProgressErasureJob drives the partial unique index: every
+// in-progress phase conflicts with an existing in-progress job for the
+// same (tenant_id, user_id), terminal jobs and other users or tenants
+// do not, a terminal job cannot be moved back into progress beside a
+// running one, and the index arbitrates the store's ON CONFLICT start.
+func assertOneInProgressErasureJob(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-running", "alice", "initiated"); err != nil {
+		t.Fatalf("insert first in-progress job: %v", err)
+	}
+	for _, phase := range []string{"initiated", "store_deleting", "pseudonymizing", "verifying"} {
+		err := insertErasureJob(ctx, pg, "acme", "job-second-"+phase, "alice", phase)
+		if !isUniqueViolation(err) {
+			t.Errorf("second in-progress job in phase %s: err = %v, want unique_violation (23505)", phase, err)
+		}
+	}
+	admitted := []struct{ tenant, id, user, status string }{
+		{"acme", "job-completed", "alice", "completed"},
+		{"acme", "job-failed", "alice", "failed"},
+		{"acme", "job-failed-2", "alice", "failed"},
+		{"acme", "job-bob", "bob", "store_deleting"},
+		{"globex", "job-globex-alice", "alice", "initiated"},
+	}
+	for _, j := range admitted {
+		if err := insertErasureJob(ctx, pg, j.tenant, j.id, j.user, j.status); err != nil {
+			t.Errorf("insert %s (%s/%s, %s): %v, want it admitted", j.id, j.tenant, j.user, j.status, err)
+		}
+	}
+	// A retry moves a failed job back to initiated; while another job for
+	// the user is in progress the move must fail.
+	err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'initiated' WHERE id = 'job-failed'`)
+	if !isUniqueViolation(err) {
+		t.Errorf("retry of a failed job beside an in-progress one: err = %v, want unique_violation (23505)", err)
+	}
+	assertErasureStartArbiter(t, ctx, pg)
+}
+
+// assertErasureStartArbiter checks that an INSERT ... ON CONFLICT naming
+// the index predicate resolves against the index: a duplicate start
+// inserts nothing, and the start succeeds once the running job completes.
+func assertErasureStartArbiter(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	const start = `INSERT INTO erasure_jobs (id, tenant_id, user_id, status)
+		VALUES ($1, 'acme', 'alice', 'initiated')
+		ON CONFLICT (tenant_id, user_id)
+		WHERE status IN ('initiated', 'store_deleting', 'pseudonymizing', 'verifying')
+		DO NOTHING`
+	if err := execTenant(ctx, pg, "acme", start, "job-dup-start"); err != nil {
+		t.Fatalf("ON CONFLICT start beside a running job: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-dup-start"); n != 0 {
+		t.Errorf("ON CONFLICT start beside a running job inserted %d rows, want 0", n)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'completed' WHERE id = 'job-running'`); err != nil {
+		t.Fatalf("complete the running job: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme", start, "job-next-start"); err != nil {
+		t.Fatalf("ON CONFLICT start after completion: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-next-start"); n != 1 {
+		t.Errorf("ON CONFLICT start after completion inserted %d rows, want 1", n)
+	}
+}
+
+// erasureJobCount returns how many erasure_jobs rows carry id.
+func erasureJobCount(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM erasure_jobs WHERE id = $1`, id).Scan(&n); err != nil {
+		t.Fatalf("count erasure job %s: %v", id, err)
+	}
+	return n
+}
+
+// isUniqueViolation reports whether err is a Postgres unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // seedCountedSessionPopulation fills tenant acme with many terminal and
