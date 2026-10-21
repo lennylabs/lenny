@@ -43,7 +43,7 @@ func newFenceFixture(t *testing.T, opts ...memstore.Option) *fenceFixture {
 			t.Fatalf("seed user %s: %v", sub, err)
 		}
 	}
-	all := append([]memstore.Option{memstore.WithCreationMarkers(memstore.StoreMarkers(f.tenants, f.users))}, opts...)
+	all := append([]memstore.Option{memstore.WithCreationMarkers(sessionstore.StoreMarkers(f.tenants, f.users))}, opts...)
 	f.sessions = memstore.New(all...)
 	return f
 }

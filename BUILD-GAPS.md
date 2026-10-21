@@ -20515,6 +20515,13 @@ audit-recovery admin endpoints, and the audit-event schema registry.
 **Gap:** The admin audit rows (session.force_terminated, tenant.suspended) are written on the request context after a long synchronous hook or drain.
 **Suggested resolution:** Append the audit row before the hook, or on a detached context. Owned by proposal P2 (terminal pipeline completeness), second wave after P1 (`gateway-runtime-comms-remediation.md` §10.2). Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-11.7.23 — The tier-4 Postgres persistence test finds no audit_log row for the admin bootstrap [Low] — OPEN
+
+**Spec:** §11.7 Audit Logging.
+**Evidence:** `tests/tier4_integration/gateway_postgres_e2e_test.go` `TestGatewayPostgresPersistenceE2E`, the audit subtest. Its earlier assertion called `GET /v1/admin/audit-events/verify`, a route commit f2e4819ef removed as non-spec, so the test failed before proposal 0094 touched it. With that call removed, a tenant-scoped `SELECT COUNT(*) FROM audit_log WHERE tenant_id = 'acme'` returns 0 after `POST /v1/admin/bootstrap`. Filed 2026-10-21 by the proposal 0094 creation-gate step, whose replay assertion in the same test passes.
+**Gap:** Either the bootstrap's audit row is written under a tenant or chain other than `acme`, or it is not written durably in the `--postgres-dsn` posture. The test cannot tell which.
+**Suggested resolution:** Establish the tenant and chain the §11.7 bootstrap audit row lands on, assert that row, and remove the `blocked:` skip of the audit subtest. Unassigned.
+
 ## §11.8 Security Incident Response <a id="11.8"></a>
 ### Summary
 

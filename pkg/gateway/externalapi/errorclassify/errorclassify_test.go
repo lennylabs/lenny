@@ -300,3 +300,17 @@ func TestClassifyStatusKnownCodeWinsOverStatus(t *testing.T) {
 		t.Errorf("INTERNAL_ERROR@400 = (%q, %v), want (TRANSIENT, true)", cat, retr)
 	}
 }
+
+// TestCreationFenceCodesArePolicyNonRetryable pins the classifier rows of
+// the creation-fence codes: TENANT_NOT_ACTIVE and USER_INVALIDATED are
+// POLICY and not retryable, so the MCP surface no longer classifies them
+// as transient and retryable while REST does not.
+// spec: 15.1 (REST API: Error code catalog), 15.2.1 (REST/MCP Consistency Contract)
+func TestCreationFenceCodesArePolicyNonRetryable(t *testing.T) {
+	for _, code := range []string{"TENANT_NOT_ACTIVE", "USER_INVALIDATED"} {
+		cat, retryable := Classify(code)
+		if cat != CategoryPolicy || retryable {
+			t.Errorf("%s = (%s, %v), want (POLICY, false)", code, cat, retryable)
+		}
+	}
+}

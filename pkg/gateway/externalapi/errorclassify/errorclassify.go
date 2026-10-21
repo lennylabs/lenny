@@ -407,6 +407,8 @@ var table = map[string]entry{
 	"COMPLIANCE_CROSS_USER_CACHE_PROHIBITED":  {CategoryPolicy, false}, // spec: 15:1088
 	"VARIANT_ISOLATION_UNAVAILABLE":           {CategoryPolicy, false}, // spec: 15:1056 (§15.4 family)
 	"TENANT_SUSPENDED":                        {CategoryPolicy, false}, // spec: 15:1096 (§15.4 family)
+	"TENANT_NOT_ACTIVE":                       {CategoryPolicy, false}, // spec: §15.1 (Error code catalog)
+	"USER_INVALIDATED":                        {CategoryPolicy, false}, // spec: §15.1 (Error code catalog)
 	// Code-internal §8.5 delegate_task policy denial (no §15.4 catalog
 	// row); a delegation rejected by policy fails identically on retry.
 	"DELEGATION_DENIED": {CategoryPolicy, false},

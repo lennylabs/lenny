@@ -65,7 +65,7 @@ func newReplayRaceStores(t *testing.T, tenant string) *replayRaceStores {
 		return nil
 	}
 	s.sessions = memstore.New(
-		memstore.WithCreationMarkers(memstore.StoreMarkers(tenants, s.users)),
+		memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, s.users)),
 		memstore.WithTranscriptCopier(copier),
 	)
 	return s

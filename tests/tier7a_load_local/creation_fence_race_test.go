@@ -67,7 +67,7 @@ func (s storeTerminator) ForceTerminate(ctx context.Context, tenantID, id string
 func memFenceStores() fenceStores {
 	tenants, users := tenantstore.NewMemory(), userstore.NewMemory()
 	return fenceStores{
-		sessions: memstore.New(memstore.WithCreationMarkers(memstore.StoreMarkers(tenants, users))),
+		sessions: memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users))),
 		tenants:  tenants,
 		users:    users,
 		newTenant: func(t *testing.T) string {

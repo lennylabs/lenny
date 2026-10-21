@@ -36,7 +36,7 @@ type Store struct {
 
 	// markers reads the creation fence's marker rows. Nil admits every
 	// insert. Called under mu (WithCreationMarkers).
-	markers MarkerReader
+	markers sessionstore.MarkerReader
 
 	// copyTranscript copies a transcript inside CreateWithTranscript, under
 	// mu. Nil makes CreateWithTranscript return ErrTranscriptCopierUnwired.

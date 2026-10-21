@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -344,6 +345,17 @@ type Service struct {
 	// in-process minimal gateway with no GatewayControl listener).
 	// F-15.3.5.
 	leaseRegistrar LeaseChildRegistrar
+	// sessionObjects deletes the file-export objects written under a
+	// child ID whose delegation is refused or fails before its insert.
+	// Nil keeps the reservation, so the owner's erasure reaches them.
+	sessionObjects SessionObjectDeleter
+}
+
+// SessionObjectDeleter deletes every object a blob store holds under one
+// session ID. The MinIO, memory, filesystem, and cataloging blob stores
+// implement it. spec: §12.8 (Lifecycle fence and drain).
+type SessionObjectDeleter interface {
+	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
 }
 
 // LeaseChildRegistrar registers a delegated child session with the §8.6
@@ -517,6 +529,14 @@ type Options struct {
 	// and the unit suite, which register no external interceptors).
 	// F-4.8.17.
 	InterceptorCooldown InterceptorCooldownResolver
+
+	// SessionObjects, when set, deletes the §8.7 file-export objects a
+	// refused or failed delegation wrote under the child ID before its
+	// insert, after which the child ID's reservation is released. Nil
+	// keeps the reservation, so the owner's erasure still reaches the
+	// objects through the reserved ID. spec: §12.8 (Lifecycle fence and
+	// drain).
+	SessionObjects SessionObjectDeleter
 }
 
 // InterceptorCooldownResolver reports the §8.3 SEC-013 active fail-open
@@ -578,6 +598,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		tokenMinter:                  opts.ChildTokenMinter,
 		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
 		leaseRegistrar:               opts.LeaseRegistrar,
+		sessionObjects:               opts.SessionObjects,
 	}
 }
 
@@ -1187,11 +1208,11 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	// §8.2 child-token exchange, struct assembly, and §10.7 experiment
 	// routing). The token is returned alongside the row for the audit and
 	// the Result.
-	child, childToken, err := s.buildChildSession(ctx, tenantID, req, adm, rootSessionID)
+	child, childToken, reserved, err := s.buildChildSession(ctx, tenantID, req, adm, rootSessionID)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.store.Create(ctx, child); err != nil {
+	if err := s.commitChild(ctx, child, reserved); err != nil {
 		return Result{}, err
 	}
 	// §8.6: register the committed child with the lease-extension
@@ -1320,17 +1341,6 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	return nil
 }
 
-// buildChildSession assembles the §8.2 child session row after every
-// admission gate has passed. It mints the §12.6 child id, runs the §8.7
-// file-export materialization when the lease declares exports, runs the
-// §8.2 in-process child-token exchange when a minter and ParentToken are
-// present, builds the child Session row (stamping the resolved lease,
-// content policy, visibility, tracing, and experiment context), and runs
-// the §10.7 ExperimentRouter for an independent-propagation child. It
-// returns the constructed (uncommitted) row and the minted child token.
-//
-// spec: §8.2; §8.7; §8.9; §10.7.
-// F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
 // credentialOriginID resolves the credential-origin session id stamped on
 // a delegated child per §8.3. A `credentialPropagation:
 // inherit` hop forwards the parent's origin so contiguous `inherit` hops
@@ -1350,7 +1360,25 @@ func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Se
 	return childID
 }
 
-func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (sessionstore.Session, *ChildToken, error) {
+// buildChildSession assembles the §8.2 child session row after every
+// admission gate has passed. It mints the §12.6 child id, runs the §8.7
+// file-export materialization when the lease declares exports, runs the
+// §8.2 in-process child-token exchange when a minter and ParentToken are
+// present, builds the child Session row (stamping the resolved lease,
+// content policy, visibility, tracing, and experiment context), and runs
+// the §10.7 ExperimentRouter for an independent-propagation child. It
+// returns the constructed (uncommitted) row, the minted child token, and
+// whether the child ID was reserved.
+//
+// When the lease declares exports, the child ID is reserved for its owner
+// before any export object is written under it, so the owner's erasure
+// reaches the objects even when the child row is never inserted; the
+// reservation runs the creation fence for a delegated child. Every error
+// return after the reservation deletes the objects and releases it.
+//
+// spec: §8.2; §8.7; §8.9; §10.7; §12.8 (Lifecycle fence and drain).
+// F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
+func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (_ sessionstore.Session, _ *ChildToken, reserved bool, retErr error) {
 	parent := adm.parent
 	userID := req.UserID
 	if userID == "" {
@@ -1367,13 +1395,25 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// materialized child workspace. F-8.7.1 / F-8.7.5 / F-8.7.6.
 	childID, err := s.newChildID(rootSessionID)
 	if err != nil {
-		return sessionstore.Session{}, nil, err
+		return sessionstore.Session{}, nil, reserved, err
 	}
 	var childPlan json.RawMessage
 	if len(req.FileExport) > 0 {
+		// spec: §12.8 (Lifecycle fence and drain) — reserve the child ID
+		// before the export writes objects under it. A fence refusal is
+		// returned unwrapped so delegate_task maps its code.
+		if err := s.store.Reserve(ctx, tenantID, userID, childID, true); err != nil {
+			return sessionstore.Session{}, nil, false, err
+		}
+		reserved = true
+		defer func() {
+			if retErr != nil {
+				s.undoChildExport(ctx, tenantID, childID)
+			}
+		}()
 		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, adm.effectivePolicy, adm.haveEffectivePolicy)
 		if err != nil {
-			return sessionstore.Session{}, nil, err
+			return sessionstore.Session{}, nil, reserved, err
 		}
 		childPlan = plan
 	}
@@ -1401,7 +1441,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 			Now:                   now,
 		})
 		if err != nil {
-			return sessionstore.Session{}, nil, err
+			return sessionstore.Session{}, nil, reserved, err
 		}
 		childToken = &minted
 	}
@@ -1489,10 +1529,52 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// rather than creating an unenrolled child.
 	if s.experimentRouter != nil && child.ExperimentContext == nil {
 		if err := s.experimentRouter.ApplyExperimentRouting(ctx, &child); err != nil {
-			return sessionstore.Session{}, nil, err
+			return sessionstore.Session{}, nil, reserved, err
 		}
 	}
-	return child, childToken, nil
+	return child, childToken, reserved, nil
+}
+
+// commitChild inserts the child row: through CreateReserved when its ID
+// was reserved, so a reservation the owner's erasure ended refuses the
+// insert, and through Create otherwise. A fence refusal of a reserved
+// child deletes the export objects and releases the reservation. Any
+// other insert error keeps both, because it can follow a committed insert.
+// spec: §12.8 (Lifecycle fence and drain).
+func (s *Service) commitChild(ctx context.Context, child sessionstore.Session, reserved bool) error {
+	if !reserved {
+		return s.store.Create(ctx, child)
+	}
+	err := s.store.CreateReserved(ctx, child)
+	var ref *sessionstore.CreationRefusal
+	if errors.As(err, &ref) {
+		s.undoChildExport(ctx, child.TenantID, child.ID)
+	}
+	return err
+}
+
+// undoChildExport deletes the file-export objects written under childID
+// and then releases its reservation, on a context detached from the
+// request's cancellation. A deletion error, or an unwired SessionObjects,
+// keeps the reservation, so the owner's erasure still reaches the objects
+// through the reserved ID; the error is logged.
+// spec: §12.8 (Lifecycle fence and drain).
+func (s *Service) undoChildExport(ctx context.Context, tenantID, childID string) {
+	ctx = context.WithoutCancel(ctx)
+	if s.sessionObjects == nil {
+		slog.Warn("delegation: no session-object deleter is wired; keeping the child session reservation",
+			"session_id", childID)
+		return
+	}
+	if _, err := s.sessionObjects.DeleteBySession(ctx, tenantID, childID); err != nil {
+		slog.Warn("delegation: delete the child export objects; keeping the reservation",
+			"session_id", childID, "error", err)
+		return
+	}
+	if err := s.store.ReleaseReservation(ctx, tenantID, childID); err != nil {
+		slog.Warn("delegation: release the child session reservation",
+			"session_id", childID, "error", err)
+	}
 }
 
 // emitSpawnedAudit emits the §11.7 / §16.7 `delegation.spawned` audit

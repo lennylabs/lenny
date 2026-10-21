@@ -51,10 +51,12 @@ func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, 
 	return srv, store
 }
 
-// spec: §11.4 — hard_disable "also block[s] new delegated tasks". A
-// running parent whose owning user is disabled after start cannot spawn
-// a child through lenny/delegate_task. F-11.4.1.
-func TestDelegateTaskRejectsDisabledOwner_spec_11_4(t *testing.T) {
+// spec: §11.4 (User Invalidation), §12.8 (Lifecycle fence and drain) — a
+// soft-disabled owner's in-flight work keeps delegating: the delegated
+// child classification admits it, as the store fence does. The gate
+// answered USER_INVALIDATED for this owner before it read the fence
+// predicate. F-11.4.1.
+func TestDelegateTaskAdmitsSoftDisabledOwner_spec_11_4(t *testing.T) {
 	users := userstore.NewMemory()
 	if err := users.Create(context.Background(), userstore.User{
 		Subject: "user_alice", TenantID: "acme", Disabled: true,
@@ -66,15 +68,11 @@ func TestDelegateTaskRejectsDisabledOwner_spec_11_4(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
-	if result["isError"] != true {
-		t.Fatalf("a disabled owner must block delegation: %+v", resp)
+	if result["isError"] == true {
+		t.Fatalf("a soft-disabled owner must keep delegating: %+v", resp)
 	}
-	env := readLennyErrorEnvelope(t, result)
-	if env["code"] != "USER_INVALIDATED" {
-		t.Errorf("code = %v, want USER_INVALIDATED", env["code"])
-	}
-	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {
-		t.Error("a blocked delegation must not commit a child session")
+	if _, err := store.Get(context.Background(), "acme", "sess_child"); err != nil {
+		t.Errorf("the admitted delegation did not commit a child session: %v", err)
 	}
 }
 
@@ -96,6 +94,9 @@ func TestDelegateTaskRejectsRevokedOwner_spec_11_4(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a revoked owner must block delegation: %+v", resp)
+	}
+	if env := readLennyErrorEnvelope(t, result); env["code"] != "USER_INVALIDATED" {
+		t.Errorf("code = %v, want USER_INVALIDATED", env["code"])
 	}
 	if _, err := store.Get(ctx, "acme", "sess_child"); err == nil {
 		t.Error("a blocked delegation must not commit a child session")

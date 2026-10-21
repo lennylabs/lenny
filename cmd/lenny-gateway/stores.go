@@ -298,7 +298,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		// stores, and copies a replayed transcript under its own lock.
 		// Source Mode restores these same stores, so it shares the wiring.
 		sessMem := memstore.New(
-			memstore.WithCreationMarkers(memstore.StoreMarkers(tenantMem, userMem)),
+			memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenantMem, userMem)),
 			memstore.WithTranscriptCopier(transcriptMem.CopySession),
 		)
 		connectorMem := connectorstore.NewMemory()

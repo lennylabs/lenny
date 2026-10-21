@@ -4,20 +4,12 @@ package memstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
-
-// MarkerReader returns the creation fence's marker state for a session that
-// userID owns in tenantID. It leaves IsDelegatedChild unset; the store sets
-// it from the row. A returned error fails the insert closed.
-type MarkerReader func(ctx context.Context, tenantID, userID string) (sessionstore.CreationMarkers, error)
 
 // TranscriptCopier copies the transcript of sourceSessionID into
 // destSessionID. transcriptstore.Memory.CopySession has this signature.
@@ -39,7 +31,7 @@ type TranscriptCopier func(ctx context.Context, tenantID, sourceSessionID, destS
 // A missing tenant row (TenantFound false) is reachable only here. In
 // Postgres the sessions.tenant_id foreign key rejects that insert first.
 // spec: §12.8 (Lifecycle fence and drain).
-func WithCreationMarkers(read MarkerReader) Option {
+func WithCreationMarkers(read sessionstore.MarkerReader) Option {
 	return func(s *Store) { s.markers = read }
 }
 
@@ -51,48 +43,6 @@ func WithCreationMarkers(read MarkerReader) Option {
 // spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
 func WithTranscriptCopier(copyFn TranscriptCopier) Option {
 	return func(s *Store) { s.copyTranscript = copyFn }
-}
-
-// TenantGetter is the tenant-store read StoreMarkers needs.
-type TenantGetter interface {
-	Get(ctx context.Context, id string) (tenantstore.Tenant, error)
-}
-
-// UserGetter is the user-store read StoreMarkers needs.
-type UserGetter interface {
-	Get(ctx context.Context, tenantID, subject string) (userstore.User, error)
-}
-
-// StoreMarkers returns a MarkerReader over a tenant store and a user store,
-// the reader the gateway's in-memory and Source Mode postures wire. A
-// missing row carries no marker; any other read error is returned.
-// spec: §12.8 (Lifecycle fence and drain).
-func StoreMarkers(tenants TenantGetter, users UserGetter) MarkerReader {
-	return func(ctx context.Context, tenantID, userID string) (sessionstore.CreationMarkers, error) {
-		var m sessionstore.CreationMarkers
-		t, err := tenants.Get(ctx, tenantID)
-		switch {
-		case errors.Is(err, tenantstore.ErrNotFound):
-		case err != nil:
-			return m, fmt.Errorf("creation fence: read tenant %s: %w", tenantID, err)
-		default:
-			m.TenantFound, m.TenantSuspended, m.TenantState = true, t.Suspended, t.State
-		}
-		if userID == "" {
-			return m, nil
-		}
-		u, err := users.Get(ctx, tenantID, userID)
-		switch {
-		case errors.Is(err, userstore.ErrNotFound):
-		case err != nil:
-			return m, fmt.Errorf("creation fence: read user %s/%s: %w", tenantID, userID, err)
-		default:
-			m.UserFound = true
-			m.UserDisabled, m.UserDeleted = u.Disabled, !u.DeletedAt.IsZero()
-			m.ProcessingRestricted, m.ErasureJobID = u.ProcessingRestricted, u.ErasureJobID
-		}
-		return m, nil
-	}
 }
 
 // reservation is one session-ID reservation. The exported fields are the
