@@ -184,7 +184,8 @@ func TestTeardownPairingRuleRefusesAMalformedShutdown_spec_4_7_1(t *testing.T) {
 }
 
 // Rule 11, the no-entry rule: a Shutdown of either form for a session with no
-// entry answers ABSENT with a clean exit and runs neither teardown.
+// entry, and that no Shutdown has removed, answers ABSENT with a clean exit and
+// runs neither teardown.
 //
 // spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
 // specification)
@@ -251,8 +252,9 @@ func TestAttemptMatchRuleReclaimsTheEntry_spec_4_7_1(t *testing.T) {
 }
 
 // Rule 15, the reclaim-outcome rule: every Shutdown outcome arrives on a
-// successful call carrying the matching slot_reclaim value, and the outcomes
-// that remove nothing report a clean exit.
+// successful call carrying the matching slot_reclaim value. A SUPERSEDED
+// outcome reports a clean exit, and an ABSENT outcome reports the exit rule 11
+// states.
 //
 // spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
 // specification)
