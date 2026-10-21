@@ -20,7 +20,6 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
-	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
@@ -119,16 +118,17 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	// countdown is anchored at detection. F-10.1.3.
 	if w.pgPool != nil && w.redisClient != nil {
 		pgPoolRef := w.pgPool
-		redisRef := w.redisClient
 		w.dsMonitor = &dualstore.Monitor{
 			PostgresProbe: func(ctx context.Context) bool {
 				pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 				defer cancel()
 				return pgPoolRef.Ping(pctx) == nil
 			},
-			RedisProbe: func(context.Context) bool {
-				return redisconn.PingWithTimeout(redisRef, 2*time.Second) == nil
-			},
+			// §10.1 dual-store unavailability concerns coordination
+			// leases, which live on the Coordination concern's instance
+			// (§12.4), so that instance is the Redis half probed here.
+			// F-12.4.30.
+			RedisProbe:     concernRedisProbe(w.concernRedis, storerouter.RedisConcernCoordination),
 			Gauge:          gwMetrics,
 			Streams:        w.eventBus,
 			MaxUnavailable: time.Duration(*dualStoreMaxSeconds) * time.Second,

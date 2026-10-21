@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"time"
 
@@ -275,9 +274,9 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 			liveBytes := w.storageLiveBytes
 			storageCounter = storagequota.NewFailover(storageRedis, liveBytes, nil)
 			storageRecoveryReconciler = &storagequota.RecoveryReconciler{
-				Probe: func(ctx context.Context) bool {
-					return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
-				},
+				// §12.4: probe the Quota concern's own instance, the one
+				// storageRedis writes to. F-12.4.30.
+				Probe:   concernRedisProbe(concernRedis, storerouter.RedisConcernQuota),
 				Primary: storageRedis,
 				Tenants: (tenantsLister{tenants}).ListTenants,
 				SizeOf:  liveBytes,
