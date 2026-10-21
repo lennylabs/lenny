@@ -377,8 +377,9 @@ func TestErasureJobStoreCompleteAndClear_spec_12_8(t *testing.T) {
 			t.Fatalf("commit restart: %v", cerr)
 		}
 		<-done
-		if !errors.Is(err, erasurejob.ErrNotFailed) {
-			t.Fatalf("ClearRestriction behind a restart = %v, want ErrNotFailed", err)
+		var nf *erasurejob.NotFailedError
+		if !errors.Is(err, erasurejob.ErrNotFailed) || !errors.As(err, &nf) || nf.Phase != erasurejob.PhaseInitiated {
+			t.Fatalf("ClearRestriction behind a restart = %v, want *NotFailedError carrying the locked phase initiated", err)
 		}
 		if u := e.user(t, "alice"); !u.ProcessingRestricted || u.ErasureJobID != j.ID {
 			t.Fatalf("flag = %+v, want set naming the restarted job", u)
@@ -510,8 +511,10 @@ func TestErasureJobStoreRestart_spec_12_8(t *testing.T) {
 	t.Run("restart refuses a job that is not failed", func(t *testing.T) {
 		e.addTenant(t)
 		j := e.start(t, "erasure_r_"+e.tenant, "alice")
-		if _, err := e.jobs.Restart(ctx, j.ID); !errors.Is(err, erasurejob.ErrNotFailed) {
-			t.Fatalf("Restart = %v, want ErrNotFailed", err)
+		_, err := e.jobs.Restart(ctx, j.ID)
+		var nf *erasurejob.NotFailedError
+		if !errors.Is(err, erasurejob.ErrNotFailed) || !errors.As(err, &nf) || nf.Phase != j.Phase {
+			t.Fatalf("Restart = %v, want *NotFailedError carrying the locked phase %q", err, j.Phase)
 		}
 		if _, err := e.jobs.Restart(ctx, "erasure_absent"); !errors.Is(err, erasurejob.ErrNotFound) {
 			t.Fatalf("Restart unknown = %v, want ErrNotFound", err)

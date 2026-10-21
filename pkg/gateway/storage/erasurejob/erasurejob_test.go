@@ -244,8 +244,10 @@ func TestMemoryRestartAndClearRestriction_spec_12_8(t *testing.T) {
 	t.Run("restart refuses a job that is not failed", func(t *testing.T) {
 		m, _ := newJobStoreUsers(t)
 		startJob(t, m, newJob("erasure_r", "acme", "alice"))
-		if _, err := m.Restart(ctx, "erasure_r"); !errors.Is(err, erasurejob.ErrNotFailed) {
-			t.Fatalf("Restart = %v, want ErrNotFailed", err)
+		_, err := m.Restart(ctx, "erasure_r")
+		var nf *erasurejob.NotFailedError
+		if !errors.Is(err, erasurejob.ErrNotFailed) || !errors.As(err, &nf) || nf.Phase != erasurejob.PhaseInitiated {
+			t.Fatalf("Restart = %v, want *NotFailedError carrying the locked phase initiated", err)
 		}
 		if _, err := m.Restart(ctx, "erasure_absent"); !errors.Is(err, erasurejob.ErrNotFound) {
 			t.Fatalf("Restart unknown = %v, want ErrNotFound", err)
@@ -272,8 +274,10 @@ func TestMemoryRestartAndClearRestriction_spec_12_8(t *testing.T) {
 	t.Run("clear refuses a job that is not failed", func(t *testing.T) {
 		m, users := newJobStoreUsers(t)
 		startJob(t, m, newJob("erasure_c", "acme", "alice"))
-		if _, err := m.ClearRestriction(ctx, "erasure_c"); !errors.Is(err, erasurejob.ErrNotFailed) {
-			t.Fatalf("ClearRestriction = %v, want ErrNotFailed", err)
+		_, err := m.ClearRestriction(ctx, "erasure_c")
+		var nf *erasurejob.NotFailedError
+		if !errors.Is(err, erasurejob.ErrNotFailed) || !errors.As(err, &nf) || nf.Phase != erasurejob.PhaseInitiated {
+			t.Fatalf("ClearRestriction = %v, want *NotFailedError carrying the locked phase initiated", err)
 		}
 		if u := user(t, users, "acme", "alice"); !u.ProcessingRestricted {
 			t.Fatal("refused clear lifted the restriction")

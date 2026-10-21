@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
@@ -340,5 +343,95 @@ func TestRetryWhileAnotherJobInProgress_spec_15_1(t *testing.T) {
 	}
 	if job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, jobID); job.Phase != erasurejob.PhaseFailed {
 		t.Fatalf("refused retry moved the job to %q", job.Phase)
+	}
+}
+
+// racingJobs is a job store whose Restart and ClearRestriction first run a
+// concurrent retry of the same job, as one landing between the handler's
+// own read and the store's locked phase check would, and then delegate.
+type racingJobs struct {
+	*erasurejob.Memory
+}
+
+func (r racingJobs) Restart(ctx context.Context, id string) (erasurejob.Job, error) {
+	r.concurrentRetry(ctx, id)
+	return r.Memory.Restart(ctx, id)
+}
+
+func (r racingJobs) ClearRestriction(ctx context.Context, id string) (erasurejob.Job, error) {
+	r.concurrentRetry(ctx, id)
+	return r.Memory.ClearRestriction(ctx, id)
+}
+
+func (r racingJobs) concurrentRetry(ctx context.Context, id string) {
+	if _, err := r.Memory.Restart(ctx, id); err != nil {
+		panic("racingJobs: concurrent retry: " + err.Error())
+	}
+}
+
+// newRacingErasureAdmin builds the admin router over racingJobs, with the
+// runner writing the inner store so the erase that seeds the failed job
+// is not raced.
+func newRacingErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, *userstore.Memory, *erasurejob.Memory) {
+	t.Helper()
+	users := userstore.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
+	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: erasureClock,
+		Audit: &recordingAudit{},
+	}).WithUsers(users).WithErasure(runner, racingJobs{Memory: jobs})
+	return router, users, jobs
+}
+
+// errorMessage decodes the message of an error envelope.
+func errorMessage(t *testing.T, body []byte) string {
+	t.Helper()
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode error envelope: %v (body %s)", err, body)
+	}
+	return env.Error.Message
+}
+
+// TestNotFailedRefusalReportsLockedPhase_spec_15_1 pins the phase an
+// ERASURE_JOB_NOT_FAILED refusal from the store reports: the handler reads
+// the job as failed, a concurrent retry restarts it before the store
+// locks the row, and the 409 names the phase the store refused on
+// (initiated) rather than the handler's earlier read (failed).
+// spec: 15.1 (REST API), 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
+func TestNotFailedRefusalReportsLockedPhase_spec_15_1(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body, subject string
+	}{
+		{"clear", "/clear-processing-restriction", `{"justification":"operator review"}`, "ivan@acme.com"},
+		{"retry", "/retry", "", "judy@acme.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
+				{Name: "broken", DeleteByUser: func(context.Context, string, string) (int, error) {
+					return 0, context.DeadlineExceeded
+				}},
+			}})
+			router, users, jobs := newRacingErasureAdmin(t, orch)
+			seedUser(t, users, "acme", tc.subject)
+			jobID := initiateAndFail(t, router, jobs, tc.subject)
+
+			req := withAdminPrincipal(httptest.NewRequest(http.MethodPost,
+				"/v1/admin/erasure-jobs/"+jobID+tc.path, bytes.NewReader([]byte(tc.body))))
+			rr := httptest.NewRecorder()
+			router.Handler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusConflict || errorCode(t, rr.Body.Bytes()) != "ERASURE_JOB_NOT_FAILED" {
+				t.Fatalf("%s behind a concurrent retry: %d %s, want 409 ERASURE_JOB_NOT_FAILED", tc.name, rr.Code, rr.Body.String())
+			}
+			msg := errorMessage(t, rr.Body.Bytes())
+			if !strings.Contains(msg, "phase "+string(erasurejob.PhaseInitiated)) || strings.Contains(msg, "phase "+string(erasurejob.PhaseFailed)) {
+				t.Fatalf("refusal message = %q, want the locked phase initiated", msg)
+			}
+		})
 	}
 }

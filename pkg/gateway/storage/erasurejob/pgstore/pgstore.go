@@ -217,7 +217,7 @@ func (s *Store) Restart(ctx context.Context, id string) (erasurejob.Job, error) 
 			return err
 		}
 		if j.Phase != erasurejob.PhaseFailed {
-			return erasurejob.ErrNotFailed
+			return &erasurejob.NotFailedError{Phase: j.Phase}
 		}
 		erasurejob.RestartJob(&j, s.now())
 		if err := writeJob(ctx, tx, j); err != nil {
@@ -268,7 +268,7 @@ func (s *Store) ClearRestriction(ctx context.Context, id string) (erasurejob.Job
 			return err
 		}
 		if j.Phase != erasurejob.PhaseFailed {
-			return erasurejob.ErrNotFailed
+			return &erasurejob.NotFailedError{Phase: j.Phase}
 		}
 		if err := userpg.ClearProcessingRestrictionTx(ctx, tx, j.TenantID, j.UserID, j.ID); err != nil {
 			return err

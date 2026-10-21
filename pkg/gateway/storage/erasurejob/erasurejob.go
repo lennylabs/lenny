@@ -140,7 +140,9 @@ var (
 	ErrInvalidTenant = errors.New("erasurejob: a concrete tenant ID is required")
 	// ErrNotFailed — Restart or ClearRestriction found the job in a
 	// phase other than failed. Only a failed job is retried or has its
-	// restriction cleared by an operator.
+	// restriction cleared by an operator. The stores return it wrapped in
+	// *NotFailedError, which carries the phase read under the job's lock;
+	// match it with errors.Is.
 	ErrNotFailed = errors.New("erasurejob: job is not failed")
 	// ErrJobMoved — the stored job is no longer the attempt the writer
 	// read (SameAttempt failed), so the write was refused and nothing
@@ -167,6 +169,26 @@ type ErrActiveJob struct {
 func (e *ErrActiveJob) Error() string {
 	return "erasurejob: user " + e.Job.UserID + " already has erasure job " + e.Job.ID + " in progress"
 }
+
+// NotFailedError is the refusal Restart and ClearRestriction return when
+// the job, read under the write's own lock, is not failed. Phase is that
+// locked read, so a caller that reports the phase names the one the store
+// refused on rather than an earlier read taken outside the lock. It
+// satisfies errors.Is(err, ErrNotFailed).
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §15.1 (REST API).
+type NotFailedError struct {
+	Phase Phase
+}
+
+// Error implements error.
+func (e *NotFailedError) Error() string {
+	return ErrNotFailed.Error() + " (phase " + string(e.Phase) + ")"
+}
+
+// Unwrap returns ErrNotFailed so errors.Is matches the sentinel.
+func (e *NotFailedError) Unwrap() error { return ErrNotFailed }
 
 // SameAttempt reports whether stored is still the job read was taken
 // from: equal Phase and equal len(PhaseLog). The PhaseLog length refuses a
@@ -204,11 +226,11 @@ type Store interface {
 	// Restart moves a failed job back to initiated, clears Failure,
 	// CompletedAt, ErasedAt, ReceiptAt, and Billing, appends initiated to
 	// PhaseLog, and sets the user's flag naming the job, in one
-	// transaction. It returns ErrNotFailed when the job is not failed and
+	// transaction. It returns *NotFailedError when the job is not failed and
 	// *ErrActiveJob when another job for the user is in progress.
 	Restart(ctx context.Context, id string) (Job, error)
 	// ClearRestriction is the operator clear of a failed job's
-	// restriction. It returns ErrNotFailed when the job is not failed and
+	// restriction. It returns *NotFailedError when the job is not failed and
 	// userstore.ErrRestrictionHeldByOtherJob when the user's
 	// erasure_job_id names another job, and writes nothing in either case.
 	ClearRestriction(ctx context.Context, id string) (Job, error)

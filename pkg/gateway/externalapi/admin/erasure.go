@@ -300,7 +300,7 @@ func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request)
 		var active *erasurejob.ErrActiveJob
 		switch {
 		case errors.Is(err, erasurejob.ErrNotFailed):
-			writeErasureJobNotFailed(w, job.Phase, "retried")
+			writeErasureJobNotFailed(w, lockedPhase(err, job.Phase), "retried")
 		case errors.As(err, &active):
 			writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 				"erasure job "+active.Job.ID+" for the user is in progress", nil)
@@ -372,7 +372,7 @@ func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.
 	if _, err := r.erasureJobs.ClearRestriction(req.Context(), jobID); err != nil {
 		switch {
 		case errors.Is(err, erasurejob.ErrNotFailed):
-			writeErasureJobNotFailed(w, job.Phase, "cleared")
+			writeErasureJobNotFailed(w, lockedPhase(err, job.Phase), "cleared")
 		case errors.Is(err, userstore.ErrRestrictionHeldByOtherJob):
 			writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 				"the user's processing restriction is held by another erasure job", nil)
@@ -449,6 +449,21 @@ func (r *Router) lookupErasureJob(w http.ResponseWriter, req *http.Request, jobI
 func writeErasureJobNotFailed(w http.ResponseWriter, phase erasurejob.Phase, action string) {
 	writeError(w, http.StatusConflict, "ERASURE_JOB_NOT_FAILED",
 		"erasure job is in phase "+string(phase)+"; only a failed job can be "+action, nil)
+}
+
+// lockedPhase returns the phase a store's ErrNotFailed refusal read under
+// the job's lock. The handler's own read runs before the lock, so a retry
+// or a completion that lands in between leaves that read at failed while
+// the store refused on another phase; the response names the locked one.
+// fallback is returned only for a refusal that carries no phase.
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §15.1 (REST API).
+func lockedPhase(err error, fallback erasurejob.Phase) erasurejob.Phase {
+	var nf *erasurejob.NotFailedError
+	if errors.As(err, &nf) {
+		return nf.Phase
+	}
+	return fallback
 }
 
 // callerMaySeeTenant reports whether the request's principal is

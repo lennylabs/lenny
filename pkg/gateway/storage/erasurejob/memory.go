@@ -116,7 +116,7 @@ func (m *Memory) Restart(ctx context.Context, id string) (Job, error) {
 		return Job{}, ErrNotFound
 	}
 	if j.Phase != PhaseFailed {
-		return Job{}, ErrNotFailed
+		return Job{}, &NotFailedError{Phase: j.Phase}
 	}
 	if active, ok := m.activeForUserLocked(j.TenantID, j.UserID, id); ok {
 		return Job{}, &ErrActiveJob{Job: cloneJob(active)}
@@ -142,7 +142,7 @@ func (m *Memory) ClearRestriction(ctx context.Context, id string) (Job, error) {
 		return Job{}, ErrNotFound
 	}
 	if j.Phase != PhaseFailed {
-		return Job{}, ErrNotFailed
+		return Job{}, &NotFailedError{Phase: j.Phase}
 	}
 	if err := m.restrictor.ClearProcessingRestrictionForJob(ctx, j.TenantID, j.UserID, id); err != nil {
 		return Job{}, err
