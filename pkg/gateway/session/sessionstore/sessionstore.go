@@ -935,7 +935,56 @@ const (
 type Store interface {
 	// Create persists a fresh session row. Returns ErrAlreadyExists
 	// if a session with the same ID already exists.
+	//
+	// Create runs the creation fence: in the insert transaction it reads
+	// the tenant row and the owner's user row under a shared lock and
+	// returns *CreationRefusal, inserting nothing, when CreationMarkers.Refusal
+	// refuses the row. A marker read error fails the insert. In the same
+	// transaction it deletes the reservation whose ID and owner match the
+	// row. A missing tenant row reaches the fence only in the in-memory
+	// store; in Postgres the sessions.tenant_id foreign key rejects the
+	// insert first.
+	// spec: §12.8 (Lifecycle fence and drain).
 	Create(ctx context.Context, s Session) error
+
+	// Reserve runs the creation fence for a row that ownerUserID will own
+	// and records sessionID for that owner, in one transaction. It returns
+	// *CreationRefusal when the fence refuses, and records nothing. An
+	// empty ownerUserID reads only the tenant row and records nothing.
+	// delegatedChild is the CreationMarkers.IsDelegatedChild of the row the
+	// path will insert. A path that writes data keyed to the new session
+	// ID before its insert reserves the ID first, so the owner's erasure
+	// reaches that data through ReservedSessionIDs.
+	// spec: §12.8 (Lifecycle fence and drain).
+	Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error
+
+	// ReleaseReservation deletes the reservation of sessionID. It is
+	// idempotent. A path releases its reservation only after it deleted
+	// what it wrote under the ID.
+	// spec: §12.8 (Lifecycle fence and drain).
+	ReleaseReservation(ctx context.Context, tenantID, sessionID string) error
+
+	// ReservedSessionIDs lists the session IDs reserved for userID within
+	// tenantID, read from the primary. The erasure's session lister returns
+	// them with the user's session rows.
+	// spec: §12.8 (Lifecycle fence and drain).
+	ReservedSessionIDs(ctx context.Context, tenantID, userID string) ([]string, error)
+
+	// CreateReserved is Create for a row whose ID was reserved through
+	// Reserve. For a row with an owner it deletes the reservation in the
+	// insert transaction and, when no reservation is left to delete,
+	// returns ReservationEndedRefusal and inserts nothing. A row with no
+	// owner inserts as Create does.
+	// spec: §12.8 (Lifecycle fence and drain).
+	CreateReserved(ctx context.Context, s Session) error
+
+	// CreateWithTranscript is Create, plus a copy of the transcript of
+	// transcriptSourceID into s.ID, in Create's transaction. A fence
+	// refusal, a copy error, or any other insert error leaves neither the
+	// row nor a copied entry. A store built without a transcript copier
+	// returns ErrTranscriptCopierUnwired and inserts nothing.
+	// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+	CreateWithTranscript(ctx context.Context, s Session, transcriptSourceID string) error
 
 	// Get returns the session row whose ID equals id within tenantID.
 	// Returns ErrNotFound when no matching row exists (including
@@ -983,18 +1032,21 @@ type Store interface {
 	// DeleteByUser removes every session owned by userID within
 	// tenantID and returns the count deleted. It is the §12.8
 	// GDPR-erasure per-store adapter — erasing a user with no sessions
-	// is a no-op that returns (0, nil), never ErrNotFound.
+	// is a no-op that returns (0, nil), never ErrNotFound. In the same
+	// transaction it deletes the user's session-ID reservations, which
+	// the count does not include.
 	//
-	// spec: §12.1, §12.8 step 17.
+	// spec: §12.1, §12.8 step 17, §12.8 (Lifecycle fence and drain).
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant removes every session row belonging to tenantID
 	// and returns the count deleted. It is the §12.1 / §12.8 Phase 4
 	// tenant-deletion erasure adapter — a tenant with no sessions is
 	// a no-op that returns (0, nil), never ErrNotFound. Cross-tenant
-	// rows are never touched.
+	// rows are never touched. In the same transaction it deletes the
+	// tenant's session-ID reservations, which the count does not include.
 	//
-	// spec: §12.1, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4, §12.8 (Lifecycle fence and drain).
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// GetActiveSlotsByPod returns the identifiers of the pod's slot

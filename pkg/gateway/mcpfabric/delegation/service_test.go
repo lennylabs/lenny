@@ -421,6 +421,26 @@ func (c *countingStore) Create(ctx context.Context, s sessionstore.Session) erro
 	return c.inner.Create(ctx, s)
 }
 
+func (c *countingStore) Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error {
+	return c.inner.Reserve(ctx, tenantID, ownerUserID, sessionID, delegatedChild)
+}
+
+func (c *countingStore) ReleaseReservation(ctx context.Context, tenantID, sessionID string) error {
+	return c.inner.ReleaseReservation(ctx, tenantID, sessionID)
+}
+
+func (c *countingStore) ReservedSessionIDs(ctx context.Context, tenantID, userID string) ([]string, error) {
+	return c.inner.ReservedSessionIDs(ctx, tenantID, userID)
+}
+
+func (c *countingStore) CreateReserved(ctx context.Context, s sessionstore.Session) error {
+	return c.inner.CreateReserved(ctx, s)
+}
+
+func (c *countingStore) CreateWithTranscript(ctx context.Context, s sessionstore.Session, transcriptSourceID string) error {
+	return c.inner.CreateWithTranscript(ctx, s, transcriptSourceID)
+}
+
 func (c *countingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	c.gets++
 	return c.inner.Get(ctx, tenantID, id)

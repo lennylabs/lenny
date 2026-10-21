@@ -223,3 +223,27 @@ func normalizeMiss(err error) error {
 	}
 	return err
 }
+
+// CopySessionTx copies the transcript of sourceSessionID into
+// destSessionID on tx, in one INSERT ... SELECT. The copy renumbers seq from
+// 1 in the source order and keeps each entry's role, content, timestamp, and
+// schema version; each copied row gets a new id. A source with no transcript
+// copies nothing and returns nil. tx must carry the tenant context
+// (pgtenant.InTx) and must already hold the destination session row, which
+// session_messages.session_id references.
+//
+// The session store calls it from CreateWithTranscript on the replayed
+// session's insert transaction, so the copied rows commit only with the
+// session row, behind the creation fence.
+// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+func CopySessionTx(ctx context.Context, tx pgx.Tx, tenantID, sourceSessionID, destSessionID string) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO session_messages
+		 (id, session_id, tenant_id, seq, role, content, created_at, schema_version)
+		 SELECT gen_random_uuid(), $1::uuid, tenant_id, row_number() OVER (ORDER BY seq),
+		        role, content, created_at, schema_version
+		   FROM session_messages
+		  WHERE session_id = $2::uuid AND tenant_id = $3`,
+		destSessionID, sourceSessionID, tenantID)
+	return err
+}

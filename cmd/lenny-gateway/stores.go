@@ -273,7 +273,10 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			}
 			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
 		}
-		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool))
+		// spec: §12.8 (Lifecycle fence and drain) — the replay transcript
+		// copy runs on the replayed session's insert transaction.
+		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool),
+			sessionpg.WithTranscriptCopier(transcriptpg.CopySessionTx))
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
 		capOverrides = capoverridepg.New(pool)
@@ -285,12 +288,19 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		// holds a raw pool. F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.7.1.
 		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
 	} else {
-		sessMem := memstore.New()
 		tenantMem := tenantstore.NewMemory()
 		runtimeMem := runtimestore.NewMemory()
 		capMem := runtimecapoverride.NewMemory()
 		transcriptMem := transcriptstore.NewMemory()
 		userMem := userstore.NewMemory()
+		// spec: §12.8 (Lifecycle fence and drain) — the in-memory session
+		// store fences every insert on this branch's tenant and user
+		// stores, and copies a replayed transcript under its own lock.
+		// Source Mode restores these same stores, so it shares the wiring.
+		sessMem := memstore.New(
+			memstore.WithCreationMarkers(memstore.StoreMarkers(tenantMem, userMem)),
+			memstore.WithTranscriptCopier(transcriptMem.CopySession),
+		)
 		connectorMem := connectorstore.NewMemory()
 		billingMem := billingstore.NewMemory()
 		sessions = sessMem

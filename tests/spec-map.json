@@ -3349,7 +3349,12 @@
         "tests/tier9_security/full_revoke_lease_return_test.go",
         "tests/tier4_integration/full_revoke_two_replica_test.go",
         "tests/tier7a_load_local/full_revoke_sweep_terminal_race_test.go",
-        "tests/tier8_chaos/full_revoke_denylist_drop_test.go"
+        "tests/tier8_chaos/full_revoke_denylist_drop_test.go",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalCrossProduct_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalSoftDisabledAdmitsOnlyDelegatedChild_spec_11_4",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceClassifiesByDelegationDepth_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceRefusesEachMarker_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceRefusesInTransaction_spec_12_8"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3554,7 +3559,8 @@
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
         "migrations/0178_checkpoint_manifest_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestPrimaryPartitionDoesNotStallMessages_spec_12_3"
+        "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestPrimaryPartitionDoesNotStallMessages_spec_12_3",
+        "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservedSessionIDsReadsPrimary_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -3706,7 +3712,27 @@
         "tests/tier4_integration/tenant_deletion_phase4_test.go",
         "pkg/gateway/storage/erasure/tenant_order_test.go",
         "pkg/gateway/mcpfabric/delegationtree/treearchive/erasure_tenant_test.go",
-        "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8"
+        "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalCrossProduct_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalIsTypedError_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalMissingRowsCarryNoMarker_spec_12_8",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalSoftDisabledAdmitsOnlyDelegatedChild_spec_11_4",
+        "pkg/gateway/session/sessionstore/creation_fence_test.go::TestCreationRefusalTenantStateMatchesAcceptsNewWork_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/create_with_transcript_test.go::TestMemstoreCreateWithTranscript_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/create_with_transcript_test.go::TestMemstoreReplayTranscriptAgainstErasure_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceClassifiesByDelegationDepth_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceFailsClosedOnReadError_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceRefusesEachMarker_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreReservations_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreSnapshotCarriesReservations_spec_12_8",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreUnfencedStoreAdmits_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_create_with_transcript_test.go::TestSessionStoreCreateWithTranscript_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceRefusesInTransaction_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceSerializesWithMarkerWriters_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservations_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservedSessionIDsReadsPrimary_spec_12_8",
+        "tests/tier7a_load_local/creation_fence_race_test.go::TestCreationFenceRaceAgainstMarkerAndDrain_spec_12_8",
+        "tests/tier7a_load_local/replay_transcript_erasure_race_test.go::TestReplayTranscriptCopyRaceAgainstErasure_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -4351,7 +4377,10 @@
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestResumeAndInterruptToolsMatchREST_spec_15_2_1",
         "tests/tier11_docs/suspension_flag_help_doc_consistency_test.go::TestNoReaderPageNamesTheRetiredResumeTerms",
         "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
+        "pkg/gateway/session/sessionstore/memstore/create_with_transcript_test.go::TestMemstoreCreateWithTranscript_spec_12_8",
+        "tests/tier2_component/stores/sessionstore_create_with_transcript_test.go::TestSessionStoreCreateWithTranscript_spec_12_8",
+        "tests/tier7a_load_local/replay_transcript_erasure_race_test.go::TestReplayTranscriptCopyRaceAgainstErasure_spec_12_8"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5027,7 +5056,8 @@
         "tests/tier9_security/embedded_gateway_loopback_test.go",
         "tests/tier9_security/admission_token_service_gate_render_test.go",
         "tests/tier4_integration/source_mode_protocols_test.go",
-        "tests/tier11_docs/embedded_manifests_sync_test.go"
+        "tests/tier11_docs/embedded_manifests_sync_test.go",
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreSnapshotCarriesReservations_spec_12_8"
       ],
       "packages": [
         "cmd/lenny-dev",
@@ -5371,7 +5401,8 @@
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
+        "tests/tier7a_load_local/creation_fence_race_test.go::TestCreationFenceRaceAgainstMarkerAndDrain_spec_12_8"
       ],
       "packages": [
         "cmd/lenny-ctl"
