@@ -185,6 +185,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	if err := validatePrimaryReadTimeout(*f.sessionPrimaryReadTimeout); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -252,6 +255,16 @@ func (w *gatewayWiring) buildStartupGates() {
 func validatePrimaryReadTimeout(d time.Duration) error {
 	if d <= 0 {
 		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
+}
+
+// validateLifecycleTickBudget rejects a non-positive
+// --lifecycle-tick-budget, which would expire every lifecycle drain
+// before its first session and stall every tenant deletion at Phase 2.
+func validateLifecycleTickBudget(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--lifecycle-tick-budget must be positive, got %s (§12.8)", d)
 	}
 	return nil
 }

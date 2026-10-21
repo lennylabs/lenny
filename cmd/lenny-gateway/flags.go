@@ -347,6 +347,7 @@ type gatewayFlags struct {
 	legalHoldEscrowBucket                         *string
 	legalHoldEscrowEndpoint                       *string
 	tenantDeletionInterval                        *time.Duration
+	lifecycleTickBudget                           *time.Duration
 
 	// externalInterceptors collects each repeatable --external-interceptor
 	// value (§4.8 external RequestInterceptor registration). It is appended
@@ -1348,4 +1349,11 @@ func (f *gatewayFlags) registerOpsFlags() {
 	// operator-tunable.
 	f.tenantDeletionInterval = flag.Duration("tenant-deletion-interval", envDuration("LENNY_TENANT_DELETION_INTERVAL", 30*time.Second),
 		"§12.8 tenant-deletion runner tick. Each tick advances every in-flight tenant deletion by one phase. Default 30s. Override via LENNY_TENANT_DELETION_INTERVAL.")
+	// The bound on each §12.8 lifecycle drain a background tick runs, such
+	// as the tenant-deletion Phase 2 drain. A drain that exceeds it stops
+	// between sessions and counts as a drain failure, so the job stays in
+	// its phase and the next tick re-runs the drain. The specification
+	// fixes no bound, so the 10-minute default is operator-tunable.
+	f.lifecycleTickBudget = flag.Duration("lifecycle-tick-budget", envDuration("LENNY_LIFECYCLE_TICK_BUDGET", 10*time.Minute),
+		"§12.8 bound on each lifecycle drain a background tick runs (the tenant-deletion Phase 2 drain). A drain that exceeds it is a drain failure retried on the next tick. Must be positive. Default 10m. Override via LENNY_LIFECYCLE_TICK_BUDGET.")
 }

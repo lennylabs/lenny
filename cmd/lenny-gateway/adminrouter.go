@@ -169,6 +169,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	billingDualControlThreshold := f.billingDualControlThreshold
 	legalHoldEscrowBucket := f.legalHoldEscrowBucket
 	tenantDeletionInterval := f.tenantDeletionInterval
+	lifecycleTickBudget := f.lifecycleTickBudget
 	minioBucket := f.minioBucket
 	minioUseSSL := f.minioUseSSL
 	opsServiceURL := f.opsServiceURL
@@ -722,7 +723,15 @@ func (w *gatewayWiring) buildAdminRouter(
 			Jobs:     tenantdeletion.NewMemory(),
 			Eraser:   &tenantEraser{erasers: tenantErasers},
 			Disabler: tenantStateDisabler{tenants: w.tenants, clock: clockinject.Now},
-			Clock:    clockinject.Now,
+			// §12.8 Phase 2: drain the tenant's sessions through the shared
+			// lifecycle drain, each drain bounded by --lifecycle-tick-budget.
+			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+			Terminator: tenantSessionTerminator{
+				sessions: w.sessions,
+				term:     sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal},
+				budget:   *lifecycleTickBudget,
+			},
+			Clock: clockinject.Now,
 		}
 		if auditAppender != nil {
 			deletionReconciler.Receipts = auditReceiptSink{appender: auditAppender, clock: clockinject.Now}

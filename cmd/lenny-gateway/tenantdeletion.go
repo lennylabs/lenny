@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -52,6 +53,33 @@ func (d tenantStateDisabler) SoftDisableTenant(ctx context.Context, tenantID str
 		return nil
 	})
 	return err
+}
+
+// tenantSessionTerminator is the §12.8 Phase 2 SessionTerminator. It
+// runs the lifecycle drain over the whole tenant under a per-drain
+// budget, so one tenant's drain delays the other tenants' deletion by at
+// most one budget. A budget expiry ends the drain between sessions and
+// is returned as a drain error, which keeps the job at Phase 2 for the
+// next tick.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+type tenantSessionTerminator struct {
+	sessions admin.DrainLister
+	term     admin.DrainTerminator
+	// budget bounds each drain. It is the operator-tunable
+	// --lifecycle-tick-budget, which the startup gate requires positive.
+	budget time.Duration
+}
+
+// TerminateTenantSessions drains every non-terminal session of tenantID
+// and returns the drain's error.
+func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
+	tctx, cancel := context.WithTimeout(ctx, t.budget)
+	defer cancel()
+	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, tenantID, ""); err != nil {
+		return fmt.Errorf("tenant deletion drain: %w", err)
+	}
+	return nil
 }
 
 // namedTenantEraser pairs a store name with its DeleteByTenant function.
@@ -319,8 +347,11 @@ func (rn *tenantDeletionRunner) ensureJob(ctx context.Context, t tenantstore.Ten
 // syncBack reflects a job's progress onto the tenant row: a completed
 // lifecycle tombstones the tenant; an in-progress job advances the tenant
 // state (disabling → deleting) so GET /v1/admin/tenants/{id} surfaces
-// real progress; a failed or blocked job leaves the tenant in `deleting`
-// for operator attention.
+// real progress. A job paused at Phase 2 on a drain that did not verify
+// keeps state `disabling`, so a job rebuilt after a restart resumes at
+// Phase 1 and re-runs the drain. A Phase 3.5 block leaves the tenant in
+// `deleting`, and a failed job leaves it where it is for operator
+// attention.
 func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 	job, err := rn.reconciler.Jobs.Get(ctx, tenantID)
 	if err != nil {
@@ -333,7 +364,8 @@ func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 			log.Printf("lenny-gateway: tenant-deletion tombstone %q: %v", tenantID, err)
 		}
 	case tenantdeletion.PhaseFailed:
-		// Leave the tenant where it is; an operator retries the job.
+		// Leave the tenant where it is. A failed job is terminal for the
+		// controller and needs operator attention.
 	default:
 		// Reflect the job's coarse state onto the tenant row so a GET
 		// surfaces progress. The job reaches state `deleted` already at the

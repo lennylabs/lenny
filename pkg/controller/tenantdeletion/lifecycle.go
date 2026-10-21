@@ -186,12 +186,16 @@ type Job struct {
 	Receipt *Receipt
 	// Failure carries the error reason when Phase is failed.
 	Failure string
-	// BlockedReason carries the §12.8 Phase 3.5 standard-path pause
-	// reason while one or more active legal holds prevent the deletion
-	// from advancing into Phase 4. It is empty once the holds clear (or
-	// the operator exercises the force-delete override). The job stays at
-	// PhaseLegalHoldSegregation, not PhaseFailed, while blocked so a later
-	// pass re-evaluates the ledger without an operator retry.
+	// BlockedReason carries the reason a job is paused in phase rather
+	// than failed. At PhaseTerminateSessions it is the error of the last
+	// §12.8 Phase 2 drain that did not verify, and the job keeps State
+	// disabling so the next pass re-runs the drain. At
+	// PhaseLegalHoldSegregation it is the §12.8 Phase 3.5 pause reason
+	// while one or more active legal holds prevent the deletion from
+	// advancing into Phase 4, or the escrow region is unresolvable on the
+	// override path. It is cleared when the phase advances. A paused job
+	// stays in its phase, rather than PhaseFailed, so a later pass retries
+	// without an operator action.
 	BlockedReason string
 	// BlockedHolds is the set of active tenant-scoped legal holds the
 	// §12.8 Phase 3.5 enumeration found, carried so the
