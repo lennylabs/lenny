@@ -2848,6 +2848,7 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
     and is the only check that also exercises `SCAN` on a real cluster.
   - Size: about 15 production files and 20 test files; tiers 0, 1, 2, 4, and 9, plus 3 if the channels are
     renamed.
+  - Also land F-12.4.30 (concern-specific probes and health checks ping the base client), about five files.
 - [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule** (not yet written). F-12.4.28
   class B/C, 3 operations in 1 family.
   - **Scope.** §25.4 describes one Lua script over `ops:lock:{scope}` that also reads `ops:lock-epoch:current`
@@ -2861,7 +2862,10 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
   - **Open question for the owner.** §17.8.2 places coordination on Sentinel and quota on Redis Cluster at
     Tier 3, but `redistopology.Build` cannot express a per-concern topology, so every store shares the
     cluster. Whether the separation is still required is under analysis (2026-10-21); the answer decides
-    whether P6 relaxes §17.8.2 or a code finding adds per-concern topology.
+    whether P6 relaxes §17.8.2 or a code finding adds per-concern topology. The 2026-10-21 analysis found
+    the split rests on throughput and latency-isolation reasons only (finding SCA-004, 2026-04-04), none of
+    them a correctness need, and recommends relaxing §17.8.2 and §12.4 so one cluster may serve every
+    concern at Tier 3; awaiting the owner's answer.
   - **Drafting.** Under the drafting rules and the test instruction above; about 10 to 20 lines of spec text.
   - **Dependencies.** Independent of P1 to P5b; its code stays inside `pkg/ops/coordination/redisstore`, its
     tests, and the tier-11 key registry check.
