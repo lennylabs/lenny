@@ -9,7 +9,8 @@
 // through the admin API, and asserts that Phase 2 drains every live
 // session before Phase 4 deletes it, and that Phase 4 completes and
 // leaves none of the tenant's rows behind while a second tenant's rows
-// and live sessions survive.
+// and live sessions survive. Every run logs how long the deletion took to
+// get through its Phase 2 drain.
 package tier4_integration_test
 
 import (
@@ -282,6 +283,57 @@ func assertDrainedBeforeDeletion(t *testing.T, ctx context.Context, pool *pgxpoo
 	}
 }
 
+// drainPollInterval is how often awaitSessionsTerminal reads the session
+// rows. It is well below the gateway's tenant-deletion interval, so the
+// measured drain time overstates the drain by at most one poll.
+const drainPollInterval = 25 * time.Millisecond
+
+// awaitSessionsTerminal polls the primary until every session in ids is
+// terminal or deleted and returns the time from start to the first poll
+// that saw it. Every one of ids is live before the deletion, so the
+// returned duration is the time the deletion took to get through its Phase
+// 2 drain. The test logs it on every run, because a long Phase 2 drain
+// delays the tenant-deletion tick and the run is where that delay shows.
+func awaitSessionsTerminal(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string, ids []string, start time.Time, timeout time.Duration) time.Duration {
+	t.Helper()
+	deadline := start.Add(timeout)
+	for {
+		live := liveSessionCount(t, ctx, pool, tenant, ids)
+		if live == 0 {
+			return time.Since(start)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d %s sessions still live %s after the DELETE request; Phase 2 never drained them", live, tenant, timeout)
+		}
+		time.Sleep(drainPollInterval)
+	}
+}
+
+// liveSessionCount returns how many of ids are still non-terminal rows of
+// tenant. A deleted row counts as drained.
+func liveSessionCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string, ids []string) int {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT state FROM sessions WHERE tenant_id = $1 AND id::text = ANY($2)`, tenant, ids)
+	if err != nil {
+		t.Fatalf("read %s session states: %v", tenant, err)
+	}
+	defer rows.Close()
+	live := 0
+	for rows.Next() {
+		var state string
+		if err := rows.Scan(&state); err != nil {
+			t.Fatalf("scan %s session state: %v", tenant, err)
+		}
+		if !session.IsTerminal(session.State(state)) {
+			live++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read %s session states: %v", tenant, err)
+	}
+	return live
+}
+
 // assertGlobexLive asserts the other tenant's live sessions are untouched.
 func assertGlobexLive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, live []string) {
 	t.Helper()
@@ -369,9 +421,12 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 		}
 	}
 
+	deleteSent := time.Now()
 	if code, raw := adminDo(http.MethodDelete, "/v1/admin/tenants/acme", nil); code != http.StatusAccepted {
 		t.Fatalf("DELETE /v1/admin/tenants/acme: status %d: %s", code, raw)
 	}
+	t.Logf("tenant deletion Phase 2 drain: %d acme sessions terminal %.3fs after the DELETE request",
+		len(acmeLive), awaitSessionsTerminal(t, ctx, pg.Pool, "acme", acmeLive, deleteSent, 90*time.Second).Seconds())
 
 	// The runner advances one phase per tick; the tombstone (`deleted`)
 	// is written only after Phase 4 and the Phase 6 receipt succeed.

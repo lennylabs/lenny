@@ -91,6 +91,52 @@ func TestDeletionReconcilerLogsPhase2PauseThroughTestLog_spec_12_8(t *testing.T)
 	}
 }
 
+// TestDeletionPhase2LogsDrainTimeThroughTestLog_spec_12_8 runs one
+// successful and one faulted Phase 2 drain and requires each drain's
+// record, with its tenant, elapsed_seconds, and terminated count, to reach
+// the test log, and the faulted one to carry its error. A Phase 2 drain
+// that records no timing leaves the tier-8 deletion runs without the drain
+// time that bounds the tenant-deletion tick delay.
+//
+// spec: 12.8 (Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+func TestDeletionPhase2LogsDrainTimeThroughTestLog_spec_12_8(t *testing.T) {
+	tb := &captureTB{T: t}
+	w := NewWorld(tb, MemoryStores(), 1)
+	d := w.NewDeletion()
+	ctx := context.Background()
+	if err := d.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatalf("Phase 1 tick: %v", err)
+	}
+	w.Faults.FailDrainListings(1)
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatalf("faulted Phase 2 tick: %v", err)
+	}
+	if !tb.logged("tenant deletion phase 2 drain finished", "tenant_id="+w.Tenant, "elapsed_seconds=", "terminated=0", `error="`+faultedDrainError(t, w)) {
+		t.Fatalf("the faulted Phase 2 drain's record never reached the test log with its error: %v", tb.lines)
+	}
+	if _, err := d.ThroughPhase2(ctx, 4); err != nil {
+		t.Fatalf("Phase 2 after the fault: %v", err)
+	}
+	if !tb.logged("tenant deletion phase 2 drain finished", "tenant_id="+w.Tenant, "elapsed_seconds=", `error=""`) {
+		t.Fatalf("the successful Phase 2 drain's elapsed time never reached the test log: %v", tb.lines)
+	}
+}
+
+// faultedDrainError returns the leading text of the error a faulted drain
+// listing returns, as the drain record quotes it.
+func faultedDrainError(t *testing.T, w *World) string {
+	t.Helper()
+	w.Faults.FailDrainListings(1)
+	_, err := w.Drain(context.Background(), "")
+	if err == nil {
+		t.Fatal("a faulted drain listing returned no error")
+	}
+	return err.Error()
+}
+
 // TestTestLogWriterDropsRecordsAfterTheTestEnds_spec_12_8 requires a record
 // written after the writer closes to be dropped rather than passed to
 // t.Log, which panics once its test has completed.

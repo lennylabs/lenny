@@ -11,9 +11,10 @@ import (
 
 // testLogWriter writes each slog record through t.Log, so a scenario's
 // verbose output carries what the erasure runner and the tenant-deletion
-// reconciler log: the drain's elapsed_seconds and any Phase 2 pause
-// warning. The tier-8 and tier-7a runs rely on that output to show how long
-// each drain took.
+// reconciler log: the erasure drain's elapsed_seconds, the Phase 2 drain
+// record the harness terminator writes with its elapsed_seconds, and any
+// Phase 2 pause warning. The tier-8 and tier-7a runs rely on that output to
+// show how long each drain took.
 //
 // A record written after the test has finished is dropped rather than
 // passed to t.Log, which panics once its test has completed. A runner

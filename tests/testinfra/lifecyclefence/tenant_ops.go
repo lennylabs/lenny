@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
@@ -344,17 +345,41 @@ func (d disabler) SoftDisableTenant(ctx context.Context, tenantID string) error 
 }
 
 // phase2Drain is the Phase 2 SessionTerminator: the shared drain over the
-// whole tenant.
+// whole tenant. It logs each drain's elapsed time, because a long Phase 2
+// drain delays the tenant-deletion tick and the tier-8 runs make that delay
+// observable through the test log.
 type phase2Drain struct{ w *World }
 
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain)
 func (p phase2Drain) TerminateTenantSessions(ctx context.Context, tenantID string) error {
 	if tenantID != p.w.Tenant {
 		return fmt.Errorf("phase 2 drain of foreign tenant %s", tenantID)
 	}
-	if _, err := p.w.Drain(ctx, ""); err != nil {
+	start := time.Now()
+	res, err := p.w.Drain(ctx, "")
+	p.logDrain(ctx, tenantID, time.Since(start), res, err)
+	if err != nil {
 		return fmt.Errorf("tenant deletion drain: %w", err)
 	}
 	return nil
+}
+
+// logDrain records one Phase 2 drain: the tenant, how long it took, how
+// many sessions it terminated, and the error it returned, if any.
+func (p phase2Drain) logDrain(ctx context.Context, tenantID string, elapsed time.Duration, res admin.DrainResult, err error) {
+	p.w.Logger.InfoContext(ctx, "tenant deletion phase 2 drain finished",
+		"tenant_id", tenantID,
+		"elapsed_seconds", elapsed.Seconds(),
+		"terminated", res.Terminated,
+		"error", errString(err))
+}
+
+// errString renders err for a log attribute, empty when err is nil.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 type noopEraser struct{}
