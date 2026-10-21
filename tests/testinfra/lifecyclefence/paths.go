@@ -58,6 +58,10 @@ type CreateOutcome struct {
 	// Crashed reports that the path stopped after its pre-insert writes,
 	// as a gateway replica that dies between the copy and the insert does.
 	Crashed bool
+	// ReservationKept reports that the undo after a failed insert could not
+	// delete what the path wrote under the ID, so the path left the
+	// reservation in place for the owner's erasure to reach.
+	ReservationKept bool
 }
 
 // Refused reports whether the creation fence refused the create.
@@ -129,10 +133,7 @@ func (w *World) run(ctx context.Context, path Path, owner string, crash bool) Cr
 
 // reservedWrite runs the reserve, write, insert, and undo sequence of a
 // path that writes data keyed to the new session ID before its insert. A
-// crash stops after the write. Any insert failure deletes the objects and
-// the manifest row on a detached context and only then releases the
-// reservation, so the owner's erasure reaches whatever a failed deletion
-// would leave.
+// crash stops after the write. Any insert failure runs the undo.
 func (w *World) reservedWrite(ctx context.Context, o *CreateOutcome, delegatedChild, crash bool, insert func() error) {
 	if o.Err = w.S.Sessions.Reserve(ctx, w.Tenant, o.Owner, o.ID, delegatedChild); o.Err != nil {
 		return
@@ -146,13 +147,31 @@ func (w *World) reservedWrite(ctx context.Context, o *CreateOutcome, delegatedCh
 		o.Crashed = true
 		return
 	}
+	if fn := w.Faults.takeBeforeInsert(); fn != nil {
+		fn()
+	}
 	if o.Err = insert(); o.Err == nil {
 		o.CommittedSeq = w.next()
 		return
 	}
+	w.undoReservedWrite(ctx, o)
+}
+
+// undoReservedWrite deletes the objects and the manifest row the path wrote
+// under the ID, on a detached context, and releases the reservation only
+// when both deletions succeeded. A deletion error keeps the reservation, so
+// the owner's erasure still lists the ID and reaches what the failed
+// deletion left.
+//
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain)
+func (w *World) undoReservedWrite(ctx context.Context, o *CreateOutcome) {
 	undo := context.WithoutCancel(ctx)
-	_, _ = w.Objects.DeleteBySession(undo, w.Tenant, o.ID)
-	_, _ = w.Manifests.DeleteBySession(undo, w.Tenant, o.ID)
+	_, objErr := w.Objects.DeleteBySession(undo, w.Tenant, o.ID)
+	_, manErr := w.Manifests.DeleteBySession(undo, w.Tenant, o.ID)
+	if objErr != nil || manErr != nil {
+		o.ReservationKept = true
+		return
+	}
 	if err := w.S.Sessions.ReleaseReservation(undo, w.Tenant, o.ID); err != nil {
 		w.Violatef("%s %s: release reservation: %v", o.Path, o.ID, err)
 	}

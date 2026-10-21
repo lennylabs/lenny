@@ -277,9 +277,52 @@ const loweredClaimOrphanTimeout = 60 * time.Second
 // defaultGCInterval).
 const orphanGCPass = 60 * time.Second
 
-// controllerLeaderSlack absorbs the leader-election handover after the
-// controller rollout, before the new leader's first orphan-GC sweep.
-const controllerLeaderSlack = 60 * time.Second
+// controllerLeaderLease is the controller manager's leader-election Lease
+// (cmd/lenny-controller LeaderElectionID), whose holder runs the orphan GC.
+const controllerLeaderLease = "lenny-warm-pool-controller"
+
+// controllerLeaderWait bounds the wait for a controller pod of the current
+// rollout to hold the leader Lease after the flag override.
+const controllerLeaderWait = 3 * time.Minute
+
+// waitControllerLeader waits until the controller's leader Lease is held by
+// a running controller pod that is not terminating, so the leader-election
+// handover after the flag override's rollout has finished before the test
+// starts the clock on the orphan-GC bound.
+func waitControllerLeader(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	deadline := time.Now().Add(controllerLeaderWait)
+	for {
+		holder, _ := c.KubectlOut(t, "-n", "lenny-system", "get", "lease", controllerLeaderLease,
+			"-o", "jsonpath={.spec.holderIdentity}")
+		pods, _ := c.KubectlOut(t, "-n", "lenny-system", "get", "pods", "-o",
+			`jsonpath={range .items[?(@.status.phase=="Running")]}{.metadata.name} {.metadata.deletionTimestamp}{"\n"}{end}`)
+		if leaderIsLivePod(strings.TrimSpace(holder), pods) {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("no running lenny-controller pod holds lease %s after %s (holder %q)", controllerLeaderLease, controllerLeaderWait, holder)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// leaderIsLivePod reports whether holder, a controller-runtime holder
+// identity of the form <pod>_<uuid>, names a running controller pod with no
+// deletion timestamp in pods, one "<name> <deletionTimestamp>" per line.
+func leaderIsLivePod(holder, pods string) bool {
+	pod, _, ok := strings.Cut(holder, "_")
+	if !ok || !strings.HasPrefix(pod, "lenny-controller-") {
+		return false
+	}
+	for _, line := range strings.Split(pods, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 1 && fields[0] == pod {
+			return true
+		}
+	}
+	return false
+}
 
 // lowerClaimOrphanTimeout sets the controller's --claim-orphan-timeout to
 // loweredClaimOrphanTimeout for the test and restores it afterwards. It also
@@ -309,6 +352,7 @@ func lowerClaimOrphanTimeout(t *testing.T, c *kind.Cluster) {
 func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	c := kind.InstallLenny(t)
 	lowerClaimOrphanTimeout(t, c)
+	waitControllerLeader(t, c)
 	a, b, tenant := twoReplicaDrivers(t, c)
 	// The erasure target must be a registered user of the tenant, and the
 	// session must be owned by it: the §12.8 drain and erasers act on the
@@ -348,5 +392,5 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	waitClaimReleased(t, c, sess.PodAssignment,
-		loweredClaimOrphanTimeout+orphanGCPass+controllerLeaderSlack+lifecycleDrainSchedulingSlack)
+		loweredClaimOrphanTimeout+orphanGCPass+lifecycleDrainSchedulingSlack)
 }

@@ -95,18 +95,24 @@ func (r residue) empty() bool {
 // inErasureReach reports whether the outcome's writes committed before the
 // owner's erasure wrote its completion receipt. A derive-failure row is
 // judged by its insert, because the row its insert commits after the
-// erasure is a new session admitted once the restriction was cleared.
+// erasure is a new session admitted once the restriction was cleared; a
+// derive failure whose undo kept the reservation and whose row was refused
+// is judged by its reservation, which is all that reaches its writes.
 func inErasureReach(o CreateOutcome, erasedAt map[string]int64) bool {
 	at, erased := erasedAt[o.Owner]
 	if !erased {
 		return false
 	}
 	seq := o.CommittedSeq
-	if o.Reserved && o.Path != PathDeriveFailure {
+	if o.Reserved && (o.Path != PathDeriveFailure || keptWithoutRow(o)) {
 		seq = o.ReservedSeq
 	}
 	return seq > 0 && seq < at
 }
+
+// keptWithoutRow reports that the create inserted no row and its undo kept
+// the reservation.
+func keptWithoutRow(o CreateOutcome) bool { return o.ReservationKept && o.Err != nil }
 
 // checkOutcome returns what is wrong with one create's residue, or "".
 func (w *World) checkOutcome(ctx context.Context, o CreateOutcome, erasedAt map[string]int64, reserved map[string]bool) string {
@@ -122,6 +128,13 @@ func (w *World) checkOutcome(ctx context.Context, o CreateOutcome, erasedAt map[
 		r.manifests = 0
 		if !r.empty() {
 			return fmt.Sprintf("outlived its owner's erasure: %+v", r)
+		}
+	case keptWithoutRow(o):
+		// The undo could not delete what the path wrote, so the reservation
+		// must still stand: it is the only thing that lists the ID to the
+		// owner's erasure.
+		if !r.reserved || r.row {
+			return fmt.Sprintf("an undo whose deletion failed must keep the reservation and no row: %+v", r)
 		}
 	case o.Refused():
 		if !r.empty() {

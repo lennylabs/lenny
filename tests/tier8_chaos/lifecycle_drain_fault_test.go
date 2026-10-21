@@ -7,8 +7,9 @@
 // termination, the erasure job's Start, each erasure phase, and the
 // completion receipt; a cancelled suspend request; a crash between erasure
 // phases and a graceful stop of the leader inside one; a crash between a
-// derive's copy and its insert; and a replica takeover of the
-// tenant-deletion tick. Every case seeds live sessions in the scope. The
+// derive's copy and its insert, and a refused derive whose undo deletion
+// fails; a tick-budget expiry in the Phase 2 drain; and a replica takeover
+// of the tenant-deletion tick while the former leader's drain still runs. Every case seeds live sessions in the scope. The
 // lifecyclefence World asserts, at the moment an erasure job leaves
 // initiated or a deletion job leaves Phase 2, that a primary listing of the
 // scope returns no non-terminal session, and that a job's restriction stays
@@ -21,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -390,27 +392,43 @@ func requireDisabling(t *testing.T, w *lifecyclefence.World, when string) {
 
 // TestDeletionPhase2FaultsAndTakeover_spec_12_8 injects a listing error and
 // a forced termination error into the Phase 2 drain, which keeps the job at
-// Phase 2 until a later tick drains the tenant, and hands the tick to
-// another replica whose lease the first lost mid-drain: the new replica's
-// fresh job store re-runs Phase 1 and drains the tenant before it leaves
-// Phase 2. The tenant row stays in disabling through every fault and the
-// takeover, so the creation fence never admits a create into the partly
-// drained tenant.
+// Phase 2 until a later tick drains the tenant, and expires the tick budget
+// before the drain lists anything, which keeps the job at Phase 2 the same
+// way. It then hands the tick to another replica while the first replica's
+// drain is still running: a lease loss does not cancel a tick in flight, so
+// the former leader's drain keeps running on its live context while the new
+// leader's fresh job store re-runs Phase 1 and drains the same tenant. Both
+// replicas leave Phase 2 only with the tenant drained, neither job fails, and
+// the tenant row stays in disabling through every fault and the takeover, so
+// the creation fence never admits a create into the partly drained tenant.
 //
 // spec: 12.8 (Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
-// diagnosis: a failure means a Phase 2 drain error failed the job or let it
-// advance with live sessions, a Phase 2 fault or a lost lease moved the
-// tenant out of disabling before the deletion completed, or a replica
-// takeover advanced the deletion past Phase 2 without draining the tenant.
+// diagnosis: a failure means a Phase 2 drain error or a budget expiry failed
+// the job or let it advance with live sessions, a Phase 2 fault moved the
+// tenant out of disabling before the deletion completed, or two replicas
+// draining the same tenant at once failed a job, advanced past Phase 2
+// without draining the tenant, or moved the tenant out of disabling.
 func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 	s := lifecycleFaultStores(t)
 	ctx := context.Background()
 	faults := []struct {
 		name   string
-		inject func(w *lifecyclefence.World)
+		inject func(w *lifecyclefence.World) context.Context
 	}{
-		{"listing error", func(w *lifecyclefence.World) { w.Faults.FailDrainListings(1) }},
-		{"one forced termination error", func(w *lifecyclefence.World) { w.Faults.FailForceTerminates(1) }},
+		{"listing error", func(w *lifecyclefence.World) context.Context {
+			w.Faults.FailDrainListings(1)
+			return ctx
+		}},
+		{"one forced termination error", func(w *lifecyclefence.World) context.Context {
+			w.Faults.FailForceTerminates(1)
+			return ctx
+		}},
+		{"tick budget expiry before the drain lists", func(w *lifecyclefence.World) context.Context {
+			budgetCtx, expire := context.WithCancel(ctx)
+			t.Cleanup(expire)
+			w.Faults.BeforeDrainList(expire)
+			return budgetCtx
+		}},
 	}
 	for _, f := range faults {
 		t.Run(f.name, func(t *testing.T) {
@@ -422,9 +440,9 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 			if p, err := d.Tick(ctx); err != nil || p != tenantdeletion.PhaseTerminateSessions {
 				t.Fatalf("Phase 1 tick = %s, %v", p, err)
 			}
-			f.inject(w)
-			if p, err := d.Tick(ctx); err != nil || p != tenantdeletion.PhaseTerminateSessions {
-				t.Fatalf("the faulted Phase 2 tick left phase %s (%v), want terminate_sessions", p, err)
+			tickCtx := f.inject(w)
+			if p, _ := d.Tick(tickCtx); p != tenantdeletion.PhaseTerminateSessions {
+				t.Fatalf("the faulted Phase 2 tick left phase %s, want terminate_sessions", p)
 			}
 			requireDisabling(t, w, "after the faulted Phase 2 tick")
 			if p, err := d.ThroughPhase2(ctx, 3); err != nil {
@@ -441,23 +459,82 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 		if err := first.Start(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := first.Tick(ctx); err != nil {
-			t.Fatal(err)
+		if p, err := first.Tick(ctx); err != nil || p != tenantdeletion.PhaseTerminateSessions {
+			t.Fatalf("Phase 1 tick = %s, %v", p, err)
 		}
-		leaseCtx, loseLease := context.WithCancel(ctx)
-		w.Faults.BeforeDrainList(loseLease)
-		if p, _ := first.Tick(leaseCtx); p != tenantdeletion.PhaseTerminateSessions {
-			t.Fatalf("the replica that lost its lease left phase %s, want terminate_sessions", p)
+		// Hold the former leader's drain after its listing and before its
+		// first forced termination. Its tick context stays live throughout.
+		entered, release := make(chan struct{}), make(chan struct{})
+		w.Faults.BeforeForceTerminate(func() {
+			close(entered)
+			<-release
+		})
+		type result struct {
+			phase tenantdeletion.Phase
+			err   error
 		}
-		requireDisabling(t, w, "after the first replica lost its lease")
+		firstDone := make(chan result, 1)
+		go func() {
+			p, err := first.ThroughPhase2(ctx, 3)
+			firstDone <- result{p, err}
+		}()
+		select {
+		case <-entered:
+		case <-time.After(30 * time.Second):
+			close(release)
+			t.Fatal("the former leader's drain never reached a forced termination")
+		}
+		requireDisabling(t, w, "while the former leader's drain is held")
+
 		second := w.NewDeletion()
 		if err := second.Start(ctx); err != nil {
+			close(release)
 			t.Fatal(err)
 		}
-		if p, err := second.ThroughPhase2(ctx, 4); err != nil {
-			t.Fatalf("takeover replica: %s, %v", p, err)
+		p2, err := second.ThroughPhase2(ctx, 4)
+		close(release)
+		if err != nil {
+			t.Fatalf("new leader: %s, %v", p2, err)
 		}
-		requireDisabling(t, w, "after the takeover replica left Phase 2")
+		r1 := <-firstDone
+		if r1.err != nil {
+			t.Fatalf("former leader: %s, %v", r1.phase, r1.err)
+		}
+		for name, p := range map[string]tenantdeletion.Phase{"former leader": r1.phase, "new leader": p2} {
+			if p == tenantdeletion.PhaseFailed {
+				t.Errorf("the %s's deletion job failed", name)
+			}
+		}
+		requireDisabling(t, w, "after both replicas left Phase 2")
 		w.Check(t)
 	})
+}
+
+// TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8 refuses a
+// derive's insert because its owner's erasure starts between the snapshot
+// copy and the insert, and fails the undo's object deletion. The undo keeps
+// the reservation, so the erasure lists the reserved ID and deletes the
+// copied objects and the reservation.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (Processing restriction during erasure (GDPR Article 18))
+// diagnosis: a failure means the derive undo released the reservation after
+// a deletion error, so the copied objects outlive the owner's erasure under
+// an ID no lister returns, or the erasure does not reach reserved IDs.
+func TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8(t *testing.T) {
+	s := lifecycleFaultStores(t)
+	w := lifecyclefence.NewWorld(t, s, 2)
+	ctx := context.Background()
+	e := w.NewErasure()
+	var job erasurejob.Job
+	w.Objects.FailDeletes(1)
+	w.Faults.BeforeReservedInsert(func() { job = startErasure(t, e) })
+	o := w.Create(ctx, lifecyclefence.PathDerive, "alice")
+	if !o.Refused() || !o.ReservationKept {
+		t.Fatalf("derive outcome = %+v, want a refusal whose undo kept the reservation", o)
+	}
+	complete(t, e, job.ID)
+	if n := w.Objects.Count(w.Tenant, o.ID); n != 0 {
+		t.Errorf("%d copied objects outlived the owner's erasure", n)
+	}
+	w.Check(t)
 }

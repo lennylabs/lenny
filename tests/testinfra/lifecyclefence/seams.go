@@ -21,6 +21,9 @@ var ErrInjected = errors.New("lifecyclefence: injected store error")
 type KeyedSet struct {
 	mu sync.Mutex
 	n  map[[2]string]int
+	// deleteFaults is the number of upcoming DeleteBySession calls that
+	// fail with ErrInjected and delete nothing.
+	deleteFaults int
 }
 
 // NewKeyedSet returns an empty KeyedSet.
@@ -33,12 +36,24 @@ func (k *KeyedSet) Put(tenantID, sessionID string) {
 	k.n[[2]string{tenantID, sessionID}]++
 }
 
+// FailDeletes makes the next n DeleteBySession calls fail with ErrInjected
+// and delete nothing.
+func (k *KeyedSet) FailDeletes(n int) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.deleteFaults = n
+}
+
 // DeleteBySession removes the session's entries and returns how many it
 // removed. Its signature is the erasure orchestrator's session-scoped
 // eraser.
 func (k *KeyedSet) DeleteBySession(_ context.Context, tenantID, sessionID string) (int, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.deleteFaults > 0 {
+		k.deleteFaults--
+		return 0, ErrInjected
+	}
 	key := [2]string{tenantID, sessionID}
 	n := k.n[key]
 	delete(k.n, key)
@@ -59,6 +74,8 @@ type Faults struct {
 	listLeft      int
 	terminateLeft int
 	beforeList    func()
+	beforeTerm    func()
+	beforeInsert  func()
 }
 
 // BeforeDrainList runs fn once, before the next primary listing, such as
@@ -75,6 +92,42 @@ func (f *Faults) takeBeforeList() func() {
 	defer f.mu.Unlock()
 	fn := f.beforeList
 	f.beforeList = nil
+	return fn
+}
+
+// BeforeForceTerminate runs fn once, before the next forced termination,
+// such as to hold one replica's drain between its listing and its
+// terminations while another replica drains the same scope.
+func (f *Faults) BeforeForceTerminate(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeTerm = fn
+}
+
+// takeBeforeTerminate returns and disarms the before-termination hook.
+func (f *Faults) takeBeforeTerminate() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn := f.beforeTerm
+	f.beforeTerm = nil
+	return fn
+}
+
+// BeforeReservedInsert runs fn once, after the next reserved path's
+// reservation and pre-insert writes and before its insert, such as to set a
+// marker the insert's fence then refuses.
+func (f *Faults) BeforeReservedInsert(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeInsert = fn
+}
+
+// takeBeforeInsert returns and disarms the before-insert hook.
+func (f *Faults) takeBeforeInsert() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn := f.beforeInsert
+	f.beforeInsert = nil
 	return fn
 }
 
@@ -141,6 +194,9 @@ func (t *Terminator) GetByID(ctx context.Context, id string) (sessionstore.Sessi
 // ForceTerminate writes failed, FailureClassRuntime, and FORCE_TERMINATED
 // under the row lock and reports whether this call made the transition.
 func (t *Terminator) ForceTerminate(ctx context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
+	if fn := t.faults.takeBeforeTerminate(); fn != nil {
+		fn()
+	}
 	if t.faults.take(&t.faults.terminateLeft) {
 		return sessionstore.Session{}, "", false, ErrInjected
 	}
