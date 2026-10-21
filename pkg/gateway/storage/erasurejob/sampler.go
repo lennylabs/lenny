@@ -42,6 +42,7 @@ type Sampler struct {
 	sink            AgeSink
 	defaultDeadline time.Duration
 	clock           func() time.Time
+	crossTenantRead CrossTenantReadFunc
 
 	// mu guards published, the set of jobs whose series the previous
 	// round published, and serializes each round's sink writes with
@@ -64,15 +65,31 @@ func NewSampler(jobs Store, sink AgeSink, defaultDeadline time.Duration, clock f
 	}
 }
 
+// WithCrossTenantReadAudit attaches the §12.3 cross_tenant_read recorder
+// Sample calls once per round after its all-tenants ListActive read. An
+// emit error makes the round publish nothing. A nil function emits
+// nothing. Returns the Sampler for call chaining.
+//
+// spec: §12.3 (Postgres HA Requirements).
+func (s *Sampler) WithCrossTenantReadAudit(f CrossTenantReadFunc) *Sampler {
+	s.crossTenantRead = f
+	return s
+}
+
 // Sample publishes one round of erasure-SLA gauges: the age and overdue
 // seconds of every in-progress job, the in-progress count, and a cleared
 // pair of series for every job published in the previous round that is no
-// longer in progress. A ListActive error publishes nothing and keeps the
-// previous round's set. It is safe to call on a ticker.
+// longer in progress. A ListActive error or a cross_tenant_read emit error
+// publishes nothing and keeps the previous round's set. It is safe to call on a ticker.
 func (s *Sampler) Sample(ctx context.Context) error {
 	jobs, err := s.jobs.ListActive(ctx)
 	if err != nil {
 		return err
+	}
+	if s.crossTenantRead != nil {
+		if err := s.crossTenantRead(ctx, CrossTenantReadEndpointSampler, "", len(jobs)); err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

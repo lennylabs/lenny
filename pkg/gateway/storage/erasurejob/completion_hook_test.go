@@ -22,13 +22,13 @@ func TestRunnerCompletionHookFiresOnCompletion_spec_12_5_317(t *testing.T) {
 
 	var gotTenant, gotUser string
 	calls := 0
-	r := erasurejob.NewRunner(jobs, orch, fixedClock(at)).
+	r := newRunner(jobs, orch, fixedClock(at)).
 		WithCompletionHook(func(_ context.Context, tenantID, userID string) {
 			calls++
 			gotTenant, gotUser = tenantID, userID
 		})
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -55,10 +55,10 @@ func TestRunnerCompletionHookSkippedOnFailure_spec_12_5_317(t *testing.T) {
 	}}})
 
 	fired := false
-	r := erasurejob.NewRunner(jobs, orch, fixedClock(at)).
+	r := newRunner(jobs, orch, fixedClock(at)).
 		WithCompletionHook(func(context.Context, string, string) { fired = true })
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

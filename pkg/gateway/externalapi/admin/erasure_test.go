@@ -47,7 +47,7 @@ func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, *
 	users := userstore.NewMemory()
 	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: erasureClock,
 		Audit: audit,
@@ -55,12 +55,15 @@ func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, *
 	return router, users, jobs, audit
 }
 
-// awaitTerminal polls the job store until the job reaches a terminal
-// phase — the erase handler runs the job in a background goroutine.
+// awaitTerminal drives the test's runners and polls the job store until
+// the job reaches a terminal phase. The erase handler only records the
+// job; the gateway leader's sweep runs it, which driveRunners stands in
+// for.
 func awaitTerminal(t *testing.T, jobs erasurejob.Store, jobID string) erasurejob.Job {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
+		driveRunners(t)
 		job, err := jobs.Get(context.Background(), erasurejob.AllTenants, jobID)
 		if err != nil {
 			t.Fatalf("Get job %q: %v", jobID, err)
@@ -120,11 +123,12 @@ func TestEraseUserInitiatesJob(t *testing.T) {
 	}
 }
 
-// awaitAuditEvent polls the recording audit sink until an event of the
-// given type appears, then returns it. The erasure receipt is emitted
-// from a background goroutine once the job completes.
+// awaitAuditEvent drives the test's runners and polls the recording audit
+// sink until an event of the given type appears, then returns it. The
+// erasure receipt is written by the runner when the job completes.
 func awaitAuditEvent(t *testing.T, audit *recordingAudit, eventType string) admin.AuditEvent {
 	t.Helper()
+	driveRunners(t)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, ev := range audit.snapshot() {
@@ -174,7 +178,7 @@ func newBillingErasureAdmin(t *testing.T, billingPolicy string) (*admin.Router, 
 	}
 	billing := billingstore.NewMemory()
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), erasureClock).
+	runner := newFixtureRunner(t, jobs, erasure.New(erasure.Config{}), audit).
 		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
 	router := admin.NewRouter(tenants, admin.Options{Clock: erasureClock, Audit: audit}).
 		WithUsers(users).WithErasure(runner, jobs)
@@ -431,7 +435,7 @@ func newErasureAdminWithSessions(t *testing.T, orch *erasure.Orchestrator) (*adm
 	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	sessions := memstore.New()
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: erasureClock,
 		Audit: audit,
@@ -482,7 +486,7 @@ func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
 	audit := &recordingAudit{}
 	holder := newFakeArtifactHolder()
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: erasureClock, Audit: audit}).
 		WithUsers(users).WithErasure(runner, jobs).WithSessions(sessions).WithArtifactLegalHold(holder)
 
@@ -625,6 +629,7 @@ func awaitUnrestricted(t *testing.T, users userstore.Store, tenant, subject stri
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
+		driveRunners(t)
 		u, err := users.Get(context.Background(), tenant, subject)
 		if err != nil {
 			t.Fatalf("Get user: %v", err)

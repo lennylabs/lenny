@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -60,11 +61,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/saltlockpg"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
@@ -570,19 +571,9 @@ func (w *gatewayWiring) buildAdminRouter(
 			erasure.Eraser{Name: "credential_pool", DeleteByUser: credentialPools.DeleteByUser})
 
 		erasureCfg := erasure.Config{
-			Sessions: func(ctx context.Context, tenantID, userID string) ([]string, error) {
-				rows, err := w.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
-				if err != nil {
-					return nil, err
-				}
-				ids := make([]string, 0, len(rows))
-				for _, s := range rows {
-					if s.UserID == userID {
-						ids = append(ids, s.ID)
-					}
-				}
-				return ids, nil
-			},
+			// spec: §12.8 (Lifecycle fence and drain) — the user's session
+			// rows from the primary plus every id reserved for the user.
+			Sessions:      erasureSessionLister{sessions: w.sessions}.List,
 			SessionScoped: sessionScoped,
 			UserScoped:    userScoped,
 		}
@@ -594,12 +585,36 @@ func (w *gatewayWiring) buildAdminRouter(
 		}
 		erasureOrch := erasure.New(erasureCfg)
 		erasureJobs := w.erasureJobs
+		// spec: §12.8 (Lifecycle fence and drain) — the initiated phase
+		// drains the user's sessions over the primary listing, then re-checks
+		// legal holds through the same enumeration the erase and retry
+		// handlers run.
+		var artifactHolds admin.ArtifactHoldChecker
+		if w.artifactCatalog != nil {
+			artifactHolds = w.artifactCatalog
+		}
+		erasureTerm := sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
-			// spec: §12.8 — emit the in-progress gauge and
-			// per-job duration histogram for erasure-throughput / SLA
-			// monitoring.
+			// spec: §12.8 — the per-job duration histogram for
+			// erasure-throughput / SLA monitoring.
 			WithLifecycleMetrics(gwMetrics).
+			WithMaxConcurrentJobs(*f.erasureMaxConcurrentJobs).
+			WithSessionDrain(func(ctx context.Context, tenantID, userID string) error {
+				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, tenantID, userID)
+				return err
+			}).
+			WithHoldCheck(func(ctx context.Context, tenantID, userID string) ([]erasurejob.Hold, error) {
+				held, err := admin.HeldResourcesForUser(ctx, w.sessions, artifactHolds, tenantID, userID)
+				if err != nil {
+					return nil, err
+				}
+				holds := make([]erasurejob.Hold, 0, len(held))
+				for _, h := range held {
+					holds = append(holds, erasurejob.Hold{ResourceType: h.ResourceType, ResourceID: h.ResourceID})
+				}
+				return holds, nil
+			}).
 			// spec: §12.8 / §12.9 — record the tier-specific SLA
 			// deadline on each job (T4 Restricted 1h, otherwise 72h).
 			WithDeadlineResolver(func(ctx context.Context, tenantID string) time.Duration {
@@ -624,7 +639,14 @@ func (w *gatewayWiring) buildAdminRouter(
 		// memory_store_preflight}. F-9.4.3 / F-12.2.10.
 		if w.memories != nil {
 			memstore := w.memories
+			// The preflight seeds and erases one fixed probe identity, so two
+			// runs at once see each other's probe rows and fail. The runner
+			// runs up to --erasure-max-concurrent-jobs jobs at once, so the
+			// preflight runs one at a time on this replica.
+			var preflightMu sync.Mutex
 			erasureRunner = erasureRunner.WithMemoryPreflight(func(ctx context.Context) error {
+				preflightMu.Lock()
+				defer preflightMu.Unlock()
 				return memorystore.ValidateMemoryStoreErasure(ctx, memstore)
 			})
 		}
@@ -694,18 +716,37 @@ func (w *gatewayWiring) buildAdminRouter(
 			})
 			erasureRunner = erasureRunner.WithDeadLetterRedaction(redactionSvc.RedactForUser)
 		}
+		// spec: §12.8 (Processing restriction during erasure (GDPR Article
+		// 18)) — the completion receipt is appended through the audit
+		// appender, whose error keeps the job in progress, before the job
+		// completes and lifts the restriction. Without an appender no
+		// receipt can be written, so jobs stay in progress rather than
+		// lifting the restriction unreceipted.
+		if auditAppender != nil {
+			erasureRunner = erasureRunner.WithCompletionReceipt(erasureReceiptSink{appender: auditAppender}.WriteReceipt)
+		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
-		// spec: §12.8 (Erasure SLA enforcement) — publish the erasure-SLA
-		// gauges (lenny_erasure_job_age_seconds,
-		// lenny_erasure_job_overdue_seconds, lenny_erasure_jobs_active) on a
-		// periodic tick so the §16.5 ErasureJobOverdue alert can detect a
-		// stalled job before its deadline breaches. The Runner cannot
-		// advance a job's age while blocked inside a slow DeleteByUser, so a
-		// separate sampler reads the registry. The default deadline is the
-		// §12.9 T3 72h bound, used for a job that recorded no deadline of
-		// its own.
+		// spec: §12.8 (Erasure SLA enforcement) — the erasure-SLA gauges
+		// (lenny_erasure_job_age_seconds, lenny_erasure_job_overdue_seconds,
+		// lenny_erasure_jobs_active) let the §16.5 ErasureJobOverdue alert
+		// detect a stalled job before its deadline breaches. The runner
+		// cannot advance a job's age while blocked inside a slow
+		// DeleteByUser, so a separate sampler reads the registry. The
+		// default deadline is the §12.9 T3 72h bound, used for a job that
+		// recorded no deadline of its own. startLeaderElectedSweeps runs the
+		// sampler and the runner's Poll on the gateway-leader gate.
 		erasureSampler := erasurejob.NewSampler(erasureJobs, gwMetrics, 72*time.Hour, clockinject.Now)
-		go erasureSampler.Run(context.Background(), 30*time.Second)
+		// spec: §12.3 (Postgres HA Requirements) — the Postgres job store's
+		// all-tenants reads each record a cross_tenant_read event. The
+		// Memory store reads under no sentinel, so nothing is wired there.
+		if _, durable := erasureJobs.(*erasurepg.Store); durable && auditOpsStore != nil {
+			ctr := erasureCrossTenantRead(auditOpsStore)
+			erasureRunner = erasureRunner.WithCrossTenantReadAudit(ctr)
+			erasureSampler = erasureSampler.WithCrossTenantReadAudit(ctr)
+			adminRouter = adminRouter.WithErasureCrossTenantReadAudit(ctr)
+		}
+		w.erasureRunner = erasureRunner
+		w.erasureSampler = erasureSampler
 	}
 
 	// §12.8 tenant-deletion lifecycle. The gateway hosts the background
@@ -716,8 +757,8 @@ func (w *gatewayWiring) buildAdminRouter(
 	// path), DeleteByTenant across the erasure-scope stores, Phase 4a KMS
 	// destroy (operator-driven on a probe-only host), CRD cleanup, and the
 	// erasure receipt. The persisted TenantState column is the durable
-	// anchor; an in-memory Job is reconstructed from it each pass. A
-	// Postgres advisory lock keeps the destructive loop on one replica.
+	// anchor; an in-memory Job is reconstructed from it each pass. The
+	// runner ticks only while this replica is the gateway leader.
 	// spec: §12.8. F-12.8.1, F-24.10.3.
 	{
 		tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools)
@@ -800,15 +841,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		// its §12.8 Phase 6 proof, so the runner is only started when one
 		// is wired.
 		if deletionReconciler.Receipts != nil {
-			runner := &tenantDeletionRunner{
+			w.tenantDeletion = &tenantDeletionRunner{
 				reconciler: deletionReconciler,
 				tenants:    w.tenants,
 				clock:      clockinject.Now,
 				interval:   *tenantDeletionInterval,
-				pool:       w.pgPool,
 			}
-			go runner.Start(context.Background())
-			log.Printf("lenny-gateway: §12.8 tenant-deletion controller started (erasure stores: %d)", len(tenantErasers))
+			log.Printf("lenny-gateway: §12.8 tenant-deletion controller built (erasure stores: %d)", len(tenantErasers))
 		}
 	}
 	if w.pgPool != nil {

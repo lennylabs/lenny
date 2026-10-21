@@ -292,7 +292,6 @@ prefixes:
   - pkg/gateway/storage/dualstore/
   - pkg/gateway/storage/erasure/
   - pkg/gateway/storage/erasurejob/
-  - pkg/gateway/storage/erasurejob/saltlockpg/
   - pkg/gateway/storage/eventbus/
   - pkg/gateway/storage/evictionfallback/
   - pkg/gateway/storage/evictionstatestore/

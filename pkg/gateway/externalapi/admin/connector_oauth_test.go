@@ -628,3 +628,37 @@ func TestConnectorOAuthRoutesAbsentWithoutWiring(t *testing.T) {
 		t.Fatalf("OAuth route is live without WithConnectorOAuth wiring")
 	}
 }
+
+// TestConnectorOAuthCredentialStoredAttributedToFlowPrincipal_spec_9_3 pins
+// that the deferred connector.oauth.credential_stored event is attributed
+// to the principal the authorize step persisted with the flow, whatever
+// principal the callback request carries: the callback is a browser
+// redirect, so the persisted flow is the only binding to the user.
+// spec: 9.3 (Connector OAuth flow), 16.7 (Section 25 Audit Events)
+func TestConnectorOAuthCredentialStoredAttributedToFlowPrincipal_spec_9_3(t *testing.T) {
+	f := newOAuthFixture(t)
+	f.registerOAuthConnector(t, false)
+	resp := f.initiate(t)
+	state := stateFromAuthURL(t, resp.AuthorizationURL)
+
+	cbReq := httptest.NewRequest(http.MethodGet,
+		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(state), nil)
+	cbReq = cbReq.WithContext(authmw.WithPrincipal(cbReq.Context(), authmw.Principal{
+		Subject: "bob@globex.com", TenantID: "globex",
+	}))
+	cbRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(cbRR, cbReq)
+	if cbRR.Code != http.StatusOK {
+		t.Fatalf("callback status: %d, body=%s", cbRR.Code, cbRR.Body.String())
+	}
+	for _, ev := range f.audit.snapshot() {
+		if ev.Type != "connector.oauth.credential_stored" {
+			continue
+		}
+		if ev.ActorSubject != "alice@acme.com" || ev.ActorTenantID != "acme" {
+			t.Errorf("credential_stored actor = %q/%q, want the flow's alice@acme.com/acme", ev.ActorSubject, ev.ActorTenantID)
+		}
+		return
+	}
+	t.Fatalf("expected connector.oauth.credential_stored event, got %+v", f.audit.snapshot())
+}

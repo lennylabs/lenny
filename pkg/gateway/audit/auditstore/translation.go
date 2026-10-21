@@ -128,18 +128,45 @@ func (s *Store) pendingTranslationOnShard(ctx context.Context, pool *pgxpool.Poo
 	return out, nil
 }
 
-// emitCrossTenantRead writes the §12.3 cross_tenant_read
-// audit event to the `platform` audit chain. category names the
-// background worker category that ran the cross-tenant SELECT;
-// rowCount records how many rows the worker observed (purely
-// observability — it is not load-bearing for the audit chain).
+// CrossTenantRead is one §12.3 cross_tenant_read audit event. Category
+// names the reading path's category and RowCount the number of rows the
+// read returned. Endpoint names the reading path and CallerSubject the
+// requesting principal; each is written only when non-empty.
+type CrossTenantRead struct {
+	Category      string `json:"category"`
+	RowCount      int    `json:"row_count"`
+	Endpoint      string `json:"endpoint,omitempty"`
+	CallerSubject string `json:"caller_subject,omitempty"`
+}
+
+// EmitCrossTenantRead writes r to the `platform` audit chain synchronously
+// through Append, even when audit batching is enabled: a caller subject is a
+// T3 user identifier, which the batch buffer does not carry. It returns the
+// append error, so a reading path that fails closed on it reads nothing
+// unaudited.
+//
+// spec: §12.3 (Postgres HA Requirements).
+func (s *Store) EmitCrossTenantRead(ctx context.Context, r CrossTenantRead) error {
+	payload, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("auditstore: encode cross_tenant_read (%s): %w", r.Category, err)
+	}
+	if _, err := s.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{}); err != nil {
+		return fmt.Errorf("auditstore: emit cross_tenant_read (%s): %w", r.Category, err)
+	}
+	return nil
+}
+
+// emitCrossTenantRead writes the §12.3 cross_tenant_read audit event of a
+// background worker to the `platform` audit chain. category names the
+// worker category that ran the cross-tenant SELECT; rowCount records how
+// many rows the worker observed. The event carries no caller, so when
+// §12.3 audit batching is enabled it rides the batch buffer, which flushes
+// it within auditFlushIntervalMs (F-12.3.14); otherwise it is written
+// through EmitCrossTenantRead.
 func (s *Store) emitCrossTenantRead(ctx context.Context, category string, rowCount int) error {
-	payload := []byte(fmt.Sprintf(`{"category":%q,"row_count":%d}`, category, rowCount))
-	// cross_tenant_read is a non-PII T2 (Internal) operational receipt.
-	// When §12.3 audit batching is enabled it rides the batch buffer
-	// instead of a synchronous write; the buffer flushes it within
-	// auditFlushIntervalMs. F-12.3.14.
 	if s.batchBuffer != nil {
+		payload := []byte(fmt.Sprintf(`{"category":%q,"row_count":%d}`, category, rowCount))
 		s.batchBuffer.Enqueue(auditbatch.Item{
 			TenantID:  "platform",
 			EventType: "cross_tenant_read",
@@ -147,11 +174,7 @@ func (s *Store) emitCrossTenantRead(ctx context.Context, category string, rowCou
 		})
 		return nil
 	}
-	_, err := s.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{})
-	if err != nil {
-		return fmt.Errorf("auditstore: emit cross_tenant_read (%s): %w", category, err)
-	}
-	return nil
+	return s.EmitCrossTenantRead(ctx, CrossTenantRead{Category: category, RowCount: rowCount})
 }
 
 // SetTranslationState implements ocsf.TranslationStore. It transitions

@@ -1715,14 +1715,6 @@ func (m *Metrics) IncErasureJobFailed(tenantID, failurePhase string) {
 	m.erasureJobFailed.WithLabelValues(tenantID, failurePhase).Inc()
 }
 
-// IncErasureJobsActive increments the §12.8 in-progress
-// erasure-job gauge when a job begins execution.
-func (m *Metrics) IncErasureJobsActive() { m.erasureJobsActive.Inc() }
-
-// DecErasureJobsActive decrements the in-progress erasure-job gauge when
-// a job reaches a terminal phase.
-func (m *Metrics) DecErasureJobsActive() { m.erasureJobsActive.Dec() }
-
 // ObserveErasureJobDuration records a completed (or failed) erasure
 // job's wall-clock duration in the §12.8 histogram.
 func (m *Metrics) ObserveErasureJobDuration(seconds float64) {

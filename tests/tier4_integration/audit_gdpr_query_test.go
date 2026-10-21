@@ -57,7 +57,10 @@ func TestAuditGDPRDownstreamNotificationQueryable(t *testing.T) {
 	// The single test Postgres plays both the app DSN and the
 	// CREATE-privileged DDL DSN the gateway uses to provision a tenant's
 	// audit_seq_<40hex> sequence.
-	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
+	// --tenant-deletion-interval is also the erasure sweep's poll cadence;
+	// the leader runs a recorded job on its next poll.
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN,
+		"--postgres-billing-audit-ddl-dsn="+pg.DSN, "--tenant-deletion-interval=1s")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 

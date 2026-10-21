@@ -376,10 +376,11 @@ func newRacingErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Rou
 	t.Helper()
 	users := userstore.NewMemory()
 	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	audit := &recordingAudit{}
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: erasureClock,
-		Audit: &recordingAudit{},
+		Audit: audit,
 	}).WithUsers(users).WithErasure(runner, racingJobs{Memory: jobs})
 	return router, users, jobs
 }

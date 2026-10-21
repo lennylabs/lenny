@@ -19,6 +19,7 @@ import (
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint"
@@ -459,6 +460,22 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		})
 	}
 
+	// ----- §12.8 user-erasure executor and SLA sampler -----
+	// The runner's Poll and the sampler run only on the leader, so one
+	// replica executes erasure jobs and publishes the per-job SLA series.
+	// spec: §12.5, §12.8 (Erasure job phase field (crash recovery)).
+	if w.erasureRunner != nil {
+		addErasureSweep(leaderGate, w.erasureRunner, w.erasureSampler, *f.tenantDeletionInterval)
+	}
+	// ----- §12.8 tenant-deletion runner -----
+	// The runner polls this elector each tick rather than registering on
+	// the gate: a lease loss cancels the leader context, which would fail
+	// the replica's in-memory deletion job mid-phase.
+	if w.tenantDeletion != nil {
+		w.tenantDeletion.elector = leaderElector
+		go w.tenantDeletion.Start(w.watchdogCtx)
+	}
+
 	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 	w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 
@@ -468,6 +485,24 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	// Started after every leaderGate.Add above so the full set is gated.
 	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len())
 	go leaderGate.Run(w.watchdogCtx)
+}
+
+// erasureSamplerInterval is the cadence of the erasure-SLA sampler.
+const erasureSamplerInterval = 30 * time.Second
+
+// addErasureSweep registers the erasure runner's Poll and the erasure
+// sampler on the gateway-leader gate, so only the leader executes erasure
+// jobs and publishes the per-job SLA series. A lease loss ends both: the
+// runs stop at their next store call, and the sampler clears every series
+// it published. interval is the runner's poll cadence.
+//
+// spec: §12.5 (lenny-gateway-leader gate), §12.8 (Erasure job phase field
+// (crash recovery)), §12.8 (Erasure SLA enforcement).
+func addErasureSweep(gate *gatewayleader.Gate, runner *erasurejob.Runner, sampler *erasurejob.Sampler, interval time.Duration) {
+	gate.Add("erasure-job-sweep", func(ctx context.Context) { runner.Poll(ctx, interval) })
+	if sampler != nil {
+		gate.Add("erasure-job-sampler", func(ctx context.Context) { sampler.Run(ctx, erasureSamplerInterval) })
+	}
 }
 
 // hardPrunePartialManifests runs the §12.5 ll. 341 tombstone hard-prune

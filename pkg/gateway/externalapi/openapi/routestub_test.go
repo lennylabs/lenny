@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls"
@@ -42,8 +43,9 @@ func (saltRotatorStub) RotateErasureSalt(context.Context, string) error { return
 // erasureRunnerStub satisfies admin.ErasureRunner.
 type erasureRunnerStub struct{}
 
-func (erasureRunnerStub) Start(context.Context, string, string) (string, error) { return "", nil }
-func (erasureRunnerStub) Run(context.Context, string) error                     { return nil }
+func (erasureRunnerStub) Start(context.Context, string, string, string, map[string]any) (erasurejob.Job, error) {
+	return erasurejob.Job{}, nil
+}
 
 // impersonationStub satisfies admin.ImpersonationService.
 type impersonationStub struct{}

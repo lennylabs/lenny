@@ -15,6 +15,11 @@
       "unit": ["pkg/gateway/storage/erasurejob/..."],
       "component": ["tests/tier2_component/stores/erasurejobstore_test.go"]
     },
+    "pkg/gateway/storage/erasurejob/saltlockpg": {
+      "unit": ["pkg/gateway/storage/erasurejob/saltlockpg/..."],
+      "component": ["tests/tier2_component/tenantsalt/saltlockpg_test.go"],
+      "integration": ["tests/tier4_integration/erasure_job_test.go"]
+    },
     "pkg/store/lease": {
       "unit": ["pkg/store/lease/..."],
       "component": ["tests/tier2_component/stores/lease_store_test.go"]

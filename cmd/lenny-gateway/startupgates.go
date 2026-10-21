@@ -188,6 +188,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateErasureMaxConcurrentJobs(*f.erasureMaxConcurrentJobs); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}

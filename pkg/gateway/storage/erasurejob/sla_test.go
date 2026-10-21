@@ -15,16 +15,19 @@ import (
 
 // spec: §12.8 — erasure throughput / SLA metrics.
 
-// fakeLifecycle records the §12.8 lifecycle metric calls.
+// fakeLifecycle records the §12.8 duration observations.
 type fakeLifecycle struct {
-	inc, dec  int
 	durations []float64
 }
 
-func (f *fakeLifecycle) IncErasureJobsActive()               { f.inc++ }
-func (f *fakeLifecycle) DecErasureJobsActive()               { f.dec++ }
 func (f *fakeLifecycle) ObserveErasureJobDuration(s float64) { f.durations = append(f.durations, s) }
 
+// TestRunnerLifecycleMetrics pins the duration observation of a completed
+// job: one observation, measured from StartedAt, made after Complete
+// applied. The in-progress gauge is the sampler's, so the runner exposes no
+// active-jobs bracket at all (LifecycleMetrics has only the duration
+// method).
+// spec: §12.8 (Erasure SLA enforcement)
 func TestRunnerLifecycleMetrics(t *testing.T) {
 	jobs := newJobStore(t)
 	start := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
@@ -40,45 +43,57 @@ func TestRunnerLifecycleMetrics(t *testing.T) {
 	}
 	lc := &fakeLifecycle{}
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
-	r := erasurejob.NewRunner(jobs, orch, clock).WithLifecycleMetrics(lc)
+	r := newRunner(jobs, orch, clock).WithLifecycleMetrics(lc)
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if lc.inc != 1 || lc.dec != 1 {
-		t.Errorf("active bracket = inc %d / dec %d, want 1/1", lc.inc, lc.dec)
-	}
 	if len(lc.durations) != 1 || lc.durations[0] != 12 {
 		t.Errorf("duration observations = %v, want one observation of 12s", lc.durations)
 	}
 }
 
-// A failed job still brackets the active gauge and observes a duration.
+// TestRunnerLifecycleMetricsOnFailure pins that a failed job observes one
+// duration once its failure write applied, and that a job whose receipt
+// write fails, and so stays in progress, observes none.
+// spec: §12.8 (Erasure SLA enforcement)
 func TestRunnerLifecycleMetricsOnFailure(t *testing.T) {
 	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
 	lc := &fakeLifecycle{}
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name:         "sessions",
-		DeleteByUser: func(context.Context, string, string) (int, error) { return 0, context.DeadlineExceeded },
+		DeleteByUser: func(context.Context, string, string) (int, error) { return 0, errors.New("store down") },
 	}}})
-	r := erasurejob.NewRunner(jobs, orch, fixedClock(at)).WithLifecycleMetrics(lc)
+	r := newRunner(jobs, orch, fixedClock(at)).WithLifecycleMetrics(lc)
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	_ = r.Run(context.Background(), id)
-	if lc.inc != 1 || lc.dec != 1 || len(lc.durations) != 1 {
-		t.Errorf("failed job metrics = inc %d / dec %d / durations %v, want 1/1/one", lc.inc, lc.dec, lc.durations)
+	if len(lc.durations) != 1 {
+		t.Errorf("failed job durations = %v, want one observation", lc.durations)
+	}
+
+	lc2 := &fakeLifecycle{}
+	ok := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	r2 := newRunner(jobs, ok, fixedClock(at)).WithLifecycleMetrics(lc2).
+		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return errors.New("audit down") })
+	id2, _ := runnerStart(context.Background(), r2, "acme", "bob")
+	if err := r2.Run(context.Background(), id2); err == nil {
+		t.Fatal("Run with a failing receipt returned nil")
+	}
+	if len(lc2.durations) != 0 {
+		t.Errorf("in-progress job durations = %v, want none", lc2.durations)
 	}
 }
 
 func TestRunnerRecordsDeadline(t *testing.T) {
 	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), fixedClock(at)).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), fixedClock(at)).
 		WithDeadlineResolver(func(_ context.Context, tenantID string) time.Duration {
 			if tenantID == "regulated" {
 				return time.Hour // T4
@@ -86,7 +101,7 @@ func TestRunnerRecordsDeadline(t *testing.T) {
 			return 72 * time.Hour
 		})
 
-	id, _ := r.Start(context.Background(), "regulated", "alice")
+	id, _ := runnerStart(context.Background(), r, "regulated", "alice")
 	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Deadline != time.Hour {
 		t.Errorf("Deadline = %v, want 1h (T4)", job.Deadline)
@@ -269,5 +284,56 @@ func TestSamplerRunClearsOnContextEnd_spec_12_8(t *testing.T) {
 	defer sink.mu.Unlock()
 	if sink.active != 0 {
 		t.Fatalf("active = %d after Run ended, want 0", sink.active)
+	}
+}
+
+// TestSamplerCrossTenantRead_spec_12_3 pins the sampler's
+// cross_tenant_read event: one event per Sample with the sampler endpoint,
+// no caller, and the listed row count, including an empty read; an emit
+// error publishes nothing; a nil function emits nothing.
+// spec: 12.3 (Postgres HA Requirements), 12.8 (Erasure SLA enforcement)
+func TestSamplerCrossTenantRead_spec_12_3(t *testing.T) {
+	ctx := context.Background()
+	jobs := newJobStore(t)
+	sink := newFakeAgeSink()
+	at := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
+	type event struct {
+		endpoint, caller string
+		rows             int
+	}
+	var events []event
+	var emitErr error
+	s := erasurejob.NewSampler(jobs, sink, time.Hour, fixedClock(at)).
+		WithCrossTenantReadAudit(func(_ context.Context, endpoint, caller string, rows int) error {
+			events = append(events, event{endpoint, caller, rows})
+			return emitErr
+		})
+	if err := s.Sample(ctx); err != nil {
+		t.Fatalf("empty Sample: %v", err)
+	}
+	j, err := jobs.Start(ctx, erasurejob.Job{ID: "erasure_a", TenantID: "acme", UserID: "alice", Phase: erasurejob.PhaseInitiated, StartedAt: at})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	emitErr = errors.New("audit down")
+	if err := s.Sample(ctx); err == nil {
+		t.Fatal("Sample with a failing emit returned nil")
+	}
+	if sink.series(j.ID) {
+		t.Error("a Sample whose emit failed published a series")
+	}
+	want := []event{
+		{erasurejob.CrossTenantReadEndpointSampler, "", 0},
+		{erasurejob.CrossTenantReadEndpointSampler, "", 1},
+	}
+	if len(events) != 2 || events[0] != want[0] || events[1] != want[1] {
+		t.Errorf("events = %+v, want %+v", events, want)
+	}
+	s.WithCrossTenantReadAudit(nil)
+	if err := s.Sample(ctx); err != nil {
+		t.Fatalf("Sample with no recorder: %v", err)
+	}
+	if !sink.series(j.ID) || len(events) != 2 {
+		t.Errorf("nil recorder: series published %v, events %d; want published and no new event", sink.series(j.ID), len(events))
 	}
 }
