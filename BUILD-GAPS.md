@@ -1581,6 +1581,13 @@ On the `lenny-e2e` cluster (2026-10-16) the upgraded controller's GC reclaimed a
 **Pinning test:** `TestRecycleRebindRacesAByNameDelete_spec_5_2` in `tests/tier7a_load_local/slot_release_departure_race_test.go`.
 **Suggested resolution:** Closing it needs session identity on the claim, which §4.6.3 keeps on the Postgres row, so it needs a spec change through the proposal pipeline. No owner is named.
 
+### - [ ] F-4.6.37 — The agent pod's preStop hook execs `lenny-adapter`, which the adapter image does not contain, so the hook never runs [High] — OPEN
+
+**Spec:** §4.6.1 (the adapter container's preStop hook drains the pod before the kubelet's SIGTERM).
+**Evidence:** `preStopDrainHook` (`pkg/controller/sandbox/podspec/termination.go`) renders the exec command `lenny-adapter prestop --timeout=<n>s`. The `Dockerfile` builds every platform image with `-o /out/lenny` and installs only `/usr/local/bin/lenny` on a distroless base, so no `lenny-adapter` executable exists in the adapter image. Found by the R7 to R25 re-derivation of `gateway-runtime-comms-remediation.md` on 2026-10-21; proposal 0087's draft summary noted it without filing it.
+**Gap:** The kubelet's preStop exec fails at every pod termination, so the drain the hook exists to run never happens and the container receives SIGTERM undrained.
+**Suggested resolution:** Render the command the image provides (`/usr/local/bin/lenny prestop ...`) or install the binary under the name the podspec uses, and pin the rendered command against the image layout with a tier-5 test. Owned by remediation step R16, whose tier-5 terminate-and-checkpoint test covers it; a direct fix may land it earlier.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
@@ -7503,7 +7510,7 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Spec:** §7.2 crash-recovery row (the adopting coordinator emits `inbox_cleared`).
 **Evidence:** `Coordinator.ClearInboxOnAcquire` (`pkg/gateway/session/sessioninbox/coordinator.go`), the only emitter of `inbox_cleared`, has no production caller. The resume path no longer clears an inbox (`clearInboxOnResume` is deleted), because no inbox was cleared there. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
 **Gap:** A sender whose buffered messages a coordinator crash lost receives no `inbox_cleared` event.
-**Suggested resolution:** Call `ClearInboxOnAcquire` from the coordination takeover so the adopter emits the event.
+**Suggested resolution:** Call `ClearInboxOnAcquire` from the coordination takeover so the adopter emits the event. Owned by remediation step R20 (`gateway-runtime-comms-remediation.md` section 5, re-derived 2026-10-21).
 
 ### - [ ] F-7.2.41 — No code implements the adapter's `delivered_message_ids` duplicate suppression [Medium] — OPEN
 
@@ -49627,7 +49634,7 @@ Spec: `spec/29_communication-scenarios.md` §29.3 (**Off-holder matrix.**).
 **Spec:** §29.3 **Off-holder matrix.** (the `POST /v1/sessions/{id}/resume` row for a `suspended` session whose pod is still held requires a forward to the coordinator, with `TARGET_NOT_READY` only for an unreachable coordinator).
 **Evidence:** `handleResume` (`pkg/gateway/sessionserver/resume.go`) answers 409 `TARGET_NOT_READY` whenever the serving replica does not hold the coordination lease of a held-pod `suspended` session, because no inter-replica carrier for the forward exists. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
 **Gap:** A client resume of a held-pod `suspended` session that the load balancer routes to a replica other than the coordinator is refused although the coordinator is reachable.
-**Suggested resolution:** Name a carrier for the forward in §28.3 and §28.5.4 through the proposal pipeline, then forward the resume to the coordinator over it. No remediation step owns the carrier yet.
+**Suggested resolution:** Name a carrier for the forward in §28.3 and §28.5.4 through the proposal pipeline, then forward the resume to the coordinator over it. The carrier is specified by the inter-replica carrier proposal in `gateway-runtime-comms-remediation.md` §10.2, and the forward is owned by remediation step R19 (assigned 2026-10-21).
 
 ### - [ ] F-29.3.2 — An off-holder message to an `input_required` session is buffered in the serving replica's own inbox, which the coordinator does not read under `durableInbox: false` [Medium] — OPEN
 
