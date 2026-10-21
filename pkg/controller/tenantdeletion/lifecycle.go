@@ -10,7 +10,7 @@
 // tenant through the §12.8 phases in order:
 //
 //	Phase 1  (disabling) — soft-disable: reject new sessions, API keys, sign-ups.
-//	Phase 2  (disabling) — terminate: graceful-shutdown active sessions.
+//	Phase 2  (disabling) — terminate: drain the tenant's sessions; retry until the drain succeeds.
 //	Phase 3  (deleting)  — revoke OAuth tokens and credential leases.
 //	Phase 4  (deleting)  — DeleteByTenant across every store, in dependency order.
 //	Phase 4a (deleting)  — T4 tenants only: destroy the per-tenant KMS key
@@ -68,8 +68,10 @@ const (
 	// PhaseSoftDisable — §12.8 Phase 1: reject new session creation,
 	// API key issuance, and sign-ups for the tenant.
 	PhaseSoftDisable Phase = "soft_disable"
-	// PhaseTerminateSessions — §12.8 Phase 2: graceful-shutdown active
-	// sessions, then force-terminate any that miss the timeout.
+	// PhaseTerminateSessions — §12.8 Phase 2: drain the tenant's sessions
+	// by applying the forced terminal transition to each non-terminal
+	// session. The phase completes only when the drain succeeds; a drain
+	// that does not succeed keeps the job in this phase for the next pass.
 	PhaseTerminateSessions Phase = "terminate_sessions"
 	// PhaseRevokeCredentials — §12.8 Phase 3: revoke OAuth tokens and
 	// refresh tokens, invalidate credential pool leases.
