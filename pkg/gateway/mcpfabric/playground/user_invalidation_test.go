@@ -11,6 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // spec: §27.3.1 / §27.6 — user.invalidated drives the
@@ -177,7 +179,7 @@ func TestRevokeSessionsForUserIdempotentAndNilStore_spec_27_6_204(t *testing.T) 
 
 func TestRedisSessionStoreUserIndexAndRevoke_spec_11_4(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()

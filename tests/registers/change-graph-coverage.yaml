@@ -305,7 +305,6 @@ prefixes:
   - pkg/gateway/storage/pgnotify/
   - pkg/gateway/storage/pgtenant/
   - pkg/gateway/storage/pubsub/
-  - pkg/gateway/storage/rediskeys/
   - pkg/gateway/storage/redistopology/
   - pkg/gateway/storage/retentiongc/
   - pkg/gateway/storage/slotcounter/
@@ -345,7 +344,6 @@ prefixes:
   - pkg/proto/adapter/v1/
   - pkg/proto/interceptor/v1/
   - pkg/proto/tokenservice/v1/
-  - pkg/redisconn/
   - pkg/remediationlock/
   - pkg/runtimekit/
   - pkg/runtimekit/echocore/

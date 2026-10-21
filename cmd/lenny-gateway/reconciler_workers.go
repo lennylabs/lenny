@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/quota"
-	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
 // startReconcilerWorkers launches the §8.10 orphan-cleanup job, the §10.1
@@ -224,9 +224,10 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// are all wired. F-11.2.5 / F-12.4.8.
 	if w.treeBudgetConcrete != nil && w.pgPool != nil && w.sessions != nil {
 		w.delegationBudgetReconciler = &delegationbudget.Reconciler{
-			Probe: func(ctx context.Context) bool {
-				return redisconn.PingWithTimeout(w.redisClient, 2*time.Second) == nil
-			},
+			// §12.4: the dlg:* counters live on the Delegation concern's
+			// instance, so its outage and recovery edges are read there.
+			// F-12.4.30.
+			Probe:           concernRedisProbe(w.concernRedis, storerouter.RedisConcernDelegation),
 			Counters:        delegationbudget.CounterAdapter{Reserver: w.treeBudgetConcrete},
 			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
 			Store:           delegationbudgetpg.New(w.pgPool),
@@ -252,9 +253,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// and the session-completion final write wired above. F-11.2.4.
 	if w.quotaCheckpointSvc != nil {
 		quotaCheckpointReconciler := &quotacheckpoint.Reconciler{
-			Probe: func(ctx context.Context) bool {
-				return redisconn.PingWithTimeout(w.redisClient, 2*time.Second) == nil
-			},
+			// §12.4: the token-usage counters live on the Quota concern's
+			// instance. F-12.4.30.
+			Probe:    concernRedisProbe(w.concernRedis, storerouter.RedisConcernQuota),
 			Service:  w.quotaCheckpointSvc,
 			Interval: time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
 		}

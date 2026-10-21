@@ -38,6 +38,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
 // DefaultMaxInboxSize is the §7.2 default: the
@@ -119,11 +121,11 @@ type Inbox interface {
 	Delete(ctx context.Context, tenantID, sessionID string) (int, error)
 }
 
-// inboxKey is the §12.4 durable-inbox Redis key
+// InboxKey is the §12.4 durable-inbox Redis key
 // `t:{tenant_id}:session:{session_id}:inbox`. The in-memory inbox reuses
 // the same string as its map key so the two modes are interchangeable.
-func inboxKey(tenantID, sessionID string) string {
-	return "t:" + tenantID + ":session:" + sessionID + ":inbox"
+func InboxKey(tenantID, sessionID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "session:" + sessionID + ":inbox"
 }
 
 // MemoryInbox is the default (`durableInbox:false`) in-memory inbox. It
@@ -154,7 +156,7 @@ func NewMemoryInbox(maxSize int) *MemoryInbox {
 func (m *MemoryInbox) Enqueue(_ context.Context, tenantID, sessionID string, msg Message) (*Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	q := append(m.byKey[key], msg)
 	var dropped *Message
 	if len(q) > m.max {
@@ -170,7 +172,7 @@ func (m *MemoryInbox) Enqueue(_ context.Context, tenantID, sessionID string, msg
 func (m *MemoryInbox) Drain(_ context.Context, tenantID, sessionID string) ([]Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	q := m.byKey[key]
 	delete(m.byKey, key)
 	return q, nil
@@ -180,7 +182,7 @@ func (m *MemoryInbox) Drain(_ context.Context, tenantID, sessionID string) ([]Me
 func (m *MemoryInbox) Len(_ context.Context, tenantID, sessionID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.byKey[inboxKey(tenantID, sessionID)]), nil
+	return len(m.byKey[InboxKey(tenantID, sessionID)]), nil
 }
 
 // Peek implements Inbox. The handle names the entry by its message ID and
@@ -188,7 +190,7 @@ func (m *MemoryInbox) Len(_ context.Context, tenantID, sessionID string) (int, e
 func (m *MemoryInbox) Peek(_ context.Context, tenantID, sessionID string) (Message, string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	q := m.byKey[inboxKey(tenantID, sessionID)]
+	q := m.byKey[InboxKey(tenantID, sessionID)]
 	if len(q) == 0 {
 		return Message{}, "", false, nil
 	}
@@ -199,7 +201,7 @@ func (m *MemoryInbox) Peek(_ context.Context, tenantID, sessionID string) (Messa
 func (m *MemoryInbox) Ack(_ context.Context, tenantID, sessionID, handle string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	q := m.byKey[key]
 	for i, msg := range q {
 		if memoryHandle(msg) != handle {
@@ -221,7 +223,7 @@ func (m *MemoryInbox) Ack(_ context.Context, tenantID, sessionID, handle string)
 func (m *MemoryInbox) Delete(_ context.Context, tenantID, sessionID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	n := len(m.byKey[key])
 	delete(m.byKey, key)
 	return n, nil
@@ -279,7 +281,7 @@ func (r *RedisInbox) Enqueue(ctx context.Context, tenantID, sessionID string, ms
 		return nil, err
 	}
 	res, err := enqueueInboxScript.Run(ctx, r.client,
-		[]string{inboxKey(tenantID, sessionID)}, r.max, payload).Result()
+		[]string{InboxKey(tenantID, sessionID)}, r.max, payload).Result()
 	if errors.Is(err, redis.Nil) {
 		// The Lua script returned `false` (no eviction); nothing dropped.
 		return nil, nil
@@ -302,7 +304,7 @@ func (r *RedisInbox) Enqueue(ctx context.Context, tenantID, sessionID string, ms
 // deletes the key in one pipeline so a concurrent enqueue cannot lose a
 // message between the read and the delete.
 func (r *RedisInbox) Drain(ctx context.Context, tenantID, sessionID string) ([]Message, error) {
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	var rangeCmd *redis.StringSliceCmd
 	_, err := r.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		rangeCmd = p.LRange(ctx, key, 0, -1)
@@ -329,13 +331,13 @@ func (r *RedisInbox) Drain(ctx context.Context, tenantID, sessionID string) ([]M
 
 // Len implements Inbox.
 func (r *RedisInbox) Len(ctx context.Context, tenantID, sessionID string) (int, error) {
-	n, err := r.client.LLen(ctx, inboxKey(tenantID, sessionID)).Result()
+	n, err := r.client.LLen(ctx, InboxKey(tenantID, sessionID)).Result()
 	return int(n), err
 }
 
 // Peek implements Inbox. The handle is the list member, LINDEX 0.
 func (r *RedisInbox) Peek(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
-	raw, err := r.client.LIndex(ctx, inboxKey(tenantID, sessionID), 0).Result()
+	raw, err := r.client.LIndex(ctx, InboxKey(tenantID, sessionID), 0).Result()
 	if errors.Is(err, redis.Nil) {
 		return Message{}, "", false, nil
 	}
@@ -352,14 +354,14 @@ func (r *RedisInbox) Peek(ctx context.Context, tenantID, sessionID string) (Mess
 // Ack implements Inbox. It removes one occurrence of the member handle names
 // (LREM count 1).
 func (r *RedisInbox) Ack(ctx context.Context, tenantID, sessionID, handle string) (bool, error) {
-	n, err := r.client.LRem(ctx, inboxKey(tenantID, sessionID), 1, handle).Result()
+	n, err := r.client.LRem(ctx, InboxKey(tenantID, sessionID), 1, handle).Result()
 	return n > 0, err
 }
 
 // Delete implements Inbox. It reads the list length and deletes the key in
 // one transaction.
 func (r *RedisInbox) Delete(ctx context.Context, tenantID, sessionID string) (int, error) {
-	key := inboxKey(tenantID, sessionID)
+	key := InboxKey(tenantID, sessionID)
 	var lenCmd *redis.IntCmd
 	if _, err := r.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		lenCmd = p.LLen(ctx, key)

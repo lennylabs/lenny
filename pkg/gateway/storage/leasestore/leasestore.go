@@ -28,6 +28,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // Sentinel errors.
@@ -87,8 +90,19 @@ func New(client redis.UniversalClient) *Store {
 	return &Store{client: client, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func leaseKey(tenantID, sessionID string) string {
-	return "t:" + tenantID + ":lease:session:" + sessionID
+// TenantKeyPrefix returns the §12.4 prefix every session lease of tenantID
+// carries: `t:{tenant_id}:lease:session:`. The tenant segment is the
+// rediskeys.TenantPrefix hash tag, so a tenant's leases share one Redis
+// Cluster slot and the tenant erasure SCAN runs on the master that owns it.
+func TenantKeyPrefix(tenantID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "lease:session:"
+}
+
+// Key returns the §12.4 Redis key of the session lease:
+// `t:{tenant_id}:lease:session:{session_id}`. The Postgres fallback store
+// derives its advisory-lock hash from the same string.
+func Key(tenantID, sessionID string) string {
+	return TenantKeyPrefix(tenantID) + sessionID
 }
 
 // acquireScript sets the lease only when it is unheld or already held
@@ -130,7 +144,7 @@ func (s *Store) Acquire(ctx context.Context, tenantID, sessionID, holder string,
 	if ttl <= 0 {
 		return Lease{}, fmt.Errorf("leasestore: ttl must be positive, got %s", ttl)
 	}
-	k := leaseKey(tenantID, sessionID)
+	k := Key(tenantID, sessionID)
 	res, err := acquireScript.Run(ctx, s.client, []string{k}, holder, ttl.Milliseconds()).Int()
 	if err != nil {
 		return Lease{}, err
@@ -152,7 +166,7 @@ func (s *Store) Renew(ctx context.Context, tenantID, sessionID, holder string, t
 	if ttl <= 0 {
 		return Lease{}, fmt.Errorf("leasestore: ttl must be positive, got %s", ttl)
 	}
-	k := leaseKey(tenantID, sessionID)
+	k := Key(tenantID, sessionID)
 	res, err := renewScript.Run(ctx, s.client, []string{k}, holder, ttl.Milliseconds()).Int()
 	if err != nil {
 		return Lease{}, err
@@ -172,7 +186,7 @@ func (s *Store) Renew(ctx context.Context, tenantID, sessionID, holder string, t
 // lease is already gone or held by another replica, so a replica can
 // safely release on shutdown without racing the TTL.
 func (s *Store) Release(ctx context.Context, tenantID, sessionID, holder string) error {
-	k := leaseKey(tenantID, sessionID)
+	k := Key(tenantID, sessionID)
 	_, err := releaseScript.Run(ctx, s.client, []string{k}, holder).Int()
 	return err
 }
@@ -180,7 +194,7 @@ func (s *Store) Release(ctx context.Context, tenantID, sessionID, holder string)
 // Get returns the current lease for the session, or ErrNotFound when
 // none is held.
 func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (Lease, error) {
-	k := leaseKey(tenantID, sessionID)
+	k := Key(tenantID, sessionID)
 	holder, err := s.client.Get(ctx, k).Result()
 	if errors.Is(err, redis.Nil) {
 		return Lease{}, ErrNotFound
@@ -237,45 +251,5 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	if tenantID == "" {
 		return 0, ErrEmptyScope
 	}
-	return scanDelete(ctx, s.client, "t:"+tenantID+":lease:session:*")
-}
-
-// scanDelete SCANs the keyspace for pattern and deletes the matched
-// keys in batches, returning the count removed. SCAN is cursor-based
-// and non-blocking, so a large keyspace does not stall Redis. Keys
-// that vanish between SCAN and DEL (TTL expiry) simply do not count.
-func scanDelete(ctx context.Context, client redis.UniversalClient, pattern string) (int, error) {
-	const delBatch = 256
-	var (
-		batch   []string
-		deleted int
-	)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		n, err := client.Del(ctx, batch...).Result()
-		if err != nil {
-			return err
-		}
-		deleted += int(n)
-		batch = batch[:0]
-		return nil
-	}
-	iter := client.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		batch = append(batch, iter.Val())
-		if len(batch) >= delBatch {
-			if err := flush(); err != nil {
-				return deleted, err
-			}
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return deleted, err
-	}
-	if err := flush(); err != nil {
-		return deleted, err
-	}
-	return deleted, nil
+	return redisconn.ScanDelete(ctx, s.client, rediskeys.TenantPrefix(tenantID), TenantKeyPrefix(tenantID)+"*")
 }

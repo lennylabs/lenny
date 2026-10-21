@@ -12,13 +12,14 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // newStore returns a leasestore wired to a fresh miniredis instance.
 func newStore(t *testing.T) *leasestore.Store {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return leasestore.New(cl)
 }

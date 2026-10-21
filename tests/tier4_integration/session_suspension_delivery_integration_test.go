@@ -210,7 +210,7 @@ func TestHeldMessagesReachTheRuntimeInOrder_spec_7_2(t *testing.T) {
 		if st := h.Row(id).State; st != session.StateResumePending {
 			t.Fatalf("after the crash with no spare pod the session is %q, want resume_pending", st)
 		}
-		inboxKey := "t:" + lifecycleharness.Tenant + ":session:" + id + ":inbox"
+		inboxKey := sessioninbox.InboxKey(lifecycleharness.Tenant, id)
 		if !h.Redis.Exists(inboxKey) {
 			t.Fatalf("the durable inbox entry left the inbox at resume_pending")
 		}

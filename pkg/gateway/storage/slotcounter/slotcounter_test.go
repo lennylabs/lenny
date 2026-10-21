@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newCounter(t *testing.T) *slotcounter.Counter {
@@ -29,7 +30,7 @@ func newCounter(t *testing.T) *slotcounter.Counter {
 func newCounterNoSource(t *testing.T, opts ...slotcounter.Option) (*slotcounter.Counter, *miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return slotcounter.New(cl, opts...), mr, cl
 }
@@ -525,7 +526,7 @@ func TestReserveRehydrationCrossReplicaSeedsOnce(t *testing.T) {
 	src := newFakeSource()
 	mr := miniredis.RunT(t)
 	newReplica := func() *slotcounter.Counter {
-		cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 		t.Cleanup(func() { _ = cl.Close() })
 		return slotcounter.New(cl, slotcounter.WithSlotSource(src))
 	}

@@ -106,7 +106,7 @@ func TestDLQPeekOldestUndecodableHeadIsAFailedPeek_spec_7_2(t *testing.T) {
 	ctx := context.Background()
 	rc := newRedisT(t)
 	d := NewDLQ(rc, 10)
-	if err := rc.ZAdd(ctx, dlqKey("acme", "s"), redis.Z{Score: 1, Member: "{not an envelope"}).Err(); err != nil {
+	if err := rc.ZAdd(ctx, DLQKey("acme", "s"), redis.Z{Score: 1, Member: "{not an envelope"}).Err(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	got, member, ok, err := d.PeekOldest(ctx, "acme", "s")

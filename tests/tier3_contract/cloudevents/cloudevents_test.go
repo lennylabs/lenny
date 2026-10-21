@@ -145,7 +145,7 @@ func TestCloudEventsTenantPrefixedChannels(t *testing.T) {
 		if a == b {
 			t.Errorf("topic %q: tenants acme and globex share channel %q", topic, a)
 		}
-		if !strings.HasPrefix(a, "t:acme:evt:") {
+		if !strings.HasPrefix(a, "t:{acme}:evt:") {
 			t.Errorf("topic %q: channel %q lacks the t:{tenant}:evt: prefix", topic, a)
 		}
 	}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func msg(id, sender string) Message {
@@ -23,7 +25,7 @@ func msg(id, sender string) Message {
 func newRedisT(t *testing.T) redis.UniversalClient {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }

@@ -4,6 +4,8 @@ package redisstore_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,8 +14,14 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/clustertest"
 )
 
+// newStore builds the store over a single miniredis. It deliberately does
+// not install slotguard.Hook: the lock scripts and the persist transaction
+// span the ops:lock: and ops:lockidx: hash slots (F-12.4.28 class B/C),
+// which P6 resolves by renaming the lock keys under one hash tag. Install
+// the hook here when P6 lands.
 func newStore(t *testing.T) (*redisstore.Store, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -219,5 +227,47 @@ func TestRedisServerTime_spec_25_4(t *testing.T) {
 	}
 	if got.Location() != time.UTC {
 		t.Errorf("ServerTime location = %v, want UTC", got.Location())
+	}
+}
+
+// TestRedisListCoversEveryClusterMaster_spec_25_4 asserts the lock listing
+// reads every master of a Redis Cluster. The ops:lock:{scope} keys carry no
+// shared hash tag, so they spread over the masters, and a SCAN on the
+// cluster client alone would return one master's locks (F-12.4.29).
+//
+// The locks are written directly as hashes rather than through Acquire,
+// and the store's other tests do not install the slot guard: the acquire
+// and release scripts and the persist transaction span the ops:lock: and
+// ops:lockidx: hash slots, which is F-12.4.28 class B/C, resolved by P6's
+// rename of the lock keys under one hash tag.
+//
+// spec: §25.4; §12.4 Redis HA and Failure Modes.
+func TestRedisListCoversEveryClusterMaster_spec_25_4(t *testing.T) {
+	c := clustertest.New(t, 3)
+	s := redisstore.New(c.Client)
+	ctx := context.Background()
+	const n = 20
+	masters := map[string]bool{}
+	for i := 0; i < n; i++ {
+		scope := fmt.Sprintf("pool:p%02d", i)
+		blob, err := json.Marshal(coordination.Lock{ID: "lock-" + scope, Scope: scope, AcquiredBy: "alice"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := "ops:lock:" + scope
+		if err := c.Client.HSet(ctx, key, "id", "lock-"+scope, "data", blob).Err(); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+		masters[c.ServerFor(key).Addr()] = true
+	}
+	if len(masters) < 2 {
+		t.Fatalf("fixture: locks landed on %d master(s), want them spread", len(masters))
+	}
+	locks, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(locks) != n || locks[0].Scope != "pool:p00" || locks[n-1].Scope != fmt.Sprintf("pool:p%02d", n-1) {
+		t.Fatalf("list = %d locks, want %d ordered by scope", len(locks), n)
 	}
 }

@@ -3617,12 +3617,20 @@
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestSlotSetKeyRowsDescribeASet_spec_12_4",
         "tests/tier7a_load_local/slot_counter_rebuild_race_test.go",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "tests/tier4_integration/redis_cluster_smoke_test.go::TestRedisClusterTenantKeysAndScanRouting_spec_12_4",
+        "tests/tier0_static/redis_cluster_safety_test.go",
+        "pkg/redisconn/scan_test.go",
+        "pkg/redisconn/slotguard/hook_test.go",
+        "pkg/gateway/storage/rediskeys/rediskeys_test.go::TestTenantPrefixIsHashTagged_spec_12_4",
+        "cmd/lenny-gateway/redis_concern_probes_test.go"
       ],
       "packages": [
         "pkg/store/lease",
         "pkg/store/quota",
-        "pkg/redisconn"
+        "pkg/redisconn",
+        "pkg/redisconn/slotguard",
+        "pkg/gateway/storage/rediskeys"
       ],
       "blocked_until_phase": "4",
       "notes": "pkg/redisconn is the gateway/ops Redis client constructor: it accepts either a direct redis-url or a \u00a712.8 Sentinel failover configuration (sentinel addrs + master name) and returns a go-redis client that follows automatic Sentinel failover transparently. The cmd/lenny-gateway and cmd/lenny-ops binaries call into it. TestRedisSentinelFailover drives the failover against the compose Sentinel topology; TestRedisHAFailoverKind drives the same behavior against the Kind datastores-ha-redis.yaml overlay."

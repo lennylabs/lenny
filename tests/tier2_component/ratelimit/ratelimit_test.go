@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -38,7 +39,7 @@ func rateKey(t *testing.T) string {
 func TestRateLimitCounterContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	counter := redisstore.New(rd.Client)
+	counter := redisstore.New(slotguard.Install(rd.Client))
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 

@@ -15,13 +15,15 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
 func newPurgeTier(t *testing.T) (*Tier, redis.UniversalClient) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	tier, err := New(Options{Client: client, ConsumerName: "replica-1"})
 	if err != nil {

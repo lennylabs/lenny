@@ -53,7 +53,7 @@ var _ leasestore.LeaseStore = (*Store)(nil)
 // matches the Redis key form so the two stores lock the same logical
 // resource namespace.
 func leaseKey(tenantID, sessionID string) string {
-	return "t:" + tenantID + ":lease:session:" + sessionID
+	return leasestore.Key(tenantID, sessionID)
 }
 
 // advisoryLock takes the per-(tenant, session) transaction-level

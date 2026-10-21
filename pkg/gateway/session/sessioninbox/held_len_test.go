@@ -10,6 +10,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // heldCoordinator builds a Coordinator over miniredis with the given inbox
@@ -17,7 +19,7 @@ import (
 func heldCoordinator(t *testing.T, durable bool) (*Coordinator, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = c.Close() })
 	var in Inbox = NewMemoryInbox(10)
 	if durable {
@@ -140,10 +142,10 @@ func TestEraseSessionDeletesOnlyThatSessionsQueues_spec_12_8(t *testing.T) {
 					t.Fatalf("%s/%s held %d after another session's erasure, want 2", key[0], key[1], got)
 				}
 			}
-			if durable && mr.Exists(inboxKey("acme", "s")) {
+			if durable && mr.Exists(InboxKey("acme", "s")) {
 				t.Fatal("the durable inbox key survived the erasure")
 			}
-			if mr.Exists(dlqKey("acme", "s")) {
+			if mr.Exists(DLQKey("acme", "s")) {
 				t.Fatal("the DLQ key survived the erasure")
 			}
 			mr.SetError("boom")

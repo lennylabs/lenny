@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // spec: §7.1 — concurrent derives on the same source session
@@ -306,7 +307,7 @@ func TestNoLock_AlwaysAdmits(t *testing.T) {
 func newMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	return mr, client
 }

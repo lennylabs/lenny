@@ -40,6 +40,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover"
 )
@@ -81,7 +83,7 @@ func StreamMaxLenForTier(tier string) int64 {
 
 // streamKey returns the §11.2.1 per-tenant stream key.
 func streamKey(tenantID string) string {
-	return "t:" + tenantID + ":billing:stream"
+	return rediskeys.TenantPrefix(tenantID) + "billing:stream"
 }
 
 // Inserter commits a billing event reclaimed from the stream into the

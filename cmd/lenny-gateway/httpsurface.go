@@ -188,9 +188,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		healthAgg.Register(backends.Postgres(w.pgPool, "postgres"))
 		readinessDeps = append(readinessDeps, "postgres")
 	}
-	if w.redisClient != nil {
-		healthAgg.Register(backends.Redis(w.redisClient, "redis"))
-	}
+	// §12.4: the base client plus each distinct dedicated concern
+	// client, so a split concern's outage is visible. F-12.4.30.
+	registerRedisHealth(healthAgg, w.redisClient, w.concernRedis)
 	if w.breakerCache != nil {
 		healthAgg.Register(backends.CircuitBreakerCache(w.breakerCache, "circuit-breaker-cache"))
 	}
@@ -424,7 +424,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			redisSessions := playground.NewRedisSessionStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub)).WithMetrics(pgMetrics)
 			pgSessions = redisSessions
 			// §27.3.1 / §27.6 pub/sub: a single PSUBSCRIBE on
-			// t:*:pg:revocations subscribes this replica to every tenant's
+			// t:{*}:pg:revocations subscribes this replica to every tenant's
 			// revocation channel — including tenants provisioned after
 			// gateway start — so the auth hot path can short-circuit the
 			// Redis GET on a cache hit and the §27.8 propagation histogram

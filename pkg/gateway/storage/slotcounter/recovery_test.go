@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // The tests in this file pin the add-only recovery rebuild that runs when a
@@ -41,7 +42,7 @@ func newOutageEnv(t *testing.T) *outageEnv {
 // surfaces at once.
 func fastClient(t *testing.T, mr *miniredis.Miniredis) *redis.Client {
 	t.Helper()
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1, DialTimeout: 200 * time.Millisecond}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return cl
 }

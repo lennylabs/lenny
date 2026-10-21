@@ -346,6 +346,15 @@
       "component": ["tests/tier2_component/runbooks/index_load_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/runbook_index_test.go"]
     },
+    "pkg/redisconn": {
+      "static": ["tests/tier0_static/redis_cluster_safety_test.go"],
+      "unit": ["pkg/redisconn/...", "pkg/gateway/storage/rediskeys/..."],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+    },
+    "pkg/gateway/storage/rediskeys": {
+      "unit": ["pkg/gateway/storage/rediskeys/..."],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+    },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
       "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go"],
@@ -460,7 +469,8 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "tests/testinfra/containers": {
-      "component": ["tests/testinfra/containers/postgres_test.go"]
+      "component": ["tests/testinfra/containers/postgres_test.go"],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
     },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]

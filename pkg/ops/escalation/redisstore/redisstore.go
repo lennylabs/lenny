@@ -24,6 +24,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // keyPrefix is the §25.4 escalation key namespace.
@@ -179,20 +180,28 @@ func (s *Store) read(ctx context.Context, k string) (*escalation.Escalation, err
 }
 
 // scanAll iterates the escalation keyspace and decodes every live record.
-// Keys that expire between the scan and the read are skipped.
+// Keys that expire between the scan and the read are skipped. The
+// ops:escalations:{id} keys carry no shared hash tag, so on a Redis Cluster
+// they spread over every master: the SCAN runs on each master
+// (redisconn.ScanKeys with no routing key) and each record is read with
+// its own command, so the listing is complete (F-12.4.29).
+//
+// spec: §25.4; §12.4 Redis HA and Failure Modes.
 func (s *Store) scanAll(ctx context.Context) ([]escalation.Escalation, error) {
-	iter := s.client.Scan(ctx, 0, keyPrefix+"*", 256).Iterator()
 	var out []escalation.Escalation
-	for iter.Next(ctx) {
-		esc, err := s.read(ctx, iter.Val())
-		if err != nil {
-			return nil, err
+	err := redisconn.ScanKeys(ctx, s.client, "", keyPrefix+"*", 256, func(keys []string) error {
+		for _, k := range keys {
+			esc, err := s.read(ctx, k)
+			if err != nil {
+				return err
+			}
+			if esc != nil {
+				out = append(out, *esc)
+			}
 		}
-		if esc != nil {
-			out = append(out, *esc)
-		}
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // keyRecorder is a go-redis hook that records the keys of every command the
@@ -156,7 +157,7 @@ func TestEveryCounterCommandStaysInOneHashSlot_spec_12_4(t *testing.T) {
 	for _, step := range steps {
 		t.Run(step.name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
-			cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 			t.Cleanup(func() { _ = cl.Close() })
 			rec := &keyRecorder{}
 			cl.AddHook(rec)

@@ -9,12 +9,14 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newCacheT(t *testing.T, opts ...Option) (*RedisCache, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	return NewRedis(client, opts...), mr
 }
@@ -23,12 +25,12 @@ func newCacheT(t *testing.T, opts ...Option) (*RedisCache, *miniredis.Miniredis)
 // `t:{tenant_id}:exp:{experiment_id}:sticky:{user_id}`.
 func TestKeyFormat_spec_12_4(t *testing.T) {
 	got := assignmentKey("acme", "exp-1", "alice@acme.com")
-	want := "t:acme:exp:exp-1:sticky:alice@acme.com"
+	want := "t:{acme}:exp:exp-1:sticky:alice@acme.com"
 	if got != want {
 		t.Fatalf("assignmentKey = %q, want %q", got, want)
 	}
 	gotPat := flushPattern("acme", "exp-1")
-	wantPat := "t:acme:exp:exp-1:sticky:*"
+	wantPat := "t:{acme}:exp:exp-1:sticky:*"
 	if gotPat != wantPat {
 		t.Fatalf("flushPattern = %q, want %q", gotPat, wantPat)
 	}

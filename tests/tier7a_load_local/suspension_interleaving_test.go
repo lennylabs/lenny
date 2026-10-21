@@ -24,6 +24,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -185,7 +186,7 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 				// The peer takes the session over: the stale coordinator's
 				// lease key is gone and the peer's sweep re-adopts the pod at a
 				// later generation.
-				h.Redis.Del("t:" + lifecycleharness.Tenant + ":lease:session:" + id)
+				h.Redis.Del(leasestore.Key(lifecycleharness.Tenant, id))
 				if _, err := r2.Sweeper.Sweep(context.Background()); err != nil {
 					t.Fatalf("peer sweep: %v", err)
 				}
