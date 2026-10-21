@@ -3699,6 +3699,7 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerResumesFromPersistedPhase_spec_12_8",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerMissingHookFailsJob_spec_12_8",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerReceiptErrorKeepsJobInProgress_spec_12_8",
@@ -4373,6 +4374,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
         "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
@@ -4928,6 +4930,7 @@
       "title": "Alerting Rules and SLOs",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateAcceptsWellFormed",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateRejectsBadPromQL",

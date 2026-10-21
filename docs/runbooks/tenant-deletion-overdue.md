@@ -57,6 +57,8 @@ The stalled phase tells you which subsystem is the blocker. Common mappings:
 | `audit_redacted` | [postgres-failover](postgres-failover.html), constraint violations |
 | `tokens_revoked` | [token-service-outage](token-service-outage.html) |
 
+**Phase 2 session drain incomplete.** In Phase 2 the controller force-terminates every active session in the tenant. When a session cannot be terminated, or the drain does not finish within its per-pass time budget, the job stays in Phase 2, the tenant's `state` in `GET /v1/admin/tenants/{id}` stays `disabling`, and the gateway logs a warning naming the tenant. The controller runs the drain again on its next pass. A tenant that stays `disabling` across several passes has a session the drain cannot terminate; inspect the tenant's non-terminal sessions and the gateway warnings for the cause.
+
 ### Step 3 — Residual resources
 
 <!-- access: api method=GET path=/v1/admin/tenants/{id}/deletion -->

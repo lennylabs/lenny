@@ -82,7 +82,7 @@ For idempotent creation, set the `Idempotency-Key` request header (see [Idempote
 
 In service mode (`conversationContinuity: none`) every message is self-contained and the gateway may route successive messages to different replicas. A client of a `multi_turn` runtime in service mode must re-inject any needed context into each message's `input`. `GET /v1/sessions/{id}` returns the same `sessionIsolationLevel` object.
 
-**Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403).
+**Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403), `USER_INVALIDATED` (403), `TENANT_SUSPENDED` (403), and `TENANT_NOT_ACTIVE` (403).
 
 ### POST /v1/sessions/{id}/upload
 
