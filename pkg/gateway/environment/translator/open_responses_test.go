@@ -153,21 +153,30 @@ func TestOpenResponsesGetMissing(t *testing.T) {
 	}
 }
 
+// TestOpenResponsesDelete pins that the adapter serves no delete operation: a
+// DELETE on /v1/responses/{id} answers 405 with an Allow header naming GET, and
+// the implicit per-request session record behind the response survives it.
+// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
 func TestOpenResponsesDelete(t *testing.T) {
 	h, store := newResponsesHandler(t)
-	_ = store.Create(context.Background(), sessionstore.Session{
+	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "resp_1", TenantID: "acme",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodDelete, "/v1/responses/resp_1", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("delete: %d", rr.Code)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("DELETE /v1/responses/{id}: status %d, want 405", rr.Code)
 	}
-	if _, err := store.Get(context.Background(), "acme", "resp_1"); err == nil {
-		t.Error("response should be deleted")
+	if allow := rr.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Errorf("Allow header %q does not name GET", allow)
+	}
+	if _, err := store.Get(context.Background(), "acme", "resp_1"); err != nil {
+		t.Errorf("session record behind the response must survive a DELETE: %v", err)
 	}
 }
 
