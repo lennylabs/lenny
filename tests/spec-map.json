@@ -527,7 +527,8 @@
         "tests/testinfra/lifecycleharness/slots_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
-        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4"
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -2534,7 +2535,8 @@
         "pkg/gateway/mcpfabric/mcptools/elicitation_test.go::TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2",
         "pkg/gateway/mcpfabric/mcptools/elicitation_test.go::TestRequestElicitationWaiterExitsWhenExpired_spec_9_2",
         "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
-        "pkg/gateway/mcpfabric/mcptools/creation_fence_tools_test.go::TestMCPElicitationResolutionKeysOnPrincipal_spec_9_2"
+        "pkg/gateway/mcpfabric/mcptools/creation_fence_tools_test.go::TestMCPElicitationResolutionKeysOnPrincipal_spec_9_2",
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
       ],
       "packages": [
         "pkg/elicitation"
@@ -2739,7 +2741,8 @@
         "pkg/gateway/sessionserver/resume_rebind_test.go::TestResumeReleasesEarlierBindingBeforeBind_spec_10_1",
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRenewsSelfHeldLeaseInRecoveringStates_spec_10_1",
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
-        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go"
+        "tests/tier7a_load_local/elicitation_xreplica_wake_test.go",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8"
       ],
       "packages": [
         "pkg/gateway"
@@ -3802,7 +3805,19 @@
         "pkg/gateway/mcpfabric/mcptools/creation_fence_tools_test.go::TestMCPElicitationResolutionKeysOnPrincipal_spec_9_2",
         "cmd/lenny-gateway/stores_fence_wiring_test.go::TestMemoryPostureSessionStoreFencesAndCopies_spec_12_8",
         "pkg/gateway/sessionserver/interactions_user_gate_test.go::TestInteractionResolutionCallerCheck_spec_12_8",
-        "pkg/gateway/environment/translator/singleshot_test.go::TestNoopSingleShotBinderMapsFenceRefusal_spec_12_8"
+        "pkg/gateway/environment/translator/singleshot_test.go::TestNoopSingleShotBinderMapsFenceRefusal_spec_12_8",
+        "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestErasureFaultAtEachStep_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestErasureStartAndReceiptFaults_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestErasureCrashAndLeaderStopResume_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeriveCrashBeforeInsertErasedByOwnerErasure_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionPhase2FaultsAndTakeover_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestSuspendDrainFaults_spec_15_1",
+        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
+        "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -4457,7 +4472,12 @@
         "tests/tier7a_load_local/replay_transcript_erasure_race_test.go::TestReplayTranscriptCopyRaceAgainstErasure_spec_12_8",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier4_integration/gateway_postgres_e2e_test.go",
-        "pkg/gateway/externalapi/errorclassify/errorclassify_test.go::TestCreationFenceCodesArePolicyNonRetryable"
+        "pkg/gateway/externalapi/errorclassify/errorclassify_test.go::TestCreationFenceCodesArePolicyNonRetryable",
+        "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestSuspendDrainFaults_spec_15_1",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
+        "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
       ],
       "packages": [
         "pkg/api/v1/session",

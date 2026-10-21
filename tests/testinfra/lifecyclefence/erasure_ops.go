@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: MIT
+
+package lifecyclefence
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+)
+
+// Step names one erasure step the runner calls out to.
+type Step string
+
+// The erasure steps, in the order a job runs them.
+const (
+	StepDrain        Step = "drain"
+	StepHoldCheck    Step = "hold-check"
+	StepErase        Step = "erase"
+	StepPseudonymize Step = "pseudonymize"
+	StepVerify       Step = "verify"
+	StepReceipt      Step = "receipt"
+)
+
+// Erasure runs user erasures of the World's tenant through the production
+// erasure job store and Runner, with every step the runner calls out to
+// counted and open to a fault.
+type Erasure struct {
+	w *World
+	// Jobs is the erasure job store every runner of this Erasure uses. It
+	// asserts, on each committed write that moves a job out of initiated,
+	// that the user holds no non-terminal session.
+	Jobs erasurejob.Store
+
+	mu sync.Mutex
+	// fault, when set, is called before each step runs. A non-nil error
+	// fails the step without running it.
+	fault func(Step) error
+	// afterAdvance, when set, runs after each committed phase change.
+	afterAdvance func(from, to erasurejob.Phase)
+	steps        map[Step]int
+	startFaults  int
+	failures     []string
+}
+
+// NewErasure builds the World's erasure runner set.
+func (w *World) NewErasure() *Erasure {
+	e := &Erasure{w: w, steps: map[Step]int{}}
+	e.Jobs = &watchedErasureJobs{Store: w.S.Jobs, e: e}
+	return e
+}
+
+// SetFault installs the step fault hook. A nil hook clears it.
+func (e *Erasure) SetFault(f func(Step) error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.fault = f
+}
+
+// SetAfterAdvance installs the phase-change hook. A nil hook clears it.
+func (e *Erasure) SetAfterAdvance(f func(from, to erasurejob.Phase)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.afterAdvance = f
+}
+
+// FailStarts makes the next n job Starts fail with ErrInjected.
+func (e *Erasure) FailStarts(n int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.startFaults = n
+}
+
+// Steps returns how many times each step ran to completion.
+func (e *Erasure) Steps() map[Step]int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[Step]int, len(e.steps))
+	for k, v := range e.steps {
+		out[k] = v
+	}
+	return out
+}
+
+// Failures returns the failure-phase labels the runners counted, in order.
+func (e *Erasure) Failures() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.failures...)
+}
+
+// step runs fn as step s: it returns ctx's error when ctx has ended, as a
+// replica that has stopped runs nothing, then the fault hook's error, and
+// otherwise fn's, counting the step when fn succeeds.
+func (e *Erasure) step(ctx context.Context, s Step, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	fault := e.fault
+	e.mu.Unlock()
+	if fault != nil {
+		if err := fault(s); err != nil {
+			return err
+		}
+	}
+	if err := fn(); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.steps[s]++
+	e.mu.Unlock()
+	return nil
+}
+
+// Runner builds one replica's runner over the shared job store.
+func (e *Erasure) Runner() *erasurejob.Runner {
+	w := e.w
+	return erasurejob.NewRunner(e.Jobs, e.orchestrator(), nil).
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithBilling(erasurejob.NewBillingEraser(billingLedger{e}, w.S.Tenants)).
+		WithSessionDrain(func(ctx context.Context, tenantID, userID string) error {
+			return e.step(ctx, StepDrain, func() error {
+				if tenantID != w.Tenant {
+					return fmt.Errorf("erasure drain of foreign tenant %s", tenantID)
+				}
+				_, err := w.Drain(ctx, userID)
+				return err
+			})
+		}).
+		WithHoldCheck(func(ctx context.Context, _, _ string) ([]erasurejob.Hold, error) {
+			return nil, e.step(ctx, StepHoldCheck, func() error { return nil })
+		}).
+		WithFailureObserver(func(_, phase string) {
+			e.mu.Lock()
+			e.failures = append(e.failures, phase)
+			e.mu.Unlock()
+		}).
+		WithCompletionReceipt(func(ctx context.Context, j erasurejob.Job) error {
+			return e.step(ctx, StepReceipt, func() error {
+				w.mu.Lock()
+				w.erasedAt[j.UserID] = w.next()
+				w.mu.Unlock()
+				return nil
+			})
+		})
+}
+
+// orchestrator is the erasure over the World's stores: a lister over the
+// user's session rows from the primary and the IDs reserved for the user,
+// the session-scoped objects and transcripts erasers, and the sessions
+// user-scoped eraser, which also deletes the user's reservations. Every
+// eraser is the StepErase step.
+func (e *Erasure) orchestrator() *erasure.Orchestrator {
+	w := e.w
+	scoped := []erasure.SessionEraser{{Name: "artifacts", DeleteBySession: e.sessionEraser(w.Objects.DeleteBySession)}}
+	if w.S.TranscriptEraser != nil {
+		scoped = append(scoped, erasure.SessionEraser{Name: w.S.TranscriptEraser.Name, DeleteBySession: e.sessionEraser(w.S.TranscriptEraser.DeleteBySession)})
+	}
+	return erasure.New(erasure.Config{
+		Sessions:      w.userSessionIDs,
+		SessionScoped: scoped,
+		UserScoped: []erasure.Eraser{{Name: "sessions", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
+			var n int
+			err := e.step(ctx, StepErase, func() error {
+				var err error
+				n, err = w.S.Sessions.DeleteByUser(ctx, tenantID, userID)
+				return err
+			})
+			return n, err
+		}}},
+	})
+}
+
+// sessionEraser runs a session-scoped eraser only while ctx is live, so a
+// stopped replica deletes nothing.
+func (e *Erasure) sessionEraser(fn erasure.DeleteBySessionFunc) erasure.DeleteBySessionFunc {
+	return func(ctx context.Context, tenantID, sessionID string) (int, error) {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		return fn(ctx, tenantID, sessionID)
+	}
+}
+
+// userSessionIDs is the erasure's session lister: the user's rows from the
+// primary and the IDs reserved for the user.
+func (w *World) userSessionIDs(ctx context.Context, tenantID, userID string) ([]string, error) {
+	rows, err := w.S.Sessions.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
+	if err != nil {
+		return nil, err
+	}
+	ids, err := w.S.Sessions.ReservedSessionIDs(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	return ids, nil
+}
+
+// billingLedger is an empty billing ledger whose pseudonymize and count
+// calls are the StepPseudonymize and StepVerify steps.
+type billingLedger struct{ e *Erasure }
+
+func (b billingLedger) PseudonymizeUser(ctx context.Context, _, _ string, _ []byte) (int, error) {
+	return 0, b.e.step(ctx, StepPseudonymize, func() error { return nil })
+}
+
+func (b billingLedger) CountUser(ctx context.Context, _, _ string) (int, error) {
+	return 0, b.e.step(ctx, StepVerify, func() error { return nil })
+}
+
+// Start requests an erasure of user twice concurrently, as two erase
+// requests racing on two replicas would, and returns the job that was
+// started. Exactly one Start must succeed; the other must answer the
+// store's *erasurejob.ErrActiveJob.
+func (e *Erasure) Start(ctx context.Context, user string) (erasurejob.Job, error) {
+	r := e.Runner()
+	var jobs [2]erasurejob.Job
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			jobs[i], errs[i] = r.Start(ctx, e.w.Tenant, user, "carol@acme.com", nil)
+		}(i)
+	}
+	wg.Wait()
+	var active *erasurejob.ErrActiveJob
+	switch {
+	case errs[0] == nil && errors.As(errs[1], &active):
+		return jobs[0], nil
+	case errs[1] == nil && errors.As(errs[0], &active):
+		return jobs[1], nil
+	case errs[0] != nil && errs[1] != nil:
+		return erasurejob.Job{}, fmt.Errorf("start erasure of %s: %w; %w", user, errs[0], errs[1])
+	default:
+		e.w.Violatef("two concurrent erasure Starts for %s answered %v and %v; want one job and one ErrActiveJob", user, errs[0], errs[1])
+		return jobs[0], nil
+	}
+}
+
+// RunToCompletion runs RunPending on a fresh replica's runner until the
+// job completes, at most maxPasses times, restarting a failed job as the
+// retry endpoint does. While the job is in progress the user's
+// restriction must stay set naming the job.
+func (e *Erasure) RunToCompletion(ctx context.Context, jobID string, maxPasses int) (erasurejob.Job, error) {
+	for i := 0; i < maxPasses; i++ {
+		j, err := e.Jobs.Get(ctx, erasurejob.AllTenants, jobID)
+		if err != nil {
+			return j, fmt.Errorf("read erasure job %s: %w", jobID, err)
+		}
+		switch j.Phase {
+		case erasurejob.PhaseCompleted:
+			return j, nil
+		case erasurejob.PhaseFailed:
+			e.AssertRestricted(ctx, j)
+			if _, err := e.Jobs.Restart(ctx, jobID); err != nil {
+				return j, fmt.Errorf("restart erasure job %s: %w", jobID, err)
+			}
+			continue
+		}
+		e.AssertRestricted(ctx, j)
+		_ = e.Runner().RunPending(ctx)
+	}
+	j, err := e.Jobs.Get(ctx, erasurejob.AllTenants, jobID)
+	if err == nil && j.Phase != erasurejob.PhaseCompleted {
+		err = fmt.Errorf("erasure job %s still %s after %d passes (last failure %q)", jobID, j.Phase, maxPasses, j.Failure)
+	}
+	return j, err
+}
+
+// AssertRestricted records a violation unless the job's user carries the
+// restriction naming the job.
+func (e *Erasure) AssertRestricted(ctx context.Context, j erasurejob.Job) {
+	u, err := e.w.S.Users.Get(context.WithoutCancel(ctx), j.TenantID, j.UserID)
+	if err != nil {
+		e.w.Violatef("read user %s: %v", j.UserID, err)
+		return
+	}
+	if !u.ProcessingRestricted || u.ErasureJobID != j.ID {
+		e.w.Violatef("erasure job %s is %s but user %s has processing_restricted=%v naming %q",
+			j.ID, j.Phase, j.UserID, u.ProcessingRestricted, u.ErasureJobID)
+	}
+}
+
+// watchedErasureJobs is the erasure job store with the Start fault and the
+// phase-change assertions and hook.
+type watchedErasureJobs struct {
+	erasurejob.Store
+	e *Erasure
+}
+
+// Start implements erasurejob.Store.
+func (s *watchedErasureJobs) Start(ctx context.Context, j erasurejob.Job) (erasurejob.Job, error) {
+	s.e.mu.Lock()
+	fire := s.e.startFaults > 0
+	if fire {
+		s.e.startFaults--
+	}
+	s.e.mu.Unlock()
+	if fire {
+		return erasurejob.Job{}, ErrInjected
+	}
+	return s.Store.Start(ctx, j)
+}
+
+// Update implements erasurejob.Store.
+func (s *watchedErasureJobs) Update(ctx context.Context, id string, mutate func(*erasurejob.Job) error) (erasurejob.Job, error) {
+	var from, to erasurejob.Phase
+	var user string
+	j, err := s.Store.Update(ctx, id, func(j *erasurejob.Job) error {
+		from, user = j.Phase, j.UserID
+		if err := mutate(j); err != nil {
+			return err
+		}
+		to = j.Phase
+		return nil
+	})
+	if err != nil || from == to {
+		return j, err
+	}
+	if from == erasurejob.PhaseInitiated && to != erasurejob.PhaseFailed {
+		s.e.w.assertScopeDrained(context.WithoutCancel(ctx), user, fmt.Sprintf("when erasure job %s left initiated for %s", id, to))
+	}
+	s.e.mu.Lock()
+	hook := s.e.afterAdvance
+	s.e.mu.Unlock()
+	if hook != nil {
+		hook(from, to)
+	}
+	return j, err
+}

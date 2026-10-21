@@ -1,0 +1,332 @@
+// SPDX-License-Identifier: MIT
+
+//go:build e2e_kind
+
+// Tier-5 e2e Kind tests for the §12.8 lifecycle drain across gateway
+// replicas. The suspend case binds one session on each of two gateway
+// replicas, suspends the tenant through one of them, and asserts that every
+// session is terminal, that each session's pod claim is released within the
+// coordination Sweeper interval plus maxWorkspaceSealDurationSeconds, and
+// that a later create on either replica is refused with TENANT_SUSPENDED.
+// The erasure case erases a user whose session is bound on the other
+// replica and asserts that the session's claim is no longer bound after
+// claimOrphanTimeout plus one orphan-GC pass, the accepted path when the
+// erasure deletes the row before the binding replica's Sweeper lists it.
+//
+// Both cases bootstrap a tenant whose name carries a per-run suffix and
+// sweep, at start, every tenant an earlier killed run left under the same
+// prefix.
+package tier5_e2e_kind_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/kind"
+	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
+)
+
+// lifecycleDrainTenantPrefix prefixes every tenant these tests bootstrap.
+const lifecycleDrainTenantPrefix = "lifecycle-drain-"
+
+// lifecycleDrainSchedulingSlack absorbs the kubelet and controller latency
+// between the gateway releasing a claim and the SandboxClaim object
+// reflecting it.
+const lifecycleDrainSchedulingSlack = 30 * time.Second
+
+// adminRequest issues one platform-admin request through d's port-forward
+// and returns the status and the raw body.
+func adminRequest(t *testing.T, d *sessiondriver.Driver, tenant, method, path string, body any) (int, []byte) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		reader = strings.NewReader(string(b))
+	}
+	req, err := http.NewRequest(method, d.BaseURL()+path, reader)
+	if err != nil {
+		t.Fatalf("build %s %s: %v", method, path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	req.Header.Set("X-Lenny-User-ID", "alice")
+	res, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	return res.StatusCode, raw
+}
+
+// sweepStaleLifecycleTenants deletes every tenant under the test prefix
+// that an earlier run left behind. It is best-effort: a failure is logged
+// and never fails the run.
+func sweepStaleLifecycleTenants(t *testing.T, d *sessiondriver.Driver) {
+	t.Helper()
+	code, raw := adminRequest(t, d, "platform", http.MethodGet, "/v1/admin/tenants", nil)
+	if code != http.StatusOK {
+		t.Logf("stale-tenant sweep: list tenants answered %d; skipping the sweep", code)
+		return
+	}
+	var list struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Logf("stale-tenant sweep: decode tenant list: %v", err)
+		return
+	}
+	for _, tn := range list.Items {
+		if !strings.HasPrefix(tn.ID, lifecycleDrainTenantPrefix) {
+			continue
+		}
+		_, _ = adminRequest(t, d, "platform", http.MethodPost, "/v1/admin/tenants/"+tn.ID+"/resume", nil)
+		code, _ := adminRequest(t, d, "platform", http.MethodDelete, "/v1/admin/tenants/"+tn.ID, nil)
+		t.Logf("stale-tenant sweep: deleted %s left by an earlier run (status %d)", tn.ID, code)
+	}
+}
+
+// deploymentDurationArg returns the value of a duration flag on a
+// lenny-system Deployment, or def when the flag is absent. A bare integer is read as
+// seconds.
+func deploymentDurationArg(t *testing.T, c *kind.Cluster, deployment, flag string, def time.Duration) time.Duration {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", "lenny-system", "get", "deploy", deployment,
+		"-o", "jsonpath={.spec.template.spec.containers[0].args}")
+	if err != nil {
+		t.Fatalf("read %s args: %v\n%s", deployment, err, out)
+	}
+	var args []string
+	if err := json.Unmarshal([]byte(out), &args); err != nil {
+		t.Fatalf("decode %s args %q: %v", deployment, out, err)
+	}
+	for _, a := range args {
+		v, ok := strings.CutPrefix(a, "--"+flag+"=")
+		if !ok {
+			continue
+		}
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			t.Fatalf("parse %s --%s=%q: %v", deployment, flag, v, err)
+		}
+		return d
+	}
+	return def
+}
+
+// waitClaimReleased waits until the pod's SandboxClaim is gone or no longer
+// bound, failing after within.
+func waitClaimReleased(t *testing.T, c *kind.Cluster, pod string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var last string
+	for {
+		out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
+			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
+		last = strings.TrimSpace(out)
+		if err == nil && last != "bound" && last != "Bound" {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("claim of pod %s is still %q %s after the session ended", pod, last, within)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// twoReplicaDrivers pins one driver to each of two Ready gateway replicas
+// and bootstraps a fresh tenant through the second.
+func twoReplicaDrivers(t *testing.T, c *kind.Cluster) (a, b *sessiondriver.Driver, tenant string) {
+	t.Helper()
+	ensureGatewayReplicas(t, c, 2)
+	pods := readyGatewayPods(t, c)
+	if len(pods) < 2 {
+		t.Skipf("blocked: need two Ready gateway replicas, have %d (%v)", len(pods), pods)
+	}
+	a = sessiondriver.NewKeptForTarget(t, "pod/"+pods[0])
+	t.Cleanup(a.Close)
+	b = sessiondriver.NewKeptForTarget(t, "pod/"+pods[1])
+	t.Cleanup(b.Close)
+	sweepStaleLifecycleTenants(t, b)
+	tenant = fmt.Sprintf("%s%d", lifecycleDrainTenantPrefix, time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := b.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	ensureTenantAllowsSessionsWithNoEnvironment(t, b, tenant)
+	return a, b, tenant
+}
+
+// startOn creates and starts a session through d, skipping when the warm
+// pool has no pod to claim.
+func startOn(t *testing.T, d *sessiondriver.Driver, tenant string) *sessiondriver.Session {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
+	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
+		t.Skipf("blocked: warm pool not ready: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("create and start: %v", err)
+	}
+	if sess.PodAssignment == "" {
+		t.Fatalf("session %s carries no pod assignment", sess.ID)
+	}
+	return sess
+}
+
+// requireTerminal asserts the session reads terminal through d.
+func requireTerminal(t *testing.T, d *sessiondriver.Driver, tenant, id string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, ok := d.WaitForState(ctx, tenant, id, 20*time.Second, "failed", "completed", "cancelled", "expired"); !ok {
+		got, _ := d.GetSession(ctx, tenant, id)
+		t.Fatalf("session %s is not terminal after the drain: %+v", id, got)
+	}
+}
+
+// TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8 suspends a tenant
+// whose sessions are bound on two gateway replicas.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API), 10.1 (Horizontal Scaling)
+// diagnosis: a failure means the suspend drain did not reach a session
+// bound on another replica (a session still live), that replica's Sweeper
+// did not release the claim of a session the drain made terminal within
+// its interval plus the seal bound (a pod held out of the pool), or the
+// creation fence admitted a create into the suspended tenant on one of the
+// replicas.
+func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
+	c := kind.InstallLenny(t)
+	a, b, tenant := twoReplicaDrivers(t, c)
+	sessA, sessB := startOn(t, a, tenant), startOn(t, b, tenant)
+
+	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/tenants/"+tenant+"/suspend", map[string]any{"reason": "tier-5 drain"})
+	if code != http.StatusOK {
+		t.Fatalf("suspend: %d %s", code, raw)
+	}
+	var out struct {
+		Suspended      bool     `json:"suspended"`
+		FailedSessions []string `json:"failedSessions"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || !out.Suspended || len(out.FailedSessions) != 0 {
+		t.Fatalf("suspend body = %s (%v), want suspended with no failed sessions", raw, err)
+	}
+	defer adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/tenants/"+tenant+"/resume", nil)
+
+	requireTerminal(t, b, tenant, sessA.ID)
+	requireTerminal(t, a, tenant, sessB.ID)
+
+	bound := deploymentDurationArg(t, c, "lenny-gateway", "coordination-interval", 15*time.Second) +
+		deploymentDurationArg(t, c, "lenny-gateway", "workspace-seal-max-duration-seconds", 300*time.Second) +
+		lifecycleDrainSchedulingSlack
+	for _, s := range []*sessiondriver.Session{sessA, sessB} {
+		waitClaimReleased(t, c, s.PodAssignment, bound)
+	}
+
+	for name, d := range map[string]*sessiondriver.Driver{"replica A": a, "replica B": b} {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_, err := d.CreateSession(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "TENANT_SUSPENDED") {
+			t.Errorf("create on %s after the suspend = %v, want a 403 TENANT_SUSPENDED refusal", name, err)
+		}
+	}
+}
+
+// maxOrphanWaitEnv names the longest wait, in seconds, the erasure case
+// spends on claimOrphanTimeout plus one orphan-GC pass.
+const maxOrphanWaitEnv = "LENNY_LIFECYCLE_DRAIN_MAX_ORPHAN_WAIT_SECONDS"
+
+// orphanWaitBudget returns the configured orphan wait budget, 300s when
+// unset.
+func orphanWaitBudget(t *testing.T) time.Duration {
+	t.Helper()
+	v := os.Getenv(maxOrphanWaitEnv)
+	if v == "" {
+		return 300 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		t.Fatalf("%s=%q is not a positive number of seconds", maxOrphanWaitEnv, v)
+	}
+	return time.Duration(n) * time.Second
+}
+
+// TestUserErasureReleasesClaimOnOtherReplica_spec_12_8 erases a user whose
+// session is bound on the other gateway replica. The erasure deletes the
+// session row, so the binding replica may never list it terminal; the
+// orphan GC then releases the claim after claimOrphanTimeout.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (User-level erasure invocation), 4.6.1 (Orphan claim detection)
+// diagnosis: a failure means a pod bound to an erased user's session stays
+// bound past claimOrphanTimeout plus one orphan-GC pass, so an erasure
+// strands a pod out of the warm pool, or the erasure job never completed.
+func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
+	c := kind.InstallLenny(t)
+	orphan := deploymentDurationArg(t, c, "lenny-controller", "claim-orphan-timeout", 15*time.Minute)
+	// The warm-pool controller's orphan GC runs once a minute and has no
+	// flag (pkg/controller/warmpool defaultGCInterval).
+	const gcPass = 60 * time.Second
+	if budget := orphanWaitBudget(t); orphan+gcPass > budget {
+		t.Skipf("blocked: the controller's claimOrphanTimeout (%s) plus one orphan-GC pass (%s) exceeds the %s wait budget; "+
+			"run against an install with a lowered claimOrphanTimeout or raise %s", orphan, gcPass, budget, maxOrphanWaitEnv)
+	}
+	a, b, tenant := twoReplicaDrivers(t, c)
+	sess := startOn(t, a, tenant)
+	user := sess.UserID
+	if user == "" {
+		user = "alice"
+	}
+	// The erasure target must be a registered user of the tenant.
+	if code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/bootstrap", map[string]any{
+		"tenants": []map[string]any{{"id": tenant}},
+		"users":   []map[string]any{{"subject": user, "tenantId": tenant, "email": user + "@acme.com", "roles": []string{"user"}}},
+	}); code != http.StatusOK && code != http.StatusMultiStatus {
+		t.Fatalf("register %s: %d %s", user, code, raw)
+	}
+
+	code, raw := adminRequest(t, b, "platform", http.MethodPost, "/v1/admin/users/"+user+"/erase", map[string]any{"tenantId": tenant})
+	if code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("erase %s: %d %s", user, code, raw)
+	}
+	var started struct {
+		JobID string `json:"jobId"`
+	}
+	if err := json.Unmarshal(raw, &started); err != nil || started.JobID == "" {
+		t.Fatalf("erase body %s carries no jobId (%v)", raw, err)
+	}
+	jobDeadline := time.Now().Add(3 * time.Minute)
+	for {
+		code, raw := adminRequest(t, b, "platform", http.MethodGet, "/v1/admin/erasure-jobs/"+started.JobID, nil)
+		var job struct {
+			Phase string `json:"phase"`
+		}
+		_ = json.Unmarshal(raw, &job)
+		if code == http.StatusOK && job.Phase == "completed" {
+			break
+		}
+		if job.Phase == "failed" || !time.Now().Before(jobDeadline) {
+			t.Fatalf("erasure job %s did not complete: %d %s", started.JobID, code, raw)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	waitClaimReleased(t, c, sess.PodAssignment, orphan+gcPass+lifecycleDrainSchedulingSlack)
+}
