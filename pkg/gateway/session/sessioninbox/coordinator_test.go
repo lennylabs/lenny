@@ -82,7 +82,7 @@ func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	if n, _ := c.dlq.Len(ctx, "acme", "s"); n != 0 {
 		t.Fatalf("dlq len = %d, want 0 (no drain in durable mode)", n)
 	}
-	ttl, err := rc.TTL(ctx, inboxKey("acme", "s")).Result()
+	ttl, err := rc.TTL(ctx, InboxKey("acme", "s")).Result()
 	if err != nil {
 		t.Fatal(err)
 	}

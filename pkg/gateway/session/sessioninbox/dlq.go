@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
 // DefaultMaxDLQSize is the §7.2 default: the
@@ -29,12 +31,12 @@ const DefaultDLQTTL = 900 * time.Second
 // brief post-mortem retrieval by monitoring tools.
 const TerminalDLQTTL = 60 * time.Second
 
-// dlqKey is the §12.4 / §7.2 canonical DLQ Redis key
+// DLQKey is the §12.4 / §7.2 canonical DLQ Redis key
 // `t:{tenant_id}:session:{session_id}:dlq`. The tenant prefix ensures a
 // DLQ processor iterating across keys cannot read another tenant's
 // messages.
-func dlqKey(tenantID, sessionID string) string {
-	return "t:" + tenantID + ":session:" + sessionID + ":dlq"
+func DLQKey(tenantID, sessionID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "session:" + sessionID + ":dlq"
 }
 
 // DLQ is the §7.2 dead-letter queue: a Redis sorted set. It holds the
@@ -124,7 +126,7 @@ func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Messa
 	}
 	score := msg.EnqueuedAt.Add(ttl).UnixMilli()
 	res, err := enqueueDLQScript.Run(ctx, d.client,
-		[]string{dlqKey(tenantID, sessionID)}, d.max,
+		[]string{DLQKey(tenantID, sessionID)}, d.max,
 		strconv.FormatInt(score, 10), payload, strconv.FormatInt(score+1, 10)).Result()
 	if errors.Is(err, redis.Nil) {
 		// The Lua script returned `false` (no eviction); nothing dropped.
@@ -159,7 +161,7 @@ func DLQMember(msg Message) (string, error) {
 //
 // spec: §7.2; §7.3.
 func (d *DLQ) DrainAll(ctx context.Context, tenantID, sessionID string) ([]Message, error) {
-	key := dlqKey(tenantID, sessionID)
+	key := DLQKey(tenantID, sessionID)
 	var rangeCmd *redis.StringSliceCmd
 	_, err := d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		rangeCmd = p.ZRange(ctx, key, 0, -1)
@@ -193,7 +195,7 @@ return expired
 // `dlq_ttl_expired`.
 func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now time.Time) ([]Message, error) {
 	res, err := sweepExpiredScript.Run(ctx, d.client,
-		[]string{dlqKey(tenantID, sessionID)}, now.UnixMilli()).StringSlice()
+		[]string{DLQKey(tenantID, sessionID)}, now.UnixMilli()).StringSlice()
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +212,7 @@ func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now 
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
 func (d *DLQ) PeekOldest(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
-	raw, err := d.client.ZRange(ctx, dlqKey(tenantID, sessionID), 0, 0).Result()
+	raw, err := d.client.ZRange(ctx, DLQKey(tenantID, sessionID), 0, 0).Result()
 	if err != nil {
 		return Message{}, "", false, err
 	}
@@ -229,7 +231,7 @@ func (d *DLQ) PeekOldest(ctx context.Context, tenantID, sessionID string) (Messa
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
 func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (bool, error) {
-	n, err := d.client.ZRem(ctx, dlqKey(tenantID, sessionID), member).Result()
+	n, err := d.client.ZRem(ctx, DLQKey(tenantID, sessionID), member).Result()
 	return n > 0, err
 }
 
@@ -248,7 +250,7 @@ func (d *DLQ) Remove(ctx context.Context, tenantID, sessionID, member string) (b
 // spec: §7.2 (Message delivery routing — seven paths, path 6).
 func (d *DLQ) CountAcceptedAfter(ctx context.Context, tenantID, sessionID string, since time.Time) (int, error) {
 	floor := since.Add(DefaultDLQTTL).UnixMilli()
-	n, err := d.client.ZCount(ctx, dlqKey(tenantID, sessionID), strconv.FormatInt(floor, 10), "+inf").Result()
+	n, err := d.client.ZCount(ctx, DLQKey(tenantID, sessionID), strconv.FormatInt(floor, 10), "+inf").Result()
 	return int(n), err
 }
 
@@ -258,7 +260,7 @@ func (d *DLQ) CountAcceptedAfter(ctx context.Context, tenantID, sessionID string
 //
 // spec: §12.8 (Compliance Interfaces).
 func (d *DLQ) Delete(ctx context.Context, tenantID, sessionID string) (int, error) {
-	key := dlqKey(tenantID, sessionID)
+	key := DLQKey(tenantID, sessionID)
 	var card *redis.IntCmd
 	if _, err := d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		card = p.ZCard(ctx, key)
@@ -272,7 +274,7 @@ func (d *DLQ) Delete(ctx context.Context, tenantID, sessionID string) (int, erro
 
 // Len reports the DLQ entry count.
 func (d *DLQ) Len(ctx context.Context, tenantID, sessionID string) (int, error) {
-	n, err := d.client.ZCard(ctx, dlqKey(tenantID, sessionID)).Result()
+	n, err := d.client.ZCard(ctx, DLQKey(tenantID, sessionID)).Result()
 	return int(n), err
 }
 

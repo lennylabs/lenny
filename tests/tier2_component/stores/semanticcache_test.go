@@ -68,7 +68,10 @@ func TestSemanticCacheContract(t *testing.T) {
 		// Every key the cache wrote for this tenant must carry the
 		// §12.4 prefix t:{tenant_id}:scache: — both the entry and the
 		// per-(scope, model, provider) index set.
-		want := "t:" + tenant + ":scache:"
+		want := semanticcache.TenantKeyPrefix(tenant)
+		if want != "t:{"+tenant+"}:scache:" {
+			t.Fatalf("tenant prefix = %q, want the hash-tagged t:{%s}:scache:", want, tenant)
+		}
 		keys, err := rd.Client.Keys(ctx, want+"*").Result()
 		if err != nil {
 			t.Fatalf("scan keys: %v", err)
@@ -190,7 +193,7 @@ func TestSemanticCacheContract(t *testing.T) {
 			t.Error("DeleteByUser erased bob, but alice was the target")
 		}
 		// No alice key survives in the keyspace.
-		residual, err := rd.Client.Keys(ctx, "t:"+tenant+":scache:u:alice:*").Result()
+		residual, err := rd.Client.Keys(ctx, semanticcache.UserKeyPrefix(tenant, "alice")+"*").Result()
 		if err != nil {
 			t.Fatalf("scan residual: %v", err)
 		}
@@ -218,7 +221,7 @@ func TestSemanticCacheContract(t *testing.T) {
 		if err := cache.DeleteByTenant(ctx, tenant); err != nil {
 			t.Fatalf("DeleteByTenant: %v", err)
 		}
-		residual, err := rd.Client.Keys(ctx, "t:"+tenant+":scache:*").Result()
+		residual, err := rd.Client.Keys(ctx, semanticcache.TenantKeyPrefix(tenant)+"*").Result()
 		if err != nil {
 			t.Fatalf("scan residual: %v", err)
 		}

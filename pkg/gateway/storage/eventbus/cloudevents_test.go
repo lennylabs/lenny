@@ -254,8 +254,8 @@ func TestEventEmptyExtensionsRoundTrip(t *testing.T) {
 // t:{tenant_id}:evt:{topic}. ChannelName must build exactly that, so a
 // subscriber on one tenant cannot receive another tenant's events.
 func TestChannelNameIsTenantPrefixed(t *testing.T) {
-	if got := ChannelName("acme", TopicDelegationTree); got != "t:acme:evt:delegation_tree" {
-		t.Errorf("ChannelName = %q, want t:acme:evt:delegation_tree", got)
+	if got := ChannelName("acme", TopicDelegationTree); got != "t:{acme}:evt:delegation_tree" {
+		t.Errorf("ChannelName = %q, want t:{acme}:evt:delegation_tree", got)
 	}
 	if ChannelName("acme", TopicSessionLifecycle) == ChannelName("globex", TopicSessionLifecycle) {
 		t.Error("two tenants must not share a channel name")

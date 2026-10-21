@@ -141,7 +141,7 @@ func TestPeerAdoptsAResumePendingSession_spec_10_1_1(t *testing.T) {
 		if st := h.Row(id).State; st != session.StateResumePending {
 			t.Fatalf("after the crash with no spare pod the session is %q, want resume_pending", st)
 		}
-		h.Redis.Del("t:" + lifecycleharness.Tenant + ":lease:session:" + id)
+		h.Redis.Del(leasestore.Key(lifecycleharness.Tenant, id))
 		if got := leaseHolder(t, h, id); got != "" {
 			t.Fatalf("lease still held by %q after deleting its key; the key layout changed", got)
 		}

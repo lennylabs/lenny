@@ -11,6 +11,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
@@ -23,7 +25,7 @@ import (
 // spec: §11.2.1 (billing Redis stream tier)
 func TestConcurrentTenantPublishAndPendingShareTheTier_spec_11_2_1(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 
 	tier, err := New(Options{Client: client, ConsumerName: "replica-1"})

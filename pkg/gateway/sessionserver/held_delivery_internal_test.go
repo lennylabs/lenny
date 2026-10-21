@@ -231,7 +231,7 @@ func TestDeliverBufferedKeepsDeliveryExactlyOnce_spec_7_2(t *testing.T) {
 		// A DLQ member whose envelope does not decode is a failed peek: the
 		// loop stops with nothing removed, as for an inbox Peek error.
 		f := newHeldFixture(t, false)
-		if err := f.rc.ZAdd(context.Background(), "t:acme:session:s:dlq",
+		if err := f.rc.ZAdd(context.Background(), sessioninbox.DLQKey("acme", "s"),
 			redis.Z{Score: 1, Member: "{not an envelope"}).Err(); err != nil {
 			t.Fatalf("seed undecodable DLQ member: %v", err)
 		}

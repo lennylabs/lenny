@@ -115,7 +115,7 @@ func TestQuotaCounterContract(t *testing.T) {
 		if _, err := counter.Add(ctx, tenant, "alice", quota.ResetHourly, refTime, 5); err != nil {
 			t.Fatalf("Add: %v", err)
 		}
-		keys, err := rd.Client.Keys(ctx, "t:"+tenant+":quota:tokens:*").Result()
+		keys, err := rd.Client.Keys(ctx, quotastore.TenantKeyPrefix(tenant)+"*").Result()
 		if err != nil || len(keys) != 1 {
 			t.Fatalf("expected one quota key, got %v (err %v)", keys, err)
 		}

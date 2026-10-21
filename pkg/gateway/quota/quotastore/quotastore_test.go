@@ -13,12 +13,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newCounter(t *testing.T) *quotastore.Counter {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return quotastore.New(cl)
 }

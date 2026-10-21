@@ -128,8 +128,8 @@ func TestPublishRecordsDurationHistogram_spec_12_6_709(t *testing.T) {
 // boundary. ChannelName must build t:{tenant}:evt:{topic} and a missing
 // tenant must be rejected before any send.
 func TestPublishTypedTenantIDChannelIsolation_spec_12_6_705(t *testing.T) {
-	if got := ChannelName(TenantID("acme"), TopicSessionLifecycle); got != "t:acme:evt:session_lifecycle" {
-		t.Errorf("ChannelName = %q, want t:acme:evt:session_lifecycle", got)
+	if got := ChannelName(TenantID("acme"), TopicSessionLifecycle); got != "t:{acme}:evt:session_lifecycle" {
+		t.Errorf("ChannelName = %q, want t:{acme}:evt:session_lifecycle", got)
 	}
 	if ChannelName(TenantID("acme"), TopicSessionLifecycle) == ChannelName(TenantID("globex"), TopicSessionLifecycle) {
 		t.Error("different tenants produced the same channel — isolation broken")

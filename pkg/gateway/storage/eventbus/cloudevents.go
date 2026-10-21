@@ -26,6 +26,8 @@ import (
 	"math/big"
 	"sort"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
 // SpecVersion is the CloudEvents envelope version. The
@@ -322,9 +324,11 @@ func cryptoNonce() (string, error) {
 
 // ChannelName returns the §12.4 tenant-prefixed Redis channel for a
 // (tenant, topic) pair: t:{tenant_id}:evt:{topic}. Callers never build
-// raw channel names — tenant isolation is enforced at this boundary.
+// raw channel names — tenant isolation is enforced at this boundary. The
+// tenant segment is the rediskeys.TenantPrefix hash tag, written the same
+// way as the tenant's keys.
 func ChannelName(tenantID TenantID, topic EventTopic) string {
-	return fmt.Sprintf("t:%s:evt:%s", tenantID, topic)
+	return rediskeys.TenantPrefix(string(tenantID)) + "evt:" + string(topic)
 }
 
 // SortedExtensionNames returns the extension attribute names of e

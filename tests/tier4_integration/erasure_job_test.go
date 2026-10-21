@@ -26,6 +26,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -413,7 +414,7 @@ func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T
 	// Seed each session's DLQ and durable inbox under the §12.4 key layout.
 	ctx := t.Context()
 	keys := func(sid string) (dlq, inbox string) {
-		return "t:acme:session:" + sid + ":dlq", "t:acme:session:" + sid + ":inbox"
+		return sessioninbox.DLQKey("acme", sid), sessioninbox.InboxKey("acme", sid)
 	}
 	for _, sid := range []string{aliceSID, bobSID} {
 		dlq, inbox := keys(sid)
