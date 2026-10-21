@@ -303,7 +303,11 @@ The same codes apply across every API. MCP tool errors use the same `code` and `
 | `TARGET_TERMINAL` | `PERMANENT` | 409 | No | Target session is in a terminal state |
 | `STORAGE_QUOTA_EXCEEDED` | `POLICY` | 429 | No | Artifact storage quota would be exceeded |
 | `IMAGE_RESOLUTION_FAILED` | `PERMANENT` | 422 | No | Container image reference invalid or unresolvable |
-| `ERASURE_IN_PROGRESS` | `POLICY` | 403 | No | User has a pending GDPR erasure job |
+| `ERASURE_IN_PROGRESS` | `POLICY` | 403 | No | The requesting user, the new session's owner, or the owner of a derive or replay source has a pending GDPR erasure job |
+| `USER_INVALIDATED` | `POLICY` | 403 | No | The requesting or owning user is invalidated |
+| `TENANT_SUSPENDED` | `POLICY` | 403 | No | The tenant is suspended; session creation and message injection are rejected |
+| `TENANT_NOT_ACTIVE` | `POLICY` | 403 | No | The tenant is not `active`, such as during tenant deletion; session creation is rejected |
+| `ERASURE_JOB_NOT_FAILED` | `PERMANENT` | 409 | No | An erasure-job retry or processing-restriction clear named a job that is not in the `failed` state |
 
 The full catalog (50+ codes, with the shape of each error's `details`) lives in the [OpenAPI specification](#openapi-specification).
 

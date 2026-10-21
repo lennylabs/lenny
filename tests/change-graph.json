@@ -11,6 +11,15 @@
       ],
       "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
     },
+    "pkg/gateway/storage/erasurejob/pgstore": {
+      "unit": ["pkg/gateway/storage/erasurejob/..."],
+      "component": ["tests/tier2_component/stores/erasurejobstore_test.go"]
+    },
+    "pkg/gateway/storage/erasurejob/saltlockpg": {
+      "unit": ["pkg/gateway/storage/erasurejob/saltlockpg/..."],
+      "component": ["tests/tier2_component/tenantsalt/saltlockpg_test.go"],
+      "integration": ["tests/tier4_integration/erasure_job_test.go"]
+    },
     "pkg/store/lease": {
       "unit": ["pkg/store/lease/..."],
       "component": ["tests/tier2_component/stores/lease_store_test.go"]
@@ -225,7 +234,7 @@
       "contract": ["tests/tier3_contract/rest_sessions/..."]
     },
     "pkg/gateway/sessionserver": {
-      "unit": ["pkg/gateway/sessionserver/..."],
+      "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
@@ -347,6 +356,11 @@
       "unit": ["pkg/alerting/rules/..."],
       "component": ["tests/tier2_component/alerting/..."],
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
+    },
+    "tests/testinfra/lifecyclefence": {
+      "unit": ["tests/testinfra/lifecyclefence/..."],
+      "load_local": ["tests/tier7a_load_local/lifecycle_fence_scenarios_test.go"],
+      "chaos": ["tests/tier8_chaos/lifecycle_drain_fault_test.go"]
     },
     "tests/testinfra/lifecycleharness": {
       "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],

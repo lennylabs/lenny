@@ -378,6 +378,11 @@ var table = map[string]entry{
 	// the audit event id does not exist and will not on retry.
 	"AUDIT_EVENT_NOT_FOUND": {CategoryPermanent, false},
 
+	// The erasure retry and the processing-restriction clear act only on a
+	// failed erasure job; any other phase is refused and is not retryable.
+	// spec: §15.1 (Error code catalog)
+	"ERASURE_JOB_NOT_FAILED": {CategoryPermanent, false},
+
 	// POLICY — a deliberate policy decision rejected a well-formed request.
 	"PERMISSION_DENIED":                       {CategoryPolicy, false}, // spec: 15:1028
 	"TOOL_CAPABILITY_DENIED":                  {CategoryPolicy, false}, // spec: 05:327 (§5.3 call-time; §10.6 capability filter)
@@ -407,6 +412,8 @@ var table = map[string]entry{
 	"COMPLIANCE_CROSS_USER_CACHE_PROHIBITED":  {CategoryPolicy, false}, // spec: 15:1088
 	"VARIANT_ISOLATION_UNAVAILABLE":           {CategoryPolicy, false}, // spec: 15:1056 (§15.4 family)
 	"TENANT_SUSPENDED":                        {CategoryPolicy, false}, // spec: 15:1096 (§15.4 family)
+	"TENANT_NOT_ACTIVE":                       {CategoryPolicy, false}, // spec: §15.1 (Error code catalog)
+	"USER_INVALIDATED":                        {CategoryPolicy, false}, // spec: §15.1 (Error code catalog)
 	// Code-internal §8.5 delegate_task policy denial (no §15.4 catalog
 	// row); a delegation rejected by policy fails identically on retry.
 	"DELEGATION_DENIED": {CategoryPolicy, false},

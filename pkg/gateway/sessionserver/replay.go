@@ -3,6 +3,7 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +82,12 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)) — the source session's owner, when restricted, refuses the
+	// replay before the isolation-downgrade audit event and the insert.
+	if !s.requireSourceOwnerNotRestricted(w, r, tenantID, source.UserID) {
 		return
 	}
 
@@ -177,17 +184,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		ParentSessionID:    source.ID,
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
-	if err := s.store.Create(r.Context(), replayed); err != nil {
+	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
+		// spec: §12.8 (Lifecycle fence and drain) — the fence over the
+		// tenant and the new owner refuses with 403. A transcript copy
+		// error rolls the row back with it and answers 500.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			s.writeCreationRefusal(w, ref)
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
-	}
-
-	// prompt_history mode: copy the source transcript into the
-	// replayed session so the new runtime sees the prior conversation.
-	if req.ReplayMode == ReplayPromptHistory && s.transcripts != nil {
-		if entries, err := s.transcripts.Get(r.Context(), tenantID, source.ID); err == nil {
-			_ = s.transcripts.Append(r.Context(), tenantID, replayed.ID, entries...)
-		}
 	}
 
 	resp := ReplayResponse{
@@ -198,4 +205,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// insertReplayed inserts the replayed session row. A prompt_history replay
+// with a transcript store wired copies the source transcript into the new
+// session in the insert transaction, under the creation fence, so the
+// copied entries exist only when the row committed and a copy error leaves
+// neither. Any other replay inserts the row alone.
+// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+func (s *Server) insertReplayed(ctx context.Context, replayed sessionstore.Session, sourceID string, mode ReplayMode) error {
+	if mode == ReplayPromptHistory && s.transcripts != nil {
+		return s.store.CreateWithTranscript(ctx, replayed, sourceID)
+	}
+	return s.store.Create(ctx, replayed)
 }

@@ -76,8 +76,11 @@ func TestReplayWorkspaceDerive(t *testing.T) {
 }
 
 func TestReplayPromptHistoryCopiesTranscript(t *testing.T) {
-	store := memstore.New()
+	// spec: §15.1 (REST API), §12.8 (Lifecycle fence and drain) — the copy
+	// runs inside the session store's insert, so the store carries the
+	// transcript copier the gateway wires.
 	transcripts := transcriptstore.NewMemory()
+	store := memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession))
 	seedTerminalSource(t, store)
 	_ = transcripts.Append(context.Background(), "acme", "sess_src",
 		transcriptstore.Entry{Role: "user", Content: "original prompt"})

@@ -190,6 +190,13 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)) — the source session's owner, when restricted, refuses the
+	// derive before the isolation-downgrade audit event, the reservation,
+	// and the copy, whatever the new owner's and the tenant's markers.
+	if !s.requireSourceOwnerNotRestricted(w, r, tenantID, source.UserID) {
+		return
+	}
 
 	var req DeriveRequest
 	if r.ContentLength > 0 {
@@ -319,6 +326,13 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	derivedID := s.idFn()
 	derivedRef := derivedSnapshotRef(tenantID, derivedID)
+	// spec: §12.8 (Lifecycle fence and drain) — reserve derivedID for its
+	// owner before any object is copied under it. The reservation runs the
+	// creation fence over the tenant and the new owner. Every error return
+	// below that precedes the insert undoes the copy and releases it.
+	if !s.reserveDerivedSession(w, r, tenantID, userID, derivedID) {
+		return
+	}
 	// spec: §10.1.7 / §7.1 derive — when the parent's checkpoint is a
 	// chunked manifest, derive copies every chunk under the parent's
 	// chunk_object_key_prefix into the derived session's own prefix and
@@ -329,12 +343,14 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if newRef, handled, cerr := s.deriveChunkedCheckpoint(r.Context(), source, derivedID, now); handled {
 		if cerr != nil {
 			if errors.Is(cerr, blobstore.ErrNotFound) {
+				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 				s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
 				s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 					"parent workspace checkpoint chunk is absent in storage",
 					map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
 				return
 			}
+			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 			s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 				"workspace checkpoint copy failed: "+cerr.Error(), nil)
@@ -359,12 +375,14 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 				// derive_failure audit row before the error is returned.
 				// F-15.1.14.
 				if errors.Is(err, blobstore.ErrNotFound) {
+					s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 					s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
 					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 						"parent workspace snapshot object is absent in storage",
 						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
 					return
 				}
+				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 				s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
 				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 					"workspace snapshot copy failed: "+err.Error(), nil)
@@ -398,7 +416,18 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		ParentSessionID:        source.ID,
 		ParentWorkspaceRef:     source.WorkspaceSnapshot.Ref,
 	}
-	if err := s.store.Create(r.Context(), derived); err != nil {
+	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
+		// reservation the owner's erasure ended, undoes the copy, releases
+		// the reservation, and answers 403. Any other insert error keeps
+		// the objects and the reservation, because such an error can
+		// follow a committed insert.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+			s.writeCreationRefusal(w, ref)
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}

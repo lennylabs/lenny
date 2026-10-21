@@ -268,19 +268,19 @@ func (r *Router) registerErasureJobRoutes(mux *http.ServeMux) {
 		return
 	}
 	// §12.8 erasure-job status query.
-	mux.Handle("GET /v1/admin/erasure-jobs/{jobId}",
+	mux.Handle(routeGetErasureJob,
 		r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
 	// §24.12 / §12.8 — operator retry of a failed
 	// erasure job. platform-admin only.
 	if r.erasureRunner != nil && r.users != nil {
-		mux.Handle("POST /v1/admin/erasure-jobs/{jobId}/retry",
+		mux.Handle(routeRetryErasureJob,
 			r.requireAdmin(http.HandlerFunc(r.handleRetryErasureJob)))
 	}
 	// §24.12 / §12.8 — manual clear of the GDPR
 	// Article 18 processing restriction after a failed job.
 	// platform-admin only.
 	if r.users != nil {
-		mux.Handle("POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction",
+		mux.Handle(routeClearErasureRestriction,
 			r.requireAdmin(http.HandlerFunc(r.handleClearErasureRestriction)))
 	}
 }

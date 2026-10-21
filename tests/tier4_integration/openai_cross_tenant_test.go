@@ -41,17 +41,23 @@ const (
 // MCP management server, audit query, drift detection, lenny-ops
 // endpoints). Every attempt must fail with the documented isolation
 // error.")
-// diagnosis: a cross-tenant GET or DELETE through POST /v1/responses,
-// or a cross-tenant REST read of a session created through POST
+// spec: §15.1 (REST API): the Open Responses adapter serves no delete
+// operation on /v1/responses/{id}.
+// diagnosis: a cross-tenant GET of an Open Responses resource, or a
+// cross-tenant REST read of a session created through POST
 // /v1/chat/completions, that returns anything other than the
 // documented RESOURCE_NOT_FOUND / not-found-shaped isolation error is
 // a tenant-isolation breach on the OpenAI-compatible surfaces the
-// TESTING.md §12.9.1 matrix names.
+// TESTING.md §12.9.1 matrix names. An owner-tenant DELETE on
+// /v1/responses/{id} that answers anything other than 405, or a
+// resource the owner can no longer read afterwards, means a delete
+// route came back on the adapter and can remove the implicit session
+// record behind a response.
 func TestOpenAICompatibleSurfacesCrossTenantIsolation(t *testing.T) {
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 
-	t.Run("open_responses_cross_tenant_get_and_delete", func(t *testing.T) {
+	t.Run("open_responses_cross_tenant_get_and_no_delete", func(t *testing.T) {
 		testOpenResponsesCrossTenant(t, base)
 	})
 	t.Run("chat_completions_write_then_cross_tenant_rest_read", func(t *testing.T) {
@@ -112,9 +118,12 @@ func openaiErrorCode(body map[string]any) string {
 
 // testOpenResponsesCrossTenant creates an Open Responses resource
 // under crossTenantOwner and asserts that crossTenantAttacker cannot
-// read or delete it: both GET and DELETE /v1/responses/{id} under the
-// attacker's tenant must reject with the not-found isolation error,
-// and the resource must remain intact for its owner afterward.
+// read it: GET /v1/responses/{id} under the attacker's tenant must
+// reject with the not-found isolation error. It then asserts that the
+// adapter serves no delete operation: a DELETE /v1/responses/{id}
+// under the owner's own tenant answers 405 from the router's method
+// mismatch, which carries a plain-text body rather than the OpenAI
+// error envelope, and the resource remains readable by its owner.
 func testOpenResponsesCrossTenant(t *testing.T, base string) {
 	const secret = "globex confidential response payload"
 	reqBody, err := json.Marshal(map[string]any{
@@ -146,28 +155,25 @@ func testOpenResponsesCrossTenant(t *testing.T, base string) {
 		t.Errorf("cross-tenant GET response leaked the owner's payload: %s", getRaw)
 	}
 
-	// Cross-tenant DELETE must also reject.
-	delStatus, delBody, delRaw := crossTenantRequest(t, base, http.MethodDelete, "/v1/responses/"+id, crossTenantAttacker, nil)
-	if delStatus != http.StatusNotFound {
-		t.Errorf("%s DELETE %s's Open Responses resource: got status %d, want 404 (cross-tenant isolation); body=%s",
-			crossTenantAttacker, crossTenantOwner, delStatus, delRaw)
-	}
-	if typ := errorType(delBody); typ != "not_found_error" {
-		t.Errorf("cross-tenant DELETE error.type = %q, want not_found_error; body=%s", typ, delRaw)
+	// The adapter serves no delete operation, so even the owner's own
+	// DELETE is refused by the router's method mismatch.
+	delStatus, _, delRaw := crossTenantRequest(t, base, http.MethodDelete, "/v1/responses/"+id, crossTenantOwner, nil)
+	if delStatus != http.StatusMethodNotAllowed {
+		t.Errorf("owner %s DELETE of its own Open Responses resource: got status %d, want 405 (no delete operation); body=%s",
+			crossTenantOwner, delStatus, delRaw)
 	}
 
-	// The resource must survive both cross-tenant attempts: its owner
-	// can still read it back with the same id. This rules out a false
-	// positive where the "404" above came from the DELETE having
-	// actually succeeded (deleting a foreign-tenant resource) rather
-	// than being rejected outright.
+	// The resource must survive both the cross-tenant read and the
+	// owner's DELETE: its owner can still read it back with the same
+	// id. This rules out a DELETE that removed the implicit session
+	// record behind the response while answering an unexpected status.
 	ownerStatus, ownerBody, ownerRaw := crossTenantRequest(t, base, http.MethodGet, "/v1/responses/"+id, crossTenantOwner, nil)
 	if ownerStatus != http.StatusOK {
-		t.Fatalf("owner %s lost its own Open Responses resource after the cross-tenant attempts: status %d, body=%s",
+		t.Fatalf("owner %s lost its own Open Responses resource after the cross-tenant read and the DELETE: status %d, body=%s",
 			crossTenantOwner, ownerStatus, ownerRaw)
 	}
 	if gotID, _ := ownerBody["id"].(string); gotID != id {
-		t.Errorf("owner's Open Responses resource id after cross-tenant attempts: got %q, want %q", gotID, id)
+		t.Errorf("owner's Open Responses resource id after the cross-tenant read and the DELETE: got %q, want %q", gotID, id)
 	}
 }
 

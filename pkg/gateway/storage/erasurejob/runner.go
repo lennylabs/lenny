@@ -5,50 +5,92 @@ package erasurejob
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
 )
 
-// Runner executes §12.8 erasure jobs: it records a job, then drives it
-// through its phases while the erasure.Orchestrator deletes the target
-// user's data from every store.
+// Runner executes §12.8 erasure jobs. Start records a job; Run, RunPending,
+// and Poll drive recorded jobs through their phases from the phase each job
+// persisted, so a job resumes after a crash on whichever replica runs it
+// next and never re-runs a step of an earlier phase.
 //
-// The runner drives the store-deletion core of the §12.8 sequence
-// (initiated → store_deleting). When a BillingEraser is attached via
-// WithBilling, it then drives the pseudonymizing and verifying phases:
-// the target user's billing events are pseudonymized rather than
-// deleted, and the §12.8 post-pseudonymization check confirms the
-// erasure is effective. Without a BillingEraser the job completes at
-// store deletion.
+// The phases are: initiated (the MemoryStore preflight, the session drain,
+// and the legal-hold re-check), store_deleting (the dependency-ordered
+// DeleteByUser sequence and the dead-letter redaction), pseudonymizing and
+// verifying (the billing erasure, when a BillingEraser is attached), and
+// then the completion receipt followed by Complete.
+//
+// Every job write the runner makes is guarded by SameAttempt against the job
+// the runner last read or wrote, so a stale runner's write returns
+// ErrJobMoved, changes nothing, and stops that runner's work on the job. The
+// gateway-leader gate that runs Poll does not guarantee a single executor:
+// a former leader's runs continue until they observe their ended context,
+// and the guard is what keeps two executors from both writing one attempt.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §12.8 (Erasure job phase field (crash recovery)), §24.12 (Erasure Job
+// Management).
 type Runner struct {
 	jobs             Store
 	erase            *erasure.Orchestrator
 	billing          *BillingEraser
 	memoryPreflight  func(context.Context) error
 	deadLetterRedact func(ctx context.Context, tenantID, userID string) (int, error)
+	drain            func(ctx context.Context, tenantID, userID string) error
+	holdCheck        func(ctx context.Context, tenantID, userID string) ([]Hold, error)
+	receipt          func(ctx context.Context, j Job) error
+	crossTenantRead  CrossTenantReadFunc
 	onFailure        func(tenantID, failurePhase string)
 	onComplete       func(ctx context.Context, tenantID, userID string)
 	lifecycle        LifecycleMetrics
 	deadlineFor      func(ctx context.Context, tenantID string) time.Duration
 	clock            func() time.Time
+	logger           *slog.Logger
+	maxConcurrent    int
+
+	// mu guards inFlight, which maps the id of every job a RunPending
+	// goroutine is running to the job's tenant. Its size is the in-flight
+	// count across overlapping RunPending calls.
+	mu       sync.Mutex
+	inFlight map[string]string
 }
 
-// LifecycleMetrics receives the §12.8 erasure throughput
-// signals: the in-progress gauge bracket (IncActive/DecActive) and the
-// per-job duration observation. *gatewaymetrics.Metrics satisfies it via
-// IncErasureJobsActive / DecErasureJobsActive / ObserveErasureJobDuration.
+// Hold is one §12.8 legal hold the runner's re-check found on the erasure
+// target: a held session, or a held artifact named by its session.
+type Hold struct {
+	ResourceType string
+	ResourceID   string
+}
+
+// CrossTenantReadFunc records one §12.3 cross_tenant_read event with
+// category erasure_job for a read made under the all-tenants sentinel.
+// endpoint names the reading path, callerSubject is the requesting
+// principal (empty for a background worker), and rowCount is the number of
+// rows the read returned. A non-nil error fails the reading path closed.
+type CrossTenantReadFunc func(ctx context.Context, endpoint, callerSubject string, rowCount int) error
+
+// Endpoints the background erasure paths record on their cross_tenant_read
+// events.
+const (
+	CrossTenantReadEndpointRunner  = "erasure_job_runner"
+	CrossTenantReadEndpointSampler = "erasure_job_sampler"
+)
+
+// LifecycleMetrics receives the §12.8 per-job duration observation.
+// *gatewaymetrics.Metrics satisfies it. The in-progress gauge is set by the
+// Sampler from the job store rather than by the runner.
 type LifecycleMetrics interface {
-	IncErasureJobsActive()
-	DecErasureJobsActive()
 	ObserveErasureJobDuration(seconds float64)
 }
 
 // FailurePhase labels for the §12.8 CMP-026 lenny_erasure_job_failed_total
 // counter. The MemoryStore erasure preflight (§12.8) adds
 // PhaseMemoryStorePreflight to the store_delete / pseudonymization /
-// verification phases the spec enumerates.
+// verification phases the spec enumerates. A session-drain failure and a
+// legal hold the runner's re-check finds are labelled store_delete.
 const (
 	FailurePhaseMemoryStorePreflight = "memory_store_preflight"
 	FailurePhaseStoreDelete          = "store_delete"
@@ -57,19 +99,48 @@ const (
 	FailurePhaseVerification         = "verification"
 )
 
-// errMemoryStorePreflight is the §12.8 abort cause recorded when the
-// per-job MemoryStore erasure preflight fails. The job aborts before any
-// store deletion and the target user's processing_restricted flag is left
-// set (the admin handler clears it only on PhaseCompleted).
-var errMemoryStorePreflight = errors.New("memory_store_preflight_failed")
+// Errors the runner records as a job's failure cause or returns to a
+// synchronous caller.
+var (
+	// errMemoryStorePreflight is the §12.8 abort cause recorded when the
+	// per-job MemoryStore erasure preflight fails.
+	errMemoryStorePreflight = errors.New("memory_store_preflight_failed")
+	// ErrSessionDrainUnwired is the failure cause of a job run by a runner
+	// with no session-drain hook. Erasing with live sessions would leave
+	// them writing data the erasure has already passed, so a missing hook
+	// fails the job rather than skipping the drain.
+	ErrSessionDrainUnwired = errors.New("erasurejob: no session drain is wired")
+	// ErrHoldCheckUnwired is the failure cause of a job run by a runner
+	// with no legal-hold re-check hook.
+	ErrHoldCheckUnwired = errors.New("erasurejob: no legal-hold re-check is wired")
+	// ErrReceiptUnwired is returned when a job has finished its erasers
+	// but the runner has no completion-receipt hook. The job stays in
+	// progress, because §12.8 lifts the restriction only after the receipt
+	// is written.
+	ErrReceiptUnwired = errors.New("erasurejob: no completion receipt sink is wired")
+	// ErrBillingUnwired is the failure cause of a job persisted in a
+	// billing phase that a runner with no BillingEraser resumes.
+	ErrBillingUnwired = errors.New("erasurejob: no billing eraser is wired")
+	// errBillingVerification is the failure cause recorded when the §12.8
+	// post-pseudonymization check does not pass.
+	errBillingVerification = errors.New(
+		"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization",
+	)
+)
 
 // NewRunner builds a Runner over the job registry and the erasure
-// orchestrator. Pass nil for clock to default to time.Now.
+// orchestrator. Pass nil for clock to default to time.Now. The runner runs
+// one job at a time until WithMaxConcurrentJobs raises the limit.
 func NewRunner(jobs Store, orch *erasure.Orchestrator, clock func() time.Time) *Runner {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Runner{jobs: jobs, erase: orch, clock: clock}
+	return &Runner{
+		jobs: jobs, erase: orch, clock: clock,
+		logger:        slog.Default(),
+		maxConcurrent: 1,
+		inFlight:      map[string]string{},
+	}
 }
 
 // WithBilling attaches the §12.8 BillingEraser so Run drives the
@@ -80,28 +151,22 @@ func (r *Runner) WithBilling(b *BillingEraser) *Runner {
 	return r
 }
 
-// WithMemoryPreflight attaches the §12.8 per-job MemoryStore erasure preflight. The check re-runs
-// the seeded-row write/erase/requery cycle at job start, before any store
-// deletion; a backend that passed the startup preflight but later
-// regressed (e.g., after a rolling upgrade of an external vector DB)
-// aborts the job here rather than reporting a successful erasure while
-// memories persist. Pass memorystore.ValidateMemoryStoreErasure bound to
-// the wired store. A nil preflight disables the per-job check. Returns
-// the Runner for call chaining.
+// WithMemoryPreflight attaches the §12.8 per-job MemoryStore erasure
+// preflight. The check re-runs the seeded-row write/erase/requery cycle in
+// the initiated phase, before any store deletion; a backend that passed the
+// startup preflight but later regressed aborts the job here rather than
+// reporting a successful erasure while memories persist. A nil preflight
+// disables the per-job check. Returns the Runner for call chaining.
 func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Runner {
 	r.memoryPreflight = preflight
 	return r
 }
 
 // WithDeadLetterRedaction attaches the §12.8 step-14 OCSF dead-letter PII
-// redaction. After the store-deletion phase, the hook scrubs raw canonical
-// PII out of every audit_log row the OCSF translator dead-lettered that
-// names the target user, persisting a signed RedactionReceipt and emitting
-// the gdpr.erasure_deadletter_redacted / _downstream_notified events per
-// row. A nil hook skips step 14 (a deployment with no dead-lettered rows
-// is unaffected either way). The redaction runs as its own phase so a
-// failure aborts the job under FailurePhaseDeadLetterRedaction with the
-// store deletion already durable. Returns the Runner for call chaining.
+// redaction, run in the store_deleting phase after DeleteByUser. A failure
+// aborts the job under FailurePhaseDeadLetterRedaction with the store
+// deletion already durable. A nil hook skips step 14. Returns the Runner
+// for call chaining.
 //
 // spec: §12.8.
 func (r *Runner) WithDeadLetterRedaction(hook func(ctx context.Context, tenantID, userID string) (int, error)) *Runner {
@@ -109,254 +174,188 @@ func (r *Runner) WithDeadLetterRedaction(hook func(ctx context.Context, tenantID
 	return r
 }
 
+// WithSessionDrain attaches the §12.8 session drain the initiated phase
+// runs before any store deletion: it brings every session the user owns to
+// a terminal state and returns an error unless the drain verified. A drain
+// error fails the job under store_delete with the restriction left set. A
+// runner with no drain hook fails every job it runs past initiated the same
+// way. Returns the Runner for call chaining.
+//
+// spec: §12.8 (Lifecycle fence and drain), §12.8 (Processing restriction
+// during erasure (GDPR Article 18)).
+func (r *Runner) WithSessionDrain(drain func(ctx context.Context, tenantID, userID string) error) *Runner {
+	r.drain = drain
+	return r
+}
+
+// WithHoldCheck attaches the legal-hold re-check the initiated phase runs
+// after the session drain and before the advance to store_deleting. A hold
+// it returns fails the job under store_delete, unless the job's
+// OverrideReceipt lists the hold and the job has never failed: a retried
+// job exempts no hold, because the retry ran its own preflight with no
+// override. A read error fails the job the same way, and so does a runner
+// with no hold-check hook. A hold set after the job advances to
+// store_deleting is not re-checked; the re-check closes the window between
+// the handler's preflight and the first eraser. Returns the Runner for call
+// chaining.
+//
+// spec: §12.8 (DeleteByUser dependency-ordered deletion sequence).
+func (r *Runner) WithHoldCheck(check func(ctx context.Context, tenantID, userID string) ([]Hold, error)) *Runner {
+	r.holdCheck = check
+	return r
+}
+
+// WithCompletionReceipt attaches the sink that writes the §12.8
+// gdpr.erasure_completed receipt. The runner writes the receipt before it
+// calls Complete, and only a nil return lets the job complete and lift the
+// restriction. A sink error, or a runner with no sink, leaves the job in
+// progress for the next run, which writes a byte-identical receipt because
+// the job's ReceiptAt is chosen once. Returns the Runner for call chaining.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)).
+func (r *Runner) WithCompletionReceipt(sink func(ctx context.Context, j Job) error) *Runner {
+	r.receipt = sink
+	return r
+}
+
+// WithCrossTenantReadAudit attaches the §12.3 cross_tenant_read recorder
+// RunPending calls once per invocation after its all-tenants ListActive
+// read. An emit error makes RunPending start no run. A nil function emits
+// nothing. Returns the Runner for call chaining.
+//
+// spec: §12.3 (Postgres HA Requirements).
+func (r *Runner) WithCrossTenantReadAudit(f CrossTenantReadFunc) *Runner {
+	r.crossTenantRead = f
+	return r
+}
+
+// WithMaxConcurrentJobs sets how many jobs RunPending runs at once across
+// overlapping calls. A value below 1 keeps the limit at 1. Returns the
+// Runner for call chaining.
+func (r *Runner) WithMaxConcurrentJobs(n int) *Runner {
+	if n < 1 {
+		n = 1
+	}
+	r.maxConcurrent = n
+	return r
+}
+
+// WithLogger sets the logger the runner reports drain timings and
+// background run errors to. A nil logger keeps slog.Default. Returns the
+// Runner for call chaining.
+func (r *Runner) WithLogger(l *slog.Logger) *Runner {
+	if l != nil {
+		r.logger = l
+	}
+	return r
+}
+
 // WithFailureObserver attaches the §12.8 CMP-026 failure counter hook,
-// invoked with the tenant id and failure phase whenever a job transitions
-// to PhaseFailed. Pass gatewaymetrics.Metrics.IncErasureJobFailed. A nil
-// observer disables emission. Returns the Runner for call chaining.
+// invoked with the tenant id and failure phase once per failure write that
+// applied. A nil observer disables emission. Returns the Runner for call
+// chaining.
 func (r *Runner) WithFailureObserver(obs func(tenantID, failurePhase string)) *Runner {
 	r.onFailure = obs
 	return r
 }
 
-// WithLifecycleMetrics attaches the §12.8 erasure throughput
-// metrics. Run brackets each executing job with IncErasureJobsActive /
-// DecErasureJobsActive and observes the job's wall-clock duration on
-// termination. A nil m disables emission. Returns the Runner for call
+// WithLifecycleMetrics attaches the §12.8 per-job duration histogram. The
+// runner observes a job's duration after the write that completes it or
+// fails it applied. A nil m disables emission. Returns the Runner for call
 // chaining.
 func (r *Runner) WithLifecycleMetrics(m LifecycleMetrics) *Runner {
 	r.lifecycle = m
 	return r
 }
 
-// WithDeadlineResolver attaches the §12.8 tier-specific SLA
-// resolver. Start stamps the resolved deadline (T3 72h, T4 1h) onto the
-// job so the overdue sampler and the completion receipt can present it. A
-// nil resolver leaves Job.Deadline zero. Returns the Runner for call
-// chaining.
+// WithDeadlineResolver attaches the §12.8 tier-specific SLA resolver. Start
+// stamps the resolved deadline (T3 72h, T4 1h) onto the job so the overdue
+// sampler and the completion receipt can present it. A nil resolver leaves
+// Job.Deadline zero. Returns the Runner for call chaining.
 func (r *Runner) WithDeadlineResolver(f func(ctx context.Context, tenantID string) time.Duration) *Runner {
 	r.deadlineFor = f
 	return r
 }
 
-// WithCompletionHook attaches the §12.5 erasure-completion hook,
-// invoked with the job's tenant and user id once the job reaches
-// PhaseCompleted. The gateway wires it to the `gcPriority: high`
-// immediate-sweep trigger: a high-priority tenant's expired artifacts are
-// collected as soon as one of its erasure jobs completes, independent of
-// the global GC cycle. The hook runs after the completion is durably
-// recorded so a hook panic or slow sweep never rolls back the completed
-// job; it is best-effort and a nil hook disables it. Returns the Runner
-// for call chaining. spec: §12.5.
+// WithCompletionHook attaches the §12.5 erasure-completion hook, invoked
+// with the job's tenant and user id after Complete applied. The gateway
+// wires it to the `gcPriority: high` immediate-sweep trigger. The hook is
+// best-effort and a nil hook disables it. Returns the Runner for call
+// chaining. spec: §12.5.
 func (r *Runner) WithCompletionHook(hook func(ctx context.Context, tenantID, userID string)) *Runner {
 	r.onComplete = hook
 	return r
 }
 
-// errBillingVerification is the failure cause recorded when the §12.8
-// post-pseudonymization check does not pass.
-var errBillingVerification = errors.New(
-	"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization",
-)
-
-// advance sets the job's lifecycle phase and appends the transition to
-// its PhaseLog with the current clock time, so the §12.8 completion
-// receipt can present the per-phase timeline. spec: §12.8.
-func (r *Runner) advance(ctx context.Context, jobID string, p Phase) error {
-	_, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		j.Phase = p
-		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: p, At: r.clock()})
-		return nil
-	})
-	return err
-}
-
-// recordBilling returns a job mutator that records the §12.8 billing
-// erasure outcome on the job.
-func recordBilling(o BillingErasureOutcome) func(*Job) {
-	return func(j *Job) { j.Billing = o }
-}
-
-// fail transitions the job to PhaseFailed with cause as the recorded
-// failure reason and emits the §12.8 CMP-026 failure counter under
-// failurePhase. extra, when non-nil, records any partial result first. It
-// returns cause so a synchronous caller observes the failure; a
-// registry-update error preempts it.
-func (r *Runner) fail(ctx context.Context, jobID, failurePhase string, cause error, extra func(*Job)) error {
-	job, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		if extra != nil {
-			extra(j)
-		}
-		j.Phase = PhaseFailed
-		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: PhaseFailed, At: r.clock()})
-		j.Failure = cause.Error()
-		j.CompletedAt = r.clock()
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if r.onFailure != nil {
-		r.onFailure(job.TenantID, failurePhase)
-	}
-	return cause
-}
-
 // Start records a fresh erasure job for the user in PhaseInitiated and
-// returns its id. The job is not executed; the caller invokes Run —
-// typically in a goroutine so the §12.8 admin API returns the job id
-// immediately while erasure proceeds in the background.
-func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, error) {
-	id := NewID()
+// returns it. The store writes the job and sets the user's
+// processing_restricted flag, naming the job, in one transaction, so no job
+// exists without its restriction. initiatedBy is the requesting principal's
+// subject and overrideReceipt the legal-hold override fields, or nil; both
+// persist with the job so the completion receipt written on any replica
+// records them. When the user already has a job in progress it returns the
+// store's *ErrActiveJob and records nothing. The job is not executed here:
+// the leader's Poll runs it.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §12.8 (User-level erasure invocation).
+func (r *Runner) Start(ctx context.Context, tenantID, userID, initiatedBy string, overrideReceipt map[string]any) (Job, error) {
 	now := r.clock()
 	var deadline time.Duration
 	if r.deadlineFor != nil {
 		deadline = r.deadlineFor(ctx, tenantID)
 	}
-	if err := r.jobs.Create(ctx, Job{
-		ID:        id,
-		TenantID:  tenantID,
-		UserID:    userID,
-		Phase:     PhaseInitiated,
-		StartedAt: now,
-		Deadline:  deadline,
-		PhaseLog:  []PhaseTransition{{Phase: PhaseInitiated, At: now}},
-	}); err != nil {
-		return "", err
-	}
-	return id, nil
+	return r.jobs.Start(ctx, Job{
+		ID:              NewID(),
+		TenantID:        tenantID,
+		UserID:          userID,
+		Phase:           PhaseInitiated,
+		StartedAt:       now,
+		Deadline:        deadline,
+		PhaseLog:        []PhaseTransition{{Phase: PhaseInitiated, At: now}},
+		InitiatedBy:     initiatedBy,
+		OverrideReceipt: overrideReceipt,
+	})
 }
 
-// Run executes the erasure job to completion. It transitions the job
-// initiated → store_deleting, recording the per-store deleted counts
-// the orchestrator reports. When a BillingEraser is attached it then
-// drives pseudonymizing → verifying — pseudonymizing the target user's
-// billing events and confirming the §12.8 post-erasure check — before
-// the job reaches completed.
+// Run drives one job from its persisted phase until it completes, fails,
+// or stops. A job in a terminal phase is left untouched. A job whose
+// ErasedAt is set goes straight to its receipt and Complete.
 //
-// Run is fail-fast: a store error, a pseudonymization error, or a
-// failed verification transitions the job to failed with the partial
-// result preserved, matching the §12.8 contract so a retry resumes
-// from a consistent point. A job already in a terminal phase is left
-// untouched, so a crash-recovery re-run is idempotent.
-//
-// Run returns the failure cause (if any) for a synchronous caller; the
-// job record is the authoritative outcome.
+// Run returns nil when the job completed or was already terminal, the
+// failure cause when the job failed, ErrJobMoved when another executor
+// wrote the job first, and otherwise the error that left the job in
+// progress for a later run (a receipt error, a store error, or an ended
+// context). When ctx has ended, a failing step writes nothing and the job
+// stays in its persisted phase for the next leader.
 func (r *Runner) Run(ctx context.Context, jobID string) error {
-	job, err := r.jobs.Get(ctx, jobID)
+	// The runner is a background worker that reads any tenant's job.
+	job, err := r.jobs.Get(ctx, AllTenants, jobID)
 	if err != nil {
 		return err
 	}
-	if job.Phase.Terminal() {
-		return nil
-	}
-
-	// §12.8 throughput metrics: bracket the executing job with
-	// the in-progress gauge and observe its wall-clock duration on
-	// termination (success or failure), so operators can monitor erasure
-	// throughput and detect stalled jobs before they breach the SLA.
-	if r.lifecycle != nil {
-		started := job.StartedAt
-		r.lifecycle.IncErasureJobsActive()
-		defer func() {
-			r.lifecycle.DecErasureJobsActive()
-			r.lifecycle.ObserveErasureJobDuration(r.clock().Sub(started).Seconds())
-		}()
-	}
-
-	// §12.8 per-job MemoryStore erasure preflight (defense-in-depth layer
-	// 3): re-run the seeded-row check before step 8 (store deletion). On
-	// failure the job aborts as memory_store_preflight_failed before any
-	// data is touched, and the target user's processing_restricted flag is
-	// left set (the admin handler clears it only on PhaseCompleted).
-	if r.memoryPreflight != nil {
-		if err := r.memoryPreflight(ctx); err != nil {
-			return r.fail(ctx, jobID, FailurePhaseMemoryStorePreflight,
-				fmt.Errorf("%w: %v", errMemoryStorePreflight, err), nil)
+	for {
+		if job.Phase.Terminal() {
+			return nil
 		}
-	}
-
-	// Store deletion.
-	if err := r.advance(ctx, jobID, PhaseStoreDeleting); err != nil {
-		return err
-	}
-	res, eraseErr := r.erase.DeleteByUser(ctx, job.TenantID, job.UserID)
-	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		j.Deleted = res.Deleted
-		j.Total = res.Total
-		return nil
-	}); err != nil {
-		return err
-	}
-	if eraseErr != nil {
-		return r.fail(ctx, jobID, FailurePhaseStoreDelete, eraseErr, nil)
-	}
-
-	// §12.8 step-14 OCSF dead-letter PII redaction: scrub raw canonical
-	// PII out of the user's dead-lettered audit_log rows in place (the
-	// rows the §11.7 audit retention carve-out keeps rather than deletes),
-	// recording the per-row count on the job. A redaction error aborts the
-	// job under deadletter_redaction with the store deletion already
-	// durable.
-	if r.deadLetterRedact != nil {
-		n, err := r.deadLetterRedact(ctx, job.TenantID, job.UserID)
-		if err != nil {
-			return r.fail(ctx, jobID, FailurePhaseDeadLetterRedaction, err, nil)
+		if !job.ErasedAt.IsZero() {
+			return r.finish(ctx, job)
 		}
-		if n > 0 {
-			if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-				j.DeadLetterRedacted = n
-				return nil
-			}); err != nil {
-				return err
-			}
+		var step func(context.Context, Job) (Job, error)
+		switch job.Phase {
+		case PhaseInitiated:
+			step = r.runInitiated
+		case PhaseStoreDeleting:
+			step = r.runStoreDeleting
+		case PhasePseudonymizing:
+			step = r.runPseudonymizing
+		case PhaseVerifying:
+			step = r.runVerifying
+		default:
+			return r.fail(ctx, job, FailurePhaseStoreDelete, errors.New("erasurejob: unknown phase "+string(job.Phase)), nil)
 		}
-	}
-
-	// §12.8 billing-event pseudonymization, when a BillingEraser is
-	// attached: billing events are pseudonymized rather than deleted,
-	// then the post-pseudonymization check confirms the erasure.
-	billing := BillingErasureOutcome{}
-	if r.billing != nil {
-		if err := r.advance(ctx, jobID, PhasePseudonymizing); err != nil {
+		if job, err = step(ctx, job); err != nil {
 			return err
 		}
-		billing, err = r.billing.Pseudonymize(ctx, job.TenantID, job.UserID)
-		if err != nil {
-			return r.fail(ctx, jobID, FailurePhasePseudonymization, err, nil)
-		}
-		if billing.Disposition != billingExempt {
-			if err := r.advance(ctx, jobID, PhaseVerifying); err != nil {
-				return err
-			}
-			verified, err := r.billing.Verify(ctx, job.TenantID, job.UserID)
-			if err != nil {
-				return r.fail(ctx, jobID, FailurePhaseVerification, err, recordBilling(billing))
-			}
-			billing.Verified = verified
-			if !verified {
-				return r.fail(ctx, jobID, FailurePhaseVerification, errBillingVerification, recordBilling(billing))
-			}
-		}
 	}
-
-	// Completed.
-	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		now := r.clock()
-		j.Billing = billing
-		j.Phase = PhaseCompleted
-		j.PhaseLog = append(j.PhaseLog, PhaseTransition{Phase: PhaseCompleted, At: now})
-		j.CompletedAt = now
-		return nil
-	}); err != nil {
-		return err
-	}
-	// §12.5: fire the erasure-completion hook after the
-	// completion is durable. The gateway uses it to trigger a
-	// tenant-scoped GC sweep for a `gcPriority: high` tenant. It is
-	// best-effort — a hook error must not retroactively fail the
-	// already-completed erasure job.
-	if r.onComplete != nil {
-		r.onComplete(ctx, job.TenantID, job.UserID)
-	}
-	return nil
 }

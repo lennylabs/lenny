@@ -199,6 +199,10 @@ type Router struct {
 	userPlayground UserPlaygroundRevoker
 	erasureRunner  ErasureRunner
 	erasureJobs    erasurejob.Store
+	// erasureCrossTenantRead records the §12.3 cross_tenant_read event of
+	// each erasure-job read made under the all-tenants sentinel. Nil emits
+	// nothing.
+	erasureCrossTenantRead erasurejob.CrossTenantReadFunc
 	// impersonation drives the §13.3 platform-admin impersonation flow
 	// (POST/DELETE/GET /v1/admin/impersonation). Nil leaves the routes
 	// unregistered. F-16.7.1.

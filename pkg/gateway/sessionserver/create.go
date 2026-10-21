@@ -88,6 +88,13 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
+	// spec: §12.8 (Lifecycle fence and drain) — the early creation gate
+	// over the tenant row and the new row's owner (the body's userId),
+	// before the quota, concurrency, rate-limit, and policy gates, so a
+	// fenced create consumes no rate budget and claims no pod.
+	if !s.requireCreationAllowed(w, r, tenantID, req.UserID) {
+		return false
+	}
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return false
 	}
@@ -395,6 +402,15 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 		// spec: §16.3 — a store INSERT failure is retryable
 		// (TRANSIENT: the client receives a 503 + Retry-After).
 		s.rollbackClaim(r.Context(), createClaim, row.ID)
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal in
+		// the insert transaction answers 403 with its code rather than
+		// the retryable 503.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
+			s.writeCreationRefusal(w, ref)
+			return level, "", false
+		}
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return level, "", false

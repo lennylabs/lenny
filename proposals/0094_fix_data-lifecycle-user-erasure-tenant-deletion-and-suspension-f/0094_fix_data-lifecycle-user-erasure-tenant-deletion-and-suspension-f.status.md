@@ -2,15 +2,15 @@
 proposal: 0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f
 title: Data lifecycle operations do not terminate and erase every session and store they cover
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-16
 drafted-by: change-proposal
 reviewed-date: 2026-10-18
 reviewed-by: change-proposal
 approved-date: 
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-21
+implemented-by: jaf
 ---
 ## Review history
 

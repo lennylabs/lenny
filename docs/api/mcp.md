@@ -169,7 +169,10 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | `QUOTA_EXCEEDED` | Tenant session quota exceeded |
 | `CREDENTIAL_POOL_EXHAUSTED` | No credentials available |
 | `CIRCUIT_BREAKER_OPEN` | Operator circuit breaker active |
-| `ERASURE_IN_PROGRESS` | User has pending GDPR erasure |
+| `ERASURE_IN_PROGRESS` | The caller or the session's owner has a pending GDPR erasure job |
+| `USER_INVALIDATED` | The caller or the session's owner is invalidated |
+| `TENANT_SUSPENDED` | The tenant is suspended |
+| `TENANT_NOT_ACTIVE` | The tenant is not `active`, such as during tenant deletion |
 
 **Example:**
 

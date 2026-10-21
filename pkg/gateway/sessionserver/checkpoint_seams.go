@@ -119,4 +119,9 @@ type CheckpointManifestWriter interface {
 	Put(ctx context.Context, r partialmanifeststore.Record) error
 	ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error
 	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
+	// DeleteByUser deletes the manifest rows of sessionIDs. The derive undo
+	// calls it with the derived session's ID when the derive is refused or
+	// fails after it wrote the derived manifest row.
+	// spec: §12.8 (Lifecycle fence and drain).
+	DeleteByUser(ctx context.Context, tenantID, userID string, sessionIDs []string) error
 }

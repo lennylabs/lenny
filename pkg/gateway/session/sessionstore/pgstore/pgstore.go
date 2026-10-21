@@ -39,6 +39,11 @@ type Store struct {
 	// single primary serves reads and writes unchanged. Writes always use
 	// pool. spec: §12.3.
 	read *pgxpool.Pool
+	// copyTranscript copies a source session's transcript into a new
+	// session inside CreateWithTranscript's insert transaction. Nil makes
+	// CreateWithTranscript return ErrTranscriptCopierUnwired.
+	// spec: §12.8 (Lifecycle fence and drain).
+	copyTranscript TranscriptCopier
 }
 
 // Option configures a Store at construction time.
@@ -142,7 +147,22 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 // the parent's RootSessionID onto every child so all rows in one tree
 // share the same root, which §8.9 and §12.5 read via the
 // idx_sessions_root index. F-8.9.8.
+//
+// The insert runs behind the creation fence (fenceInsert) and deletes the
+// reservation whose ID and owner match the row, in one transaction.
+// spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
+	return s.create(ctx, sess, nil)
+}
+
+// afterInsert runs in the insert transaction after the fence, the INSERT,
+// and the reservation DELETE. reservationDeleted reports whether that DELETE
+// removed a row. A non-nil error rolls the whole transaction back.
+type afterInsert func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, reservationDeleted bool) error
+
+// create is the shared insert of Create, CreateReserved, and
+// CreateWithTranscript.
+func (s *Store) create(ctx context.Context, sess sessionstore.Session, after afterInsert) error {
 	now := time.Now().UTC()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = now
@@ -265,6 +285,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		sess.CoordinationGeneration = 1
 	}
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
+		// spec: §12.8 (Lifecycle fence and drain) — the fence reads the
+		// marker rows FOR SHARE before the INSERT, in this transaction.
+		if err := fenceInsert(ctx, tx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0); err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
@@ -352,7 +377,17 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $59 — §6.2 accumulated_session_age_seconds, the active age
 			// Update accrues on every later write. Zero for a new row.
 			sess.AccumulatedSessionAgeSeconds)
-		return err
+		if err != nil {
+			return err
+		}
+		deleted, err := deleteOwnReservation(ctx, tx, sess)
+		if err != nil {
+			return err
+		}
+		if after == nil {
+			return nil
+		}
+		return after(ctx, tx, sess, deleted)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -665,7 +700,14 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 
 	var out []sessionstore.Session
 	// spec: §12.3 — session-status listing routes to the read replica.
-	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+	// A lifecycle drain sets Primary and reads the primary instead, so a
+	// row the creation fence admitted is never missed to replica lag.
+	// spec: §12.8 (Lifecycle fence and drain).
+	pool := s.read
+	if filter.Primary {
+		pool = s.pool
+	}
+	err := pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
 			return err
@@ -797,7 +839,12 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 			return err
 		}
 		deleted = int(tag.RowsAffected())
-		return nil
+		// spec: §12.8 (Lifecycle fence and drain) — the erasure ends the
+		// user's reservations with the session rows, so a CreateReserved
+		// still in flight finds its reservation gone and refuses.
+		_, err = tx.Exec(ctx,
+			`DELETE FROM session_reservations WHERE tenant_id = $1 AND user_id = $2`, tenantID, userID)
+		return err
 	})
 	return deleted, err
 }
@@ -820,7 +867,11 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 			return err
 		}
 		deleted = int(tag.RowsAffected())
-		return nil
+		// spec: §12.8 (Lifecycle fence and drain) — tenant deletion ends
+		// every reservation of the tenant with its session rows.
+		_, err = tx.Exec(ctx,
+			`DELETE FROM session_reservations WHERE tenant_id = $1`, tenantID)
+		return err
 	})
 	return deleted, err
 }

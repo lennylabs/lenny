@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -844,7 +845,7 @@ func TestMCPRespondToElicitationResolves(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), ownerPrincipal, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"option-A"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "responded") {
@@ -878,7 +879,7 @@ func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), authmw.Principal{Subject: "bob", TenantID: "acme"}, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_bob","elicitationId":"elic_x","response":"option-A"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
@@ -904,7 +905,7 @@ func TestMCPDismissElicitation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	_ = call(t, srv.Handler(), "lenny/dismiss_elicitation",
+	_ = callAs(t, srv.Handler(), ownerPrincipal, "lenny/dismiss_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","reason":"user_cancelled"}`)
 	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
 	if err != nil {
@@ -938,7 +939,7 @@ func TestMCPRespondToElicitationAlreadyResolvedSurfacesConflict(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), ownerPrincipal, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"second"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
@@ -1107,3 +1108,10 @@ func TestRequestElicitationWaiterExitsWhenExpired_spec_9_2(t *testing.T) {
 		t.Errorf("roundtrips = %d, want 1", lc.roundtripCount())
 	}
 }
+
+// ownerPrincipal is the authenticated owner of the sessions the
+// elicitation-resolution tests resolve against. The MCP resolution tools
+// key the (tenant, session, user, elicitation) triple on the principal's
+// subject, as the REST resolution endpoints do.
+// spec: §9.2 (respond_to_elicitation authorization).
+var ownerPrincipal = authmw.Principal{Subject: "alice", TenantID: "acme"}

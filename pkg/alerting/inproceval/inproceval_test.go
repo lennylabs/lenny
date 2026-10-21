@@ -567,3 +567,55 @@ func TestCatalogNeverPanics_spec_25_13_4676(t *testing.T) {
 		}
 	}
 }
+
+// TestErasureJobOverdueEvaluatesInProcess_spec_16_5 pins that the §25.13
+// in-process fallback evaluates the bundled ErasureJobOverdue expression:
+// active over a positive per-job overdue series published under two
+// instance labels, inactive over a negative one and over no series, and
+// never ErrUnsupportedExpr.
+// spec: 16.5 (Alerting Rules and SLOs), 12.8 (Compliance Interfaces: Erasure SLA enforcement), 25.13 (Bundled Alerting Rules)
+func TestErasureJobOverdueEvaluatesInProcess_spec_16_5(t *testing.T) {
+	expr := catalogRule(t, "ErasureJobOverdue").Expr
+	labels := []string{"tenant_id", "job_id", "instance"}
+	cases := []struct {
+		name    string
+		samples []labeledSample
+		want    bool
+	}{
+		{"positive overdue under two instances", []labeledSample{
+			{values: []string{"acme", "erasure_a", "gw-0"}, v: 3600},
+			{values: []string{"acme", "erasure_a", "gw-1"}, v: 3600},
+		}, true},
+		{"negative overdue", []labeledSample{
+			{values: []string{"globex", "erasure_b", "gw-0"}, v: -3540},
+		}, false},
+		{"one job overdue beside one not", []labeledSample{
+			{values: []string{"acme", "erasure_a", "gw-0"}, v: 1},
+			{values: []string{"globex", "erasure_b", "gw-0"}, v: -60},
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newReg(t).gaugeVec("lenny_erasure_job_overdue_seconds", labels, tc.samples).eval()
+			got, err := e.Active(context.Background(), expr)
+			if errors.Is(err, ErrUnsupportedExpr) {
+				t.Fatalf("Active(%q) is unsupported in-process", expr)
+			}
+			if err != nil {
+				t.Fatalf("Active(%q): %v", expr, err)
+			}
+			if got != tc.want {
+				t.Fatalf("Active = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	t.Run("no series", func(t *testing.T) {
+		got, err := newReg(t).eval().Active(context.Background(), expr)
+		if errors.Is(err, ErrUnsupportedExpr) {
+			t.Fatalf("Active(%q) is unsupported in-process", expr)
+		}
+		if got {
+			t.Fatal("Active with no overdue series = true, want false")
+		}
+	})
+}

@@ -10,7 +10,7 @@
 // tenant through the §12.8 phases in order:
 //
 //	Phase 1  (disabling) — soft-disable: reject new sessions, API keys, sign-ups.
-//	Phase 2  (disabling) — terminate: graceful-shutdown active sessions.
+//	Phase 2  (disabling) — terminate: drain the tenant's sessions; retry until the drain succeeds.
 //	Phase 3  (deleting)  — revoke OAuth tokens and credential leases.
 //	Phase 4  (deleting)  — DeleteByTenant across every store, in dependency order.
 //	Phase 4a (deleting)  — T4 tenants only: destroy the per-tenant KMS key
@@ -68,8 +68,10 @@ const (
 	// PhaseSoftDisable — §12.8 Phase 1: reject new session creation,
 	// API key issuance, and sign-ups for the tenant.
 	PhaseSoftDisable Phase = "soft_disable"
-	// PhaseTerminateSessions — §12.8 Phase 2: graceful-shutdown active
-	// sessions, then force-terminate any that miss the timeout.
+	// PhaseTerminateSessions — §12.8 Phase 2: drain the tenant's sessions
+	// by applying the forced terminal transition to each non-terminal
+	// session. The phase completes only when the drain succeeds; a drain
+	// that does not succeed keeps the job in this phase for the next pass.
 	PhaseTerminateSessions Phase = "terminate_sessions"
 	// PhaseRevokeCredentials — §12.8 Phase 3: revoke OAuth tokens and
 	// refresh tokens, invalidate credential pool leases.
@@ -186,12 +188,16 @@ type Job struct {
 	Receipt *Receipt
 	// Failure carries the error reason when Phase is failed.
 	Failure string
-	// BlockedReason carries the §12.8 Phase 3.5 standard-path pause
-	// reason while one or more active legal holds prevent the deletion
-	// from advancing into Phase 4. It is empty once the holds clear (or
-	// the operator exercises the force-delete override). The job stays at
-	// PhaseLegalHoldSegregation, not PhaseFailed, while blocked so a later
-	// pass re-evaluates the ledger without an operator retry.
+	// BlockedReason carries the reason a job is paused in phase rather
+	// than failed. At PhaseTerminateSessions it is the error of the last
+	// §12.8 Phase 2 drain that did not verify, and the job keeps State
+	// disabling so the next pass re-runs the drain. At
+	// PhaseLegalHoldSegregation it is the §12.8 Phase 3.5 pause reason
+	// while one or more active legal holds prevent the deletion from
+	// advancing into Phase 4, or the escrow region is unresolvable on the
+	// override path. It is cleared when the phase advances. A paused job
+	// stays in its phase, rather than PhaseFailed, so a later pass retries
+	// without an operator action.
 	BlockedReason string
 	// BlockedHolds is the set of active tenant-scoped legal holds the
 	// §12.8 Phase 3.5 enumeration found, carried so the

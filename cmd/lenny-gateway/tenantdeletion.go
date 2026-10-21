@@ -6,14 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -52,6 +51,33 @@ func (d tenantStateDisabler) SoftDisableTenant(ctx context.Context, tenantID str
 		return nil
 	})
 	return err
+}
+
+// tenantSessionTerminator is the §12.8 Phase 2 SessionTerminator. It
+// runs the lifecycle drain over the whole tenant under a per-drain
+// budget, so one tenant's drain delays the other tenants' deletion by at
+// most one budget. A budget expiry ends the drain between sessions and
+// is returned as a drain error, which keeps the job at Phase 2 for the
+// next tick.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+type tenantSessionTerminator struct {
+	sessions admin.DrainLister
+	term     admin.DrainTerminator
+	// budget bounds each drain. It is the operator-tunable
+	// --lifecycle-tick-budget, which the startup gate requires positive.
+	budget time.Duration
+}
+
+// TerminateTenantSessions drains every non-terminal session of tenantID
+// and returns the drain's error.
+func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
+	tctx, cancel := context.WithTimeout(ctx, t.budget)
+	defer cancel()
+	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, tenantID, ""); err != nil {
+		return fmt.Errorf("tenant deletion drain: %w", err)
+	}
+	return nil
 }
 
 // namedTenantEraser pairs a store name with its DeleteByTenant function.
@@ -180,25 +206,28 @@ func (s tenantDeletionBlockedSink) DeletionBlocked(ctx context.Context, tenantID
 // tick it reconstructs a deletion Job for every tenant in `disabling` or
 // `deleting`, advances every active job one phase via the Reconciler,
 // reflects the job state back onto the tenant row, and tombstones the
-// tenant once the lifecycle completes. A single-flight Postgres advisory
-// lock keeps the destructive loop running on at most one gateway replica.
+// tenant once the lifecycle completes. A tick runs only while the §12.5
+// lenny-gateway-leader elector reports this replica as leader, so the
+// destructive loop runs on the same replica as the other gateway-singleton
+// sweeps and holds no pooled connection across the tick.
+//
+// The runner is not registered on the leader gate: a lease loss cancels
+// the leader context, which would fail the replica's in-memory deletion
+// job mid-phase. It runs for the process lifetime and polls the elector
+// instead.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.5 (lenny-gateway-leader
+// gate).
 type tenantDeletionRunner struct {
 	reconciler *tenantdeletion.Reconciler
 	tenants    tenantstore.Store
 	clock      func() time.Time
 	interval   time.Duration
-	// pool, when non-nil, gates each tick behind a non-blocking advisory
-	// lock so only one replica runs the destructive loop. Nil runs the
-	// loop unguarded (single-replica / in-memory posture).
-	pool *pgxpool.Pool
-}
-
-// advisoryLockKey is the stable 64-bit key for the tenant-deletion
-// single-flight lock, shared across replicas.
-func advisoryLockKey() int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte("tenant_deletion_controller"))
-	return int64(h.Sum64())
+	// elector gates each tick. startLeaderElectedSweeps sets it to the
+	// gateway-leader elector before it launches Start. A nil elector runs
+	// no tick, so an unwired runner never runs the destructive loop on
+	// every replica.
+	elector gatewayleader.Elector
 }
 
 // Start runs the reconcile loop until ctx is cancelled. It reconciles
@@ -222,22 +251,11 @@ func (rn *tenantDeletionRunner) Start(ctx context.Context) {
 	}
 }
 
-// tick advances every in-flight tenant deletion by one phase under the
-// single-flight lock.
+// tick advances every in-flight tenant deletion by one phase when this
+// replica is the gateway leader.
 func (rn *tenantDeletionRunner) tick(ctx context.Context) {
-	if rn.pool != nil {
-		conn, err := rn.pool.Acquire(ctx)
-		if err != nil {
-			return
-		}
-		defer conn.Release()
-		var locked bool
-		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey()).Scan(&locked); err != nil || !locked {
-			return
-		}
-		defer func() {
-			_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", advisoryLockKey())
-		}()
+	if rn.elector == nil || !rn.elector.IsLeader() {
+		return
 	}
 	rn.reconcileOnce(ctx)
 }
@@ -319,8 +337,11 @@ func (rn *tenantDeletionRunner) ensureJob(ctx context.Context, t tenantstore.Ten
 // syncBack reflects a job's progress onto the tenant row: a completed
 // lifecycle tombstones the tenant; an in-progress job advances the tenant
 // state (disabling → deleting) so GET /v1/admin/tenants/{id} surfaces
-// real progress; a failed or blocked job leaves the tenant in `deleting`
-// for operator attention.
+// real progress. A job paused at Phase 2 on a drain that did not verify
+// keeps state `disabling`, so a job rebuilt after a restart resumes at
+// Phase 1 and re-runs the drain. A Phase 3.5 block leaves the tenant in
+// `deleting`, and a failed job leaves it where it is for operator
+// attention.
 func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 	job, err := rn.reconciler.Jobs.Get(ctx, tenantID)
 	if err != nil {
@@ -333,7 +354,8 @@ func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 			log.Printf("lenny-gateway: tenant-deletion tombstone %q: %v", tenantID, err)
 		}
 	case tenantdeletion.PhaseFailed:
-		// Leave the tenant where it is; an operator retries the job.
+		// Leave the tenant where it is. A failed job is terminal for the
+		// controller and needs operator attention.
 	default:
 		// Reflect the job's coarse state onto the tenant row so a GET
 		// surfaces progress. The job reaches state `deleted` already at the

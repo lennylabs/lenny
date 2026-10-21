@@ -1397,40 +1397,35 @@ type discoveredAgent struct {
 	Description      string `json:"description,omitempty"`
 }
 
-// requireActiveDelegator enforces the §11.4 rule that hard_disable
-// "also block[s] new delegated tasks". It resolves the parent session's
-// owning user and rejects the delegation with USER_INVALIDATED when that
-// user is no longer active. When no user store is wired, the parent
-// session is unresolvable, or the owning user has no registry row, the
-// delegation proceeds — mirroring the REST session-creation gate, which
-// admits principals that were never provisioned through the admin user
-// API. spec: §11.4; F-11.4.1.
+// requireActiveDelegator is the early creation gate of a delegated child.
+// It reads the parent session's owning user's row and the tenant row and
+// refuses with the code CreationMarkers.Refusal answers for a delegated
+// child, so it answers the fence's code for the same marker state: a
+// soft-disabled owner's in-flight work keeps delegating (§11.4), while a
+// hard-disabled or fully revoked owner, a restricted owner, and a
+// suspended or non-active tenant refuse. A missing row carries no marker,
+// and an unwired store reads nothing. A marker read error answers the
+// INTERNAL_ERROR tool error. When the parent session is unresolvable the
+// gate stays out of the way so the delegation service returns its
+// canonical PARENT_NOT_FOUND. The fence in the child's insert transaction
+// remains the serialization point.
+// spec: §11.4 (User Invalidation), §12.8 (Lifecycle fence and drain).
 func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessionID string) error {
-	if deps.Users == nil || deps.Store == nil || parentSessionID == "" {
+	if (deps.Users == nil && deps.Tenants == nil) || deps.Store == nil || parentSessionID == "" {
 		return nil
 	}
 	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
 	if err != nil {
-		// A missing or unreadable parent is the delegation service's
-		// concern (it returns PARENT_NOT_FOUND); the user gate stays out
-		// of the way so the canonical error surfaces downstream.
 		return nil
 	}
-	if parent.UserID == "" {
-		return nil
-	}
-	user, err := deps.Users.Get(ctx, tenant, parent.UserID)
-	if errors.Is(err, userstore.ErrNotFound) {
-		return nil
-	}
+	m, err := sessionstore.StoreMarkers(deps.Tenants, deps.Users)(ctx, tenant, parent.UserID)
 	if err != nil {
 		return mcp.NewToolError("INTERNAL_ERROR",
-			"user-invalidation check failed: "+err.Error(), nil)
+			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
-	if !user.IsActive() {
-		return mcp.NewToolError("USER_INVALIDATED",
-			"the owning user has been invalidated and cannot spawn new delegated tasks",
-			map[string]any{"userId": parent.UserID})
+	m.IsDelegatedChild = true
+	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
+		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
 	}
 	return nil
 }

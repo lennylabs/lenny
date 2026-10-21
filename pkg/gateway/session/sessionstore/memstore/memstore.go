@@ -28,6 +28,20 @@ type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]sessionstore.Session
 
+	// reservations holds the session-ID reservations of the creation fence,
+	// keyed by reservationKey(tenantID, sessionID). Guarded by mu, so a
+	// reservation and the session row that ends it change together.
+	// spec: §12.8 (Lifecycle fence and drain).
+	reservations map[string]reservation
+
+	// markers reads the creation fence's marker rows. Nil admits every
+	// insert. Called under mu (WithCreationMarkers).
+	markers sessionstore.MarkerReader
+
+	// copyTranscript copies a transcript inside CreateWithTranscript, under
+	// mu. Nil makes CreateWithTranscript return ErrTranscriptCopierUnwired.
+	copyTranscript TranscriptCopier
+
 	// podLockMu guards podLocks. podLocks holds the per-pod mutex the
 	// §12.4 Redis-outage capacity gate (ReserveSlotUnderLock) takes so the
 	// in-memory backend serializes the count-and-decide the same way the
@@ -41,29 +55,50 @@ type Store struct {
 	now func() time.Time
 }
 
+// Option configures a Store at construction.
+type Option func(*Store)
+
 // New returns an empty in-memory store on the wall clock.
-func New() *Store {
-	return NewWithClock(nil)
+func New(opts ...Option) *Store {
+	return NewWithClock(nil, opts...)
 }
 
 // NewWithClock returns an empty in-memory store whose Update reads now for
 // the UpdatedAt stamp and the §6.2 active-age accrual, so a test can advance
 // a session's active age deterministically. A nil now selects the wall clock.
-func NewWithClock(now func() time.Time) *Store {
+func NewWithClock(now func() time.Time, opts ...Option) *Store {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{
-		sessions: make(map[string]sessionstore.Session),
-		podLocks: make(map[string]*sync.Mutex),
-		now:      now,
+	s := &Store{
+		sessions:     make(map[string]sessionstore.Session),
+		reservations: make(map[string]reservation),
+		podLocks:     make(map[string]*sync.Mutex),
+		now:          now,
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
-// Create inserts the row. Returns ErrAlreadyExists when ID is taken.
-func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
+// Create inserts the row. Returns ErrAlreadyExists when ID is taken. It
+// runs the creation fence first and deletes the reservation whose ID and
+// owner match the row (fence.go).
+// spec: §12.8 (Lifecycle fence and drain).
+func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createLocked(ctx, sess, nil)
+}
+
+// createLocked is the shared insert of Create, CreateReserved, and
+// CreateWithTranscript. Callers hold s.mu. before runs after every check
+// and before the row is stored, so its error stores nothing.
+func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, before func(sessionstore.Session) error) error {
+	if err := s.fenceLocked(ctx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0); err != nil {
+		return err
+	}
 	if _, ok := s.sessions[sess.ID]; ok {
 		return sessionstore.ErrAlreadyExists
 	}
@@ -103,6 +138,12 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 			sess.RootSessionID = sess.ID
 		}
 	}
+	if before != nil {
+		if err := before(sess); err != nil {
+			return err
+		}
+	}
+	s.deleteOwnReservationLocked(sess)
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -214,7 +255,9 @@ func monotonicNext(prev, now time.Time) time.Time {
 }
 
 // List returns every row for the tenant in created-at descending
-// order, after applying the supplied filter.
+// order, after applying the supplied filter. The store has one backing,
+// so f.Primary changes nothing: every read already sees every committed
+// write. spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -339,6 +382,13 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 		if row.TenantID == tenantID && row.UserID == userID {
 			delete(s.sessions, id)
 			deleted++
+		}
+	}
+	// spec: §12.8 (Lifecycle fence and drain) — the erasure ends the
+	// user's reservations with the session rows.
+	for k, r := range s.reservations {
+		if r.TenantID == tenantID && r.UserID == userID {
+			delete(s.reservations, k)
 		}
 	}
 	return deleted, nil
@@ -595,6 +645,13 @@ func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) 
 		if row.TenantID == tenantID {
 			delete(s.sessions, id)
 			deleted++
+		}
+	}
+	// spec: §12.8 (Lifecycle fence and drain) — tenant deletion ends the
+	// tenant's reservations with its session rows.
+	for k, r := range s.reservations {
+		if r.TenantID == tenantID {
+			delete(s.reservations, k)
 		}
 	}
 	return deleted, nil

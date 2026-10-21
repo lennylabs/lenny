@@ -2302,7 +2302,7 @@ data:
                 description: A user-level erasure job has failed. The user's processing_restricted flag remains set, blocking all new sessions for that user. The failure_phase label distinguishes failure modes.
                 summary: A user-level erasure job has failed
             - alert: ErasureJobOverdue
-              expr: lenny_erasure_job_age_seconds > scalar(lenny_erasure_job_deadline_seconds)
+              expr: max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0
               labels:
                 severity: warning
               annotations:

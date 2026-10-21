@@ -347,6 +347,8 @@ type gatewayFlags struct {
 	legalHoldEscrowBucket                         *string
 	legalHoldEscrowEndpoint                       *string
 	tenantDeletionInterval                        *time.Duration
+	lifecycleTickBudget                           *time.Duration
+	erasureMaxConcurrentJobs                      *int
 
 	// externalInterceptors collects each repeatable --external-interceptor
 	// value (§4.8 external RequestInterceptor registration). It is appended
@@ -1348,4 +1350,19 @@ func (f *gatewayFlags) registerOpsFlags() {
 	// operator-tunable.
 	f.tenantDeletionInterval = flag.Duration("tenant-deletion-interval", envDuration("LENNY_TENANT_DELETION_INTERVAL", 30*time.Second),
 		"§12.8 tenant-deletion runner tick. Each tick advances every in-flight tenant deletion by one phase. Default 30s. Override via LENNY_TENANT_DELETION_INTERVAL.")
+	// The bound on each §12.8 lifecycle drain a background tick runs, such
+	// as the tenant-deletion Phase 2 drain. A drain that exceeds it stops
+	// between sessions and counts as a drain failure, so the job stays in
+	// its phase and the next tick re-runs the drain. The specification
+	// fixes no bound, so the 10-minute default is operator-tunable.
+	f.lifecycleTickBudget = flag.Duration("lifecycle-tick-budget", envDuration("LENNY_LIFECYCLE_TICK_BUDGET", 10*time.Minute),
+		"§12.8 bound on each lifecycle drain a background tick runs (the tenant-deletion Phase 2 drain). A drain that exceeds it is a drain failure retried on the next tick. Must be positive. Default 10m. Override via LENNY_LIFECYCLE_TICK_BUDGET.")
+	// The number of erasure jobs the gateway leader's erasure runner runs
+	// at once, with at most one per tenant. Each run holds one pooled
+	// connection at a time and waits for the salt lock on a connection
+	// outside the pool, so the limit carries no rule tied to the pool's
+	// size. The specification fixes no limit, so the default of 2 is
+	// operator-tunable.
+	f.erasureMaxConcurrentJobs = flag.Int("erasure-max-concurrent-jobs", envInt("LENNY_ERASURE_MAX_CONCURRENT_JOBS", 2),
+		"§12.8 number of user-erasure jobs the gateway leader runs at once, at most one per tenant. Must be at least 1. Default 2. Override via LENNY_ERASURE_MAX_CONCURRENT_JOBS.")
 }
