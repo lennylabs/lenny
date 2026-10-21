@@ -244,3 +244,96 @@ func TestDB_AutoFlushPersists_spec_17_4_199(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+// restoredPair opens a fresh DB over path and returns the restored
+// erasure_jobs and users bytes.
+func restoredPair(t *testing.T, path string) (jobs, users string) {
+	t.Helper()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open fresh: %v", err)
+	}
+	defer db.Close(context.Background())
+	j, u := &fakeStore{}, &fakeStore{}
+	db.Register("erasure_jobs", j)
+	db.Register("users", u)
+	if err := db.Restore(context.Background()); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	return string(j.get()), string(u.get())
+}
+
+// TestDB_FlushIsOneTransaction_spec_17_4 pins that a flush commits every
+// changed store or none: a persist-time abort of the users upsert leaves
+// the file at the previous flush for both stores, and the next flush,
+// once the abort is gone, persists both new states because the failed
+// flush did not advance either store's last-persisted bytes. The
+// persist-time abort is the discriminating injection: an export error
+// happens before any write, so it passes against a flush that writes each
+// store in its own statement.
+// spec: 17.4 (Local Development Mode: Source Mode), 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
+func TestDB_FlushIsOneTransaction_spec_17_4(t *testing.T) {
+	ctx := context.Background()
+	path := tmpDBPath(t)
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close(ctx)
+	jobs, users := &fakeStore{}, &fakeStore{}
+	db.Register("erasure_jobs", jobs)
+	db.Register("users", users)
+	jobs.set([]byte("jobs-1"))
+	users.set([]byte("users-1"))
+	if err := db.Flush(ctx); err != nil {
+		t.Fatalf("first flush: %v", err)
+	}
+
+	if _, err := db.db.ExecContext(ctx, `CREATE TRIGGER abort_users_upsert
+		BEFORE UPDATE ON store_snapshots WHEN NEW.name = 'users'
+		BEGIN SELECT RAISE(ABORT, 'injected users persist failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	jobs.set([]byte("jobs-2"))
+	users.set([]byte("users-2"))
+	if err := db.Flush(ctx); err == nil {
+		t.Fatal("flush with an aborted users upsert returned nil")
+	}
+	if j, u := restoredPair(t, path); j != "jobs-1" || u != "users-1" {
+		t.Fatalf("after a failed flush the file holds (%q, %q), want the first flush (jobs-1, users-1)", j, u)
+	}
+
+	if _, err := db.db.ExecContext(ctx, `DROP TRIGGER abort_users_upsert`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	if err := db.Flush(ctx); err != nil {
+		t.Fatalf("flush after the abort is gone: %v", err)
+	}
+	if j, u := restoredPair(t, path); j != "jobs-2" || u != "users-2" {
+		t.Fatalf("after recovery the file holds (%q, %q), want (jobs-2, users-2)", j, u)
+	}
+}
+
+// TestDB_FlushExportErrorWritesNothing_spec_17_4 pins that an export error
+// part-way through a flush rolls back the stores already written in it.
+// spec: 17.4 (Local Development Mode: Source Mode)
+func TestDB_FlushExportErrorWritesNothing_spec_17_4(t *testing.T) {
+	ctx := context.Background()
+	path := tmpDBPath(t)
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close(ctx)
+	jobs, users := &fakeStore{}, &fakeStore{}
+	db.Register("erasure_jobs", jobs)
+	db.Register("users", users)
+	jobs.set([]byte("jobs-1"))
+	users.exportErr = errors.New("export failed")
+	if err := db.Flush(ctx); err == nil {
+		t.Fatal("flush with an export error returned nil")
+	}
+	if j, _ := restoredPair(t, path); j != "" {
+		t.Fatalf("a failed flush persisted erasure_jobs = %q", j)
+	}
+}

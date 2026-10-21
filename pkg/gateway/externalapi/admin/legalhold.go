@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -464,69 +465,72 @@ func (r *Router) emitLegalHold(req *http.Request, hold bool, resourceType, resou
 	r.emit(req.Context(), principal, event, resourceID, detail)
 }
 
-// heldResource describes a single §12.8 legal-hold blocking the erasure
-// of a user. spec: §12.8 — the blocked event carries
-// {resourceType, resourceId} tuples for each hold.
-type heldResource struct {
+// HeldResource is one §12.8 legal hold that blocks an erasure: a held
+// session (ResourceType "session") or a held artifact under a session
+// (ResourceType "artifact", ResourceID the session's id). spec: §12.8 — the
+// blocked event carries {resourceType, resourceId} tuples for each hold.
+type HeldResource struct {
 	ResourceType string `json:"resourceType"`
 	ResourceID   string `json:"resourceId"`
 }
 
-// heldSessions returns the ids of the user's sessions that carry a
-// §12.8 session-level legal hold. An empty result means no session-level
-// hold blocks the erasure. When no SessionStore is wired the preflight
-// cannot run and the result is empty.
-func (r *Router) heldSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
-	if r.sessions == nil {
-		return nil, nil
-	}
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
-	if err != nil {
-		return nil, err
-	}
-	var held []string
-	for _, s := range rows {
-		if s.UserID == userID && s.LegalHold {
-			held = append(held, s.ID)
-		}
-	}
-	return held, nil
+// ArtifactHoldChecker reports whether any artifact under a session carries
+// a §12.8 legal hold. ArtifactLegalHolder satisfies it.
+type ArtifactHoldChecker interface {
+	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
-// heldResourcesForUser enumerates the §12.8 step-0 legal-hold preflight
-// blocking set for userID: session-level holds (resourceType session)
-// and artifact-level holds on any artifact owned by one of the user's
-// sessions (resourceType artifact). The returned holds back the
-// gdpr.erasure_blocked_by_hold event's resource tuples and the override
-// receipt. spec: §12.8(a)(b).
-func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID string) ([]heldResource, error) {
-	if r.sessions == nil {
-		return nil, nil
-	}
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+// HeldResourcesForUser enumerates the §12.8 step-0 legal-hold blocking set
+// for userID: session-level holds and artifact-level holds on any artifact
+// under one of the user's sessions. It lists the user's sessions from the
+// Postgres primary, so a hold set just before the request is not missed on
+// a lagging replica. The erase and retry handlers run it as the preflight,
+// and the erasure runner runs it as the re-check before the first eraser.
+// A nil artifacts checker skips the artifact half.
+//
+// spec: §12.8 (DeleteByUser dependency-ordered deletion sequence), §12.8
+// (Lifecycle fence and drain).
+func HeldResourcesForUser(ctx context.Context, sessions DrainLister, artifacts ArtifactHoldChecker, tenantID, userID string) ([]HeldResource, error) {
+	rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list sessions of user %s: %w", userID, err)
 	}
-	var holds []heldResource
+	return holdsInSessions(ctx, artifacts, tenantID, rows)
+}
+
+// holdsInSessions returns the session-level and artifact-level holds on
+// rows. §12.8(b): an artifact under a session that carries its own hold
+// blocks even when the session itself is not held.
+func holdsInSessions(ctx context.Context, artifacts ArtifactHoldChecker, tenantID string, rows []sessionstore.Session) ([]HeldResource, error) {
+	var holds []HeldResource
 	for _, s := range rows {
-		if s.UserID != userID {
+		if s.LegalHold {
+			holds = append(holds, HeldResource{ResourceType: "session", ResourceID: s.ID})
+		}
+		if artifacts == nil {
 			continue
 		}
-		if s.LegalHold {
-			holds = append(holds, heldResource{ResourceType: "session", ResourceID: s.ID})
+		held, err := artifacts.IsLegalHeldAt(ctx, tenantID, s.ID)
+		if err != nil {
+			return nil, fmt.Errorf("artifact legal hold of session %s: %w", s.ID, err)
 		}
-		// §12.8(b): an artifact under one of the user's sessions
-		// that carries its own hold blocks the erasure even when the
-		// session itself is not held.
-		if r.artifactHolds != nil {
-			held, herr := r.artifactHolds.IsLegalHeldAt(ctx, tenantID, s.ID)
-			if herr != nil {
-				return nil, herr
-			}
-			if held {
-				holds = append(holds, heldResource{ResourceType: "artifact", ResourceID: s.ID})
-			}
+		if held {
+			holds = append(holds, HeldResource{ResourceType: "artifact", ResourceID: s.ID})
 		}
 	}
 	return holds, nil
+}
+
+// heldResourcesForUser runs HeldResourcesForUser over the Router's wired
+// stores. When no SessionStore is wired the preflight cannot run and the
+// result is empty.
+func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID string) ([]HeldResource, error) {
+	if r.sessions == nil {
+		return nil, nil
+	}
+	var artifacts ArtifactHoldChecker
+	if r.artifactHolds != nil {
+		artifacts = r.artifactHolds
+	}
+	return HeldResourcesForUser(ctx, r.sessions, artifacts, tenantID, userID)
 }

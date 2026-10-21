@@ -2106,13 +2106,6 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
-      },
-      "delete": {
-        "operationId": "deleteV1ResponsesById",
-        "summary": "Delete an Open Responses response",
-        "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "204": { "description": "Deleted" } }
       }
     },
     "/v1/oauth/token": {

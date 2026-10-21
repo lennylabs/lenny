@@ -235,11 +235,16 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 }
 
 // Handler returns the http.Handler routing /v1/responses.
+//
+// The adapter serves create and read only. Each response is backed by the
+// implicit per-request session record that audit and billing rely on, so no
+// route deletes it; a DELETE on /v1/responses/{id} reaches the ServeMux's
+// method mismatch and answers 405 with an Allow header naming GET.
+// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
 func (h *OpenResponsesHandler) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/responses", h.handleCreate)
 	mux.HandleFunc("GET /v1/responses/{id}", h.handleGet)
-	mux.HandleFunc("DELETE /v1/responses/{id}", h.handleDelete)
 	return mux
 }
 
@@ -467,20 +472,6 @@ func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (h *OpenResponsesHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
-	tenantID := resolveTenant(r)
-	id := r.PathValue("id")
-	if err := h.store.Delete(r.Context(), tenantID, id); err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			writeOpenAIError(w, http.StatusNotFound, "not_found_error", "response not found")
-			return
-		}
-		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // normalizeInput accepts either a string (single user message) or an

@@ -2838,14 +2838,31 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     (concurrent-slot resume and restore touches the slot release and the resume binder, TT-22 and TT-30),
     and R13 (bind-time coordinator resolution, beside TT-15).
   - **Drafting.** Under the drafting rules and the test instruction above.
-- [ ] **P5. Data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and
-  `DELETE /v1/responses/{id}`** (not yet written; its opening defect list is drafted now, during 0092's
-  review).
+- [x] **P5. Data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and
+  `DELETE /v1/responses/{id}`** (proposal 0094, implemented 2026-10-21).
+  - **Outcome.** Proposal 0094
+    (`proposals/0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f/`) covers pieces A and
+    D: the creation fence inside the session insert transaction on every creation path, the session-ID
+    reservation, one shared drain that lists from the primary and verifies, used by tenant suspension,
+    tenant-deletion Phase 2, and user erasure, the durable Postgres erasure job run by the gateway leader's
+    sweep, and the removal of `DELETE /v1/responses/{id}`. It closes F-12.8.26, F-12.8.27, F-12.8.28,
+    F-12.8.31, F-12.8.32, F-12.8.33, F-12.8.36, F-15.1.48, F-15.1.50, and F-15.1.51, reopens and closes
+    F-12.8.20, and files and closes F-12.8.38, F-12.8.39, and F-12.8.40. The `tenant.suspended` half of
+    F-11.7.22 landed here, and its `session.force_terminated` half stays with P2. Its fence closes the
+    concurrent-insert half of F-11.4.14.
+  - **Moved to P5b.** Pieces B and C and the full_revoke fixes go to the follow-on proposal P5b, which lands
+    after P1 (0093): F-11.4.12, F-11.4.13, the F-11.4.14 listing remainder, F-12.8.25, F-12.8.30,
+    F-12.8.34, F-12.8.35, F-12.8.37, and the newly filed F-12.8.41 and F-12.8.42.
   - **Scope.** Removal and fencing of a user's or tenant's data: the erasure gate and listing, quiescing
     live sessions before the erasers run, the tenant-deletion phases, tenant suspension's drain and its
     creation race, the full_revoke session loop and listing, and the responses `DELETE`. P5 decides when
     and for which sessions a release runs, and P1 decides how. §12.8 gains the statement that erasure
-    terminates the user's sessions and waits for their terminal hooks before the erasers run.
+    terminates the user's sessions before the erasers run. A successful drain does not wait for a
+    session's terminal steps or its pod release: the pod of a drained session bound on another replica can
+    stay claimed after user erasure deletes its row, until the claim-orphan GC reclaims it. That residual
+    is F-12.8.43, owned by P2, which also asks P2 whether such a binding's credential leases are returned,
+    and the claim register carries it as an `ABSENT` row deferred to R21.
+  - **Filed unassigned.** F-12.3.25, F-12.8.44, F-12.8.45, F-12.8.46, F-12.8.47, F-12.8.48, and F-15.1.55.
   - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
     F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101),
     F-15.1.51 (TT-102), and F-12.8.34 and F-12.8.35 (the Phase 4 stores and the in-memory checkpoint
@@ -2853,7 +2870,8 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Dependencies.** Its implementation lands after 0092's, because 0092 edits the erasure job (item 17)
     and the full_revoke handler (item 2a). Its full_revoke edits follow P1's. Direct fix F-12.8.29 (TT-98)
     lands before it.
-  - **Overlapping plan steps.** None; no plan step owns erasure, tenant deletion, or tenant suspension.
+  - **Overlapping plan steps.** R21, which the terminal-tail claim row names as its deferral; no plan step
+    owns erasure, tenant deletion, or tenant suspension.
   - **Drafting.** Under the drafting rules and the test instruction above.
 
 - [ ] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
@@ -2865,8 +2883,8 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     Also the `audit_redaction_receipts` foreign key that blocks an audit eraser, and the full_revoke session
     loop, listing, and error handling.
   - **Members.** F-11.4.12, F-11.4.13, the F-11.4.14 remainder (0094's fence closes its creation race),
-    F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, and the P5 dossier's N-3 and N-4
-    (`scratchpad/p1-p5/p5-dossier.md`).
+    F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, F-12.8.41 (the P5 dossier's N-3), F-12.8.42
+    (the `coordination_lease` mirror rows), and the P5 dossier's N-4 (`scratchpad/p1-p5/p5-dossier.md`).
   - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
     and release mechanism, and after P5 (0094), whose fence and drain it builds on.
   - **Drafting.** Under the drafting rules and the test instruction above.

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 
 // Process represents a running lenny-gateway subprocess.
 type Process struct {
+	// done receives the result of cmd.Wait once the process exits.
+	done chan error
+	// stopOnce makes stop signal the process at most once.
+	stopOnce   sync.Once
 	cmd        *exec.Cmd
 	baseURL    string
 	stderr     *os.File
@@ -138,32 +143,13 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
-	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile, stderrPath: stderrPath}
+	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile, stderrPath: stderrPath, done: make(chan error, 1)}
+	// Buffered so the goroutine never blocks once nothing waits on it.
+	go func() { p.done <- cmd.Wait() }()
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
-
-		// Buffered so the goroutine never blocks if cleanup gives up
-		// waiting and returns.
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		_ = cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-done:
-			return
-		case <-time.After(3 * time.Second):
-		}
-
-		// SIGINT did not take. Force-kill; WaitDelay still bounds the
-		// final wait if the kernel takes its time reaping.
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		case <-time.After(cmd.WaitDelay + time.Second):
-			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
-		}
+		p.stop(t, os.Interrupt)
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
@@ -172,6 +158,36 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		t.Fatalf("gateway not ready: %v\nlogs:\n%s", err, b)
 	}
 	return p
+}
+
+// stop signals the gateway with sig and waits for it to exit, force-killing
+// it when sig does not take within 3 seconds. Only the first call signals;
+// later calls return at once.
+func (p *Process) stop(t testing.TB, sig os.Signal) {
+	p.stopOnce.Do(func() {
+		_ = p.cmd.Process.Signal(sig)
+		select {
+		case <-p.done:
+			return
+		case <-time.After(3 * time.Second):
+		}
+		// The signal did not take. Force-kill; WaitDelay still bounds the
+		// final wait if the kernel takes its time reaping.
+		_ = p.cmd.Process.Kill()
+		select {
+		case <-p.done:
+		case <-time.After(p.cmd.WaitDelay + time.Second):
+			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
+		}
+	})
+}
+
+// Kill ends the gateway with SIGKILL and waits for it to exit, as a crash
+// of the replica would: no shutdown path runs. A test uses it to hand work
+// the replica held to another replica.
+func (p *Process) Kill(t testing.TB) {
+	t.Helper()
+	p.stop(t, os.Kill)
 }
 
 // BaseURL returns the http://host:port the gateway is listening on.

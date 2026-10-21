@@ -109,3 +109,29 @@ func TestSingleShotErrorMessage(t *testing.T) {
 		t.Errorf("errors.As did not resolve *SingleShotError")
 	}
 }
+
+// refusingStore refuses every insert with a creation-fence refusal.
+type refusingStore struct{ sessionstore.Store }
+
+func (refusingStore) Create(context.Context, sessionstore.Session) error {
+	return &sessionstore.CreationRefusal{Code: "USER_INVALIDATED", Message: "the session owner has been invalidated"}
+}
+
+// TestNoopSingleShotBinderMapsFenceRefusal_spec_12_8 pins the fallback
+// binder's refusal surface: a fence refusal from the insert is a 403
+// *SingleShotError carrying the refusal's code and message, which the
+// adapter renders in its native envelope, rather than a wrapped error the
+// adapter renders as 500 server_error.
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)
+func TestNoopSingleShotBinderMapsFenceRefusal_spec_12_8(t *testing.T) {
+	b := newNoopSingleShotBinder(refusingStore{memstore.New()},
+		func() string { return "sess_refused" }, time.Now)
+	_, err := b.BindSingleShot(context.Background(), SingleShotSpec{TenantID: "acme", UserID: "alice"})
+	var sse *SingleShotError
+	if !errors.As(err, &sse) {
+		t.Fatalf("err = %v, want *SingleShotError", err)
+	}
+	if sse.HTTPStatus != 403 || sse.Code != "USER_INVALIDATED" || sse.Message == "" {
+		t.Errorf("SingleShotError = %+v, want 403 USER_INVALIDATED with the refusal's message", sse)
+	}
+}

@@ -486,6 +486,7 @@ Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layer
 ### Erasure Process
 
 - **Processing restriction (Article 18):** Before full deletion, a `processing_restricted` flag can be set on a user, blocking all new session creation while the erasure job runs.
+- **Session drain:** Before any data is deleted, the erasure job force-terminates the user's running sessions. When it cannot terminate them, the job fails and the processing restriction stays set.
 - **Erasure SLA:** 72 hours for T3 data, 1 hour for T4 data.
 - **Billing pseudonymization:** Configurable per-tenant via `billingErasurePolicy`:
   - `default` -- billing events are pseudonymized using a per-tenant `erasure_salt` (salt is deleted immediately after pseudonymization for GDPR Recital 26 compliance)

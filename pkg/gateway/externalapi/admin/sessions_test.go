@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,10 +24,13 @@ import (
 
 // fakeSessionAdmin is an in-memory admin.SessionAdmin: GetByID resolves
 // across the seeded set, and ForceTerminate applies the §24.11
-// transition (idempotent on an already-terminal row).
+// transition to a row of the named tenant (idempotent on an
+// already-terminal row). forceCalls records every ForceTerminate call as
+// tenant/id, so a test can assert what the handler passed.
 type fakeSessionAdmin struct {
 	rows       map[string]sessionstore.Session
 	terminated []string
+	forceCalls []string
 	forceErr   error
 }
 
@@ -38,12 +42,13 @@ func (f *fakeSessionAdmin) GetByID(_ context.Context, id string) (sessionstore.S
 	return s, nil
 }
 
-func (f *fakeSessionAdmin) ForceTerminate(_ context.Context, id string) (sessionstore.Session, session.State, bool, error) {
+func (f *fakeSessionAdmin) ForceTerminate(_ context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
+	f.forceCalls = append(f.forceCalls, tenantID+"/"+id)
 	if f.forceErr != nil {
 		return sessionstore.Session{}, "", false, f.forceErr
 	}
 	s, ok := f.rows[id]
-	if !ok {
+	if !ok || s.TenantID != tenantID {
 		return sessionstore.Session{}, "", false, sessionstore.ErrNotFound
 	}
 	prev := s.State
@@ -212,6 +217,97 @@ func TestAdminForceTerminate_NotFound_spec_24_11(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rr.Code)
 	}
+}
+
+// TestAdminForceTerminate_UnknownIDAnswers404BeforeTransition_spec_24_11
+// pins that the handler resolves the id before the forced transition: an
+// unknown id answers 404 with no ForceTerminate call.
+// spec: §24.11 (Session investigation), §12.8 (Lifecycle fence and drain).
+func TestAdminForceTerminate_UnknownIDAnswers404BeforeTransition_spec_24_11(t *testing.T) {
+	sa := &fakeSessionAdmin{rows: map[string]sessionstore.Session{}}
+	h := newSessionAdminRouter(t, sa, nil).Handler()
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/sessions/missing/force-terminate", nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404", rr.Code)
+	}
+	if len(sa.forceCalls) != 0 {
+		t.Errorf("ForceTerminate called for an unknown id: %v", sa.forceCalls)
+	}
+}
+
+// TestAdminForceTerminate_PassesRowTenant_spec_24_11 pins that the
+// forced transition runs under the tenant of the row the handler
+// resolved, since the operator supplies only the id.
+// spec: §24.11 (Session investigation), §12.8 (Lifecycle fence and drain).
+func TestAdminForceTerminate_PassesRowTenant_spec_24_11(t *testing.T) {
+	sa := &fakeSessionAdmin{rows: map[string]sessionstore.Session{
+		"sess_g": {ID: "sess_g", TenantID: "globex", State: session.StateRunning},
+	}}
+	h := newSessionAdminRouter(t, sa, nil).Handler()
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/sessions/sess_g/force-terminate", nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if len(sa.forceCalls) != 1 || sa.forceCalls[0] != "globex/sess_g" {
+		t.Errorf("ForceTerminate calls = %v, want [globex/sess_g]", sa.forceCalls)
+	}
+}
+
+// TestAdminForceTerminate_LookupErrorAnswers500_spec_24_11 pins that a
+// resolution error other than not-found answers 500 with no transition.
+// spec: §24.11 (Session investigation).
+func TestAdminForceTerminate_LookupErrorAnswers500_spec_24_11(t *testing.T) {
+	sa := &erroringLookupAdmin{}
+	h := newSessionAdminRouter(t, sa, nil).Handler()
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/sessions/sess_1/force-terminate", nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", rr.Code)
+	}
+	if sa.forced {
+		t.Error("ForceTerminate called after a lookup error")
+	}
+}
+
+// TestAdminForceTerminate_TransitionErrorAnswers500_spec_24_11 pins that
+// a transition error after a successful lookup answers 500.
+// spec: §24.11 (Session investigation).
+func TestAdminForceTerminate_TransitionErrorAnswers500_spec_24_11(t *testing.T) {
+	sa := &fakeSessionAdmin{
+		rows: map[string]sessionstore.Session{
+			"sess_1": {ID: "sess_1", TenantID: "acme", State: session.StateRunning},
+		},
+		forceErr: errors.New("primary unavailable"),
+	}
+	h := newSessionAdminRouter(t, sa, nil).Handler()
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/sessions/sess_1/force-terminate", nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", rr.Code)
+	}
+}
+
+// erroringLookupAdmin is an admin.SessionAdmin whose GetByID fails with
+// a non-not-found error.
+type erroringLookupAdmin struct{ forced bool }
+
+func (e *erroringLookupAdmin) GetByID(context.Context, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errors.New("read pool unavailable")
+}
+
+func (e *erroringLookupAdmin) ForceTerminate(context.Context, string, string) (sessionstore.Session, session.State, bool, error) {
+	e.forced = true
+	return sessionstore.Session{}, "", false, nil
 }
 
 func TestAdminForceTerminate_MalformedBody_spec_24_11(t *testing.T) {

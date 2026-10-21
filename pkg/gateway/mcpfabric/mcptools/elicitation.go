@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
@@ -607,14 +609,20 @@ func ResolveElicitation(
 
 // resolveElicitationTool is the shared body of the §9.2 MCP
 // `lenny/respond_to_elicitation` and `lenny/dismiss_elicitation` tools.
-// It looks up the calling session row (so the triple's user_id is the
-// session's bound user identity — the same binding the §9.2 dispatcher
-// used to record the pending row), enforces the (tenant, session,
-// user, elicitation) triple via ResolveElicitation, and surfaces a
-// well-typed lenny error envelope on the three failure paths:
-// ELICITATION_NOT_FOUND on triple mismatch, INTERACTION_ALREADY_RESOLVED
-// on a second resolution attempt, INTERNAL_ERROR otherwise. Symmetric
-// with sessionserver.resolveInteraction. F-9.2.17.
+// It runs the caller check on the authenticated principal, looks up the
+// calling session row, enforces the (tenant, session, user, elicitation)
+// triple via ResolveElicitation with the principal's subject as the
+// triple's user, and surfaces a well-typed lenny error envelope on the
+// failure paths: USER_INVALIDATED or ERASURE_IN_PROGRESS from the caller
+// check, ELICITATION_NOT_FOUND on triple mismatch (another user's
+// elicitation included), INTERACTION_ALREADY_RESOLVED on a second
+// resolution attempt, INTERNAL_ERROR otherwise. The caller check runs
+// before the session lookup, so a refused principal gets the same answer
+// for a session that exists and one that does not. Symmetric with
+// sessionserver.resolveInteraction. F-9.2.17.
+// spec: §9.2 (respond_to_elicitation authorization), §11.4 (User
+// Invalidation), §12.8 (Processing restriction during erasure (GDPR
+// Article 18)).
 func resolveElicitationTool(
 	ctx context.Context,
 	deps Deps,
@@ -623,8 +631,11 @@ func resolveElicitationTool(
 	response any,
 	reason string,
 ) (mcp.ToolResult, error) {
-	row, err := deps.Store.Get(ctx, tenant, sessionID)
-	if err != nil {
+	principal, _ := authmw.FromContext(ctx)
+	if err := requireActiveResolver(ctx, deps, tenant, principal.Subject); err != nil {
+		return mcp.ToolResult{}, err
+	}
+	if _, err := deps.Store.Get(ctx, tenant, sessionID); err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_NOT_FOUND",
 				"elicitation not found",
@@ -633,8 +644,12 @@ func resolveElicitationTool(
 		return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
 			fmt.Sprintf("session lookup: %v", err), nil)
 	}
+	// spec: §9.2 (respond_to_elicitation authorization) — the triple's
+	// user is the authenticated caller, as on the REST resolution
+	// endpoints, so another user's elicitation answers
+	// ELICITATION_NOT_FOUND.
 	out, err := ResolveElicitation(ctx, deps.Interactions, tenant, sessionID,
-		row.UserID, elicitationID, phase, response, reason)
+		principal.Subject, elicitationID, phase, response, reason)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrElicitationNotFound):
@@ -655,4 +670,38 @@ func resolveElicitationTool(
 		"resolvedAt": out.ResolvedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 	})
 	return textResult(string(body)), nil
+}
+
+// requireActiveResolver is the caller check of an MCP interaction
+// resolution. It reads the principal's user row and refuses with the
+// USER_INVALIDATED tool error when the user is invalidated, then with
+// ERASURE_IN_PROGRESS (details userId and jobId) when the user's
+// processing is restricted, as the REST resolution endpoints do. A
+// principal with no subject, an unwired user store, and a missing registry
+// row admit; any other read error answers INTERNAL_ERROR. A refused
+// resolution leaves the elicitation pending.
+// spec: §11.4 (User Invalidation), §12.8 (Processing restriction during
+// erasure (GDPR Article 18)).
+func requireActiveResolver(ctx context.Context, deps Deps, tenant, subject string) error {
+	if deps.Users == nil || subject == "" {
+		return nil
+	}
+	user, err := deps.Users.Get(ctx, tenant, subject)
+	if errors.Is(err, userstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return mcp.NewToolError("INTERNAL_ERROR",
+			"user-invalidation check failed: "+err.Error(), nil)
+	}
+	if !user.IsActive() {
+		return mcp.NewToolError("USER_INVALIDATED",
+			"the authenticated user has been invalidated and cannot resolve interactions", nil)
+	}
+	if user.ProcessingRestricted {
+		return mcp.NewToolError("ERASURE_IN_PROGRESS",
+			"the authenticated user has a pending erasure request and cannot resolve interactions until erasure completes",
+			map[string]any{"userId": subject, "jobId": user.ErasureJobID})
+	}
+	return nil
 }

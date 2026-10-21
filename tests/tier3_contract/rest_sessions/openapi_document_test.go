@@ -292,3 +292,34 @@ func httpMethodFor(verb string) string {
 		return ""
 	}
 }
+
+// spec: §15.1 (REST API), §15 (Built-in adapter single-shot compute model).
+// diagnosis: a failure here means the served OpenAPI document advertises a
+// delete operation on /v1/responses/{id}. The Open Responses adapter serves
+// create and read only, because each response is backed by the implicit
+// per-request session record that audit and billing rely on; a client or SDK
+// generated from the document would offer a delete the gateway answers with
+// 405. Remove paths./v1/responses/{id}.delete from
+// pkg/gateway/externalapi/openapi/openapi.json. A failure on the get operation
+// means the path itself drifted and the absence check has nothing to read.
+func TestServedDocumentOpenResponsesByIDHasNoDeleteOperation(t *testing.T) {
+	ts := httptest.NewServer(openapi.Handler())
+	t.Cleanup(ts.Close)
+
+	var parsed struct {
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal([]byte(fetchServedDocument(t, ts.URL+"/openapi.json")), &parsed); err != nil {
+		t.Fatalf("decode served /openapi.json: %v", err)
+	}
+	item, ok := parsed.Paths["/v1/responses/{id}"]
+	if !ok {
+		t.Fatal("served document has no /v1/responses/{id} path, so the delete-absence check reads nothing")
+	}
+	if _, ok := item["get"]; !ok {
+		t.Error("served document lost the get operation on /v1/responses/{id}")
+	}
+	if _, ok := item["delete"]; ok {
+		t.Error("served document advertises a delete operation on /v1/responses/{id}; the adapter serves none")
+	}
+}

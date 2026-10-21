@@ -458,6 +458,29 @@ platform-admin
 
 Delete a tenant. Blocked if any non-terminal sessions, pools, or credential pools exist.
 
+### POST /v1/admin/tenants/{id}/suspend
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Suspend a tenant. Body: `{"reason": "<string>"}`. The gateway sets the tenant's suspension marker and then force-terminates every active session in the tenant. While the tenant is suspended, session creation and message injection are rejected with `403 TENANT_SUSPENDED`. Every suspend request, a repeat included, is recorded in the audit trail with the operator identity and the reason.
+
+A suspend request for a tenant that is already suspended leaves the original suspension record unchanged and runs the session drain again. Repeat the request to retry a drain that did not complete.
+
+The response body reports the suspension and the drain result:
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `tenantId` | string | The suspended tenant. |
+| `suspended` | boolean | `true` once the suspension marker is set. |
+| `reason` | string | The reason recorded with the suspension. |
+| `suspendedAt` | string | When the suspension was recorded. |
+| `suspendedBy` | string | The operator who recorded the suspension. |
+| `drainedSessions` | integer | The number of sessions this request's drain terminated. |
+| `failedSessions` | array of strings | The IDs of sessions the drain did not bring to a terminal state. A non-empty array means the drain is incomplete and the request can be repeated. The array is empty when the drain completed. |
+
+When the gateway cannot list the tenant's sessions, the request returns `500 INTERNAL_ERROR` and the tenant stays suspended.
+
 ### Tenant RBAC configuration
 
 | Endpoint | Method | Role | Description |
@@ -833,6 +856,8 @@ platform-admin tenant-admin
 
 Initiate a GDPR user-level erasure job. Returns a job ID.
 
+A user has at most one erasure job in progress. The legal-hold preflight runs on every request, a repeat request included, and a request blocked by an active legal hold returns `409 ERASURE_BLOCKED_BY_LEGAL_HOLD`. When the user already has an erasure job in progress and no active legal hold applies to the user, the request returns that job's ID and starts no second job. When the user already has an erasure job in progress and the request passes the preflight only through `acknowledgeHoldOverride`, the request returns `409 INVALID_STATE_TRANSITION`.
+
 ---
 
 ## Erasure jobs
@@ -840,8 +865,8 @@ Initiate a GDPR user-level erasure job. Returns a job ID.
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
 | `GET /v1/admin/erasure-jobs/{jobId}` | GET | platform-admin, tenant-admin | Query erasure job status: phase, completion %, time elapsed, errors |
-| `POST /v1/admin/erasure-jobs/{jobId}/retry` | POST | platform-admin | Retry a failed erasure job |
-| `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag. Body: `{"justification": "..."}` |
+| `POST /v1/admin/erasure-jobs/{jobId}/retry` | POST | platform-admin | Retry a failed erasure job. The job restarts from its first phase and sets the user's processing restriction again. Returns `409 ERASURE_JOB_NOT_FAILED` when the job is not in the `failed` state, `409 INVALID_STATE_TRANSITION` when the user already has another erasure job in progress, and `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when an active legal hold on the user's sessions or artifacts blocks the erasure. |
+| `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag after a failed erasure job. Body: `{"justification": "..."}`. The endpoint accepts only a failed job and returns `409 ERASURE_JOB_NOT_FAILED` for any other job. It returns `409 INVALID_STATE_TRANSITION` while the user's restriction belongs to another erasure job. The clear reopens the user to new sessions and does not retry the job. |
 
 ---
 

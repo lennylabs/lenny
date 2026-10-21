@@ -333,7 +333,7 @@ active → disabling → deleting → deleted
 | Phase | State | Actions |
 |---|---|---|
 | 1. Soft-disable | `disabling` | New session creation blocked; existing sessions continue |
-| 2. Drain active sessions | `disabling` | Send graceful-shutdown signals; wait for in-flight sessions to complete or hit configurable timeout (default: 5 min), then force-terminate remaining pods |
+| 2. Drain active sessions | `disabling` | Force-terminate every active session in the tenant. The phase completes when no active session remains. When a session cannot be terminated, the phase stays incomplete and the controller retries it on its next pass. |
 | 3. Credential revocation | `deleting` | Revoke all active credential leases via `CredentialPoolStore.RevokeByTenant`; delete stored OAuth/refresh tokens via `TokenStore.DeleteByTenant`; flush tenant-scoped Redis cache entries |
 | 4. Data deletion | `deleting` | Execute `DeleteByTenant` on every store in dependency order: sessions, artifacts, checkpoints, memories, audit logs, billing events (respecting `billingErasurePolicy` and legal holds) |
 | 4a. KMS key scheduling | `deleting` | **T4 tenants only.** Schedule tenant-specific KMS keys for deletion after provider-minimum retention period (AWS: 7 days, GCP: 24h, Vault: immediate). Key is disabled first to block new encrypt/decrypt calls. |

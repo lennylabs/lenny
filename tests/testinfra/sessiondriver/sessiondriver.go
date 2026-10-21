@@ -511,6 +511,10 @@ type StartOptions struct {
 	// RetryPolicy is the §7.3 per-session retryPolicy, as raw JSON, for
 	// example `{"maxResumeWindowSeconds":5}`.
 	RetryPolicy json.RawMessage
+	// UserID is the body's userId, the user who owns the new session row.
+	// The §12.8 creation fence and a user erasure act on this owner, so a
+	// test that erases a user starts the user's session with it set.
+	UserID string
 }
 
 // sessionBody is the session-creation body the driver sends.
@@ -519,6 +523,7 @@ type sessionBody struct {
 	IsolationProfile string          `json:"isolationProfile"`
 	WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
 	RetryPolicy      json.RawMessage `json:"retryPolicy,omitempty"`
+	UserID           string          `json:"userId,omitempty"`
 }
 
 // startBody builds the creation body for runtimeRef under the standard
@@ -527,6 +532,7 @@ func startBody(runtimeRef string, opts StartOptions) sessionBody {
 	return sessionBody{
 		RuntimeRef: runtimeRef, IsolationProfile: "standard",
 		WorkspacePlan: opts.WorkspacePlan, RetryPolicy: opts.RetryPolicy,
+		UserID: opts.UserID,
 	}
 }
 

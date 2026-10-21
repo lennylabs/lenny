@@ -506,6 +506,29 @@ EXPLICIT = [
         "note": "the watchdog compares the session's accumulated active time, which pauses "
                 "in suspended and the recovery states, with maxSessionAgeSeconds",
     },
+    # The lifecycle drain writes each scoped session's terminal row from the
+    # replica that runs it, and the release of a pod bound on another replica
+    # waits for that replica's Sweeper to list the row. §28.5.4 places no
+    # channel between gateway replicas, so nothing tells the binding replica
+    # to release first, and user erasure can delete the row before the Sweeper
+    # lists it. R21, the off-holder eviction leg, is the step that releases a
+    # binding another replica holds. BUILD-GAPS.md F-12.8.43 records the
+    # residual, owned by the terminal pipeline completeness proposal (P2).
+    {
+        "claim": "Lifecycle drain releases the pod of a session bound on another gateway "
+                 "replica before the drained scope's rows are erased",
+        "status": "ABSENT",
+        "spec_anchor": "#2854-inter-replica",
+        "deferral_id": "R21",
+        "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions`; spec §12.8 "
+                   "Lifecycle fence and drain, Drain: a successful drain does not wait for the "
+                   "session's terminal steps or the release of its pod",
+        "note": "the drain writes the terminal row only; the binding replica's Sweeper "
+                "releases the pod when it lists that row, and a row that user erasure deletes "
+                "first leaves the pod to the claim-orphan GC after claimOrphanTimeout; "
+                "BUILD-GAPS.md F-12.8.43 records the residual, owned by P2 (terminal pipeline "
+                "completeness)",
+    },
 ]
 
 # One row per request-message field the specification adds, each naming the step

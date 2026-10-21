@@ -36,32 +36,33 @@ func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionsto
 	return a.store.GetByID(ctx, id)
 }
 
-// ForceTerminate transitions a non-terminal session to `failed` and
-// releases its pod. It resolves the session's tenant from a global
-// lookup (the operator supplies only the id), then performs the
-// transition under the tenant's row lock so a concurrent natural
-// transition is serialized: if the row has already reached a terminal
-// state the mutate refuses (sessionstore.ErrSuperseded) and ForceTerminate
-// returns the locked row, its state, false, and nil (idempotent). The
-// pre-force state is captured inside the mutate so it reflects the state at
-// commit time, and the forced write records the Terminated fact. It opens the
-// terminal claim before the write and ends it after the terminal pipeline,
-// or at once on a refusal or error. spec: §24.11; §7.2 (Interactive Session
-// Model).
-func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (sessionstore.Session, session.State, bool, error) {
-	sess, err := a.store.GetByID(ctx, id)
-	if err != nil {
-		return sessionstore.Session{}, "", false, err
-	}
+// ForceTerminate transitions a non-terminal session of tenantID to
+// `failed` and releases its pod. The caller supplies the tenant: the
+// admin endpoint reads it from the row it has already resolved, and a
+// lifecycle drain passes the tenant it lists. The adapter performs no
+// lookup of its own, because a global lookup reads the §12.3 read pool,
+// which can omit a row the drain listed from the primary; the locked
+// Update below reads the primary and returns sessionstore.ErrNotFound
+// when no row of that id exists in tenantID. The transition runs under
+// the row lock so a concurrent natural transition is serialized: if the
+// row has already reached a terminal state the mutate refuses
+// (sessionstore.ErrSuperseded) and ForceTerminate returns the locked row,
+// its state, false, and nil (idempotent). The pre-force state is captured
+// inside the mutate so it reflects the state at commit time, and the
+// forced write records the Terminated fact. It opens the terminal claim
+// before the write and ends it after the terminal pipeline, or at once on
+// a refusal or error. spec: §24.11; §7.2 (Interactive Session Model);
+// §12.8 (Lifecycle fence and drain).
+func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
 	end := func() {}
 	if a.beginTerminal != nil {
-		end = a.beginTerminal(sess.ID)
+		end = a.beginTerminal(id)
 	}
 	defer end()
 	var prev session.State
 	var locked sessionstore.Session
 	now := time.Now()
-	updated, err := a.store.Update(ctx, sess.TenantID, sess.ID, func(s *sessionstore.Session) error {
+	updated, err := a.store.Update(ctx, tenantID, id, func(s *sessionstore.Session) error {
 		prev = s.State
 		locked = *s
 		if session.IsTerminal(s.State) {

@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +51,10 @@ func TestErasureJobJourney(t *testing.T) {
 	// audit_seq_<40hex> sequence; without it every audit Append for a
 	// freshly bootstrapped tenant fails on nextval of a nonexistent
 	// relation. The single test Postgres instance plays both roles.
-	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
+	// --tenant-deletion-interval is also the erasure sweep's poll cadence;
+	// the leader runs a recorded job on its next poll.
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN,
+		"--postgres-billing-audit-ddl-dsn="+pg.DSN, "--tenant-deletion-interval=1s")
 	base := gw.BaseURL()
 
 	do := func(t *testing.T, method, path, roles string, body any) (int, map[string]any) {
@@ -376,7 +380,7 @@ func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN,
-		"--redis-url=redis://"+rd.Addr+"/0", "--messaging-durable-inbox")
+		"--redis-url=redis://"+rd.Addr+"/0", "--messaging-durable-inbox", "--tenant-deletion-interval=1s")
 	base := gw.BaseURL()
 
 	const alice, bob = "alice@acme.com", "bob@acme.com"
@@ -448,5 +452,131 @@ func TestErasureDeletesTheErasedUsersSessionMessageQueues_spec_12_8(t *testing.T
 	}
 	if n := rd.Client.Exists(ctx, bobDLQ, bobInbox).Val(); n != 2 {
 		t.Errorf("%d of another user's session message queues remain, want 2", n)
+	}
+}
+
+// bootstrapErasureTenants bootstraps one tenant per id with the echo
+// runtime and one tenant-admin user, alice@<tenant>.com, in each.
+func bootstrapErasureTenants(t *testing.T, base string, tenants ...string) {
+	t.Helper()
+	var ts, users []map[string]any
+	for _, id := range tenants {
+		ts = append(ts, map[string]any{"id": id, "displayName": id})
+		user := "alice@" + id + ".com"
+		users = append(users, map[string]any{"subject": user, "tenantId": id, "email": user, "roles": []string{"tenant-admin"}})
+	}
+	code, _ := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
+		"tenants":  ts,
+		"runtimes": []map[string]any{{"name": "echo", "image": "lenny/echo@sha256:abc", "labels": map[string]string{"tier": "test"}}},
+		"users":    users,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("bootstrap: status %d", code)
+	}
+}
+
+// eraseAlice starts an erasure of alice@<tenant>.com through base and
+// returns the job id.
+func eraseAlice(t *testing.T, base, tenant string) string {
+	t.Helper()
+	code, resp := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/users/alice@"+tenant+".com/erase", "platform-admin",
+		map[string]any{"tenantId": tenant})
+	jobID, _ := resp["jobId"].(string)
+	if code != http.StatusAccepted || jobID == "" {
+		t.Fatalf("erase alice@%s.com: status %d (%v)", tenant, code, resp)
+	}
+	return jobID
+}
+
+// awaitErasureCompleted polls the job through base until it completes.
+func awaitErasureCompleted(t *testing.T, base, jobID string, within time.Duration) {
+	t.Helper()
+	wait.For(t, within, "erasure job "+jobID+" completes", func() (bool, error) {
+		code, job := erasureAdminDo(t, base, http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, "platform-admin", nil)
+		if code != http.StatusOK {
+			return false, nil
+		}
+		if job["phase"] == "failed" {
+			t.Fatalf("erasure job %s failed: %v", jobID, job)
+		}
+		return job["phase"] == "completed", nil
+	})
+}
+
+// spec: 12.8 (Erasure job phase field (crash recovery)), 12.8 (Processing restriction during erasure (GDPR Article 18)), 12.3 (Postgres HA Requirements), 12.5 (Artifact Store)
+// diagnosis: a job recorded on one gateway replica was not resumed by
+// another replica after the first one died, so the job store is not shared
+// or the leader sweep does not poll it; or the erasure job's all-tenants
+// reads (the runner's, the sampler's, and the platform-admin status
+// query's) leave no cross_tenant_read event on the platform chain, so the
+// §12.3 audit of sentinel reads is unwired.
+func TestErasureJobResumesOnAnotherReplica_spec_12_8(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	args := func(interval string) []string {
+		return []string{
+			"--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn=" + pg.DSN,
+			"--postgres-billing-audit-ddl-dsn=" + pg.DSN, "--tenant-deletion-interval=" + interval,
+		}
+	}
+	// Replica A polls once at startup and then not for an hour, so a job it
+	// records stays unexecuted until A dies.
+	gwA := gateway.StartWith(t, args("1h")...)
+	bootstrapErasureTenants(t, gwA.BaseURL(), "acme")
+	jobID := eraseAlice(t, gwA.BaseURL(), "acme")
+	if code, job := erasureAdminDo(t, gwA.BaseURL(), http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, "platform-admin", nil); code != http.StatusOK || job["phase"] != "initiated" {
+		t.Fatalf("job on replica A = %d %v, want initiated", code, job)
+	}
+	gwA.Kill(t)
+
+	gwB := gateway.StartWith(t, args("1s")...)
+	awaitErasureCompleted(t, gwB.BaseURL(), jobID, 30*time.Second)
+	if n := dbCountErasure(t, pg, `SELECT COUNT(*) FROM users WHERE tenant_id = 'acme' AND subject = 'alice@acme.com' AND processing_restricted`); n != 0 {
+		t.Errorf("restriction still set after the resumed completion")
+	}
+
+	for _, ep := range []struct{ endpoint, caller string }{
+		{"erasure_job_runner", ""},
+		{"erasure_job_sampler", ""},
+		{"GET /v1/admin/erasure-jobs/{jobId}", "ops@acme.com"},
+	} {
+		wait.For(t, 40*time.Second, "cross_tenant_read for "+ep.endpoint, func() (bool, error) {
+			n := dbCountErasure(t, pg, `SELECT COUNT(*) FROM audit_log
+				WHERE tenant_id = 'platform' AND event_type = 'cross_tenant_read'
+				  AND payload->>'category' = 'erasure_job' AND payload->>'endpoint' = $1
+				  AND COALESCE(payload->>'caller_subject', '') = $2`, ep.endpoint, ep.caller)
+			return n > 0, nil
+		})
+	}
+}
+
+// spec: 12.8 (erasure_salt key management), 12.8 (Erasure job phase field (crash recovery)), 12.3 (Postgres HA Requirements)
+// diagnosis: with a four-connection pool and eight concurrent erasure
+// runs, at least one job did not complete: the salt lock holds or waits on
+// pooled connections, so pseudonymizations exhaust the pool and deadlock,
+// or the runner's concurrency limit does not admit jobs of distinct
+// tenants together.
+func TestErasureJobsCompleteWithSmallPool_spec_12_8(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	small := pg.DSN + "&pool_max_conns=4"
+	if !strings.Contains(pg.DSN, "?") {
+		small = pg.DSN + "?pool_max_conns=4"
+	}
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+small,
+		"--postgres-billing-audit-ddl-dsn="+pg.DSN, "--tenant-deletion-interval=1s", "--erasure-max-concurrent-jobs=8")
+	base := gw.BaseURL()
+	tenants := []string{"acme", "globex", "initech", "umbrella", "hooli", "stark", "wayne", "wonka"}
+	bootstrapErasureTenants(t, base, tenants...)
+	jobs := make([]string, 0, len(tenants))
+	for _, tn := range tenants {
+		jobs = append(jobs, eraseAlice(t, base, tn))
+	}
+	for _, id := range jobs {
+		awaitErasureCompleted(t, base, id, 60*time.Second)
 	}
 }

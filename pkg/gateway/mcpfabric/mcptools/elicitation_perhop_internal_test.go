@@ -46,6 +46,26 @@ func (s *slowAncestorStore) Create(context.Context, sessionstore.Session) error 
 	panic("unused")
 }
 
+func (s *slowAncestorStore) Reserve(context.Context, string, string, string, bool) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ReleaseReservation(context.Context, string, string) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ReservedSessionIDs(context.Context, string, string) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) CreateReserved(context.Context, sessionstore.Session) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) CreateWithTranscript(context.Context, sessionstore.Session, string) error {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	panic("unused")
 }

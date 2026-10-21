@@ -125,6 +125,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
@@ -440,4 +441,20 @@ type gatewayWiringFields struct {
 	uploadIssuer       *uploadtoken.Issuer
 	uploadVerifier     *uploadtoken.Verifier
 	users              userstore.Store
+	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
+	// builds for the posture: the Postgres store over the primary pool, or
+	// erasurejob.Memory writing the flag through the branch's user store.
+	// The admin router, the erasure runner, and the sampler read it.
+	erasureJobs erasurejob.Store
+	// erasureRunner and erasureSampler are the §12.8 erasure executor and
+	// SLA sampler the admin router builds. startLeaderElectedSweeps
+	// registers both on the gateway-leader gate, so only the leader runs
+	// them. Nil when no erasure surface is built.
+	erasureRunner  *erasurejob.Runner
+	erasureSampler *erasurejob.Sampler
+	// tenantDeletion is the §12.8 tenant-deletion runner the admin router
+	// builds when a receipt sink is wired. startLeaderElectedSweeps sets its
+	// elector to the gateway-leader elector and launches it. Nil when no
+	// receipt sink is wired.
+	tenantDeletion *tenantDeletionRunner
 }

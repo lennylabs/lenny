@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -254,7 +255,11 @@ func resolveOnReplicaB(t *testing.T, ctx context.Context, b elicitReplica, inter
 				"sessionId": elicitSessionID(i), "elicitationId": elicitID(i), "reason": "not now",
 			}
 		}
-		res, err := b.callTool(ctx, tool, args)
+		// The MCP resolution tools key the (tenant, session, user,
+		// elicitation) triple on the authenticated caller, so the owner's
+		// principal rides the call. spec: §9.2.
+		owner := authmw.WithPrincipal(ctx, authmw.Principal{Subject: "alice", TenantID: elicitXReplicaTenant})
+		res, err := b.callTool(owner, tool, args)
 		at := time.Now()
 		if err != nil || res["isError"] == true {
 			t.Fatalf("session %d: %s on replica B = %v, %v", i, tool, resultText(res), err)

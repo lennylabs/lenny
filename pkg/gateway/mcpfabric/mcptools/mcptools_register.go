@@ -210,6 +210,12 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			UpdatedAt:        now,
 		}
 		if err := deps.Store.Create(ctx, row); err != nil {
+			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
+			// store refuses with its code and details.
+			var ref *sessionstore.CreationRefusal
+			if errors.As(err, &ref) {
+				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
+			}
 			return mcp.ToolResult{}, err
 		}
 		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, row.ID, row.State)), nil
@@ -1809,11 +1815,10 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		// spec: §11.4 — hard_disable "also block[s] new delegated
-		// tasks". The in-session delegation path (lenny/delegate_task)
-		// is otherwise ungated: the REST session-creation gate never
-		// runs here. Resolve the parent session's owning user and
-		// reject when it is no longer active. F-11.4.1.
+		// spec: §11.4, §12.8 (Lifecycle fence and drain) — the early
+		// creation gate of the delegated child over the parent's owning
+		// user and the tenant, before any delegation work. The REST
+		// session-creation gates never run on this path. F-11.4.1.
 		if err := requireActiveDelegator(ctx, deps, tenant, in.ParentSessionID); err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -2172,6 +2177,13 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			TreeVisibility: session.TreeVisibility(in.TreeVisibility),
 		})
 		if err != nil {
+			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
+			// child's reservation or insert refused; surface its code and
+			// details rather than the generic fallback.
+			var ref *sessionstore.CreationRefusal
+			if errors.As(err, &ref) {
+				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
+			}
 			// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
 			// is surfaced under the spec's ISOLATION_MONOTONICITY_VIOLATED
 			// reason so the caller can distinguish it, and the §10.6
