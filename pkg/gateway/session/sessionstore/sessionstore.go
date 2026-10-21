@@ -1146,6 +1146,14 @@ type ListFilter struct {
 	// includes these audit rows by default; the `?includeDeriveFailures=false`
 	// query param sets this flag. spec: §15.1. F-15.1.14.
 	ExcludeDeriveFailures bool
+
+	// Primary reads from the Postgres primary rather than the §12.3 read
+	// pool. Lifecycle decisions set it: the drain of a lifecycle operation
+	// lists its scope from the primary, because a replica can omit a row
+	// the creation fence admitted before the marker committed. A store
+	// with a single backing (memstore) ignores it.
+	// spec: §12.8 (Lifecycle fence and drain), §12.3 (Read replicas).
+	Primary bool
 }
 
 // Sentinel errors. The sessionserver maps these to the §15.1 error

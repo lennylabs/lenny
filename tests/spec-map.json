@@ -3543,6 +3543,7 @@
       "title": "Postgres HA Requirements (R-01, R-02, R-03)",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier2_component/stores/sessionstore_list_primary_test.go::TestSessionStoreListPrimaryReadsPastReplicaLag_spec_12_8",
         "tests/tier2_component/stores/sessionstore_primary_read_test.go::TestSessionStorePrimaryReadIsLockFree_spec_12_3",
         "tests/tier8_chaos/lifecycle_fault_injection_test.go::TestLifecycleFaultInjection_spec_10_1_2",
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
@@ -3681,6 +3682,7 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier2_component/stores/sessionstore_list_primary_test.go::TestSessionStoreListPrimaryReadsPastReplicaLag_spec_12_8",
         "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/storage/retentiongc/...",
         "pkg/gateway/storage/erasure/...",

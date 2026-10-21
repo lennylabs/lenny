@@ -83,7 +83,7 @@ func (sessionAdminStub) GetByID(context.Context, string) (sessionstore.Session, 
 	return sessionstore.Session{}, nil
 }
 
-func (sessionAdminStub) ForceTerminate(context.Context, string) (sessionstore.Session, session.State, bool, error) {
+func (sessionAdminStub) ForceTerminate(context.Context, string, string) (sessionstore.Session, session.State, bool, error) {
 	return sessionstore.Session{}, "", false, nil
 }
 

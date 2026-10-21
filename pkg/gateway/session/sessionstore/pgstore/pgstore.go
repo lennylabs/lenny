@@ -665,7 +665,14 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 
 	var out []sessionstore.Session
 	// spec: §12.3 — session-status listing routes to the read replica.
-	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+	// A lifecycle drain sets Primary and reads the primary instead, so a
+	// row the creation fence admitted is never missed to replica lag.
+	// spec: §12.8 (Lifecycle fence and drain).
+	pool := s.read
+	if filter.Primary {
+		pool = s.pool
+	}
+	err := pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
 			return err

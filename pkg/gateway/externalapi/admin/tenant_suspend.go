@@ -11,10 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // eventTenantSuspended / eventTenantResumed are the §15.1 tenant
@@ -109,7 +107,8 @@ func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 	// drained. The marker set above is the authoritative rejection; the
 	// drain is a best-effort consequence performed when the session
 	// seams are wired. A drain error does not unwind the suspension.
-	drained, _ := r.drainTenantSessions(req.Context(), id)
+	res, _ := r.drainTenant(req.Context(), id)
+	drained := res.Terminated
 
 	detail := map[string]any{"tenant_id": id, "drained_sessions": drained}
 	if reason != "" {
@@ -170,37 +169,14 @@ func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, tenantResumePayload{TenantID: updated.ID, Suspended: updated.Suspended})
 }
 
-// drainTenantSessions force-terminates every non-terminal session in the
-// tenant per the §15.1 suspend contract and returns the count actually
-// transitioned. It is a no-op returning (0, nil) when the session store
-// or the force-terminate seam is not wired. ForceTerminate is idempotent,
-// so a session that reaches a terminal state concurrently is skipped.
-// spec: §15.1.
-func (r *Router) drainTenantSessions(ctx context.Context, tenantID string) (int, error) {
+// drainTenant runs the shared lifecycle drain over the whole tenant
+// when the session seams are wired, and is a no-op returning a zero
+// result and nil otherwise. spec: §15.1; §12.8 (Lifecycle fence and drain).
+func (r *Router) drainTenant(ctx context.Context, tenantID string) (DrainResult, error) {
 	if r.sessions == nil || r.sessionAdmin == nil {
-		return 0, nil
+		return DrainResult{}, nil
 	}
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
-	if err != nil {
-		return 0, err
-	}
-	drained := 0
-	for _, s := range rows {
-		if session.IsTerminal(s.State) {
-			continue
-		}
-		_, _, transitioned, terr := r.sessionAdmin.ForceTerminate(ctx, s.ID)
-		if terr != nil {
-			if errors.Is(terr, sessionstore.ErrNotFound) {
-				continue
-			}
-			return drained, terr
-		}
-		if transitioned {
-			drained++
-		}
-	}
-	return drained, nil
+	return DrainSessions(ctx, r.sessions, r.sessionAdmin, tenantID, "")
 }
 
 // decodeSuspendReason reads the optional {"reason": "..."} suspend body.

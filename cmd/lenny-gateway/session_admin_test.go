@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -40,7 +41,7 @@ func TestSessionAdminAdapter_ForceTerminate_TransitionsAndReleases(t *testing.T)
 		},
 	}
 
-	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "sess_1")
+	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "acme", "sess_1")
 	if err != nil {
 		t.Fatalf("ForceTerminate: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestSessionAdminAdapter_ForceTerminate_IdempotentOnTerminal(t *testing.T) {
 		},
 	}
 
-	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "sess_done")
+	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "acme", "sess_done")
 	if err != nil {
 		t.Fatalf("ForceTerminate: %v", err)
 	}
@@ -111,9 +112,86 @@ func TestSessionAdminAdapter_ForceTerminate_IdempotentOnTerminal(t *testing.T) {
 
 func TestSessionAdminAdapter_ForceTerminate_NotFound(t *testing.T) {
 	adapter := sessionAdminAdapter{store: memstore.New()}
-	_, _, _, err := adapter.ForceTerminate(context.Background(), "missing")
-	if err == nil {
-		t.Fatal("ForceTerminate on a missing session: want error, got nil")
+	_, _, _, err := adapter.ForceTerminate(context.Background(), "acme", "missing")
+	if !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("ForceTerminate on a missing session: err = %v, want ErrNotFound", err)
+	}
+}
+
+// replicaLagStore is a session store whose global GetByID cannot see any
+// row, as a read pool that has not yet replicated a freshly inserted row
+// cannot. Update and the other methods address the primary (the embedded
+// memstore).
+type replicaLagStore struct{ *memstore.Store }
+
+func (replicaLagStore) GetByID(context.Context, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, sessionstore.ErrNotFound
+}
+
+// TestSessionAdminAdapter_ForceTerminate_ReadsNoReplica_spec_12_8 pins
+// that the adapter performs no global lookup: a row the read pool has
+// not seen is still terminated under the caller's tenant through the
+// locked update, and the terminal pipeline runs. An adapter that resolves
+// the row with GetByID first returns ErrNotFound here.
+// spec: §12.8 (Lifecycle fence and drain: Drain), §24.11 (Session investigation).
+func TestSessionAdminAdapter_ForceTerminate_ReadsNoReplica_spec_12_8(t *testing.T) {
+	primary := memstore.New()
+	seedRunning(t, primary, "sess_lag", "acme")
+	var released []string
+	var claimed []string
+	ended := 0
+	adapter := sessionAdminAdapter{
+		store: replicaLagStore{primary},
+		onTerminal: func(_ context.Context, _ session.State, s sessionstore.Session) {
+			released = append(released, s.ID)
+		},
+		beginTerminal: func(id string) func() {
+			claimed = append(claimed, id)
+			return func() { ended++ }
+		},
+	}
+	sess, prev, transitioned, err := adapter.ForceTerminate(context.Background(), "acme", "sess_lag")
+	if err != nil {
+		t.Fatalf("ForceTerminate: %v", err)
+	}
+	if !transitioned || prev != session.StateRunning {
+		t.Fatalf("transitioned=%v prev=%q, want true and running", transitioned, prev)
+	}
+	if sess.State != session.StateFailed || sess.FailureClass != session.FailureClassRuntime ||
+		sess.FailureReason != "FORCE_TERMINATED" {
+		t.Errorf("row = %q/%q/%q, want failed/runtime_failure/FORCE_TERMINATED",
+			sess.State, sess.FailureClass, sess.FailureReason)
+	}
+	if len(released) != 1 || released[0] != "sess_lag" {
+		t.Errorf("terminal pipeline runs = %v, want [sess_lag]", released)
+	}
+	if len(claimed) != 1 || claimed[0] != "sess_lag" || ended != 1 {
+		t.Errorf("terminal claim = %v ended %d times, want [sess_lag] ended once", claimed, ended)
+	}
+}
+
+// TestSessionAdminAdapter_ForceTerminate_OtherTenantNotFound_spec_12_8
+// pins the tenant scope: called with another tenant's id, the adapter
+// returns ErrNotFound, leaves the row unchanged, and runs no terminal
+// pipeline. spec: §12.8 (Lifecycle fence and drain: Drain), §24.11.
+func TestSessionAdminAdapter_ForceTerminate_OtherTenantNotFound_spec_12_8(t *testing.T) {
+	store := memstore.New()
+	seedRunning(t, store, "sess_a", "acme")
+	ran := false
+	adapter := sessionAdminAdapter{
+		store:      store,
+		onTerminal: func(context.Context, session.State, sessionstore.Session) { ran = true },
+	}
+	_, _, transitioned, err := adapter.ForceTerminate(context.Background(), "globex", "sess_a")
+	if !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if transitioned || ran {
+		t.Errorf("transitioned=%v terminal pipeline ran=%v, want neither", transitioned, ran)
+	}
+	got, _ := store.GetByID(context.Background(), "sess_a")
+	if got.State != session.StateRunning {
+		t.Errorf("acme row state = %q, want running (unchanged)", got.State)
 	}
 }
 

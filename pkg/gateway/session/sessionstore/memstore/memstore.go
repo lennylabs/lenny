@@ -214,7 +214,9 @@ func monotonicNext(prev, now time.Time) time.Time {
 }
 
 // List returns every row for the tenant in created-at descending
-// order, after applying the supplied filter.
+// order, after applying the supplied filter. The store has one backing,
+// so f.Primary changes nothing: every read already sees every committed
+// write. spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
