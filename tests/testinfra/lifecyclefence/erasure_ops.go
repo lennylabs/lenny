@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -123,7 +121,7 @@ func (e *Erasure) step(ctx context.Context, s Step, fn func() error) error {
 func (e *Erasure) Runner() *erasurejob.Runner {
 	w := e.w
 	return erasurejob.NewRunner(e.Jobs, e.orchestrator(), nil).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(w.Logger).
 		WithBilling(erasurejob.NewBillingEraser(billingLedger{e}, w.S.Tenants)).
 		WithSessionDrain(func(ctx context.Context, tenantID, userID string) error {
 			return e.step(ctx, StepDrain, func() error {

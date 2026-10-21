@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecyclefence"
@@ -339,6 +340,7 @@ func TestSuspendDrainFaults_spec_15_1(t *testing.T) {
 		if res.Status != http.StatusOK || len(res.FailedSessions) != 1 {
 			t.Fatalf("suspend = %d failed %v, want 200 naming one session: %s", res.Status, res.FailedSessions, res.Body)
 		}
+		requireSuspended(t, w)
 		if res := w.Suspend(ctx); res.Status != http.StatusOK || len(res.FailedSessions) != 0 {
 			t.Fatalf("repeat suspend = %d %v: %s", res.Status, res.FailedSessions, res.Body)
 		}
@@ -372,17 +374,34 @@ func requireSuspended(t *testing.T, w *lifecyclefence.World) {
 	}
 }
 
+// requireDisabling asserts the tenant row is still in disabling, so the
+// creation fence keeps refusing creates while the deletion's Phase 2 drain
+// is incomplete or its tick has passed to another replica.
+func requireDisabling(t *testing.T, w *lifecyclefence.World, when string) {
+	t.Helper()
+	tn, err := w.S.Tenants.Get(context.Background(), w.Tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tn.State != tenantstore.TenantStateDisabling {
+		t.Fatalf("%s the tenant state is %q, want %q", when, tn.State, tenantstore.TenantStateDisabling)
+	}
+}
+
 // TestDeletionPhase2FaultsAndTakeover_spec_12_8 injects a listing error and
 // a forced termination error into the Phase 2 drain, which keeps the job at
 // Phase 2 until a later tick drains the tenant, and hands the tick to
 // another replica whose lease the first lost mid-drain: the new replica's
 // fresh job store re-runs Phase 1 and drains the tenant before it leaves
-// Phase 2.
+// Phase 2. The tenant row stays in disabling through every fault and the
+// takeover, so the creation fence never admits a create into the partly
+// drained tenant.
 //
 // spec: 12.8 (Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Lifecycle fence and drain)
 // diagnosis: a failure means a Phase 2 drain error failed the job or let it
-// advance with live sessions, or a replica takeover advanced the deletion
-// past Phase 2 without draining the tenant.
+// advance with live sessions, a Phase 2 fault or a lost lease moved the
+// tenant out of disabling before the deletion completed, or a replica
+// takeover advanced the deletion past Phase 2 without draining the tenant.
 func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 	s := lifecycleFaultStores(t)
 	ctx := context.Background()
@@ -407,9 +426,11 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 			if p, err := d.Tick(ctx); err != nil || p != tenantdeletion.PhaseTerminateSessions {
 				t.Fatalf("the faulted Phase 2 tick left phase %s (%v), want terminate_sessions", p, err)
 			}
+			requireDisabling(t, w, "after the faulted Phase 2 tick")
 			if p, err := d.ThroughPhase2(ctx, 3); err != nil {
 				t.Fatalf("Phase 2 retry: %s, %v", p, err)
 			}
+			requireDisabling(t, w, "after the deletion left Phase 2")
 			w.Check(t)
 		})
 	}
@@ -428,6 +449,7 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 		if p, _ := first.Tick(leaseCtx); p != tenantdeletion.PhaseTerminateSessions {
 			t.Fatalf("the replica that lost its lease left phase %s, want terminate_sessions", p)
 		}
+		requireDisabling(t, w, "after the first replica lost its lease")
 		second := w.NewDeletion()
 		if err := second.Start(ctx); err != nil {
 			t.Fatal(err)
@@ -435,6 +457,7 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 		if p, err := second.ThroughPhase2(ctx, 4); err != nil {
 			t.Fatalf("takeover replica: %s, %v", p, err)
 		}
+		requireDisabling(t, w, "after the takeover replica left Phase 2")
 		w.Check(t)
 	})
 }

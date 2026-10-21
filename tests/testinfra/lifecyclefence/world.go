@@ -5,6 +5,7 @@ package lifecyclefence
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,10 @@ type World struct {
 	Lister *FaultySessions
 	// Terminator is the drain's forced terminal transition behind Faults.
 	Terminator *Terminator
+	// Logger writes through the scenario test's t.Log. The erasure runners
+	// and the tenant-deletion reconcilers log through it, so a run's verbose
+	// output records each drain's elapsed time and any Phase 2 pause.
+	Logger *slog.Logger
 
 	seq atomic.Int64
 
@@ -80,6 +85,7 @@ func NewWorld(t testing.TB, s *Stores, liveSeeds int) *World {
 		Manifests: NewKeyedSet(),
 		Faults:    &Faults{},
 		Audit:     &AuditSink{},
+		Logger:    newTestLogger(t),
 		sources:   map[string]string{},
 		erasedAt:  map[string]int64{},
 	}

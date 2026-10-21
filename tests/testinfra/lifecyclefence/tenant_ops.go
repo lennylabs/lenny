@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 
@@ -136,7 +134,7 @@ func (w *World) NewDeletion() *Deletion {
 		Terminator: phase2Drain{w},
 		Eraser:     noopEraser{},
 		Receipts:   noopReceipts{},
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:     w.Logger,
 	}}
 }
 
