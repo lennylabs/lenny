@@ -234,7 +234,7 @@
       "contract": ["tests/tier3_contract/rest_sessions/..."]
     },
     "pkg/gateway/sessionserver": {
-      "unit": ["pkg/gateway/sessionserver/..."],
+      "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
@@ -358,6 +358,7 @@
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
     "tests/testinfra/lifecyclefence": {
+      "unit": ["tests/testinfra/lifecyclefence/..."],
       "load_local": ["tests/tier7a_load_local/lifecycle_fence_scenarios_test.go"],
       "chaos": ["tests/tier8_chaos/lifecycle_drain_fault_test.go"]
     },

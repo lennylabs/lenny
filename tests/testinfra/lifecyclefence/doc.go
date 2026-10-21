@@ -8,15 +8,19 @@
 // invariants. It is test-only code and adds no production seam.
 //
 // A World is one tenant with the users alice and bob. Its creation paths
-// reproduce the store calls each gateway creation path makes, in the order
-// the Creation-path rules of §12.8 fix: a plain fenced insert, a derive
-// (reserve, copy the snapshot objects and the manifest row, insert through
-// CreateReserved, and undo on any failure), a derive-failure audit row, a
-// prompt_history replay through CreateWithTranscript, and a delegated child
-// with a file export (reserve as a delegated child, export, insert through
-// CreateReserved). The lifecycle operations are the production code: the
-// admin router's suspend and resume handlers, the shared admin.DrainSessions,
-// the erasure job store and Runner, and the tenantdeletion Reconciler.
+// follow the Creation-path rules of §12.8. A plain fenced insert and a
+// prompt_history replay through CreateWithTranscript are single store
+// calls. A derive and a failing derive run the production session server's
+// derive handler, and a delegated child with a file export runs the
+// production delegation service, so the reservation, the pre-insert writes,
+// the insert through CreateReserved, the undo, and the derive-failure row
+// are the gateway's own code. The World injects its object store, its
+// checkpoint manifest store, and a session store that observes the calls
+// keyed by the new session ID, and that records a violation when a path
+// releases its reservation while anything it wrote remains under the ID.
+// The lifecycle operations are the production code: the admin router's
+// suspend and resume handlers, the shared admin.DrainSessions, the erasure
+// job store and Runner, and the tenantdeletion Reconciler.
 //
 // The World records a violation, rather than failing the test, when an
 // invariant breaks inside a concurrent goroutine; Check reports every
@@ -30,6 +34,9 @@
 //     session.
 //   - A refused create left no session row, object, manifest row,
 //     transcript entry, or reservation under its session ID.
+//   - A path releases its reservation only after deleting every object and
+//     manifest row it wrote under the ID, and keeps the reservation when a
+//     deletion fails.
 //   - A session ID reserved for a user before that user's erasure completed
 //     holds no object, no reservation, and no row once it has completed,
 //     and a replay created for the user before then holds no transcript.

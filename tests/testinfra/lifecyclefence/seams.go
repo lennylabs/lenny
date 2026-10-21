@@ -15,58 +15,6 @@ import (
 // ErrInjected is the store error Faults injects.
 var ErrInjected = errors.New("lifecyclefence: injected store error")
 
-// KeyedSet counts the entries written under each (tenant, session) key. It
-// stands for a store keyed by session ID, such as the blob store or the
-// checkpoint manifest.
-type KeyedSet struct {
-	mu sync.Mutex
-	n  map[[2]string]int
-	// deleteFaults is the number of upcoming DeleteBySession calls that
-	// fail with ErrInjected and delete nothing.
-	deleteFaults int
-}
-
-// NewKeyedSet returns an empty KeyedSet.
-func NewKeyedSet() *KeyedSet { return &KeyedSet{n: map[[2]string]int{}} }
-
-// Put writes one entry under the session.
-func (k *KeyedSet) Put(tenantID, sessionID string) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.n[[2]string{tenantID, sessionID}]++
-}
-
-// FailDeletes makes the next n DeleteBySession calls fail with ErrInjected
-// and delete nothing.
-func (k *KeyedSet) FailDeletes(n int) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.deleteFaults = n
-}
-
-// DeleteBySession removes the session's entries and returns how many it
-// removed. Its signature is the erasure orchestrator's session-scoped
-// eraser.
-func (k *KeyedSet) DeleteBySession(_ context.Context, tenantID, sessionID string) (int, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.deleteFaults > 0 {
-		k.deleteFaults--
-		return 0, ErrInjected
-	}
-	key := [2]string{tenantID, sessionID}
-	n := k.n[key]
-	delete(k.n, key)
-	return n, nil
-}
-
-// Count returns the session's entries.
-func (k *KeyedSet) Count(tenantID, sessionID string) int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.n[[2]string{tenantID, sessionID}]
-}
-
 // Faults arms store errors on the drain's seams. Each armed fault fires on
 // the next n calls of its seam and then disarms.
 type Faults struct {

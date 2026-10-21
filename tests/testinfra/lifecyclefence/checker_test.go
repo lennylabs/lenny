@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -44,7 +45,12 @@ func TestCheckerHoldsRefusedDeriveManifestInsideErasureReach_spec_12_8(t *testin
 			ctx := context.Background()
 			o := tc.outcome
 			o.ID, o.Path, o.Owner = uuid.NewString(), PathDerive, "alice"
-			w.Manifests.Put(w.Tenant, o.ID)
+			if err := w.Manifests.Put(ctx, partialmanifeststore.Record{
+				TenantID: w.Tenant, CheckpointID: uuid.NewString(), SessionID: o.ID,
+				ChunkEncoding: partialmanifeststore.ChunkEncodingTar, ChunkObjectKeyPrefix: "/" + w.Tenant + "/checkpoints/" + o.ID + "/",
+			}); err != nil {
+				t.Fatalf("write manifest row: %v", err)
+			}
 			// The owner's erasure began after the reservation committed and
 			// has since removed it, so no reservation is listed.
 			reserved := map[string]bool{}

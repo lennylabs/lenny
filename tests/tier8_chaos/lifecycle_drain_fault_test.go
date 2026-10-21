@@ -275,8 +275,9 @@ func TestErasureCrashAndLeaderStopResume_spec_12_8(t *testing.T) {
 }
 
 // TestDeriveCrashBeforeInsertErasedByOwnerErasure_spec_12_8 stops a derive
-// after its reservation and snapshot copy, before its insert and its undo,
-// as a replica that dies there does. The owner's next erasure reaches the
+// through the production session server after its reservation, its chunk
+// copy, and its manifest write, before its insert and its undo, as a replica
+// that dies there does. The owner's next erasure reaches the
 // reserved ID and deletes the copied objects and the reservation.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (Processing restriction during erasure (GDPR Article 18))
@@ -552,31 +553,39 @@ func TestDeletionPhase2FaultsAndTakeover_spec_12_8(t *testing.T) {
 	})
 }
 
-// TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8 refuses a
-// derive's insert because its owner's erasure starts between the snapshot
-// copy and the insert, and fails the undo's object deletion. The undo keeps
-// the reservation, so the erasure lists the reserved ID and deletes the
-// copied objects and the reservation.
+// TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8 refuses
+// the insert of a derive through the production session server, and of a
+// delegation through the production delegation service, because the
+// owner's erasure starts between the pre-insert writes and the insert, and
+// fails the undo's object deletion. The production undo keeps the
+// reservation, so the erasure lists the reserved ID and deletes the written
+// objects and the reservation.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (Processing restriction during erasure (GDPR Article 18))
-// diagnosis: a failure means the derive undo released the reservation after
-// a deletion error, so the copied objects outlive the owner's erasure under
-// an ID no lister returns, or the erasure does not reach reserved IDs.
+// diagnosis: a failure means the derive undo in the session server or the
+// export undo in the delegation service released the reservation after a
+// deletion error, or before deleting, so the written objects outlive the
+// owner's erasure under an ID no lister returns, or the erasure does not
+// reach reserved IDs.
 func TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8(t *testing.T) {
 	s := lifecycleFaultStores(t)
-	w := lifecyclefence.NewWorld(t, s, 2)
-	ctx := context.Background()
-	e := w.NewErasure()
-	var job erasurejob.Job
-	w.Objects.FailDeletes(1)
-	w.Faults.BeforeReservedInsert(func() { job = startErasure(t, e) })
-	o := w.Create(ctx, lifecyclefence.PathDerive, "alice")
-	if !o.Refused() || !o.ReservationKept {
-		t.Fatalf("derive outcome = %+v, want a refusal whose undo kept the reservation", o)
+	for _, path := range []lifecyclefence.Path{lifecyclefence.PathDerive, lifecyclefence.PathDelegate} {
+		t.Run(string(path), func(t *testing.T) {
+			w := lifecyclefence.NewWorld(t, s, 2)
+			ctx := context.Background()
+			e := w.NewErasure()
+			var job erasurejob.Job
+			w.Objects.FailDeletes(1)
+			w.Faults.BeforeReservedInsert(func() { job = startErasure(t, e) })
+			o := w.Create(ctx, path, "alice")
+			if !o.Refused() || !o.ReservationKept {
+				t.Fatalf("%s outcome = %+v, want a refusal whose undo kept the reservation", path, o)
+			}
+			complete(t, e, job.ID)
+			if n := w.Objects.Count(w.Tenant, o.ID); n != 0 {
+				t.Errorf("%d written objects outlived the owner's erasure", n)
+			}
+			w.Check(t)
+		})
 	}
-	complete(t, e, job.ID)
-	if n := w.Objects.Count(w.Tenant, o.ID); n != 0 {
-		t.Errorf("%d copied objects outlived the owner's erasure", n)
-	}
-	w.Check(t)
 }

@@ -4,9 +4,11 @@ package lifecyclefence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,10 +17,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // Users is the set of users every World seeds in its tenant.
@@ -33,12 +39,13 @@ const sourceEntries = 3
 type World struct {
 	S      *Stores
 	Tenant string
-	// Objects stands for the blob store that holds derive snapshot copies
-	// and delegated-child file exports, keyed by session ID.
-	Objects *KeyedSet
-	// Manifests stands for the checkpoint_manifest rows a chunked derive
-	// writes under the derived session ID.
-	Manifests *KeyedSet
+	// Objects is the blob store that holds each source's checkpoint chunk,
+	// derive chunk copies, and delegated-child file exports.
+	Objects *Objects
+	// Manifests is the checkpoint_manifest store that holds each source's
+	// chunked checkpoint and the manifest rows a derive writes under the
+	// derived session ID.
+	Manifests *Manifests
 	// Faults injects store errors into the drain's listing and forced
 	// termination.
 	Faults *Faults
@@ -59,10 +66,13 @@ type World struct {
 	adminOnce sync.Once
 	adminH    http.Handler
 
-	mu         sync.Mutex
-	sources    map[string]string // user → completed source session ID
-	outcomes   []CreateOutcome
-	violations []string
+	mu       sync.Mutex
+	sources  map[string]string // user → completed source session ID
+	outcomes []CreateOutcome
+	// parentCommits is the commit sequence number of each delegation
+	// parent the delegate path created.
+	parentCommits map[string]int64
+	violations    []string
 	// erasedAt is, per user, the sequence number taken when the user's
 	// erasure wrote its completion receipt, just before Complete cleared
 	// the restriction. A reservation or insert whose sequence number is
@@ -83,13 +93,15 @@ func NewWorld(t testing.TB, s *Stores, liveSeeds int) *World {
 	w := &World{
 		S:         s,
 		Tenant:    "t-" + uuid.NewString()[:8],
-		Objects:   NewKeyedSet(),
-		Manifests: NewKeyedSet(),
+		Objects:   NewObjects(),
+		Manifests: NewManifests(),
 		Faults:    &Faults{},
 		Audit:     &AuditSink{},
 		Logger:    newTestLogger(t),
 		sources:   map[string]string{},
 		erasedAt:  map[string]int64{},
+
+		parentCommits: map[string]int64{},
 	}
 	w.Lister = &FaultySessions{Store: s.Sessions, faults: w.Faults}
 	w.Terminator = &Terminator{store: s.Sessions, faults: w.Faults}
@@ -109,11 +121,16 @@ func NewWorld(t testing.TB, s *Stores, liveSeeds int) *World {
 }
 
 // seedSource writes a completed session of user with a transcript, which
-// the replay path copies from.
+// the replay path copies from, and a one-chunk checkpoint, which the derive
+// path copies from.
 func (w *World) seedSource(t testing.TB, user string) {
 	t.Helper()
 	ctx := context.Background()
-	src := sessionstore.Session{ID: uuid.NewString(), TenantID: w.Tenant, UserID: user, RuntimeRef: "echo", State: session.StateCompleted}
+	src := sessionstore.Session{
+		ID: uuid.NewString(), TenantID: w.Tenant, UserID: user, RuntimeRef: "echo", State: session.StateCompleted,
+		IsolationProfile: isolation.ProfileSandboxed,
+	}
+	src.WorkspaceSnapshot = w.seedCheckpoint(t, src.ID)
 	if err := w.S.Sessions.Create(ctx, src); err != nil {
 		t.Fatalf("seed source of %s: %v", user, err)
 	}
@@ -125,6 +142,23 @@ func (w *World) seedSource(t testing.TB, user string) {
 	w.sources[user] = src.ID
 }
 
+// seedCheckpoint writes a complete one-chunk checkpoint of the source
+// session and returns the snapshot reference that names it.
+func (w *World) seedCheckpoint(t testing.TB, sourceID string) *sessionstore.WorkspaceSnapshot {
+	t.Helper()
+	ckpt := uuid.NewString()
+	enc := partialmanifeststore.ChunkEncodingTar
+	chunk := resumechunks.ChunkObjectURI(w.Tenant, sourceID, ckpt, 0, enc)
+	chunk.TTL = time.Hour
+	if _, err := w.Objects.Put(chunk, "application/x-tar", strings.NewReader("chunk-0")); err != nil {
+		t.Fatalf("seed checkpoint chunk of %s: %v", sourceID, err)
+	}
+	w.Manifests.seedParent(partialmanifeststore.Record{
+		TenantID: w.Tenant, CheckpointID: ckpt, SessionID: sourceID, ChunkCount: 1, ChunkEncoding: enc,
+	})
+	return &sessionstore.WorkspaceSnapshot{Ref: fmt.Sprintf("/%s/%s/%s/%s", w.Tenant, blobstore.ObjectTypeCheckpoint, sourceID, ckpt)}
+}
+
 // SeedLive inserts one running session of user and returns its ID.
 func (w *World) SeedLive(t testing.TB, user string) string {
 	t.Helper()
@@ -133,6 +167,12 @@ func (w *World) SeedLive(t testing.TB, user string) string {
 		t.Fatalf("seed live session of %s: %v", user, err)
 	}
 	return row.ID
+}
+
+// sessionGone reports whether the session's row is absent from the store.
+func (w *World) sessionGone(ctx context.Context, id string) bool {
+	_, err := w.S.Sessions.Get(ctx, w.Tenant, id)
+	return errors.Is(err, sessionstore.ErrNotFound)
 }
 
 // next returns the World's next sequence number. Sequence numbers order the

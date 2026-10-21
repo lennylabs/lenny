@@ -16,26 +16,30 @@ import (
 // Path names one creation path by the store calls it makes.
 type Path string
 
-// The creation paths, each reproducing its gateway path's store calls.
+// The creation paths. A plain create and a replay are single store calls.
+// A derive, a failing derive, and a delegation run the production gateway
+// code that owns their reserved write and its undo: the session server's
+// derive handler and the delegation service.
 const (
 	// PathCreate is a fenced insert with no write before it: POST
 	// /v1/sessions, /v1/sessions/start, MCP create_session, the single-shot
 	// implicit create, and both fallback creators.
 	PathCreate Path = "create"
-	// PathDerive reserves the derived ID, copies the snapshot objects and
-	// writes the derived manifest row under it, and inserts through
-	// CreateReserved; on any failure it deletes what it wrote and then
-	// releases the reservation.
+	// PathDerive is a derive through the session server: it reserves the
+	// derived ID, copies the source's checkpoint chunk and writes the
+	// derived manifest row under it, and inserts through CreateReserved;
+	// on a refusal it deletes what it wrote and then releases the
+	// reservation.
 	PathDerive Path = "derive"
-	// PathDeriveFailure is a derive whose copy fails: the reservation, the
-	// partial copy, its undo, and then the terminal derive-failure audit
-	// row through Create.
+	// PathDeriveFailure is a derive through the session server whose copy
+	// fails after the chunk copy and the manifest write: the handler undoes
+	// both and then writes the terminal derive-failure row through Create.
 	PathDeriveFailure Path = "derive-failure"
 	// PathReplay is a prompt_history replay through CreateWithTranscript.
 	PathReplay Path = "replay"
-	// PathDelegate is a delegated child with a file export: a delegated-child
-	// reservation, the export under the child ID, and CreateReserved with a
-	// non-zero delegation depth.
+	// PathDelegate is a delegated child with a file export through the
+	// delegation service: a delegated-child reservation, the export under
+	// the child ID, and CreateReserved with a non-zero delegation depth.
 	PathDelegate Path = "delegate"
 )
 
@@ -58,9 +62,10 @@ type CreateOutcome struct {
 	// Crashed reports that the path stopped after its pre-insert writes,
 	// as a gateway replica that dies between the copy and the insert does.
 	Crashed bool
-	// ReservationKept reports that the undo after a failed insert could not
-	// delete what the path wrote under the ID, so the path left the
-	// reservation in place for the owner's erasure to reach.
+	// ReservationKept reports that the path reserved the ID and then
+	// neither inserted under the reservation nor released it: its undo
+	// could not delete what it wrote, so it left the reservation in place
+	// for the owner's erasure to reach.
 	ReservationKept bool
 }
 
@@ -72,6 +77,12 @@ func (o CreateOutcome) Refused() bool {
 
 // errCopyFailed is the snapshot copy failure of PathDeriveFailure.
 var errCopyFailed = errors.New("lifecyclefence: snapshot copy failed")
+
+// ErrSourceGone marks a derive or a delegation that found its source or
+// parent session gone or ended, because the owner's erasure or a drain
+// reached it first. It is neither a refusal nor a defect, and the path
+// wrote nothing under its session ID.
+var ErrSourceGone = errors.New("lifecyclefence: source session gone")
 
 // Create runs one create of owner on path and records its outcome.
 func (w *World) Create(ctx context.Context, path Path, owner string) CreateOutcome {
@@ -90,7 +101,7 @@ func (w *World) CreateCrashing(ctx context.Context, owner string) CreateOutcome 
 }
 
 func (w *World) record(o CreateOutcome) {
-	if o.Err != nil && !o.Refused() {
+	if o.Err != nil && !o.Refused() && !errors.Is(o.Err, ErrSourceGone) {
 		w.Violatef("%s create %s of %s: unexpected error %v", o.Path, o.ID, o.Owner, o.Err)
 	}
 	w.mu.Lock()
@@ -109,19 +120,12 @@ func (w *World) run(ctx context.Context, path Path, owner string, crash bool) Cr
 		src := w.sources[owner]
 		w.mu.Unlock()
 		o.Err = w.S.Sessions.CreateWithTranscript(ctx, row, src)
-	case PathDerive:
-		w.reservedWrite(ctx, &o, false, crash, func() error { return w.S.Sessions.CreateReserved(ctx, row) })
+	case PathDerive, PathDeriveFailure:
+		w.runDerive(ctx, &o, path == PathDeriveFailure, crash)
 		return o
 	case PathDelegate:
-		row.DelegationDepth = 1
-		w.reservedWrite(ctx, &o, true, false, func() error { return w.S.Sessions.CreateReserved(ctx, row) })
+		w.runDelegate(ctx, &o)
 		return o
-	case PathDeriveFailure:
-		w.reservedWrite(ctx, &o, false, false, func() error { return errCopyFailed })
-		if o.Reserved && errors.Is(o.Err, errCopyFailed) {
-			row.State, row.FailureClass, row.FailureReason = session.StateFailed, session.FailureClassRuntime, "DERIVE_SNAPSHOT_UNAVAILABLE"
-			o.Err = w.S.Sessions.Create(ctx, row)
-		}
 	default:
 		o.Err = fmt.Errorf("lifecyclefence: unknown path %q", path)
 	}
@@ -129,52 +133,6 @@ func (w *World) run(ctx context.Context, path Path, owner string, crash bool) Cr
 		o.CommittedSeq = w.next()
 	}
 	return o
-}
-
-// reservedWrite runs the reserve, write, insert, and undo sequence of a
-// path that writes data keyed to the new session ID before its insert. A
-// crash stops after the write. Any insert failure runs the undo.
-func (w *World) reservedWrite(ctx context.Context, o *CreateOutcome, delegatedChild, crash bool, insert func() error) {
-	if o.Err = w.S.Sessions.Reserve(ctx, w.Tenant, o.Owner, o.ID, delegatedChild); o.Err != nil {
-		return
-	}
-	o.Reserved, o.ReservedSeq = true, w.next()
-	w.Objects.Put(w.Tenant, o.ID)
-	if !delegatedChild {
-		w.Manifests.Put(w.Tenant, o.ID)
-	}
-	if crash {
-		o.Crashed = true
-		return
-	}
-	if fn := w.Faults.takeBeforeInsert(); fn != nil {
-		fn()
-	}
-	if o.Err = insert(); o.Err == nil {
-		o.CommittedSeq = w.next()
-		return
-	}
-	w.undoReservedWrite(ctx, o)
-}
-
-// undoReservedWrite deletes the objects and the manifest row the path wrote
-// under the ID, on a detached context, and releases the reservation only
-// when both deletions succeeded. A deletion error keeps the reservation, so
-// the owner's erasure still lists the ID and reaches what the failed
-// deletion left.
-//
-// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain)
-func (w *World) undoReservedWrite(ctx context.Context, o *CreateOutcome) {
-	undo := context.WithoutCancel(ctx)
-	_, objErr := w.Objects.DeleteBySession(undo, w.Tenant, o.ID)
-	_, manErr := w.Manifests.DeleteBySession(undo, w.Tenant, o.ID)
-	if objErr != nil || manErr != nil {
-		o.ReservationKept = true
-		return
-	}
-	if err := w.S.Sessions.ReleaseReservation(undo, w.Tenant, o.ID); err != nil {
-		w.Violatef("%s %s: release reservation: %v", o.Path, o.ID, err)
-	}
 }
 
 // Outcomes returns a copy of the recorded create outcomes.
@@ -187,13 +145,15 @@ func (w *World) Outcomes() []CreateOutcome {
 // Summary counts the recorded creates by outcome and the suspends whose
 // drain a resume overtook, for a test's log.
 func (w *World) Summary() string {
-	var admitted, refused, crashed int
+	var admitted, refused, crashed, gone int
 	for _, o := range w.Outcomes() {
 		switch {
 		case o.Crashed:
 			crashed++
 		case o.Refused():
 			refused++
+		case errors.Is(o.Err, ErrSourceGone):
+			gone++
 		case o.Err == nil:
 			admitted++
 		}
@@ -201,5 +161,5 @@ func (w *World) Summary() string {
 	w.mu.Lock()
 	raced := len(w.racedSuspends)
 	w.mu.Unlock()
-	return fmt.Sprintf("creates admitted=%d refused=%d crashed=%d; raced suspends=%d", admitted, refused, crashed, raced)
+	return fmt.Sprintf("creates admitted=%d refused=%d crashed=%d source-gone=%d; raced suspends=%d", admitted, refused, crashed, gone, raced)
 }

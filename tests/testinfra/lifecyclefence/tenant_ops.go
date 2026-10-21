@@ -237,13 +237,20 @@ func (w *World) resumeDuringDrainViolations(o racedObservation) []string {
 	return out
 }
 
-// committedAfter returns the IDs of the creates whose insert committed
-// after the sequence number seq.
+// committedAfter returns the IDs of the creates, and of the delegation
+// parents, whose insert committed after the sequence number seq.
 func (w *World) committedAfter(seq int64) map[string]bool {
 	out := map[string]bool{}
 	for _, o := range w.Outcomes() {
 		if o.Err == nil && o.CommittedSeq > seq {
 			out[o.ID] = true
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for id, at := range w.parentCommits {
+		if at > seq {
+			out[id] = true
 		}
 	}
 	return out
