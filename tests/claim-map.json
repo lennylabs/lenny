@@ -262,6 +262,14 @@
       "deferral_id": "R16"
     },
     {
+      "claim": "Lifecycle drain releases the pod of a session bound on another gateway replica before the drained scope's rows are erased",
+      "status": "ABSENT",
+      "spec_anchor": "#2854-inter-replica",
+      "deferral_id": "R21",
+      "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions`; spec \u00a712.8 Lifecycle fence and drain, Drain: a successful drain does not wait for the session's terminal steps or the release of its pod",
+      "note": "the drain writes the terminal row only; the binding replica's Sweeper releases the pod when it lists that row, and a row that user erasure deletes first leaves the pod to the claim-orphan GC after claimOrphanTimeout; BUILD-GAPS.md F-12.8.43 records the residual, owned by P2 (terminal pipeline completeness)"
+    },
+    {
       "claim": "Mirror seed at bind",
       "status": "ABSENT",
       "spec_anchor": "#register-entry-register",
