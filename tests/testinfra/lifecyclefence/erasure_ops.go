@@ -264,8 +264,35 @@ func (e *Erasure) Start(ctx context.Context, user string) (erasurejob.Job, error
 // RunToCompletion runs RunPending on a fresh replica's runner until the
 // job completes, at most maxPasses times, restarting a failed job as the
 // retry endpoint does. While the job is in progress the user's
-// restriction must stay set naming the job.
+// restriction must stay set naming the job. A scenario that arms a fault
+// uses it; RunUnfaulted is the run for one that arms none.
 func (e *Erasure) RunToCompletion(ctx context.Context, jobID string, maxPasses int) (erasurejob.Job, error) {
+	return e.run(ctx, jobID, maxPasses, true)
+}
+
+// RunUnfaulted runs the job as RunToCompletion does in a scenario that arms
+// no fault, and records a violation for every failure a runner counted and
+// for a job that fails. It does not restart a failed job. With no fault
+// armed, the only way a job fails is an incomplete drain, and the drain
+// comes back incomplete only when a create of the user committed after the
+// restriction did; a restart would drain that session and erase its row,
+// leaving the breach with no witness.
+//
+// spec: §12.8 (Lifecycle fence and drain: Creation fence, Drain), §12.8 (Processing restriction during erasure (GDPR Article 18))
+func (e *Erasure) RunUnfaulted(ctx context.Context, jobID string, maxPasses int) (erasurejob.Job, error) {
+	j, err := e.run(ctx, jobID, maxPasses, false)
+	for _, phase := range e.Failures() {
+		e.w.Violatef("unfaulted erasure job %s failed at %s: a create of %s committed after its restriction", jobID, phase, j.UserID)
+	}
+	if j.Phase == erasurejob.PhaseFailed {
+		e.w.Violatef("unfaulted erasure job %s of %s ended failed: %s", jobID, j.UserID, j.Failure)
+	}
+	return j, err
+}
+
+// run is the RunPending loop of RunToCompletion and RunUnfaulted. When
+// restart is false a failed job ends the loop with an error.
+func (e *Erasure) run(ctx context.Context, jobID string, maxPasses int, restart bool) (erasurejob.Job, error) {
 	for i := 0; i < maxPasses; i++ {
 		j, err := e.Jobs.Get(ctx, erasurejob.AllTenants, jobID)
 		if err != nil {
@@ -276,6 +303,9 @@ func (e *Erasure) RunToCompletion(ctx context.Context, jobID string, maxPasses i
 			return j, nil
 		case erasurejob.PhaseFailed:
 			e.AssertRestricted(ctx, j)
+			if !restart {
+				return j, fmt.Errorf("erasure job %s failed: %s", jobID, j.Failure)
+			}
 			if _, err := e.Jobs.Restart(ctx, jobID); err != nil {
 				return j, fmt.Errorf("restart erasure job %s: %w", jobID, err)
 			}

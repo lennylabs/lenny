@@ -77,6 +77,27 @@ func (w *World) Suspend(ctx context.Context) SuspendResult {
 	return res
 }
 
+// SuspendUnfaulted issues a suspend in a scenario that arms no drain fault
+// and runs no concurrent resume, and records a violation unless it answers
+// 200 with an empty failedSessions. Once the marker commits, the fence must
+// refuse every create of the tenant, so with no fault armed the only way
+// the drain's verifying listing can still see a live session is a create
+// the fence admitted after the marker committed. A 200 that reports such a
+// session is that breach, so it is a violation here rather than the
+// partial-failure answer a faulted drain gives.
+//
+// spec: §12.8 (Lifecycle fence and drain: Creation fence, Drain), §15.1 (REST API)
+func (w *World) SuspendUnfaulted(ctx context.Context) SuspendResult {
+	res := w.Suspend(ctx)
+	switch {
+	case res.Status != http.StatusOK:
+		w.Violatef("unfaulted suspend answered %d: %s", res.Status, res.Body)
+	case len(res.FailedSessions) > 0:
+		w.Violatef("unfaulted suspend reported failedSessions %v: a create committed into the tenant after its suspension marker", res.FailedSessions)
+	}
+	return res
+}
+
 // suspend issues the suspend request and decodes a 200 answer. It reports
 // whether the answer was a well-formed 200, recording a violation for a 200
 // whose body is malformed or reports the tenant not suspended.

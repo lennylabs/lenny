@@ -39,6 +39,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -169,6 +171,7 @@ type liveGateway struct {
 	tenants tenantstore.Store
 	users   userstore.Store
 	pgExec  func(sql string, args ...any) int
+	pool    *pgxpool.Pool
 }
 
 const liveTenant = "acme"
@@ -195,7 +198,7 @@ func startLiveGateway(t *testing.T) *liveGateway {
 		"--postgres-dsn="+pg.DSN, "--bearer-trust-hmac-key-file="+keyPath)
 	g := &liveGateway{
 		t: t, base: gw.BaseURL(), signer: jwt.NewHMACSigner(keyID, []byte(secret)),
-		tenants: tenantpg.New(pg.Pool), users: userpg.New(pg.Pool),
+		tenants: tenantpg.New(pg.Pool), users: userpg.New(pg.Pool), pool: pg.Pool,
 		pgExec: func(sql string, args ...any) int {
 			var n int
 			if err := pg.Pool.QueryRow(context.Background(), sql, args...).Scan(&n); err != nil {
@@ -385,6 +388,98 @@ func (g *liveGateway) startRunning(runtime string) string {
 	return id
 }
 
+// deriveWriteTables are the tables a derive writes under the derived
+// session ID: the reservation, the chunked-checkpoint manifest row, the
+// artifact metadata of the snapshot copy, and the session row.
+var deriveWriteTables = []string{"session_reservations", "checkpoint_manifest", "artifact_store", "sessions"}
+
+// installDeriveWriteProbe records every row any later committed statement
+// inserts into deriveWriteTables for acme, with the table and the session
+// ID. A derive that reserved its ID or copied under it and then undid the
+// write leaves nothing in the tables themselves, so the probe is the only
+// witness that the write happened. The probe table carries no tenant_id
+// column, so no tenant guard applies to the trigger's insert.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18))
+func (g *liveGateway) installDeriveWriteProbe(ctx context.Context) {
+	g.t.Helper()
+	stmts := []string{
+		`CREATE TABLE test_derive_write_probe (written_tenant TEXT, table_name TEXT, session_id TEXT)`,
+		`CREATE FUNCTION test_record_derive_write() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+		 BEGIN
+		   INSERT INTO test_derive_write_probe VALUES
+		     (NEW.tenant_id, TG_TABLE_NAME, COALESCE(to_jsonb(NEW)->>'session_id', to_jsonb(NEW)->>'id'));
+		   RETURN NEW;
+		 END $$`,
+	}
+	for _, table := range deriveWriteTables {
+		stmts = append(stmts, `CREATE TRIGGER test_derive_write_probe AFTER INSERT ON `+table+
+			` FOR EACH ROW EXECUTE FUNCTION test_record_derive_write()`)
+	}
+	for _, stmt := range stmts {
+		if _, err := g.pool.Exec(ctx, stmt); err != nil {
+			g.t.Fatalf("install derive write probe: %v", err)
+		}
+	}
+	g.checkProbeSeesUndoneWrite(ctx)
+}
+
+// checkProbeSeesUndoneWrite is the probe's control: it reserves a session
+// ID and releases it again, as a derive that reserved and then undid would,
+// and fails unless the probe recorded the reservation. It then empties the
+// probe, so the derive's assertion starts from nothing.
+func (g *liveGateway) checkProbeSeesUndoneWrite(ctx context.Context) {
+	g.t.Helper()
+	tx, err := g.pool.Begin(ctx)
+	if err != nil {
+		g.t.Fatalf("probe control: begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range []string{
+		`SELECT set_config('app.current_tenant', '` + liveTenant + `', true)`,
+		`INSERT INTO session_reservations (tenant_id, session_id, user_id) VALUES ('` + liveTenant + `', '00000000-0000-4000-8000-000000000001', 'bob@acme.com')`,
+		`DELETE FROM session_reservations WHERE session_id = '00000000-0000-4000-8000-000000000001'`,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			g.t.Fatalf("probe control: %v", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		g.t.Fatalf("probe control: commit: %v", err)
+	}
+	if got := g.deriveWrites(ctx, ""); len(got) != 1 {
+		g.t.Fatalf("probe control: recorded %v, want the one undone reservation", got)
+	}
+	if _, err := g.pool.Exec(ctx, `DELETE FROM test_derive_write_probe`); err != nil {
+		g.t.Fatalf("probe control: empty the probe: %v", err)
+	}
+}
+
+// deriveWrites returns the probe's acme rows other than the parent's own,
+// as "table/session" strings. The running parent may checkpoint, so its
+// own rows are not a derive's.
+func (g *liveGateway) deriveWrites(ctx context.Context, parent string) []string {
+	g.t.Helper()
+	rows, err := g.pool.Query(ctx, `SELECT table_name, session_id FROM test_derive_write_probe
+		WHERE written_tenant = $1 AND session_id IS DISTINCT FROM $2`, liveTenant, parent)
+	if err != nil {
+		g.t.Fatalf("read derive write probe: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var table, id string
+		if err := rows.Scan(&table, &id); err != nil {
+			g.t.Fatalf("scan derive write probe: %v", err)
+		}
+		out = append(out, table+"/"+id)
+	}
+	if err := rows.Err(); err != nil {
+		g.t.Fatalf("read derive write probe: %v", err)
+	}
+	return out
+}
+
 // TestCreationFenceAndResolutionOnLiveGateway_spec_12_8 drives the real
 // gateway with signed bearer tokens.
 //
@@ -392,7 +487,8 @@ func (g *liveGateway) startRunning(runtime string) string {
 // diagnosis: a failure names the surface and the marker. A create admitted
 // under a marker, or refused with another code, means that surface's gate
 // or the fence's refusal mapping diverged from the §12.8 refusal rows; a
-// derive that copied anything means the source-owner check runs after the
+// derive that reserved, copied, or inserted anything under a new session ID,
+// even a write it later undid, means the source-owner check runs after the
 // reservation or the copy; bob resolving or seeing alice's elicitation
 // means the MCP resolution tools key the triple on something other than
 // the authenticated caller; a DELETE /v1/responses/{id} other than 405
@@ -447,6 +543,7 @@ func TestCreationFenceAndResolutionOnLiveGateway_spec_12_8(t *testing.T) {
 	t.Run("derive of a restricted owner's session", func(t *testing.T) {
 		g.t = t
 		defer g.clearMarkers(ctx)
+		g.installDeriveWriteProbe(ctx)
 		before := g.pgExec(`SELECT count(*) FROM sessions WHERE tenant_id = $1`, liveTenant)
 		if err := restrictAlice(ctx, g); err != nil {
 			t.Fatal(err)
@@ -461,6 +558,9 @@ func TestCreationFenceAndResolutionOnLiveGateway_spec_12_8(t *testing.T) {
 		}
 		if n := g.pgExec(`SELECT count(*) FROM session_reservations WHERE tenant_id = $1`, liveTenant); n != 0 {
 			t.Errorf("the refused derive left %d reservations", n)
+		}
+		if writes := g.deriveWrites(ctx, parent); len(writes) != 0 {
+			t.Errorf("the refused derive wrote under a new session ID before its refusal, even if undone: %v", writes)
 		}
 	})
 

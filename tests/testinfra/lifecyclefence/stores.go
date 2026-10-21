@@ -54,12 +54,19 @@ type Stores struct {
 
 // MemoryStores builds the in-memory posture.
 func MemoryStores() *Stores {
+	return memoryStores(func(read sessionstore.MarkerReader) sessionstore.MarkerReader { return read })
+}
+
+// memoryStores builds the in-memory posture with the session store's fence
+// reading markers through wrap, so a harness self-test can stand in a fence
+// that admits what the production fence refuses.
+func memoryStores(wrap func(sessionstore.MarkerReader) sessionstore.MarkerReader) *Stores {
 	tenants, users, transcripts := tenantstore.NewMemory(), userstore.NewMemory(), transcriptstore.NewMemory()
 	restrictions := newMemStartFault(users)
 	return &Stores{
 		Name: "memory",
 		Sessions: memstore.New(
-			memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)),
+			memstore.WithCreationMarkers(wrap(sessionstore.StoreMarkers(tenants, users))),
 			memstore.WithTranscriptCopier(transcripts.CopySession),
 		),
 		Tenants:          tenants,

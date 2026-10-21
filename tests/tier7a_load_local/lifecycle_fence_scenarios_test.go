@@ -38,25 +38,22 @@ func lockedRand(seed int64) func(n int) int {
 // the raced branch, which asserts the resume-during-drain rule in place of
 // the drained-scope rule every other suspend keeps: a session the verifying
 // listing still sees must be reported in failedSessions or have been
-// created after the resume. The checker's one already_suspended=false row
+// created after the resume. Every other suspend arms no fault, so a 200
+// that reports any failed session is a fence breach. The checker's one already_suspended=false row
 // per marker transition holds across every branch.
 func tenantLifecycle(ctx context.Context, w *lifecyclefence.World, pick func(int) int) {
 	for i, n := 0, 2+pick(3); i < n; i++ {
 		lifecyclefence.Sleep(pick, 1500)
 		switch pick(4) {
 		case 0:
-			if res := w.Suspend(ctx); res.Status != 200 {
-				w.Violatef("suspend answered %d: %s", res.Status, res.Body)
-			}
+			w.SuspendUnfaulted(ctx)
 		case 1:
 			var wg sync.WaitGroup
 			for j := 0; j < 2; j++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if res := w.Suspend(ctx); res.Status != 200 {
-						w.Violatef("concurrent suspend answered %d: %s", res.Status, res.Body)
-					}
+					w.SuspendUnfaulted(ctx)
 				}()
 			}
 			wg.Wait()
@@ -81,7 +78,9 @@ func tenantLifecycle(ctx context.Context, w *lifecyclefence.World, pick func(int
 	}
 }
 
-// userErasure erases alice after a random delay.
+// userErasure erases alice after a random delay. No fault is armed, so a
+// job that fails, which an incomplete drain makes it do, is a violation
+// rather than a job to restart.
 func userErasure(ctx context.Context, w *lifecyclefence.World, pick func(int) int) {
 	lifecyclefence.Sleep(pick, 2000)
 	e := w.NewErasure()
@@ -90,7 +89,7 @@ func userErasure(ctx context.Context, w *lifecyclefence.World, pick func(int) in
 		w.Violatef("start erasure: %v", err)
 		return
 	}
-	if _, err := e.RunToCompletion(ctx, job.ID, 20); err != nil {
+	if _, err := e.RunUnfaulted(ctx, job.ID, 20); err != nil {
 		w.Violatef("run erasure: %v", err)
 	}
 }
@@ -153,8 +152,9 @@ func runLifecycleScenario(t *testing.T, s *lifecyclefence.Stores, master *rand.R
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (Processing restriction during erasure (GDPR Article 18)), 12.8 (Tenant deletion lifecycle), 15.1 (REST API)
 // diagnosis: a failure names the broken invariant. A live session after a
-// drain or at a phase exit means a create committed into a fenced scope or
-// the drain missed a row; residue under a refused or erased session ID
+// drain or at a phase exit, an unfaulted suspend reporting failedSessions,
+// or an unfaulted erasure job failing means a create committed into a
+// fenced scope after its marker or the drain missed a row; residue under a refused or erased session ID
 // means a creation path's reservation, undo, or the erasure's reach to
 // reserved IDs is broken; an extra already_suspended=false row means
 // suspend decides newness outside the row lock; a raced-suspend violation
