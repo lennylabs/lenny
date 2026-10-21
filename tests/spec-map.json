@@ -3835,6 +3835,7 @@
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8",
+        "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8",
         "tests/testinfra/kind/deployflag_test.go::TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout",
         "tests/testinfra/sessiondriver/createandstart_internal_test.go::TestCreateAndStartSendsTheOwnerUserID",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",

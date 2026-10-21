@@ -11,9 +11,12 @@
 // that a later create on either replica is refused with TENANT_SUSPENDED.
 // The erasure case lowers the controller's claimOrphanTimeout for its run,
 // erases a user whose session is bound on the other replica, and asserts
-// that the session's pod has returned to the pool after claimOrphanTimeout
-// plus one orphan-GC pass, the accepted path when the
-// erasure deletes the row before the binding replica's Sweeper lists it.
+// that the session's SandboxClaim is no longer bound (deleted, or in any
+// phase other than bound) after claimOrphanTimeout plus one orphan-GC pass,
+// the accepted path when the erasure deletes the row before the binding
+// replica's Sweeper lists it. The erasure case does not require the pod to
+// have returned to the pool: deleting the claim and re-warming or retiring
+// the Sandbox may finish after that bound.
 //
 // Both cases bootstrap a tenant whose name carries a per-run suffix and
 // sweep, at start, every tenant an earlier killed run left under the same
@@ -48,8 +51,8 @@ func suspendReleaseBound(sweeperInterval, sealMax time.Duration) time.Duration {
 	return sweeperInterval + sealMax
 }
 
-// erasureReleaseBound is the bound within which a pod bound to an erased
-// user's session returns to the pool, measured from the erase request's
+// erasureReleaseBound is the bound within which the claim of a pod bound to
+// an erased user's session is no longer bound, measured from the erase request's
 // answer: claimOrphanTimeout plus one orphan-GC pass. The erasure drains
 // the session and deletes its row inside the job, after the answer, so the
 // claim is orphaned no earlier than the answer and the bound adds no slack.
@@ -223,37 +226,92 @@ func claimState(found bool, phase string) string {
 	return fmt.Sprintf("present in phase %q", phase)
 }
 
-// claimReleasedProbe reports whether the pod has returned to the pool, as
+// claimNoLongerBound reports whether a pod's per-pod SandboxClaim has left
+// the bound phase, from claimFound and claimPhase. It is the erasure case's
+// condition: a claim that is deleted, or present in any phase other than
+// bound (released and failed included), no longer binds the erased user's
+// session to the pod. Unlike podReturnedToPool it does not wait for the
+// controller to delete the claim or for the Sandbox to leave the occupied
+// phases, because the orphan GC's bound covers only the claim leaving bound.
+//
+// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §4.6.1
+// (Orphan claim detection), §4.6.3 (SandboxClaim binding state)
+func claimNoLongerBound(claimFound bool, claimPhase string) (bool, string) {
+	state := "claim " + claimState(claimFound, claimPhase)
+	return !claimFound || claimPhase != "bound", state
+}
+
+// readClaim reads the pod's per-pod SandboxClaim, reporting whether it
+// exists and its status.phase.
+func readClaim(t *testing.T, c *kind.Cluster, pod string) (found bool, phase string, err error) {
+	claim, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
+		"-o", "jsonpath={.metadata.name}{\" \"}{.status.phase}", "--ignore-not-found")
+	if err != nil {
+		return false, "", fmt.Errorf("read claim claim-%s: %w", pod, err)
+	}
+	name, phase, _ := strings.Cut(strings.TrimSpace(claim), " ")
+	return name != "", strings.TrimSpace(phase), nil
+}
+
+// podReturnedProbe reports whether the pod has returned to the pool, as
 // podReturnedToPool defines it, with the claim and Sandbox state it last
-// read.
-func claimReleasedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
+// read. The suspend case polls it.
+func podReturnedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
 	return func() (bool, string) {
-		claim, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
-			"-o", "jsonpath={.metadata.name}{\" \"}{.status.phase}", "--ignore-not-found")
+		found, phase, err := readClaim(t, c, pod)
 		if err != nil {
-			return false, fmt.Sprintf("read claim: %v", err)
+			return false, err.Error()
 		}
 		sandbox, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox", pod,
 			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 		if err != nil {
 			return false, fmt.Sprintf("read sandbox: %v", err)
 		}
-		name, phase, _ := strings.Cut(strings.TrimSpace(claim), " ")
-		return podReturnedToPool(name != "", strings.TrimSpace(phase), strings.TrimSpace(sandbox))
+		return podReturnedToPool(found, phase, strings.TrimSpace(sandbox))
 	}
 }
 
-// waitClaimsReleasedBy fails unless every pod has returned to the pool, as
-// podReturnedToPool defines it, by the one absolute deadline.
-func waitClaimsReleasedBy(t *testing.T, c *kind.Cluster, deadline time.Time, pods ...string) {
+// claimUnboundProbe reports whether the pod's claim is no longer bound, as
+// claimNoLongerBound defines it, with the claim state it last read. The
+// erasure case polls it.
+func claimUnboundProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
+	return func() (bool, string) {
+		found, phase, err := readClaim(t, c, pod)
+		if err != nil {
+			return false, err.Error()
+		}
+		return claimNoLongerBound(found, phase)
+	}
+}
+
+// waitPodsBy fails unless the probe newProbe builds for every pod reports
+// done by the one absolute deadline. want names the condition in the
+// failure message.
+func waitPodsBy(t *testing.T, c *kind.Cluster, deadline time.Time, want string,
+	newProbe func(*testing.T, *kind.Cluster, string) func() (bool, string), pods ...string,
+) {
 	t.Helper()
 	probes := make(map[string]func() (bool, string), len(pods))
 	for _, pod := range pods {
-		probes[pod] = claimReleasedProbe(t, c, pod)
+		probes[pod] = newProbe(t, c, pod)
 	}
 	if pending := awaitAllBy(deadline, wallClock, probes); len(pending) != 0 {
-		t.Fatalf("pods not returned to the pool at the deadline %s (pod: last claim and sandbox state): %v", deadline.Format(time.RFC3339), pending)
+		t.Fatalf("%s at the deadline %s fails for (pod: last observed state): %v", want, deadline.Format(time.RFC3339), pending)
 	}
+}
+
+// waitPodsReturnedBy fails unless every pod has returned to the pool, as
+// podReturnedToPool defines it, by the one absolute deadline.
+func waitPodsReturnedBy(t *testing.T, c *kind.Cluster, deadline time.Time, pods ...string) {
+	t.Helper()
+	waitPodsBy(t, c, deadline, "pods returned to the pool", podReturnedProbe, pods...)
+}
+
+// waitClaimsUnboundBy fails unless every pod's claim is no longer bound, as
+// claimNoLongerBound defines it, by the one absolute deadline.
+func waitClaimsUnboundBy(t *testing.T, c *kind.Cluster, deadline time.Time, pods ...string) {
+	t.Helper()
+	waitPodsBy(t, c, deadline, "claims no longer bound", claimUnboundProbe, pods...)
 }
 
 // twoReplicaDrivers pins one driver to each of two Ready gateway replicas
@@ -370,7 +428,7 @@ func TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8(t *testing.T) {
 	// completed by the deadline is observed without any slack on the bound.
 	requireTerminalBy(t, b, tenant, sessA.ID, deadline)
 	requireTerminalBy(t, a, tenant, sessB.ID, deadline)
-	waitClaimsReleasedBy(t, c, deadline, sessA.PodAssignment, sessB.PodAssignment)
+	waitPodsReturnedBy(t, c, deadline, sessA.PodAssignment, sessB.PodAssignment)
 
 	for name, d := range map[string]*sessiondriver.Driver{"replica A": a, "replica B": b} {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -462,12 +520,15 @@ func lowerClaimOrphanTimeout(t *testing.T, c *kind.Cluster) {
 // session is bound on the other gateway replica, with the controller's
 // claimOrphanTimeout lowered for the run. The erasure deletes the session
 // row, so the binding replica may never list it terminal; the orphan GC then
-// releases the claim after claimOrphanTimeout.
+// moves the claim out of bound after claimOrphanTimeout. The case asserts
+// only that the claim is no longer bound by that bound plus one GC pass;
+// deleting the claim and returning the pod to the pool may finish later.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 12.8 (User-level erasure invocation), 4.6.1 (Orphan claim detection)
-// diagnosis: a failure means a pod bound to an erased user's session stays
-// bound past claimOrphanTimeout plus one orphan-GC pass, so an erasure
-// strands a pod out of the warm pool, or the erasure job never completed.
+// diagnosis: a failure means the claim of a pod bound to an erased user's
+// session is still bound past claimOrphanTimeout plus one orphan-GC pass, so
+// an erasure strands a pod bound to a deleted session, or the erasure job
+// never completed.
 func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 	c := kind.InstallLenny(t)
 	lowerClaimOrphanTimeout(t, c)
@@ -513,5 +574,5 @@ func TestUserErasureReleasesClaimOnOtherReplica_spec_12_8(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	waitClaimsReleasedBy(t, c, deadline, sess.PodAssignment)
+	waitClaimsUnboundBy(t, c, deadline, sess.PodAssignment)
 }

@@ -126,10 +126,10 @@ func TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8(t *testing.T) {
 // with no added slack.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (Orphan claim detection)
-// diagnosis: a failure means the Kind erasure case measures pod release
-// against more than claimOrphanTimeout plus one orphan-GC pass, so a pod
-// that stays bound to an erased user's session past that bound still
-// passes.
+// diagnosis: a failure means the Kind erasure case measures the claim
+// leaving bound against more than claimOrphanTimeout plus one orphan-GC
+// pass, so a claim that stays bound to an erased user's session past that
+// bound still passes.
 func TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8(t *testing.T) {
 	for _, tc := range []struct{ timeout, pass time.Duration }{
 		{loweredClaimOrphanTimeout, orphanGCPass},
@@ -152,7 +152,9 @@ func TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8(t *testi
 }
 
 // TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8
-// pins what the Kind drain cases accept as a pod returned to the pool.
+// pins what the Kind suspend case accepts as a pod returned to the pool.
+// The erasure case holds a weaker condition, which
+// TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8 pins.
 //
 // spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (occupancy projection on claim DELETE), 4.6.3 (SandboxClaim binding state)
 // diagnosis: a failure means the probe accepts a pod still held out of the
@@ -189,5 +191,48 @@ func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *
 				t.Fatalf("podReturnedToPool = %v (%s), want %v", got, state, tc.want)
 			}
 		})
+	}
+}
+
+// TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8 pins what the Kind
+// erasure case accepts: the erased session's claim is deleted or in any
+// phase other than bound, whatever the Sandbox's phase. It is weaker than
+// podReturnedToPool, which the suspend case holds.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (Orphan claim detection), 4.6.3 (SandboxClaim binding state)
+// diagnosis: a failure means the erasure probe rejects a claim the orphan GC
+// already moved out of bound (released, failed, or deleted before the
+// Sandbox re-warms), holding the erasure case to the suspend case's
+// pool-return condition, or it accepts a claim still bound to the erased
+// user's session.
+func TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8(t *testing.T) {
+	cases := []struct {
+		name       string
+		claimFound bool
+		claimPhase string
+		want       bool
+	}{
+		{"claim still bound", true, "bound", false},
+		{"claim released, not yet deleted", true, "released", true},
+		{"claim failed, not yet deleted", true, "failed", true},
+		{"claim recycling", true, "recycling", true},
+		{"claim reserved", true, "reserved", true},
+		{"claim deleted", false, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, state := claimNoLongerBound(tc.claimFound, tc.claimPhase)
+			if got != tc.want {
+				t.Fatalf("claimNoLongerBound = %v (%s), want %v", got, state, tc.want)
+			}
+		})
+	}
+	// A claim the orphan GC released while the Sandbox still reads claimed
+	// passes the erasure probe and fails the suspend probe.
+	if ok, _ := claimNoLongerBound(true, "released"); !ok {
+		t.Fatal("erasure probe rejects a released claim")
+	}
+	if ok, _ := podReturnedToPool(true, "released", "claimed"); ok {
+		t.Fatal("suspend probe accepts a released claim that has not been deleted")
 	}
 }
