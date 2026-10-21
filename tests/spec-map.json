@@ -3692,6 +3692,8 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
+        "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
         "tests/tier2_component/stores/sessionstore_list_primary_test.go::TestSessionStoreListPrimaryReadsPastReplicaLag_spec_12_8",
         "pkg/gateway/externalapi/admin/...",
         "pkg/gateway/storage/retentiongc/...",
@@ -4335,6 +4337,8 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
+        "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestReportResumeFailureSetupCommand_spec_7_3",
