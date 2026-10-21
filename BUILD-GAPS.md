@@ -1581,6 +1581,13 @@ On the `lenny-e2e` cluster (2026-10-16) the upgraded controller's GC reclaimed a
 **Pinning test:** `TestRecycleRebindRacesAByNameDelete_spec_5_2` in `tests/tier7a_load_local/slot_release_departure_race_test.go`.
 **Suggested resolution:** Closing it needs session identity on the claim, which §4.6.3 keeps on the Postgres row, so it needs a spec change through the proposal pipeline. No owner is named.
 
+### - [ ] F-4.6.37 — The agent pod's preStop hook execs `lenny-adapter`, which the adapter image does not contain, so the hook never runs [High] — OPEN
+
+**Spec:** §4.6.1 (the adapter container's preStop hook drains the pod before the kubelet's SIGTERM).
+**Evidence:** `preStopDrainHook` (`pkg/controller/sandbox/podspec/termination.go`) renders the exec command `lenny-adapter prestop --timeout=<n>s`. The `Dockerfile` builds every platform image with `-o /out/lenny` and installs only `/usr/local/bin/lenny` on a distroless base, so no `lenny-adapter` executable exists in the adapter image. Found by the R7 to R25 re-derivation of `gateway-runtime-comms-remediation.md` on 2026-10-21; proposal 0087's draft summary noted it without filing it.
+**Gap:** The kubelet's preStop exec fails at every pod termination, so the drain the hook exists to run never happens and the container receives SIGTERM undrained.
+**Suggested resolution:** Render the command the image provides (`/usr/local/bin/lenny prestop ...`) or install the binary under the name the podspec uses, and pin the rendered command against the image layout with a tier-5 test. Owned by remediation step R16, whose tier-5 terminate-and-checkpoint test covers it; a direct fix may land it earlier.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
@@ -7503,7 +7510,7 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 **Spec:** §7.2 crash-recovery row (the adopting coordinator emits `inbox_cleared`).
 **Evidence:** `Coordinator.ClearInboxOnAcquire` (`pkg/gateway/session/sessioninbox/coordinator.go`), the only emitter of `inbox_cleared`, has no production caller. The resume path no longer clears an inbox (`clearInboxOnResume` is deleted), because no inbox was cleared there. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
 **Gap:** A sender whose buffered messages a coordinator crash lost receives no `inbox_cleared` event.
-**Suggested resolution:** Call `ClearInboxOnAcquire` from the coordination takeover so the adopter emits the event.
+**Suggested resolution:** Call `ClearInboxOnAcquire` from the coordination takeover so the adopter emits the event. Owned by remediation step R20 (`gateway-runtime-comms-remediation.md` section 5, re-derived 2026-10-21).
 
 ### - [ ] F-7.2.41 — No code implements the adapter's `delivered_message_ids` duplicate suppression [Medium] — OPEN
 
@@ -22425,6 +22432,20 @@ The `t:{tenant_id}:` keys are written without braces, so they carry no hash tag.
 
 ---
 
+
+### - [ ] F-12.4.29 — Redis `SCAN` on the cluster client covers one node, so erasure, breaker collection, idle-session expiry, and lock and escalation listings silently miss keys [High] — OPEN
+
+**Spec:** §12.4 Redis HA and Failure Modes (Redis Cluster at Tier 3), §12.8 (erasure scope), §11.6 (circuit breakers), §27.3.1 (playground idle sessions), §25.4 (remediation locks and escalations).
+**Evidence:** go-redis v9's cluster client sends `SCAN` to one node, so each of these covers one master of the cluster: the circuit-breaker `collect` (`pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore/redisstore.go`), the semantic cache `deletePrefix` (`pkg/gateway/llmproxy/semanticcache/redisstore/redisstore.go`), the quota store `scanDelete` (`pkg/gateway/quota/quotastore/quotastore.go`), the lease store `scanDelete` (`pkg/gateway/storage/leasestore/leasestore.go`), the experiment sticky cache `scanDelete` (`pkg/gateway/experiment/experimentsticky/experimentsticky.go`), the playground `IdleSessions` (`pkg/gateway/mcpfabric/playground/sessionrecord.go`), and the lenny-ops lock and escalation `scanAll` (`pkg/ops/coordination/redisstore/redisstore.go`, the escalation store). The delegation budget's `PurgeRoot` already routes its `SCAN` to the node `MasterForKey` returns. Found by the Redis Cluster key-co-location analysis of 2026-10-21, beside F-12.4.28.
+**Gap:** On a Redis Cluster these calls return no error and a partial result: tenant and user erasure leave keys behind, an open breaker on another node is never seen by admission, idle playground sessions on other nodes never expire, and lock and escalation listings are incomplete.
+**Suggested resolution:** Route a tenant-prefixed `SCAN` to the node `MasterForKey` returns for the tenant's hash-tagged prefix (after F-12.4.28's `t:{<tenant>}:` rename puts the tenant's keys in one slot), and run a cross-tenant or platform `SCAN` on every master with `ForEachMaster`. Lands with the F-12.4.28 direct fix in `gateway-runtime-comms-remediation.md` §10.2 (Redis Cluster readiness).
+
+### - [ ] F-12.4.30 — Concern-specific Redis recovery probes, the dual-store monitor, and the health aggregator ping the base client, so a split concern's outage or recovery is misread [Medium] — OPEN
+
+**Spec:** §12.4 Redis HA and Failure Modes ("Logical separation of Redis concerns": each store role has its own connection string), §12.6 (`RedisConcern`).
+**Evidence:** The gateway already accepts per-concern URLs (`--redis-{coordination,quota,cache-pubsub,session-data,delegation}-url`, chart `redis.concerns.*Url`), but these probes use the base client: `storagequota.RecoveryReconciler.Probe` (`cmd/lenny-gateway/redis_quota.go`), the delegation-budget and quota-checkpoint reconciler probes (`cmd/lenny-gateway/reconciler_workers.go`), the `dualstore.Monitor` Redis probe (`cmd/lenny-gateway/metricsbackfill.go`), and the health aggregator, which registers only the base client (`cmd/lenny-gateway/httpsurface.go`). Only the slot counter probes its own client (`cmd/lenny-gateway/pod_lifecycle.go`). Found by the §17.8.2 concern-separation analysis of 2026-10-21.
+**Gap:** When an operator points a concern at its own instance, that instance's outage and recovery edges are read from the base client: a quota or delegation instance can be down while its reconciler sees Redis as healthy, or recover while it still reports an outage.
+**Suggested resolution:** Probe each concern's own client in each reconciler and monitor, and register every distinct concern client with the health aggregator. A direct fix of about five production files plus tier-1 tests; it lands with the Redis Cluster readiness direct fix in `gateway-runtime-comms-remediation.md` §10.2.
 ### Summary
 
 | Severity | Count | Items |
@@ -49736,7 +49757,7 @@ Spec: `spec/29_communication-scenarios.md` §29.3 (**Off-holder matrix.**).
 **Spec:** §29.3 **Off-holder matrix.** (the `POST /v1/sessions/{id}/resume` row for a `suspended` session whose pod is still held requires a forward to the coordinator, with `TARGET_NOT_READY` only for an unreachable coordinator).
 **Evidence:** `handleResume` (`pkg/gateway/sessionserver/resume.go`) answers 409 `TARGET_NOT_READY` whenever the serving replica does not hold the coordination lease of a held-pod `suspended` session, because no inter-replica carrier for the forward exists. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
 **Gap:** A client resume of a held-pod `suspended` session that the load balancer routes to a replica other than the coordinator is refused although the coordinator is reachable.
-**Suggested resolution:** Name a carrier for the forward in §28.3 and §28.5.4 through the proposal pipeline, then forward the resume to the coordinator over it. No remediation step owns the carrier yet.
+**Suggested resolution:** Name a carrier for the forward in §28.3 and §28.5.4 through the proposal pipeline, then forward the resume to the coordinator over it. The carrier is specified by the inter-replica carrier proposal in `gateway-runtime-comms-remediation.md` §10.2, and the forward is owned by remediation step R19 (assigned 2026-10-21).
 
 ### - [ ] F-29.3.2 — An off-holder message to an `input_required` session is buffered in the serving replica's own inbox, which the coordinator does not read under `durableInbox: false` [Medium] — OPEN
 
