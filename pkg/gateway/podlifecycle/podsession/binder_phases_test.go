@@ -597,7 +597,7 @@ func TestCreatedTimeoutReleasesClaimedPod_spec_15_1(t *testing.T) {
 	}
 
 	if got := claimPhase(t, f.c, claim.SandboxName); got != "gone" {
-		t.Errorf("exclusive claim after the created-state deadline = %s, want gone (pod returned to the pool)", got)
+		t.Errorf("exclusive claim after the created-state deadline = %s, want gone (the claim delete drains the pod, §4.6.1)", got)
 	}
 	if got := f.slotMembers(t, "sbx-alone"); len(got) != 0 {
 		t.Errorf("sbx-alone slot set = %v, want empty", got)

@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: Partial application of the regenerated SandboxClaim CRD in CODE-8
+## Partial application of the regenerated SandboxClaim CRD in CODE-8
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S5 (CODE-8: comments and regenerated descriptions for the retired end-of-occupancy outcome).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader who follows the checklist literally would expect the committed chart CRDs and the embedded CRDs to equal the current `make generate` output. They do not. Rerunning `make generate` produces a diff in the SandboxClaim CRD (the schema-version annotation and the preserve-unknown-fields markers), in the other CRDs, and in `zz_generated.deepcopy.go`. That diff predates this proposal and is not evidence that CODE-8 was left incomplete.
 
-## Proposed: The bounded detached slot release retry is a Binder method behind a consumer-side interface
+## The bounded detached slot release retry is a Binder method behind a consumer-side interface
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S6 (CODE-1: slot set primitive, keyed callers, removal-gated disposition, detached rollbacks, bounded retry, hash-tagged keys, outage rebuild, slot-holder predicate).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader searching for the free function with the `*podclaim.SlotClaimer` parameter named in the proposal will not find it. The helper is a method on `Binder`, its claimer parameter has the interface type `slotReleaser`, and its pause is configured through the `Binder` field.
 
-## Proposed: Pause schedule for the bounded detached slot release retry
+## Pause schedule for the bounded detached slot release retry
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S6 (CODE-1: slot set primitive, keyed callers, removal-gated disposition, detached rollbacks, bounded retry, hash-tagged keys, outage rebuild, slot-holder predicate).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** The proposal does not fix the pause values. A reader who needs the attempt count or the timing of the retry finds it in `retryPause` and the 5s bound of `detachedReleaseContext`, and those values originate in this implementation rather than in the proposal.
 
-## Proposed: Source of the pool label on the slot set rehydration metric
+## Source of the pool label on the slot set rehydration metric
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S6 (CODE-1: slot set primitive, keyed callers, removal-gated disposition, detached rollbacks, bounded retry, hash-tagged keys, outage rebuild, slot-holder predicate).
 
@@ -58,9 +58,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would expect the pool label to be passed by the caller of `ReleaseSlot`. It is read from the Sandbox at release time, so a rehydration whose Sandbox read fails carries an empty pool label on the metric.
 
-## Proposed: Flag name and probe placement for the slot set outage rebuild
+## Flag name and probe placement for the slot set outage rebuild
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S6 (CODE-1: slot set primitive, keyed callers, removal-gated disposition, detached rollbacks, bounded retry, hash-tagged keys, outage rebuild, slot-holder predicate).
 
@@ -72,9 +72,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would look for a chart value to tune the probe interval and find none. The interval is set only through the gateway flag or its environment variable, and the probe runs as a `Counter` method on the watchdog context.
 
-## Proposed: Recovery-rebuild cases run at tier 1 and the tier-8 Redis outage test only passes session identifiers
+## Recovery-rebuild cases run at tier 1 and the tier-8 Redis outage test only passes session identifiers
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S6 (CODE-1: slot set primitive, keyed callers, removal-gated disposition, detached rollbacks, bounded retry, hash-tagged keys, outage rebuild, slot-holder predicate).
 
@@ -86,9 +86,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would expect the tier-8 outage test to exercise the add-only rebuild against a real Redis restart. It does not. The rebuild is covered only by the tier-1 miniredis cases.
 
-## Proposed: The fan-out test file kept its content and the full_revoke cases landed in the revoke hook test
+## The fan-out test file kept its content and the full_revoke cases landed in the revoke hook test
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S12 (CODE-7: full_revoke release routing).
 
@@ -100,9 +100,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would look for a CODE-7 edit to `users_invalidate_fanout_test.go` and find none. The file was already free of `USER_REVOKED` expectations, and the CODE-7 tier-1 cases are in `users_revoke_hook_test.go`.
 
-## Proposed: The full_revoke lease step is a library type in pkg/
+## The full_revoke lease step is a library type in pkg/
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S12 (CODE-7: full_revoke release routing), corrected by the design-conformance review.
 
@@ -114,9 +114,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader following CODE-7 item 7 would look for `userLeaseRevoker` in `cmd/lenny-gateway/user_revocation.go` and find no such type. The step is `leaserevoke.Revoker`, and the tier-9 case covers it directly. `tests/tier11_docs/release_ownership_deviations_currency_test.go` fails when this entry names a file or a symbol the tree no longer holds.
 
-## Proposed: A spec commit body names proposal scaffolding labels
+## A spec commit body names proposal scaffolding labels
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** the design-conformance review.
 
@@ -128,9 +128,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader of the first-parent history would find labels that resolve only against the proposal's own checklist and staged-edit list. The change the commit carries is the set of §4.6.3 edits and pointer sites named above.
 
-## Proposed: The admin router filters pre-running sessions and the full_revoke cancel write moved into a helper
+## The admin router filters pre-running sessions and the full_revoke cancel write moved into a helper
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S12 (CODE-7: full_revoke release routing).
 
@@ -142,9 +142,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would expect the pre-running filter to exist only in the session server and the cancel write to sit inline in `terminateUserSessions`. The filter is applied in both the admin router and the session server, and the terminal-writer inventory names `cancelForRevoke` as the writer.
 
-## Proposed: The stale-slot reaper's integration tier maps to two tier-4 tests
+## The stale-slot reaper's integration tier maps to two tier-4 tests
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** step S13 (CODE-9: stale-slot reaper, shared claimOrphanTimeout and checks, launch bound, per-row terminal stamp, and the adapter's absent or unclean answer).
 
@@ -156,9 +156,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would expect the reaper key to name only the outage-fallback test and would treat the pgstore entry, or the tier-0 guard that pins it, as an error to remove.
 
-## Proposed: binder_phases_test.go keeps the return-to-pool expectation for the created-state deadline
+## binder_phases_test.go keeps the return-to-pool expectation for the created-state deadline
 
-**Status:** proposed
+**Status:** accepted, fixed after implementation (the assertion message now says the claim delete drains the pod) (adjudicated 2026-10-21 under the owner's standing delegation)
 
 **Reported by:** the step sweep for stale code the landed spec edits left behind.
 
