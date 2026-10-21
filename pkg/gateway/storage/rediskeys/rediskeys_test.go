@@ -31,7 +31,7 @@ func TestValidateKey_spec_12_4(t *testing.T) {
 		{"own tenant inbox", acme, "t:acme:session:s1:inbox", nil},
 		{"cross tenant rejected", acme, "t:globex:session:s1:dlq", rediskeys.ErrCrossTenant},
 		{"cb exception", acme, "cb:pool:default", nil},
-		{"pod exception", acme, "lenny:pod:pod-7:active_slots", nil},
+		{"pod exception", acme, "lenny:pod:{pod-7}:active_slots", nil},
 		{"no prefix rejected", acme, "raw:key", rediskeys.ErrNoPrefix},
 		{"empty tenant segment rejected", acme, "t::oops", rediskeys.ErrNoPrefix},
 		{"empty key admitted", acme, "", nil},

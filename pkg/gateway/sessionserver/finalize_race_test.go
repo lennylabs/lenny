@@ -673,7 +673,9 @@ func TestFinalizeCredentialFailureAfterTerminalWriteRevokes_spec_7_1(t *testing.
 
 // A partial credential assignment whose failure write commits fails the row,
 // reclaims the pod through the binder, answers the pod-claim error envelope,
-// and revokes the recorded lease the attempt-scoped release omits.
+// and revokes the recorded lease the attempt-scoped release omits. The lease is
+// released twice, by the failure write's post-terminal hook reclaim and by the
+// handler's revoke, and the second release finds nothing to return.
 // spec: 7.1 (steps 11-13, step 23), 4.9, 6.2
 func TestFinalizeCredentialFailureCommittedRevokes_spec_7_1(t *testing.T) {
 	f := newRaceFixture(t, raceOptions{failAssignRPC: true})
@@ -698,7 +700,7 @@ func TestFinalizeCredentialFailureCommittedRevokes_spec_7_1(t *testing.T) {
 	if !reflect.DeepEqual(f.assigner.assigns, []string{raceSessionID}) {
 		t.Errorf("AssignProto calls = %v, want [%s]", f.assigner.assigns, raceSessionID)
 	}
-	f.assertReleased(t, []string{raceSessionID})
+	f.assertReleased(t, []string{raceSessionID, raceSessionID})
 }
 
 // A malformed stored plan whose failure write loses to a terminal writer
@@ -832,10 +834,12 @@ func TestFinalizeReadyAmbiguousCommitKeepsReady_spec_15_1(t *testing.T) {
 }
 
 // A failure write that returns a store error without committing leaves the
-// row `finalizing` for the §6.2 watchdog. The plan-parse and ready-write
-// branches still reclaim the pod, and the prepare-failure branch still
-// answers its own envelope and revokes the lease. A store error is not a
-// lost write.
+// row `finalizing` for the §6.2 watchdog. The plan-parse branch still
+// reclaims the pod, and the prepare-failure branch still answers its own
+// envelope and revokes the lease. The ready-write branch releases nothing,
+// because the ready write may have committed: the claim and the lease stay
+// for the finalizing watchdog's terminal write. A store error is not a lost
+// write.
 // spec: 7.1 (steps 11-13, step 23), 6.2 (finalize timeout)
 func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 	t.Run("plan parse", func(t *testing.T) {
@@ -890,9 +894,10 @@ func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 		if got := f.row(t).State; got != session.StateFinalizing {
 			t.Errorf("state = %q, want finalizing (the hook fired)", got)
 		}
-		if f.claimPresent(t) {
-			t.Errorf("claim-sbx-1 present, want reclaimed")
+		if !f.claimPresent(t) {
+			t.Errorf("claim-sbx-1 deleted, want it kept: the ready write may have committed")
 		}
+		f.assertReleased(t, nil)
 	})
 }
 

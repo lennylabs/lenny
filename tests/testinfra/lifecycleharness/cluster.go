@@ -68,6 +68,30 @@ type Pod struct {
 	mu         sync.Mutex
 	failAttach chan struct{}
 	attaches   atomic.Int64
+	// unary counts the unary RPCs the pod's adapter served, by method
+	// name (the last element of the gRPC full method).
+	unary map[string]int
+}
+
+// UnaryCalls reports how many unary RPCs named method (for example
+// "SealSession" or "Shutdown") the pod's adapter has received.
+func (p *Pod) UnaryCalls(method string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.unary[method]
+}
+
+// countUnary is the adapter's unary interceptor that counts each call by
+// method name.
+func (p *Pod) countUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+	method := info.FullMethod[strings.LastIndex(info.FullMethod, "/")+1:]
+	p.mu.Lock()
+	if p.unary == nil {
+		p.unary = map[string]int{}
+	}
+	p.unary[method]++
+	p.mu.Unlock()
+	return h(ctx, req)
 }
 
 // Attaches reports how many Attach streams the pod's adapter has opened.
@@ -209,7 +233,7 @@ func (c *Cluster) AddIdlePod(t testing.TB) *Pod {
 	}
 	lis := bufconn.Listen(1 << 20)
 	pod := &Pod{Name: name, IP: ip, Adapter: srv, Runtime: rt, lis: lis}
-	gs := adapter.NewGRPCServer(srv, grpc.ChainStreamInterceptor(pod.failableAttach))
+	gs := adapter.NewGRPCServer(srv, grpc.ChainStreamInterceptor(pod.failableAttach), grpc.ChainUnaryInterceptor(pod.countUnary))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
@@ -342,21 +366,46 @@ func (c *Cluster) Pods() []*Pod {
 // retires a pod whose runtime crashed, so no later claim takes the pod.
 // spec: §6.2 (Pod State Machine)
 func (c *Cluster) Retire(ctx context.Context, p *Pod) error {
+	return c.ProjectPhase(ctx, p, "draining")
+}
+
+// ProjectPhase writes the pod's Sandbox phase as the WarmPoolController's
+// occupancy projection does, under its field manager. A scenario uses it for
+// a projection the harness does not run, such as `reserved` after a
+// recycle's scrub completes.
+// spec: §4.6.1 (occupancy projection), §6.2 (Pod State Machine)
+func (c *Cluster) ProjectPhase(ctx context.Context, p *Pod, phase string) error {
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
 	u.SetKind("Sandbox")
 	u.SetName(p.Name)
 	u.SetNamespace(Namespace)
-	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "draining", "podIP": p.IP}, "status")
+	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": phase, "podIP": p.IP}, "status")
 	if err := c.Client.Status().Patch(ctx, u, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-		return fmt.Errorf("retire sandbox %s: %w", p.Name, err)
+		return fmt.Errorf("project sandbox %s to %s: %w", p.Name, phase, err)
 	}
 	return nil
 }
 
-// RemoveSandbox deletes the pod's Sandbox, so no claim can take it.
+// RemoveSandbox deletes the pod's Sandbox, so no claim can take it, and
+// deletes the pod's claim, as the WarmPoolController does when it completes
+// a pod's termination.
+// spec: §4.6 (SandboxClaim deleted when the pod terminates)
 func (c *Cluster) RemoveSandbox(ctx context.Context, p *Pod) error {
-	return client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.Sandbox{
+	if err := client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: Namespace},
+	})); err != nil {
+		return err
+	}
+	return client.IgnoreNotFound(c.Client.Delete(ctx, &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + p.Name, Namespace: Namespace},
 	}))
+}
+
+// retireByName moves the named pod's Sandbox to draining when the pod is
+// still in the cluster.
+func (c *Cluster) retireByName(ctx context.Context, pod string) {
+	if p, ok := c.PodByName(pod); ok {
+		_ = c.Retire(ctx, p)
+	}
 }

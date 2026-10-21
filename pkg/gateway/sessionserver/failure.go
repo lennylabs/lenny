@@ -38,9 +38,12 @@ type FailureReport struct {
 	Reason string
 
 	// PodAssignment carries the failed pod's sandbox name when the
-	// reporter knows it. Stamped onto the session row's PodAssignment
-	// so a follow-on /resume can correlate the new pod's claim. An empty
-	// value leaves the existing assignment in place.
+	// reporter knows it. transitionToFailed is its only reader: the failed
+	// edge stamps it onto the terminal row, which no slot-holder reader
+	// counts. The resume_pending and awaiting_client_action edges clear the
+	// row's pod_assignment instead, because the funnel releases the slot
+	// and a resume claims a fresh pod. An empty value leaves the existing
+	// assignment in place on the failed edge.
 	PodAssignment string
 
 	// ExpectedCoordinationGeneration is the resuming incarnation the report
@@ -329,25 +332,36 @@ func slotBinding(bind *podsession.BindResult) *podsession.BindResult {
 // whole binding and is released unconditionally. It reports true only when it
 // called the executor's release and that call returned nil. A release error
 // is logged: the row has already committed and the release is best-effort.
-// Its callers are the failure funnel (failed disposition), the suspension
-// release, and the terminal binding release.
+// Its callers are the failure funnel (failed disposition) and the suspension
+// release; the terminal binding release calls releaseCurrentBinding, which
+// returns the error to its caller.
 //
 // spec: §7.3 (resume flow after pod failure); §5.2 (Failure isolation);
 // §28.5.1 (CH-ATTACH Degradation).
 func (s *Server) releaseReportedBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) bool {
+	released, err := s.releaseCurrentBinding(ctx, sessionID, bind, disposition)
+	if err != nil {
+		log.Printf("sessionserver: release session %s binding: %v", sessionID, err)
+	}
+	return released
+}
+
+// releaseCurrentBinding is releaseReportedBinding's body, which returns the
+// executor release error rather than logging it. It releases nothing and
+// returns (false, nil) when the registry no longer holds exactly bind.
+func (s *Server) releaseCurrentBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) (bool, error) {
 	if s.podRegistry != nil {
 		if bind == nil {
-			return false
+			return false, nil
 		}
 		if cur, ok := s.podRegistry.Get(sessionID); !ok || cur != bind {
-			return false
+			return false, nil
 		}
 	}
 	if err := releaseExecutor(ctx, s.executor, sessionID, disposition); err != nil {
-		log.Printf("sessionserver: release session %s binding: %v", sessionID, err)
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 // applyFailureFromResuming drives the §6.2 mid-resume failure
@@ -381,7 +395,8 @@ func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.
 }
 
 // transitionToResumePending writes from → resume_pending, bumps
-// RetryCount, stamps the failure reason on the row, and fires the
+// RetryCount, stamps the failure reason on the row, clears its
+// pod_assignment, and fires the
 // §16.1 retry counter + §11.7 audit row via recordSessionRetry.
 func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int,
@@ -393,9 +408,12 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 		r.State = session.StateResumePending
 		r.RetryCount++
 		r.FailureReason = rep.Reason
-		if rep.PodAssignment != "" {
-			r.PodAssignment = rep.PodAssignment
-		}
+		// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume
+		// flow after pod failure) — the funnel releases this session's slot
+		// after the edge write, so the row stops naming the pod here; a
+		// row that kept naming it would be added back to the pod's slot set
+		// by a rehydration and counted by the fallback gate and the GC.
+		r.PodAssignment = ""
 		return nil
 	})
 	if err != nil {
@@ -423,8 +441,8 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 	}, nil
 }
 
-// transitionToAwaitingClientAction writes from → awaiting_client_action
-// and fires the §7.3 webhook + §16.6 op event + §11.7 audit
+// transitionToAwaitingClientAction writes from → awaiting_client_action,
+// clears the row's pod_assignment, and fires the §7.3 webhook + §16.6 op event + §11.7 audit
 // row via emitAwaitingClientActionEntered.
 func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
@@ -435,9 +453,10 @@ func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessi
 		}
 		r.State = session.StateAwaitingClientAction
 		r.FailureReason = rep.Reason
-		if rep.PodAssignment != "" {
-			r.PodAssignment = rep.PodAssignment
-		}
+		// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume
+		// flow after pod failure) — as on the resume_pending edge, the row
+		// stops naming the pod whose slot the funnel releases.
+		r.PodAssignment = ""
 		return nil
 	})
 	if err != nil {

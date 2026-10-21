@@ -60,7 +60,7 @@ func TestPodLifecycle(t *testing.T) {
 // chartClaimOrphanTimeout is the chart default of the lenny-controller
 // --claim-orphan-timeout flag: a live or empty-status SandboxClaim older than
 // this with no active session is an orphan the §4.6.1 GC reclaims.
-const chartClaimOrphanTimeout = 5 * time.Minute
+const chartClaimOrphanTimeout = 15 * time.Minute
 
 // orphanReclaimBudget bounds the start-time wait for the GC: two 60-second
 // sweep intervals plus the drain and pod-termination latency.

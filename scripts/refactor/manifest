@@ -77,7 +77,6 @@ github.com/lennylabs/lenny/pkg/gateway/coordfence	github.com/lennylabs/lenny/pkg
 github.com/lennylabs/lenny/pkg/gateway/coordination	github.com/lennylabs/lenny/pkg/gateway/coordination/coordination
 github.com/lennylabs/lenny/pkg/gateway/coordlease	github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease
 github.com/lennylabs/lenny/pkg/gateway/correctionstore	github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore
-github.com/lennylabs/lenny/pkg/gateway/createdsweeper	github.com/lennylabs/lenny/pkg/gateway/session/createdsweeper
 github.com/lennylabs/lenny/pkg/gateway/credassign	github.com/lennylabs/lenny/pkg/gateway/credentials/credassign
 github.com/lennylabs/lenny/pkg/gateway/credcache	github.com/lennylabs/lenny/pkg/gateway/credentials/credcache
 github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore	github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore

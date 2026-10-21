@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
@@ -72,6 +73,10 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	saTokenAudience := f.saTokenAudience
 	adminSATokenAudience := f.adminSATokenAudience
 	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
+	slotCounterRecoveryProbeInterval := f.slotCounterRecoveryProbeInterval
+	// slotCounterProbeTimeout bounds one slot-set recovery probe, the 2s
+	// bound the other §12.4 recovery probes use.
+	const slotCounterProbeTimeout = 2 * time.Second
 
 	// The stores, Redis client, executor, credential assigner, and pool
 	// store were recorded on the accumulator by the earlier build steps.
@@ -218,11 +223,11 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			PermitWithoutStream: true,
 		})
 		podRegistry = podsession.NewRegistry()
-		// §5.2 atomic slot counter. When Redis is wired, every
-		// concurrent-mode slot reservation goes through the Redis Lua
-		// GET-compare-INCR sequence so two gateway replicas racing on
-		// the same pod cannot transiently exceed maxConcurrent. The
-		// counter (with its §12.4 Postgres fallback) is the only
+		// §5.2 slot set. When Redis is wired, every concurrent-mode slot
+		// reservation and release goes through the Redis Lua slot-set
+		// scripts so two gateway replicas racing on the same pod cannot
+		// transiently exceed maxConcurrent. The set (with its §12.4
+		// Postgres fallback) is the only
 		// intra-pod capacity gate; a nil counter makes SlotClaimer
 		// ClaimSlot and ReleaseSlot fail closed rather than overrun or
 		// over-release the pod, so a concurrent-mode pool requires Redis.
@@ -231,8 +236,8 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// §5.2: the SessionStore is the post-recovery
 			// rehydration seed source. After a Redis restart the first
 			// slot reservation on each concurrent-mode pod re-seeds the
-			// pod's active_slots counter from GetActiveSlotsByPod before
-			// any new slot is allowed, closing the over-commit race.
+			// pod's active_slots set from GetActiveSlotsByPod before any
+			// new slot is allowed, closing the over-commit race.
 			// §12.4: the SessionStore is also the Redis-outage
 			// capacity-gate fallback. When Redis is unreachable the counter
 			// gates intra-pod slot admission on GetActiveSlotsByPod under a
@@ -242,10 +247,20 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// (gateway.slotCounterPostgresFallbackMaxSeconds) so the spec-default
 			// 60s bounded outage window is not hardcoded; a non-positive value
 			// keeps the default.
-			slotCounter = slotcounter.New(concernRedis.For(storerouter.RedisConcernCoordination),
+			// §12.4: when an outage ends the counter rebuilds the slot sets
+			// before fast-path enforcement resumes; RunRecovery (started in
+			// startReconcilerWorkers) probes the same coordination client
+			// on the operator-tunable interval.
+			slotRedis := concernRedis.For(storerouter.RedisConcernCoordination)
+			slotCounter = slotcounter.New(slotRedis,
 				slotcounter.WithSlotSource(sessions),
 				slotcounter.WithFallbackSource(sessions),
-				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterPostgresFallbackMaxSeconds)*time.Second))
+				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterPostgresFallbackMaxSeconds)*time.Second),
+				slotcounter.WithRecoveryProbeInterval(*slotCounterRecoveryProbeInterval),
+				slotcounter.WithRecoveryProbe(func(context.Context) error {
+					return redisconn.PingWithTimeout(slotRedis, slotCounterProbeTimeout)
+				}))
+			w.slotCounter = slotCounter
 		}
 		// reserved-hold coordinator: arms the per-claim hold-TTL expiry
 		// timer after a recycle reserves the claim, and is cancelled on an

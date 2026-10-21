@@ -63,24 +63,44 @@ func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox, leaseAssign
 }
 
 // ReclaimClaimed releases a pod claimed at /create that no live BindResult
-// covers: a `created`/`finalizing`/`ready` session retired by the §4.5
-// created-expiry sweeper or by /terminate, whose pod↔session binding is the
-// persisted SandboxName + pool alone (§4.6). It deletes the per-pod
-// SandboxClaim (returning the pod to the pool per the §4.6.1 occupancy
-// projection) and revokes any §4.9 credential lease the session holds, keyed
-// by sessionID (Credentials.ReleaseSession). The lease revoke is mandatory
-// rather than best-effort-skipped: a `finalizing`/`ready` session always
-// holds a lease assigned at finalize (§4.3), and ReleaseSession is a no-op
-// for a `created` session that never assigned one, so the unconditional
-// revoke fails closed without over-releasing. The claim delete runs on a
-// detached context, so a reclaim reached after the caller's context ended
-// still returns the pod. spec: §4.5 (proposal), §4.6 (proposal), §7.1 step 23
-// (lease release); §4.6.1 (occupancy projection on claim DELETE).
-func (b *Binder) ReclaimClaimed(ctx context.Context, sandboxName, sessionID string) error {
-	// Revoke the lease first so a DELETE error does not strand the
-	// credential's active-session slot; ReleaseSession is keyed by sessionID
-	// and is a no-op for a session that holds no lease.
+// covers: a `created`, `finalizing`, or `ready` session that a terminal write
+// ended (DELETE, terminate, cancel_child, a watchdog pre-running timeout, or a
+// finalize failure), a create-time rollback, or a Prepare or Launch reconnect
+// failure. The pod-session binding is the persisted SandboxName alone (§4.6).
+//
+// It releases the session's §4.9 credential leases first, keyed by
+// sessionID (Credentials.ReleaseSession), so a later claim error does not
+// strand a lease; ReleaseSession is a no-op for a session that holds none.
+// Then it ends the occupancy without reuse, by pool kind:
+//
+//   - perSlot true (a concurrent-workspace pool): the session's member of the
+//     pod's slot set is released through ReleaseSlotReservation, which never
+//     recycles. The release deletes the shared per-pod SandboxClaim only when
+//     it removed the member and left the set empty, so a live sibling keeps
+//     its claim. No claim is deleted by name.
+//   - perSlot false (an exclusive pool): the per-pod SandboxClaim is deleted
+//     by name on a detached context, so a reclaim reached after the caller's
+//     context ended still returns the pod; the §4.6.1 occupancy projection
+//     drains it. A recycling exclusive pool is not patched to `recycling`,
+//     because a pre-running session never used the pod.
+//
+// The caller passes perSlot from the session row's frozen scrubPolicy rather
+// than a live pool lookup, because maxConcurrentSessions can change after
+// create.
+//
+// spec: §5.2 (Slot assignment atomicity; Recycle lifecycle), §6.2 (leaked
+// slot semantics), §4.6.3 (SandboxClaim: a release that ends the occupancy
+// without reuse), §7.1 step 23 (lease release).
+func (b *Binder) ReclaimClaimed(ctx context.Context, sandboxName, sessionID string, perSlot bool) error {
 	b.releaseCredentials(sessionID)
+	if perSlot {
+		// No workspace RPC ran for a pre-running slot, so the adapter holds
+		// nothing for it and the release is not leaked.
+		if err := b.ReleaseSlotReservation(ctx, sandboxName, sessionID, false); err != nil {
+			return fmt.Errorf("podsession: reclaim slot on pod %s for session %s: %w", sandboxName, sessionID, err)
+		}
+		return nil
+	}
 	if err := b.deleteClaimDetached(ctx, sandboxName); err != nil {
 		return fmt.Errorf("podsession: reclaim claimed pod %s for session %s: %w", sandboxName, sessionID, err)
 	}

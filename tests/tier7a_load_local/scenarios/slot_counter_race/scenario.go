@@ -8,8 +8,11 @@
 // Regression source: commit 9b5ba3e replaced the previous SSA-based
 // slot counter (which let N parallel reservers all observe the same
 // value and all "succeed" past maxConcurrent) with an atomic Redis
-// Lua GET-compare-INCR. This scenario re-creates that race surface
-// and asserts no overcommit.
+// Lua script; the slot occupancy is now a per-pod set keyed by session.
+// This scenario re-creates that race surface with a distinct session per
+// reservation and asserts no overcommit, that every keyed release removes
+// exactly its own member, and that the set is empty once every
+// reservation is released.
 //
 // TESTING.md §12.7.a regression scenarios.
 package slot_counter_race
@@ -62,6 +65,11 @@ type Scenario struct {
 	totalReserves    atomic.Int64
 	totalRejects     atomic.Int64
 	overcommitEvents atomic.Int64
+	// releaseMisses counts keyed releases that did not remove the
+	// session's own member.
+	releaseMisses atomic.Int64
+	// finalMembers is the set's cardinality after the run.
+	finalMembers int64
 }
 
 func (s *Scenario) Name() string { return "slot_counter_race" }
@@ -102,6 +110,10 @@ func (s *Scenario) Setup(ctx context.Context) error {
 
 func (s *Scenario) Teardown(ctx context.Context) error {
 	if s.client != nil {
+		n, err := s.client.SCard(context.WithoutCancel(ctx), "lenny:pod:{"+s.podID+"}:active_slots").Result()
+		if err == nil {
+			s.finalMembers = n
+		}
 		_ = s.client.Close()
 	}
 	if s.mr != nil {
@@ -116,13 +128,14 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 // slotcounter ever returns success past maxConcurrent, inFlight will
 // momentarily exceed the cap and overcommitEvents will increment.
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	n, _, err := s.counter.Reserve(ctx, s.podID, s.maxConcurrent)
+	sessionID := fmt.Sprintf("vu%d-it%d", vu, iter)
+	n, _, err := s.counter.Reserve(ctx, s.podID, sessionID, s.maxConcurrent)
 	if err != nil {
 		if errors.Is(err, slotcounter.ErrSlotsExhausted) {
 			s.totalRejects.Add(1)
 			return nil
 		}
-		return fmt.Errorf("Reserve: %w", err)
+		return fmt.Errorf("reserve: %w", err)
 	}
 	_ = n
 	s.totalReserves.Add(1)
@@ -147,8 +160,12 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	s.mu.Lock()
 	s.inFlight--
 	s.mu.Unlock()
-	if _, err := s.counter.Release(ctx, s.podID); err != nil {
-		return fmt.Errorf("Release: %w", err)
+	removed, _, _, err := s.counter.Release(context.WithoutCancel(ctx), s.podID, sessionID, false)
+	if err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	if !removed {
+		s.releaseMisses.Add(1)
 	}
 	return nil
 }
@@ -168,6 +185,12 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	}
 	if r.Iterations < 100 {
 		return fmt.Errorf("scenario did not get enough load: %d iterations (want >= 100)", r.Iterations)
+	}
+	if s.releaseMisses.Load() > 0 {
+		return fmt.Errorf("§5.2 violated: %d keyed releases did not remove their own member", s.releaseMisses.Load())
+	}
+	if s.finalMembers != 0 {
+		return fmt.Errorf("§5.2 violated: %d members remain after every reservation was released", s.finalMembers)
 	}
 	if s.totalReserves.Load() == 0 {
 		return fmt.Errorf("scenario never observed a successful Reserve; load did not exercise the counter")

@@ -102,9 +102,18 @@ const (
 		"cleanup-outcome report (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
 
 	claimOwnershipRowSentence = "Created by the gateway at pod acquisition; binding state written via the status " +
-		"subresource; deleted by the gateway at hold expiry or when its acquisition path ends the hold on a pool " +
+		"subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool " +
 		"outside the runtime-process acknowledgment rule " +
-		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or by the " +
+		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a " +
+		"release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the " +
+		"occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to " +
+		"zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). " +
+		"A release ends the occupancy without reuse when the pool does not recycle, when no gateway replica published " +
+		"the session's binding to the pod, the gateway step that follows the pod's acceptance of the session's start " +
+		"or resume and from which the session's message delivery and its release reach the pod " +
+		"([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), or, on a pool with `maxConcurrentSessions: 1`, " +
+		"when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails " +
+		"([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the " +
 		"WarmPoolController at pod termination and orphan GC"
 
 	forwardMessageTransportSentence = "The conversation the connection carries is the internal gRPC " +
@@ -125,7 +134,8 @@ const (
 // and `scrub_failure_count` are gateway-written), and §4.6.3 assigns the
 // create, the status-subresource writes, the hold-expiry delete, and the
 // delete when an acquisition ends the hold on a pool outside the
-// runtime-process acknowledgment rule to the gateway and only the
+// runtime-process acknowledgment rule, and the delete by a release that
+// ends the occupancy without reuse, to the gateway and only the
 // pod-termination and orphan-GC deletes to the
 // WarmPoolController leader; an unattributed name check cannot tell either
 // rule from its inverse.
@@ -136,8 +146,9 @@ const (
 		"for `sessions_served` and `scrub_failure_count`"
 
 	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
-		"deletes at hold expiry and when an acquisition ends the hold, and the WarmPoolController leader for the " +
-		"deletes at pod termination and orphan garbage collection"
+		"deletes at hold expiry, when an acquisition ends the hold, and when a release ends the occupancy without " +
+		"reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), and the " +
+		"WarmPoolController leader for the deletes at pod termination and orphan garbage collection"
 )
 
 // The heading of the claim-register subsection and the sentence it opens

@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -105,12 +106,26 @@ func createdRowGeneration(generation int64) int64 {
 // is logged via the configured error handler but does not fail the
 // claim — the in-memory Registry remains authoritative for this
 // replica, and the next coordination sweep will re-publish the
-// assignment. spec: §4.2 — "Pod-to-session binding".
+// assignment.
+//
+// A row in a recovery state is left unchanged. publishBinding puts the
+// binding in the registry before it persists the pod, so a failure-funnel
+// edge write that commits between the two has already cleared
+// pod_assignment and released the slot; naming the pod again would make the
+// rehydration, the fallback gate, and the orphan GC count a session that
+// holds no slot. Only the resume commit names a pod on a row that leaves a
+// recovery state.
+//
+// spec: §4.2 — "Pod-to-session binding"; §5.2 (Post-recovery rehydration
+// atomicity).
 func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, podAssignment string) {
 	if podAssignment == "" {
 		return
 	}
 	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		if session.IsRecovery(row.State) {
+			return nil
+		}
 		row.PodAssignment = podAssignment
 		return nil
 	})

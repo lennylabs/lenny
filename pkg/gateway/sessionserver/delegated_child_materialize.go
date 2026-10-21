@@ -68,7 +68,13 @@ func (e *DelegatedChildNotCreatedError) Error() string {
 // pod, lease, or registry entry leaks past the failed persist.
 // spec: §8.2.
 func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error) {
-	row, err := s.store.Get(ctx, tenantID, childID)
+	// spec: §5.2 (Slot assignment atomicity) — the launch bound starts before
+	// the primary read of the child's row, and the claim and the launch run
+	// under it, so a materialization that read the row created ends within
+	// the bound of a terminal write that would end it.
+	launchCtx, cancelLaunch := s.launchContext(ctx)
+	defer cancelLaunch()
+	row, err := s.readPrimary(launchCtx, tenantID, childID)
 	if err != nil {
 		return "", fmt.Errorf("load delegated child %s: %w", childID, err)
 	}
@@ -102,7 +108,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		// as the top-level create path does at claimAtCreate. On failure no pod
 		// is claimed (the pre-check gates the claim), so the typed sentinel
 		// returns directly.
-		outcome, err := s.claimAtCreate(ctx, row, plan, claimRouteStart)
+		outcome, err := s.claimAtCreate(launchCtx, row, plan, claimRouteStart)
 		if err != nil {
 			return "", err
 		}
@@ -131,7 +137,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		// §6.3 binder and launch against the claimed pod. On failure release the
 		// create-time claim (unless the binder already owns its release) and
 		// return the typed sentinel; the row stays StateCreated, so no pod leaks.
-		bound, err = s.startOnPod(ctx, row, plan, startCtx, resumeBind{})
+		bound, err = s.startOnPod(launchCtx, row, plan, startCtx, resumeBind{})
 		if err != nil {
 			if createClaimNeedsRollback(createClaim, err) {
 				s.rollbackClaim(ctx, createClaim, row.ID)

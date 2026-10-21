@@ -78,7 +78,9 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
 			return nil, err
 		}
-		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+		// Prepare runs only on an exclusive pool, so the reclaim deletes the
+		// claim by name rather than releasing a slot.
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID, false); rerr != nil {
 			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
 		}
 		return nil, err

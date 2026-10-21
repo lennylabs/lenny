@@ -129,21 +129,22 @@ func finalizingPrecondition(row *sessionstore.Session) error {
 // unchanged, and the caller decides the response; no hook ran.
 //
 // It is a hook-path terminal writer. On a write that applied, the
-// post-terminal hook runs with fromState finalizing, which is pre-running, so
-// the hook reclaims a claimed pod by name. podReclaimed reports that the
-// caller's failing step already reclaimed the pod, or that no pod was
-// prepared; failFinalizing then passes session.StateFailed as fromState, so
-// the hook does not delete the claim by name a second time.
-// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states)
-func (s *Server) failFinalizing(ctx context.Context, tenantID, id string, podReclaimed bool) error {
+// post-terminal hook runs with the locked row's fromState, finalizing, which
+// is pre-running, so the hook's reclaim releases the pod claimed at /create by
+// the row's pool kind: the session's slot member on a concurrent-workspace
+// pool, deleting the shared claim only when that release empties the set, and
+// the claim by name on an exclusive pool. Every finalize failure exit routes
+// its pod and slot release through this hook; a by-name release that a
+// through-Prepare failure's binder already performed is repeated on an
+// exclusive pool, and a duplicate slot release is a keyed no-op.
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
+// §6.1 (Per-session credential lease lifecycle)
+func (s *Server) failFinalizing(ctx context.Context, tenantID, id string) error {
 	end := s.BeginTerminal(id)
 	defer end()
 	from, updated, err := s.writeTerminal(ctx, tenantID, id, session.StateFailed, finalizingPrecondition)
 	if err != nil {
 		return err
-	}
-	if podReclaimed {
-		from = session.StateFailed
 	}
 	s.afterFailed(ctx, from, updated)
 	return nil

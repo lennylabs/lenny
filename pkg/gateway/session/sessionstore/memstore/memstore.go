@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -342,23 +344,69 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 	return deleted, nil
 }
 
-// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
-// source. It counts live (non-terminal) sessions bound to podID across
-// every tenant. An empty podID matches no slot (sessions with no pod
-// binding carry an empty pod_assignment and are never counted).
-func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error) {
+// GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
+// It returns the identifiers of the non-terminal sessions whose
+// pod_assignment names podID across every tenant (the slot-holder
+// predicate). An empty podID matches no session.
+func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, error) {
 	if podID == "" {
-		return 0, nil
+		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	count := 0
+	var ids []string
 	for _, row := range s.sessions {
 		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
-			count++
+			ids = append(ids, row.ID)
 		}
 	}
-	return count, nil
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// ListPodsWithActiveSlots implements Store: the distinct pods that a
+// non-terminal best-effort-per-slot session row names, across tenants.
+// spec: §12.4 (Redis failure behavior).
+func (s *Store) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]bool{}
+	var pods []string
+	for _, row := range s.sessions {
+		if row.PodAssignment == "" || row.ScrubPolicy != "best-effort-per-slot" || session.IsTerminal(row.State) {
+			continue
+		}
+		if !seen[row.PodAssignment] {
+			seen[row.PodAssignment] = true
+			pods = append(pods, row.PodAssignment)
+		}
+	}
+	sort.Strings(pods)
+	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the identifiers in ids whose
+// row is terminal with a TerminatedAt earlier than terminatedBefore, across
+// tenants, with the pgstore filter that drops identifiers that are not
+// UUIDs, because sessions.id is a UUID column there.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var stale []string
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		row, ok := s.sessions[id]
+		if !ok || !session.IsTerminal(row.State) || row.TerminatedAt.IsZero() {
+			continue
+		}
+		if row.TerminatedAt.Before(terminatedBefore) {
+			stale = append(stale, id)
+		}
+	}
+	return stale, nil
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity

@@ -20,8 +20,12 @@ type Proxy struct {
 
 	mu          sync.Mutex
 	partitioned bool
-	healed      chan struct{}
-	conns       []net.Conn
+	// drops counts the Drop calls, so a chunk read before or during a
+	// dropping partition is discarded rather than delivered at Heal.
+	drops    int
+	dropping bool
+	healed   chan struct{}
+	conns    []net.Conn
 }
 
 // NewProxy starts a proxy to backend and closes it when the test ends.
@@ -51,10 +55,32 @@ func (p *Proxy) Partition() {
 	}
 }
 
+// Drop partitions the path and discards every chunk read while it is
+// partitioned instead of holding it, so a request sent during the partition
+// never reaches the backend, even after Heal. It models a backend that is
+// unreachable with its data kept, where a request that timed out was never
+// applied.
+func (p *Proxy) Drop() {
+	p.mu.Lock()
+	p.drops++
+	p.dropping = true
+	p.mu.Unlock()
+	p.Partition()
+}
+
+// dropState returns the number of Drop calls so far and whether a dropping
+// partition is in effect.
+func (p *Proxy) dropState() (int, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.drops, p.dropping
+}
+
 // Heal resumes forwarding.
 func (p *Proxy) Heal() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.dropping = false
 	if p.partitioned {
 		p.partitioned = false
 		close(p.healed)
@@ -88,13 +114,20 @@ func (p *Proxy) serve() {
 }
 
 // pipe copies src to dst, holding each chunk while the path is
-// partitioned.
+// partitioned, and discarding it when a Drop began before it was delivered.
 func (p *Proxy) pipe(dst, src net.Conn) {
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
+			epoch, dropping := p.dropState()
+			if dropping {
+				continue
+			}
 			<-p.gate()
+			if now, _ := p.dropState(); now != epoch {
+				continue
+			}
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return
 			}

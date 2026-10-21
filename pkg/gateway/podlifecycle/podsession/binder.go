@@ -82,8 +82,8 @@ type Binder struct {
 	// capacity gate for the maxConcurrentSessions > 1 slot path. Wired in
 	// production installs that expose --redis-url; the SlotClaimer
 	// constructed per BindSlot call carries it through so the Redis Lua
-	// GET-compare-INCR sequence enforces maxConcurrentSessions atomically
-	// across gateway replicas. It is required: a nil counter makes both
+	// slot-set scripts enforce maxConcurrentSessions atomically across
+	// gateway replicas. It is required: a nil counter makes both
 	// ClaimSlot and ReleaseSlot fail closed (each returns a configuration
 	// error rather than degrading to an SSA-only path, which no longer
 	// exists), so slot release cannot over-release a pod that still hosts
@@ -131,6 +131,9 @@ type Binder struct {
 	// (labeled by pod and pool). It is threaded into the per-BindSlot
 	// SlotClaimer. Nil is a no-op.
 	Rehydration func(podID, pool string)
+	// slotReleasePause waits between releaseSlotRetrying attempts. Nil
+	// sleeps on the wall clock; a tier-1 test injects a pause that does not.
+	slotReleasePause func(ctx context.Context, d time.Duration) error
 	// ClaimAccepted records the §6.3 / §16.1
 	// `lenny_warmpool_claims_total{pool,runtime_class}` counter
 	// increment on each idle→claimed transition the §6.1 warm pool

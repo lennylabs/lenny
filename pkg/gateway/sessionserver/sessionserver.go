@@ -388,8 +388,9 @@ type Server struct {
 	// replacement binding and a drain the accounting requests is stamped
 	// before the release can reach the occupancy-zero recycle edge. The
 	// failure funnel holds it on both pool kinds from before its edge
-	// through its release; releaseEarlierBinding and the terminal binding
-	// release take it before they release. Never take it while holding
+	// through its release; releaseEarlierBinding, the terminal binding
+	// release, and the post-terminal hook's release step take it before
+	// they release. Never take it while holding
 	// deliveryLocks. The zero value is ready to use. spec: §5.2 "whole-pod
 	// replacement trigger"; §7.3 (Credential leases on the replacement pod).
 	slotAccountLocks sessionLocks
@@ -464,6 +465,8 @@ type Server struct {
 	// driver); §6.2 (Pod State Machine).
 	maxResumePending time.Duration
 	maxResuming      time.Duration
+	// maxFinalizing is the launch bound (Options.MaxFinalizing).
+	maxFinalizing time.Duration
 	// ageCap resolves a row's effective active-age cap with the same
 	// resolver the watchdog's maxSessionAge sweep uses, so the resume
 	// driver refuses an over-cap row against the value the sweep applies.
@@ -851,9 +854,9 @@ type Options struct {
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
 	// minted token. Per §7.1 the token TTL equals
 	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
-	// configured timeout through this field, the watchdog's
-	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
-	// budgets never drift. A non-positive value falls through to
+	// configured timeout through this field and the watchdog's
+	// MaxCreatedSeconds so the two budgets never drift. A non-positive
+	// value falls through to
 	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	UploadTokenTTL time.Duration
 
@@ -1185,6 +1188,15 @@ type Options struct {
 	// watchdog defaults. spec: §7.3 (Resume driver).
 	MaxResumePending time.Duration
 	MaxResuming      time.Duration
+
+	// MaxFinalizing bounds a slot launch: the two-step /start launch and a
+	// delegated child's materialization each run on a context carrying this
+	// deadline, taken before the session row is read from the primary. On a
+	// concurrent-workspace pool the launch performs the materialization and
+	// setup that finalizing performs on an exclusive pool, so the gateway
+	// wires --max-finalizing-state-timeout-seconds. Zero selects the
+	// watchdog default. spec: §5.2 (Slot assignment atomicity).
+	MaxFinalizing time.Duration
 
 	// AgeCap resolves a row's effective maxSessionAge cap. The gateway
 	// wires the resolver the watchdog's maxSessionAge sweep uses, so the
@@ -1777,6 +1789,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
 	s.maxResumePending = opts.MaxResumePending
 	s.maxResuming = opts.MaxResuming
+	s.maxFinalizing = opts.MaxFinalizing
 	s.ageCap = opts.AgeCap
 	s.lifetimeCtx, s.lifetimeCancel = context.WithCancel(context.Background())
 	if s.sealSleep == nil {

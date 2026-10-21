@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -824,31 +825,113 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	return deleted, err
 }
 
-// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
-// source. It counts live (non-terminal) sessions bound to podID. The
-// read runs cross-tenant (InAllTenants) because the rehydration path
-// holds only the pod identity; §5.2 tenant pinning guarantees every
-// counted row belongs to one tenant. The partial index from migration
-// 0080 keeps the count under the 5ms target the spec assumes during a
-// post-restart rehydration burst. The non-terminal predicate matches
-// the index predicate and session.TerminalStates() verbatim.
-// spec: §5.2.
-func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+// GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
+// It returns the identifiers of the non-terminal sessions whose
+// pod_assignment names podID (the slot-holder predicate). The read runs
+// cross-tenant (InAllTenants) because the rehydration path holds only the
+// pod identity; §5.2 tenant pinning guarantees every row belongs to one
+// tenant. The partial index from migration 0080 keeps the read under the 5ms
+// target the spec assumes during a post-restart rehydration burst. The
+// non-terminal predicate matches the index predicate and
+// session.TerminalStates() verbatim.
+// spec: §5.2 (Post-recovery rehydration atomicity).
+func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
 	if podID == "" {
-		return 0, nil
+		return nil, nil
 	}
-	var count int
+	var ids []string
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			`SELECT count(*) FROM sessions
+		var qErr error
+		ids, qErr = collectStrings(ctx, tx,
+			`SELECT id FROM sessions
 			   WHERE pod_assignment = $1
 			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
-			podID).Scan(&count)
+			podID)
+		return qErr
 	})
 	if err != nil {
-		return 0, fmt.Errorf("pgstore: count active slots for pod %s: %w", podID, err)
+		return nil, fmt.Errorf("pgstore: list active slots for pod %s: %w", podID, err)
 	}
-	return count, nil
+	return ids, nil
+}
+
+// ListPodsWithActiveSlots implements Store: the pods the slot counter's
+// recovery rebuild names. It returns the distinct pod_assignment values of
+// the non-terminal best-effort-per-slot session rows across tenants, with
+// the predicate of the migration 0080 partial index.
+// spec: §12.4 (Redis failure behavior).
+func (s *Store) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
+	var pods []string
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		var qErr error
+		pods, qErr = collectStrings(ctx, tx,
+			`SELECT DISTINCT pod_assignment FROM sessions
+			   WHERE pod_assignment <> ''
+			     AND scrub_policy = 'best-effort-per-slot'
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`)
+		return qErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: list pods with active slots: %w", err)
+	}
+	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the stale-slot reaper's
+// cross-tenant primary-key read. sessions.id is a UUID, so an identifier
+// that does not parse as one is dropped before the query rather than
+// failing the whole batch's cast; no session row can carry it.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	keys := uuidIdentifiers(ids)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	var stale []string
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		var qErr error
+		stale, qErr = collectStrings(ctx, tx,
+			`SELECT id::text FROM sessions
+			   WHERE id = ANY($1::uuid[])
+			     AND state IN ('completed', 'failed', 'cancelled', 'expired')
+			     AND terminated_at < $2`,
+			keys, terminatedBefore)
+		return qErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: list stale terminal sessions: %w", err)
+	}
+	return stale, nil
+}
+
+// uuidIdentifiers returns the members of ids that parse as UUIDs, in their
+// original spelling.
+func uuidIdentifiers(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// collectStrings runs a single-column text query and returns its values.
+func collectStrings(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage

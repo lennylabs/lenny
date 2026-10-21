@@ -83,7 +83,7 @@ func TestParseFlagsPopulatesEveryControllerDefault(t *testing.T) {
 		// registerLifecycleFlags (§4.6.1 fill grace / dedup / GC / queue knobs)
 		{"initialFillGrace", f.initialFillGrace, 120 * time.Second},
 		{"statusDedupWindow", f.statusDedupWindow, 500 * time.Millisecond},
-		{"claimOrphanTimeout", f.claimOrphanTimeout, 5 * time.Minute},
+		{"claimOrphanTimeout", f.claimOrphanTimeout, 15 * time.Minute},
 		{"reservedHoldGrace", f.reservedHoldGrace, 60 * time.Second},
 		{"workqueueMaxDepth", f.workqueueMaxDepth, 500},
 		{"devMode", f.devMode, false},

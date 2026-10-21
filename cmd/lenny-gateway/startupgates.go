@@ -188,6 +188,16 @@ func (w *gatewayWiring) buildStartupGates() {
 	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateSlotReaperFlags(slotReaperSettings{
+		interval:             *f.slotReaperInterval,
+		rate:                 *f.slotReaperRate,
+		terminalAge:          *f.slotReaperTerminalAge,
+		maxFinalizingSeconds: *f.maxFinalizingTimeoutSeconds,
+		maxResumingSeconds:   *f.maxResumingSeconds,
+		sealSeconds:          *f.workspaceSealMaxDurationSeconds,
+	}); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
@@ -264,4 +274,54 @@ func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, ba
 		return fmt.Errorf("--suspended-backlog-recheck-seconds must be at least %d, got %d (§7.2)", minimum, backlogRecheckSeconds)
 	}
 	return nil
+}
+
+// slotReaperSettings is the configuration the stale-slot reaper gate reads:
+// the reaper's own flags and the three post-terminal deadlines its terminal
+// age must exceed.
+type slotReaperSettings struct {
+	interval             time.Duration
+	rate                 int
+	terminalAge          time.Duration
+	maxFinalizingSeconds int
+	maxResumingSeconds   int
+	sealSeconds          int
+}
+
+// validateSlotReaperFlags rejects a non-positive reaper interval or rate,
+// and a --slot-reaper-terminal-age below the post-terminal slot activity
+// invariant: the terminal age (the gateway's copy of claimOrphanTimeout) must
+// be at least one second more than the largest of the launch bound
+// (--max-finalizing-state-timeout-seconds), the resuming deadline
+// (--max-resuming-seconds), and the seal window
+// (--workspace-seal-max-duration-seconds), each taken as the value in effect.
+// A value in effect is the flag's value, or its default when the flag is not
+// positive, as the watchdog and the session server resolve it. A shorter
+// terminal age lets the reaper free a slot that a launch, a resume restore,
+// or a seal still acts on.
+// spec: §5.2 (Slot assignment atomicity).
+func validateSlotReaperFlags(c slotReaperSettings) error {
+	if c.interval <= 0 {
+		return fmt.Errorf("--slot-reaper-interval must be positive, got %s (§5.2)", c.interval)
+	}
+	if c.rate <= 0 {
+		return fmt.Errorf("--slot-reaper-rate must be positive, got %d (§5.2)", c.rate)
+	}
+	finalizing := secondsInEffect(c.maxFinalizingSeconds, watchdog.DefaultMaxFinalizingStateSeconds)
+	resuming := secondsInEffect(c.maxResumingSeconds, watchdog.DefaultMaxResumingSeconds)
+	seal := secondsInEffect(c.sealSeconds, int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second))
+	floor := time.Duration(max(finalizing, resuming, seal))*time.Second + time.Second
+	if c.terminalAge < floor {
+		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and --workspace-seal-max-duration-seconds (%ds) (§5.2)",
+			c.terminalAge, floor, finalizing, resuming, seal)
+	}
+	return nil
+}
+
+// secondsInEffect is v when it is positive, and def otherwise.
+func secondsInEffect(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
 }

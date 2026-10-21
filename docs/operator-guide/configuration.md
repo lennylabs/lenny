@@ -330,7 +330,7 @@ The configurations the `sessionPolicy` settings express:
 |---|---|---|---|
 | One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
 | Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. |
-| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero, unless the last release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
 | Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
 
 **`service`** -- The gateway routes each message to any ready tenant-pinned replica, creating no claim and materializing no workspace. The pool keeps a per-pod [slot](../reference/glossary#slot) bound through `maxConcurrent`. Service mode provides no cross-message conversation continuity, and `sessionPolicy` does not apply:
@@ -501,6 +501,25 @@ redis:
   connectionString: "rediss://:password@redis:6380"
   # TLS + AUTH required in all environments
 ```
+
+### Stale slot reaper
+
+```yaml
+controller:
+  claimOrphanTimeoutSeconds: 900   # Default: 900. Also the stale slot reaper's age.
+gateway:
+  slotReaper:
+    intervalSeconds: 60            # Default: 60. Wait between passes.
+    ratePerSecond: 50              # Default: 50. Must be positive.
+```
+
+On a pool with `maxConcurrentSessions` above 1, the gateway counts each pod's occupied slots in a Redis slot set. A session's release frees its slot. When the release does not free the slot, such as when it fails during a Redis outage, the slot stays counted and the pod admits one session fewer. The gateway leader runs a stale slot reaper that releases such a slot once the session that held it ended at least `claimOrphanTimeoutSeconds` ago. The reaper asks the pod's runtime adapter to stop that session and frees the slot only when the adapter confirms a clean stop. A slot whose adapter does not answer, or reports that the session's runtime may still be running, stays counted, and the reaper retries it at a later pass. The reaper never frees a leaked slot, which is a slot whose cleanup the adapter did not report as clean. The reaper also keeps a slot that is the pod's last remaining slot, and it does not visit a pod on which no session is still active. Such a slot stays counted until the pod's last active session ends, after which the controller drains the pod once the orphaned-claim timeout (`claimOrphanTimeoutSeconds`) elapses. A pass starts `intervalSeconds` after the previous pass ends, and `ratePerSecond` bounds the number of slots the reaper releases per second.
+
+On a pod that still runs other sessions, a slot whose release failed is freed `claimOrphanTimeoutSeconds` after its session ended, plus up to one pass interval, plus the time the reaper takes to reach it at `ratePerSecond`. At the defaults, the roughly 12,000 slots that a 60-second Redis outage can leave on a Scale-size deployment drain in about 4 minutes, so the reaper frees each such slot within about 20 minutes of its session's end while the pod's other sessions keep running. On a pod whose slot set the gateway rebuilt after a Redis outage, the reaper reaches the slot at the first pass after the pod's next slot reservation or release.
+
+`claimOrphanTimeoutSeconds` also sets the controller's orphaned-claim timeout. The chart renders the one value into the controller's `--claim-orphan-timeout` flag and the gateway's `--slot-reaper-terminal-age` flag, so the two stay equal; a deployment outside the chart sets both flags to the same value. The value must be at least one second longer than the longest of the session finalize timeout (the gateway's `--max-finalizing-state-timeout-seconds`, default 600 seconds), the session resume timeout (the gateway's `--max-resuming-seconds`, default 300 seconds), and `gateway.workspaceSealMaxDurationSeconds` (300 seconds when set to 0). This margin ensures that no session launch, restore, or workspace seal still uses a slot when the reaper stops it. The chart refuses to render with a shorter value or with a `gateway.slotReaper.ratePerSecond` that is not positive, and the gateway refuses to start with a `--slot-reaper-terminal-age` shorter than the values it has in effect allow.
+
+Change these values across a rolling gateway update in a fixed order, because a gateway replica that still runs the old configuration can hold the leader role while a replica with the new configuration runs a launch, restore, or seal. To raise one of the three timeouts, raise `claimOrphanTimeoutSeconds` first in its own rollout, and raise the timeout in a later rollout. To lower `claimOrphanTimeoutSeconds`, lower the timeout first in its own rollout, and lower `claimOrphanTimeoutSeconds` in a later rollout.
 
 ### MinIO / Object Storage
 

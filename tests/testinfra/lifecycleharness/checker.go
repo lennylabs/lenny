@@ -139,6 +139,14 @@ func (h *Harness) fingerprint() string {
 	claims, _ := h.Cluster.BoundClaims(ctx)
 	sort.Strings(claims)
 	fmt.Fprintf(&b, "claims=%v", claims)
+	if h.Concurrent() {
+		pods := h.Cluster.Pods()
+		sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
+		for _, p := range pods {
+			members, _ := h.SlotMembers(ctx, p.Name)
+			fmt.Fprintf(&b, ";slots %s=%v", p.Name, members)
+		}
+	}
 	return b.String()
 }
 
@@ -152,7 +160,8 @@ var noLeaseStates = map[session.State]bool{
 }
 
 // Invariants evaluates the lifecycle invariants for the tracked sessions:
-// every bound claim's pod is named by a non-terminal row (pods and claims);
+// every bound claim's pod is named by a non-terminal row, or on a
+// concurrent-workspace pool holds a non-empty slot set (pods and claims);
 // a session in a lease-free state holds no credential lease (credential
 // leases); at most one surviving replica binds a session (one coordinator);
 // no surviving replica binds a terminal session (replica records); a
@@ -186,21 +195,10 @@ func (h *Harness) Invariants() []Invariant {
 				bound[b.SandboxName] = true
 			}
 		}
-		for _, pod := range claims {
-			// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3 — the
-			// crash relaxation of the pods-and-claims invariant: a claim a
-			// crash left is accepted when no non-terminal row names its pod
-			// and no surviving replica binds it; the claim-orphan GC
-			// reclaims it.
-			if !held[pod] && h.RelaxOrphanClaims && !bound[pod] {
-				continue
-			}
-			if !held[pod] {
-				podsClaims.Violations = append(podsClaims.Violations, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))
-			}
-		}
+		podsClaims.Violations = h.podsClaimsViolations(claims, held, bound, h.occupiedPods(ctx))
 	}
 	out = append(out, podsClaims)
+	out = append(out, h.slotInvariants(ctx, rows, held)...)
 	for _, id := range ids {
 		row := rows[id]
 		if row.err != nil {
@@ -242,6 +240,36 @@ func (h *Harness) Invariants() []Invariant {
 			retries.Violations = append(retries.Violations, fmt.Sprintf("RetryCount = %d, want at most %d", row.retries, MaxRetries))
 		}
 		out = append(out, leases, coordinator, records, queues, retries)
+	}
+	return out
+}
+
+// podsClaimsViolations flags each bound claim whose pod no non-terminal row
+// names. Three cases are accepted. Under RelaxOrphanClaims a claim a crash
+// left is accepted when no surviving replica binds its pod, because the
+// claim-orphan GC reclaims it. On a concurrent-workspace pool a claim whose
+// pod's slot set is non-empty (occupied) is accepted, because a leaked:
+// member, or a counted member whose release no replica performed, keeps the
+// shared claim bound after the pod's last session; the empty-pod slot
+// invariant governs that pod instead. Under RelaxEmptySetClaims a claim on a
+// concurrent pod whose set is empty is accepted, so that relaxation covers
+// this invariant and the empty-pod slot invariant together: a CREATE loser's
+// withdrawal after the winner's last release leaves exactly that claim for
+// the claim-orphan GC.
+//
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3, §5.2 (Slot
+// assignment atomicity), §6.2 (leaked slot semantics)
+func (h *Harness) podsClaimsViolations(claims []string, held, bound, occupied map[string]bool) []string {
+	var out []string
+	for _, pod := range claims {
+		switch {
+		case held[pod]:
+		case occupied[pod]:
+		case h.RelaxEmptySetClaims && h.Concurrent():
+		case h.RelaxOrphanClaims && !bound[pod]:
+		default:
+			out = append(out, fmt.Sprintf("claim on %s is bound, but no non-terminal row names the pod", pod))
+		}
 	}
 	return out
 }

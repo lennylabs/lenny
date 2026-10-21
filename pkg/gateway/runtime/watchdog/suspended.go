@@ -95,7 +95,10 @@ func (w *Watchdog) expireSuspendedIfDue(ctx context.Context, tenant string, row 
 		}
 		r.State = session.StateExpired
 		r.FailureReason = string(session.FailureExpiredIdle)
-		sessionstore.MarkTerminated(r, session.StateSuspended, now)
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because an earlier row's post-terminal
+		// hook, seal included, ran after the pass's now was read.
+		sessionstore.MarkTerminated(r, session.StateSuspended, w.clock())
 		return nil
 	})
 	switch {

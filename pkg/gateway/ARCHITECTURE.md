@@ -95,11 +95,12 @@ concern, beneath the subsystem boundaries above.
 ### `credentials/` — §4.9 Credential Leasing Service
 
 End-user and pool credential storage, lease lifecycle, renewal, fallback, the
-deny list, and the §13.3 platform-admin impersonation path.
+deny list, the §11.4 full_revoke lease step, and the §13.3 platform-admin
+impersonation path.
 
 `credassign`, `credcache`, `credentialpoolstore`, `credentialserver`,
 `credentialstore`, `credfallback`, `credleasestore`, `credrenewal`, `denylist`,
-`impersonation`, `revocation`, `usercreds`.
+`impersonation`, `leaserevoke`, `revocation`, `usercreds`.
 
 ### `connectors/` — §9.3 connector access
 
@@ -114,10 +115,10 @@ authorization boundary, secret resolution, invocation, and tool bridging.
 Session state, routing cache, session-scoped lifecycle workers, interactive
 input and tool-approval registries, message routing, and §9.4 agent memory.
 
-`createdsweeper`, `executor`, `inputwait`, `interactionstore`, `memorystore`,
-`messagerouting`, `orphansession`, `recycle`, `routingcache`, `sessionage`,
-`sessionbudget`, `sessioncallback`, `sessioncheckpointmeta`, `sessionevents`,
-`sessionidle`, `sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
+`executor`, `inputwait`, `interactionstore`, `memorystore`, `messagerouting`,
+`orphansession`, `recycle`, `routingcache`, `sessionage`, `sessionbudget`,
+`sessioncallback`, `sessioncheckpointmeta`, `sessionevents`, `sessionidle`,
+`sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
 `toolapproval`.
 
 ### `runtime/` — §5 runtime and data plane
@@ -133,10 +134,11 @@ and watchdog workers.
 
 ### `podlifecycle/` — §4.6 pod lifecycle
 
-Pod claim and session placement, termination, the PreStop path, and the
-drain-readiness endpoint.
+Pod claim and session placement, termination, the PreStop path, the
+drain-readiness endpoint, and the stale-slot reaper.
 
-`drainreadiness`, `podclaim`, `podsession`, `podterminate`, `prestop`.
+`drainreadiness`, `podclaim`, `podsession`, `podterminate`, `prestop`,
+`slotreaper`.
 
 ### `checkpoint/` — §4.4 Event / Checkpoint Store
 

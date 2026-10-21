@@ -250,7 +250,10 @@ func (s *Sweeper) expireOrphan(ctx context.Context, tenant string, row sessionst
 		if r.FailureReason == "" {
 			r.FailureReason = string(session.FailureExpiredDeadline)
 		}
-		sessionstore.MarkTerminated(r, from, now)
+		// spec: §5.2 (Slot assignment atomicity) — the stamp reads the clock
+		// inside this row's Update, because an earlier row's post-terminal
+		// hook, seal included, ran after the pass's now was read.
+		sessionstore.MarkTerminated(r, from, s.clock())
 		return nil
 	})
 	if errors.Is(err, sessionstore.ErrSuperseded) {

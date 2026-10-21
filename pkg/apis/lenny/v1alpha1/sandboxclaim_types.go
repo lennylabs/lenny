@@ -14,9 +14,9 @@ import (
 // Postgres session row's `pod_assignment` column, so the claim carries no
 // session identifier. A SandboxClaim deliberately omits an ownerReference
 // so its deletion is an explicit step of the claim lifecycle (hold expiry,
-// a hold the acquisition path ends, orphan GC, or pod termination) rather
-// than a cascade from pod deletion; the WarmPoolController garbage-collects
-// orphaned claims.
+// a hold the acquisition path ends, a release that ends the occupancy
+// without reuse, orphan GC, or pod termination) rather than a cascade from
+// pod deletion; the WarmPoolController garbage-collects orphaned claims.
 // spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
 type SandboxClaimSpec struct {
 	// SandboxRef names the Sandbox this claim binds. The
@@ -46,10 +46,11 @@ type SandboxClaimStatus struct {
 	// `recycle.maxPodUptimeSeconds` reached) under which the
 	// WarmPoolController projects the pod to `draining` then `terminated`,
 	// retiring it rather than returning it to the pool; `failed` on a
-	// scrub-failure or crashed-session retirement, which likewise drains
-	// and terminates the pod. Per §4.6.3 only `released` and `failed` are
-	// terminal. Returning a pod to the pool (`reserved → idle` on hold
-	// expiry) is the claim DELETE edge, not a phase value.
+	// scrub-failure retirement (`onScrubFailure: fail`), which likewise
+	// drains and terminates the pod. Per §4.6.3 only `released` and
+	// `failed` are terminal. Returning a pod to the pool (`reserved → idle`
+	// on hold expiry) is the claim DELETE edge, not a phase value.
+	// spec: §4.6.3 (SandboxClaim.status.phase enumeration)
 	// +kubebuilder:validation:Enum=bound;recycling;reserved;released;failed
 	// +optional
 	Phase string `json:"phase,omitempty"`

@@ -175,15 +175,17 @@ func sourceUploadRefField(i int, _ string) string {
 // workspace_materialization / setup_commands / credential_assignment phase
 // timings.
 //
-// On any failure the create-time pod is reclaimed via the §6.2 pre-attached
-// disposition so no pod leaks past a finalize-barrier failure (§4.3). A
-// through-Prepare failure (workspace validation, setup command, or lease
-// assignment) is reclaimed by the binder's lease-aware failPhase, which revokes
-// the lease when AssignCredentials had already run. A pre-Prepare failure (pool
-// resolution, or a credential source that was available at the create-time
-// pre-check but gone by finalize) never engages the binder, so this function
-// reclaims the claimed pod itself before returning; no lease is assigned yet, so
-// the revoke is a no-op. A finalize-time credential availability miss is the
+// No failure exit of this function releases the create-time pod or slot
+// itself. A through-Prepare failure (workspace validation, setup command, or
+// lease assignment) is reclaimed by the binder's lease-aware failPhase, which
+// revokes the lease when AssignCredentials had already run. A pre-Prepare
+// failure (pool resolution, or a credential source that was available at the
+// create-time pre-check but gone by finalize) never engages the binder; the
+// caller's failure write, when it applies, runs the post-terminal hook with
+// fromState finalizing, and the hook's pre-running reclaim releases the pod
+// on an exclusive pool and the session's slot member on a concurrent-workspace
+// pool. When that write loses or reports a store error, the terminal writer
+// or the finalizing watchdog owns the release. A finalize-time credential availability miss is the
 // §4.9 check-to-assignment mismatch (the source vanished across the
 // upload window), so it is remapped to CREDENTIAL_POOL_EXHAUSTED rather than the
 // create-only USER_CREDENTIAL_NOT_FOUND (§4.9). handleFinalize answers the
@@ -227,12 +229,12 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
 		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
-		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — a pre-Prepare
-		// failure (pool resolution) never engages the binder, so its internal
-		// failPhase reclaim cannot run. Reclaim the create-time pod here so a
-		// pool that was deleted during the upload window does not leak the claim
-		// past the §4.6.1 orphan-claim GC timeout.
-		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
+		// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal
+		// states) — a pre-Prepare failure (pool resolution) releases nothing
+		// here. This is the only pre-Prepare exit a concurrent-workspace pool
+		// reaches, and a by-name claim delete would end every live sibling on
+		// its shared claim. The applied failure write's hook releases the pod
+		// or the slot by the row's pool kind.
 		return nil, err
 	}
 	// spec: §5.2 — service mode is claimless and materializes no workspace;
@@ -249,10 +251,9 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	// resolves the assignment inputs the prepare phase's AssignCredentials uses.
 	credPools, poolDeliveryModes, userCredProviders, err := s.resolveCredentialPools(ctx, row)
 	if err != nil {
-		// spec: §4.3 (proposal: finalize-failure reclaim) / §6.2 — the
-		// resolution ran before the binder engaged, so reclaim the create-time
-		// pod here (no lease is assigned yet, so the revoke is a no-op).
-		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
+		// spec: §15.1 (finalize row), §6.2 (finalize timeout) — the resolution
+		// ran before the binder engaged; the applied failure write's hook
+		// releases the create-time pod.
 		// spec: §4.9 — a credential source that was
 		// available at the create-time pre-check but is gone at finalize is the
 		// check-to-assignment mismatch the proposal requires to surface as
@@ -268,11 +269,10 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	// deliveryMode against the bound pod's isolationProfile/spiffeBinding
 	// before the prepare barrier assigns the lease, so a forbidden combination
 	// the pool-definition copy hid is rejected in multi-tenant mode before any
-	// lease is minted. Reclaim the create-time pod first, matching the two
-	// existing pre-Prepare exits above, because the outer finalize handler does
-	// not reclaim on a pre-Prepare error.
+	// lease is minted. Like the two pre-Prepare exits above, the refusal
+	// releases nothing here; the applied failure write's hook releases the
+	// create-time pod.
 	if derr := s.checkCredentialDeliveryIsolation(match, poolDeliveryModes); derr != nil {
-		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
 		return nil, derr
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
@@ -375,18 +375,23 @@ func (s *Server) applyFinalizePrepareResult(ctx context.Context, tenantID, id, r
 // finalizePlanParseFailed answers a finalize call whose stored WorkspacePlan
 // could not be parsed. The parse failed before the prepare phase engaged the
 // binder, so the binder's own reclaim cannot run. A failure write that
-// applied runs the post-terminal hook, which reclaims the pod claimed at
-// /create by name; after a failure write that returned a store error no hook
-// ran, so the handler reclaims the pod itself. When a terminal writer
-// overtook the call, the failure write loses, the terminal writer's reclaim
-// owns the pod, and the handler revokes any lease under the session and
-// answers 409 with the terminal state without deleting a claim by name.
+// applied runs the post-terminal hook, whose pre-running reclaim releases the
+// pod claimed at /create by the row's pool kind. After a failure write that
+// returned a store error no hook ran, so the handler reclaims through the same
+// slot-aware call, keyed by scrubPolicy: on a concurrent-workspace pool it
+// removes only the session's slot member, and on an exclusive pool it deletes
+// the claim by name. No ready write runs on this exit, so the reclaim cannot
+// end a committed `ready` session, and a later release by the finalizing
+// watchdog's hook is a keyed no-op. When a terminal writer overtook the call,
+// the failure write loses, the terminal writer's reclaim owns the pod, and the
+// handler revokes any lease under the session and answers 409 with the
+// terminal state without releasing the pod.
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
-// §7.1 step 23 (lease release)
+// §6.1 (Per-session credential lease lifecycle), §7.1 step 23 (lease release)
 func (s *Server) finalizePlanParseFailed(
-	w http.ResponseWriter, r *http.Request, tenantID, id, podAssignment string, perr error,
+	w http.ResponseWriter, r *http.Request, tenantID, id, podAssignment, scrubPolicy string, perr error,
 ) {
-	ferr := s.failFinalizing(r.Context(), tenantID, id, false)
+	ferr := s.failFinalizing(r.Context(), tenantID, id)
 	if isPreconditionError(ferr) {
 		s.revokeFinalizeLease(id)
 		s.writePreconditionError(w, ferr)
@@ -394,21 +399,22 @@ func (s *Server) finalizePlanParseFailed(
 	}
 	if ferr != nil {
 		log.Printf("sessionserver: fail finalizing session %s after plan parse failure: %v", id, ferr)
-		s.reclaimFinalizedPod(r.Context(), podAssignment, id)
+		s.reclaimFinalizedPod(r.Context(), podAssignment, id, scrubPolicy == ScrubPolicyPerSlot)
 	}
 	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 		"stored workspace plan could not be parsed: "+perr.Error(), nil)
 }
 
 // finalizePrepareFailed answers a finalize call whose prepare phase failed.
-// The failing step already reclaimed the pod: the binder's failPhase or
-// reconnect reclaim for a through-Prepare failure, or prepareAtFinalize's own
-// reclaim for a pre-Prepare failure, so the failure write passes the
-// podReclaimed flag and its post-terminal hook deletes no claim by name. The
-// handler writes `failed` only while the row is still `finalizing`, and
-// revokes the session's leases on every
-// outcome, because a partial credential assignment can leave a recorded lease
-// that the binder's attempt-scoped release omits. A lost failure write means
+// The handler writes `failed` only while the row is still `finalizing`. A
+// failure write that applied runs the post-terminal hook, whose pre-running
+// reclaim releases the pod or the slot by the row's pool kind; after a
+// through-Prepare failure the binder's failPhase has already reclaimed the
+// exclusive pod, and the hook's release repeats it. The handler revokes the
+// session's leases on every outcome, because a partial credential assignment
+// can leave a recorded lease that the binder's attempt-scoped release omits,
+// and because a failure write that commits and still reports a store error
+// runs no hook, which leaves this revoke as the only lease return. A lost failure write means
 // a terminal writer overtook the call: the failure is still recorded, and the
 // response is 409 with the terminal state in place of the prepare-phase
 // error. Otherwise the failure surfaces through writePodClaimError, and a
@@ -416,9 +422,9 @@ func (s *Server) finalizePlanParseFailed(
 // SESSION_CREATION_FAILED fallback unless it is a §13.4 archive validator
 // violation.
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
-// §7.1 step 23 (lease release)
+// §6.1 (Per-session credential lease lifecycle), §7.1 step 23 (lease release)
 func (s *Server) finalizePrepareFailed(w http.ResponseWriter, r *http.Request, tenantID, id string, err error) {
-	ferr := s.failFinalizing(r.Context(), tenantID, id, true)
+	ferr := s.failFinalizing(r.Context(), tenantID, id)
 	s.revokeFinalizeLease(id)
 	if isPreconditionError(ferr) {
 		s.recordPodClaimFailure(err)
@@ -439,13 +445,12 @@ func (s *Server) finalizePrepareFailed(w http.ResponseWriter, r *http.Request, t
 // error is ambiguous, so the handler attempts the guarded failure write and
 // branches on its outcome:
 //
-//   - The failure write commits: its post-terminal hook reclaims the pod and
-//     its lease by name when the prepare phase ran (an unprepared finalize
-//     passes the podReclaimed flag, so the hook deletes no claim by name),
-//     and the handler answers 500.
-//   - The failure write fails with a store error: no hook ran, so the
-//     handler reclaims the pod and its lease when the prepare phase ran, and
-//     answers 500.
+//   - The failure write commits: its post-terminal hook releases the pod or
+//     the slot by the row's pool kind, and the handler answers 500.
+//   - The failure write fails with a store error: the ready write may have
+//     committed, so the handler releases nothing and answers 500. When the
+//     row is still `finalizing`, the finalizing watchdog's terminal write and
+//     its hook release the pod.
 //   - The failure write loses to a terminal state: a terminal writer ended the
 //     session and owns the pod, so the handler revokes any lease and answers
 //     409 with that state.
@@ -455,16 +460,14 @@ func (s *Server) finalizePrepareFailed(w http.ResponseWriter, r *http.Request, t
 //     ready-write error.
 //
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states),
-// §7.1 step 23 (lease release)
-func (s *Server) finalizeReadyWriteFailed(
-	w http.ResponseWriter, r *http.Request, tenantID, id, podAssignment string, prepared bool, err error,
-) {
+// §6.1 (Per-session credential lease lifecycle), §7.1 step 23 (lease release)
+func (s *Server) finalizeReadyWriteFailed(w http.ResponseWriter, r *http.Request, tenantID, id string, err error) {
 	if isPreconditionError(err) {
 		s.revokeFinalizeLease(id)
 		s.writePreconditionError(w, err)
 		return
 	}
-	ferr := s.failFinalizing(r.Context(), tenantID, id, !prepared)
+	ferr := s.failFinalizing(r.Context(), tenantID, id)
 	var pe *session.PreconditionError
 	if errors.As(ferr, &pe) {
 		if session.IsTerminal(pe.CurrentState) {
@@ -477,9 +480,6 @@ func (s *Server) finalizeReadyWriteFailed(
 	}
 	if ferr != nil {
 		log.Printf("sessionserver: fail finalizing session %s after ready write failure: %v", id, ferr)
-		if prepared {
-			s.reclaimFinalizedPod(r.Context(), podAssignment, id)
-		}
 	}
 	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 }
@@ -492,20 +492,24 @@ func isPreconditionError(err error) bool {
 	return errors.As(err, &pe)
 }
 
-// reclaimFinalizedPod releases the pod claimed at /create and revokes the §4.9
-// credential lease the prepare phase assigned. The finalize handler calls it
-// only on an exit whose failure write failed with a store error, where no
-// post-terminal hook ran, never after a lost or applied write, and
-// prepareAtFinalize calls it on its pre-Prepare exits. ReclaimClaimed deletes the per-pod SandboxClaim and revokes the lease
-// keyed by sessionID, so a finalize failure does not leak either.
-// Best-effort: the §4.6.1 orphan-claim GC backstops a release error.
-// spec: §7.1 steps 11-13 (finalize prepare phase), §7.1 step 23 (lease release),
-// §4.6.1 (orphan-claim GC).
-func (s *Server) reclaimFinalizedPod(ctx context.Context, sandboxName, sessionID string) {
+// reclaimFinalizedPod releases the pod or slot claimed at /create and revokes
+// the §4.9 credential lease keyed by sessionID. Its only caller is
+// finalizePlanParseFailed, on a failure write that returned a store error,
+// where no post-terminal hook ran and no ready write can have committed.
+// perSlot is the row's frozen scrubPolicy discriminator: on a
+// concurrent-workspace pool ReclaimClaimed removes the session's slot member
+// and deletes the shared claim only when that release empties the set, and on
+// an exclusive pool it deletes the claim by name. Best-effort: the §4.6.1
+// orphan-claim GC backstops a release error.
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §4.6.3 (SandboxClaim: a
+// release that ends the occupancy without reuse), §5.2 (Slot assignment
+// atomicity), §6.1 (Per-session credential lease lifecycle), §4.6.1
+// (orphan-claim GC).
+func (s *Server) reclaimFinalizedPod(ctx context.Context, sandboxName, sessionID string, perSlot bool) {
 	if s.podBinder == nil || sandboxName == "" {
 		return
 	}
-	if err := s.podBinder.ReclaimClaimed(ctx, sandboxName, sessionID); err != nil {
+	if err := s.podBinder.ReclaimClaimed(ctx, sandboxName, sessionID, perSlot); err != nil {
 		log.Printf("sessionserver: reclaim finalized pod %s for session %s after finalize failure: %v",
 			sandboxName, sessionID, err)
 	}

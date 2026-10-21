@@ -946,8 +946,8 @@ func (a *AttachStream) CloseSend() error {
 // Shutdown tears the named session down: the adapter ends the session's
 // use of the pod's runtime process, which stays alive for the pod's life,
 // removes its per-slot tree, and releases the slot it held. reason is an
-// opaque cause string surfaced to the adapter — the §11.4 full_revoke
-// fan-out passes `USER_REVOKED` — and deadline bounds the graceful phase.
+// opaque cause string surfaced to the adapter, and deadline bounds the
+// graceful phase.
 // A zero deadline lets the adapter apply its default grace period. The
 // returned bool reports whether the session's close and slot teardown
 // completed cleanly.
@@ -955,7 +955,11 @@ func (a *AttachStream) CloseSend() error {
 // The request is addressed by the session identifier alone, which under
 // §5.2 also names the slot that session holds, and the handler is
 // idempotent: a request naming a session the adapter has already released
-// is a no-op reporting a clean exit.
+// is a no-op that answers absent. That answer reports a clean exit except
+// while another Shutdown's teardown of the session is in flight, or after
+// the last Shutdown that removed the session's entry reported an unclean
+// exit; in both cases the session's runtime may still run, so the answer
+// reports an unclean exit (§4.7.1 rule 11).
 //
 // spec: §4.7 (Shutdown row); §4.7.10 (runtime process lifetime); §5.2;
 // §11.4.
@@ -1054,8 +1058,8 @@ type RecycleScrub struct {
 // before this call bounds it. The returned bool reports whether the ending
 // session's runtime exited cleanly.
 //
-// The plain Shutdown helper leaves the recycle sub-message nil (the
-// terminate path, on which the pod is replaced).
+// The plain Shutdown helper leaves the recycle sub-message nil, and the
+// claim effect of that release is the one §4.6.3 assigns.
 //
 // spec: §4.7 Shutdown recycle disposition; §5.2 whole-pod scrub trigger.
 func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc RecycleScrub) (bool, error) {

@@ -20,7 +20,14 @@
 // session the scenario created: pods and claims, credential leases,
 // coordination, per-replica records, queues, and client-visible effects.
 //
+// With Options.MaxConcurrentSessions above 1 the warm pool is a
+// concurrent-workspace pool: each replica's binder holds its own slot
+// counter on the shared Redis, and the checker also asserts that every
+// pod's slot set holds exactly the non-terminal sessions naming the pod
+// plus its leaked: members, that no pod with an empty set keeps a bound
+// claim, and that no member was removed twice in one reservation.
+//
 // spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §10.1.1
 // (Stateless Replicas and Per-Session Coordination), §10.1.5 (Stale Replica
-// Behavior)
+// Behavior), §5.2 (Slot assignment atomicity)
 package lifecycleharness

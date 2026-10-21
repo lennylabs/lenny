@@ -298,7 +298,7 @@ func TestPostClaimHookErrorReleasesTheClaimOnce_spec_7_3(t *testing.T) {
 	t.Run("resume_slot_with_sibling", func(t *testing.T) {
 		e := newPostClaimEnv(t, workingAdapterDialer(t))
 		// A co-tenant's slot on the pod the resume claims.
-		if _, _, err := e.binder.SlotCounter.Reserve(context.Background(), "sbx-1", 4); err != nil {
+		if _, _, err := e.binder.SlotCounter.Reserve(context.Background(), "sbx-1", "sibling", 4); err != nil {
 			t.Fatalf("seed sibling occupancy: %v", err)
 		}
 		req := resumeRequest(4)

@@ -178,9 +178,9 @@ state that the READY signal is one of them.
    acknowledgment (runtime process kept across sessions)").
 
 8. On a pool whose `sessionPolicy.maxConcurrentSessions` is greater than 1: `gateway` → `redis`,
-   `REG-SLOTCOUNT`, Redis. The gateway reserves the intra-pod slot with a Lua script that checks the
-   counter and increments it only when the result would not exceed `maxConcurrentSessions`, returning a
-   slot-unavailable result otherwise. The counter is the intra-pod capacity gate and the per-pod claim
+   `REG-SLOTCOUNT`, Redis. The gateway reserves the intra-pod slot through the atomic reservation of
+   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+   **Slot assignment atomicity**, which is the intra-pod capacity gate, and the per-pod claim
    `REG-CLAIM` guards pod acquisition; a pod whose slots are all taken is skipped and the gateway falls
    through to the next pod in the pool, claiming a further warm pod when every pod is at its limit
    ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.3). During
@@ -723,9 +723,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
-    `Shutdown`, the graceful end-of-session teardown of the named session. On the default disposition the
-    pod is replaced. On the recycle disposition, which applies
-    when occupancy reaches zero on a recycling pod, the request also carries the pod identity and the
+    `Shutdown`, the graceful end-of-session teardown of the named session. On the recycle disposition,
+    which applies when occupancy reaches zero on a recycling pod unless the release ends the occupancy
+    without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
+    the request also carries the pod identity and the
     whole-pod scrub parameters, and the adapter keeps its own process and the runtime process alive across
     the recycle boundary and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter),
@@ -770,9 +771,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 
 17. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway releases the
-    pod. On the default disposition the claim is deleted and the pod projects `draining` and then
-    `terminated` ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
-    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3). On the recycle
+    pod. When the release ends the occupancy without reuse, the gateway deletes the claim
+    ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries), §28.3), and the
+    pod's phase follows the [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)
+    occupancy projection. On the recycle
     disposition the gateway patches the claim's binding state from `bound` to `recycling`, the whole-pod
     scrub runs while the pod projects `claimed`, the adapter reports its outcome with `ReportPodScrub`,
     and the gateway then patches the claim to `reserved`, coordinates the SDK re-warm on a preConnect
@@ -1524,8 +1526,8 @@ independent in them.
   `sessionIsolationLevel.residualStateWarning` on the session creation response
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
   [§7.1](07_session-lifecycle.md#71-normal-flow)).
-- The occupancy and claim primitives. `REG-SLOTCOUNT` is an atomic per-pod counter that ceilings
-  concurrent slots and is the occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
+- The occupancy and claim primitives. `REG-SLOTCOUNT` ceilings a pod's concurrent slots and is the
+  occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
   on first claim (§28.3, [§6.2](06_warm-pod-model.md#62-pod-state-machine)). The specification states no
   per-slot claim object.
 - The shared asset tree. `/workspace/shared/` is populated by the adapter at warm time, before the pod

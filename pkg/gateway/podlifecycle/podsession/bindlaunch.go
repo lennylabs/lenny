@@ -48,7 +48,9 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
 			return nil, err
 		}
-		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+		// Launch runs only on an exclusive pool, so the reclaim deletes the
+		// claim by name rather than releasing a slot.
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID, false); rerr != nil {
 			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
 		}
 		return nil, err

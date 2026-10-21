@@ -2,15 +2,15 @@
 proposal: 0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po
 title: Release ownership for pods, slots, per-pod claims, and credential leases at and after a terminal write
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-16
 drafted-by: change-proposal
 reviewed-date: 2026-10-19
 reviewed-by: change-proposal
 approved-date: 2026-10-19
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-21
+implemented-by: jaf
 ---
 
 ## Review history

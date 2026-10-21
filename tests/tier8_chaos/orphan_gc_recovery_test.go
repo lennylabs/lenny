@@ -31,12 +31,15 @@
 package tier8_chaos_test
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
+	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
 // lennyControllerDeployment runs the WarmPoolController (and its
@@ -124,7 +127,7 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 	if out, err := c.ApplyStdin(t, claim); err != nil {
 		t.Fatalf("failed to create the recycling claim: %v\n%s", err, out)
 	}
-	// Aged well past the default claimOrphanTimeout (5m) so the first sweep
+	// Aged well past the default claimOrphanTimeout (15m) so the first sweep
 	// after creation treats the claim as orphaned.
 	aged := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
 	statusPatch := fmt.Sprintf(
@@ -163,5 +166,175 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 		if strings.TrimSpace(out) != "" {
 			t.Errorf("Sandbox %s phase = %q after reclaim, want draining or terminated", sandboxRef, phase)
 		}
+	}
+}
+
+// agedClaimResidue creates claim-<pod> on the warm pod in binding state
+// phase with a binding-state transition time older than the default
+// claimOrphanTimeout, which is the residue a gateway replica leaves when it
+// exits between a session's terminal commit and its release.
+func agedClaimResidue(t *testing.T, c *kind.Cluster, pod, phase string) string {
+	t.Helper()
+	claimName := "claim-" + pod
+	claim := sandboxClaimManifest(claimName, agentNamespace, pod, "sess-orphan-"+phase)
+	t.Cleanup(func() { _, _ = c.DeleteStdin(t, claim) })
+	if out, err := c.ApplyStdin(t, claim); err != nil {
+		t.Fatalf("create the %s claim residue: %v\n%s", phase, err, out)
+	}
+	aged := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	patch := fmt.Sprintf(`{"status":{"phase":%q,"bindingStateTransitionTime":%q}}`, phase, aged)
+	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandboxclaim", claimName,
+		"--subresource=status", "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("stamp the %s binding state: %v\n%s", phase, err, out)
+	}
+	return claimName
+}
+
+// requireDrainedWithinSweep waits for the orphan GC to delete the claim, in
+// the GC's sweep interval plus reconcile latency, and requires the pod to
+// drain rather than return to idle.
+func requireDrainedWithinSweep(t *testing.T, c *kind.Cluster, pod, claimName string) {
+	t.Helper()
+	reclaimed := pollUntil(3*time.Minute, 5*time.Second, func() bool {
+		out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxclaim", claimName, "--ignore-not-found", "-o", "name")
+		return err == nil && strings.TrimSpace(out) == ""
+	})
+	if !reclaimed {
+		t.Fatalf("the orphan GC did not reclaim %s within one sweep interval of claimOrphanTimeout (Sandbox phase %q)",
+			claimName, sandboxPhase(t, c, pod))
+	}
+	if phase := sandboxPhase(t, c, pod); phase == "idle" {
+		t.Errorf("Sandbox %s returned to idle after the reclaim; an occupied pod must drain", pod)
+	}
+}
+
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 7.2 (Interactive Session
+// Model)
+// diagnosis: the claim a gateway replica leaves bound when it exits between a
+// session's terminal commit and its release was not reclaimed by the
+// chart-installed claim-orphan GC within claimOrphanTimeout plus one sweep
+// interval, so the pod is held for good. First confirm the lenny-controller
+// renders --claim-orphan-timeout and logs the orphan-claim GC registration.
+func TestOrphanGCReclaimsTheBoundClaimACrashLeaves_spec_4_6_1(t *testing.T) {
+	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
+	if !deploymentReady(t, c, lennyControllerDeployment) {
+		t.Skipf("not yet applicable: precondition not met: %s Deployment is not fully Ready before the test", lennyControllerDeployment)
+	}
+	pod := idleWarmSandbox(t, c, orphanGCFixturePool)
+	claimName := agedClaimResidue(t, c, pod, "bound")
+	requireDrainedWithinSweep(t, c, pod, claimName)
+}
+
+// redisCLI runs redis-cli against the cluster Redis.
+func redisCLI(t *testing.T, c *kind.Cluster, args ...string) string {
+	t.Helper()
+	out, err := c.KubectlOut(t, append([]string{"-n", lennySystemNamespace, "exec", "deploy/lenny-redis", "--", "redis-cli"}, args...)...)
+	if err != nil {
+		t.Fatalf("redis-cli %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(out)
+}
+
+// ageClaimTransition moves the claim's binding-state transition time past
+// the default claimOrphanTimeout, leaving its phase as it is.
+func ageClaimTransition(t *testing.T, c *kind.Cluster, claimName string) {
+	t.Helper()
+	aged := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	patch := fmt.Sprintf(`{"status":{"bindingStateTransitionTime":%q}}`, aged)
+	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandboxclaim", claimName,
+		"--subresource=status", "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("age the binding-state transition of %s: %v\n%s", claimName, err, out)
+	}
+}
+
+// claimPhaseOf reads the claim's binding state, or "" when it is gone.
+func claimPhaseOf(t *testing.T, c *kind.Cluster, claimName string) string {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxclaim", claimName, "--ignore-not-found", "-o", "jsonpath={.status.phase}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 12.4 (Redis failure
+// behavior), 5.2 (Post-recovery rehydration atomicity), 5.2 (Slot assignment
+// atomicity)
+// diagnosis: a concurrent pod whose slot set still counts the member of a
+// terminal session whose release failed during a Redis outage was not
+// drained by the claim-orphan GC once the pod's last live session ended; or
+// the stale-slot reaper released that member although it was the pod's last,
+// which would empty the set outside a release; or the member was dropped
+// before the drain, which would let the pod admit over its cap. The pod's
+// last live release must leave the member and the claim bound, the GC's
+// slot-holder read must exclude the terminal row that still names the pod,
+// and the GC must drain the pod. First confirm the gateway leader logs the
+// stale-slot reaper cadence line and the lenny-controller logs the
+// orphan-claim GC registration.
+func TestOrphanGCDrainsAConcurrentPodHoldingAnOutageMember_spec_4_6_1(t *testing.T) {
+	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
+	if !deploymentReady(t, c, lennyControllerDeployment) {
+		t.Skipf("not yet applicable: precondition not met: %s Deployment is not fully Ready before the test", lennyControllerDeployment)
+	}
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	tenant := "orphan-gc-a27-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
+	}
+	live, err := d.CreateAndStart(ctx, tenant, reaperConcurrentRuntime)
+	if err != nil {
+		t.Skipf("not-yet-applicable: the concurrent pool admitted no session: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, live.ID) })
+	pod := live.PodAssignment
+	stranded, err := d.CreateAndStart(ctx, tenant, reaperConcurrentRuntime)
+	if err != nil || stranded.PodAssignment != pod {
+		t.Skipf("not-yet-applicable: the second session did not share %s: %+v, %v", pod, stranded, err)
+	}
+	setKey := "lenny:pod:{" + pod + "}:active_slots"
+	t.Cleanup(func() { redisCLI(t, c, "SREM", setKey, stranded.ID) })
+	// The stranded session ends and its release runs; restoring its member
+	// leaves the set as a release that failed during a Redis outage on a
+	// replica that then exited leaves it.
+	if err := d.Terminate(ctx, tenant, stranded.ID); err != nil {
+		t.Fatalf("terminate the stranded session: %v", err)
+	}
+	if !pollUntil(time.Minute, time.Second, func() bool { return !slotMember(t, c, pod, stranded.ID) }) {
+		t.Fatalf("the stranded session's release did not remove its member from %s", pod)
+	}
+	redisCLI(t, c, "SADD", setKey, stranded.ID)
+	// The pod's last live session ends: its release removes its own member,
+	// leaves the stranded one, and runs no occupancy-zero disposition.
+	if err := d.Terminate(ctx, tenant, live.ID); err != nil {
+		t.Fatalf("terminate the live session: %v", err)
+	}
+	if !pollUntil(time.Minute, time.Second, func() bool { return !slotMember(t, c, pod, live.ID) }) {
+		t.Fatalf("the live session's release did not remove its member from %s", pod)
+	}
+	claimName := "claim-" + pod
+	if phase := claimPhaseOf(t, c, claimName); phase != "bound" {
+		t.Fatalf("claim %s = %q after the last live release, want bound (the stranded member keeps it)", claimName, phase)
+	}
+	// The stranded session's row is terminal and older than the reaper's
+	// terminal age, so only the pod's-last-member rule keeps it.
+	ageTermination(t, c, tenant, stranded.ID)
+	time.Sleep(150 * time.Second) // two reaper passes at the default 60s interval
+	if !slotMember(t, c, pod, stranded.ID) {
+		t.Fatalf("the stale-slot reaper released %s, the last member of %s", stranded.ID, pod)
+	}
+	if phase := claimPhaseOf(t, c, claimName); phase != "bound" {
+		t.Fatalf("claim %s = %q before its transition aged, want bound", claimName, phase)
+	}
+	ageClaimTransition(t, c, claimName)
+	requireDrainedWithinSweep(t, c, pod, claimName)
+	if !slotMember(t, c, pod, stranded.ID) {
+		t.Errorf("the stranded member left %s before the pod terminated", pod)
 	}
 }

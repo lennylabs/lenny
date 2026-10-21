@@ -139,11 +139,11 @@ func (f *streamFixture) assertLeasesUnchanged(t *testing.T, holders map[string]s
 
 // spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume)
 // diagnosis: a stream failure on this replica's current binding is reported
-// as runtime_crash with the stream's sandbox as the pod assignment, so the
-// retryable failure moves a running session to resume_pending and the funnel
-// releases the binding with the failed disposition. A failure means the
-// report uses another reason, loses the pod identity, or never reaches the
-// failure funnel.
+// as runtime_crash, so the retryable failure moves a running session to
+// resume_pending, clears its pod_assignment, and the funnel releases the
+// binding with the failed disposition. A failure means the report uses
+// another reason, leaves the row naming the released pod, or never reaches
+// the failure funnel.
 func TestStreamFailureReportsRuntimeCrash_spec_28_5_1(t *testing.T) {
 	f := newStreamFixture(t)
 	f.seedAt(t, "sess-crash", session.StateRunning, 1, 1)
@@ -154,8 +154,10 @@ func TestStreamFailureReportsRuntimeCrash_spec_28_5_1(t *testing.T) {
 	if row.State != session.StateResumePending || row.FailureReason != string(session.FailureRuntimeCrash) {
 		t.Fatalf("row = %s/%q, want resume_pending/runtime_crash", row.State, row.FailureReason)
 	}
-	if row.PodAssignment != "pod-x" {
-		t.Errorf("PodAssignment = %q, want the stream's sandbox pod-x", row.PodAssignment)
+	// spec: §5.2 (Post-recovery rehydration atomicity) — the recovery
+	// edge clears the pod whose slot the funnel releases.
+	if row.PodAssignment != "" {
+		t.Errorf("PodAssignment = %q, want it cleared on the resume_pending edge", row.PodAssignment)
 	}
 	if calls := f.exec.callList(); len(calls) != 1 || calls[0] != executor.DispositionFailed {
 		t.Errorf("release calls = %v, want one failed release", calls)
@@ -233,8 +235,12 @@ func TestStreamFailureNonRetryableReleasesOnLiveContext_spec_28_5_1(t *testing.T
 
 	f.srv.ReportAttachStreamFailure("acme", "sess-fatal", "pod-x", heartbeatEnd)
 
-	if st := f.state(t, "sess-fatal").State; st != session.StateFailed {
-		t.Fatalf("state = %s, want failed", st)
+	fatal := f.state(t, "sess-fatal")
+	if fatal.State != session.StateFailed {
+		t.Fatalf("state = %s, want failed", fatal.State)
+	}
+	if fatal.PodAssignment != "pod-x" {
+		t.Errorf("PodAssignment = %q, want the stream's sandbox pod-x stamped on the failed edge", fatal.PodAssignment)
 	}
 	calls := f.exec.callList()
 	if len(calls) != 1 || calls[0] != executor.DispositionFailed {

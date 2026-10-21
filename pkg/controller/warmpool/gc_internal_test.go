@@ -165,11 +165,14 @@ func TestClassifyZeroKeyNeverReclaims(t *testing.T) {
 // selected when the operator-tunable fields are unset, and the operator value
 // otherwise.
 //
-// spec: 4.6.1 (claimOrphanTimeout default 5m, reserved-hold grace
+// spec: 4.6.1 (claimOrphanTimeout default 15m, reserved-hold grace
 // operator-tunable).
 func TestGCTimeoutDefaults(t *testing.T) {
 	t.Parallel()
 	zero := &ClaimGarbageCollector{}
+	if defaultClaimOrphanTimeout != 15*time.Minute {
+		t.Errorf("defaultClaimOrphanTimeout = %v, want 15m", defaultClaimOrphanTimeout)
+	}
 	if got := zero.orphanTimeout(); got != defaultClaimOrphanTimeout {
 		t.Errorf("orphanTimeout default = %v, want %v", got, defaultClaimOrphanTimeout)
 	}

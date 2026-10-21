@@ -71,6 +71,9 @@ spec:
                    agree on one port. F-16.9.2. */}}
             - --metrics-bind-address=:{{ .Values.controller.metricsPort }}
             - --health-probe-bind-address=:8081
+            # §4.6.1 claimOrphanTimeout. The gateway's --slot-reaper-terminal-age
+            # renders the same value (§5.2 Slot assignment atomicity).
+            - --claim-orphan-timeout={{ .Values.controller.claimOrphanTimeoutSeconds | default 900 }}s
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}

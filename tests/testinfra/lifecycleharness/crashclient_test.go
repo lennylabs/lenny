@@ -5,6 +5,7 @@ package lifecycleharness
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -128,5 +129,66 @@ func TestCrashableClientRecordsAcceptedClaimCreates_spec_4_6_1(t *testing.T) {
 	bare := crashableClient{Client: inner, crashed: &crashed}
 	if err := bare.Create(ctx, claim("claim-e", "pod-e")); err != nil {
 		t.Errorf("create with no log: %v", err)
+	}
+}
+
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
+// atomicity)
+//
+// The departure scenarios arm a ClaimFault on one replica's binder to fail
+// or hold a SandboxClaim write. The fault sees every claim create, status
+// write, and delete with the claim's name, a refused write never reaches the
+// kube-apiserver, a write of another kind bypasses it, and disarming it lets
+// the writes through again.
+func TestClaimFaultInterceptsClaimWrites_spec_4_6_1(t *testing.T) {
+	ctx := context.Background()
+	s := runtime.NewScheme()
+	if err := lennyv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	claim := func(name string) *lennyv1.SandboxClaim {
+		return &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: Namespace}}
+	}
+	inner := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(claim("kept")).
+		WithStatusSubresource(&lennyv1.SandboxClaim{}).Build()
+	var crashed atomic.Bool
+	var fault atomic.Pointer[ClaimFault]
+	c := crashableClient{Client: inner, crashed: &crashed, claims: &ClaimLog{}, fault: &fault}
+	var seen []string
+	refuse := errors.New("injected")
+	f := ClaimFault(func(_ context.Context, op ClaimOp, name string) error {
+		seen = append(seen, fmt.Sprintf("%d:%s", op, name))
+		return refuse
+	})
+	fault.Store(&f)
+
+	if err := c.Create(ctx, claim("new")); !errors.Is(err, refuse) {
+		t.Errorf("create = %v, want the injected error", err)
+	}
+	if err := c.Status().Update(ctx, claim("kept")); !errors.Is(err, refuse) {
+		t.Errorf("status update = %v, want the injected error", err)
+	}
+	if err := c.SubResource("status").Patch(ctx, claim("kept"), client.MergeFrom(claim("kept"))); !errors.Is(err, refuse) {
+		t.Errorf("status patch = %v, want the injected error", err)
+	}
+	if err := c.Delete(ctx, claim("kept")); !errors.Is(err, refuse) {
+		t.Errorf("delete = %v, want the injected error", err)
+	}
+	if err := c.Create(ctx, &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: Namespace}}); err != nil {
+		t.Errorf("a sandbox create went through the claim fault: %v", err)
+	}
+	want := []string{
+		fmt.Sprintf("%d:new", ClaimCreate), fmt.Sprintf("%d:kept", ClaimStatus),
+		fmt.Sprintf("%d:kept", ClaimStatus), fmt.Sprintf("%d:kept", ClaimDelete),
+	}
+	if fmt.Sprint(seen) != fmt.Sprint(want) {
+		t.Errorf("fault saw %v, want %v", seen, want)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "kept"}, &lennyv1.SandboxClaim{}); err != nil {
+		t.Errorf("the refused delete reached the kube-apiserver: %v", err)
+	}
+	fault.Store(nil)
+	if err := c.Delete(ctx, claim("kept")); err != nil {
+		t.Errorf("delete after disarming: %v", err)
 	}
 }

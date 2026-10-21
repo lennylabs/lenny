@@ -255,25 +255,37 @@ func TestReleaseUncommittedReturnsOnlyTheAttemptsPodAndLeases_spec_7_3(t *testin
 		})
 	}
 
-	t.Run("unconfirmed reclaim releases nothing", func(t *testing.T) {
-		trace := newRPCTrace()
-		e := newPostClaimEnv(t, tracedAdapterDialer(t, trace))
-		res, err := e.binder.Resume(context.Background(), credentialedResumeRequest(1))
-		if err != nil {
-			t.Fatalf("Resume: %v", err)
-		}
-		trace.failOn = "Shutdown"
-		err = e.binder.ReleaseUncommitted(context.Background(), res.Result, true)
-		if !errors.Is(err, podsession.ErrReclaimUnconfirmed) {
-			t.Fatalf("ReleaseUncommitted = %v, want ErrReclaimUnconfirmed", err)
-		}
-		if !podClaimExists(t, e.kube, "sbx-1") {
-			t.Error("the claim was released after an unconfirmed reclaim")
-		}
-		if len(e.assigner.leaseReleases) != 0 {
-			t.Errorf("leases released = %v, want none", e.assigner.leaseReleases)
-		}
-	})
+	// The unconfirmed-reclaim departure holds on both pool kinds: on the
+	// maxConcurrentSessions: 4 pool the attempt's member stays counted, so
+	// the stale-slot reaper or the orphan GC is its backstop.
+	// spec: §5.2 (Slot assignment atomicity), §4.6.1 (Orphaned SandboxClaim
+	// detection)
+	for _, pool := range []int32{1, 4} {
+		t.Run("unconfirmed reclaim releases nothing/"+map[int32]string{1: "exclusive", 4: "concurrent"}[pool], func(t *testing.T) {
+			trace := newRPCTrace()
+			e := newPostClaimEnv(t, tracedAdapterDialer(t, trace))
+			res, err := e.binder.Resume(context.Background(), credentialedResumeRequest(pool))
+			if err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			trace.failOn = "Shutdown"
+			err = e.binder.ReleaseUncommitted(context.Background(), res.Result, true)
+			if !errors.Is(err, podsession.ErrReclaimUnconfirmed) {
+				t.Fatalf("ReleaseUncommitted = %v, want ErrReclaimUnconfirmed", err)
+			}
+			if !podClaimExists(t, e.kube, "sbx-1") {
+				t.Error("the claim was released after an unconfirmed reclaim")
+			}
+			if len(e.assigner.leaseReleases) != 0 {
+				t.Errorf("leases released = %v, want none", e.assigner.leaseReleases)
+			}
+			if pool == 4 {
+				if got := e.activeSlots(t); got != "1" {
+					t.Errorf("active_slots = %s, want 1; the unconfirmed attempt's member stays counted", got)
+				}
+			}
+		})
+	}
 }
 
 // spec: 5.2 (Pool Configuration and Execution Modes)

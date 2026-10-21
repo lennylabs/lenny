@@ -93,17 +93,22 @@ func WithClockForTest(now func() time.Time) Option {
 // outage). A Redis-only outage therefore degrades slot admission to Postgres
 // latency rather than rejecting all session dispatch.
 //
+// The call stamps the outage clock when it is zero, and an admission records
+// (pod, session) in the outage ledger, so the recovery rebuild adds the
+// admitted session's member when Redis returns (recovery.go).
+//
 // spec: §12.4 ("Postgres fallback under a per-pod advisory lock, then fail
 // closed"); §5.2 (intra-pod capacity gate during a Redis outage).
-func (c *Counter) fallbackReserve(ctx context.Context, podID string, maxConcurrent int32, rehydrated bool) (int32, bool, error) {
+func (c *Counter) fallbackReserve(ctx context.Context, podID, sessionID string, maxConcurrent int32, rehydrated bool) (int32, bool, error) {
+	// Stamp (or read) the start of the current outage window and fail closed
+	// once it exceeds the bound. The window is measured from the first call
+	// that observed Redis unreachable.
+	exceeded := c.outageExceeded()
 	if c.fallback == nil {
 		// No Postgres fallback configured: a Redis outage fails closed.
 		return 0, rehydrated, ErrFailClosed
 	}
-	// Stamp (or read) the start of the current outage window and fail closed
-	// once it exceeds the bound. The window is measured from the first
-	// reservation that observed Redis unreachable.
-	if c.outageExceeded() {
+	if exceeded {
 		return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: outage window exceeded: %w", podID, ErrFailClosed)
 	}
 	count, admitted, err := c.fallback.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
@@ -115,6 +120,7 @@ func (c *Counter) fallbackReserve(ctx context.Context, podID string, maxConcurre
 	if !admitted {
 		return 0, rehydrated, ErrSlotsExhausted
 	}
+	c.record(entryAdmission, podID, sessionID)
 	return count, rehydrated, nil
 }
 
@@ -132,13 +138,11 @@ func (c *Counter) outageExceeded() bool {
 	return now.Sub(c.outageSince) > c.fallbackMaxWindow
 }
 
-// clearOutage resets the §12.4 outage window after Redis answers, so a
-// later outage measures a fresh window. spec: §12.4 (on Redis recovery the
-// counter resumes fast-path enforcement).
-func (c *Counter) clearOutage() {
+// stampOutage stamps the outage clock when it is zero. spec: §12.4.
+func (c *Counter) stampOutage() {
 	c.outageMu.Lock()
-	if !c.outageSince.IsZero() {
-		c.outageSince = time.Time{}
+	if c.outageSince.IsZero() {
+		c.outageSince = c.now()
 	}
 	c.outageMu.Unlock()
 }

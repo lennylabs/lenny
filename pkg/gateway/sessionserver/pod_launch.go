@@ -51,8 +51,9 @@ type startContext struct {
 //   - An exclusive pool with no live create-time claim runs the whole
 //     Claim → Prepare → Launch sequence through podBinder.Bind. This is
 //     the §7.3 snapshotless resume-rebuild path (resumeOnPod invokes
-//     startOnPod on a recovery-state row that still carries the dead pod's
-//     stale PodAssignment).
+//     startOnPod on a recovery-state row, whose PodAssignment the failure
+//     funnel cleared or, after MarkBudgetUnrecoverable, may still name the
+//     earlier pod until releaseEarlierBinding clears it).
 //   - A concurrent-workspace pool (maxConcurrentSessions>1) whose row
 //     carries a live §4.6 binding reconnects to the slot reserved at
 //     create through podBinder.BindReservedSlot (§5.2), the slot analog of
@@ -195,10 +196,11 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	//
 	// The reconnect is gated on a live create-time claim, signalled by a
 	// non-empty PodAssignment on a non-recovery row, rather than by a non-empty
-	// PodAssignment alone. A session that lost its pod and entered a recovery
-	// state (resume_pending / resuming / awaiting_client_action) retains the
-	// dead pod's name in PodAssignment (failure.go), and no resume or
-	// tree-recovery path clears it. The §7.3 snapshotless resume-rebuild path
+	// PodAssignment alone. The failure funnel clears PodAssignment on its
+	// resume_pending and awaiting_client_action edges (failure.go), but a root
+	// that MarkBudgetUnrecoverable moved to awaiting_client_action still names
+	// the pod it held until releaseEarlierBinding clears it, so the state, not
+	// the column, decides. The §7.3 snapshotless resume-rebuild path
 	// (resumeOnPod → startOnPod with a recovery-state row) must claim a fresh
 	// pod through the whole Claim → Prepare → Launch sequence below rather than
 	// reconnect to the dead binding; reconnecting would fail Prepare against the

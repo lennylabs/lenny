@@ -141,10 +141,11 @@ func (f *Fixture) Dial(t *testing.T) Pod {
 // the sessions it closed, and a case can park a Start or a Close for one
 // session through a hook.
 type Runtime struct {
-	mu      sync.Mutex
-	closed  []string
-	onStart func(sessionID string)
-	onClose func(sessionID string)
+	mu       sync.Mutex
+	closed   []string
+	closeErr error
+	onStart  func(sessionID string)
+	onClose  func(sessionID string)
 }
 
 // Start runs the start hook, which a case uses to hold a start in flight.
@@ -163,12 +164,20 @@ func (r *Runtime) Start(_ context.Context, sessionID string) error {
 func (r *Runtime) Close(_ context.Context, sessionID string) error {
 	r.mu.Lock()
 	r.closed = append(r.closed, sessionID)
-	hook := r.onClose
+	hook, err := r.onClose, r.closeErr
 	r.mu.Unlock()
 	if hook != nil {
 		hook(sessionID)
 	}
-	return nil
+	return err
+}
+
+// SetCloseErr makes every later Close fail with err, which the adapter
+// reports as an unclean exit; nil restores a clean close.
+func (r *Runtime) SetCloseErr(err error) {
+	r.mu.Lock()
+	r.closeErr = err
+	r.mu.Unlock()
 }
 
 // WriteEnvelope accepts and discards a frame.

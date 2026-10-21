@@ -292,14 +292,7 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 	if req.MaxConcurrentSessions <= 1 {
 		return "", nil
 	}
-	claimer := &podclaim.SlotClaimer{
-		Client:         b.Client,
-		Namespace:      b.Namespace,
-		Counter:        b.SlotCounter,
-		OnSlotConflict: b.SlotConflict,
-		OnRehydrate:    b.Rehydration,
-	}
-	res, err := claimer.ReserveSlotOnPod(ctx, sandboxName, podclaim.SlotRequest{
+	res, err := b.slotClaimer().ReserveSlotOnPod(ctx, sandboxName, podclaim.SlotRequest{
 		Pool:                  req.Pool,
 		SessionID:             req.SessionID,
 		TenantID:              req.TenantID,

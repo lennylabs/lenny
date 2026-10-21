@@ -997,18 +997,42 @@ type Store interface {
 	// spec: §12.1, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
-	// GetActiveSlotsByPod returns the number of live (non-terminal)
-	// sessions bound to podID across every tenant. It is the §5.2
-	// "Post-recovery rehydration atomicity" seed source: after a Redis
-	// restart the gateway reads this count to rehydrate the pod's
-	// lenny:pod:{pod_id}:active_slots counter before allowing any new
-	// slot allocation on the pod. The query is pod-scoped rather than
-	// tenant-scoped because the rehydration path holds only the pod
-	// identity; §5.2 tenant pinning guarantees the rows it counts all
-	// belong to one tenant. A pod with no live sessions returns
-	// (0, nil).
-	// spec: §5.2.
-	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
+	// GetActiveSlotsByPod returns the identifiers of the pod's slot
+	// holders across every tenant: the sessions whose row is non-terminal
+	// and whose pod_assignment names podID (the slot-holder predicate). It
+	// is the §5.2 "Post-recovery rehydration atomicity" seed source: the
+	// gateway adds these identifiers to lenny:pod:{pod_id}:active_slots,
+	// keeping the members the set already holds. The failure funnel clears
+	// pod_assignment on its resume_pending and awaiting_client_action edges,
+	// so a session whose slot the funnel released is not returned. The query
+	// is pod-scoped rather than tenant-scoped because the rehydration path
+	// holds only the pod identity; §5.2 tenant pinning guarantees the rows
+	// all belong to one tenant. An empty podID or a pod with no slot holder
+	// returns (nil, nil).
+	// spec: §5.2 (Post-recovery rehydration atomicity).
+	GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error)
+
+	// ListPodsWithActiveSlots returns, once each, the pods that a
+	// non-terminal session row whose scrub_policy is best-effort-per-slot
+	// names in pod_assignment, across tenants. The slot counter's recovery
+	// rebuild deletes each listed pod's rehydrated flag when a Redis outage
+	// ends, so the pod's next reservation or release rehydrates its set. An
+	// empty pod_assignment is never returned.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery
+	// rehydration atomicity).
+	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)
+
+	// ListStaleTerminalSessions returns the identifiers in ids whose row is
+	// in a terminal state with a terminated_at earlier than
+	// terminatedBefore, across tenants. A missing row, a non-terminal row, a
+	// terminal row with no terminated_at, and an identifier that is not a
+	// session identifier are not returned. The stale-slot reaper resolves a
+	// pod's slot set members through it: MarkTerminated stamps
+	// terminated_at in the first terminal write and keeps it on a relabel,
+	// so an eligible member's session ended at least the reaper's terminal
+	// age ago.
+	// spec: §5.2 (Slot assignment atomicity).
+	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
 
 	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
 	// per-pod session-mode slot counter. It serializes the slot-admission

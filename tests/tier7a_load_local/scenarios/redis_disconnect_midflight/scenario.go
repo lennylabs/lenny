@@ -6,7 +6,8 @@
 // when miniredis is restarted mid-run. The §5.2 invariant: slot
 // reservations fail closed when Redis is unavailable, and recover
 // cleanly once Redis returns. There must be no overcommit at any
-// point.
+// point, and every keyed release that Redis answers removes exactly the
+// member its own reservation added.
 //
 // TESTING.md §12.7.a multi-component scenarios.
 package redis_disconnect_midflight
@@ -45,6 +46,7 @@ type Scenario struct {
 	rejections       atomic.Int64
 	transportErrs    atomic.Int64
 	overcommitEvents atomic.Int64
+	releaseMisses    atomic.Int64
 
 	disconnectOnce sync.Once
 }
@@ -88,7 +90,8 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		})
 	}
 
-	_, _, err := s.counter.Reserve(ctx, "pod-disc", s.maxConcurrent)
+	sessionID := fmt.Sprintf("vu%d-it%d", vu, iter)
+	_, _, err := s.counter.Reserve(ctx, "pod-disc", sessionID, s.maxConcurrent)
 	if err != nil {
 		switch {
 		case errors.Is(err, slotcounter.ErrSlotsExhausted):
@@ -116,9 +119,13 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	s.mu.Lock()
 	s.inFlight--
 	s.mu.Unlock()
-	if _, err := s.counter.Release(ctx, "pod-disc"); err != nil {
+	removed, _, _, err := s.counter.Release(context.WithoutCancel(ctx), "pod-disc", sessionID, false)
+	switch {
+	case err != nil:
 		// Transport error during disconnect window: still benign.
 		s.transportErrs.Add(1)
+	case !removed:
+		s.releaseMisses.Add(1)
 	}
 	return nil
 }
@@ -128,9 +135,13 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	r.AddCustom("rejections", float64(s.rejections.Load()))
 	r.AddCustom("transport_errs", float64(s.transportErrs.Load()))
 	r.AddCustom("overcommit_events", float64(s.overcommitEvents.Load()))
+	r.AddCustom("release_misses", float64(s.releaseMisses.Load()))
 	r.AddCustom("peak_in_flight", float64(s.peakInFlight))
 	if s.overcommitEvents.Load() > 0 {
 		return fmt.Errorf("§5.2 violated: %d overcommit events; peak in-flight = %d", s.overcommitEvents.Load(), s.peakInFlight)
+	}
+	if s.releaseMisses.Load() > 0 {
+		return fmt.Errorf("§5.2 violated: %d answered releases did not remove their own member", s.releaseMisses.Load())
 	}
 	if s.reserves.Load() == 0 {
 		return fmt.Errorf("scenario did not reach any successful Reserve")

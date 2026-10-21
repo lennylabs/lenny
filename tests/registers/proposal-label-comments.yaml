@@ -60,7 +60,6 @@ files:
   pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go: 2
   pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go: 1
   pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go: 1
-  pkg/gateway/podlifecycle/podsession/binder_phases_test.go: 1
   pkg/gateway/podlifecycle/podsession/slotbinder_test.go: 2
   pkg/gateway/runtime/adapterclient/client_test.go: 1
   pkg/gateway/runtime/slothealth/slothealth_test.go: 2
@@ -89,7 +88,6 @@ files:
   tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race/scenario.go: 3
   tests/tier7a_load_local/scenarios/raisebudget_enforcer_race/scenario.go: 2
   tests/tier7a_load_local/scenarios/scenarios.go: 3
-  tests/tier7a_load_local/scenarios/slot_leaked_counted_race/scenario.go: 1
   tests/tier8_chaos/direct_usage_crash_recovery_test.go: 4
   tests/tier9_security/controller_rbac_test.go: 2
   tests/tier9_security/write_before_issue_failclosed_test.go: 4

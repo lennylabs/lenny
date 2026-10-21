@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 
@@ -316,12 +317,18 @@ type gatewayWiringFields struct {
 	mtlsDenyProp                *mtlsdenylistprop.Propagator
 	mux                         *http.ServeMux
 	podBinder                   *podsession.Binder
-	recommendationStore         *recommendations.WindowStore
-	revCache                    *revocation.Cache
-	revProp                     *revocationprop.Propagator
-	sessions                    sessionstore.Store
-	sessionSrv                  *sessionserver.Server
-	storageCounter              storagequota.Counter
+	// slotCounter is the §5.2 slot set shared by every concurrent-mode
+	// reservation and release; its §12.4 recovery probe runs on
+	// watchdogCtx, and the leader-run stale-slot reaper reads and removes
+	// its members. Nil when no Redis is wired, which also leaves the reaper
+	// unregistered.
+	slotCounter         *slotcounter.Counter
+	recommendationStore *recommendations.WindowStore
+	revCache            *revocation.Cache
+	revProp             *revocationprop.Propagator
+	sessions            sessionstore.Store
+	sessionSrv          *sessionserver.Server
+	storageCounter      storagequota.Counter
 	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
 	// (live artifact_store bytes plus outstanding checkpoint reservations)
 	// buildRedisAndQuota composes once and every storage-counter consumer

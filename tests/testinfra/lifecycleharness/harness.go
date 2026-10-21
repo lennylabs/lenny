@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -34,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -80,6 +82,12 @@ type Options struct {
 	DurableInbox bool
 	// Recycling, when true, makes the warm pool a recycling pool.
 	Recycling bool
+	// MaxCreatedSeconds is every replica's watchdog bound on a session
+	// that stays in created; zero keeps the watchdog default.
+	MaxCreatedSeconds int
+	// MaxFinalizingSeconds is every replica's watchdog bound on a session
+	// that stays in finalizing; zero keeps the watchdog default.
+	MaxFinalizingSeconds int
 	// MaxIdleSeconds is every replica's watchdog idle bound; zero keeps it
 	// longer than any scenario, so no idle sweep fires.
 	MaxIdleSeconds int
@@ -87,6 +95,18 @@ type Options struct {
 	// interval, so a runtime's busy reports reach the adapter's activity
 	// window within a scenario.
 	HeartbeatInterval time.Duration
+	// MaxConcurrentSessions, when above 1, makes the warm pool a
+	// concurrent-workspace pool with that many slots per pod: every
+	// replica's binder gets its own slot counter over the shared Redis, and
+	// the gateway pool registry carries the pool's session policy.
+	MaxConcurrentSessions int32
+	// KeepRuntime, on a recycling harness with an exclusive pool, registers
+	// the pool's session policy with recycle.maxSessionsPerPod above 1 and
+	// the process-level isolation acknowledgment, so a pod keeps its runtime
+	// across the sessions it serves and a same-tenant acquisition rebinds a
+	// reserved pod rather than ending its hold (§5.2 Deployer acknowledgment
+	// (runtime process kept across sessions), §4.6.1 within-hold rebind).
+	KeepRuntime bool
 	// QueueAddr, when set, maps the shared Redis address to the address the
 	// session DLQ and inbox client dials, so a scenario can put a
 	// partitionable proxy on the held-message path alone.
@@ -123,6 +143,19 @@ type Harness struct {
 	// surviving replica binds is accepted, because the claim-orphan GC
 	// reclaims it (§4.6.1 Orphaned SandboxClaim detection, §7.3).
 	RelaxOrphanClaims bool
+	// Slots records every slot-set reservation and removal the replicas'
+	// slot counters made.
+	Slots *SlotLog
+	// RelaxStaleSlotMembers applies the slot relaxation that matches
+	// RelaxOrphanClaims: a plain slot-set member whose session is terminal
+	// is accepted, because a release no replica performs leaves it counted
+	// until the stale-slot reaper or the orphan GC (§5.2 Slot assignment
+	// atomicity).
+	RelaxStaleSlotMembers bool
+	// RelaxEmptySetClaims accepts a bound claim on a pod whose slot set is
+	// empty and that no non-terminal row names, which the claim-orphan GC
+	// reclaims (§4.6.1 Orphaned SandboxClaim detection).
+	RelaxEmptySetClaims bool
 
 	mu          sync.Mutex
 	sessions    map[string]bool
@@ -130,6 +163,18 @@ type Harness struct {
 	events      bool
 	recycling   bool
 	idleSeconds int
+	// createdSeconds and finalizingSeconds are the watchdog's created- and
+	// finalizing-state bounds.
+	createdSeconds    int
+	finalizingSeconds int
+	// slotClient is the Redis client every replica's slot counter uses;
+	// its hook feeds Slots.
+	slotClient *redis.Client
+	// maxConcurrent is the pool's maxConcurrentSessions, and pools the
+	// gateway pool registry that carries it; pools is nil on an exclusive
+	// pool.
+	maxConcurrent int32
+	pools         *poolstore.Memory
 }
 
 // Replica is one gateway replica: a session server with its own pod
@@ -142,6 +187,9 @@ type Replica struct {
 	Binder   *podsession.Binder
 	Watchdog *watchdog.Watchdog
 	Sweeper  *coordination.Sweeper
+	// SlotCounter is the replica's own slot counter on a concurrent pool,
+	// and nil on an exclusive pool.
+	SlotCounter *slotcounter.Counter
 	// InputWaits is the replica's lenny/request_input registry, shared by
 	// its REST and MCP message paths as the gateway wires it.
 	InputWaits *inputwait.Registry
@@ -151,6 +199,21 @@ type Replica struct {
 	// k8sDown fails the binder's Kubernetes writes once the replica
 	// crashed (crashableClient).
 	k8sDown atomic.Bool
+	// claimFault is the fault SetClaimFault arms on the binder's
+	// SandboxClaim writes.
+	claimFault atomic.Pointer[ClaimFault]
+}
+
+// SetClaimFault arms f on every SandboxClaim create, status write, and
+// delete the replica's binder makes, so a scenario can fail one of them or
+// hold it against another actor; nil disarms it. The fault runs on the
+// binder's goroutine.
+func (r *Replica) SetClaimFault(f ClaimFault) {
+	if f == nil {
+		r.claimFault.Store(nil)
+		return
+	}
+	r.claimFault.Store(&f)
 }
 
 // Crashed reports whether the replica crashed.
@@ -171,21 +234,38 @@ func New(t testing.TB, opts Options) *Harness {
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	h := &Harness{
-		T:            t,
-		Clock:        NewClock(time.Now().UTC(), mr),
-		Trace:        NewTrace(),
-		Redis:        mr,
-		Leases:       leasestore.New(rc),
-		Cluster:      NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval}),
-		Checkpoints:  &Checkpointer{},
-		Interactions: interactionstore.NewMemory(),
-		TreeMetrics:  &TreeMetrics{},
-		Claims:       &ClaimLog{},
-		sessions:     map[string]bool{},
-		rc:           rc,
-		events:       opts.Events,
-		recycling:    opts.Recycling,
-		idleSeconds:  opts.MaxIdleSeconds,
+		T:                 t,
+		Clock:             NewClock(time.Now().UTC(), mr),
+		Trace:             NewTrace(),
+		Redis:             mr,
+		Leases:            leasestore.New(rc),
+		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval}),
+		Checkpoints:       &Checkpointer{},
+		Interactions:      interactionstore.NewMemory(),
+		TreeMetrics:       &TreeMetrics{},
+		Claims:            &ClaimLog{},
+		sessions:          map[string]bool{},
+		rc:                rc,
+		events:            opts.Events,
+		recycling:         opts.Recycling,
+		idleSeconds:       opts.MaxIdleSeconds,
+		createdSeconds:    opts.MaxCreatedSeconds,
+		finalizingSeconds: opts.MaxFinalizingSeconds,
+	}
+	h.Slots = NewSlotLog()
+	h.slotClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	h.slotClient.AddHook(h.Slots)
+	t.Cleanup(func() { _ = h.slotClient.Close() })
+	if opts.KeepRuntime && !opts.Recycling && opts.MaxConcurrentSessions <= 1 {
+		t.Fatal("lifecycleharness: KeepRuntime needs a recycling pool or maxConcurrentSessions above 1")
+	}
+	if opts.MaxConcurrentSessions > 1 || opts.KeepRuntime {
+		mcs := max(opts.MaxConcurrentSessions, 1)
+		pools, err := poolPolicyStore(mcs, opts.Recycling)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.maxConcurrent, h.pools = mcs, pools
 	}
 	h.Inner = opts.Store
 	switch {
@@ -228,12 +308,16 @@ func (h *Harness) AddReplica(id string) *Replica {
 	reg := podsession.NewRegistry()
 	r := &Replica{ID: id, Registry: reg, InputWaits: inputwait.NewRegistry()}
 	binder := &podsession.Binder{
-		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims},
+		Client:           crashableClient{Client: h.Cluster.Client, crashed: &r.k8sDown, claims: h.Claims, retire: h.Cluster.retireByName, fault: &r.claimFault},
 		Namespace:        Namespace,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      h.Cluster.Dial,
 		Credentials:      h.Creds,
+	}
+	if h.Concurrent() {
+		r.SlotCounter = h.newSlotCounter()
+		binder.SlotCounter = r.SlotCounter
 	}
 	exec := executor.NewPodExecutor(reg, binder)
 	r.Executor, r.Binder = exec, binder
@@ -260,6 +344,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 		Interactions:            h.Interactions,
 		TreeRecoveryMetrics:     h.TreeMetrics,
 		InputWaits:              r.InputWaits,
+		Pools:                   h.poolRegistry(),
 	})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
@@ -269,6 +354,8 @@ func (h *Harness) AddReplica(id string) *Replica {
 		MaxResumingSeconds:             int(MaxResuming / time.Second),
 		MaxRetries:                     MaxRetries,
 		MaxIdleSeconds:                 h.watchdogIdleSeconds(),
+		MaxCreatedSeconds:              h.createdSeconds,
+		MaxFinalizingSeconds:           h.finalizingSeconds,
 		MaxSessionAgeSeconds:           100000,
 		MaxAwaitingClientActionSeconds: 100000,
 	}, h.Clock.Now).WithTerminalHook(r.Server).
@@ -426,6 +513,23 @@ func (h *Harness) TryStartSession(r *Replica) (string, int, map[string]any) {
 	return id, code, body
 }
 
+// CreateSession creates a session on the replica without starting it, as
+// the two-step create path does, and tracks it. The session's row stays
+// in a pre-running state (created, or ready once finalized), and on a
+// concurrent pool the create already reserved the session's slot.
+func (h *Harness) CreateSession(r *Replica) string {
+	h.T.Helper()
+	code, body := h.Do(r, http.MethodPost, "/v1/sessions", sessionserver.CreateSessionRequest{
+		RuntimeRef: RuntimeRef, UserID: "alice@acme.com",
+	})
+	id, _ := body["id"].(string)
+	if code != http.StatusCreated || id == "" {
+		h.T.Fatalf("create on %s: status %d body %v", r.ID, code, body)
+	}
+	h.Track(id)
+	return id
+}
+
 // registryBindings is the Sweeper's view of one replica's pod registry.
 type registryBindings struct {
 	reg  *podsession.Registry
@@ -492,6 +596,16 @@ func (h *Harness) TakeOver(sessionID string, from *Replica) {
 		r.CoordinationGeneration++
 		return nil
 	})
+}
+
+// poolRegistry is the gateway pool registry the session servers read: the
+// concurrent pool's registry, or none on an exclusive pool, so a nil
+// *poolstore.Memory never reaches the interface-typed option.
+func (h *Harness) poolRegistry() poolstore.Store {
+	if h.pools == nil {
+		return nil
+	}
+	return h.pools
 }
 
 // watchdogIdleSeconds is the watchdog idle bound: Options.MaxIdleSeconds,

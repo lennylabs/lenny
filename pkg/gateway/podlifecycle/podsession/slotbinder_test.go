@@ -383,7 +383,7 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 // concurrent-workspace pool, so the §15.1 created-state pod-claim invariant
 // holds uniformly; a failure means the create path admitted a `created`
 // session with no claimed pod. ClaimSlot reserves the slot (the per-pod
-// SandboxClaim plus the active_slots increment) and runs the handshake, but
+// SandboxClaim plus the session's active_slots member) and runs the handshake, but
 // does not materialize the workspace or start the runtime.
 func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
 	a := newConcurrentAdapter()
@@ -503,8 +503,9 @@ func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
 		t.Fatal("BindReservedSlot succeeded, want a StartSession failure")
 	}
 	// The reserved slot was the only slot on the pod, so releasing it on the
-	// failure deletes the per-pod claim and returns the pod to the pool. A
-	// surviving claim would mean the active_slots count leaked.
+	// failure deletes the per-pod claim, and the pod's phase then follows the
+	// §4.6.1 occupancy projection. A surviving claim would mean the session's
+	// active_slots member leaked.
 	if podClaimExists(t, c, "sbx-1") {
 		t.Error("BindReservedSlot did not release the reserved slot on a start failure (active_slots leaked)")
 	}

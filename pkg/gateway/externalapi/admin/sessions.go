@@ -114,7 +114,8 @@ func (r *Router) handleGetSession(w http.ResponseWriter, req *http.Request) {
 // handleForceTerminateSession implements POST
 // /v1/admin/sessions/{id}/force-terminate — the §24.11
 // operator-driven forced terminal transition. The session transitions
-// immediately to `failed` and the assigned pod is released to the pool.
+// immediately to `failed`, and the gateway releases the assigned pod, with
+// the claim effect §4.6.3 assigns.
 // An optional `reason` in the request body is recorded in the
 // session.force_terminated audit event. The endpoint is idempotent: a
 // force against an already-terminal session returns 200 with the current

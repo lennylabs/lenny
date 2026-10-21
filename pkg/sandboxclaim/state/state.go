@@ -45,9 +45,9 @@ const (
 	// Terminal: the WarmPoolController drains then terminates the pod
 	// rather than returning it to the pool. spec: §4.6.3.
 	Released State = "released"
-	// Failed: scrub-failure or crashed-session retirement disposition.
+	// Failed: scrub-failure retirement disposition (`onScrubFailure: fail`).
 	// Terminal: the WarmPoolController drains then terminates the pod.
-	// spec: §4.6.3.
+	// spec: §4.6.3 (SandboxClaim.status.phase enumeration).
 	Failed State = "failed"
 )
 

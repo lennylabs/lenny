@@ -352,7 +352,7 @@ lenny-ctl admin sessions force-terminate <session-id>
 
 | Alert | Condition | Action |
 |---|---|---|
-| `SandboxClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability |
+| `SandboxClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability and the gateway log for pod releases that failed or did not run. The controller drains the pod of an orphaned claim once the claim's last binding change is older than the claim orphan timeout (`controller.claimOrphanTimeoutSeconds`, default 15 minutes) and no active session uses the pod. |
 | `OrphanTasksPerTenantHigh` | > 80% of `maxOrphanTasksPerTenant` | Check for misbehaving orchestrator |
 
 ---

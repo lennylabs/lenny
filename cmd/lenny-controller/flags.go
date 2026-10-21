@@ -174,8 +174,8 @@ func registerLifecycleFlags(f *controllerFlags) {
 		"§4.6.1 cold-start fill grace period. The WarmPoolExhausted and WarmPoolLow alerts are suppressed for a pool during this window from pool creation, controller startup, or a minWarm 0→positive re-activation, to avoid false positives while the pool fills toward minWarm.")
 	flag.DurationVar(&f.statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
 		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
-	flag.DurationVar(&f.claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
-		"§4.6.1 SandboxClaim orphan timeout: a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+	flag.DurationVar(&f.claimOrphanTimeout, "claim-orphan-timeout", 15*time.Minute,
+		"§4.6.1 SandboxClaim orphan timeout (claimOrphanTimeout): a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup. The gateway's --slot-reaper-terminal-age must equal it, and it must be at least one second more than the largest of the gateway's --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and --workspace-seal-max-duration-seconds (§5.2). Default 15m.")
 	flag.DurationVar(&f.reservedHoldGrace, "reserved-hold-grace", 60*time.Second,
 		"§4.6.1 reserved-claim grace period: a reserved SandboxClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
 	flag.IntVar(&f.workqueueMaxDepth, "workqueue-max-depth", 500,

@@ -17,7 +17,7 @@ type ClaimResult struct {
 	// SandboxName is the claimed Sandbox the binding is persisted against.
 	SandboxName string
 	// Pool is the pool the pod was claimed from, persisted so Prepare and
-	// Launch (and the §4.5 created-expiry reclaim) can name the pool.
+	// Launch (and the pre-running reclaim) can name the pool.
 	Pool string
 	// PodIP is the claimed pod's address, returned for the §15.1 create
 	// response and the §6.3 pod-claim metric.

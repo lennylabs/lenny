@@ -27,11 +27,14 @@ import (
 // defaultClaimOrphanTimeout is the §4.6.1 default for --claim-orphan-timeout:
 // a SandboxClaim whose orphan key is older than this with no active session
 // is treated as orphaned. spec: §4.6.1 "Orphaned SandboxClaim detection" —
-// default 5 minutes; §11.5 controls table records the same 300s default. The
+// default 15 minutes; §11.5 controls table records the same 900s default. The
+// gateway's stale-slot reaper shares the value as --slot-reaper-terminal-age,
+// and it must exceed the post-terminal slot activity windows §5.2 (Slot
+// assignment atomicity) states. The
 // key is the binding-state-transition time for a claim that has reached a
 // binding state, and metadata.creationTimestamp for an empty-status claim
 // (the CREATE-before-status fallback).
-const defaultClaimOrphanTimeout = 5 * time.Minute
+const defaultClaimOrphanTimeout = 15 * time.Minute
 
 // defaultReservedHoldGrace is the §4.6.1 grace period the orphan GC adds to a
 // reserved claim's holdExpiresAt before reclaiming it. spec: §4.6.1 predicate

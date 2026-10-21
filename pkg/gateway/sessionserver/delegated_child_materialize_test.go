@@ -173,6 +173,15 @@ type updateFaultStore struct {
 	fail bool
 }
 
+// GetPrimary forwards the primary read, so the injected fault reaches only
+// the transition-persist Update and not the materialization's entry read.
+func (s *updateFaultStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if pr, ok := s.Store.(sessionstore.PrimaryReader); ok {
+		return pr.GetPrimary(ctx, tenantID, id)
+	}
+	return s.Get(ctx, tenantID, id)
+}
+
 func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	if s.fail {
 		return sessionstore.Session{}, errors.New("injected transition-persist fault")

@@ -66,7 +66,15 @@ func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error)
 	panic("unused")
 }
 
-func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
+func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ListPodsWithActiveSlots(context.Context) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ListStaleTerminalSessions(context.Context, []string, time.Time) ([]string, error) {
 	panic("unused")
 }
 

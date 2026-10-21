@@ -224,7 +224,7 @@ stateDiagram-v2
 
 ### Recycle transitions (`recycle.enabled: true`)
 
-When occupancy reaches zero on a recycling pod, the gateway patches the claim's binding state to `recycling`, the whole-pod scrub runs while the pod projects `claimed`, and the recycle disposition decides whether to hold the pod or retire it. On preConnect pools a successful scrub report begins the SDK re-warm (the pod projects `sdk_connecting`) before the claim enters `reserved`.
+When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway patches the claim's binding state to `recycling`, the whole-pod scrub runs while the pod projects `claimed`, and the recycle disposition decides whether to hold the pod or retire it. On preConnect pools a successful scrub report begins the SDK re-warm (the pod projects `sdk_connecting`) before the claim enters `reserved`.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -233,7 +233,8 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 | `claimed` | `reserved` | `preConnect: false`, scrub reported, disposition is recycle; claim patched to `reserved` with no re-warm leg |
 | `sdk_connecting` | `reserved` | SDK re-warm completes within `sdkConnectTimeoutSeconds` measured from the re-warm-start stamp |
 | `sdk_connecting` | `failed` | Re-warm watchdog fires |
-| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session on a pool with `maxConcurrentSessions: 1`, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
+| `claimed` | `draining` | A release that ends the occupancy without reuse, such as the release of a failed session on a pool with `maxConcurrentSessions: 1`, deletes the claim instead of patching it to `recycling` (see [Recycle lifecycle](execution-modes#recycle-lifecycle)) |
+| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
 | `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
 | `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm. The gateway also ends the hold, with the same precondition-guarded DELETE, on a pool that no longer keeps runtime processes across sessions |
 | `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. The gateway also stamps the `lenny.dev/drain-request` annotation on a pinned idle pod that an acquisition refuses on a pool outside the [runtime-process acknowledgment rule](execution-modes#presets). |
@@ -255,7 +256,7 @@ Every session is bound to a [slot](glossary#slot) on the pod that runs it, whate
 
 ### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
 
-A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while the per-slot sub-states above track each slot's progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
+A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the pod's Redis slot set is nonempty, while the per-slot sub-states above track each slot's progress. When occupancy reaches zero and the last release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway deletes the claim and the pod leaves `claimed` through `draining`. Every release on a pool without `recycle.enabled` ends the occupancy without reuse. Otherwise the pod leaves `claimed` through the recycle edges above.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -265,7 +266,7 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 | `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
-Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection) or when its session's stream to the pod fails after the session has started, such as when the runtime stops answering heartbeats. A slot whose stream failed counts toward the `claimed -> draining` threshold above even when its session is retried on another pod, and a runtime that stops answering heartbeats ends the stream of every open session on the pod. A slot moves `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
+Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection) or when its session's stream to the pod fails after the session has started, such as when the runtime stops answering heartbeats. A slot whose stream failed counts toward the `claimed -> draining` threshold above even when its session is retried on another pod, and a runtime that stops answering heartbeats ends the stream of every open session on the pod. A slot moves `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot set and counts toward the `claimed -> draining` threshold above. It stays counted until a Redis restart loses the set, because the gateway rebuilds the set from the session records, which record no leaked slots.
 
 ---
 

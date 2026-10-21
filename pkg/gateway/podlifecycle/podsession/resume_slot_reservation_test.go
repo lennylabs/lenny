@@ -5,6 +5,8 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -33,18 +35,18 @@ func resumeSlotFixture(t *testing.T, c client.Client, dial func(string) (*adapte
 	return b, mr
 }
 
-// resumeActiveSlots reads the pod's §5.2 occupancy counter.
+// resumeActiveSlots reads the cardinality of the pod's §5.2 slot set.
 func resumeActiveSlots(t *testing.T, mr *miniredis.Miniredis, sandboxName string) string {
 	t.Helper()
-	key := "lenny:pod:" + sandboxName + ":active_slots"
+	key := "lenny:pod:{" + sandboxName + "}:active_slots"
 	if !mr.Exists(key) {
 		return "0"
 	}
-	v, err := mr.Get(key)
+	v, err := mr.Members(key)
 	if err != nil {
 		t.Fatalf("read %s: %v", key, err)
 	}
-	return v
+	return strconv.Itoa(len(v))
 }
 
 // resumeRequest is the concurrent-pool resume the reservation cases drive.
@@ -205,10 +207,12 @@ func TestResumeStampsMaxPodUptimeOnTheReplacementPod_spec_4_6_1(t *testing.T) {
 }
 
 // spec: 5.2 (the reservation carries its compensating release), 7.3
-// diagnosis: a failed adapter Resume left the pod's occupancy increment
-// behind. A checkpoint-restore failure is the retryable case the resume slot
-// reservation exists to enable, so the leak compounds per attempt and caps
-// the pod's real capacity until a Redis restart rehydrates the counter.
+// diagnosis: a failed adapter Resume left the session's member in the pod's
+// slot set. A checkpoint-restore failure is the retryable case the resume slot
+// reservation exists to enable, so the stale member holds a slot the pod
+// could otherwise fill until the gateway leader's stale-member release removes
+// it, which happens only after the session has been terminal for longer than
+// claimOrphanTimeout.
 func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testing.T) {
 	t.Run("no co-tenant: the claim is disposed at occupancy zero", func(t *testing.T) {
 		srv := adapter.New("adapter-test")
@@ -239,7 +243,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 		// A sibling slot's occupancy, held by a co-tenant session that
 		// landed on the pod after connect's claim CREATE.
-		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", 4); err != nil {
+		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", "sibling", 4); err != nil {
 			t.Fatalf("seed sibling occupancy: %v", err)
 		}
 
@@ -273,7 +277,7 @@ func TestResumeOntoAFullPodReservesAndReleasesNothing_spec_5_2(t *testing.T) {
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 	for i := 0; i < 2; i++ {
-		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", 2); err != nil {
+		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", fmt.Sprintf("co-%d", i), 2); err != nil {
 			t.Fatalf("seed co-tenant occupancy %d: %v", i, err)
 		}
 	}

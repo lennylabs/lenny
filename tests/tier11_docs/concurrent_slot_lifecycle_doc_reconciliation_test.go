@@ -370,3 +370,183 @@ func assertNoBareOldCounter(t *testing.T, site, body, oldToken string) {
 		idx = pos + len(oldToken)
 	}
 }
+
+// collapsedSpec reads a spec file with every run of whitespace collapsed to
+// one space, so an assertion can quote a hard-wrapped paragraph, table row,
+// or diagram line as one string.
+func collapsedSpec(t *testing.T, root, file string) string {
+	t.Helper()
+	return strings.Join(strings.Fields(readDocPage(t, filepath.Join(root, "spec", file))), " ")
+}
+
+// requireNear fails unless body contains anchor, and fails when any of
+// forbidden appears within window bytes of the anchor, so a check reads the
+// edited sentence rather than an unrelated sentence elsewhere in the file.
+func requireNear(t *testing.T, label, body, anchor string, window int, forbidden ...string) {
+	t.Helper()
+	i := strings.Index(body, anchor)
+	if i < 0 {
+		t.Errorf("%s: %q not found (reverted or reworded?)", label, anchor)
+		return
+	}
+	lo, hi := max(0, i-window), min(len(body), i+len(anchor)+window)
+	for _, f := range forbidden {
+		if strings.Contains(body[lo:hi], f) {
+			t.Errorf("%s: %q appears beside %q", label, f, anchor)
+		}
+	}
+}
+
+// spec: 5.2 (Slot assignment atomicity), 12.4 (Redis HA and failure modes),
+// 10.1.4 (Coordinator-Loss Detection and Hold State), 6.2 (Pod State
+// Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle)), 28.3, 28.6, 29.2,
+// 29.10
+// diagnosis: a spec site reverted the per-pod slot occupancy from a set keyed
+// by session to a decremented counter (an INCR, a reset to 0, an "atomic
+// per-pod counter", or "occupancy decremented"), or dropped the stale-member
+// release by the gateway leader, so the sites no longer describe one
+// occupancy record and one keyed release.
+func TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2(t *testing.T) {
+	root := repoRoot(t)
+	s52 := strings.Join(strings.Fields(requireLine(t, specSection(t,
+		filepath.Join(root, "spec", "05_runtime-registry-and-pool-model.md"), "### 5.2 "),
+		"**Slot assignment atomicity")), " ")
+	requireAllContain(t, "§5.2 Slot assignment atomicity", s52, []string{
+		"Redis set", "keyed by the session identifier", "is stale", "the stale members",
+		"`claimOrphanTimeout`", "`lenny-gateway-leader` Lease",
+		"`maxFinalizingTimeoutSeconds`", "the `resuming` watchdog's duration", "`maxWorkspaceSealDurationSeconds`",
+	})
+	for _, banned := range []string{"INCR", "reset to 0", "atomic per-pod counter"} {
+		if strings.Contains(s52, banned) {
+			t.Errorf("§5.2 Slot assignment atomicity names %q", banned)
+		}
+	}
+
+	s10 := requireLine(t, readDocPage(t, filepath.Join(root, "spec", "10_gateway-internals.md")),
+		"**Whole-pod connection loss when `maxConcurrentSessions > 1`.**")
+	requireAllContain(t, "§10.1.4 whole-pod connection loss", s10, []string{"Redis slot set"})
+	for _, banned := range []string{"INCR", "reset to 0", "resets the counter"} {
+		if strings.Contains(s10, banned) {
+			t.Errorf("§10.1.4 whole-pod connection loss names %q", banned)
+		}
+	}
+
+	reg := requireLine(t, readDocPage(t, filepath.Join(root, "spec", "28_communication-channels.md")), "| `REG-SLOTCOUNT` |")
+	requireAllContain(t, "§28.3 REG-SLOTCOUNT row", reg, []string{"per-pod set"})
+	if strings.Contains(reg, "INCR") || strings.Contains(reg, "counter") {
+		t.Errorf("§28.3 REG-SLOTCOUNT row describes a counter: %s", reg)
+	}
+
+	c06 := collapsedSpec(t, root, "06_warm-pod-model.md")
+	requireAllContain(t, "§6.2 concurrent-occupancy diagram", c06, []string{"Redis slot reservation succeeds", "Redis-counter occupancy"})
+	if strings.Contains(c06, "occupancy decremented") {
+		t.Error("§6.2 concurrent-occupancy diagram still says occupancy decremented")
+	}
+	requireAllContain(t, "§6.2 Partial occupancy", requireLine(t, readDocPage(t, filepath.Join(root, "spec", "06_warm-pod-model.md")),
+		"- **Partial occupancy.**"), []string{"Redis slot set"})
+
+	c28 := collapsedSpec(t, root, "28_communication-channels.md")
+	requireAllContain(t, "§28.6", c28, []string{"`REG-SLOTCOUNT` ceilings a pod's concurrent slots"})
+	c29 := collapsedSpec(t, root, "29_communication-scenarios.md")
+	for label, body := range map[string]string{"§28": c28, "§29": c29} {
+		for _, banned := range []string{"atomic per-pod counter", "checks the counter and increments it"} {
+			if strings.Contains(body, banned) {
+				t.Errorf("%s names %q", label, banned)
+			}
+		}
+	}
+	requireAllContain(t, "§29.2 step 8", c29, []string{
+		"The gateway reserves the intra-pod slot through the atomic reservation of [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Slot assignment atomicity**",
+	})
+	requireAllContain(t, "§4.6.1", collapsedSpec(t, root, "04_system-components.md"), []string{"gated by the Redis slot set"})
+}
+
+// spec: 4.6.3 (CRD Field Ownership and Write Boundaries), 5.2 (Recycle
+// lifecycle), 6.2 (Pod State Machine), 4.7, 7.1, 28.3, 29.4
+// diagnosis: an edit that states when a release deletes the per-pod claim
+// lost the one predicate wording, "ends the occupancy without reuse", or
+// reintroduced the retired default disposition ("On the default disposition
+// the pod is replaced"), so the sites disagree on which releases delete the
+// claim and which patch it recycling.
+func TestOccupancyEndingReleasePredicateAtEverySite_spec_4_6_3(t *testing.T) {
+	root := repoRoot(t)
+	sites := []struct{ file, anchor string }{
+		{"04_system-components.md", "when a gateway release ends the occupancy without reuse"},
+		{"04_system-components.md", "a release that ends the occupancy without reuse, orphan GC, or pod termination"},
+		{"04_system-components.md", "it is deleted by the release that ends the occupancy without reuse"},
+		{"04_system-components.md", "When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse"},
+		{"04_system-components.md", "or when a release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the occupancy"},
+		{"04_system-components.md", "occupancy zero on a recycling pod unless the release ends the occupancy without reuse"},
+		{"05_runtime-registry-and-pool-model.md", "When the pod's occupancy reaches zero, unless the release ends the occupancy without reuse"},
+		{"05_runtime-registry-and-pool-model.md", "recycles when occupancy reaches zero unless the release ends the occupancy without reuse"},
+		{"06_warm-pod-model.md", "the recycle edges above apply unless the last release ends the occupancy without reuse"},
+		{"06_warm-pod-model.md", "occupancy reaches zero, unless the release ends the occupancy without reuse under §4.6.3"},
+		{"06_warm-pod-model.md", "When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse"},
+		{"06_warm-pod-model.md", "the last release deletes the claim when it ends the occupancy without reuse"},
+		{"07_session-lifecycle.md", "whole-pod scrub runs when occupancy reaches zero on a recycling pool unless the release ends the occupancy without reuse"},
+		{"28_communication-channels.md", "when a release ends the occupancy without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), and the WarmPoolController leader"},
+		{"29_communication-scenarios.md", "When the release ends the occupancy without reuse, the gateway deletes the claim"},
+		{"29_communication-scenarios.md", "when occupancy reaches zero on a recycling pod unless the release ends the occupancy without reuse"},
+	}
+	for _, s := range sites {
+		requireNear(t, s.file, collapsedSpec(t, root, s.file), s.anchor, 0)
+	}
+	for _, file := range []string{"04_system-components.md", "29_communication-scenarios.md"} {
+		if strings.Contains(collapsedSpec(t, root, file), "On the default disposition the pod is replaced") {
+			t.Errorf("%s still states the retired default disposition", file)
+		}
+	}
+	if strings.Contains(collapsedSpec(t, root, "11_policy-and-controls.md"), "USER_REVOKED") {
+		t.Error("§11.4 still names the retired USER_REVOKED shutdown reason")
+	}
+}
+
+// spec: 4.6.3 (CRD Field Ownership and Write Boundaries), 7.2, 6.2, 4.9,
+// 8.3, 15.1, 24.11
+// diagnosis: a sentence that says a pod or claim is released lost its link
+// to §4.6.3, which states what the release does to the claim, or went back
+// to saying the pod returns "to the pool", which is wrong for a release that
+// ends the occupancy without reuse.
+func TestPodReleasePointersLinkTheClaimRule_spec_4_6_3(t *testing.T) {
+	root := repoRoot(t)
+	const link = "04_system-components.md#463-crd-field-ownership-and-write-boundaries"
+	forbidden := []string{"released to the pool", "released back to the pool", "back to the pool", "back to the warm pool"}
+	for _, s := range []struct{ file, anchor string }{
+		{"07_session-lifecycle.md", "before the gateway releases the half-claimed replacement pod ([§4.6.3](" + link + ")"},
+		{"06_warm-pod-model.md", "the half-claimed replacement pod, which the gateway then releases ([§4.6.3](" + link + "))"},
+		{"04_system-components.md", "it releases the claimed pod ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)) and returns"},
+		{"08_recursive-delegation.md", "the gateway releases the pod ([Section 4.6.3](" + link + ")) and returns"},
+		{"15_external-api-surface.md", "releases the pod claim ([§4.6.3](" + link + "))"},
+		{"24_lenny-ctl-command-reference.md", "and the gateway releases the assigned pod ([§4.6.3](" + link + "))"},
+	} {
+		requireNear(t, s.file, collapsedSpec(t, root, s.file), s.anchor, 200, forbidden...)
+	}
+}
+
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 11.3 (orphan timeout row),
+// 4.7.1 (role and gateway RPC contract), 7.1 (Pod-side reclaim on a failed
+// bind)
+// diagnosis: the claimOrphanTimeout default or the adapter's absent answer
+// drifted: predicate 1 or the §11.3 row no longer states the 15-minute
+// default, rule 11 no longer reports an unclean exit after an in-flight or
+// unclean Shutdown teardown, or rule 15 or §7.1 still says an absent answer
+// is always clean, which would let the stale-slot reaper free a slot whose
+// runtime may still run.
+func TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1(t *testing.T) {
+	root := repoRoot(t)
+	c04 := collapsedSpec(t, root, "04_system-components.md")
+	requireAllContain(t, "§4.6.1 predicate 1", c04, []string{"(default: 15 minutes"})
+	requireAllContain(t, "§11.3 orphan-timeout row", requireLine(t, readDocPage(t, filepath.Join(root, "spec", "11_policy-and-controls.md")),
+		"| SandboxClaim orphan timeout"), []string{"900s"})
+	rule11 := requireLine(t, readDocPage(t, filepath.Join(root, "spec", "04_system-components.md")), "11. **The no-entry rule.**")
+	requireAllContain(t, "§4.7.1 rule 11", rule11, []string{
+		"reports an unclean exit while another `Shutdown` that removed the session's entry is still performing its teardown",
+		"after the last `Shutdown` that removed the session's entry reported an unclean exit",
+	})
+	if strings.Contains(c04, "a response reporting `absent` or `superseded` reports a clean exit") {
+		t.Error("§4.7.1 rule 15 still reports every absent answer clean")
+	}
+	if strings.Contains(collapsedSpec(t, root, "07_session-lifecycle.md"), "a reclaim answered `superseded` or `absent` is acknowledged clean") {
+		t.Error("§7.1 Pod-side reclaim on a failed bind still acknowledges every absent answer clean")
+	}
+}

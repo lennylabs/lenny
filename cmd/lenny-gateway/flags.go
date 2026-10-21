@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
@@ -101,6 +102,10 @@ type gatewayFlags struct {
 	dualStoreMaxSeconds                           *int
 	claimHoldTTLSeconds                           *int
 	slotCounterPostgresFallbackMaxSeconds         *int
+	slotCounterRecoveryProbeInterval              *time.Duration
+	slotReaperInterval                            *time.Duration
+	slotReaperRate                                *int
+	slotReaperTerminalAge                         *time.Duration
 	shutdownTimeout                               *time.Duration
 	deprecatedAPIVersionsCSV                      *string
 	recommendationsDisabledRules                  *string
@@ -553,6 +558,18 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.slotCounterPostgresFallbackMaxSeconds = flag.Int("slot-counter-postgres-fallback-max-seconds",
 		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
 		"§12.4 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
+	f.slotCounterRecoveryProbeInterval = flag.Duration("slot-counter-recovery-probe-interval",
+		envDuration("LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL", slotcounter.DefaultRecoveryProbeInterval),
+		"§12.4 slot-set recovery probe cadence: how often the gateway probes Redis so that, when an outage ends, a replica with no slot traffic still rebuilds the per-pod slot sets (adds its fallback admissions and leaked marks, and deletes the rehydrated flag of every pod a non-terminal concurrent-workspace session names) before fast-path enforcement resumes. A non-positive value keeps the default. Default 2s. Override via LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL.")
+	f.slotReaperInterval = flag.Duration("slot-reaper-interval",
+		envDuration("LENNY_SLOT_REAPER_INTERVAL", slotreaper.DefaultInterval),
+		"§5.2 stale-slot reaper cadence: the wait between the end of one leader-run reaper pass and the start of the next. Each pass releases the concurrent-workspace slot set members whose session row has been terminal for longer than --slot-reaper-terminal-age. Default 60s. Override via LENNY_SLOT_REAPER_INTERVAL.")
+	f.slotReaperRate = flag.Int("slot-reaper-rate",
+		envInt("LENNY_SLOT_REAPER_RATE", slotreaper.DefaultRate),
+		"§5.2 stale-slot reaper rate: the most slot set members the reaper releases per second, and the most pods whose release is in flight at once. Must be positive. Default 50. Override via LENNY_SLOT_REAPER_RATE.")
+	f.slotReaperTerminalAge = flag.Duration("slot-reaper-terminal-age",
+		envDuration("LENNY_SLOT_REAPER_TERMINAL_AGE", slotreaper.DefaultTerminalAge),
+		"§5.2 stale-slot reaper terminal age: the gateway's copy of claimOrphanTimeout. A slot set member is released once its session row has been terminal for longer than this. It must equal the controller's --claim-orphan-timeout, and it must be at least one second more than the largest of --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and --workspace-seal-max-duration-seconds (the post-terminal slot activity invariant), which the gateway checks at startup. Default 15m. Override via LENNY_SLOT_REAPER_TERMINAL_AGE.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -828,7 +845,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§6.2 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
 	f.maxResumingSeconds = flag.Int("max-resuming-seconds",
 		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
-		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. A restore whose pod claim is older than the controller's --claim-orphan-timeout is drained by the orphan-claim GC and fails, so keep this value at or below that timeout.")
+		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. The controller's --claim-orphan-timeout, and the gateway's --slot-reaper-terminal-age, must be at least one second more than the largest of this value, --max-finalizing-state-timeout-seconds, and --workspace-seal-max-duration-seconds (the §5.2 post-terminal slot activity invariant), which the gateway checks at startup.")
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -1046,7 +1063,7 @@ func (f *gatewayFlags) registerArtifactFlags() {
 		"§12.5 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
 	f.maxCreatedStateTimeoutSeconds = flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
-		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
+		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL and the watchdog's `created`-state budget so the two deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
 	f.maxDeadlockWaitSeconds = flag.Int("max-deadlock-wait-seconds",
 		envInt("LENNY_MAX_DEADLOCK_WAIT_SECONDS", 120),
 		"§8.8 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")

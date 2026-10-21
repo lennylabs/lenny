@@ -61,7 +61,12 @@ const dispositionFailed = "failed"
 // recycling patch is durable and ordered first; the adapter Shutdown is
 // best-effort — a coordinating-gateway crash after the patch leaves the claim in
 // `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
-// path Release returns only an error from the recycling patch. spec: §4.6.1,
+// path Release returns only an error from the recycling patch. The claim
+// writes (the recycling patch, and the retire path's Sandbox read and claim
+// delete) run on a detached context bounded by the §5.2 per-slot cleanup
+// floor, while the adapter Shutdown keeps the caller's context, so a caller
+// whose context ends during the Shutdown still has its claim deleted or
+// patched. spec: §4.6.1,
 // §4.7 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
 // §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
@@ -84,7 +89,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// spec: §28.5.1 (Gateway-to-pod) — a binding whose attach stream ended in
 	// a reported stream failure retires the pod whatever the disposition.
 	if result.Recycle && disposition != dispositionFailed && !result.Crashed() {
-		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
+		if err := b.writeRecyclingDetached(ctx, result.SandboxName); err != nil {
 			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
 		}
 		// §4.7: arm the gateway-side missing-report timeout now that the claim
@@ -113,11 +118,39 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// pool retires its pod rather than triggering the scrub-and-reuse path, then
 	// tear the session's processes down and drain the pod.
 	b.shutdownAdapter(ctx, result, false)
+	return b.retireDetached(ctx, result.SandboxName)
+}
+
+// writeRecyclingDetached patches the per-pod SandboxClaim of sandboxName
+// bound → recycling on a detached context (detachedReleaseContext). The
+// executor removed the binding before calling Release and nothing retries
+// the release, so a caller context that has ended must not leave the claim
+// `bound` for the §4.6.1 orphan GC.
+//
+// spec: §5.2 (Recycle lifecycle); §4.6.3 (SandboxClaim binding state).
+func (b *Binder) writeRecyclingDetached(ctx context.Context, sandboxName string) error {
+	rctx, cancel := detachedReleaseContext(ctx)
+	defer cancel()
+	return podclaim.WriteRecyclingStatus(rctx, b.Client, b.Namespace, podclaim.ClaimName(sandboxName), nil)
+}
+
+// retireDetached reads the Sandbox and deletes its per-pod SandboxClaim on a
+// detached context created by this call, so the bound starts after the
+// best-effort adapter Shutdown returned. A Shutdown that runs to the caller's
+// deadline would otherwise spend the context the claim delete needs, and the
+// pod would wait for the §4.6.1 orphan GC although the session ended.
+//
+// spec: §5.2 (Recycle lifecycle); §4.6.3 (SandboxClaim: a release that ends
+// the occupancy without reuse); §4.6.1 (occupancy projection on claim
+// DELETE).
+func (b *Binder) retireDetached(ctx context.Context, sandboxName string) error {
+	rctx, cancel := detachedReleaseContext(ctx)
+	defer cancel()
 	var sb lennyv1.Sandbox
-	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
-		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
+	if err := b.Client.Get(rctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
+		return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
 	}
-	return b.drain(ctx, &sb)
+	return b.drain(rctx, &sb)
 }
 
 // shutdownAdapter shuts the pod's runtime down through the adapter and closes

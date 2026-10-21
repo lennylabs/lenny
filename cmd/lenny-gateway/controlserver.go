@@ -206,7 +206,8 @@ func (w *gatewayWiring) buildControlServer(
 	// F-5.2.26.
 	// F-7.4.7: thread the configured maxCreatedStateTimeoutSeconds into
 	// the watchdog so its `created`-state budget matches the
-	// uploadToken TTL and the createdsweeper deadline.
+	// uploadToken TTL. An abandoned `created` row ends as the watchdog's
+	// CREATED_TIMEOUT write, and the post-terminal hook releases its pod.
 	// spec: §7.1.
 	// F-6.2.14: thread the §6.2 resuming watchdog and §6.2 resume_pending wall-clock cap into the gateway watchdog. The
 	// resume_pending cap defaults to maxResumeWindowSeconds (which the
