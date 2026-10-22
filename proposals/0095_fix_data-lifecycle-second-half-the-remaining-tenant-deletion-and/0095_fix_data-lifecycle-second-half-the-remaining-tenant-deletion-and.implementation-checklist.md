@@ -10,9 +10,9 @@ Every step lands the tests the non-spec Testing section places under its deliver
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-4. Lands the §11.4 edits.
       Tiers 0, 11. Depends on: —
-- [ ] **S4 · spec** — SPEC-2. Lands the tenant deletion lifecycle edits.
+- [ ] **S4 · spec** — SPEC-2. Lands the tenant deletion lifecycle edits and the §17.6 seed edits.
       Tiers 0, 11. Depends on: S2, S3
-- [ ] **S5 · spec** — SPEC-5. Lands the scope-table, step 18, and Phase 4 edits.
+- [ ] **S5 · spec** — SPEC-5. Lands the scope-table, step 18, Phase 4, and §13.3 retention edits.
       Tiers 0, 11. Depends on: S2
 - [ ] **S6 · spec** — SPEC-6. Lands the override sub-step edits.
       Tiers 0, 11. Depends on: S5
