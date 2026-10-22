@@ -27,7 +27,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S12 · code** — CODE-7. Lands the lease step without deny-listing and the retargeted lease-step tests.
       Tiers 0, 1, 4, 8, 9. Depends on: S4
 - [ ] **S13 · code** — CODE-8. Lands the Phase 3 revoker, its wiring, and the in-phase pause.
-      Tiers 0, 1, 4, 8. Depends on: S3, S4, S5, S11, S12
+      Tiers 0, 1, 4, 8. Depends on: S3, S4, S5, S10, S11, S12
 - [ ] **S14 · code** — CODE-9. Lands full_revoke continuation.
       Tiers 0, 1, 3, 4. Depends on: S4, S12
 - [ ] **S15 · docs** — DOCS-1. Lands the operator-guide and `lenny-ctl` reference edits.
