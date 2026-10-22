@@ -31,13 +31,13 @@ Re-baselined 2026-10-22. The spec steps land after proposal 0090's (landed) and 
 - [ ] **S14 · code** — CODE-1 with its tier-1 and tier-2 tests.
       Tiers 0, 1, 2. Depends on: S1, S8
 - [ ] **S15 · code** — CODE-2 with its C unit, fuzz, and binary-check tests.
-      Tiers 0, 1. Depends on: S2, S3, S4, S5, S9, S10
+      Tiers 0, 1. Depends on: S2, S3, S4, S5, S6, S9, S10
 - [ ] **S16 · code** — CODE-3 with its tier-1, tier-3, and tier-7a tests and its claim rows.
       Tiers 0, 1, 3, 7a. Depends on: S2, S3, S4, S5, S6, S8, S9, S10, S11, S15
 - [ ] **S17 · code** — CODE-5 with its tier-1, tier-2, and tier-4 tests, including the interim refusal of `restart` until proposal 0084 lands, its comment block, its tier-1 test, and the skip-register entries for the tier-4 `restart` cases.
       Tiers 0, 1, 2, 4. Depends on: S6, S14
 - [ ] **S18 · code** — CODE-4 with its tier-1 and tier-2 tests. Serializes with R17 under S-4.
-      Tiers 0, 1, 2. Depends on: S2, S6, S7, S8, S14, S15, S16, S17
+      Tiers 0, 1, 2. Depends on: S1, S2, S6, S7, S8, S14, S15, S16, S17
 - [ ] **S19 · code** — CODE-6.
       Tiers 0, 1. Depends on: S4, S12, S15
 - [ ] **S20 · test** — FIXTURE-1, and TEST-1's tier-5, tier-6, tier-8, tier-9, and tier-10 tests, with the skip-register entries for the cases that need an admitted `restart` pool.

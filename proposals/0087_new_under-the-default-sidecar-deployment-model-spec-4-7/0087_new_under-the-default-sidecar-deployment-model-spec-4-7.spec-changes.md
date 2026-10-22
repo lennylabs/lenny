@@ -489,8 +489,8 @@ than the supervisor, and the sweep reaches what
 [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
 **Sweep.** lists, so no runtime process persists across the recycle boundary;
 the adapter process persists. On a `keep` pod, and on a sidecar pod without the
-runtime supervisor, the runtime process, its memory, and the processes it started
-persist across the boundary, because
+runtime supervisor, the runtime process and its memory persist across the boundary,
+and in the sidecar model so do the processes it started, because
 the pod keeps the runtime process
 ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process
 lifetime"). In the embedded model the runtime is the adapter's process, which
@@ -612,8 +612,7 @@ Replace the diagram block that follows with:
   adapter listens and the runtime supervisor dials. When `SO_PEERCRED` is enforced, the adapter accepts
   only the agent UID and the supervisor accepts the connection only when its peer is the adapter UID
   ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8). No manifest-nonce
-  handshake or challenge-response runs on this channel, because the supervisor connects before any
-  manifest exists.
+  handshake or challenge-response runs on this channel.
 - **Axes.** Control plane, dialled by the runtime supervisor, message authority on both sides,
   Unix socket JSON Lines transport (§28.3).
 - **Messages.** Each message is a single JSON object terminated by `\n` whose `type` member carries the
@@ -669,6 +668,8 @@ Replace the diagram block that follows with:
 **One connection per pod.** `CH-SUPERVISE` admits one connection for the pod's life, and its unit is the
 pod. Its card states the guards (§28.5.3). No gateway replica holds the channel.
 ```
+
+In the **One operation per pod.** paragraph, replace `Below the per-session constraint sits one per-pod constraint.` with `Below the per-session constraint sits a per-pod constraint.`
 
 (f) In the §28.8 matrix, insert after the `CH-MCP-CONNECTOR` row, as one physical line:
 
