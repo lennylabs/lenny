@@ -104,7 +104,7 @@ the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `comm
 
 Delete the §26.3 line that begins `**Setup-time image entrypoint:**`.
 
-### SPEC-2 · spec/04_system-components.md § 4.7.10 Deployment Model and § 4.7.1, spec/11_policy-and-controls.md § 11.4, and spec/10_gateway-internals.md § 10.1
+### SPEC-2 · spec/04_system-components.md § 4.7.10 Deployment Model and § 4.7.1, spec/11_policy-and-controls.md § 11.4, spec/10_gateway-internals.md § 10.1, and spec/06_warm-pod-model.md § 6.2
 
 (a) In the **Runtime process lifetime.** paragraph, replace its first sentence, `The runtime process lives as long as the pod.`, with:
 
@@ -303,10 +303,9 @@ container and no supervisor.
   **Liveness.** states the pod's outcome. A process holds a session from the
   [§4.7.1](#471-role-and-gateway-rpc-contract) rule-8 record of the session's
   start until the deregistration of the session's registry entry. The adapter
-  handles `exited` as one step under the registry critical section
-  ([§4.7.1](#471-role-and-gateway-rpc-contract)), so it decides which sessions
-  the process held against the registry as that step finds it. The release row
-  of the
+  decides which sessions the process held in the `exited` step of the
+  [§4.7.1](#471-role-and-gateway-rpc-contract) registry critical section. The
+  release row of the
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
   **Supervised scrub sequence.** table states the case of an exit around the
   release of a pod's last session.
@@ -316,13 +315,13 @@ container and no supervisor.
   including one that would use a live runtime process, and sends no `launch`;
   each refused start fails
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
-  "Runtime not live"). The adapter's next `ReportPodScrub` reports that the
-  runtime cannot serve the next session, so the pod retires under "Runtime
-  not live" whatever `onScrubFailure` states. A cause before the adapter
+  "Runtime not live"). The adapter's next `ReportPodScrub` reports the
+  runtime as not able to serve, so the pod retires under "Runtime not live"
+  whatever `onScrubFailure` states. A cause before the adapter
   signals READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)
-  step 4) makes the adapter exit non-zero instead, and the pod never becomes
-  `idle`. A service-mode pod has no recycle boundary at which to report, so
-  on it any cause makes the adapter exit non-zero, and the pod is replaced.
+  step 4), and any cause on a service-mode pod, which has no recycle
+  boundary at which to report, make the adapter exit non-zero instead, and
+  [§6.2](06_warm-pod-model.md#62-pod-state-machine) states the pod's outcome.
   The causes, on every pod unless a cause names one kind of pod, are:
   - a `launched`, `ended`, or `swept` reply carries an error, a sweep walk
     that reached its bound included, or the listener rebind (**End.**) fails;
@@ -401,9 +400,17 @@ From its launch by the runtime supervisor to its end (**Runtime process lifetime
 
 In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
 
+In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor, the step is the decision of which sessions the exited process holds ([Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Crash.**).` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
+
 In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:** step 3, delete `, which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")`.
 
 (e) In `spec/10_gateway-internals.md` §10.1, in the **Hold state timeout:** bullet, replace `; that pod serves no later session and is retired ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime process lifetime**)` with `; [Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states the pod's outcome`.
+
+(f) In `spec/06_warm-pod-model.md` §6.2, insert after the fenced block that contains `warming ──→ failed                (warm-fill failure)` and before `**Pre-`running` slot cleanup.**`:
+
+```
+**Terminated adapter container.** The WarmPoolController observes a pod whose `adapter` container has terminated as failed, whether or not another of its containers still runs, because the pod's `restartPolicy: Never` keeps the pod in phase `Running` while any container runs: a `warming` or `sdk_connecting` pod takes the edge to `failed`, and an `idle` pod takes `idle ──→ draining`.
+```
 
 ### SPEC-3 · spec/04_system-components.md § 4.7.9 Startup Sequence for `type: agent` Runtimes
 
@@ -554,7 +561,7 @@ In the same paragraph, replace `A runtime that exits after its session makes the
 (c) In **Lenny scrub procedure**, replace `The scrub has two phases: a **pre-cleanup credential purge** (step 0) executed by the adapter before `cleanupCommands`, and a **post-cleanup scrub sequence** (steps 1-6) executed after `cleanupCommands` finish.` with:
 
 ```
-The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a `restart` pod ("Runtime-process lifetime" above), the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and sweeps what the agent UID left ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **End.** and **Sweep.**); the deployer's `cleanupCommands`; on a `restart` pod, a second runtime end and sweep, which remove every process and agent-UID object the commands left; and the **post-cleanup scrub sequence** (steps 1-6). On a pod that runs the runtime supervisor ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) the supervisor runs `cleanupCommands`, and **Supervised scrub sequence.** below states the outcome of each step; on every other pod the adapter runs them in its own container.
+The scrub runs the **pre-cleanup credential purge** (step 0), the deployer's `cleanupCommands`, and the **post-cleanup scrub sequence** (steps 1-6), in that order. On a pod that runs the runtime supervisor ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) the supervisor runs `cleanupCommands`, and **Supervised scrub sequence.** below states the order and the outcome of each step; on every other pod the adapter runs them in its own container.
 ```
 
 Insert after step 6 of the post-cleanup scrub sequence and before the **What the scrub reaches.** paragraph (the line that begins `**What the scrub reaches.**`):
@@ -646,6 +653,8 @@ Each site below names the acknowledgment requirement or the kept process by a po
 In §4.6.1, replace ``the webhook's immutability list covers `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` only; `lenny.dev/host-schedulable` is explicitly omitted so that`` with ``it is omitted so that``.
 
 In §17.2 item 5 (`lenny-label-immutability`), replace `` `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods`` with `` `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process` labels on agent pods``. In the §16.5 `LabelImmutabilityWebhookUnavailable` row, replace ``the immutable `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, or `lenny.dev/tenant-id` labels on agent pods`` with ``the immutable agent-pod labels ([Section 17.2](17_deployment-topology.md#172-namespace-layout) item 5)``.
+
+(i) In the **Pod retirement policy (recycling pools).** item **Runtime not live:**, replace `states that its runtime process cannot serve the next session` with `states that its runtime cannot serve the next session`. The item stays one physical line.
 
 ### SPEC-6 · spec/13_security-model.md § 13.1 Pod Security
 
@@ -915,7 +924,7 @@ In the §24.2 command table, insert after the `lenny-ctl preflight --config <val
 
 - `spec/04_system-components.md` (SPEC-2, SPEC-3, SPEC-4, SPEC-5, SPEC-7, SPEC-8(e), SPEC-11)
 - `spec/05_runtime-registry-and-pool-model.md` (SPEC-1, SPEC-5, SPEC-9)
-- `spec/06_warm-pod-model.md` (SPEC-5, SPEC-9)
+- `spec/06_warm-pod-model.md` (SPEC-2, SPEC-5, SPEC-9)
 - `spec/07_session-lifecycle.md` (SPEC-5)
 - `spec/10_gateway-internals.md` (SPEC-2, SPEC-7)
 - `spec/11_policy-and-controls.md` (SPEC-2)
