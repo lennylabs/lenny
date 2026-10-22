@@ -2895,7 +2895,11 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     multi-tenant deployment may delete `default`, with a spec edge case and operator documentation for the
     bootstrap admin token (OD-1); an admin router built without the tenancy setting fails closed as
     single-tenant (OD-2).
-- [ ] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Added
+- [x] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Landed
+  2026-10-22 (merge `2177ac596`): chart value `auth.multiTenant` renders `--multi-tenant`, a mismatch with
+  `tenancy.mode` is refused at render and at gateway startup, and `permissiveRegistry` is deleted. It
+  exposed F-10.2.21 (an unauthenticated request takes its tenant from `X-Lenny-Tenant-ID`), queued as the
+  next direct fix. Added
   2026-10-22 by the owner's OD-3 decision on 0095. Every chart-deployed gateway runs the single-tenant
   branch, which flips the auth middleware to multi-tenant with a registry that admits every tenant, so an
   unregistered tenant claim is admitted instead of refused. The fix renders the switch from the chart, keeps
