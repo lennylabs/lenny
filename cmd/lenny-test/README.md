@@ -40,6 +40,8 @@ lenny-test infra status
 lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
+lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
+lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec 4.6.1,12.3 --dry-run
 
 # Actually run (Phase 0: static + unit only)
@@ -58,4 +60,6 @@ lenny-test --group pr-fast
 | `cmd_list.go` | `list` subcommand |
 | `cmd_infra.go` | `infra up/down/status/prune` (Phase 0 stubs) |
 | `tiers.go` | Tier ordering and group-to-tier resolution |
+| `cmd_run_resolve.go` | `--changed`, `--spec`, and `--pkg` resolution into a tier plan |
+| `changed_select.go` | Unit-tier package scope for `--changed`: owning packages, change-graph unit targets, and in-module importers |
 | `verdict.go` | JSON verdict writer per TESTING.md §7 |

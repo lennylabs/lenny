@@ -62,7 +62,7 @@ var (
 //
 // spec: 28.1 (channel naming law), 28.3 (channel registers)
 func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
-	globs := readChangeGraphGlobs(t)
+	globs := mustReadChangeGraphGlobs(t)
 
 	paths, err := channelGuardSources(filepath.Join(repoRoot(), channelGuardDir))
 	if err != nil {
@@ -195,20 +195,14 @@ func validateChangeGraphPathsOverKey(t *testing.T, key string) checkResult {
 	return validateChangeGraphPaths(path, repoRoot())
 }
 
-// readChangeGraphGlobs returns the committed change graph's glob table.
-func readChangeGraphGlobs(t *testing.T) map[string]map[string][]string {
+// mustReadChangeGraphGlobs returns the committed change graph's glob table.
+func mustReadChangeGraphGlobs(t *testing.T) map[string]map[string][]string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
+	globs, err := readChangeGraphGlobs()
 	if err != nil {
-		t.Fatalf("read %s: %v", changeGraphFile, err)
+		t.Fatalf("%s: %v", changeGraphFile, err)
 	}
-	var doc struct {
-		Globs map[string]map[string][]string `json:"globs"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		t.Fatalf("parse %s: %v", changeGraphFile, err)
-	}
-	return doc.Globs
+	return globs
 }
 
 // containsRootLevelDocument reports whether list carries a root-level
