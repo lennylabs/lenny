@@ -64,7 +64,7 @@ func inMemoryEraserWiring() *gatewayWiring {
 }
 
 // TestBuildTenantErasersOrder_spec_12_8 asserts the in-memory gateway's
-// Phase 4 sequence lists every store of the Store table's tenant path, in
+// Phase 4 sequence lists every store the tenant path wires, in
 // rank order with every session-keyed store ahead of SessionStore, and
 // that the sequence passes the startup order and completeness check.
 //

@@ -11,9 +11,9 @@ import (
 
 func noopUser(context.Context, string, string) (int, error) { return 0, nil }
 
-// withoutUserEntry returns the Store table user wiring with name removed.
+// withoutUserEntry returns the gateway's user-path wiring with name removed.
 func withoutUserEntry(name string) Config {
-	cfg := StoreTableUserConfig()
+	cfg := GatewayUserWiringConfig()
 	var ss []SessionEraser
 	for _, se := range cfg.SessionScoped {
 		if se.Name != name {
@@ -42,7 +42,7 @@ func withoutName(names []string, name string) []string {
 }
 
 // TestValidatorsCompletenessAndOrder_spec_12_8 runs both validators over the
-// Store table wiring and over each kind of defective wiring: a ranked store
+// gateway's wiring on both paths and over each kind of defective wiring: a ranked store
 // missing from the path, a store both wired and exempt, an exemption with an
 // empty reason, an unranked store, a duplicate, and a rank inversion on the
 // tenant path. Each defect is rejected with the store and the path named.
@@ -70,12 +70,12 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 			return fn()
 		}
 	}
-	tenant := StoreTableTenantNames()
-	swapped := StoreTableTenantNames()
+	tenant := GatewayTenantPhase4Names()
+	swapped := GatewayTenantPhase4Names()
 	swapped[0], swapped[1] = swapped[1], swapped[0]
 	cases := []tc{
-		{name: "user store table wiring", run: func() error { return ValidateOrder(StoreTableUserConfig()) }},
-		{name: "tenant store table wiring", run: func() error { return ValidateTenantOrder(tenant) }},
+		{name: "user path wiring", run: func() error { return ValidateOrder(GatewayUserWiringConfig()) }},
+		{name: "tenant path wiring", run: func() error { return ValidateTenantOrder(tenant) }},
 		{
 			name:    "user missing ranked store",
 			run:     func() error { return ValidateOrder(withoutUserEntry("checkpoint_meta")) },
@@ -88,7 +88,7 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 		},
 		{
 			name:    "user store both wired and exempt",
-			run:     withExempt(userExempt, "audit", "a reason", func() error { return ValidateOrder(StoreTableUserConfig()) }),
+			run:     withExempt(userExempt, "audit", "a reason", func() error { return ValidateOrder(GatewayUserWiringConfig()) }),
 			wantErr: []string{"user erasure", `"audit"`, "both wired and exempt"},
 		},
 		{
@@ -98,7 +98,7 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 		},
 		{
 			name:    "user exempt with empty reason",
-			run:     withExempt(userExempt, "billing", "", func() error { return ValidateOrder(StoreTableUserConfig()) }),
+			run:     withExempt(userExempt, "billing", "", func() error { return ValidateOrder(GatewayUserWiringConfig()) }),
 			wantErr: []string{"user erasure", `"billing"`, "empty reason"},
 		},
 		{
@@ -109,7 +109,7 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 		{
 			name: "user unknown store",
 			run: func() error {
-				cfg := StoreTableUserConfig()
+				cfg := GatewayUserWiringConfig()
 				cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "mystery_store"})
 				return ValidateOrder(cfg)
 			},
@@ -117,13 +117,13 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 		},
 		{
 			name:    "tenant unknown store",
-			run:     func() error { return ValidateTenantOrder(append(StoreTableTenantNames(), "mystery_store")) },
+			run:     func() error { return ValidateTenantOrder(append(GatewayTenantPhase4Names(), "mystery_store")) },
 			wantErr: []string{"tenant deletion Phase 4", `"mystery_store"`, "no §12.8 dependency rank"},
 		},
 		{
 			name: "user duplicate across slots",
 			run: func() error {
-				cfg := StoreTableUserConfig()
+				cfg := GatewayUserWiringConfig()
 				cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "artifacts"})
 				return ValidateOrder(cfg)
 			},
@@ -168,7 +168,7 @@ func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
 
 // TestCanonicalRankNameSet_spec_12_8 pins the set of ranked store names. A
 // store added to or dropped from the §12.8 scope must change this list in
-// a reviewed edit, together with the Store table wiring on both paths.
+// a reviewed edit, together with the gateway's wiring on both paths.
 //
 // spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope)
 func TestCanonicalRankNameSet_spec_12_8(t *testing.T) {
@@ -200,7 +200,7 @@ func TestCanonicalRankNameSet_spec_12_8(t *testing.T) {
 //
 // spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
 func TestTenantRankOrderFollowsPhase4_spec_12_8(t *testing.T) {
-	if got := strings.Join(CanonicalOrder(), ","); got != strings.Join(withExemptions(storeTableTenant), ",") {
+	if got := strings.Join(CanonicalOrder(), ","); got != strings.Join(withExemptions(gatewayTenantPhase4), ",") {
 		t.Fatalf("CanonicalOrder = %s", got)
 	}
 }
@@ -244,7 +244,7 @@ func TestValidateOrderEvalAfterSessionsRejected_spec_12_8(t *testing.T) {
 //
 // spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
 func TestValidateOrderAllowsNonRankOrderWithinFKEdges_spec_12_8(t *testing.T) {
-	cfg := StoreTableUserConfig()
+	cfg := GatewayUserWiringConfig()
 	cfg.UserScoped[0], cfg.UserScoped[1] = cfg.UserScoped[1], cfg.UserScoped[0]
 	if err := ValidateOrder(cfg); err != nil {
 		t.Fatalf("a non-rank user order that honors every FK edge was rejected: %v", err)

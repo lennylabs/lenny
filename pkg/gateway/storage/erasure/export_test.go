@@ -2,22 +2,24 @@
 
 package erasure
 
-// storeTableUserSession and storeTableUserScoped are the user-path wiring of
-// the Store table: every ranked store the user path wires, session-scoped
-// stores first, each in rank order.
+// gatewayUserSessionScoped and gatewayUserScoped are the gateway's user-path
+// wiring: every ranked store the user path wires rather than exempts per
+// spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope),
+// session-scoped stores first, each in rank order.
 var (
-	storeTableUserSession = []string{
+	gatewayUserSessionScoped = []string{
 		"coordination_mirror", "artifacts", "checkpoint_manifests", "checkpoint_retention",
 		"checkpoint_meta", "transcripts", "session_message_queues", "session_tree_archive",
 		"eval_results", "delegation_budget",
 	}
-	storeTableUserScoped = []string{
+	gatewayUserScoped = []string{
 		"leases", "semantic_cache", "experiment_sticky", "billing_buffer", "quota", "memory",
 		"interactions", "audit", "sessions", "tokens", "issued_tokens", "credential_pool",
 	}
-	// storeTableTenant is the tenant-path Phase 4 wiring of the Store table,
-	// in rank order.
-	storeTableTenant = []string{
+	// gatewayTenantPhase4 is the gateway's tenant-path wiring of the deletion
+	// step of spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle
+	// Phase 4), in rank order.
+	gatewayTenantPhase4 = []string{
 		"leases", "coordination_mirror", "semantic_cache", "experiment_sticky", "billing_buffer",
 		"quota", "artifacts", "checkpoint_manifests", "checkpoint_retention", "checkpoint_meta",
 		"transcripts", "interactions", "memory", "session_message_queues", "session_tree_archive",
@@ -27,22 +29,22 @@ var (
 	}
 )
 
-// StoreTableUserConfig returns the Store table's user-path wiring with every
+// GatewayUserWiringConfig returns the gateway's user-path wiring with every
 // entry listed by name and a nil function, which the validators accept as
 // wired. Tests replace an entry's function to exercise one store.
-func StoreTableUserConfig() Config {
+func GatewayUserWiringConfig() Config {
 	cfg := Config{}
-	for _, n := range storeTableUserSession {
+	for _, n := range gatewayUserSessionScoped {
 		cfg.SessionScoped = append(cfg.SessionScoped, SessionEraser{Name: n})
 	}
-	for _, n := range storeTableUserScoped {
+	for _, n := range gatewayUserScoped {
 		cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: n})
 	}
 	return cfg
 }
 
-// StoreTableTenantNames returns the Store table's tenant-path Phase 4 names
+// GatewayTenantPhase4Names returns the gateway's tenant-path Phase 4 names
 // in rank order.
-func StoreTableTenantNames() []string {
-	return append([]string(nil), storeTableTenant...)
+func GatewayTenantPhase4Names() []string {
+	return append([]string(nil), gatewayTenantPhase4...)
 }

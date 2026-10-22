@@ -73,14 +73,14 @@ func (r recCredentials) DeleteByUser(_ context.Context, tenantID, userID string)
 	return 2, nil
 }
 
-// TestUserErasureReachesTheStoreTableStores_spec_12_8 runs user erasure over
+// TestUserErasureReachesEveryWiredStore_spec_12_8 runs user erasure over
 // the gateway's user-path builders with recording doubles and asserts the
 // checkpoint and coordination-mirror adapters run once per listed session
 // with that session alone, both TokenStore stores run once for the user, and
 // the receipt tallies the tokens entry as their sum.
 //
 // spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence), 12.8 (Compliance Interfaces: Storage backends in erasure scope), 10.1.8
-func TestUserErasureReachesTheStoreTableStores_spec_12_8(t *testing.T) {
+func TestUserErasureReachesEveryWiredStore_spec_12_8(t *testing.T) {
 	rec := &eraseCalls{}
 	w := inMemoryEraserWiring()
 	w.coordMirror = recMirror{rec: rec}

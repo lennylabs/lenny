@@ -585,7 +585,7 @@ func TestErasureJobsCompleteWithSmallPool_spec_12_8(t *testing.T) {
 	}
 }
 
-// eraseTwinTables names the rows the store-table erasure test seeds for
+// eraseTwinTables names the rows the wired-store erasure test seeds for
 // one user's session in each store the user path erases by session.
 var eraseTwinTables = []struct{ name, insert, count string }{
 	{
@@ -612,7 +612,7 @@ var eraseTwinTables = []struct{ name, insert, count string }{
 	},
 }
 
-// eraseTwinUserTables names the rows the store-table erasure test seeds
+// eraseTwinUserTables names the rows the wired-store erasure test seeds
 // for one user in the two TokenStore stores.
 var eraseTwinUserTables = []struct{ name, insert, count string }{
 	{
@@ -667,14 +667,14 @@ func eraseTwinCounts(t *testing.T, pg *containers.Postgres, user, sid string) ma
 // row, a coordination-mirror row, a connector refresh token, or a
 // registered credential of the erased user, or deleted one of another
 // user's, or a replica restarted after the erasure did not come back up.
-// Each store is in the user path's Store table, so a surviving row means
+// Each store is one the user path wires, so a surviving row means
 // its eraser is not wired, and a missing bob row means an eraser ignores
 // its scope. The restarted replica rebuilds the credential deny list from
 // the revoked registered credentials; once user erasure deletes those rows,
 // a lease still live on an unreleased remote binding loses its user-shaped
 // deny entry after the restart, bounded by the lease TTL or by the orphan
 // claim timeout plus one GC sweep.
-func TestErasureDeletesTheUsersStoreTableRows_spec_12_8(t *testing.T) {
+func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

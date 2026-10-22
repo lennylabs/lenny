@@ -8,7 +8,7 @@ import (
 )
 
 // TestValidateTenantOrder_spec_12_8 covers the tenant Phase 4 order
-// check over the Store table wiring: the wiring passes, and every rank
+// check over the gateway's tenant-path wiring: the wiring passes, and every rank
 // inversion that left Phase 4 stuck, including session_tree_archive after
 // sessions, is rejected.
 //
@@ -16,7 +16,7 @@ import (
 func TestValidateTenantOrder_spec_12_8(t *testing.T) {
 	move := func(name, after string) []string {
 		var out []string
-		for _, n := range StoreTableTenantNames() {
+		for _, n := range GatewayTenantPhase4Names() {
 			if n == name {
 				continue
 			}
@@ -32,14 +32,14 @@ func TestValidateTenantOrder_spec_12_8(t *testing.T) {
 		names   []string
 		wantErr string
 	}{
-		{name: "gateway wiring", names: StoreTableTenantNames()},
+		{name: "gateway wiring", names: GatewayTenantPhase4Names()},
 		{name: "empty sequence", names: nil, wantErr: "neither wired nor exempt"},
 		{name: "archive after sessions", names: move("session_tree_archive", "sessions"), wantErr: "order violation"},
 		{name: "eval results after sessions", names: move("eval_results", "sessions"), wantErr: "order violation"},
 		{name: "eval results before billing", names: move("eval_results", "audit"), wantErr: "order violation"},
 		{name: "tokens before sessions", names: move("tokens", "delegation_budget"), wantErr: "order violation"},
-		{name: "unknown store", names: append(StoreTableTenantNames(), "mystery_store"), wantErr: "no §12.8 dependency rank"},
-		{name: "duplicate store", names: append(StoreTableTenantNames(), "tenant_config"), wantErr: "more than one slot"},
+		{name: "unknown store", names: append(GatewayTenantPhase4Names(), "mystery_store"), wantErr: "no §12.8 dependency rank"},
+		{name: "duplicate store", names: append(GatewayTenantPhase4Names(), "tenant_config"), wantErr: "more than one slot"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestValidateTenantOrder_spec_12_8(t *testing.T) {
 //
 // spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
 func TestValidateTenantOrderEveryAdjacentSwap_spec_12_8(t *testing.T) {
-	order := StoreTableTenantNames()
+	order := GatewayTenantPhase4Names()
 	if err := ValidateTenantOrder(order); err != nil {
 		t.Fatalf("canonical order rejected: %v", err)
 	}
