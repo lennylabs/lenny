@@ -47,6 +47,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -135,16 +136,12 @@ func main() {
 	// (component=adapter) before any subcommand dispatch. F-16.4.1.
 	logging.Setup(os.Stderr, "adapter")
 
-	// spec: §4.6.1 — `lenny-adapter prestop` is the agent-pod preStop
+	// spec: §4.6.1 — the `prestop` subcommand is the agent-pod preStop
 	// drain hook. It signals the running adapter and waits for it to
 	// drain in-flight checkpoints, so it runs as a distinct subcommand
 	// rather than starting the gRPC server.
-	if len(os.Args) > 1 && os.Args[1] == "prestop" {
-		cfg, err := parsePreStopArgs(os.Args[2:])
-		if err != nil {
-			log.Fatalf("lenny-adapter: %v", err)
-		}
-		os.Exit(runPreStop(cfg, preStopOSDeps(log.Printf)))
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
 	}
 
 	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")

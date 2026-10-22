@@ -6,7 +6,20 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 )
+
+// PlatformBinaryPath is the absolute path at which the shared platform
+// Dockerfile installs the binary it builds. Every image built from it
+// carries its binary at this path under the ENTRYPOINT, whatever the
+// BINARY build-arg selects: the lenny-adapter sidecar image and the
+// first-party embedded runtime images alike. The images are distroless,
+// with no shell and no PATH lookup of another name, so an exec hook has
+// to name this path. A tier-0 test (tests/tier0_static) parses the
+// Dockerfile's final COPY destination and ENTRYPOINT and fails when either
+// diverges from this constant.
+const PlatformBinaryPath = "/usr/local/bin/lenny"
 
 const (
 	// defaultTerminationGraceSeconds is the default pod termination grace
@@ -71,8 +84,10 @@ func terminationGrace(in Inputs) int64 {
 }
 
 // preStopDrainHook returns the §4.6.1 preStop lifecycle hook for the
-// adapter container. The hook invokes the adapter binary's `prestop`
-// drain subcommand, which signals the running adapter to drain and
+// pod's gateway-facing container: the adapter sidecar, or the embedded
+// runtime that links the adapter. The hook execs PlatformBinaryPath with
+// the `prestop` drain subcommand (pkg/adapter/prestop), which both binaries
+// dispatch. The subcommand signals the running adapter to drain and
 // blocks until it exits or the bounded timeout elapses. Front-loading
 // the drain into the preStop window keeps an in-flight gateway
 // Checkpoint RPC from being SIGKILLed at the grace deadline. The
@@ -87,7 +102,7 @@ func preStopDrainHook(in Inputs) *corev1.Lifecycle {
 		PreStop: &corev1.LifecycleHandler{
 			Exec: &corev1.ExecAction{
 				Command: []string{
-					"lenny-adapter", "prestop",
+					PlatformBinaryPath, prestop.Verb,
 					fmt.Sprintf("--timeout=%ds", timeout),
 				},
 			},
