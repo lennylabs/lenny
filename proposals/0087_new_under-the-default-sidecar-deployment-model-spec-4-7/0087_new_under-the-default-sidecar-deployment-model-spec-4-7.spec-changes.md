@@ -49,7 +49,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A runtime process sends the supervisor a catchable signal | As the signal table states | SPEC-2 **Signals.** |
 | A pool sets `restart` on a runtime that is not `restartable` | Pool admission refuses the pool | SPEC-5 |
 | A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server refuses the Runtime | SPEC-1 |
-| A `cleanupCommands` command exits non-zero, or the commands together outlast `cleanupTimeoutSeconds` | As the `cleanupCommands` row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
+| A `cleanupCommands` command exits non-zero, or the commands are still running at the `cleanupTimeoutSeconds` deadline | As the `cleanupCommands` row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
 | A pool's `recycle.runtimeProcess` is edited from `keep` to `restart`, and the pool no longer requires `acknowledgeProcessLevelIsolation` | Every acquisition refuses each used `keep` pod and requests its drain; the pods created after the edit are `restart` pods | SPEC-5 |
 | Nonce-only mode | Neither peer-UID check is available, and ordering identifies both ends | SPEC-4 |
 
@@ -252,8 +252,9 @@ container and no supervisor.
   base as working directory and the launch environment plus the step-0
   cleanup metadata
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
-  The worker stops the running command when the commands together outlast
-  `cleanupTimeoutSeconds`. The §5.2 **Supervised scrub sequence.** table
+  The `cleanupTimeoutSeconds` deadline falls when the commands together have
+  run for `cleanupTimeoutSeconds`, and at that deadline the worker sends
+  SIGKILL to the running command's session. The §5.2 **Supervised scrub sequence.** table
   states the outcome of each result.
 - **SDK-warm.** On a `preConnect` runtime
   ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) the SDK
@@ -324,7 +325,7 @@ container and no supervisor.
 | Any sender, and the kernel on a fault in the supervisor | SIGSEGV, SIGBUS, SIGFPE, or SIGILL | Exits non-zero | Every process in the runtime container ends, and the closed connection is a link failure (**Liveness.**) |
 | The kernel on a write to a closed `CH-SUPERVISE` connection | SIGPIPE | None; the failed write is a closed connection, on which the supervisor exits | As for a closed connection |
 | The adapter's `end` request on `CH-SUPERVISE` | None | Sends SIGTERM and, after the request's grace, SIGKILL to every other process in the runtime container (**End.**) | **End.** |
-| The deadline of the adapter's `cleanup` request | None | Its worker sends SIGKILL to the running command's session (**Cleanup.**) | The §5.2 **Supervised scrub sequence.** table |
+| The `cleanupTimeoutSeconds` deadline | None | Its worker sends SIGKILL to the running command's session (**Cleanup.**) | The §5.2 **Supervised scrub sequence.** table |
 ```
 
 (c) In the sidecar-versus-embedded trade-off table, in the `Runtime process lifetime` row, replace the sidecar cell, which begins `The pod's lifetime; one connection serves every session`, with the text below. The row stays one physical line.
@@ -501,13 +502,13 @@ Insert after step 6 of the post-cleanup scrub sequence and before the **What the
 ```
 **Supervised scrub sequence.** On a `restart` pod ("Runtime-process lifetime" above) the whole-pod scrub and the launch that follows it run the rows of the table below in order, and each bold name in the table is a bullet of [Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** On a `keep` pod that runs the runtime supervisor ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) the rows for step 0, `cleanupCommands`, and steps 1 to 6 run, the others do not, and **Liveness.** in that section states the outcome of any runtime exit. In the table, *next* means the following row runs; *scrub failed* means the scrub's outcome is failed and `onScrubFailure` decides the pod; *not live* means the adapter reports the runtime as not able to serve the next session ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.** **Liveness.**), so the pod retires under "Runtime not live" below whatever `onScrubFailure` states; and *link failure* means a `CH-SUPERVISE` link failure ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), on which the adapter reports the runtime not live and sends no further request, so every later row that sends one is skipped. Each row from step 0 through steps 1 to 6 runs whatever the outcome of an earlier row, other than a row an earlier row's outcome skips. The gateway-side timeout on a missing report (above) bounds those rows, and a sequence that outlasts it retires the pod.
 
-| Row | Success | Error | No reply within the request's bound, or the connection closes | Walk reaches its bound | A runtime process exits during the row |
+| Row | Success | Error | No reply within the request's bound ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), `CH-SUPERVISE` **Timing.**), or the connection closes | Walk reaches its bound | A runtime process exits during the row |
 |:--|:--|:--|:--|:--|:--|
 | Release of the last session: the `Shutdown` that brings occupancy to zero deregisters the session's registry entry before it writes the session's `session_end` ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)) | next | Not applicable | Not applicable | Not applicable | An `exited` the adapter handles after the deregistration finds no session held, so it is no crash, and next; one it handles before the deregistration is a crash ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.** **Crash.**) |
 | Step 0, in the adapter | next | scrub failed; the `cleanupCommands` row is skipped; next | Not applicable | Not applicable | next, because no session is held |
 | First end: `end` with no SIGTERM grace (**End.**) | next | not live; next | link failure | Not applicable | next |
 | First sweep: `sweep` (**Sweep.**) | next | not live; next | link failure | not live; next | next |
-| `cleanupCommands`: `cleanup` (**Cleanup.**), whose request bound exceeds `cleanupTimeoutSeconds` | next | scrub failed, for a command that exits non-zero or cannot run and for commands that together outlast `cleanupTimeoutSeconds`; next | link failure | Not applicable | next |
+| `cleanupCommands`: `cleanup` (**Cleanup.**) | next | scrub failed, for a command that exits non-zero or cannot run and for commands still running at the `cleanupTimeoutSeconds` deadline; next | link failure | Not applicable | next |
 | Second end: `end`, as in the first end | next | not live; next | link failure | Not applicable | next |
 | Second sweep: `sweep`, as in the first sweep | next | not live; next | link failure | not live; next | next |
 | Listener rebind, in the adapter (**End.**) | next | not live; next | Not applicable | Not applicable | next |
@@ -680,7 +681,7 @@ Replace the diagram block that follows with:
   carries `id`, which a reply echoes from its request. A reply carries an optional `error` whose value is
   one of an enumerated set of codes; it is absent when the request succeeded. `end` carries `graceMs`,
   the SIGTERM grace before SIGKILL. `cleanup` carries the pool's `cleanupCommands`, each as an argument
-  list, the `cleanupTimeoutSeconds` bound in milliseconds, and the two step-0 cleanup metadata values
+  list, `cleanupTimeoutSeconds` in milliseconds, and the two step-0 cleanup metadata values
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). No message
   carries a credential, manifest content, a session identifier, or any byte a runtime process or a
   cleanup command wrote, and no other message carries an environment value. The exit status in `exited` is
@@ -697,6 +698,8 @@ Replace the diagram block that follows with:
 - **Timing.** The adapter waits a bounded time for the connection and its `ready` before READY. The supervisor repeats a
   refused dial within a bounded window, and exits when the window ends with no connection. Every request is bounded by the deadline of the operation that
   sends it, and `ping` by its own deadline; a request with no reply within its bound is a link failure.
+  For a `cleanup` request that bound, the `cleanup` request bound, exceeds the `cleanupTimeoutSeconds`
+  deadline ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.** **Cleanup.**).
   The specification states no value for these bounds, the ping interval, or the dial retry interval or window.
 - **Exclusivity.** One connection per pod. The guards are the agent pod's `restartPolicy: Never`, under
   which no container restarts in place, the adapter's closing of its listener after the
