@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package main
 
 func (w *wiring) remember(jti string) {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package main
 
 import tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
