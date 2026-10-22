@@ -14367,6 +14367,13 @@ Spec L195: "Dev mode: Local HMAC-SHA256 key, enabled only when `LENNY_DEV_MODE=t
 
 **Resolution:** Positive-confirmation finding; every §13.3 invariant (tenant_match, subject_expired, scope_subset, audience_no_broaden, caller_type_no_elevate, typ_no_mutate, delegation_depth, exp_min) is enforced in `tokenexchange.Validate` and the HTTP wrapper preserves the write-before-issue rule via `RecordWithAudit`. No code change required.
 
+### - [ ] F-10.2.21 — Outside dev mode the gateway admits a request with no credentials and takes its tenant from the client-sent `X-Lenny-Tenant-ID` header [High] — OPEN
+
+**Spec:** §10.2 Authentication (the tenant comes from the authenticated principal's claim, and a multi-tenant gateway refuses an unregistered tenant), §13 security model.
+**Evidence:** `cmd/lenny-gateway/httpsurface.go` builds the auth middleware with `AllowDevHeaders: true` regardless of `--dev-mode` and never sets `RequireAuth` (`pkg/gateway/middleware/auth/auth.go`), so a request with no Bearer token passes the middleware. `sessionserver.resolveTenant` (`pkg/gateway/sessionserver/request_identity.go`) then falls back to a format-valid `X-Lenny-Tenant-ID` header when no principal exists. In a production multi-tenant deployment an unauthenticated caller can therefore name a registered tenant through the header. Turning off `AllowDevHeaders` alone makes it worse, because a header-only request would then skip the registry check and still reach the handler. Found by the T-10.2.11 direct fix (2026-10-22), which keeps the dev-header behavior inside dev mode only for the middleware path and leaves this path unchanged.
+**Gap:** Tenant isolation on the session REST surface rests on a client-controlled header for any request that omits credentials.
+**Suggested resolution:** Outside dev mode, set `RequireAuth` and stop honoring `X-Lenny-Tenant-ID`, and make `resolveTenant` read only the principal (fail closed when none exists); keep the header under `--dev-mode` only. Tier-1 cases for both modes, a tier-4 case against the gateway binary, and a tier-9 case that an unauthenticated request naming a tenant is refused. Owner: a direct fix after the T-10.2.11 fix merges.
+
 ---
 
 ### Cross-cutting observations
