@@ -6,7 +6,7 @@ Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminate
 
 - [ ] **S1 · spec** — SPEC-1. Lands the `command` and `env` fields and their example and reference-runtime sites.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph, including the **Liveness.** table, its citing sites, and the adapter's exit as a cause of the §6.2 warm-fill `sdk_connecting ──→ failed` edge and the `idle ──→ draining` edge.
+- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph, including the **Runtime exits.** and **Liveness.** tables, its citing sites, and the termination of the adapter or runtime container as a cause of the §6.2 warm-fill and recycle re-warm `sdk_connecting ──→ failed` edges and of the `idle ──→ draining` edge.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the §4.7.9 startup-sequence edits.
       Tiers 0, 11. Depends on: S2
