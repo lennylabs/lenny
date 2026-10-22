@@ -1,28 +1,32 @@
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the §5.1 `command` field text.
+Re-baselined 2026-10-22. The spec steps land after proposal 0090's (landed) and before proposal 0084's. CODE-4 serializes with R17 under rule S-4.
+
+- [ ] **S1 · spec** — SPEC-1 and SPEC-10. Lands `command` and `env` in §5.1 and on the §15.1 admin payload.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 edits.
+- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph, the lifetime scoping, the trade-off row, and the §4.7.1 `Shutdown` row.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-3. Lands the §4.7.9 step 4 and step 7 edits.
+- [ ] **S3 · spec** — SPEC-3, SPEC-4, and SPEC-11. Lands §4.7.9 steps 4 and 7, §4.7.11 item 8, and the launch-ordering wording.
       Tiers 0, 11. Depends on: S2
-- [ ] **S4 · spec** — SPEC-4. Lands §4.7.11 item 8.
+- [ ] **S4 · spec** — SPEC-5. Lands `recycle.runtimeProcess`, the acknowledgment rule, the supervised `cleanupCommands`, and the scrub edits in §5.2.
       Tiers 0, 11. Depends on: S2
-- [ ] **S5 · spec** — SPEC-5. Lands the §5.2 edits.
+- [ ] **S5 · spec** — SPEC-6 and SPEC-9. Lands §13.1 **Runtime supervisor volume.** and the §6.1 SDK-warm text.
       Tiers 0, 11. Depends on: S2
-- [ ] **S6 · spec** — SPEC-6. Lands the §13.1 paragraph.
-      Tiers 0, 11. Depends on: S2
-- [ ] **S7 · code** — CODE-1 with TEST-1(a). Lands the CRD field and the registration refusals. It precedes S8 only because S8 is held until S9 (see S8), and CODE-1 implements no statement S8 stages.
+- [ ] **S6 · spec** — SPEC-7 and SPEC-8. Lands `CH-SUPERVISE` in §28 and the `shutdown` and exit-code corrections. Placed before the code that lands its `WIRED` claim rows.
+      Tiers 0, 11. Depends on: S2, S3, S4
+- [ ] **S7 · code** — CODE-1 with its tier-1 and tier-2 tests, and FIXTURE-1's `command` and any needed `env` on every existing sidecar fixture and bootstrap runtime.
       Tiers 0, 1, 2. Depends on: S1
-- [ ] **S8 · spec** — SPEC-7. Lands the `CH-SUPERVISE` register row, card, §28.6 paragraph, and §28.8 row. It is placed immediately before S9 because §28.4 requires a claim-register row for the card, and that row can only be a `WIRED` row naming surfaces S9 creates: no remediation-plan step exists for an `ABSENT` deferral.
-      Tiers 0, 11. Depends on: S2, S3, S4, S5
-- [ ] **S9 · code** — CODE-2 and CODE-3 with TEST-1(b). Lands both ends of `CH-SUPERVISE`, which share `pkg/supervise/wire.go`, together with their claim-register rows.
-      Tiers 0, 1, 3, 7a. Depends on: S2, S3, S4, S5, S8
-- [ ] **S10 · code** — CODE-4 with TEST-1(c). Lands the supervised pod rendering and the render-time refusals.
-      Tiers 0, 1, 2. Depends on: S1, S2, S6, S7, S9
-- [ ] **S11 · code** — CODE-5. Lands the comment and admission-text scoping.
-      Tiers 0, 1. Depends on: S2, S5
-- [ ] **S12 · test** — FIXTURE-1 with TEST-1(d). Lands the probe runtime, the supervised Kind pool, and the cluster-tier tests.
-      Tiers 0, 4, 5, 6, 8, 9. Depends on: S9, S10
-- [ ] **S13 · docs** — DOC-1 with TEST-1(e). Lands the documentation and the tier-11 checks.
-      Tiers 0, 11. Depends on: S1, S2, S3, S4, S5, S6, S8, S12
+- [ ] **S8 · code** — CODE-2 with its C unit, fuzz, and binary-check tests.
+      Tiers 0, 1. Depends on: S2, S3, S6
+- [ ] **S9 · code** — CODE-3 with its tier-1, tier-3, and tier-7a tests and its claim rows.
+      Tiers 0, 1, 3, 7a. Depends on: S4, S6, S8
+- [ ] **S10 · code** — CODE-5 with its tier-1, tier-2, and tier-4 tests.
+      Tiers 0, 1, 2, 4. Depends on: S4, S7
+- [ ] **S11 · code** — CODE-4 with its tier-1 and tier-2 tests. Serializes with R17 under S-4.
+      Tiers 0, 1, 2. Depends on: S5, S7, S8, S9, S10
+- [ ] **S12 · code** — CODE-6.
+      Tiers 0, 1. Depends on: S8
+- [ ] **S13 · test** — FIXTURE-1's probe runtime and pools, and the tier-5, tier-6, tier-8, tier-9, and tier-10 tests.
+      Tiers 0, 5, 6, 8, 9, 10. Depends on: S9, S10, S11
+- [ ] **S14 · docs** — DOC-1 with the tier-11 checks.
+      Tiers 0, 11. Depends on: S1 to S6, S13

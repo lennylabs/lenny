@@ -1,206 +1,135 @@
-# Summary: Sidecar pods have no platform-controlled runtime restart
+# Summary: Sidecar runtime processes have no platform supervisor
 
 ## Summary
 
-**Problem statement.** This proposal assumes that 0078, 0079 (with the runtime-SDK follow-up that 0079's checklist step S20 depends on), and 0084 have landed. On that baseline, nothing starts a new runtime process inside a running sidecar agent pod. The kubelet runs the runtime image's entrypoint once, every capability is dropped, and the two containers share no process namespace. As a result, the agent-UID halves of scrub steps 1 and 1b reach only the adapter container. 0079 resolves BUILD-GAPS F-5.2.33 part (b) by keeping one runtime process for the pod's life, with these consequences:
+**Problem statement.** On a sidecar pod the kubelet starts the runtime image's entrypoint once, and nothing the platform controls launches, observes, or ends the runtime process. That leaves the first session without a manifest (F-4.7.26), specification promises about signals, deadlines, and exit codes that nothing keeps (F-4.7.27), no sidecar SDK-warm (F-6.1.28), a scrub that cannot reach the runtime container (F-5.2.37, F-5.2.39 step 3), `cleanupCommands` exposed to agent-planted symlinks (F-5.2.36), a hung runtime that passes the scrub (F-5.2.46), and keeping the process as the only reuse path on non-microVM recycling pools. The owner directed a platform supervisor as the first process of the runtime container on every sidecar pod (plan §10.3). This is part 1. Part 2, cross-tenant reuse on `in-place` pools, moved to proposal 0096.
 
-- the process is pinned to one tenant;
-- every reusing recycling pool must set `acknowledgeProcessLevelIsolation`;
-- intra-pod MCP and direct-mode attribution fail closed after a kept process's first session for a runtime that does not address its connections.
-
-`scrubProfile: vm-restart` is admissible only on `microvm` pools. On `sandboxed` and `standard` pools, the only way to get a new runtime process per session is to disable recycling. After 0079 the specification is self-consistent, so this is a new capability rather than a defect fix. The owner directed it as option B: an opt-in platform supervisor that runs as PID 1 of the runtime container. This proposal carries Part 1 only.
+**Re-baseline note.** The draft of 2026-10-01 was written against a tree in which 0079 was a draft, and it predated the owner decisions of 2026-10-01 and 2026-10-02 in plan §10.3 and the security review. It was re-baselined on 2026-10-22. The review log's Standing context lists what changed. The staged edits are the re-baselined design at the level the review run converges from: every anchor is located by heading and quoted text in the current tree, and the review run tightens wording, completes test lists, and checks blast radius.
 
 **What changes.**
 
-- A new optional `Runtime.spec.command` is the runtime-process argv and selects supervision (§5.1; the Runtime CRD, the RuntimeReconciler, and the pod builder).
-- A runtime supervisor, the `lenny-adapter supervise` subcommand, is staged by an init container and runs as the first process of the runtime container. It launches each runtime process after the final manifest exists and ends every other process in the container at scrub step 1 (§4.7.9, §4.7.10, §13.1, `pkg/supervise`, `pkg/controller/sandbox/podspec`).
-- A new intra-pod channel, `CH-SUPERVISE`, connects the supervisor to the adapter, and the adapter gates READY on it (§4.7.11 item 8, §28.3, §28.5.3, §28.6, §28.8, `pkg/adapter`).
-- Scrub step 1 and the agent-UID half of step 1b reach the runtime container on supervised pods. The adapter binds each runtime connection to one launched process and resets the runtime generation per process (§5.2, `pkg/adapter`).
-- Comment, admission-text, and documentation sites are scoped to the runtimes that declare no `command` (`pkg/gateway`, `docs/`).
+- `Runtime.spec.command` is required on every sidecar Runtime, on the CRD and on the admin registration API, and is mirrored into the runtime registry together with a derived `restartable` flag. An optional `Runtime.spec.env` list of name and value pairs, carried the same way, gives the runtime process the variables its image `ENV` no longer supplies (§5.1, §15.1; the Runtime CRD, the RuntimeReconciler, the admin API, and the runtime registry).
+- A pool field `sessionPolicy.recycle.runtimeProcess: keep | restart` selects the runtime-process lifetime on a recycling pool. Gateway pool admission requires it where 0079's keep rule applies, refuses `restart` on a runtime that is not `restartable`, and exempts `restart` on a sequential pool from `acknowledgeProcessLevelIsolation` (§5.2; `poolstore`, the tenant-pin and acquisition predicates, the SandboxTemplate mirror).
+- A runtime supervisor, a static C binary from its own digest-pinned image `lenny-supervisor`, is staged by an init container into a volume mounted read-only into the runtime container, and runs as the runtime container's first process on every sidecar pod (§4.7.10 **Runtime supervisor.**, §4.7.11 item 8, §13.1; `supervisor/`, `pkg/controller/sandbox/podspec`, the chart, and CI).
+- A new intra-pod channel, `CH-SUPERVISE`, carries launch, end, liveness, and exit reports as JSON Lines, with a generation number and request ID on every message and mutual peer-UID authentication. The adapter gates READY on it (§28.3, §28.5.3, §28.6, §28.8; `pkg/adapter`).
+- The runtime process is launched after the manifest exists, ended before `cleanupCommands` on a `restart` boundary and on `DemoteSDK`, and proven gone by two consecutive clean passes. The supervisor's forked worker removes agent-owned IPC objects and every agent-owned entry in the agent-writable volumes (§4.7.9, §5.2, §6.1; `pkg/adapter`, `pkg/adapter/scrub`).
+- On every sidecar pod the deployer's `cleanupCommands` run at the agent UID in the runtime container, in a worker the supervisor forks, and a `restart` boundary ends every process again after them (§5.2; `supervisor/`, `pkg/adapter/scrub`).
+- Each adapter listener the runtime dials is closed and rebound between an attested end and the next launch, and the adapter's own scrub file operations resolve beneath their root with no symlink traversal (§4.7.10, §5.2; `pkg/adapter`).
+- The specification's `shutdown` deadline, SIGTERM and SIGKILL, and exit-code statements become true on sidecar pods through `CH-SUPERVISE`, or are corrected where they cannot be (§28.5.3, §28.8, §15.4).
 
 **Decisions.**
 
-- **D-SPINE.** The proposal is built on the minimal design: Part 1 only, and the supervisor is a freshness mechanism, never an isolation control. One CRD-only Runtime field selects supervision, and the gateway is untouched. Pieces taken from the other candidate designs are named in the deliverables that carry them.
-- **D-MOTIVATION.** The proposal is of kind `new`, and the recorded reason is the owner's instruction. It claims these benefits, which the baseline lacks:
-  - per-process attribution on recycled pods for unaddressed runtimes;
-  - a new runtime process per occupancy cycle on recycling `sandboxed` and `standard` pools;
-  - scrub reach into the runtime container;
-  - a manifest that exists before the runtime process starts.
-
-  It does not claim independence from the multi-session runtime SDK, because 0079's step S20 already depends on that SDK.
-- **D-SCOPE.** Part 1 only. Part 2 is a separate follow-up proposal. It covers the `unassigned -> {tenant_id}` label edge, in-place cross-tenant admission, retiring 0079's decision-8 drain, the §5.2 step 7 fresh-guest sentence, and the §4.6.3 RBAC text.
-- **D-SELECT.** Supervision is selected by the presence of `Runtime.spec.command`, on sidecar session-mode runtimes only.
-  - The field is required anyway, because the image is digest-pinned and the type has no command field.
-  - It is CRD-only and not mirrored, following `deploymentModel`. The sandbox reconciler already reads the Runtime CRD at pod creation, so no SandboxTemplate mirror, pool field, migration, or admission join is needed.
-- **D-ACK.** `acknowledgeProcessLevelIsolation`, 0079's tenant pin, D5, D6, D16, and CODE-11's rule all stay exactly as 0079 stages them, as do `KeepsRuntimeAcrossSessions`, `AdmitTenantPin`, `endReservedHolds`, and the reserved-hold rebind.
-  - Pool configuration does not fix any pod's lifetime, because a Runtime edit affects only pods created after it. A mixed-lifetime pool therefore needs no rule.
-  - Several things persist on a supervised pod anyway: the adapter process, System V semaphores and message queues, guest-kernel state, and the §5.2 best-effort residue.
-  - A defeated or failed supervisor degrades a pod to the acknowledged same-tenant keep baseline.
-- **D-BINARY.** The supervisor is a subcommand of the adapter binary, dispatched beside `prestop`. An init container that runs `in.AdapterImage` at the adapter UID stages a copy into an emptyDir.
-  - This needs no new image, chart value, cosign entry, controller flag, or Dockerfile change.
-  - Both ends of `CH-SUPERVISE` come from one build, so the protocol has no version negotiation and no hello frame.
-- **D-CHANNEL.** The new conversation is `CH-SUPERVISE`. Its carriers are the abstract socket `@lenny-supervise`, the adapter flag `--supervise-socket`, and the package `pkg/supervise` (N4, N7).
-  - The `supervis` stem binds no other mechanism.
-  - The supervisor dials. The adapter accepts exactly once through `peerCheckedListener`.
-  - The vocabulary is `launch`/`launched` and `end`/`ended`, each reply with an optional `error`. There is no generation field, because the adapter sends the requests strictly in sequence.
-- **D-READY.** The adapter waits for the supervisor after the `SO_PEERCRED` self-test and before `srv.Serve`, so a pod whose supervisor never connects never becomes `idle`.
-  - The wait uses the transport's existing accept bound.
-  - On timeout the adapter exits non-zero, following the §4.7.11 self-test-before-READY precedent.
-- **D-IDENTITY.** Identity rests on ordering. No author code exists before the first `launch`, the supervisor is the runtime container's only process, the adapter accepts once, and the pod builder refuses the agent-UID egress-capture container on supervised pods.
-  - In nonce-only mode, ordering alone identifies the supervisor. D-ACK makes that acceptable.
-  - The supervisor sets `PR_SET_DUMPABLE` to 0.
-  - No self-test, `si_pid` check, or PID-1 signal-immunity reliance is needed, because every signal outcome fails closed for freshness and has no isolation effect.
-- **D-LIFETIME.** The rule is the same on every pool: a runtime process lives from the `launch` that starts it to the next whole-pod scrub.
-  - `Start` sends `launch` only when no process is live, and otherwise joins the live process.
-  - A process that crashes mid-session is not relaunched. The session fails and §5.2 retires the pod, so §4.7.11 item 5 stays true.
-- **D-END.** The end runs inside scrub step 1, as a decorator over `scrub.Ops` that runs after the adapter's half. The §5.2 step order and the scrub interface do not change.
-  - There is no SIGTERM grace: the session is already sealed, step 1 is already `kill -9 -1`, and 0079's tier-11 test bans the SIGTERM-then-wait phrasings.
-  - The end is bounded by the scrub context and by the supervisor's own deadline.
-- **D-STALE.** After an attested `end`, no runtime connection the ended process opened or left pending reaches the next process.
-  - On `CH-MSGSOCK`, closing the per-process listener discards the backlog.
-  - `CH-RUNTIMEOPS` already rejects such a connection, because the adapter writes first in the handshake and the dead peer fails that write.
-  - The intra-pod MCP servers are cancelled at occupancy zero and re-armed under 0084, so no per-process launch nonce is added.
-- **D-TRANSPORT.** `SupervisedRuntimeProcess` builds one 0079 `SocketRuntimeProcess` per launched process with the exported constructor, and calls its `CloseListener` after an attested end. 0079's D4 and D10 therefore hold for each composed object, and `socketruntime.go` and its tests are unchanged. No proto field is added.
-- **D-COHORT.** The runtime-generation cohort resets when the transport reports a new process epoch. This applies 0079 D9's rule to each launched process.
-- **D-PODEXIT.** When the supervisor receives SIGTERM, it forwards it to every other process and keeps serving, so 0079 D8's pod-exit statement and the adapter's preStop window still hold. When `CH-SUPERVISE` closes, the supervisor exits, and its exit as the namespace init ends the container's processes.
-- **D-REFUSALS.** `command` is refused on embedded, `executionMode: service`, and `capabilities.preConnect: true` runtimes, at two sites:
-  - in the RuntimeReconciler, which writes `InvalidRuntime`;
-  - in `podspec.Build`, because a refusal leaves the earlier registry row and `createPod` reads the live CRD.
-
-  No working `preConnect` ordering exists: the gateway drives `ConfigureWorkspace` from the registry flag, and a sidecar adapter answers `Unimplemented`. Service-mode pods have neither a launch trigger nor an end trigger.
-- **D-VALIDATION.** On gVisor and Kata, `PR_SET_DUMPABLE`, the reach of `kill(-1)`, orphan reparenting, and System V shared-memory enumeration are checked by tier-6 freshness validation rather than by an admission gate.
-- **D-SURFACE.** The proposal changes no proto, OpenAPI document, registry column, migration, gateway behavior, pool field, or admission-webhook clause. The S-2 proto window is untouched.
-- **D-SPEC-HOMES.** The mechanism has one home, the §4.7.10 **Supervised runtime process.** paragraph, and the trust basis has one home, §4.7.11 item 8.
-  - The scoped sites are:
-    - 0079's **Runtime process lifetime.** paragraph;
-    - §4.7.9 steps 4 and 7;
-    - §5.2 steps 1 and 1b, **What the scrub reaches.**, the best-effort clause, the acknowledgment paragraph, and **Recycling and integration levels**;
-    - §13.1;
-    - the trade-off row.
-  - The §4.7.10 definitional sentence scopes every other 0079 "kept across sessions" statement: the §4.7 `Shutdown` row (0079 SPEC-3(a) and (b)), §5.2, §6.1, §7.1, §15.4.x, §28, and §29.
-  - The over-warning of `residualStateWarning` on supervised pods is accepted under 0079 D12.
-- **D-REOPEN.** The proposal reopens the following 0079 points and edits none of them:
-  - the review-log WATCHOUT that rejects the PID-1 supervisor;
-  - the §9.1 non-goal "Re-creating a runtime process inside the pod";
-  - the D1 and SPEC-2 lifetime;
-  - D4 and D10, which now hold per composed connection;
-  - the D9 no-reset rule, which now holds per process;
-  - D11's scrub reach;
-  - the wording of CODE-11's admission error string (CODE-5).
-- **D-PREREQS.** The proposal lands after 0078, after 0079 with its runtime-SDK follow-up, and after 0084. Neither F-4.7.25 nor the separate first-session manifest-ordering fix is a prerequisite.
-  - In the remediation plan, CODE-4 serializes after R6 under S-4, and S-2 is untouched.
-  - R14 is unaffected, R16 is preserved by D-PODEXIT, and R17's `CH-RUNTIMEOPS` rendering is covered by D-STALE.
-  - R8 gains a supervised case when it lands.
-- **D-FIXTURE.** The cluster tiers run against a test-only Standard-level probe runtime (FIXTURE-1) rather than the `echo` or `cred-shell-echo` images. Tier 5 has to observe a per-process identity, the manifest a process read at start, and an MCP call from a relaunched process, and neither existing image reports any of these.
-- **D-NUMBERING.** The challenge folded the draft's §15.4 runtime-author edit into SPEC-2 (the SIGKILL fact in **End.**) and SPEC-5(f). The draft's §28 deliverable is therefore SPEC-7.
+- **D-SCOPE.** Part 1 only, on every sidecar pod: session-mode and service-mode, `preConnect` or not, `keep` or `restart`. Embedded runtimes have no runtime container and are unchanged. Part 2 is proposal 0096.
+- **D-MOTIVATION.** Kind `new`. It is a capability the owner directed, and it also closes the BUILD-GAPS findings the plan's Phase 2 entry assigns to it.
+- **D-COMMAND.** `command` is required on every `deploymentModel: sidecar` Runtime and forbidden on an embedded Runtime. Its first element is an absolute path. The image's `ENTRYPOINT`, `CMD`, and `ENV` are not used on a sidecar pod. The field is mirrored into the runtime registry, which stops being CRD-only for it, so the admin registration payload can carry it. Plan §10.3 says both that `command` stays CRD-only (the admission-predicate decision) and that the admin registration API gains it (the later supervisor-scope decision). The proposal follows the supervisor-scope decision, because an admin-registered runtime cannot carry a field the registry does not hold. The admin payload requires it for `type: agent`. The pod builder keeps reading the live CRD, and the registry copy feeds admission.
+- **D-LIFETIME.** `recycle.runtimeProcess` is required, with no default, on every pool that 0079's keep rule covers (`recycle.enabled`, `maxSessionsPerPod > 1`, and a `scrubProfile` other than `vm-restart`), sequential or concurrent, and rejected on every other pool. `keep` is 0079's lifetime unchanged. `restart` launches a new runtime process for the first session after each occupancy-zero boundary at which the pod is reused, and on a concurrent pool sessions that start while a process is live join it. Retirement at `maxSessionsPerPod` or `maxPodUptimeSeconds` is unchanged under both values.
+- **D-RESTARTABLE.** The RuntimeReconciler mirrors `restartable`, true for a sidecar runtime that is session-mode and does not declare `preConnect`. An admin-registered runtime is a sidecar by the owner's decision, so its flag derives from its payload. Gateway pool admission refuses `restart` when the flag is false, so the deployer gets a synchronous error, as plan §10.3 records.
+- **D-ACK.** A sequential `restart` pool does not require `acknowledgeProcessLevelIsolation`. `acknowledgeBestEffortScrub`, which every recycling pool already requires, covers the remaining shared state. A concurrent pool requires the acknowledgment under both values, because its sessions share a process while they overlap. `KeepsRuntimeAcrossSessions` therefore splits: the acknowledgment predicate becomes "concurrent, or recycling under `keep`", and the same-tenant reuse predicate that `AdmitTenantPin` and the reserved-hold rebind read becomes "the pool reuses pods", so a `restart` pool keeps same-tenant reuse and the reserved hold. The tenant pin is unchanged under both values. A pod's lifetime is fixed when the pod is created (D-PODLIFETIME).
+- **D-PODLIFETIME.** Decided 2026-10-22 under the owner's delegation, replacing the re-baseline's delivery of the lifetime on the `Shutdown` recycle disposition, which needed a proto field in the S-2 proto window. The pod builder renders the pool's `recycle.runtimeProcess` into the adapter flag `--runtime-process`, the supervisor flag `--require-properties`, and the pod label `lenny.dev/runtime-process` when it creates the pod (`keep` on every pod where the pool's value is not `restart`). The adapter reads its lifetime from the flag and holds no other recycle state. An admitted edit of the field applies to pods created after it. A pod created under `keep` that has served an earlier session is acquired again only while the resolved configuration requires `acknowledgeProcessLevelIsolation`. Otherwise every acquisition refuses the pod and requests its drain, as 0079's fail-closed edit rule does (`AdmitTenantPin` reads the label beside the pin). A pod created under `restart` stays `restart` after an edit to `keep`, which gives more separation than the pool asks for. The disposition alternative was rejected for two reasons beyond the proto field. A pod that crossed its boundary under `keep` and sits `reserved` or `idle` would serve one more session in the kept process after an edit to `restart` that removed the acknowledgment. A pod created without `--require-properties` would run `restart` without the property gate.
+- **D-BINARY.** The supervisor is a single-threaded freestanding C program, built static with no `PT_INTERP`, no dynamic section, no libc, and no NSS, in its own digest-pinned image `lenny-supervisor` that carries only the binary. A Go supervisor is excluded because the Go runtime installs its own signal handlers, loses `si_pid`, and dies on default-action signals (plan §10.3, gVisor spike). The image is a chart value and a controller flag, is signed and in the cosign policy, and a CI check rejects a binary with an interpreter, a dynamic section, or a `dlopen` or NSS reference. The draft's adapter subcommand is withdrawn.
+- **D-STAGE.** An init container `lenny-supervisor-stage` runs the supervisor image's own `stage` mode to copy the binary into an `emptyDir` volume. It runs at a dedicated UID that is neither the agent nor the adapter UID, because §13.1 **Container identity.** reserves both for the regular containers `runtime` and `adapter`. The runtime container mounts the volume read-only, and no regular container mounts it read-write.
+- **D-ENV.** The supervisor calls `clearenv()` before anything else and launches each runtime process with an explicit environment the pod builder renders into its arguments: a fixed `PATH`, the Runtime's `env` (D-RUNTIMEENV), and the platform's runtime variables (the socket names and the manifest path). Nothing secret is rendered, because `/proc/1/cmdline` is readable at the agent UID. It opens no file in the runtime image's root filesystem: only `/proc` and platform volumes, through `openat` with `O_NOFOLLOW`. Each launch therefore starts from the same environment, which makes the runtime half of scrub step 3 true (F-5.2.39).
+- **D-RUNTIMEENV.** Decided 2026-10-22 under the owner's delegation, replacing the re-baseline's "no `Runtime.spec.env` field". Because the supervisor ignores the image's `ENTRYPOINT`, `CMD`, and `ENV` and calls `clearenv()` first, a runtime whose image set a variable such as a virtual-environment `PATH` would otherwise lose it with no replacement. `Runtime.spec.env` is an optional list of `{name, value}` pairs, forbidden on an embedded Runtime. A name is a non-empty POSIX variable name, names are unique, and a name with the reserved prefix `LENNY_` is refused at admission: by a CEL rule on the CRD and by admin payload validation. The field is mirrored into the runtime registry and carried on the admin registration payload as `command` is, and it is **Inherited** in the derived-runtime merge. The pod builder renders each pair into the supervisor's arguments, and the supervisor sets them after `clearenv()` and before the platform variables. A pair named `PATH` replaces the fixed `PATH`. Values are visible at the agent UID and are not a channel for secrets, which reach the runtime through the credential file. No `envFrom`, no reference to a Secret or ConfigMap, and no per-pool override are added.
+- **D-SIGNALS.** The supervisor installs a handler for every catchable signal, so only SIGKILL and SIGSTOP stay effective. It treats a catchable signal with `si_pid == 0` and `si_code == SI_USER`, which only a sender outside its PID namespace produces, as the stop request, whatever the signal, so an image `STOPSIGNAL` cannot bypass the filter. It ignores every other signal. A runtime can still kill or freeze its supervisor with SIGKILL or SIGSTOP on gVisor, which retires the pod (plan §10.3).
+- **D-CHANNEL.** `CH-SUPERVISE`, JSON Lines on the abstract socket `@lenny-supervise`, adapter flag `--supervise-socket`, and no proto field. Every message carries `gen` (the runtime generation the adapter assigned at launch) and `id` (a request ID, echoed by its reply). Requests are `launch`, `end`, `sweep`, `cleanup`, and `ping`. Replies are `launched`, `ended`, `swept`, `cleaned`, and `pong`, each with an optional `error` drawn from an enumerated code set. The supervisor's only unsolicited message is `exited`, which reports a runtime process's exit status and is diagnostic only. The adapter decodes strictly, rejecting unknown keys, duplicate keys, an unknown code, and a `gen` or `id` that matches nothing outstanding. Any of these is a link failure, and the pod retires. No author-controlled bytes cross the channel. The only deployer-defined bytes are the `cleanupCommands` argv lists and the step-0 cleanup metadata on `cleanup` (D-CLEANUP).
+- **D-AUTH.** The adapter listens and accepts once, through `peerCheckedListener` with the agent-UID check, and closes the listener. The supervisor dials, checks with `SO_PEERCRED` that the peer is the adapter UID, and never dials again: when its connection closes it exits. In nonce-only mode neither check is available, and ordering identifies both ends: the supervisor is the runtime container's first process, it launches nothing before `launch`, and §13.1 gives the agent and adapter UIDs to one container each.
+- **D-READY.** The adapter waits for the supervisor after its `SO_PEERCRED` self-test and before `srv.Serve`, so a pod whose supervisor never connects never becomes `idle`. On timeout the adapter exits non-zero.
+- **D-LAUNCH.** The adapter sends `launch` only after the manifest it needs exists and after every adapter listener the runtime dials is bound. On a session-mode runtime without `preConnect`, that is startup step 7, after step 6 wrote the final manifest, when no process is live. On a `preConnect` runtime and a service-mode runtime it is at pod warm-up, after the adapter writes the manifest at warm-up and before READY. After a `restart` boundary or a demotion, no launch happens before scrub steps 0 to 6, the step-6 verification, and the attested end, and never on a pod carrying a `scrub_warning`. This closes F-4.7.26 for every sidecar pod.
+- **D-END.** On a `restart` boundary, `end` runs after step 0 and before `cleanupCommands`, and a second `end` runs after `cleanupCommands` and before step 1 (D-CLEANUP). The supervisor sends SIGTERM and then SIGKILL to every other process in the container (`kill(-1)`), waits, and confirms from `/proc` that none remains. It requires two consecutive clean passes, and reads `pids.current` where the cgroup file is readable. `end` is also the `DemoteSDK` mechanism and the deadline action of a `shutdown`. On a recycle boundary its SIGTERM grace is zero, because the session is already sealed.
+- **D-SWEEP.** `sweep` runs after a successful `end` and before `cleanupCommands`. A forked worker that holds no `CH-SUPERVISE` descriptor removes System V shared memory, message queues, and semaphores whose `cuid` or `uid` is the agent UID, POSIX message queues, and every agent-owned entry, symlinks included, in every agent-writable volume: the workspace base outside `slots/`, `/sessions`, `/artifacts`, `/tmp`, and `/dev/shm`. The worker never follows a symlink and bounds its walk. The parent then repeats `kill(-1)` and the `/proc` check before it replies. A failed `end` or `sweep` makes the adapter report the runtime as not live, which retires the pod through `runtime_not_live` and takes precedence over `onScrubFailure: warn` (F-5.2.36 and F-5.2.37, cleanup halves).
+- **D-CLEANUP.** Decided 2026-10-22 under the owner's delegation, closing the re-baseline's open decision 1 with its option (b). On every sidecar pod, under both `keep` and `restart`, the deployer's `cleanupCommands` run at the agent UID in the runtime container: the adapter sends `cleanup` on `CH-SUPERVISE` with each command split into an argv list as the argv mode splits it today, the aggregate `cleanupTimeoutSeconds` bound, and the step-0 cleanup metadata (`LENNY_PREV_CREDENTIAL_PROVIDER`, `LENNY_PREV_LEASE_ID`). The supervisor forks a worker that holds no `CH-SUPERVISE` descriptor, sets the working directory to the workspace base, and runs each command in its own session, in order, with the launch environment (D-ENV) plus the cleanup metadata. At the deadline it sends SIGKILL to the running command's session. The commands' output stays on the runtime container's log streams, and only `cleaned`, with an optional enumerated error, crosses the channel. A `cleaned` that carries an error fails the scrub as a failed `cleanupCommands` run does today, under `onScrubFailure`. A request that gets no reply within the bound is a link failure. The order on a `restart` boundary is step 0, `end`, `sweep`, `cleanup`, a second `end`, and steps 1 to 6. The second `end` removes every process the commands left. On a `keep` boundary it is step 0, `cleanup`, and steps 1 to 6, with the runtime process alive. Commands that run at the agent UID gain nothing from a symbolic link the agent planted, which closes the confused deputy of F-5.2.36 on `keep` pools. Running the commands in the runtime image, which carries the deployer's tools, also closes the gap that they ran in the shell-less distroless adapter image. The embedded model has no supervisor and keeps running `cleanupCommands` in the adapter's container.
+- **D-PATHS.** The adapter's own scrub file operations (`RemoveAll`, `ClearContents`, `PathState`, and log truncation) resolve with `openat2` and `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` (F-5.2.36).
+- **D-STALE.** Between an attested `end` and the next `launch`, the adapter closes and rebinds the `CH-MSGSOCK` listener and, when bound, the `CH-RUNTIMEOPS` listener, which discards every backlogged connection the ended process left. The manifest nonce already rotates at each session start (`writeSessionManifest`), and the runtime-first nonce line of the 0090 handshake rejects a stale connection that survives a rebind. The draft's argument that `CH-RUNTIMEOPS` rejects a stale peer because the adapter writes first is withdrawn: since 0090 the runtime writes first. The intra-pod MCP listeners belong to proposal 0084 (security review finding 4). 0087 does not render `--runtime-ops-socket`. R17 renders it and inherits the rebind.
+- **D-TRANSPORT.** On a `restart` pod the adapter builds one 0079 `SocketRuntimeProcess` per launched process with the exported constructor and calls its `CloseListener` after an attested end, so 0079's sticky `ended` and no-redial rules hold per composed object. On a `keep` pod the adapter uses one `SocketRuntimeProcess` for the pod's life as today.
+- **D-COHORT.** Each launch increments the adapter's runtime generation, and the session cohort that `soleSession` reads resets at each new generation. On a `keep` pod the generation is 1 for the pod's life, which is 0079's rule.
+- **D-CRASH.** When a runtime process exits while a session is bound, the supervisor sends `exited`, and the adapter ends each bound session's stream with the `runtime_crash` failure, which proposal 0091's funnel takes to `resume_pending` (§7.3). The adapter does not relaunch, and it reports the runtime as not live at the next boundary, so the pod retires on every pool (plan §10.3). On a concurrent pool every slot fails together, because the slots share the process. A `restart` process that exits after its last session ended and before the boundary is ended by the boundary as usual, and the pod does not retire.
+- **D-HUNG.** A heartbeat escalation on a `keep` pod marks the runtime as not live for the next boundary report, so a hung runtime no longer passes the occupancy-zero scrub (F-5.2.46). On a `restart` pod the boundary's `end` replaces the process. The supervisor liveness ping detects a frozen or dead supervisor and is a separate mechanism.
+- **D-PING.** The adapter sends `ping` at a fixed interval while the pod lives, and a missed `pong` deadline marks the runtime as not live and fails each bound session (security review finding 10). The interval and deadline are adapter flags.
+- **D-SDKWARM.** On a sidecar `preConnect` runtime, `PreConnect` launches the process at warm-up and accepts its `CH-MSGSOCK` connection. `ConfigureWorkspace` binds the session on that connection. `DemoteSDK` sends `end`, and the session then takes the pod-warm path, which launches a new process at step 7 after the final manifest. The recycle re-warm edge launches a new process only when the session demoted it. `restart` stays refused on `preConnect` runtimes (D-RESTARTABLE). This closes F-6.1.28. R23 keeps the gateway `DemoteSDK` fallback.
+- **D-SERVICE.** A service-mode runtime is launched at warm-up and kept for the pod's life. Its exit makes the pod not ready, and the pod is replaced.
+- **D-PODEXIT.** At pod termination the kubelet's SIGTERM reaches the supervisor with `si_pid == 0`, and the supervisor forwards SIGTERM to every other process in the container and keeps serving, so the runtime sees the same signal at the same time as before this proposal. The supervisor exits when `CH-SUPERVISE` closes, which ends the container's remaining processes. The adapter shutdown and eviction proposal (before R16) assumes this ordering. If that proposal needs the runtime alive past SIGTERM for an eviction checkpoint, it replaces the forward with an adapter request on `CH-SUPERVISE`, and this proposal leaves room for that by keeping the forward in one place.
+- **D-SHUTDOWN.** The `CH-MSGSOCK` `shutdown` frame's contract becomes true on sidecar pods: the adapter observes the process's exit through `exited`, and past `deadline_ms` it sends `end` with a 10-second SIGTERM grace. Whether and when the adapter writes `shutdown` at pod drain stays with R16 and the adapter shutdown proposal. `RUNTIME_CRASH` is built from the exit status alone, because no runtime output crosses `CH-SUPERVISE`, and the "and stderr" wording is corrected (F-4.7.27).
+- **D-PROPERTIES.** The supervisor runs a startup self-test of the properties the reuse decision rests on: the non-dumpable mark against same-UID inspection, sender identification (`si_pid` and `si_code`), and `kill(-1)` reach over a double-forked descendant. On a pod whose pool's lifetime is `restart`, the pod builder renders `--require-properties`, and a failed self-test makes the supervisor exit before it dials, so the pod never becomes `idle`. On every other pod a failure is logged by the adapter. PID-namespace init signal immunity is reported and does not gate, because its failure fails closed and the owner offered `restart` on gVisor, where it fails. `lenny-ctl preflight` runs the same self-test as a one-off pod on a named RuntimeClass, and the setting is re-checked when the container runtime version changes, as §4.7.11 requires for `SO_PEERCRED`.
+- **D-LOGS.** The supervisor writes nothing to the runtime container's stdout or stderr, which the runtime inherits and can forge. Its diagnostics reach the adapter as enumerated codes, and the adapter logs them.
+- **D-SURFACE.** No proto file changes. `CH-SUPERVISE` has no proto artifact, and the lifetime reaches the adapter by flag (D-PODLIFETIME). Migrations add the registry columns for `command`, `env`, and `restartable` and the pool field's storage. Gateway behavior changes only in pool admission, the split predicates, and the acquisition read of the pod's lifetime label. The OpenAPI `Runtime` and pool schemas change.
+- **D-SPEC-HOMES.** The mechanism has one home, a new §4.7.10 **Runtime supervisor.** paragraph. The trust basis has one home, §4.7.11 item 8. The lifetime field has one home in §5.2. The `CH-SUPERVISE` contract has one home, its §28.5.3 card.
+- **D-PART2.** Cross-tenant reuse, the tenant-pin reset, and `recycle.allowCrossTenantReuse` moved to proposal 0096.
+- **D-PREREQS.** The proposal follows the plan's Phase 2 ordering (problem statement, **Prerequisites**). Its spec steps land after 0090's (landed) and before 0084's. Its podspec edits serialize with R17's under rule S-4.
+- **D-FIXTURE.** The cluster tiers run against a test-only Standard-level probe runtime (FIXTURE-1), because tier 5 has to observe a per-process identity, the manifest a process read at start, and an MCP call from a relaunched process.
 
 **Watch out for.**
 
-- Every staged spec edit is written against the text 0079 stages rather than the current tree. Locate each anchor by heading and quoted text after 0079 lands.
-- 0079's tier-11 tests ban phrases across `spec/` and `docs/` (TEST-1(e) names the file).
-  - New wording says "launch" and never "spawn".
-  - It does not name `runtime_not_live`, the "Runtime not live" label, or "cannot serve the next session" outside their §5.2 home.
-- The RuntimeReconciler's refusal leaves the earlier registry row and condition in place, and `createPod` reads the live CRD. The CODE-4 `Build` refusal is the enforcement for an edited Runtime. Do not drop it as a duplicate.
-- Go's `Accept` returns a timeout before it calls accept(2) when the deadline has already passed. A deadline-based drain of a backlog drains nothing. CODE-3 uses a per-process listener for this reason.
-- `syscall.ForkExec` does no PATH lookup. CODE-2 resolves argv[0] first.
-- A System V segment's owner can move `shm_perm.uid` to another UID with `IPC_SET`. Match the agent UID against `uid` or `cuid`.
-- The reaper goroutine is the only caller of `wait4`. A blocking reap inside `end` hangs on a process that survives a kill, and the adapter then sees only a scrub timeout.
-- On a concurrent pool, two first `Start` calls race to `launch`. The launch mutex spans the `launch` round trip and the composed `Start`.
-- R6's G3a flag gate treats a flag the adapter reads but the pod spec does not render as a defect. CODE-3 seeds the deferral row and CODE-4 clears it in the next step.
-- No test outside a container may call `kill(-1)`. Tier 1 and tier 3 use a fake `procOps`.
-- 0084's "since it last served none" and 0079 D9's no-reset reading disagree about when the generation count restarts. SPEC-2's **Generation.** sentence holds under either reading, and neither proposal needs to change for it.
-- CODE-5 changes the text of 0079's CODE-11 error string. Any 0079 test that asserts the exact string moves with it.
-- The test-coverage preflight check 1 applies: the adapter image must define `supervise` and `--supervise-socket` before any cluster renders a supervised pod.
+- Every Kind fixture Runtime and every bootstrap runtime that is a sidecar gains `command`, and every one whose image relied on its `ENV` gains the matching `env` pairs (D-ENV, D-RUNTIMEENV). Test-coverage preflight check 1 applies to the new supervisor image and the adapter's new flags.
+- `tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go` bans phrases such as "starts a fresh runtime process for each session" and "Adapter spawns runtime binary" across `spec/` and `docs/`. New wording says "launch" and names the supervisor. Its `**Runtime not live:**` one-home check stays.
+- `KeepsRuntime` is computed in `sessionserver/pool_policy_mirror.go` and read at `podclaim/claimer.go`, `podclaim/slotclaimer.go`, `podclaim/tenantpin.go`, `podsession/resolve.go`, `podsession/resume.go`, `podsession/bindrequest.go`, `podsession/bindclaim.go`, `podsession/claimconnect.go`, `sessionserver/bind_request.go`, and `sessionserver/resume_rebind.go`. The D-ACK split touches each.
+- `createPod` passes no execution mode today. D-LAUNCH and the pod builder need it.
+- `scrub.DefaultOps` execs `sh` and `ipcrm`, which the distroless adapter image lacks. On a sidecar pod steps 1 and 1b move to the supervisor. The adapter-container half of step 1 is moot, because the adapter container runs no author process.
+- A System V segment's owner can move `shm_perm.uid` with `IPC_SET`. Match on `cuid`.
+- No test outside a container may call `kill(-1)`.
 
 ## Goals
 
-- A deployer can give a sidecar runtime a new runtime process at every occupancy cycle on any isolation profile by declaring `Runtime.spec.command`.
-- On supervised pods, scrub steps 1 and 1b reach the runtime container.
-- On supervised pods, a runtime process reads the final manifest at start.
-- Intra-pod MCP and direct-mode attribution work on every session of a recycled supervised pod for a runtime that does not address its connections.
-- No isolation property, gateway path, or 0079 acquisition predicate depends on the supervisor.
+- Every sidecar runtime process is launched by the platform after the manifest exists, with a platform-controlled environment.
+- A deployer can choose a fresh runtime process at each reused occupancy-zero boundary on any isolation profile.
+- Scrub steps 1, 1b, and 3 reach the runtime container on sidecar pods that end their process, and agent-owned IPC objects and files are removed before `cleanupCommands` run.
+- Sidecar `preConnect` pools serve sessions.
+- The specification's signal, deadline, and exit-code statements about the sidecar runtime are true.
 
 ## Non-goals
 
-- **Part 2: cross-tenant reuse on `scrubProfile: in-place` Kata pools.**
-  - It needs a new `unassigned -> {tenant_id}` webhook edge, which weakens a tier-9 control. It also needs restated 0079 acquisition predicates and an admission rule that conditionally restages a rejection 0079 decision 4 records as lost. It would retire 0079's decision-8 drain while open decision 11 is unresolved, and it must reconcile §5.2 step 7's fresh-guest sentence.
-  - It rests on a sufficiency decision that may be no, and Kind cannot test it.
-  - It is a follow-up proposal that reuses this supervisor.
-- **Making `recycle.allowCrossTenantReuse` meaningful on `in-place` pools, or deleting it.** This belongs to 0079 open decision 11.
-- **A pool field `sessionPolicy.recycle.runtimeProcess: keep | restart`.** It needs a poolstore field, an OpenAPI and admin payload change, a SandboxTemplate mirror, an immutability rule with no precedent, and a pool-to-runtime admission check. `command` is needed anyway and carries the selection on its own. A deployer who wants both lifetimes registers two base Runtimes over one image.
-- **Using `acknowledgeProcessLevelIsolation` as the lifetime selector.** It changes the meaning of an existing acknowledgment. It needs a registry mirror and migration for `command`, a SandboxTemplate mirror, pod-side checks in `AdmitTenantPin` and `rebindReserved`, and a rename across five structs. It also makes the supervisor a security boundary.
-- **Dropping the acknowledgment on supervised pools.** It needs a predicate split, a per-pod supervised check at every acquisition site, edit guards, and a hard gVisor admission gate. The adapter process, semaphores, message queues, and guest state persist regardless.
-- **Splitting `KeepsRuntimeAcrossSessions` or renaming `KeepsRuntime`.** This is unnecessary while the acknowledgment is retained.
-- **Mirroring `command` or `deploymentModel` into the gateway registry, and any migration.** No gateway code reads either field.
-- **Supporting `command` on derived runtimes.** That would need a registry mirror, a migration, a `Merge` rule, and a change in `createPod` that resolves a derived runtime to its base.
-- **A supervisor startup self-test of PID-1 signal immunity, `PR_SET_DUMPABLE`, `si_pid`, or `kill(-1)`, a `getpid() == 1` check, or a `PR_GET_DUMPABLE` readback.** No isolation property rests on them. A failed kill reach fails closed through the `/proc` proof, and the pod builder makes the supervisor the container's first process by construction.
-- **An `si_pid` filter on SIGTERM, reliance on PID-1 signal immunity, or ignoring every catchable signal.** A forwarded SIGTERM reaches only the author's own processes. A signal that ends the supervisor ends its container and retires the pod, which is an availability effect that fails closed.
-- **A SIGTERM grace period before SIGKILL at `end`.** See D-END.
-- **Ending the process before step 0 and `cleanupCommands`.** It would reorder §5.2 for supervised pods. Today's runtime is alive during `cleanupCommands` in every deployment model.
-- **A per-process launch nonce on `CH-MSGSOCK`, or rotating the arming nonce as the stale-connection defense.** D-STALE binds each connection to one process without one. A nonce would need reconciliation with 0084's pod-scoped `mcpNonce` and depends on F-4.7.25 and on a `CH-RUNTIMEOPS` nonce check that does not exist.
-- **Exit status, an `exitedBeforeEnd` flag, a `remaining` count, a generation field, or a `hello` frame on `CH-SUPERVISE`.** See D-CHANNEL.
-- **Retiring a pod whose process exited on its own before `end`.** A mid-session crash already retires the pod. A process that exits after its session is replaced at the next launch.
-- **Relaunching after a crash, synthesizing `RUNTIME_CRASH` from the exit code, and `DemoteSDK` for sidecar runtimes.** These are phase 3 follow-ups.
-- **Pre-launching the next process before its session arrives.** This is phase 4, and it depends on the multi-session runtime SDK.
-- **A separate `cmd/lenny-supervisor` binary or a supervisor image.** See D-BINARY.
-- **Reversing 0079 D4 and D10 inside `SocketRuntimeProcess`, or extracting a shared per-connection type from it.** See D-TRANSPORT.
-- **Refusing supervision on nonce-only runtimes, an admission gate for `sandboxed` pools pending gVisor validation, or restricting supervision to `microvm` pools.**
-  - Ordering identifies the supervisor, and no isolation property rests on it.
-  - `microvm` already has `vm-restart`.
-  - The restriction would drop the `sandboxed` and `standard` populations.
-- **Excluding concurrent pools.** They already require the acknowledgment, and joining the live process gives one process per occupancy cycle without a new rule.
-- **Supporting `preConnect` with supervision.** See D-REFUSALS.
-- **Making supervision mandatory for every sidecar runtime.** Without `command` the argv is unknown, and the owner asked for an opt-in.
-- **Dropping the READY gate.** That would move a supervisor wait onto the session path and let a pod that cannot serve become `idle`.
-- **Having the adapter dial a supervisor-bound socket.** The adapter already owns the intra-pod listeners and `peerCheckedListener`.
-- **A §28.7 JSON Schema artifact for `CH-SUPERVISE`.** Both ends ship in one binary, and no third party implements the channel.
-- **Carrying supervisor traffic on `CH-MSGSOCK`, `CH-RUNTIMEOPS`, the MCP channels, a gateway link, or a shared-volume register.** The runtime-facing channels carry author trust and handshakes the supervisor cannot present before the first manifest. The gateway links lack an in-pod identity, and a file written at the agent UID can be forged.
-- **New admission-webhook clauses for the agent-UID rule or the read-only supervisor mount.** `podspec.Build` is the only producer of agent pods, and it refuses the combination.
-- **Removing System V semaphores and message queues, or agent-owned files outside the scrubbed paths, in the supervisor.** Step 1b covers shared memory only.
-- **Edits to §6.1, §7.1, §15.4.1 to §15.4.3, and §29.** The §4.7.10 definitional sentence scopes them (D-SPEC-HOMES).
-- **Kubernetes-native restart (`OnFailure`, `Always`, native sidecars, restart rules), image volumes, ephemeral containers, `pods/exec`, the Kata guest-agent API, or a CRI DaemonSet.** Each is ruled out at the 1.27 floor, or because it does not end a predecessor that does not cooperate.
-- **Withdrawing the proposal.** The owner directed the capability. D-MOTIVATION records what it adds.
+- Cross-tenant reuse and `recycle.allowCrossTenantReuse` (proposal 0096).
+- Relaunching after a crash, and starting the next runtime process before its session arrives on a session-mode pod without `preConnect`. Both stay deferred (plan §10.2, **Not yet scheduled**).
+- Per-generation rebind and nonce of the intra-pod MCP listeners (proposal 0084).
+- The adapter shutdown budget, the eviction signal, and whether the adapter writes `shutdown` at pod drain (the adapter shutdown and eviction proposal, then R16).
+- Rendering `--runtime-ops-socket` (R17).
+- A self-test of PID-namespace init signal immunity that gates admission.
+- Kubernetes-native restart, image volumes, ephemeral containers, `pods/exec`, the Kata guest-agent API, or a CRI DaemonSet. Each is ruled out at the 1.27 floor or because it does not end a predecessor that does not cooperate (plan §10.6).
 
 ## Open decisions for human to make
 
-None recorded yet. The review loops write this section.
+None. Open decision 1 of the re-baseline (`cleanupCommands` on `keep` pools) was decided as D-CLEANUP on 2026-10-22 under the owner's delegation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
-- **`scrub.DefaultOps` steps 1 and 1b exec binaries the adapter image does not contain.**
-  - `KillUserProcesses` runs `sh -c` (or `su`), and `PurgeIPCShm` runs `ipcrm`, both through `os/exec` (`pkg/adapter/scrub/defaultops.go`).
-  - The adapter image is `gcr.io/distroless/static:nonroot` with the single binary `/usr/local/bin/lenny` (`Dockerfile`).
-  - It stays out of scope because the supervisor's half uses syscalls and does not depend on it. File it in BUILD-GAPS.
-- **The agent-pod preStop hook execs a binary name the image does not install.**
-  - `preStopDrainHook` renders the exec command `lenny-adapter prestop` (`pkg/controller/sandbox/podspec/podspec.go`), but the image installs the binary only as `/usr/local/bin/lenny`, and distroless has no `lenny-adapter` on its PATH.
-  - D-PODEXIT relies on the adapter's preStop window, but this proposal does not change the hook, and CODE-4 does not reuse the name. File it in BUILD-GAPS.
+- Scrub step 5 is not wired (`podscrub.go` `scrubConfig` sets no `TruncateLogs`). F-5.2.39 assigns it to the recycling follow-up proposal.
+- The step-0 cleanup metadata is not wired: `podscrub.go` `scrubConfig` sets neither `PrevProvider` nor `PrevLeaseID`, so `LENNY_PREV_CREDENTIAL_PROVIDER` and `LENNY_PREV_LEASE_ID` reach `cleanupCommands` empty. D-CLEANUP carries whatever values the adapter holds and does not populate them. File it for the recycling follow-up proposal.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0078 | Reviewed | Builds one `SocketRuntimeProcess` per launched process through the exported constructor and `CloseListener` that 0078 keeps. Changes no 0078 code or test. | Land first, unchanged. |
-| 0079 | Draft | Reopens the points D-REOPEN names. Scopes 0079's staged lifetime, startup, and scrub sentences to runtimes that declare no `command`. Rewords its CODE-11 error string and four doc comments (CODE-5). Amends the `// diagnosis:` of one of its tier-11 tests (TEST-1(e)). Keeps its acknowledgment, tenant pin, predicates, and D16 unchanged. | Land first, with its runtime-SDK follow-up. 0079 stages nothing for this proposal. When 0079's staging changes before this lands, this proposal re-locates its anchors. |
-| 0084 | Draft | Relies on 0084's pod-scoped `mcpNonce`, its occupancy-zero cancellation, and its §15.4.3 **Session address.** paragraph. Adds no launch nonce. | Land first. No change is needed. |
-| Runtime-SDK follow-up to 0079 (not yet written) | Not written | A prerequisite through 0079's step S20. This proposal claims no SDK-independence benefit. | Land with 0079. |
-| F-4.7.25 fix (not yet written) | Not written | Not a prerequisite. Each composed per-process accept takes its peer and nonce checks once the fix lands. | Put the checks in `SocketRuntimeProcess.accept`, which the supervised transport composes. |
-| First-session manifest-ordering fix (not yet written) | Not written | Supervised pods launch after the final manifest, so the defect is absent on them. The fix stays owed for keep pods and for the F-4.7.25 handshake. | Fix it on keep pods. Do not route it through the supervisor. |
-| Part 2 cross-tenant follow-up (not yet written) | Not written | Reuses this supervisor. | Gate on the cross-tenant sufficiency decision and on 0079 open decision 11. |
+| 0079 | Implemented | Splits its `KeepsRuntimeAcrossSessions` predicate and scopes its lifetime, scrub-reach, and acknowledgment sentences to `keep`. Does not edit the proposal. | Nothing. Implemented proposals are not edited. |
+| 0090 | Implemented | Relies on its runtime-first nonce handshake and per-start nonce. Discharges the items it left to 0087: the `shutdown` wording (F-4.7.27), launch-ordering wording, and the first-session manifest ordering (F-4.7.26). Defines "runtime generation", which 0090 left to 0087. | Nothing. |
+| 0091 | Implemented | Its impacts row asks 0087 to state the stopped-process outcome through the §7.3 resume flow and to cover the concurrent case. D-CRASH does both. Takes F-5.2.46 (D-HUNG). | Nothing. |
+| 0093 | Implemented | The stale-slot reaper's unconditional `Shutdown` tears down a slot as today. It ends no runtime process on a `keep` pod and triggers no boundary `end`. | Nothing. |
+| 0084 | Draft | Its intra-pod MCP listeners take the per-generation close and rebind and the per-generation nonce (finding 4) between an attested `end` and the next `launch`, which this proposal defines. | Re-converge against this proposal (plan §10.2 Phase 3). |
+| 0071 | Draft | A runtime frame's consumer may change at each generation on a `restart` pod. | Re-derive against the kept connection and the supervisor (plan §10.2 Phase 3). |
+| 0096 | Draft | Reads this proposal's attestation and `restart` lifetime. | Land after this proposal. |
+| Adapter shutdown and eviction proposal | Not written | D-PODEXIT fixes the pod-exit order it must assume: the supervisor forwards the kubelet's SIGTERM at once and exits when `CH-SUPERVISE` closes. | Assume that order, or replace the forward with an adapter request on `CH-SUPERVISE`. |
+| R16 | Not started | Takes the `shutdown` write and the preStop body (F-4.6.38). D-SHUTDOWN supplies the exit observation and the deadline action. | Use `exited` and `end` rather than adapter-side signals. |
+| R17 | Not started | Inherits D-STALE's per-generation rebind of `CH-RUNTIMEOPS` when it renders `--runtime-ops-socket`. Its dead-runtime branch covers the gap between generations. Its podspec edit serializes with CODE-4 under S-4. | Serialize under S-4. |
+| R23 | Not started | Takes the sidecar half of SDK-warm (F-6.1.28). | Keep the gateway `DemoteSDK` fallback, and add the end-to-end sidecar test after this proposal lands. |
+| Recycling follow-up | Not written | Leaves it scrub step 5 and the re-warm after a `preConnect` pod's scrub report (F-5.2.39). | Nothing new. |
 
 ## Deliverable index
 
-- SPEC-1 — `spec/05_runtime-registry-and-pool-model.md` §5.1 — the `Runtime.spec.command` field.
-- SPEC-2 — `spec/04_system-components.md` §4.7.10 — the **Supervised runtime process.** paragraph, the scoping of 0079's **Runtime process lifetime.** paragraph, and the trade-off row.
-- SPEC-3 — `spec/04_system-components.md` §4.7.9 — the READY gate in step 4 and the rewrite of step 7.
+- SPEC-1 — `spec/05_runtime-registry-and-pool-model.md` §5.1 — the required `command` field and the optional `env` field.
+- SPEC-2 — `spec/04_system-components.md` §4.7.10 and §4.7.1 — the **Runtime supervisor.** paragraph, the scoping of **Runtime process lifetime.**, the trade-off row, and the `Shutdown` row.
+- SPEC-3 — `spec/04_system-components.md` §4.7.9 — the READY gate in step 4 and step 7.
 - SPEC-4 — `spec/04_system-components.md` §4.7.11 — item 8, the runtime supervisor.
-- SPEC-5 — `spec/05_runtime-registry-and-pool-model.md` §5.2 — scrub steps 1 and 1b, **What the scrub reaches.**, the best-effort clause, the runtime-process acknowledgment, and **Recycling and integration levels**.
-- SPEC-6 — `spec/13_security-model.md` §13.1 — **Agent UID on a supervised pod.**
-- SPEC-7 — `spec/28_communication-channels.md` §28.3, §28.5.3, §28.6, and §28.8 — the `CH-SUPERVISE` register row, card, exclusivity paragraph, and matrix row.
-- CODE-1 — `pkg/apis/lenny/v1alpha1`, `pkg/controller/runtime` — the CRD field and the registration refusals.
-- CODE-2 — `pkg/supervise`, `cmd/lenny-adapter` — the supervisor and the `supervise` subcommand.
-- CODE-3 — `pkg/adapter`, `cmd/lenny-adapter`, `tests/claim-map.json` — the supervised transport, the READY gate, the scrub decorator, and the cohort reset.
-- CODE-4 — `pkg/controller/sandbox/podspec`, `pkg/controller/sandbox` — supervised pod rendering and the render-time refusals.
-- CODE-5 — `pkg/gateway/runtime`, `pkg/gateway/podlifecycle` — comment and admission-text scoping.
-- FIXTURE-1 — `cmd/runtimes/supervise-probe`, `tests/testinfra/kind` — the probe runtime and the supervised Kind pool.
-- TEST-1 — `pkg/`, `tests/` — tests at every tier the change reaches.
-- DOC-1 — `docs/` — runtime-author and operator documentation.
+- SPEC-5 — `spec/05_runtime-registry-and-pool-model.md` §5.2 — `recycle.runtimeProcess`, the acknowledgment rule, the scrub order, steps 1, 1b, and 3, **What the scrub reaches.**, and the best-effort clause.
+- SPEC-6 — `spec/13_security-model.md` §13.1 — the supervisor volume and the stage container's UID.
+- SPEC-7 — `spec/28_communication-channels.md` §28.3, §28.5.3, §28.6, and §28.8 — `CH-SUPERVISE`.
+- SPEC-8 — `spec/28_communication-channels.md` §28.5.3 and §28.8, `spec/15_external-api-surface.md` §15.4 — the `shutdown`, signal, and exit-code statements (F-4.7.27).
+- SPEC-9 — `spec/06_warm-pod-model.md` §6.1 — supervised SDK-warm.
+- SPEC-10 — `spec/15_external-api-surface.md` §15.1 and the admin API — `command` and `env` on the admin registration payload.
+- SPEC-11 — `spec/04_system-components.md` §4.7.6 and §4.7.11, `spec/15_external-api-surface.md` §15.4.3, `spec/28_communication-channels.md` §28.5.3 — the launch-ordering wording 0090 left to this proposal.
+- CODE-1 — `pkg/apis/lenny/v1alpha1`, `pkg/controller/runtime`, `pkg/gateway/runtime/runtimestore`, `pkg/gateway/externalapi/admin` — `command`, `env`, and `restartable`.
+- CODE-2 — `supervisor/`, `Dockerfile.supervisor`, CI — the C supervisor, its image, and the binary check.
+- CODE-3 — `pkg/adapter`, `pkg/adapter/scrub`, `cmd/lenny-adapter` — the `CH-SUPERVISE` client, the READY gate, launch, end, sweep, cleanup, ping, the listener rebind, the generation, crash and hang handling, SDK-warm, and `openat2`.
+- CODE-4 — `pkg/controller/sandbox/podspec`, `pkg/controller/sandbox`, `cmd/lenny-controller`, `charts/lenny` — supervised pod rendering.
+- CODE-5 — `pkg/gateway/runtime/poolstore`, `pkg/gateway/podlifecycle`, `pkg/gateway/sessionserver`, the SandboxTemplate mirror — `recycle.runtimeProcess`, the admission rules, the split predicates, and the acquisition read of the lifetime label.
+- CODE-6 — `cmd/lenny-ctl` — the supervisor preflight.
+- FIXTURE-1 — `cmd/runtimes/supervise-probe`, `tests/testinfra/kind` — the probe runtime, `command` on every sidecar fixture, and the supervised pools.
+- TEST-1 — `pkg/`, `supervisor/`, `tests/` — tests at every tier the change reaches.
+- DOC-1 — `docs/` — runtime-author, operator, and security documentation.
