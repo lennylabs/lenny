@@ -17,8 +17,8 @@ implemented-by:
 
 On 2026-10-22, an adversarial review run examined this proposal in two loops: a spec loop and a non-spec loop.
 
-The spec loop ran 10 rounds and converged. It ran 5 full-pool sweeps.
+The spec loop ran 11 rounds and converged. It ran 6 full-pool sweeps.
 
-The non-spec loop ran 12 rounds and did not converge. It ran 4 full-pool sweeps. Findings the non-spec loop had not closed when it stopped remain open.
+The non-spec loop ran 15 rounds and did not converge. It ran 5 full-pool sweeps. Findings the non-spec loop had not closed when it stopped remain open.
 
-The run fixed 8 findings.
+The run fixed 3 findings.
