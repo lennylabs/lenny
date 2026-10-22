@@ -10,8 +10,8 @@ import (
 )
 
 // §11.4 full_revoke fan-out. handleInvalidateUser raises the user's
-// deleted_at tombstone, returns and deny-lists the credential leases of the
-// user's non-terminal sessions, transitions those sessions to `cancelled`
+// deleted_at tombstone, returns the credential leases of the user's
+// non-terminal sessions, transitions those sessions to `cancelled`
 // in the SessionStore, and dismisses their pending elicitations. The
 // remaining §11.4 propagation steps act on infrastructure the admin Router
 // does not own directly — the pods hosting the user's sessions, the §4.9
@@ -51,17 +51,16 @@ type UserTerminationResult struct {
 	FailedSessions []string
 }
 
-// UserLeaseRevoker returns and deny-lists the §4.9 credential leases held
-// by a user's sessions. On §11.4 full_revoke the gateway returns every
-// lease to its pool, which removes the lease record, and then adds each
-// lease's credential to the §4.9 deny list, so the LLM proxy rejects an
-// in-flight request that still carries the lease token. A deployment
-// without credential leasing wires nil.
+// UserLeaseRevoker returns the §4.9 credential leases held by a user's
+// sessions. On §11.4 full_revoke the gateway returns every lease to its
+// pool, which revokes the lease and removes its record, so the LLM proxy
+// on every replica rejects the returned lease's token. The step writes no
+// credential deny-list entry. A deployment without credential leasing
+// wires nil.
 type UserLeaseRevoker interface {
-	// RevokeUserLeases returns and deny-lists every credential lease held
-	// by the named sessions and returns the count enumerated. It is
-	// best-effort: a lease whose return fails is still deny-listed and
-	// counted.
+	// RevokeUserLeases returns every credential lease held by the named
+	// sessions and returns the count enumerated. It is best-effort: a
+	// lease whose return fails is still counted.
 	RevokeUserLeases(tenantID, userID string, sessionIDs []string) int
 }
 

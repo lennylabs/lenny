@@ -49,7 +49,7 @@ func TestSlotSetRecoveryProbeRunsOnTheWatchdogContext_spec_12_4(t *testing.T) {
 // admin router's full_revoke fan-out wiring: each binding is released
 // through the session server's terminal binding release, and the lease
 // revoker returns each lease to its pool through the credential assigner
-// and propagates it over the renewal propagator. The fan-out and the
+// and writes no deny-list entry. The fan-out and the
 // revoker are unit-tested with injected fakes, so a production wiring that
 // drops the releaser or passes no assigner is caught only here.
 //
@@ -58,7 +58,7 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
 		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
-		{"adminrouter.go", "userLeases = leaserevoke.New(ls, w.credAssign, credRenewalProp, nil)", "the lease revoker's credential assigner"},
+		{"adminrouter.go", "userLeases = leaserevoke.New(ls, w.credAssign, nil)", "the lease revoker's credential assigner"},
 	})
 }
 

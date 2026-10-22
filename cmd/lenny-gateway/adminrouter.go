@@ -866,15 +866,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		}
 		// llmLeases is the §4.9 credential-lease store; both the in-memory
 		// and Postgres-backed implementations expose LeasesBySession, so
-		// the assertion succeeds for either backend. The credential-lease
-		// revocation propagator carries a revoked lease's credential
-		// across replicas — onto every replica's deny list and renewal
-		// worker — so the §11.4 full_revoke fan-out stops the lease
-		// reaching the provider fleet-wide and no replica renews it. The
-		// credential assigner returns each lease to its pool before the
-		// deny-list write (§11.4 step 1).
+		// the assertion succeeds for either backend. The credential
+		// assigner returns each lease to its pool, which revokes it and
+		// removes its record from the shared lease store, so every
+		// replica rejects the lease's token. The step writes no deny-list
+		// entry (§11.4 step 1).
 		if ls, ok := w.llmLeases.(leaserevoke.LeaseLister); ok {
-			userLeases = leaserevoke.New(ls, w.credAssign, credRenewalProp, nil)
+			userLeases = leaserevoke.New(ls, w.credAssign, nil)
 		}
 		if w.pgPool != nil {
 			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
@@ -884,8 +882,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// §4.9 emergency credential revocation lease terminator. Wired when
 	// the lease store exposes per-credential lookup (both backends do);
 	// it reuses the credential-lease revocation propagator so a revoked
-	// pool credential is denied on every replica, mirroring the §11.4
-	// full_revoke fan-out's deny-list path.
+	// pool credential is denied on every replica.
 	if ls, ok := w.llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
 			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp},

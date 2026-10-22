@@ -488,17 +488,13 @@ func endRevokeClaims(revoked []RevokedSession) {
 
 // terminateUserSessions runs the full_revoke lease step and the cancel
 // writes. It lists the user's sessions and collects the non-terminal ones,
-// returns and deny-lists every credential lease they hold through the lease
-// revoker before any cancel write, and then cancels each listed session in
+// returns every credential lease they hold through the lease revoker before
+// any cancel write, and then cancels each listed session in
 // turn (cancelForRevoke). It returns the sessions it cancelled, each with
 // its terminal claim still open, and the number of leases the lease step
 // enumerated.
 //
-// The lease step precedes the first cancel write because, once a row is
-// terminal, the coordination Sweeper's terminal release and the resume tail
-// can release its binding, which returns its leases and removes their
-// records, and a lease the enumeration no longer finds receives no deny-list
-// entry.
+// The lease step precedes the first cancel write, as §11.4 step 1 requires.
 //
 // On a store error it returns the sessions cancelled so far with the error,
 // and the handler runs the fan-out for them before it answers the error.
@@ -519,8 +515,8 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 			live = append(live, row)
 		}
 	}
-	// spec: §11.4 step 1 — the leases are returned and deny-listed before
-	// the first cancel write.
+	// spec: §11.4 step 1 — the leases are returned before the first cancel
+	// write.
 	leasesRevoked := 0
 	if r.userLeases != nil && len(live) > 0 {
 		ids := make([]string, 0, len(live))
@@ -587,9 +583,9 @@ func (r *Router) cancelForRevoke(ctx context.Context, tenantID, id string) (Revo
 // disabled flag so the user is denied new sessions; hard_disable and
 // full_revoke also raise the deleted_at tombstone so the user is
 // blocked from delegated tasks. full_revoke additionally runs the
-// §11.4 propagation: it returns and deny-lists the §4.9 credential leases
-// the user's non-terminal sessions hold, transitions those sessions to
-// `cancelled` in the SessionStore, reclaims the pod or slot of each
+// §11.4 propagation: it returns the §4.9 credential leases the user's
+// non-terminal sessions hold, transitions those sessions to `cancelled` in
+// the SessionStore, reclaims the pod or slot of each
 // cancelled session that never started, releases the pod bindings of the
 // cancelled sessions, invalidates the user's §13.3 cached auth, and
 // dismisses the user's pending elicitations. The pod, lease, and token
@@ -632,8 +628,8 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// §11.4 full_revoke: return and deny-list the §4.9 leases of the
-	// user's active sessions, cancel those sessions in the SessionStore,
+	// §11.4 full_revoke: return the §4.9 leases of the user's active
+	// sessions, cancel those sessions in the SessionStore,
 	// release their pods, invalidate the user's §13.3 cached auth, and
 	// dismiss their pending elicitations. soft_disable and hard_disable
 	// leave running sessions alone — they only gate new work.
@@ -664,7 +660,7 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		// reported, so the fan-out never fails the request.
 		fanOut = r.runFullRevokeFanOut(req.Context(), tenant, subject, body.Reason, revoked)
 		// spec: §11.4 (Note) — the reported lease count is the number of
-		// leases step 1 adds to the deny list.
+		// leases step 1 returns.
 		fanOut.leasesRevoked = leasesRevoked
 		if r.interactions != nil {
 			elicitationsDismissed, err = r.interactions.DismissByUser(req.Context(), tenant, subject)

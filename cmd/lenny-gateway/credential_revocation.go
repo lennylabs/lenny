@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
@@ -15,9 +15,33 @@ import (
 // credential revoked in the CredentialPoolStore on their own; the
 // adapter here carries the deny-list propagation onto infrastructure the
 // admin layer does not own — the per-replica credential deny list and
-// the credential-lease store. It mirrors the §11.4 full_revoke
-// lease step (leaserevoke.Revoker) and is independently optional: a minimal gateway that
-// wires neither still marks the store and emits the §4.9.2 audit event.
+// the credential-lease store. It is independently optional: a minimal
+// gateway that wires neither still marks the store and emits the §4.9.2
+// audit event.
+
+// credentialDenyList is the §4.9 deny list a revoked pool credential is
+// added to. The marker method IsCrossReplicaPropagator is intentional:
+// §4.9 emergency revocation must reach every replica's deny list, and a
+// bare *denylist.DenyList carries a revocation only on the calling replica.
+// Requiring the marker bars an accidental wiring downgrade, because only
+// the credential-lease revocation propagator (which applies locally and
+// publishes on Redis pub/sub) satisfies it. A propagator built with a nil
+// bus still satisfies the marker; that is the explicit local-only
+// single-replica posture.
+//
+// spec: §4.9 (Credential Leasing Service: Emergency Credential Revocation)
+type credentialDenyList interface {
+	Revoke(key credential.CredentialKey)
+	IsCrossReplicaPropagator()
+}
+
+// Compile-time assertion that the §4.9 credential-lease revocation
+// propagator satisfies credentialDenyList. A refactor that drops the
+// `IsCrossReplicaPropagator()` marker on *credrenewalprop.Propagator
+// fails to build, so the emergency-revocation wiring contract is enforced
+// at compile time rather than runtime. spec: §4.9 (Credential Leasing
+// Service: Emergency Credential Revocation).
+var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
 
 // poolLeaseStore is the slice of the §4.9 credential-lease store the
 // emergency-revocation fan-out needs: enumerate the leases backed by a
@@ -44,7 +68,7 @@ type poolLeaseStore interface {
 // rejection to LEASE_TOKEN_INVALID. spec: §4.9.
 type poolCredentialRevoker struct {
 	leases   poolLeaseStore
-	denyList leaserevoke.DenyList
+	denyList credentialDenyList
 }
 
 // RevokePoolCredentials revokes each credentialID in poolID: it adds the

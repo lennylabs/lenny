@@ -15,8 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
@@ -26,25 +24,20 @@ import (
 )
 
 // observedReleaser wraps the harness's credential service as the lease
-// step's assigner and records, for each Release, the lease and what the
-// step had done when it ran: how many deny-list entries existed and whether
-// any listed session's row was already terminal. The production lease step
+// step's assigner and records, for each Release, the lease and whether any
+// listed session's row was already terminal. The production lease step
 // drives it, so the order and the count the test asserts are the step's.
 type observedReleaser struct {
 	h        *lifecycleharness.Harness
-	deny     *denylist.DenyList
 	sessions []string
 	releases map[string]int
-	// denyBefore and cancelledBefore count the Releases that ran after a
-	// deny-list write or after a listed session's cancel write.
-	denyBefore, cancelledBefore int
+	// cancelledBefore counts the Releases that ran after a listed
+	// session's cancel write.
+	cancelledBefore int
 }
 
 func (o *observedReleaser) Release(leaseID string) error {
 	o.releases[leaseID]++
-	if o.deny.Len() != 0 {
-		o.denyBefore++
-	}
 	for _, id := range o.sessions {
 		if session.IsTerminal(o.h.Row(id).State) {
 			o.cancelledBefore++
@@ -97,12 +90,12 @@ func terminateOn(ctx context.Context, r *lifecycleharness.Replica, tenantID stri
 	return res
 }
 
-// spec: §11.4 (User Invalidation), §5.2 (Slot assignment atomicity), §4.9
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism), §5.2 (Slot assignment atomicity), §4.9
 // (Credential Leasing Service)
 // diagnosis: a full_revoke handled on one replica, for sessions bound on that
 // replica, on its peer, and not yet started, left a pod, a slot member, or a
 // credential lease behind, or released one twice; or its response counted a
-// different number of leases than it deny-listed.
+// different number of leases than it returned.
 func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing.T) {
 	ctx := context.Background()
 	h := newConcurrentCompose(t, lifecycleharness.Options{})
@@ -128,9 +121,8 @@ func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing
 	if err := users.Create(ctx, userstore.User{Subject: "alice@acme.com", TenantID: lifecycleharness.Tenant, Roles: []pkgauth.Role{pkgauth.RoleUser}}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	deny := denylist.New()
-	releaser := &observedReleaser{h: h, deny: deny, sessions: ids, releases: map[string]int{}}
-	step := leaserevoke.New(h.CredLeases, releaser, credrenewalprop.New(deny, nil, nil), nil)
+	releaser := &observedReleaser{h: h, sessions: ids, releases: map[string]int{}}
+	step := leaserevoke.New(h.CredLeases, releaser, nil)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: h.Clock.Now}).
 		WithUsers(users).
 		WithSessions(h.Store).
@@ -150,7 +142,7 @@ func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 
 	h.RunToQuiescence()
-	requireLeaseStepAccounting(t, resp, deny, releaser, listed)
+	requireLeaseStepAccounting(t, resp, releaser, listed)
 	if n := len(h.CredLeases.LeasesBySession(ids)); n != 0 {
 		t.Errorf("%d credential leases remain after full_revoke, want none", n)
 	}
@@ -172,30 +164,19 @@ func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing
 // requireLeaseStepAccounting asserts the production lease step's accounting
 // against independent observations: the response's leasesRevoked equals the
 // leases enumerated before the revoke and the leases the credential service
-// saw released, each exactly once; the deny list read back holds every
-// credential those leases name; and every Release ran before the first
-// deny-list write and before any listed session's cancel write.
-func requireLeaseStepAccounting(t *testing.T, resp map[string]any, deny *denylist.DenyList, r *observedReleaser, listed []credential.Lease) {
+// saw released, each exactly once, and every Release ran before any listed
+// session's cancel write.
+func requireLeaseStepAccounting(t *testing.T, resp map[string]any, r *observedReleaser, listed []credential.Lease) {
 	t.Helper()
-	keys := map[credential.CredentialKey]bool{}
-	for _, l := range listed {
-		keys[l.CredentialKey()] = true
-	}
 	if got := resp["leasesRevoked"]; got != float64(len(listed)) || len(r.releases) != len(listed) {
 		t.Errorf("leasesRevoked = %v with %d leases released, want both %d", got, len(r.releases), len(listed))
-	}
-	if deny.Len() != len(keys) {
-		t.Errorf("the deny list holds %d entries, want the %d credentials the leases name", deny.Len(), len(keys))
 	}
 	for _, l := range listed {
 		if n := r.releases[l.LeaseID]; n != 1 {
 			t.Errorf("lease %s of %s was released %d times, want once", l.LeaseID, l.SessionID, n)
 		}
-		if !deny.Revoked(l.CredentialKey()) {
-			t.Errorf("lease %s's credential is not on the deny list", l.LeaseID)
-		}
 	}
-	if r.denyBefore != 0 || r.cancelledBefore != 0 {
-		t.Errorf("%d Releases ran after a deny-list write and %d after a cancel write, want every Release first", r.denyBefore, r.cancelledBefore)
+	if r.cancelledBefore != 0 {
+		t.Errorf("%d Releases ran after a cancel write, want every Release first", r.cancelledBefore)
 	}
 }

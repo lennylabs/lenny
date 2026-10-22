@@ -186,12 +186,13 @@ func (p *Propagator) Revoked(key credential.CredentialKey) bool { return p.denyL
 func (p *Propagator) Len() int { return p.denyList.Len() }
 
 // IsCrossReplicaPropagator is a marker that wiring sites (notably the
-// §11.4 full_revoke fan-out — see cmd/lenny-gateway/user_revocation.go)
-// require to refuse a bare *denylist.DenyList that would silently lose
-// cross-replica fan-out. A Propagator constructed with a nil bus still
-// returns true: the local-only single-replica posture is a deliberate
-// constructor choice, not an accidental wiring downgrade. spec: §11.4
-// step 6.
+// §4.9 emergency-revocation lease terminator; see
+// cmd/lenny-gateway/credential_revocation.go) require to refuse a bare
+// *denylist.DenyList that would silently lose cross-replica fan-out. A
+// Propagator constructed with a nil bus still satisfies it: the local-only
+// single-replica posture is a deliberate constructor choice rather than
+// an accidental wiring downgrade. spec: §4.9 (Credential Leasing Service:
+// Emergency Credential Revocation).
 func (p *Propagator) IsCrossReplicaPropagator() {}
 
 // Run subscribes to the credential-revocation channel and applies a
