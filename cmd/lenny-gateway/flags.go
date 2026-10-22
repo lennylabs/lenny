@@ -399,7 +399,11 @@ func parseFlags() *gatewayFlags {
 // spec: §4.1 gateway subsystem seams.
 func (f *gatewayFlags) registerCoreFlags() {
 	f.addr = flag.String("addr", ":8080", "address to bind (host:port)")
-	f.multiTenant = flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
+	// spec: §10.2 — the auth.multiTenant Helm value. The gateway refuses
+	// to start when it disagrees with --tenancy-mode (see
+	// validateTenancyConfig).
+	f.multiTenant = flag.Bool("multi-tenant", envFlag("LENNY_MULTI_TENANT"),
+		"§10.2 auth.multiTenant: when true the gateway reads the tenant from the Bearer tenant claim and refuses an unregistered tenant with 403 TENANT_NOT_FOUND; when false it ignores the claim and serves every request as the built-in `default` tenant. Must be true exactly when --tenancy-mode=multi. Mirrors the auth.multiTenant Helm value. Override via LENNY_MULTI_TENANT.")
 	// spec: §4.9 — the platform tenancy.mode signal the gateway enforces
 	// the two cross-tenant credential-delivery rejections against. It
 	// mirrors the lenny-webhook binary's --tenancy-mode flag (wired from

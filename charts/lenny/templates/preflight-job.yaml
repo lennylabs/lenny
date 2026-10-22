@@ -377,7 +377,7 @@ spec:
             - --playground-enabled={{ .Values.playground.enabled }}
             - --playground-auth-mode={{ .Values.playground.authMode }}
             - --playground-dev-tenant-id={{ .Values.playground.devTenantId }}
-            - --playground-multi-tenant={{ eq .Values.tenancy.mode "multi" }}
+            - --playground-multi-tenant={{ .Values.auth.multiTenant }}
             - --playground-global-dev-mode={{ .Values.global.devMode }}
             - --playground-acknowledge-api-key-mode={{ .Values.playground.acknowledgeApiKeyMode }}
             # §13.2 NET-040 / NET-022 — validate the kube-apiserver Service

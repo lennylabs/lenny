@@ -81,8 +81,8 @@ auth:
 
 | Configuration | Behavior |
 |---|---|
-| Single-tenant mode | `tenantIdClaim` is ignored; all requests use the `default` tenant |
-| Multi-tenant mode | Gateway reads `tenantIdClaim` from the validated OIDC ID token |
+| Single-tenant mode (`auth.multiTenant: false`, the default) | `tenantIdClaim` is ignored; all requests use the `default` tenant |
+| Multi-tenant mode (`auth.multiTenant: true` with `tenancy.mode: multi`) | Gateway reads `tenantIdClaim` from the validated OIDC ID token |
 
 **Rejection conditions:**
 
