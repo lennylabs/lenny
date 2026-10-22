@@ -42,7 +42,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A process survives two `end` passes, or the sweep fails | The pod is reported not live and retires, whatever `onScrubFailure` says | SPEC-2, SPEC-5 |
 | The supervisor misses a `pong` deadline, or is killed or frozen | The pod is reported not live and retires | SPEC-2, SPEC-7 |
 | A reply with an unknown key, a duplicate key, or an unmatched `gen` or `id` | Link failure, and the pod retires | SPEC-7 |
-| Pod termination | The supervisor forwards the kubelet's SIGTERM, and exits when `CH-SUPERVISE` closes | SPEC-2 **Pod termination.** |
+| Pod termination | The supervisor sends no signal, and exits when `CH-SUPERVISE` closes | SPEC-2 **Pod termination.** |
 | A pool sets `restart` on a runtime that is not `restartable` | Pool admission refuses the pool | SPEC-5 |
 | A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server refuses the Runtime | SPEC-1 |
 | A `cleanupCommands` command exits non-zero, or the commands together outlast `cleanupTimeoutSeconds` | `cleaned` carries an error, and the scrub fails under `onScrubFailure` as a failed cleanup does today | SPEC-5, SPEC-7 |
@@ -239,7 +239,7 @@ container and no supervisor.
   UID owns, symbolic links included, in the runtime container's writable
   volumes, which are `/sessions`, `/artifacts`, `/tmp`, `/dev/shm`, and the
   workspace base other than its `slots/` directory. The sweep leaves `slots/` to scrub
-  step 2. The worker follows no symbolic link and bounds its walk. The supervisor then
+  step 2. The worker follows no symbolic link and bounds its walk; a walk that reaches its bound is a failed sweep. The supervisor then
   ends every other process again as **End.** states before it answers.
 - **Cleanup.** At every recycle boundary the supervisor runs the deployer's
   `cleanupCommands` at the agent UID in a worker it forks, with the workspace
@@ -294,9 +294,11 @@ container and no supervisor.
   and ignores every other. A runtime process can still end or freeze the
   supervisor with SIGKILL or SIGSTOP on a runtime class where the namespace
   init is not immune to them, which retires the pod.
-- **Pod termination.** On the stop request the supervisor forwards SIGTERM to
-  every other process in the container and keeps its `CH-SUPERVISE`
-  connection. When the connection closes, the supervisor exits, and its exit
+- **Pod termination.** On the stop request the supervisor sends no signal and
+  keeps its `CH-SUPERVISE` connection, so the runtime process stays alive
+  through the adapter's preStop drain
+  ([§4.6.1](#461-warm-pool-controller-pod-lifecycle), **Disruption protection
+  for agent pods**). When the connection closes, the supervisor exits, and its exit
   as the namespace init ends every remaining process in the runtime container.
 ```
 
