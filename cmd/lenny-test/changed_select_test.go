@@ -421,9 +421,6 @@ func TestDryRunListsTheUnitScopeAndNotes(t *testing.T) {
 //
 // spec: the test infrastructure §6 (selection algorithm)
 func TestLoadPkgGraphReadsTheModule(t *testing.T) {
-	if testing.Short() {
-		t.Skip("loads the module graph with go list")
-	}
 	g, err := loadPkgGraph(context.Background(), repoRoot())
 	if err != nil {
 		t.Fatalf("loadPkgGraph: %v", err)
