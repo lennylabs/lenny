@@ -1597,6 +1597,13 @@ On the `lenny-e2e` cluster (2026-10-16) the upgraded controller's GC reclaimed a
 **Gap:** Every agent pod deletion records a failed preStop hook, and the hook performs no eviction checkpoint; the kubelet sends SIGTERM itself after the hook returns, so the hook adds nothing the spec asks for.
 **Suggested resolution:** Replace the signal-and-poll body with the §4.6.1 eviction checkpoint trigger, which the adapter shutdown and eviction proposal in `gateway-runtime-comms-remediation.md` §10.2 specifies and remediation step R16 implements. The tier-5 assertion that a deletion raises no FailedPreStopHook skips as `blocked: F-4.6.38`; `LENNY_TIER5_PRESTOP_EXIT_BLOCKED=run` runs it, and it must pass after the fix.
 
+### - [ ] F-4.6.39 — Deleting a pool soft-deletes its row but nothing deletes its `SandboxTemplate` and `SandboxWarmPool` CRDs [Medium] — OPEN
+
+**Spec:** §4.6 PoolScalingController (`ApplyPoolDefinition` "creates/updates/deletes `SandboxTemplate` and `SandboxWarmPool` CRDs").
+**Evidence:** `DELETE /v1/admin/pools/{name}` (`handleDeletePool`) soft-deletes the pool's Postgres row. The PoolScalingController reads only active rows (`PoolStoreSource`, `pkg/controller/poolscaling/poolstoresource.go`), and its only CRD delete is `drainAndDeleteWarmPool` (`pkg/controller/poolscaling/controller.go`), the §10.7 experiment-conclude path, which leaves the `SandboxTemplate` in place. A deleted pool's CRD pair therefore stays on the cluster and the WarmPoolController keeps its warm members. On `lenny-e2e` on 2026-10-22, 28 soft-deleted `chaos-nonce-only-pool-*` rows had left 24 `SandboxTemplate` objects and one `SandboxWarmPool` whose member could never pull its image. F-13.2.24's account of this path assumed that a pool delete becomes a `SandboxTemplate` delete; no code performs that delete. Found while fixing the tier-8 nonce-only fixture's leak.
+**Gap:** A deleted pool keeps its warm pods running and its templates present indefinitely, consuming capacity and, for a broken image, holding pods that never become Ready.
+**Suggested resolution:** Have the PoolScalingController observe soft-deleted pool rows and drain and delete the `SandboxWarmPool`, then the `SandboxTemplate`, through the same drain the §10.7 path uses, with a tier-2 envtest case and a tier-5 case that deletes a pool through the admin API and waits for both CRDs to disappear. No owner yet.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
