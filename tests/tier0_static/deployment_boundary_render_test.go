@@ -145,7 +145,8 @@ var embeddedRuntimeBinaries = []string{"echo-embedded", "preconnect-echo"}
 //
 //	sidecar  adapter                  args      lenny-adapter, main set
 //	sidecar  adapter                  env       lenny-adapter
-//	any      any container            preStop   token 1 is prestop: lenny-adapter, prestop set
+//	sidecar  adapter                  preStop   token 1 is prestop: lenny-adapter, prestop set
+//	embedded runtime                  preStop   token 1 is prestop: each embedded runtime binary, prestop set
 //	sidecar  runtime                  env       the runtime SDK socket variable only
 //	embedded runtime                  args      each embedded runtime binary, main set
 //	embedded runtime                  env       each embedded runtime binary
@@ -221,10 +222,12 @@ func attribute(c builtCase) ([]argvUse, []envUse, []string) {
 }
 
 // attributeLifecycle maps a container's lifecycle exec hooks. A preStop exec
-// whose token 1 is `prestop` is the adapter's drain subcommand, parsed from
-// token 2 against the prestop set. The gate does not check token 0 against
-// the image, and it does not check the embedded runtime's preStop against the
-// embedded runtime binaries.
+// whose token 1 is `prestop` is the drain subcommand, parsed from token 2
+// against the prestop set of the binary the container runs: lenny-adapter on
+// the sidecar adapter container, and each embedded runtime binary on the
+// embedded runtime container. A preStop on any other container is unmapped.
+// Token 0 is checked against the image layout by
+// TestPreStopExecPathMatchesDockerfileInstallPath, not here.
 func attributeLifecycle(c builtCase, prefix string, ctr corev1.Container, argv *[]argvUse, unmap func(string)) {
 	if ctr.Lifecycle == nil {
 		return
@@ -232,11 +235,20 @@ func attributeLifecycle(c builtCase, prefix string, ctr corev1.Container, argv *
 	if h := ctr.Lifecycle.PreStop; h != nil && h.Exec != nil && len(h.Exec.Command) > 0 {
 		site := prefix + ".lifecycle.preStop.exec.command"
 		cmd := h.Exec.Command
-		if len(cmd) >= 2 && cmd[1] == "prestop" {
-			*argv = append(*argv, argvUse{
-				Case: c.Name, Site: site, Binary: "lenny-adapter", Set: "prestop",
-				Args: append([]string(nil), cmd[2:]...),
-			})
+		var binaries []string
+		switch {
+		case c.Sidecar && ctr.Name == "adapter":
+			binaries = []string{"lenny-adapter"}
+		case !c.Sidecar && ctr.Name == "runtime":
+			binaries = embeddedRuntimeBinaries
+		}
+		if len(cmd) >= 2 && cmd[1] == "prestop" && len(binaries) > 0 {
+			for _, b := range binaries {
+				*argv = append(*argv, argvUse{
+					Case: c.Name, Site: site, Binary: b, Set: "prestop",
+					Args: append([]string(nil), cmd[2:]...),
+				})
+			}
 		} else {
 			unmap(site)
 		}

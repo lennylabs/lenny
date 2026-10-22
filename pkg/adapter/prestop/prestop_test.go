@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package main
+package prestop
 
 import (
 	"syscall"
@@ -30,6 +30,7 @@ func recordingDeps(aliveFor int, signalErr error) (*preStopDeps, *int, *int) {
 // TestRunPreStopSignalsThenReturnsOnExit_spec_4_6_1 covers the happy
 // path: the adapter is alive, the drain signals it, and the adapter
 // exits after a couple of poll cycles.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestRunPreStopSignalsThenReturnsOnExit_spec_4_6_1(t *testing.T) {
 	// alive() sequence: initial check (true), then post-signal checks
 	// true, true, false.
@@ -48,6 +49,7 @@ func TestRunPreStopSignalsThenReturnsOnExit_spec_4_6_1(t *testing.T) {
 
 // TestRunPreStopNoopWhenAlreadyExited_spec_4_6_1 covers the adapter
 // having already processed an earlier SIGTERM: no signal is sent.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestRunPreStopNoopWhenAlreadyExited_spec_4_6_1(t *testing.T) {
 	deps, signals, sleeps := recordingDeps(0, nil)
 	cfg := preStopConfig{timeout: 10 * time.Second, pollInterval: time.Second}
@@ -65,6 +67,7 @@ func TestRunPreStopNoopWhenAlreadyExited_spec_4_6_1(t *testing.T) {
 // TestRunPreStopTimesOut_spec_4_6_1 confirms the drain returns 0 (defers
 // to the kubelet SIGKILL) when the adapter never exits within the
 // budget, and that it does not loop forever.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestRunPreStopTimesOut_spec_4_6_1(t *testing.T) {
 	deps, _, sleeps := recordingDeps(1<<30, nil) // never exits
 	cfg := preStopConfig{timeout: 1 * time.Second, pollInterval: 250 * time.Millisecond}
@@ -80,6 +83,7 @@ func TestRunPreStopTimesOut_spec_4_6_1(t *testing.T) {
 // TestRunPreStopSignalESRCH_spec_4_6_1 confirms an ESRCH on signal (the
 // adapter raced to exit between the alive check and the signal) is
 // treated as a clean drain.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestRunPreStopSignalESRCH_spec_4_6_1(t *testing.T) {
 	deps, signals, _ := recordingDeps(1<<30, syscall.ESRCH)
 	cfg := preStopConfig{timeout: 5 * time.Second, pollInterval: time.Second}
@@ -91,6 +95,7 @@ func TestRunPreStopSignalESRCH_spec_4_6_1(t *testing.T) {
 	}
 }
 
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 func TestParsePreStopArgs_spec_4_6_1(t *testing.T) {
 	cfg, err := parsePreStopArgs([]string{"--timeout=110s"})
 	if err != nil {
@@ -111,5 +116,37 @@ func TestParsePreStopArgs_spec_4_6_1(t *testing.T) {
 		if _, err := parsePreStopArgs(bad); err == nil {
 			t.Errorf("parsePreStopArgs(%v) = nil error, want rejection", bad)
 		}
+	}
+}
+
+// TestRunRejectsUnparsableArgsWithStatus2_spec_4_6_1 confirms a preStop
+// invocation whose arguments the binary does not define exits with status 2
+// and logs the cause, so a pod builder and binary that disagree on the
+// subcommand's flags surface as a FailedPreStopHook event naming the flag.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
+func TestRunRejectsUnparsableArgsWithStatus2_spec_4_6_1(t *testing.T) {
+	for _, bad := range [][]string{
+		{"--unknown-flag"},
+		{"--timeout=0s"},
+		{"--timeout=110"},
+	} {
+		var logged []string
+		logf := func(format string, args ...any) { logged = append(logged, format) }
+		if rc := Run(bad, logf); rc != parseErrorExitCode {
+			t.Errorf("Run(%v) = %d, want %d", bad, rc, parseErrorExitCode)
+		}
+		if len(logged) == 0 {
+			t.Errorf("Run(%v) logged nothing; a rejected invocation must name its cause", bad)
+		}
+	}
+}
+
+// TestVerbMatchesFlagSetName_spec_4_6_1 pins Verb to the flag set name the
+// deployment-boundary gate reads by syntax, so renaming one without the
+// other fails here.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle))
+func TestVerbMatchesFlagSetName_spec_4_6_1(t *testing.T) {
+	if Verb != "prestop" {
+		t.Fatalf("Verb = %q; the parsePreStopArgs flag set is named %q", Verb, "prestop")
 	}
 }

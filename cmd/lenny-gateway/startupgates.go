@@ -160,6 +160,14 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
 	}
 
+	// spec: §10.2 / §4.9 / §10.3 — the auth.multiTenant switch and the
+	// tenancy.mode value must agree, or the auth chain and the
+	// credential-delivery rejections would enforce different tenancy
+	// postures. A contradictory pair is fatal. T-10.2.11.
+	if err := validateTenancyConfig(*f.tenancyMode, *f.multiTenant); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
 	// spec: §10.3 — gateway startup TLS probe. Before the replica
 	// is marked ready, verify a TLS handshake to Redis and PgBouncer
 	// succeeds and that a plaintext connection is refused, so a

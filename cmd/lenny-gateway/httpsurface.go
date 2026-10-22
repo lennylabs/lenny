@@ -856,7 +856,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
 	// verifier.
 	authOpts := authmw.Options{
-		MultiTenant: *multiTenant,
 		// spec: §10.2 — operator-configurable OIDC tenant claim
 		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
 		TenantClaimName: *tenantIDClaim,
@@ -910,20 +909,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	if w.pgPool != nil {
 		authOpts.RevocationFreshness = revCache
 	}
-	if !*multiTenant {
-		// Even in single-tenant mode, dev-header callers carry the
-		// tenant header. Flip to multi-tenant with a permissive
-		// registry so the header round-trips.
-		authOpts.MultiTenant = true
-		authOpts.Registry = permissiveRegistry{}
-	} else {
-		// spec: §10.2 — in multi-tenant mode, an
-		// unregistered `tenant_id` claim is a hard 403 TENANT_NOT_FOUND.
-		// The bearer chain consults the real tenantstore so unprovisioned
-		// callers cannot ride a signature-valid token into the platform.
-		// F-10.2.1.
-		authOpts.Registry = bearerTenantRegistry{store: w.tenants}
-	}
+	// spec: §10.2 — a single-tenant gateway ignores the tenant claim and
+	// serves `default`; a multi-tenant gateway refuses an unregistered
+	// tenant with 403 TENANT_NOT_FOUND. See applyTenantAuthOptions for the
+	// dev-mode dev-header exception. F-10.2.1, T-10.2.11.
+	applyTenantAuthOptions(&authOpts, *multiTenant, *devMode, w.tenants)
 	handler = authmw.Wrap(handler, authOpts)
 
 	// §16.1 request metrics, wrapped before recovery so panics still

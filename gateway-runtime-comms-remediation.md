@@ -1577,7 +1577,7 @@ here). The specification defines no adapter shutdown budget and no fallback, so 
 only after a proposal settles them. The measured numbers and the two candidate designs are in the R4
 outcome.
 
-**Re-derived 2026-10-21.** Revert `54292da1b` removed `AdapterEvicting`, `setEvicting`, `isEvicting`, and the best-effort snapshot, and the specification states no eviction message name. R16 therefore re-creates the flag, the event, and both best-effort branches rather than wiring them, and it is preceded by the adapter shutdown and eviction proposal in §10.2 (F-4.6.31's budget, the eviction signal, and the best-effort snapshot), sequenced against 0087 part 1's pod-exit ordering. R16 also takes the items 0093 handed it: the pod-side `Shutdown` generation fence, the lease and mirror release at a terminal write, the §10.1.1 statement of when a pre-running start acquires the lease, and 0093 register row A18. New defect F-4.6.37: the preStop hook execs `lenny-adapter`, which the image does not contain, so the hook never runs; R16 fixes it and its tier-5 terminate-and-checkpoint test covers it. The claim register's eviction rows become `ABSENT`, and its PDB row is closed against R6.
+**Re-derived 2026-10-21.** Revert `54292da1b` removed `AdapterEvicting`, `setEvicting`, `isEvicting`, and the best-effort snapshot, and the specification states no eviction message name. R16 therefore re-creates the flag, the event, and both best-effort branches rather than wiring them, and it is preceded by the adapter shutdown and eviction proposal in §10.2 (F-4.6.31's budget, the eviction signal, and the best-effort snapshot), sequenced against 0087 part 1's pod-exit ordering. R16 also takes the items 0093 handed it: the pod-side `Shutdown` generation fence, the lease and mirror release at a terminal write, the §10.1.1 statement of when a pre-running start acquires the lease, and 0093 register row A18. F-4.6.37 (the preStop hook exec'd a binary the image lacks) was fixed directly on 2026-10-22. Its tier-5 test then exposed F-4.6.38: the `prestop` subcommand SIGTERMs PID 1 of its own container and is SIGKILLed with it, so every deletion records FailedPreStopHook; R16 replaces the hook body with the §4.6.1 eviction checkpoint trigger and lifts that test's `blocked:` skip. The claim register's eviction rows become `ABSENT`, and its PDB row is closed against R6.
 
 **Size.** L, plus the proposal.
 
@@ -2888,6 +2888,24 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
     and release mechanism, and after P5 (0094), whose fence and drain it builds on.
   - **Drafting.** Under the drafting rules and the test instruction above.
+  - **Status (2026-10-22).** Drafted as proposal 0095 (`draft/0095-p5b`). The review run halted on the
+    tenancy-mode mechanism, and the owner decided its open decisions: the single-tenant branch that admits
+    every tenant claim is fixed by the separate direct fix for T-10.2.11 below, which lands before 0095's
+    implementation, and 0095's bearer-refusal goal names a gateway in multi-tenant mode (OD-3); a
+    multi-tenant deployment may delete `default`, with a spec edge case and operator documentation for the
+    bootstrap admin token (OD-1); an admin router built without the tenancy setting fails closed as
+    single-tenant (OD-2).
+- [x] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Landed
+  2026-10-22 (merge `2177ac596`): chart value `auth.multiTenant` renders `--multi-tenant`, a mismatch with
+  `tenancy.mode` is refused at render and at gateway startup, and `permissiveRegistry` is deleted. It
+  exposed F-10.2.21 (an unauthenticated request takes its tenant from `X-Lenny-Tenant-ID`), queued as the
+  next direct fix. Added
+  2026-10-22 by the owner's OD-3 decision on 0095. Every chart-deployed gateway runs the single-tenant
+  branch, which flips the auth middleware to multi-tenant with a registry that admits every tenant, so an
+  unregistered tenant claim is admitted instead of refused. The fix renders the switch from the chart, keeps
+  single-tenant mode on `default` with the claim ignored (§10.2), and uses the real tenant registry in
+  multi-tenant mode. It lands before 0095's implementation; a needed spec change stops it for the proposal
+  pipeline.
 
 Redis Cluster readiness (added 2026-10-21, after the analysis of F-12.4.28). Every gateway and `lenny-ops`
 Redis store runs on the cluster client when the chart's `redis.provider` is `cluster`, so each store has to

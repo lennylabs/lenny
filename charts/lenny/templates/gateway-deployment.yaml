@@ -127,6 +127,22 @@ only the env vars it can satisfy.
 {{- fail (printf "§12.5: storage.t4KmsProbeRateLimit=%v must be a positive probes/sec ceiling." .Values.storage.t4KmsProbeRateLimit) -}}
 {{- end -}}
 {{- end -}}
+{{- /* §10.2 / §4.9 — auth.multiTenant selects the tenant-claim extraction
+   mode and tenancy.mode selects the cross-tenant credential-delivery
+   rejections. Both state whether the deployment serves more than one
+   tenant, so a pair that disagrees fails the render closed rather than
+   letting the auth chain and credential delivery enforce different
+   postures. The gateway repeats the check at startup. T-10.2.11. */ -}}
+{{- $tenancyMode := .Values.tenancy.mode -}}
+{{- if not (has $tenancyMode (list "single" "multi")) -}}
+{{- fail (printf "§4.9: tenancy.mode=%v must be single or multi." $tenancyMode) -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.auth.multiTenant) -}}
+{{- fail (printf "§10.2: auth.multiTenant=%v must be a boolean." .Values.auth.multiTenant) -}}
+{{- end -}}
+{{- if ne .Values.auth.multiTenant (eq $tenancyMode "multi") -}}
+{{- fail (printf "§10.2: auth.multiTenant=%v contradicts tenancy.mode=%s; set auth.multiTenant: true with tenancy.mode: multi, or auth.multiTenant: false with tenancy.mode: single." .Values.auth.multiTenant $tenancyMode) -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -470,6 +486,12 @@ spec:
             # canonical claim name still works without a code change.
             # F-10.2.9.
             - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
+            # §10.2 — the auth.multiTenant switch. true refuses an
+            # unregistered tenant claim with 403 TENANT_NOT_FOUND; false
+            # ignores the claim and serves the built-in `default` tenant.
+            # A render-time check in this template keeps it equal to
+            # tenancy.mode == multi. T-10.2.11.
+            - --multi-tenant={{ .Values.auth.multiTenant }}
             # §10.3 — OIDC issuer + client registration the
             # gateway's token validation trusts. Required platform keys
             # outside global.devMode; the gateway fails closed at startup

@@ -71,8 +71,10 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			VolumeMounts:    runtimeMounts,
 			SecurityContext: containerSecurityContext(in.agentUID()),
 			// spec: §4.6.1 — the embedded first-party runtime links the
-			// adapter and accepts the same CLI, so its preStop drain runs
-			// the same checkpoint-before-termination path.
+			// adapter, is built from the shared platform Dockerfile to
+			// PlatformBinaryPath, and dispatches the same `prestop`
+			// subcommand, so its preStop drain runs the same
+			// checkpoint-before-termination path.
 			Lifecycle: preStopDrainHook(in),
 		},
 	}
