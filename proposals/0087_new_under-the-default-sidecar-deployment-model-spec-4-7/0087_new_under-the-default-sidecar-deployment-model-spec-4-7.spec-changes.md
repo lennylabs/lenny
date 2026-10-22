@@ -478,7 +478,7 @@ In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:*
 
 (e) In `spec/10_gateway-internals.md` §10.1, in the **Hold state timeout:** bullet, replace `; that pod serves no later session and is retired ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime process lifetime**)` with `; [Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states the pod's outcome`.
 
-(f) In `spec/06_warm-pod-model.md` §6.2, in the state-machine fenced block, add the adapter's exit to the causes of the two edges the **Exit** channel of the **Liveness.** table in (b) takes and the block does not list. The WarmPoolController behavior these causes name is that of the precursor fix the summary's D-PREREQS names; this proposal stages no controller change. Keep the column alignment of each parenthetical.
+(f) In `spec/06_warm-pod-model.md` §6.2, in the state-machine fenced block, add the termination of the adapter or runtime container to the causes of the edges below, which the WarmPoolController takes on that termination and the block does not list. The WarmPoolController behavior these causes name is that of the precursor fix the summary's D-PREREQS names; this proposal stages no controller change. Keep the column alignment of each parenthetical.
 
 In the SDK-warm warm-fill group, find:
 
@@ -490,7 +490,7 @@ Replace it with:
 
 ```
   sdk_connecting ──→ failed         (sdkConnectTimeoutSeconds watchdog fires — see §6.1; or the
-                                     adapter exits — see §4.7.10 Runtime supervisor)
+                                     adapter or runtime container terminates — see §4.7.10 Runtime supervisor)
 ```
 
 In the `idle ──→ draining` edge of the occupancy projection group, find:
@@ -505,10 +505,23 @@ Replace it with:
 ```
                                      regardless of session activity; or gateway-stamped
                                      lenny.dev/drain-request annotation — see §5.2; or the
-                                     adapter exits — see §4.7.10 Runtime supervisor)
+                                     adapter or runtime container terminates — see §4.7.10 Runtime supervisor)
 ```
 
-The `warming ──→ failed` edge (warm-fill failure), the `failed ──→ draining` edge, and the `sdk_connecting ──→ terminated` edge (SIGTERM received) stay as they are: an adapter exit before READY is a warm-fill failure, and the **Exit** channel of the **Liveness.** table excludes a pod that is being deleted, so the SIGTERM edge stays the edge of a pod deleted in `sdk_connecting`. The precursor fix honors that exclusion: it observes a Pod that is being deleted as terminating, so an `sdk_connecting` pod takes the SIGTERM edge, and a `warming` pod, which has no SIGTERM edge, holds in `warming` until the pod is gone (commit `c29693b62`). The recycle re-warm edge `sdk_connecting ──→ failed` (re-warm watchdog fires) also stays as it is, because the adapter does not exit for a cause on that edge, and the pod retires through **Start**.
+In the recycle edges group, find the re-warm edge:
+
+```
+  sdk_connecting ──→ failed         (re-warm watchdog fires)
+```
+
+Replace it with:
+
+```
+  sdk_connecting ──→ failed         (re-warm watchdog fires; or the adapter or runtime
+                                     container terminates — see §4.7.10 Runtime supervisor)
+```
+
+The `warming ──→ failed` edge (warm-fill failure), the `failed ──→ draining` edge, and the `sdk_connecting ──→ terminated` edge (SIGTERM received) stay as they are: an adapter exit before READY is a warm-fill failure, and the **Exit** channel of the **Liveness.** table excludes a pod that is being deleted, so the SIGTERM edge stays the edge of a pod deleted in `sdk_connecting`. The precursor fix honors that exclusion: it observes a Pod that is being deleted as terminating, so an `sdk_connecting` pod takes the SIGTERM edge, and a `warming` pod, which has no SIGTERM edge, holds in `warming` until the pod is gone (commit `c29693b62`).
 
 ### SPEC-3 · spec/04_system-components.md § 4.7.9 Startup Sequence for `type: agent` Runtimes
 
@@ -930,7 +943,7 @@ and replace it with:
 
 The citation of §15.4 on the next line stays.
 
-(b) In the §28.5.3 **Exit Codes** table, delete `adapter logs stderr; ` from the row for code 1, and delete ` — adapter treats as crash, pod is not reused` from the row for code 137. Each row stays one physical line. Append after `non-zero triggers an alert but the session result (if any) is still delivered.`: `In the sidecar model the runtime supervisor reports the exit status to the adapter on `CH-SUPERVISE`.`
+(b) In the §28.5.3 **Exit Codes** table, delete `adapter logs stderr; ` from the row for code 1, and delete ` — adapter treats as crash, pod is not reused` from the row for code 137. Each row stays one physical line. Append after `non-zero triggers an alert but the session result (if any) is still delivered.`: `In the sidecar model the runtime supervisor reports the exit status to the adapter on `CH-SUPERVISE`, the two sentences above do not apply, and an exit has the outcome [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Crash.** and **Liveness.** state, whatever its status.`
 
 (c) The string `the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr` occurs three times in `spec/28_communication-channels.md`: in the `CH-MSGSOCK` card's **Degradation.** bullet (§28.5.3), in the **Error reporting via `response`.** paragraph (§28.5.3), and in the §28.8 `CH-MSGSOCK` row. Replace each occurrence with `the adapter synthesizes a `RUNTIME_CRASH` error from the exit status the runtime supervisor reports`, because no runtime output crosses `CH-SUPERVISE`. Whether the adapter writes `shutdown` at pod drain belongs to R16.
 
