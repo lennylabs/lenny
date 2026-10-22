@@ -2,7 +2,7 @@
 
 Every step lands the tests the non-spec Testing section places under its deliverables, and classifies each failure those tests expose as Testing **Failures the tests find.** states.
 
-**Precondition.** The direct fix for the test gap T-10.2.11 (summary D26) has landed: the chart renders the gateway's multi-tenant switch from the tenancy configuration, and single-tenant mode ignores the bearer's tenant claim. Do not start S1 until it has.
+**Precondition (satisfied).** The direct fix for the test gap T-10.2.11 (summary D26) landed in merge 2177ac596, which this proposal's tree includes: the chart renders `auth.multiTenant` as `--multi-tenant`, the gateway refuses a `--multi-tenant` that contradicts `--tenancy-mode` at startup, and single-tenant mode ignores the bearer's tenant claim. No step waits on it.
 
 - [ ] **S1 · spec** — SPEC-1. Lands both receipt edits.
       Tiers 0, 11. Depends on: —
@@ -24,7 +24,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
       Tiers 0, 1, 2. Depends on: S5, S6
 - [ ] **S10 · code** — CODE-1, CODE-3, CODE-4. Lands the rank table and completeness check with the wiring of both paths, and closes F-12.8.37.
       Tiers 0, 1, 2, 4, 9, 11. Depends on: S5, S7, S8, S9
-- [ ] **S11 · code** — CODE-6. Lands CODE-6 and its tests.
+- [ ] **S11 · code** — CODE-6. Lands the registration predicate, the auth-failure chain, the bearer-path claim selection, the default-tenant deletion guard on `TenancyMode`, the bootstrap seed refusal (item 8, T1.24), the `platform` reservation, and their tests.
       Tiers 0, 1, 2, 9. Depends on: S2, S4
 - [ ] **S12 · code** — CODE-7. Lands the lease step without deny-listing and the retargeted lease-step tests.
       Tiers 0, 1, 4, 8, 9. Depends on: S3
