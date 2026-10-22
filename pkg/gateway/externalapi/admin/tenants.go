@@ -240,6 +240,9 @@ type Router struct {
 	// revoked receives each session the full_revoke step cancelled, right
 	// after its write. spec: §11.4 (User Invalidation).
 	revoked RevokeHook
+	// primaryReadTimeout bounds the full_revoke re-read of a cancel write
+	// that reported an error. Zero uses sessionstore.DefaultPrimaryReadTimeout.
+	primaryReadTimeout time.Duration
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
 	// them unregistered. spec: §24.11.
@@ -476,6 +479,13 @@ type Options struct {
 	// leaves the primary-instance audit-sequence provisioning inactive.
 	// spec: §12.3, §15.1. F-11.2.10.
 	PrimaryDDLPool *pgxpool.Pool
+
+	// PrimaryReadTimeout bounds each one-row read from the Postgres primary
+	// the Router issues, such as the full_revoke re-read of a cancel write
+	// that reported an error. It is sourced from the gateway
+	// --session-primary-read-timeout flag; zero uses
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3, §11.4.
+	PrimaryReadTimeout time.Duration
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -493,6 +503,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		tenancyMode:         opts.TenancyMode,
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
+		primaryReadTimeout:  opts.PrimaryReadTimeout,
 	}
 }
 

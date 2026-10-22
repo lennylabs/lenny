@@ -10,9 +10,9 @@ import (
 )
 
 // §11.4 full_revoke fan-out. handleInvalidateUser raises the user's
-// deleted_at tombstone, returns the credential leases of the user's
-// non-terminal sessions, transitions those sessions to `cancelled`
-// in the SessionStore, and dismisses their pending elicitations. The
+// deleted_at tombstone, returns the credential leases of every session
+// the user has, transitions the non-terminal ones to `cancelled` in the
+// SessionStore, and dismisses their pending elicitations. The
 // remaining §11.4 propagation steps act on infrastructure the admin Router
 // does not own directly — the pods hosting the user's sessions, the §4.9
 // credential leases those sessions hold, and the §13.3 issued tokens the

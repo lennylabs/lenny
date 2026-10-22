@@ -90,6 +90,21 @@ func terminateOn(ctx context.Context, r *lifecycleharness.Replica, tenantID stri
 	return res
 }
 
+// disconnectingUsers ends the request context right after the user row's
+// update commits, as a client that disconnects at that point does.
+type disconnectingUsers struct {
+	userstore.Store
+	cancel context.CancelFunc
+}
+
+func (u *disconnectingUsers) Update(ctx context.Context, tenantID, subject string, mut func(*userstore.User) error) (userstore.User, error) {
+	out, err := u.Store.Update(ctx, tenantID, subject, mut)
+	if u.cancel != nil {
+		u.cancel()
+	}
+	return out, err
+}
+
 // spec: §11.4 (User Invalidation: Full revoke propagation mechanism), §5.2 (Slot assignment atomicity), §4.9
 // (Credential Leasing Service)
 // diagnosis: a full_revoke handled on one replica, for sessions bound on that
@@ -97,6 +112,25 @@ func terminateOn(ctx context.Context, r *lifecycleharness.Replica, tenantID stri
 // credential lease behind, or released one twice; or its response counted a
 // different number of leases than it returned.
 func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing.T) {
+	runFullRevokeAcrossTwoReplicas(t, false)
+}
+
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism), §12.3 (Postgres HA Requirements)
+// diagnosis: a client that disconnected right after the user row committed
+// stopped the full_revoke effects on the handling replica: the Postgres
+// session store failed the listing or a cancel write on the request's ended
+// context, so a session stayed live or a lease, pod, or slot member stayed
+// behind.
+func TestFullRevokeSurvivesAClientDisconnectAfterTheUserCommit_spec_11_4(t *testing.T) {
+	runFullRevokeAcrossTwoReplicas(t, true)
+}
+
+// runFullRevokeAcrossTwoReplicas runs full_revoke on replica a for sessions
+// bound on a, bound on b, and not yet started, and asserts that each lease,
+// pod, and slot member is released exactly once. With disconnect set, the
+// request context ends right after the user row commits.
+func runFullRevokeAcrossTwoReplicas(t *testing.T, disconnect bool) {
+	t.Helper()
 	ctx := context.Background()
 	h := newConcurrentCompose(t, lifecycleharness.Options{})
 	a, b := h.Replicas[0], h.Replicas[1]
@@ -117,7 +151,7 @@ func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing
 		t.Fatalf("the listed sessions hold %d credential leases, want %d", len(listed), len(ids))
 	}
 
-	users := userstore.NewMemory()
+	users := &disconnectingUsers{Store: userstore.NewMemory()}
 	if err := users.Create(ctx, userstore.User{Subject: "alice@acme.com", TenantID: lifecycleharness.Tenant, Roles: []pkgauth.Role{pkgauth.RoleUser}}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
@@ -130,7 +164,14 @@ func TestFullRevokeAcrossTwoReplicasReleasesEachSessionOnce_spec_11_4(t *testing
 		WithUserRevocation(harnessPodTerminator{h: h, handling: a}, step, nil)
 	body, _ := json.Marshal(admin.InvalidateUserRequest{TenantID: lifecycleharness.Tenant, Mode: admin.InvalidateFullRevoke})
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/users/alice@acme.com/invalidate", bytes.NewReader(body))
-	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+	reqCtx := context.Background()
+	if disconnect {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithCancel(reqCtx)
+		users.cancel = cancel
+		t.Cleanup(cancel)
+	}
+	req = req.WithContext(authmw.WithPrincipal(reqCtx, authmw.Principal{
 		Subject: "admin@acme.com", TenantID: "platform", Roles: []pkgauth.Role{pkgauth.RolePlatformAdmin},
 	}))
 	rr := httptest.NewRecorder()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -486,66 +487,95 @@ func endRevokeClaims(revoked []RevokedSession) {
 	}
 }
 
+// FailedRevokeSession is one listed session whose full_revoke cancel write
+// did not apply, or applied and then reported an error. The response body
+// and the admin.user.invalidated audit detail carry it under failedSessions.
+type FailedRevokeSession struct {
+	SessionID string `json:"sessionId"`
+	Error     string `json:"error"`
+}
+
+// userRevocation is the outcome of the full_revoke lease step and cancel
+// writes: the sessions cancelled, each with its terminal claim still open,
+// the number of leases the lease step returned, and the sessions whose
+// cancel write failed.
+type userRevocation struct {
+	revoked       []RevokedSession
+	leasesRevoked int
+	failed        []FailedRevokeSession
+}
+
 // terminateUserSessions runs the full_revoke lease step and the cancel
-// writes. It lists the user's sessions and collects the non-terminal ones,
-// returns every credential lease they hold through the lease revoker before
-// any cancel write, and then cancels each listed session in
-// turn (cancelForRevoke). It returns the sessions it cancelled, each with
-// its terminal claim still open, and the number of leases the lease step
-// enumerated.
+// writes. It lists every session the user has from the Postgres primary,
+// terminal ones included, returns every credential lease those sessions
+// hold before any cancel write, and then cancels each listed non-terminal
+// session in turn (cancelForRevoke). A cancel write that fails does not stop
+// the loop: the session goes into the failed list and the next one is
+// written. Only a listing error is returned, and then nothing was revoked.
 //
-// The lease step precedes the first cancel write, as §11.4 step 1 requires.
-//
-// On a store error it returns the sessions cancelled so far with the error,
-// and the handler runs the fan-out for them before it answers the error.
-//
-// spec: §11.4 (User Invalidation); §7.2 (Interactive Session Model).
-func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) ([]RevokedSession, int, error) {
-	// spec: §11.4 — narrow the SessionStore lookup to the
-	// invalidation subject. The Postgres-backed store pushes the filter
-	// to `idx_sessions_tenant_user` so a tenant with many sessions does
-	// not scan tenant-wide on every full_revoke.
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID})
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism); §7.2
+// (Interactive Session Model).
+func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) (userRevocation, error) {
+	// spec: §11.4 step 1 — the listing reads the primary, so a session
+	// committed before the lookup is included, and it is narrowed to the
+	// user so the Postgres store reads `idx_sessions_tenant_user`.
+	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
 	if err != nil {
-		return nil, 0, err
+		return userRevocation{}, fmt.Errorf("list sessions of user %s: %w", userID, err)
 	}
-	var live []sessionstore.Session
+	out := userRevocation{leasesRevoked: r.returnUserLeases(tenantID, userID, rows)}
 	for _, row := range rows {
-		if !session.IsTerminal(row.State) {
-			live = append(live, row)
+		if session.IsTerminal(row.State) {
+			continue
 		}
-	}
-	// spec: §11.4 step 1 — the leases are returned before the first cancel
-	// write.
-	leasesRevoked := 0
-	if r.userLeases != nil && len(live) > 0 {
-		ids := make([]string, 0, len(live))
-		for _, row := range live {
-			ids = append(ids, row.ID)
-		}
-		leasesRevoked = r.userLeases.RevokeUserLeases(tenantID, userID, ids)
-	}
-	var revoked []RevokedSession
-	for _, row := range live {
 		rs, ok, err := r.cancelForRevoke(ctx, tenantID, row.ID)
-		if err != nil {
-			return revoked, leasesRevoked, err
-		}
-		if ok {
-			revoked = append(revoked, rs)
+		switch {
+		case err != nil:
+			// spec: §11.4 (Note) — one session's failed cancel write
+			// does not stop the others; it is partial-failure detail.
+			out.failed = append(out.failed, FailedRevokeSession{SessionID: row.ID, Error: err.Error()})
+		case ok:
+			out.revoked = append(out.revoked, rs)
 		}
 	}
-	return revoked, leasesRevoked, nil
+	return out, nil
+}
+
+// returnUserLeases is the full_revoke lease step: it returns every
+// credential lease held by the listed sessions, terminal ones included, and
+// reports the count enumerated. A terminal session can still hold a lease a
+// failed earlier release left behind, and a repeated call returns it. The
+// lease store's listing reports no error, so a lease-store failure here is
+// silent and bounded by lease expiry, the stale-slot reaper, or a repeated
+// call; this step does not fail closed.
+//
+// spec: §11.4 step 1 (User Invalidation), §4.9 (Credential Leasing Service)
+func (r *Router) returnUserLeases(tenantID, userID string, rows []sessionstore.Session) int {
+	if r.userLeases == nil || len(rows) == 0 {
+		return 0
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return r.userLeases.RevokeUserLeases(tenantID, userID, ids)
 }
 
 // cancelForRevoke is one full_revoke cancel write. It opens the session's
 // terminal claim, then cancels the row when the locked row is still
 // non-terminal, recording the Terminated fact and the pre-revoke state, and
-// then runs AfterRevokeWrite. A write that does not apply or returns an error
-// ends the claim at once; a write that applied returns it open in the
-// RevokedSession, and the fan-out ends it after the pre-running reclaim.
-// This writer runs no post-terminal hook: the fan-out releases each
-// cancelled session's binding.
+// then runs AfterRevokeWrite. A write that does not apply ends the claim at
+// once; a write that applied returns it open in the RevokedSession, and the
+// fan-out ends it after the pre-running reclaim. This writer runs no
+// post-terminal hook: the fan-out releases each cancelled session's binding.
+//
+// A write that returns an error may still have committed. The row is then
+// re-read from the primary (afterUncertainRevokeWrite), and a row found
+// cancelled gets its AfterRevokeWrite, so its inbox and DLQ are drained and
+// a same-replica resume is cancelled. The session is still returned as an
+// error and is never treated as revoked: the fan-out does not release its
+// binding, and the coordination sweeper releases it from the terminal row
+// once the claim ends.
 //
 // spec: §11.4 (User Invalidation); §7.2 (Interactive Session Model).
 func (r *Router) cancelForRevoke(ctx context.Context, tenantID, id string) (RevokedSession, bool, error) {
@@ -569,7 +599,10 @@ func (r *Router) cancelForRevoke(ctx context.Context, tenantID, id string) (Revo
 		return RevokedSession{}, false, nil
 	}
 	if err != nil {
-		end()
+		defer end()
+		if rerr := r.afterUncertainRevokeWrite(ctx, tenantID, id); rerr != nil {
+			return RevokedSession{}, false, fmt.Errorf("%w (primary re-read: %v)", err, rerr)
+		}
 		return RevokedSession{}, false, err
 	}
 	if r.revoked != nil {
@@ -578,20 +611,141 @@ func (r *Router) cancelForRevoke(ctx context.Context, tenantID, id string) (Revo
 	return RevokedSession{Row: updated, From: from, EndClaim: end}, true, nil
 }
 
+// afterUncertainRevokeWrite re-reads, from the primary, a row whose cancel
+// write returned an error, and runs AfterRevokeWrite on it when the row is
+// cancelled. It runs while the write's terminal claim is still open. With no
+// revoke hook wired there is nothing to run and it reads nothing. A failed
+// re-read runs no hook and is returned.
+//
+// spec: §11.4 step 2 (User Invalidation), §12.3 (Postgres HA Requirements)
+func (r *Router) afterUncertainRevokeWrite(ctx context.Context, tenantID, id string) error {
+	if r.revoked == nil {
+		return nil
+	}
+	row, err := sessionstore.ReadPrimary(ctx, r.sessions, r.primaryReadTimeout, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if row.State == session.StateCancelled {
+		r.revoked.AfterRevokeWrite(ctx, row)
+	}
+	return nil
+}
+
+// invalidationReport is what one user invalidation did: the full_revoke
+// lease step and cancel writes, the fan-out after them, the elicitation
+// dismissal, and the partial-failure detail of each. It is zero for
+// soft_disable and hard_disable.
+type invalidationReport struct {
+	rev                   userRevocation
+	fanOut                fullRevokeOutcome
+	elicitationsDismissed int
+	// dismissalError is the text of a DismissByUser failure.
+	dismissalError string
+	// listingError is the text of a failure to list the user's sessions.
+	// The other effects still ran, and the call answers 500.
+	listingError string
+}
+
+// fullRevoke runs the §11.4 full_revoke propagation after the user row is
+// committed: the lease step and cancel writes, the fan-out for the sessions
+// cancelled, and the elicitation dismissal. Every effect runs whatever an
+// earlier one reported. A session-listing error leaves no session to cancel,
+// so the fan-out runs with none, which still revokes the user's tokens and
+// playground sessions. Every terminal claim the cancel writes opened has
+// ended on return.
+//
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism)
+func (r *Router) fullRevoke(ctx context.Context, tenantID, userID, reason string) invalidationReport {
+	var rep invalidationReport
+	defer func() { endRevokeClaims(rep.rev.revoked) }()
+	if r.sessions != nil {
+		rev, err := r.terminateUserSessions(ctx, tenantID, userID)
+		if err != nil {
+			rep.listingError = err.Error()
+		}
+		rep.rev = rev
+	}
+	rep.fanOut = r.runFullRevokeFanOut(ctx, tenantID, userID, reason, rep.rev.revoked)
+	// spec: §11.4 (Note) — the reported lease count is the number of
+	// leases step 1 returns.
+	rep.fanOut.leasesRevoked = rep.rev.leasesRevoked
+	if r.interactions != nil {
+		n, err := r.interactions.DismissByUser(ctx, tenantID, userID)
+		rep.elicitationsDismissed = n
+		if err != nil {
+			rep.dismissalError = err.Error()
+		}
+	}
+	return rep
+}
+
+// fields returns the per-effect counts and the partial-failure detail the
+// response body, the audit detail, and the listing-error envelope share.
+// Each partial-failure field is present only when that effect failed.
+func (rep invalidationReport) fields() map[string]any {
+	out := map[string]any{
+		"sessionsTerminated":        len(rep.rev.revoked),
+		"podsTerminated":            rep.fanOut.podsTerminated,
+		"leasesRevoked":             rep.fanOut.leasesRevoked,
+		"tokensRevoked":             rep.fanOut.tokensRevoked,
+		"playgroundSessionsRevoked": rep.fanOut.playgroundSessionsRevoked,
+		"elicitationsDismissed":     rep.elicitationsDismissed,
+	}
+	if len(rep.rev.failed) > 0 {
+		out["failedSessions"] = rep.rev.failed
+	}
+	if len(rep.fanOut.podTerminateFailed) > 0 {
+		out["podTerminationFailures"] = rep.fanOut.podTerminateFailed
+	}
+	if rep.fanOut.tokenRevokeError != "" {
+		out["tokenRevocationError"] = rep.fanOut.tokenRevokeError
+	}
+	if rep.fanOut.playgroundRevokeError != "" {
+		out["playgroundRevocationError"] = rep.fanOut.playgroundRevokeError
+	}
+	if rep.dismissalError != "" {
+		out["elicitationDismissalError"] = rep.dismissalError
+	}
+	if rep.listingError != "" {
+		out["sessionListingError"] = rep.listingError
+	}
+	return out
+}
+
+// withFields returns a copy of base with every entry of extra added.
+func withFields(base, extra map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(extra))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
+}
+
 // handleInvalidateUser implements POST /v1/admin/users/{userId}/invalidate
 // — the §11.4 three-tier user invalidation. soft_disable sets the
 // disabled flag so the user is denied new sessions; hard_disable and
 // full_revoke also raise the deleted_at tombstone so the user is
 // blocked from delegated tasks. full_revoke additionally runs the
-// §11.4 propagation: it returns the §4.9 credential leases the user's
-// non-terminal sessions hold, transitions those sessions to `cancelled` in
-// the SessionStore, reclaims the pod or slot of each
+// §11.4 propagation (fullRevoke): it returns the §4.9 credential leases of
+// every session the user has, transitions the non-terminal ones to
+// `cancelled` in the SessionStore, reclaims the pod or slot of each
 // cancelled session that never started, releases the pod bindings of the
 // cancelled sessions, invalidates the user's §13.3 cached auth, and
-// dismisses the user's pending elicitations. The pod, lease, and token
-// steps run only when their gateway dependencies are wired; each is
-// best-effort and a partial propagation is reported rather than failing
-// the request.
+// dismisses the user's pending elicitations.
+//
+// Every call after the user row commits runs on a context detached from the
+// request's cancellation, with no overall deadline, so a client disconnect
+// does not stop the effects; each store call keeps its own bound. A failed
+// effect, or one session's failed cancel write, is reported as
+// partial-failure detail in a 200. A failure to list the user's sessions
+// still runs every other effect, emits the audit event, and answers 500
+// INTERNAL_ERROR with the counts in the error details.
+//
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism)
 func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) {
 	subject := req.PathValue("userId")
 	var body InvalidateUserRequest
@@ -628,95 +782,36 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// §11.4 full_revoke: return the §4.9 leases of the user's active
-	// sessions, cancel those sessions in the SessionStore,
-	// release their pods, invalidate the user's §13.3 cached auth, and
-	// dismiss their pending elicitations. soft_disable and hard_disable
-	// leave running sessions alone — they only gate new work.
-	var (
-		revoked               []RevokedSession
-		leasesRevoked         int
-		elicitationsDismissed int
-		fanOut                fullRevokeOutcome
-	)
-	// Every terminal claim the cancel writes opened ends on every return
-	// path; the fan-out ends them earlier, and the end is idempotent.
-	defer func() { endRevokeClaims(revoked) }()
+	// spec: §11.4 (Note) — a client disconnect does not stop the effects on
+	// the handling replica. The detached context keeps the request's values
+	// (the principal) and drops its cancellation; it has no overall
+	// deadline, as tenant suspension's drain does.
+	ctx := context.WithoutCancel(req.Context())
+	// soft_disable and hard_disable leave running sessions alone; they
+	// only gate new work.
+	var rep invalidationReport
 	if body.Mode == InvalidateFullRevoke {
-		if r.sessions != nil {
-			revoked, leasesRevoked, err = r.terminateUserSessions(req.Context(), tenant, subject)
-			if err != nil {
-				// spec: §11.4 — the sessions already cancelled still get
-				// their reclaim, binding release, and cached-auth
-				// invalidation before the error is answered.
-				r.runFullRevokeFanOut(req.Context(), tenant, subject, body.Reason, revoked)
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-					"session termination failed: "+err.Error(), nil)
-				return
-			}
-		}
-		// Pre-running reclaim, binding release, and cached-auth
-		// invalidation. Each step is best-effort and a partial result is
-		// reported, so the fan-out never fails the request.
-		fanOut = r.runFullRevokeFanOut(req.Context(), tenant, subject, body.Reason, revoked)
-		// spec: §11.4 (Note) — the reported lease count is the number of
-		// leases step 1 returns.
-		fanOut.leasesRevoked = leasesRevoked
-		if r.interactions != nil {
-			elicitationsDismissed, err = r.interactions.DismissByUser(req.Context(), tenant, subject)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-					"elicitation dismissal failed: "+err.Error(), nil)
-				return
-			}
-		}
+		rep = r.fullRevoke(ctx, tenant, subject, body.Reason)
 	}
-	sessionsTerminated := len(revoked)
-	detail := map[string]any{
-		"tenantId":                  tenant,
-		"mode":                      body.Mode,
-		"reason":                    body.Reason,
-		"sessionsTerminated":        sessionsTerminated,
-		"podsTerminated":            fanOut.podsTerminated,
-		"leasesRevoked":             fanOut.leasesRevoked,
-		"tokensRevoked":             fanOut.tokensRevoked,
-		"playgroundSessionsRevoked": fanOut.playgroundSessionsRevoked,
-		"elicitationsDismissed":     elicitationsDismissed,
+	fields := rep.fields()
+	principal, _ := authmw.FromContext(ctx)
+	r.emit(ctx, principal, "admin.user.invalidated", subject, withFields(fields, map[string]any{
+		"tenantId": tenant,
+		"mode":     body.Mode,
+		"reason":   body.Reason,
+	}))
+	if rep.listingError != "" {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"session listing failed: "+rep.listingError, fields)
+		return
 	}
-	if len(fanOut.podTerminateFailed) > 0 {
-		detail["podTerminationFailures"] = fanOut.podTerminateFailed
-	}
-	if fanOut.tokenRevokeError != "" {
-		detail["tokenRevocationError"] = fanOut.tokenRevokeError
-	}
-	if fanOut.playgroundRevokeError != "" {
-		detail["playgroundRevocationError"] = fanOut.playgroundRevokeError
-	}
-	principal, _ := authmw.FromContext(req.Context())
-	r.emit(req.Context(), principal, "admin.user.invalidated", subject, detail)
 	w.Header().Set("Content-Type", "application/json")
-	resp := map[string]any{
-		"subject":                   subject,
-		"tenantId":                  tenant,
-		"mode":                      body.Mode,
-		"sessionsTerminated":        sessionsTerminated,
-		"podsTerminated":            fanOut.podsTerminated,
-		"leasesRevoked":             fanOut.leasesRevoked,
-		"tokensRevoked":             fanOut.tokensRevoked,
-		"playgroundSessionsRevoked": fanOut.playgroundSessionsRevoked,
-		"elicitationsDismissed":     elicitationsDismissed,
-		"user":                      fromUser(updated),
-	}
-	if len(fanOut.podTerminateFailed) > 0 {
-		resp["podTerminationFailures"] = fanOut.podTerminateFailed
-	}
-	if fanOut.tokenRevokeError != "" {
-		resp["tokenRevocationError"] = fanOut.tokenRevokeError
-	}
-	if fanOut.playgroundRevokeError != "" {
-		resp["playgroundRevocationError"] = fanOut.playgroundRevokeError
-	}
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(withFields(fields, map[string]any{
+		"subject":  subject,
+		"tenantId": tenant,
+		"mode":     body.Mode,
+		"user":     fromUser(updated),
+	}))
 }
 
 func changedUserFields(b UpdateUserRequest) []string {

@@ -295,6 +295,9 @@ func (w *gatewayWiring) buildAdminRouter(
 		// pool-registration layer-1 check gates the cross-tenant
 		// credential-delivery rejections on.
 		TenancyMode: *tenancyMode,
+		// spec: §11.4, §12.3 — bounds the full_revoke primary re-read of a
+		// cancel write that reported an error.
+		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
 	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).
