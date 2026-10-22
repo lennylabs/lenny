@@ -2,11 +2,11 @@
 
 Re-baselined 2026-10-22. The spec steps land after proposal 0090's (landed) and before proposal 0084's. Until proposal 0084 lands, pool admission refuses `recycle.runtimeProcess: restart` through a code-only gate in S17 (D-RESTARTGATE), and the cases above tier 1 that need an admitted `restart` pool are skipped through `tests/registers/skip-reasons.yaml`; proposal 0084 removes the gate and the skip entries. CODE-4 serializes with R17 under rule S-4.
 
-Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminated-adapter` has landed before S1 starts. It makes the WarmPoolController's `observePod` report a pod whose `adapter` or `runtime` container has terminated as failed, and gives the `Sandbox` phase `failed` its `failed ──→ draining` reclaimer, held while the pod's `SandboxClaim` exists. It observes a Pod that is being deleted as terminating, never as failed, so an `sdk_connecting` pod takes the §6.2 SIGTERM edge to `terminated` and a `warming` pod holds in `warming` until the pod is gone (commit `c29693b62`). The **Exit** channel of the SPEC-2 **Liveness.** table and the tier-8 cases that delete a warming, an idle, or a reserved pod through **Exit** rest on it (summary D-PREREQS). No step of this checklist changes `observePod`, `Decide`, or `DecideSDKWarm`.
+Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminated-adapter` has landed before S1 starts. It makes the WarmPoolController's `observePod` report a pod whose `adapter` or `runtime` container has terminated as failed, and gives the `Sandbox` phase `failed` its `failed ──→ draining` reclaimer, held while the pod's `SandboxClaim` exists. It observes a Pod that is being deleted as terminating, never as failed, so an `sdk_connecting` pod takes the §6.2 SIGTERM edge to `terminated` and a `warming` pod holds in `warming` until the pod is gone (commit `c29693b62`). The **Exit** channel of the SPEC-2 **Liveness.** table and the tier-8 cases that delete a warming pod or an idle service-mode pod through **Exit** rest on it (summary D-PREREQS). No step of this checklist changes `observePod`, `Decide`, or `DecideSDKWarm`.
 
 - [ ] **S1 · spec** — SPEC-1. Lands the `command` and `env` fields and their example and reference-runtime sites.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph, including the **Liveness.** table, its citing sites, and the adapter's exit as a cause of the §6.2 warm-fill and re-warm `sdk_connecting ──→ failed` edges and the `idle ──→ draining` edge.
+- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph, including the **Liveness.** table, its citing sites, and the adapter's exit as a cause of the §6.2 warm-fill `sdk_connecting ──→ failed` edge and the `idle ──→ draining` edge.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the §4.7.9 startup-sequence edits.
       Tiers 0, 11. Depends on: S2
@@ -16,6 +16,8 @@ Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminate
       Tiers 0, 11. Depends on: S2
 - [ ] **S6 · spec** — SPEC-5. Lands `recycle.runtimeProcess` and its sites, as the deliverable index lists them.
       Tiers 0, 11. Depends on: S2
+- [ ] **S6b · test** — TEST-2, the tier-11 `claimOwnershipRowSentence` pin of the §4.6.3 `SandboxClaim` row that SPEC-5(h) rewrites. It runs next after S6 so that tier 11 is green once the row changes.
+      Tiers 0, 11. Depends on: S6
 - [ ] **S7 · spec** — SPEC-6. Lands §13.1 **Runtime supervisor volume.**
       Tiers 0, 11. Depends on: S2
 - [ ] **S8 · spec** — SPEC-9. Lands the SDK-warm and pre-warming sites.
