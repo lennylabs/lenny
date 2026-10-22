@@ -16,12 +16,12 @@ init container lenny-supervisor-stage (stage UID)
 runtime container (agent UID), PID 1 = /lenny-supervisor/lenny-supervisor run --env K=V ... -- ARGV
   clearenv; PR_SET_DUMPABLE 0; install handlers for every catchable signal
   property self-test (fails closed under --require-properties)
-  dial @lenny-supervise; SO_PEERCRED peer must be the adapter UID
+  dial @lenny-supervise until accepted or --dial-timeout ends (then exit non-zero); SO_PEERCRED peer must be the adapter UID
   serve requests in order until EOF, then exit
 
 adapter (adapter UID)
   SO_PEERCRED self-test
-  AwaitSupervisor: listen @lenny-supervise  <====  dial once
+  AwaitSupervisor: listen @lenny-supervise  <====  dial until accepted
   accept once (agent-UID check), close listener
   [preConnect or service-mode: write manifest, bind listeners, launch, accept CH-MSGSOCK]
   srv.Serve (READY)
@@ -55,23 +55,24 @@ adapter (adapter UID)
 |:--|:--|:--|
 | `gen` | Incremented by each `launch` | Never |
 | `live` (a process is running) | `launched` with no error | `ended` with no error, `exited` |
-| `notLive` (sticky) | Any of: a failed `launch`, `end`, or `sweep`; a missed `pong`; a link close; an undecodable message; `exited` while a session is bound; a heartbeat escalation on a `keep` pod | Never |
+| `notLive` (sticky) | Each condition of §4.7.10 **Runtime supervisor.** **Liveness.** | Never |
+| `launchPermitted` | Adapter start; an attested end (`ended` with no error) | `launch` |
 
-`ServesNextSession()` returns false when `notLive` is set, and on a `restart` pod also unless the last `end` and `sweep` succeeded. The pod's lifetime is the `--runtime-process` flag the pod builder rendered at pod creation (D-PODLIFETIME); the adapter holds no other recycle state. `podscrub.go` reads it as today.
+`ServesNextSession()` returns false when `notLive` is set or, on a `keep` pod, when the composed `SocketRuntimeProcess.ServesNextSession` does. The pod's lifetime is the `--runtime-process` flag the pod builder rendered at pod creation (D-PODLIFETIME); the adapter holds no other recycle state. `podscrub.go` reads it as today.
 
 ## Staged code changes
 
-### CODE-1 · `command`, `restartable`, and the admin payload
+### CODE-1 · `command`, `env`, and `restartable`
 
-**Targets.** `pkg/apis/lenny/v1alpha1/runtime_types.go`, the regenerated `zz_generated.deepcopy.go` and CRD manifests (`charts/lenny/crds/`, `pkg/embedded/crds/`), `pkg/controller/runtime/controller.go` (`mirror`, `applyCRDFields`), `pkg/gateway/runtime/runtimestore/runtimestore.go` (`Runtime`, merge rules), a registry migration for the three columns, `pkg/gateway/externalapi/admin/runtimes.go` (`RuntimePayload`, `runtimeFromPayload`), and `pkg/gateway/externalapi/openapi/openapi.json` (`components.schemas.Runtime`).
+**Targets.** `pkg/apis/lenny/v1alpha1/runtime_types.go`, the regenerated `zz_generated.deepcopy.go` and CRD manifests (`charts/lenny/crds/`, `pkg/embedded/crds/`), `pkg/controller/runtime/controller.go` (`mirror`, `applyCRDFields`), `pkg/gateway/runtime/runtimestore/runtimestore.go` (`Runtime`, merge rules), and a registry migration for the three columns.
 
 **Change.**
 
-- `RuntimeSpec.Command []string` with `MinItems=1`, `items:MinLength=1`, and CEL rules on the spec: required when `deploymentModel` is empty or `sidecar`, forbidden when `embedded`, first element absolute. `// spec: §5.1 (command)`.
-- `RuntimeSpec.Env []RuntimeEnvVar` (`Name`, `Value`), optional, with `listType=map` and `listMapKey=name` so a duplicate name is rejected, `Name` matching `^[A-Za-z_][A-Za-z0-9_]*$`, and CEL rules: no name begins with `LENNY_`, and the field is forbidden when `deploymentModel` is `embedded`. `// spec: §5.1 (env)`.
-- `applyCRDFields` copies `Command` and `Env` and computes `Restartable` (sidecar, `executionMode` session, not `preConnect`). The registry gains the three columns. `command` and `env` are **Inherited** in the derived-runtime merge.
-- `RuntimePayload` gains `command`, required for `type: agent`, and `env`, validated by the same rules as the CRD in `runtimeFromPayload`, which returns a validation error naming the offending variable. An admin-registered runtime's `Restartable` derives from its payload, treating it as a sidecar.
-- Every Kind fixture and bootstrap sidecar runtime gains `command` (FIXTURE-1).
+- `RuntimeSpec.Command []string` with `MinItems=1`, `items:MinLength=1`, and CEL rules on the spec: required when `type` is `agent` and `deploymentModel` is empty or `sidecar`, forbidden otherwise, first element absolute. `// spec: §5.1 (command)`.
+- `RuntimeSpec.Env []RuntimeEnvVar` (`Name`, `Value`), optional, with `listType=map` and `listMapKey=name` so a duplicate name is rejected, `Name` matching `^[A-Za-z_][A-Za-z0-9_]*$`, and CEL rules: no name begins with `LENNY_`, and the field is forbidden wherever `command` is. `// spec: §5.1 (env)`.
+- `applyCRDFields` copies `Command` and `Env` and computes `Restartable` as §5.1 **`command`** defines it. The registry gains the three columns. `runtimestore.Merge` takes `Command`, `Env`, and `Restartable` from the base.
+- The `PreConnect` doc comments in `runtime_types.go` and `runtimestore.go` drop the warm-pool controller as the pre-connecting actor and cite §6.1; the CRD manifests are regenerated.
+- Every Kind fixture sidecar Runtime CRD gains `command` (FIXTURE-1).
 
 ### CODE-2 · The C supervisor, its image, and the binary check
 
@@ -80,7 +81,7 @@ adapter (adapter UID)
 **Change.**
 
 - A freestanding C program built with `-static -nostdlib -ffreestanding` over raw syscall wrappers. No `PT_INTERP`, no dynamic section, no libc, and no NSS. The CI check fails the build when `readelf` reports an interpreter or a dynamic section, or the symbol table contains `dlopen` or an NSS entry point.
-- Modes: `stage DEST` copies `/proc/self/exe` to `DEST/lenny-supervisor` with mode `0555`. `run --socket NAME --adapter-uid UID [--require-properties] --env K=V ... -- ARGV...` does, in order: `clearenv`; `prctl(PR_SET_DUMPABLE, 0)`; `sigaction` for every catchable signal with `SA_SIGINFO`; the property self-test; one dial; `SO_PEERCRED` check against `--adapter-uid`; serve. The launch environment is the fixed `PATH`, then each `--env` pair in order, a later pair replacing an earlier one of the same name, so the Runtime's `env` (rendered first) can replace `PATH` and the platform's variables (rendered last) cannot be replaced.
+- Modes: `stage DEST` copies `/proc/self/exe` to `DEST/lenny-supervisor` with mode `0555`. `run --socket NAME --adapter-uid UID [--require-properties] [--dial-timeout D] --env K=V ... -- ARGV...` does, in order: `clearenv`; `prctl(PR_SET_DUMPABLE, 0)`; `sigaction` for every catchable signal with `SA_SIGINFO`; the property self-test; dial, repeating a dial refused with `ECONNREFUSED` until one connects or the `--dial-timeout` window ends, when it exits non-zero (the flag's default is at least the adapter's `AwaitSupervisor` timeout); `SO_PEERCRED` check against `--adapter-uid`; serve. The launch environment is the fixed `PATH`, then each `--env` pair in order, a later pair replacing an earlier one of the same name, so the Runtime's `env` (rendered first) can replace `PATH` and the platform's variables (rendered last) cannot be replaced.
 - Signal handling: a handler records the signal and `siginfo`. The main loop treats `si_pid == 0 && si_code == SI_USER` as the stop request, which forwards SIGTERM with `kill(-1)`, and ignores every other signal.
 - Wire: a bounded line reader and a strict JSON subset parser for the request schema. Replies are written from fixed templates with integer and enumerated fields only.
 - `end`: SIGTERM, a wait of `graceMs`, SIGKILL, reap with `wait4(-1, WNOHANG)`, and a `/proc` scan for any numeric entry other than 1. Two consecutive clean passes are required, and `pids.current` is read where `/sys/fs/cgroup/pids.current` is readable. A deadline yields `ended` with an error code.
@@ -99,17 +100,17 @@ adapter (adapter UID)
 
 **Change.**
 
-- `AwaitSupervisor(ctx, socket, auth, timeout)` listens through `peerCheckedListener` with the agent-UID check (none in nonce-only mode), accepts one connection, closes the listener, and starts one reader goroutine. The reader decodes strictly with a decoder that rejects unknown keys, duplicate keys, unknown codes, and unmatched `gen` or `id`, and sets `notLive` on any failure. `// spec: §28.5.3 (CH-SUPERVISE); §4.7.9 (step 4)`.
-- `SupervisedRuntime` implements `RuntimeProcess`, `ServesNextSession`, `CloseListener`, `SDKWarmRuntime`, and `RuntimeGeneration() uint64`. On a `keep` pod it composes one `SocketRuntimeProcess` for the pod's life and sends `launch` before the first `Start` accepts. On a `restart` pod it composes one `SocketRuntimeProcess` per launch (D-TRANSPORT). A launch mutex spans the `gen == nil` check, `launch`, and the composed `Start`, so concurrent first starts send one `launch`.
-- `EndProcess(ctx, grace)` and `Sweep(ctx)` wrap `end` and `sweep`. After both succeed, the composed `CloseListener` runs and the `CH-RUNTIMEOPS` listener is closed and rebound (`RuntimeOps.Rebind`, new), which discards every backlogged connection (D-STALE).
-- The scrub order changes on a sidecar pod: `scrub.Run` gains an optional `EndRuntime` step between step 0 and `cleanupCommands`, which calls `EndProcess` and `Sweep` on a `restart` pod and is skipped on a `keep` pod, and an optional `EndRuntimeAgain` step between `cleanupCommands` and step 1, which calls `EndProcess` on a `restart` pod. `scrub.Config` gains an optional `CleanupRunner`; when it is set, `runCleanup` sends the commands through it (`SupervisedRuntime.RunCleanup`, which splits each command as the argv mode of `workspace.RunSetup` does and sends `cleanup`) instead of `workspace.RunSetup`, and a `cleaned` error is the step's error. `podscrub.go` `scrubConfig` sets `CleanupRunner` on a sidecar pod and leaves it nil in the embedded model (D-CLEANUP). The lifetime comes from the `--runtime-process` flag (D-PODLIFETIME); no field is added to `RecycleScrub`. On a sidecar pod `DefaultOps.KillUserProcesses` and `PurgeIPCShm` become no-ops with a comment citing §5.2 **What the scrub reaches.**, because the sweep covers them and the distroless image has no `sh` or `ipcrm`. `RemoveAll`, `ClearContents`, and `PathState` resolve through `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` (D-PATHS).
+- `AwaitSupervisor(ctx, socket, auth, timeout)` listens through `peerCheckedListener` with the agent-UID check (none in nonce-only mode), accepts one connection, closes the listener, and starts one reader goroutine. The reader decodes strictly with a decoder that rejects the decode failures of §28.5.3 **Degradation.**, and sets `notLive` on any failure. `// spec: §28.5.3 (CH-SUPERVISE); §4.7.9 (step 4)`.
+- `SupervisedRuntime` implements `RuntimeProcess`, `ServesNextSession`, `CloseListener`, `SDKWarmRuntime`, and `RuntimeGeneration() uint64`. It composes one `SocketRuntimeProcess` per launch on both lifetimes (on a `keep` pod that is one per pod unless `DemoteSDK` ends the process) and sends `launch` before the composed `Start` accepts (D-TRANSPORT). A launch mutex spans the `launchPermitted` check (§4.7.10 **Launch.**), `launch`, and the composed `Start`, so concurrent first starts send one `launch`.
+- `EndProcess(ctx, grace)` and `Sweep(ctx)` wrap `end` and `sweep`. After each attested end, before the next `launch`, the composed `CloseListener` runs and the `CH-RUNTIMEOPS` listener is closed and rebound (`RuntimeOps.Rebind`, new), which discards every backlogged connection (D-STALE).
+- The scrub order changes on a sidecar pod: `scrub.Run` gains an optional `EndRuntime` step between step 0 and `cleanupCommands`, which calls `EndProcess` and `Sweep` on a `restart` pod and is skipped on a `keep` pod, and an optional `EndRuntimeAgain` step between `cleanupCommands` and step 1, which calls `EndProcess` on a `restart` pod, and runs whether or not the cleanup step failed, as steps 1 to 6 do. `scrub.Config` gains an optional `CleanupRunner`; when it is set, `runCleanup` sends the commands through it (`SupervisedRuntime.RunCleanup`, which splits each command as the argv mode of `workspace.RunSetup` does and sends `cleanup`) instead of `workspace.RunSetup`, and a `cleaned` error is the step's error. `podscrub.go` `scrubConfig` sets `CleanupRunner` on a sidecar pod and leaves it nil in the embedded model (D-CLEANUP). The lifetime comes from the `--runtime-process` flag (D-PODLIFETIME); no field is added to `RecycleScrub`. On a sidecar pod `DefaultOps.KillUserProcesses` and `PurgeIPCShm` become no-ops with a comment citing §5.2 **What the scrub reaches.**, because the sweep covers them and the distroless image has no `sh` or `ipcrm`. `RemoveAll`, `ClearContents`, and `PathState` resolve through `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` (D-PATHS).
 - `runtimegeneration.go`: the cohort resets when `RuntimeGeneration()` changes (D-COHORT).
 - Crash: on `exited` with a bound session, the adapter ends each bound session's `Attach` stream with the `runtime_crash` failure that proposal 0091's funnel maps (D-CRASH), and sets `notLive`.
 - Hang: `onHeartbeatHung` sets `notLive` on a `keep` pod (D-HUNG, F-5.2.46).
-- Ping: a goroutine tied to the server's context sends `ping` every `--supervise-ping-interval` and sets `notLive` on a missed `--supervise-ping-timeout` (D-PING).
-- SDK-warm: `PreConnect` writes the warm-up manifest, launches, and accepts `CH-MSGSOCK`. `ConfigureWorkspace` binds the session on that connection. `DemoteSDK` calls `EndProcess` and `Sweep` (D-SDKWARM).
-- Service mode: launch at warm-up before READY (D-SERVICE).
-- `cmd/lenny-adapter/main.go`: flags `--supervise-socket` (empty only in the embedded model and the developer loop), `--supervise-ping-interval`, `--supervise-ping-timeout`, and `--runtime-process` (`keep` or `restart`, default `keep`), which selects the pod's lifetime (D-PODLIFETIME). `AwaitSupervisor` runs after `PeercredSelftest` and before `srv.Serve`, and its failure exits non-zero.
+- Ping: a goroutine tied to the server's context sends `ping` every `--supervise-ping-interval` while no other request is outstanding and sets `notLive` on a missed `--supervise-ping-timeout` (D-PING).
+- SDK-warm: `PreConnect` writes the warm-up manifest, launches, and accepts `CH-MSGSOCK`. `ConfigureWorkspace` binds the session on that connection. `DemoteSDK` calls `EndProcess`, and the session's start then launches at step 7 (D-SDKWARM).
+- Service mode: launch at warm-up before READY (D-SERVICE), and exits non-zero when `notLive` is set (§4.7.10 **Liveness.**).
+- `cmd/lenny-adapter/main.go`: flags `--supervise-socket` (empty on every pod that runs no supervisor, and in the developer loop), `--supervise-ping-interval`, `--supervise-ping-timeout`, and `--runtime-process` (`keep` or `restart`, default `keep`), which selects the pod's lifetime (D-PODLIFETIME). `AwaitSupervisor` runs after `PeercredSelftest` and before `srv.Serve`, and its failure exits non-zero.
 - `tests/claim-map.json`: `WIRED` rows for the launch and end, the single accept, the ping, the sweep, and the supervised cleanup, each naming its surface. `tests/registers/exceptions-deployment-boundary.yaml`: no new row, because CODE-4 renders every new flag in the same step.
 
 ### CODE-4 · Pod builder, controller flag, and chart
@@ -121,11 +122,11 @@ This change serializes with R17 under rule S-4.
 **Change.**
 
 - `Inputs` gains `RuntimeCommand []string`, `ExecutionMode string`, `RuntimeProcess string`, and `SupervisorImage string`. `createPod` sets them from the Runtime CRD, the SandboxTemplate's mirrored `runtimeProcess`, and the controller flag `--supervisor-image` (chart value `controller.supervisorImage`).
-- `Build` returns an error for a sidecar runtime with no `RuntimeCommand` or an empty `SupervisorImage`.
+- `Build` applies `applySupervisor` when `RuntimeCommand` is set, and returns an error for a `type: agent` sidecar runtime with no `RuntimeCommand`, or for a set `RuntimeCommand` with an empty `SupervisorImage`.
 - `Inputs` also gains `RuntimeEnv`, set from the Runtime CRD's `env`.
 - `applySupervisor` adds an `emptyDir` volume, the init container `lenny-supervisor-stage` (image `SupervisorImage`, a dedicated stage UID that is neither reserved UID, read-write mount), the runtime container's `Command` (`/lenny-supervisor/lenny-supervisor run --socket @lenny-supervise --adapter-uid <adapter UID> [--require-properties] --env <each RuntimeEnv pair> --env <each platform variable> -- <command>`) with a read-only mount, and the adapter's `--supervise-socket`, ping, and `--runtime-process` flags. The runtime container's `Env` list is dropped, because the supervisor clears it; `LENNY_ADAPTER_SOCKET` moves into the platform `--env` pairs. `--require-properties` is rendered when `RuntimeProcess` is `restart`. `applyResources` stamps the init container.
 - The pod carries the label `lenny.dev/runtime-process` with the rendered lifetime: `restart` when `RuntimeProcess` is `restart`, otherwise `keep`, on every agent pod including embedded ones (D-PODLIFETIME).
-- `pkg/podsecurity/podsecurity.go` refuses a read-write mount of the supervisor volume on any regular or ephemeral container (§13.1 **Runtime supervisor volume.**).
+- `pkg/podsecurity/podsecurity.go` refuses a read-write mount of the supervisor volume on any init, regular, or ephemeral container other than `lenny-supervisor-stage` (§13.1 **Runtime supervisor volume.**).
 
 ### CODE-5 · Pool field, admission, and the split predicates
 
@@ -133,9 +134,9 @@ This change serializes with R17 under rule S-4.
 
 **Change.**
 
-- `recycle.runtimeProcess` (`keep` or `restart`): required with no default on a pool where `recycleKeepsRuntime` holds today, rejected elsewhere, and `restart` rejected when the runtime's `Restartable` is false. `// spec: §5.2 (Runtime-process lifetime)`.
-- `KeepsRuntimeAcrossSessions` splits into `RequiresProcessAcknowledgment` (concurrent, or recycling under `keep`) and `ReusesPods` (concurrent, or recycling with `maxSessionsPerPod > 1` and not `vm-restart`). `validateRecyclePolicy` reads the first. `AdmitTenantPin`, the reserved-hold rebind, and the `KeepsRuntime` fields read the second, renamed `ReusesPods`. The error string drops "the pod keeps one runtime process across the sessions it serves" for a `restart` pool.
-- No proto change (D-PODLIFETIME). The claim request carries `RequiresProcessAcknowledgment` beside `ReusesPods`, and `AdmitTenantPin` refuses a pinned pod whose `lenny.dev/runtime-process` label is not `restart` when `RequiresProcessAcknowledgment` is false, so the existing `DrainRefusedPod` path drains it. A pod with no label reads as `keep` (fail closed). `// spec: §5.2 (Deployer acknowledgment (runtime process kept across sessions))`.
+- `recycle.runtimeProcess` (`keep` or `restart`): required with no default on a pool where `recycleKeepsRuntime` holds today, rejected elsewhere, and `restart` rejected when the resolved runtime's (`runtimestore.Resolve`) `Restartable` is false. `// spec: §5.2 (Runtime-process lifetime)`.
+- `KeepsRuntimeAcrossSessions` splits into `RequiresProcessAcknowledgment` (concurrent, or recycling under `keep`) and `ReusesPods` (concurrent, or a reusing recycling pool, §5.2 **Runtime-process lifetime**). `validateRecyclePolicy` reads the first. `AdmitTenantPin`, the reserved-hold rebind, and the `KeepsRuntime` fields read the second, renamed `ReusesPods`. The error string drops "the pod keeps one runtime process across the sessions it serves" for a `restart` pool.
+- No proto change (D-PODLIFETIME). The claim request carries `RequiresProcessAcknowledgment` beside `ReusesPods`, and one helper in `tenantpin.go` refuses a pod whose `lenny.dev/runtime-process` label is not `restart` when `RequiresProcessAcknowledgment` is false. `AdmitTenantPin` applies it to a pinned pod, so the existing `DrainRefusedPod` path drains it. `Claimer.rebindReserved` reads the candidate pod and applies it before `WriteRebindStatus`: a refused pod's hold ends with the precondition-guarded `DELETE` hold expiry uses rather than being rebound, and a pod read error other than NotFound ends the acquisition as a failed pin read does. It reads the label as §5.2 **Runtime-process lifetime** states. `// spec: §5.2 (Deployer acknowledgment (runtime process kept across sessions))`.
 
 ### CODE-6 · `lenny-ctl preflight supervisor`
 
@@ -147,7 +148,7 @@ This change serializes with R17 under rule S-4.
 
 - The Runtime CRD (`command`) and the SandboxTemplate CRD (`runtimeProcess`), regenerated.
 - The runtime registry columns `command`, `env`, and `restartable`, and the pool storage for `runtimeProcess`.
-- `openapi.json`: `Runtime.command`, `Runtime.env`, and the pool `sessionPolicy.recycle.runtimeProcess`.
+- `openapi.json`: the pool `sessionPolicy.recycle.runtimeProcess`.
 - No change to `schemas/lenny-adapter.proto`.
 - `charts/lenny/values.yaml`: `controller.supervisorImage`, and the image in the cosign policy.
 
@@ -171,20 +172,20 @@ Tier selection follows `.claude/rules/test-coverage.md`. Every test carries a `/
 ### FIXTURE-1 · Probe runtime and supervised Kind pools
 
 - `cmd/runtimes/supervise-probe`: a test-only Standard-level runtime that records a per-process token (PID and start time), the manifest values it read at start, and its environment, and on request double-forks a daemon, creates System V and POSIX IPC objects, plants a symlink under the workspace base, and makes a platform MCP call. It carries subcommands the tier-6 and tier-9 tests exec: a ptrace attach to PID 1, reads of `/proc/1/mem` and `/proc/1/fd`, a write under the supervisor mount, a SIGKILL and a SIGSTOP to PID 1, and a bind of `@lenny-supervise`.
-- `tests/testinfra/kind/agent-workload.yaml` and `install.sh`: `command` on every sidecar fixture Runtime and bootstrap runtime, the supervisor image in the build and load list, a supervised `restart` pool and a `keep` pool on the probe runtime, and a sidecar `preConnect` probe pool.
+- `tests/testinfra/kind/agent-workload.yaml` and `install.sh`: `command` on every sidecar fixture Runtime CRD, the supervisor image in the build and load list, a supervised `restart` pool and a `keep` pool on the probe runtime, and a sidecar `preConnect` probe pool.
 
 ### TEST-1 · Tests across the reached tiers
 
 - **Tier 0.** The supervisor binary check; the `tests/tier0_static` matrix, identifier, naming-lint, and claim-register gates with the new rows; the deployment-boundary render gate with every new adapter flag rendered.
-- **Tier 1.** CRD validation and `mirror` (`command`, `env` with a `LENNY_` name, a duplicate name, an invalid name, and `env` on an embedded runtime, `restartable`); the admin payload, including the same `env` refusals; `validateRecyclePolicy` and the split predicates over every pool configuration; the strict decoder (unknown key, duplicate key, unknown code, unmatched `gen` and `id`); `SupervisedRuntime` with a fake peer (one `launch` under concurrent starts, end and sweep failures, ping timeout, crash with bound sessions, rebind discarding a backlogged connection, `cleaned` with each error code, and no reply to `cleanup`); the scrub order under both lifetimes, including the second `end` after `cleanup` on `restart` and no supervised cleanup in the embedded model; `AdmitTenantPin` over the label values (`keep`, `restart`, absent) against both values of `RequiresProcessAcknowledgment`; the pod builder's `env` and platform `--env` rendering order and the lifetime label; `openat2` refusing a symlink; the pod builder; the pod-security mount rule; and the C supervisor's parser, self-test, sweep walker, and signal filter under a C unit harness, with the parser and walker fuzzed.
+- **Tier 1.** CRD validation and `mirror` (`command`, `env` with a `LENNY_` name, a duplicate name, an invalid name, and `env` on an embedded runtime, `restartable`); `Merge` taking `Restartable` from the base, and pool admission of `restart` on a derived runtime of a restartable and of a non-restartable base; `validateRecyclePolicy` and the split predicates over every pool configuration; the strict decoder (unknown key, duplicate key, unknown code, unmatched `gen` and `id`, and an `exited` of the current and of an earlier generation); `SupervisedRuntime` with a fake peer (one `launch` under concurrent starts, end and sweep failures, ping timeout, crash with bound sessions, an idle exit on `keep` and on `restart`, a start after a crash on a concurrent pool with no launch permitted, a service-mode exit exiting the adapter, rebind discarding a backlogged connection, `cleaned` with each error code, and no reply to `cleanup`); the scrub order under both lifetimes, including the second `end` after `cleanup` on `restart`, whether or not `cleanup` failed and no supervised cleanup in the embedded model; `AdmitTenantPin` and `rebindReserved` over the label values (`keep`, `restart`, absent) against both values of `RequiresProcessAcknowledgment`; the pod builder's `env` and platform `--env` rendering order and the lifetime label; `openat2` refusing a symlink; the pod builder; the pod-security mount rule; and the C supervisor's parser, self-test, sweep walker, and signal filter under a C unit harness, with the parser and walker fuzzed.
 - **Tier 2.** envtest: a sidecar Runtime without `command` is rejected; a Runtime whose `env` names `LENNY_ADAPTER_SOCKET` is rejected; a supervised pod renders with the init container and passes the pod-security and cosign webhooks.
-- **Tier 3.** The real supervisor binary against the real adapter client over a socket, asserting the exact message members and the reply-per-request order.
+- **Tier 3.** The real supervisor binary against the real adapter client over a socket, asserting the exact message members and the reply-per-request order; a supervisor started before the adapter binds `@lenny-supervise` connects once the adapter binds.
 - **Tier 4.** The recycle path with `restart`: an attested end reports `runtime_live: true`; a failed end or sweep retires the pod under `warn`; a `cleaned` error fails the scrub under `onScrubFailure`; after an edit from `keep` to `restart` that drops `acknowledgeProcessLevelIsolation`, an acquisition refuses and drains a used pod labelled `keep` and admits a pod created after the edit.
 - **Tier 5.** On the supervised pools: a `cleanupCommands` command runs at the agent UID with the Runtime's `env` and the workspace base as working directory, and a symlink the probe planted toward `/run/lenny` gives it no access the agent lacks; a background process a cleanup command started on a `restart` pod is gone before the next session; two sequential sessions on a `restart` pod report different process tokens; a `keep` pod reports one; the first session's process read the final manifest (F-4.7.26); a daemon, IPC objects, and a planted symlink from session 1 are absent in session 2; a sidecar `preConnect` pod serves a session and a demoted session (F-6.1.28); the pod reports Ready only after the supervisor connects.
 - **Tier 6.** On gVisor and Kata nodes, with a skip-register entry where none exist: the self-test properties, a fork bomb, `--oci-seccomp`, and gVisor's ptrace and KVM platforms (security review finding 9).
 - **Tier 7a.** Races of `launch` against `launch`, `end` against `ping`, `exited` against `end`, and `CloseListener` against an outstanding request, under `-race` with a goroutine-leak check; the launch-after-scrub ordering (finding 11).
 - **Tier 8.** SIGKILL and SIGSTOP to the supervisor from the probe retire the pod; killing the adapter makes the supervisor exit with no runtime process left.
-- **Tier 9.** From the agent UID: ptrace, `/proc/1` reads, and a write to the supervisor mount fail; a squatted `@lenny-supervise` never receives a connection; a container injected at the agent UID is refused by the webhook; a symlink planted toward `/run/lenny` is not followed by the scrub.
+- **Tier 9.** From the agent UID: ptrace, `/proc/1` reads, and a write to the supervisor mount fail; a squatted `@lenny-supervise` never receives a connection; a container injected at the agent UID is refused by the webhook; an init container, including one with `restartPolicy: Always`, that mounts the supervisor volume read-write is refused by the webhook; a symlink planted toward `/run/lenny` is not followed by the scrub.
 - **Tier 10.** The adapter conformance battery's recycle property runs against a supervised pod under both lifetimes.
 - **Tier 11.** A one-home check for `**Runtime supervisor.**` in `spec/04`, and the documentation sites above.
 

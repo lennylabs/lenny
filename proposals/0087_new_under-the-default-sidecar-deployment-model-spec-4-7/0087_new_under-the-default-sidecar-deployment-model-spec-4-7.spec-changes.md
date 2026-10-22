@@ -12,16 +12,14 @@ Each statement has one home in the specification. Every other site cites that ho
 | Statement | Home |
 |:--|:--|
 | The `command` field and which runtimes carry it | SPEC-1, §5.1 **`command`** |
-| The `env` field, its reserved prefix, and how it reaches the runtime process | SPEC-1, §5.1 **`env`** |
-| What the supervisor is, when it launches and ends a runtime process, its environment and signals, liveness, crash, and pod termination | SPEC-2, §4.7.10 **Runtime supervisor.** |
+| The `env` field and its reserved prefix | SPEC-1, §5.1 **`env`** |
+| What the supervisor is, when it launches and ends a runtime process, how it runs `cleanupCommands`, its environment and signals, liveness, crash, and pod termination | SPEC-2, §4.7.10 **Runtime supervisor.** |
 | Startup order | SPEC-3, §4.7.9 steps 4 and 7 |
 | Why the adapter trusts the supervisor, and what the reuse decision rests on | SPEC-4, §4.7.11 item 8 |
-| `recycle.runtimeProcess`, its admission rules, the acknowledgment, the scrub order, where `cleanupCommands` run, and what the scrub reaches | SPEC-5, §5.2 |
+| `recycle.runtimeProcess`, its admission rules, the acknowledgment, the scrub order, which component runs `cleanupCommands` in each deployment model, and what the scrub reaches | SPEC-5, §5.2 |
 | The supervisor volume and the stage container's identity | SPEC-6, §13.1 |
 | The `CH-SUPERVISE` endpoint, messages, authentication, exclusivity, and failure behavior | SPEC-7, the §28.5.3 card |
 | The `shutdown` deadline, signals, and exit codes | SPEC-8, the §28.5.3 `CH-MSGSOCK` card |
-| Supervised SDK-warm | SPEC-9, §6.1 |
-| `command` on the admin registration payload | SPEC-10, §15.1 |
 
 ## Edge cases and accepted failure modes
 
@@ -30,16 +28,18 @@ Each statement has one home in the specification. Every other site cites that ho
 | The supervisor never connects | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-3, SPEC-7 |
 | The property self-test fails on a `restart` pod | The supervisor exits before it dials, and the pod never becomes `idle` | SPEC-4 |
 | `launch` fails | `launched` carries an error code, the session's start fails, and the pod is reported not live | SPEC-2, SPEC-7 |
-| The runtime process exits while a session is bound | `exited` reaches the adapter, each bound session fails with `runtime_crash` into the §7.3 resume flow, and the pod retires at the boundary | SPEC-2 **Crash.** |
+| The runtime process exits while a session is bound | `exited` reaches the adapter, each bound session fails with `runtime_crash` into the §7.3 resume flow, and the pod retires at the boundary | SPEC-2 **Crash.**, **Liveness.** |
 | A `restart` process exits after its last session and before the boundary | The boundary's `end` finds no process, and the pod does not retire | SPEC-2 |
+| A runtime process on a pod that keeps it exits with no session bound | The pod is reported not live and retires; a session that starts first fails its start | SPEC-2 **Liveness.**, **Launch.** |
+| A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | The adapter exits non-zero, and the pod is replaced | SPEC-2 **Liveness.** |
 | A heartbeat escalation on a `keep` pod | The pod is reported not live at the boundary and retires | SPEC-2 **Liveness.** |
 | A process survives two `end` passes, or the sweep fails | The pod is reported not live and retires, whatever `onScrubFailure` says | SPEC-2, SPEC-5 |
-| The supervisor misses a `pong` deadline, or is killed or frozen | The pod is reported not live, bound sessions fail, and the pod retires | SPEC-2, SPEC-7 |
+| The supervisor misses a `pong` deadline, or is killed or frozen | The pod is reported not live and retires | SPEC-2, SPEC-7 |
 | A reply with an unknown key, a duplicate key, or an unmatched `gen` or `id` | Link failure, and the pod retires | SPEC-7 |
 | Pod termination | The supervisor forwards the kubelet's SIGTERM, and exits when `CH-SUPERVISE` closes | SPEC-2 **Pod termination.** |
-| A pool sets `restart` on a runtime that is embedded, service-mode, or `preConnect` | Pool admission refuses the pool | SPEC-5 |
-| A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server or the admin API refuses the Runtime | SPEC-1 |
-| A `cleanupCommands` command exits non-zero or outlasts `cleanupTimeoutSeconds` | `cleaned` carries an error, and the scrub fails under `onScrubFailure` as a failed cleanup does today | SPEC-5, SPEC-7 |
+| A pool sets `restart` on a runtime that is not `restartable` | Pool admission refuses the pool | SPEC-5 |
+| A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server refuses the Runtime | SPEC-1 |
+| A `cleanupCommands` command exits non-zero, or the commands together outlast `cleanupTimeoutSeconds` | `cleaned` carries an error, and the scrub fails under `onScrubFailure` as a failed cleanup does today | SPEC-5, SPEC-7 |
 | A pool is edited from `keep` to `restart` and no longer requires `acknowledgeProcessLevelIsolation` | Every acquisition refuses each used pod created under `keep` and requests its drain; pods created after the edit run `restart` | SPEC-5 |
 | Nonce-only mode | Neither peer-UID check is available, and ordering identifies both ends | SPEC-4 |
 
@@ -50,8 +50,8 @@ Each statement has one home in the specification. Every other site cites that ho
 (a) In the **Standalone Runtime** YAML example, insert after the line that begins `requireSoPeercred: true # optional;`:
 
 ```yaml
-command: ["/usr/local/bin/my-agent", "--serve"] # required on deploymentModel: sidecar; forbidden on embedded; see §4.7.10 Runtime supervisor
-env: # optional; sidecar only; names beginning LENNY_ are refused
+command: ["/usr/local/bin/my-agent", "--serve"] # see command below
+env: # optional; see env below
   - name: PYTHONUNBUFFERED
     value: "1"
 ```
@@ -59,24 +59,28 @@ env: # optional; sidecar only; names beginning LENNY_ are refused
 (b) Insert after the **`requireSoPeercred`** paragraph, which ends `so a runtime registered only through the admin API runs with the default of `true`.`, and before the first `#### Derived Runtime` heading (the one directly after that paragraph, not `#### Derived Runtime Instantiation`):
 
 ```
-**`command`** — the argv of the runtime process. Required on a `deploymentModel: sidecar` runtime and forbidden on a `deploymentModel: embedded` runtime. Its first element is an absolute path in the runtime image. The runtime supervisor launches this argv as the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); the image's `ENTRYPOINT`, `CMD`, and `ENV` are not used. The API server rejects a sidecar `Runtime` without the field or with a first element that is not absolute, and an embedded `Runtime` with it. The image's environment is replaced by `env` below. The RuntimeReconciler mirrors the field into the gateway runtime registry together with `restartable`, which is true for a sidecar runtime with `executionMode: session` that does not declare `capabilities.preConnect: true` ([Section 5.2](#52-pool-configuration-and-execution-modes), `recycle.runtimeProcess`). The admin registration payload carries `command` and requires it for `type: agent` ([Section 15.1](15_external-api-surface.md#151-rest-api)); a runtime registered through the admin API is a sidecar runtime.
+**`command`** — the argv of the runtime process. Required on a `type: agent` runtime whose `deploymentModel` is `sidecar`, and forbidden on every other runtime. Its first element is an absolute path in the runtime image. The runtime supervisor launches this argv as the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The API server rejects a `Runtime` that breaks either rule or whose first element is not absolute. The RuntimeReconciler mirrors the field into the gateway runtime registry together with `restartable`, which is true for a runtime that carries `command`, has `executionMode: session`, and does not declare `capabilities.preConnect: true` ([Section 5.2](#52-pool-configuration-and-execution-modes), `recycle.runtimeProcess`).
 
-**`env`** — optional variables for the runtime process, as a list of `name` and `value` pairs. Forbidden on a `deploymentModel: embedded` runtime. Each `name` is a non-empty POSIX variable name, no name appears twice, and no name begins with `LENNY_`, which the platform reserves for its own variables; the API server and the admin API reject a `Runtime` that breaks any of these rules. The runtime supervisor sets the pairs on every process it launches and on every `cleanupCommands` command it runs, after it clears its environment and before it adds the platform's variables ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); a pair named `PATH` replaces the supervisor's fixed `PATH`. The values are readable by the runtime and are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)). The RuntimeReconciler mirrors the field into the gateway runtime registry, and the admin registration payload carries it ([Section 15.1](15_external-api-surface.md#151-rest-api)).
+**`env`** — optional variables for the runtime process, as a list of `name` and `value` pairs. Forbidden wherever `command` is. Each `name` is a non-empty POSIX variable name, no name appears twice, and no name begins with `LENNY_`, which the platform reserves for its own variables; the API server rejects a `Runtime` that breaks any of these rules. The runtime supervisor applies the pairs as [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, states. The values are readable by the runtime and are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)). The RuntimeReconciler mirrors the field into the gateway runtime registry. The admin registration payload models neither `command` nor `env`.
 ```
 
 (c) Add `command` and `env` to the **Never overridable on derived runtime:** list, and add a `command` row and an `env` row to the table under `#### Normative Merge Algorithm` as **Inherited** with "derived may not set", matching `requireSoPeercred`, because the argv and its environment are properties of the base runtime's image.
 
-### SPEC-2 · spec/04_system-components.md § 4.7.10 Deployment Model
+(d) In `spec/17_deployment-topology.md` §17.4, in the `runtime-crds.yaml` heredoc, insert `  command: ["/usr/local/bin/my-agent"]` after the line `  deploymentModel: sidecar`.
+
+### SPEC-2 · spec/04_system-components.md § 4.7.10 Deployment Model and § 4.7.1, spec/11_policy-and-controls.md § 11.4, and spec/10_gateway-internals.md § 10.1
 
 (a) In the **Runtime process lifetime.** paragraph, replace its first sentence, `The runtime process lives as long as the pod.`, with:
 
 ```
 On a pod whose pool keeps its runtime process (`recycle.runtimeProcess: keep`,
-or a pool that does not recycle), the runtime process lives as long as the pod.
-On a `restart` pod each runtime process lives from its launch to the next
+or a pool that does not recycle), the runtime process lives as long as the pod
+unless `DemoteSDK` ends it
+([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). On a
+`restart` pod each runtime process lives from its launch to the next
 occupancy-zero boundary at which the pod is reused
-([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)),
-and the sentences of this paragraph about one process or one `CH-MSGSOCK`
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+The sentences of this paragraph about one process or one `CH-MSGSOCK`
 connection for the pod's life apply to each process.
 ```
 
@@ -99,16 +103,27 @@ runtime container (**Runtime supervisor.** below), and its
 Find:
 
 ```
-runtime process that stops, or whose connection the hold timeout closed, is not
-re-created or reconnected inside the pod: the adapter
+the agent process and which `DemoteSDK` tears down and the SDK re-warm restarts, is
+distinct from the runtime process, and neither ends the runtime process.
 ```
 
 Replace with:
 
 ```
-runtime process that stops while a session is bound, or whose connection the
-hold timeout closed, is not launched again for that session or reconnected
-inside the pod: the adapter
+the agent process, is in the sidecar model the runtime process, which `DemoteSDK`
+ends (**Runtime supervisor.** below); in the embedded model it is distinct from
+the runtime process, and neither `DemoteSDK` nor the SDK re-warm ends the runtime process.
+```
+
+Delete this whole sentence, including the `A` that ends the line before it, so the paragraph continues with `A recycling pool whose pods serve`:
+
+```
+A
+runtime process that stops, or whose connection the hold timeout closed, is not
+re-created or reconnected inside the pod: the adapter
+reports it at the next recycle boundary and refuses the next session's start,
+and the pod is retired
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
 Find:
@@ -140,10 +155,11 @@ or heartbeat escalation, and, under `keep`, no occupancy-zero boundary, closes t
 (b) Insert after the **Runtime process lifetime.** paragraph and before `**Health check:**`:
 
 ```
-**Runtime supervisor.** On every sidecar pod the runtime container's first
-process, and the init of its process namespace, is the runtime supervisor, a
-platform binary from its own digest-pinned image that an init container copies
-onto a read-only mount ([§13.1](13_security-model.md#131-pod-security)). The
+**Runtime supervisor.** On every sidecar pod of a `type: agent` runtime the
+runtime container's first process, and the init of its process namespace, is
+the runtime supervisor, a platform binary from its own digest-pinned image that
+an init container copies onto a read-only mount
+([§13.1](13_security-model.md#131-pod-security)). The
 supervisor launches the runtime's `command`
 ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)) when the adapter asks
 it to on `CH-SUPERVISE` ([§28.5.3](28_communication-channels.md#2853-intra-pod)),
@@ -152,54 +168,64 @@ container and no supervisor.
 
 - **Environment.** Each launch starts from an empty environment to which the
   supervisor adds a fixed `PATH`, the runtime's `env`
-  ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), and the
-  platform's runtime variables. The image's `ENTRYPOINT`, `CMD`, and `ENV` are
+  ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), whose `PATH`
+  pair replaces the fixed one, and the platform's runtime variables. The image's `ENTRYPOINT`, `CMD`, and `ENV` are
   not used. The supervisor reads no file from the runtime image's filesystem.
-- **Launch.** The adapter asks for a launch only after the manifest the process
-  reads exists and after every adapter listener the runtime dials is bound. A
-  session-mode runtime that does not declare `preConnect` is launched at startup
-  step 7 ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)) when no
-  process is live. A `preConnect` runtime and a service-mode runtime are
-  launched at pod warm-up, before READY. After an end, no launch happens before
-  the whole-pod scrub has completed and verified and the end is attested, and
-  never on a pod carrying a `scrub_warning`. On a concurrent pool a session that
-  starts while a process is live uses that process.
+- **Launch.** The adapter asks for a launch only when the pod has launched no
+  runtime process since its creation or its last attested end, after the
+  manifest the process reads exists, and after every adapter listener the
+  runtime dials is bound; a session that starts while a process is live uses
+  that process. A `preConnect` runtime and a service-mode runtime are launched
+  at pod warm-up, before READY. Every other launch is at startup step 7
+  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)), which on a
+  `preConnect` runtime is a session start after `DemoteSDK`
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). On a
+  `restart` pod no launch follows an occupancy-zero boundary before that
+  boundary's whole-pod scrub has run
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  **Lenny scrub procedure.**). A session that finds no live process when this
+  bullet permits no launch fails its start
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  "Runtime not live").
 - **End.** The supervisor ends a runtime process by sending SIGTERM and then
   SIGKILL to every other process in the runtime container, and attests the end
   only after two consecutive passes find no other process. On a `restart` pod
-  the end runs at each occupancy-zero boundary at which the pod is reused,
-  after scrub step 0 and before `cleanupCommands`, and again after
-  `cleanupCommands`, with no SIGTERM grace
-  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+  the end runs, with no SIGTERM grace, at the points the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Lenny scrub procedure.** names.
   The end is also the `DemoteSDK` teardown
   ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) and the
   deadline action of a `shutdown`
   ([§28.5.3](28_communication-channels.md#2853-intra-pod)). Between an attested
-  end and the next launch the adapter closes and rebinds every runtime listener
-  it has bound, so no connection the ended process opened or left pending
-  reaches the next process.
+  end and the next launch the adapter closes and rebinds its `CH-MSGSOCK`
+  listener and, when bound, its `CH-RUNTIMEOPS` listener, so no connection the
+  ended process opened or left pending reaches the next process.
 - **Cleanup.** At every recycle boundary the supervisor runs the deployer's
   `cleanupCommands` at the agent UID in a worker it forks, with the workspace
   base as working directory and the launch environment plus the step-0
   cleanup metadata
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
-  The worker holds no `CH-SUPERVISE` connection and stops a command that
-  outlasts `cleanupTimeoutSeconds`.
+  The worker stops the running command when the commands together outlast
+  `cleanupTimeoutSeconds`.
 - **Generation.** Each launch starts a new runtime generation. The rule that
   counts the sessions the pod's shared runtime process has been given
   ([§28.6](28_communication-channels.md#286-exclusivity-and-concurrency-model))
   counts from the generation's launch.
-- **Crash.** A runtime process that exits while a session is bound is not
-  launched again for that session. Each bound session fails with
-  `runtime_crash` ([§7.3](07_session-lifecycle.md#73-retry-and-resume)), and
-  the pod is retired at its next boundary.
-- **Liveness.** The adapter reports the runtime as able to serve the next
-  session only while the supervisor answers its liveness checks, no runtime
-  process has exited or been escalated as hung while a session was bound, and,
-  on a `restart` pod, the last end and sweep succeeded; otherwise the pod is
-  retired
+- **Crash.** A runtime process that exits while a session is bound, other than
+  by an `end`, has crashed, and each bound session fails with `runtime_crash`
+  ([§7.3](07_session-lifecycle.md#73-retry-and-resume)); **Liveness.** states
+  the pod's outcome.
+- **Liveness.** The adapter reports the runtime as not able to serve the next
+  session once any of these has happened on the pod: a `launch`, `end`, or
+  `sweep` failed or `CH-SUPERVISE` failed
+  ([§28.5.3](28_communication-channels.md#2853-intra-pod)); a runtime process
+  exited other than by an `end` while a session was bound (**Crash.**); or, on
+  a pod that keeps its runtime process, the process exited, or its
+  `CH-MSGSOCK` connection ended, other than by an `end`, or a heartbeat
+  escalated a session as hung. The pod is then retired
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
-  "Runtime not live").
+  "Runtime not live"). A service-mode pod has no recycle boundary at which to
+  report, so its adapter exits non-zero instead, and the pod is replaced.
 - **Signals.** The supervisor handles every catchable signal. It treats a
   catchable signal sent from outside its process namespace as the stop request
   and ignores every other. A runtime process can still end or freeze the
@@ -219,6 +245,12 @@ The pod's lifetime under `keep`, or one launch to the next reused occupancy-zero
 
 (d) In §4.7.1, in the gateway RPC table's `Shutdown` row, replace `ends the session's use of the pod's runtime process, which stays alive for the pod's life` with `ends the session's use of the pod's runtime process, which stays alive until the pod terminates or, under `recycle.runtimeProcess: restart`, until the whole-pod scrub ends it`. In the same row, replace `the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously` with `the adapter keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the §5.2 whole-pod scrub asynchronously`. The row stays one physical line.
 
+In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
+
+In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:** step 3, delete `, which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")`.
+
+(e) In `spec/10_gateway-internals.md` §10.1, in the **Hold state timeout:** bullet, replace `; that pod serves no later session and is retired ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime process lifetime**)` with `; [Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states the pod's outcome`.
+
 ### SPEC-3 · spec/04_system-components.md § 4.7.9 Startup Sequence for `type: agent` Runtimes
 
 (a) Append to step 4, `4. Adapter signals READY to gateway — pod enters warm pool`, on the same list item:
@@ -233,13 +265,10 @@ The pod's lifetime under `keep`, or one launch to the next reused occupancy-zero
 7. The runtime process becomes live. In the sidecar deployment model
    ([§4.7.10](#4710-deployment-model)) the adapter has the runtime supervisor
    launch the runtime's `command` here, after step 6 wrote the final manifest,
-   when no runtime process is live, and accepts that process's `CH-MSGSOCK`
-   connection. A session that starts while a process is live, and every
-   session on a `preConnect` or service-mode runtime, whose process was launched
-   at warm-up, skips this step and steps 8 and 9 and takes step 10
-   ([§4.7.10](#4710-deployment-model), **Runtime supervisor.**). In the
-   embedded deployment model the adapter runs the runtime loop in its own
-   process for each session.
+   when **Runtime supervisor.** **Launch.** permits a launch, and accepts that
+   process's `CH-MSGSOCK` connection. A session that starts while a process is live
+   skips this step and steps 8 and 9 and takes step 10. In the embedded deployment model the
+   adapter runs the runtime loop in its own process for each session.
 ```
 
 ### SPEC-4 · spec/04_system-components.md § 4.7.11 Adapter-Agent Security Boundary
@@ -254,10 +283,9 @@ Insert after item 7, **MCP server security:**, which ends `by directly connectin
      request on `CH-SUPERVISE`, the supervisor sends only replies and exit
      reports, and no author-controlled byte crosses the channel, so item 2 and
      item 3 hold.
-   - **Why each end trusts the other.** The adapter accepts one connection,
-     from the agent UID when `SO_PEERCRED` is enforced, and the supervisor
-     accepts the connection only when its peer is the adapter UID. The
-     connection is made before any author code exists in the pod: the
+   - **Why each end trusts the other.** Each end checks the other's UID as
+     the [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE`
+     card states. The connection is made before any author code exists in the pod: the
      supervisor is the runtime container's first process, it launches nothing
      before `launch`, and [§13.1](13_security-model.md#131-pod-security)
      **Container identity.** gives the agent and adapter UIDs to one container
@@ -281,7 +309,8 @@ Insert after item 7, **MCP server security:**, which ends `by directly connectin
      a `restart` pod a failure makes the supervisor exit before it connects,
      and the pod never becomes `idle`. PID-namespace init immunity to SIGKILL
      and SIGSTOP is reported and does not gate, because its failure retires
-     only the pod whose runtime exploits it. `lenny-ctl preflight` runs the
+     only the pod whose runtime exploits it. `lenny-ctl preflight supervisor`
+     ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)) runs the
      same self-test on a named RuntimeClass, and it is re-run when the
      container runtime version changes, as item 1 requires for `SO_PEERCRED`.
 ```
@@ -291,27 +320,42 @@ Insert after item 7, **MCP server security:**, which ends `by directly connectin
 (a) In the `sessionPolicy` YAML block that follows the **Slot (session mode).** paragraph (the block whose first line is `sessionPolicy:                            # session mode only`), insert after its line `    maxSessionsPerPod: 50                 # required when enabled — counts every session served; pod retired at the bound`:
 
 ```yaml
-    runtimeProcess: keep                  # keep | restart — required, no default, where the acknowledgment rule below applies to recycling
+    # runtimeProcess: keep                # keep | restart — see "Runtime-process lifetime" below
+```
+
+In the §5.1 derived-runtime example, insert after the line `    maxSessionsPerPod: 50 # required when enabled — pod retired after serving this many sessions`, and in the §5.2 **Deployer acknowledgment.** example, insert after the line `    maxSessionsPerPod: 50 # required — no default, forces deployer choice`, respectively:
+
+```yaml
+    runtimeProcess: keep # required on this pool (see "Runtime-process lifetime" in Section 5.2)
+```
+
+```yaml
+    runtimeProcess: keep # required on this pool (see "Runtime-process lifetime" above)
 ```
 
 (b) Insert after the **Recycling and integration levels.** paragraph:
 
 ```
-**Runtime-process lifetime (`recycle.runtimeProcess`).** On a pool with
-`recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a
-`recycle.scrubProfile` other than `vm-restart`, `recycle.runtimeProcess` is
-required and has no default; the pool controller rejects it on every other
-pool. `keep` keeps the runtime process across the recycle boundary
+**Runtime-process lifetime (`recycle.runtimeProcess`).** A reusing recycling
+pool is a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above
+1, and a `recycle.scrubProfile` other than `vm-restart`. On a reusing recycling
+pool `recycle.runtimeProcess` is required and has no default; the pool
+controller rejects it on every other pool. `keep` keeps the runtime process across the recycle boundary
 ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime
 process lifetime"). `restart` ends the runtime process at each occupancy-zero
 boundary at which the pod is reused, and the next session runs in a newly
 launched process ([Section 4.7.10](04_system-components.md#4710-deployment-model),
 **Runtime supervisor.**). The gateway pool admission path rejects `restart` on a
-pool whose runtime is not `restartable` in the runtime registry, which is an
-embedded, service-mode, or `preConnect` runtime
-([Section 5.1](#51-runtime)). Pod retirement at `recycle.maxSessionsPerPod` or
-`recycle.maxPodUptimeSeconds` is the same under both values. A pod's lifetime
-is fixed when the pod is created, from the pool's value at that moment, and an
+pool whose runtime is not `restartable`
+([Section 5.1](#51-runtime)). The WarmPoolController renders `restart` only for
+a runtime that is `restartable`, and otherwise creates no pod for the pool.
+Pod retirement at `recycle.maxSessionsPerPod` or
+`recycle.maxPodUptimeSeconds` is the same under both values. The
+WarmPoolController fixes a pod's lifetime when it creates the pod, from the
+pool's value at that moment, in the immutable pod label
+`lenny.dev/runtime-process` (`keep` or `restart`;
+[Section 17.2](17_deployment-topology.md#172-namespace-layout), item 5). An
+acquisition reads an absent or unknown value of the label as `keep`. An
 admitted edit of the field applies to the pods created after it. The
 runtime-process acknowledgment below states which pods created before the edit
 an acquisition refuses.
@@ -337,12 +381,10 @@ In the same paragraph, replace `A runtime that exits after its session makes the
 (c) In **Lenny scrub procedure**, replace `The scrub has two phases: a **pre-cleanup credential purge** (step 0) executed by the adapter before `cleanupCommands`, and a **post-cleanup scrub sequence** (steps 1-6) executed after `cleanupCommands` finish.` with:
 
 ```
-The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a sidecar pod under `recycle.runtimeProcess: restart`, the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and removes the agent UID's IPC objects and its entries in every agent-writable volume ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); the deployer's `cleanupCommands`; on a sidecar pod under `restart`, a second runtime end, which ends every process the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` at the agent UID in the runtime container under both values, so they run with the runtime image's tools and with no more access than the agent has; in the embedded model the adapter runs them in its own container. A failed end or sweep makes the adapter report the runtime as not able to serve the next session, so the pod retires under "Runtime not live" below whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
+The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a sidecar pod under `recycle.runtimeProcess: restart`, the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and removes the agent UID's IPC objects and its entries in every agent-writable volume ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); the deployer's `cleanupCommands`; on a sidecar pod under `restart`, a second runtime end, which ends every process the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); in the embedded model the adapter runs them in its own container. A failed end or sweep retires the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
 ```
 
-In the **Recycle lifecycle (`recycle.enabled: true`).** paragraph, replace `deployer-defined `cleanupCommands` execute in the pod's workspace base `/workspace`,` with `deployer-defined `cleanupCommands` execute in the pod's workspace base `/workspace` (in the sidecar model at the agent UID in the runtime container; see the scrub procedure below),`.
-
-In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process under `keep` and to a newly launched one under `restart`;`.
+In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process under `keep` and to a newly launched one under `restart`;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
 
 (d) In step 1, replace `The kill runs in the container that executes the scrub and does not end the runtime process; see "What the scrub reaches" below.` with:
 
@@ -350,7 +392,7 @@ In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter en
 In the embedded model the kill runs in the adapter container. In the sidecar model the adapter container runs no author process, and the runtime container's processes are ended by the runtime end before `cleanupCommands` under `restart` and are kept under `keep`; see "What the scrub reaches" below.
 ```
 
-In step 1b, replace `the adapter's UID owns or created` with `the agent UID owns or created, matched on the creator UID because an owner can reassign a segment's owner`, and append `In the sidecar model the runtime sweep removes them, together with the agent UID's System V message queues and semaphores and its POSIX message queues.`
+In step 1b, append `In the sidecar model the adapter does not run this step; under `recycle.runtimeProcess: restart` the runtime sweep removes the segments the agent UID owns or created, together with its System V message queues and semaphores and its POSIX message queues, and under `keep` they persist (see "What the scrub reaches" below).`
 
 In step 3, append `In the sidecar model each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
 
@@ -359,8 +401,9 @@ In step 3, append `In the sidecar model each launched runtime process starts fro
 ```
 **What the scrub reaches.** Steps 0 and 2 to 6 execute in the adapter's
 process, and its file operations resolve beneath their target directory without
-following symbolic links. In the sidecar model `cleanupCommands` run at the
-agent UID, so a symbolic link the agent planted gives them no access the agent
+following symbolic links. In the sidecar model `cleanupCommands` run as
+[§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
+states, so a symbolic link the agent planted gives them no access the agent
 lacks. In the sidecar deployment model
 ([§4.7.10](04_system-components.md#4710-deployment-model)) steps 0, 2, 4, and 6
 operate on volumes mounted into both containers, so they clear and verify the
@@ -379,21 +422,40 @@ step 1 spares, and step 1 ends the processes the runtime started.
 
 (f) In the best-effort paragraph, replace `and the kept runtime process (see "What the scrub reaches" above).` with `and, under `recycle.runtimeProcess: keep`, the kept runtime process (see "What the scrub reaches" above).`
 
-(g) In the **Deployer acknowledgment (runtime process kept across sessions).** paragraph, replace `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a `recycle.scrubProfile` other than `vm-restart`.` with `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, a `recycle.scrubProfile` other than `vm-restart`, and `recycle.runtimeProcess: keep`.` Replace `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim requires this field, which is a pool with `maxConcurrentSessions` above 1 or the recycling configuration above;` with `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim reuses pods, which is a pool with `maxConcurrentSessions` above 1 or a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, under either `recycle.runtimeProcess` value;`. Replace `When the resolved configuration does not require this field, every acquisition refuses such a pod` with `When the resolved configuration does not reuse pods, every acquisition refuses such a pod`. Replace `An admitted update that takes a pool outside the rule ends reuse at the next acquisition.` with `An admitted update that takes a pool outside the rule ends reuse at the next acquisition of every pod created under `keep`.`. In the paragraph's first sentence, replace `The runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session` with `Under `recycle.runtimeProcess: keep` the runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session`. Append after `the tenant pinning paragraphs above state how the gateway enforces that.`:
+(g) In the **Deployer acknowledgment (runtime process kept across sessions).** paragraph, replace `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a `recycle.scrubProfile` other than `vm-restart`.` with `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a reusing recycling pool ("Runtime-process lifetime" above) under `recycle.runtimeProcess: keep`.` Replace `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim requires this field, which is a pool with `maxConcurrentSessions` above 1 or the recycling configuration above;` with `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim reuses pods, which is a pool with `maxConcurrentSessions` above 1 or a reusing recycling pool;`. Replace `The recycling configurations outside the rule keep no runtime process across sessions:` with `A recycling pool that is not a reusing recycling pool reuses no pod:`. Replace `When the resolved configuration does not require this field, every acquisition refuses such a pod` with `When the resolved configuration does not reuse pods, every acquisition refuses such a pod`. Replace `An admitted update that takes a pool outside the rule ends reuse at the next acquisition.` with `An admitted update that takes a pool outside the rule ends reuse at the next acquisition of every pod created under `keep`.`. In the paragraph's first sentence, replace `The runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session` with `Under `recycle.runtimeProcess: keep` the runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session`. Append after `the tenant pinning paragraphs above state how the gateway enforces that.`:
 
 ```
 A sequential pool under `recycle.runtimeProcess: restart` does not require this field, because no runtime process serves two sessions; the state that persists there is covered by `acknowledgeBestEffortScrub`. Each pod carries the lifetime it was created under ("Runtime-process lifetime" above). A pod created under `keep` that has served an earlier session is admitted only while the resolved configuration requires this field: after an admitted edit from `keep` to `restart` on a sequential pool, every acquisition refuses such a pod and stamps its drain request as stated above. A pod created under `restart` is admitted after an edit to `keep`, and its runtime process still ends at each reused boundary.
 ```
+
+(h) Outside the acknowledgment paragraph, each site that ends a reserved hold or drains a pod names a pool predicate. Replace each predicate with the acknowledgment's per-pod refusal:
+
+- §4.6.1, the `SandboxClaim` table row: replace `when the acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule` with `when an acquisition refuses the reserved pod under the runtime-process acknowledgment`.
+- §4.6.1 **Reserved hold (claim retention across same-tenant sessions):** and §6.2 **`reserved` hold semantics.**: replace `On a pool whose configuration keeps no runtime process across sessions, the acquisition path ends the hold` with `When an acquisition refuses the pod under the runtime-process acknowledgment, it ends the hold`.
+- §4.6.3, the `SandboxClaim` ownership row: replace `when its acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule` with `when an acquisition refuses the reserved pod under the runtime-process acknowledgment`.
+- §5.2 **Pinned idle inventory.**: replace `when an acquisition drains it on a pool outside the runtime-process acknowledgment rule (see the runtime-process acknowledgment below)` with `when an acquisition refuses and drains it under the runtime-process acknowledgment below`.
+- §6.2, the state diagram's `reserved ──→ idle` edge: replace the lines `(hold TTL expires, or the acquisition path ends the hold on a pool` and `that keeps no runtime process across sessions — see §5.2;` with `(hold TTL expires, or an acquisition refuses the pod under the` and `§5.2 runtime-process acknowledgment;`, keeping the column alignment.
+- §29.2, the hard-wrapped step text `On a pool whose` / `configuration keeps no runtime process across sessions, the gateway ends that hold`: replace it with `When an acquisition refuses the pod under the runtime-process` / `acknowledgment, the gateway ends that hold`, keeping the citation that follows.
+
+In §5.2:
+
+- **Tenant pinning:**, the paragraph beginning `The pin persists across the recycle-to-idle edge`: replace `because a recycled pod keeps the runtime process that served its tenant ([Section 4.7.10](04_system-components.md#4710-deployment-model))` with `because a recycled pod keeps state the scrub does not reach (see "What the scrub reaches" below)`, and replace `on every pool whose pods keep their runtime process, including` with `on every pool, including`.
+- The `recycle.allowCrossTenantReuse: true` paragraph: replace `because a recycled pod keeps the runtime process that served its pinned tenant` with `because the tenant pin applies on every pool`, and replace `requires restarting the runtime process and resetting the tenant pin` with `requires resetting the tenant pin`.
+- The configurations table, `Pod reuse` row: delete ` in one runtime process`.
+
+In §4.6.1, replace `` `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` only`` with `` `lenny.dev/egress-profile`, `lenny.dev/runtime-process`, and `lenny.dev/tenant-id` only``. In the §13.2 **Label immutability note**, replace `` `lenny.dev/egress-profile`, and `lenny.dev/dns-policy` labels are`` with `` `lenny.dev/egress-profile`, `lenny.dev/dns-policy`, and `lenny.dev/runtime-process` labels are``.
+
+In §17.2 item 5 (`lenny-label-immutability`), replace `` `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods`` with `` `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process` labels on agent pods``.
 
 ### SPEC-6 · spec/13_security-model.md § 13.1 Pod Security
 
 Insert after the **Container identity.** paragraph, which ends `and it identifies the agent only because this rule gives the agent UID to one container.`:
 
 ```
-**Runtime supervisor volume.** On a sidecar pod the init container `lenny-supervisor-stage` copies the runtime supervisor ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) into an `emptyDir` volume. It runs at a UID that is neither the agent nor the adapter UID, as the rule above requires. The `runtime` container mounts the volume read-only, and no regular or ephemeral container mounts it read-write. The `lenny-pod-security` webhook enforces the mount rule with the identity rule above.
+**Runtime supervisor volume.** On a pod that runs the runtime supervisor the init container `lenny-supervisor-stage` copies the runtime supervisor ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) into an `emptyDir` volume. It runs at a UID that is neither the agent nor the adapter UID, as the rule above requires. The `runtime` container mounts the volume read-only, and no container other than the init container `lenny-supervisor-stage` mounts it read-write. The `lenny-pod-security` webhook enforces the mount rule with the identity rule above.
 ```
 
-### SPEC-7 · spec/28_communication-channels.md § 28.3, § 28.5.3, § 28.6, and § 28.8
+### SPEC-7 · spec/28_communication-channels.md § 28.3, § 28.5.3, § 28.6, and § 28.8, spec/04_system-components.md § 4.7.11, and spec/10_gateway-internals.md § 10.3
 
 (a) In §28.3, the opening paragraph is hard-wrapped. Find:
 
@@ -411,14 +473,14 @@ inventory carries `None` in the column. The naming table below the
 (b) In the §28.3 **Channel register**, insert after the `CH-MCP-CONNECTOR` row, as one physical line:
 
 ```
-| `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Pod adapter | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness | None |
+| `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Both | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness | None |
 ```
 
 (c) In §28.5.3, replace the intro paragraph, from `This boundary carries the channels between the runtime adapter and the runtime binary inside one agent` through `The runtime is the dialling participant on every channel here.`, with:
 
 ```
 This boundary carries the channels between the runtime adapter and the runtime binary inside one agent
-pod, and on a sidecar pod the channel between the runtime adapter and the runtime supervisor
+pod, and on a pod that runs the runtime supervisor the channel between the runtime adapter and the runtime supervisor
 ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The §28.3 channel
 register places these channels on this boundary, and each carries `None` in its Link column, so each
 channel's own register row together with the endpoint stated in its card describes the connection it runs
@@ -448,8 +510,7 @@ Replace the diagram block that follows with:
 
   The runtime-ops, MCP, and supervisor channels run on abstract Unix sockets
   in the Linux abstract namespace. The runtime binary dials every channel
-  drawn above except CH-SUPERVISE, which the runtime supervisor dials. The
-  runtime supervisor is present on every sidecar pod.
+  drawn above except CH-SUPERVISE, which the runtime supervisor dials.
 ```
 
 (d) Insert after the **`CH-MCP-CONNECTOR`** card and before `#### 28.5.4 Inter-replica`:
@@ -460,20 +521,21 @@ Replace the diagram block that follows with:
 - **Link.** `None` (§28.3). The channel's own register row and the endpoint below describe the
   connection.
 - **Endpoint.** The abstract Unix socket `@lenny-supervise` in the Linux abstract namespace, on every
-  sidecar pod ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The
+  pod that runs the runtime supervisor ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The
   adapter listens and the runtime supervisor dials. When `SO_PEERCRED` is enforced, the adapter accepts
   only the agent UID and the supervisor accepts the connection only when its peer is the adapter UID
   ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8). No manifest-nonce
   handshake or challenge-response runs on this channel, because the supervisor connects before any
   manifest exists.
-- **Axes.** Control plane, dialled by the runtime supervisor, message authority with the pod adapter,
+- **Axes.** Control plane, dialled by the runtime supervisor, message authority on both sides,
   Unix socket JSON Lines transport (§28.3).
 - **Messages.** Each message is a single JSON object terminated by `\n` whose `type` member carries the
   message name. Adapter to supervisor: `launch`, `end`, `sweep`, `cleanup`, and `ping`. Supervisor to
   adapter: `launched`, `ended`, `swept`, `cleaned`, and `pong`, each answering the request of the matching
   name, and
-  `exited`, which reports that a runtime process exited and carries its exit status. Every message
-  carries `gen`, the runtime generation the adapter assigned with `launch`, and every request and reply
+  `exited`, which reports that a runtime process exited other than by an `end` and carries its exit
+  status. Every message carries `gen`, the runtime generation the adapter assigned with its latest
+  `launch`, or 0 before the first, and every request and reply
   carries `id`, which a reply echoes from its request. A reply carries an optional `error` whose value is
   one of an enumerated set of codes; it is absent when the request succeeded. `end` carries `graceMs`,
   the SIGTERM grace before SIGKILL. `cleanup` carries the pool's `cleanupCommands`, each as an argument
@@ -484,45 +546,48 @@ Replace the diagram block that follows with:
   diagnostic and decides nothing but the failure of the bound sessions.
 - **Preconditions.** The adapter accepts the connection after its `SO_PEERCRED` self-test and before it
   signals READY ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4).
-  It sends `launch` only at the points [§4.7.10](04_system-components.md#4710-deployment-model)
-  **Runtime supervisor.** names, `end` and `sweep` at a `restart` boundary, on `DemoteSDK`, and at a
-  `shutdown` deadline, `cleanup` at every recycle boundary after step 0, a second `end` after `cleaned`
-  at a `restart` boundary, and `ping` periodically for the pod's life. The adapter has at most one request
-  outstanding.
-- **Timing.** The adapter waits a bounded time for the connection before READY. `end`, `sweep`, and
-  `cleanup` are bounded by the scrub's context
-  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A `ping`
-  that receives no `pong` within its deadline is a link failure. The specification states no value for
-  these bounds or for the ping interval.
-- **Exclusivity.** One connection per pod. The adapter accepts the first connection before READY and
-  then closes the listener, and the supervisor never dials a second time (§28.6).
+  It sends `launch`, `end`, `sweep`, and `cleanup` only at the points
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** and the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Lenny scrub
+  procedure.** name, and `ping` periodically while no other request is outstanding. The adapter has at
+  most one request outstanding.
+- **Timing.** The adapter waits a bounded time for the connection before READY. The supervisor repeats a
+  refused dial within a bounded window, and exits when the window ends with no connection. Every request is bounded by the deadline of the operation that
+  sends it, and `ping` by its own deadline; a request with no reply within its bound is a link failure.
+  The specification states no value for these bounds, the ping interval, or the dial retry interval or window.
+- **Exclusivity.** One connection per pod. The guards are the agent pod's `restartPolicy: Never`, under
+  which no container restarts in place, the adapter's closing of its listener after the
+  first connection it accepts before READY, and the supervisor's exit when that connection closes
+  (**Degradation.**, §28.6).
 - **Degradation.** When no supervisor connects within the adapter's wait, the adapter exits non-zero and
   the pod is never marked `idle`. A `launched` that carries `error` fails the session's start. A
-  `cleaned` that carries `error` fails the scrub as a failed `cleanupCommands` run does. An `ended`
-  or `swept` that carries `error`, a missed `pong`, a closed connection, and a message the adapter cannot
-  decode strictly (an unknown or duplicate key, an unknown code, or a `gen` or `id` that matches nothing
-  outstanding) each make the adapter report the runtime as not able to serve the next session, and the
-  pod is retired ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
-  "Runtime not live"). When the connection closes, the supervisor exits, which ends every process in the
+  `cleaned` that carries `error` fails the scrub as a failed `cleanupCommands` run does. A closed
+  connection, a request unanswered within its bound, and a message the adapter cannot decode strictly (an
+  unknown or duplicate key, an unknown code, a reply whose `gen` or `id` matches no outstanding request,
+  or an `exited` whose `gen` is not the current generation) are link failures. A link failure, and a
+  `launched`, `ended`, or `swept` that carries `error`, take the outcome
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states. When the connection closes, the supervisor exits, which ends every process in the
   runtime container.
 ```
 
 (e) In §28.6, insert after the **One operation per pod.** paragraph and before **Channels the specification states no constraint on.**:
 
 ```
-**One connection per pod.** `CH-SUPERVISE` admits one connection for the pod's life: the first
-connection the adapter accepts before READY. The guards are the adapter's closing of the listener after
-that accept and the supervisor's exit when its connection closes (§28.5.3). The constraint bounds the
-connections inside one pod; no gateway replica holds the channel.
+**One connection per pod.** `CH-SUPERVISE` admits one connection for the pod's life, and its unit is the
+pod. Its card states the guards (§28.5.3). No gateway replica holds the channel.
 ```
 
 (f) In the §28.8 matrix, insert after the `CH-MCP-CONNECTOR` row, as one physical line:
 
 ```
-| `CH-SUPERVISE` | When no supervisor connects within the adapter's wait before READY, the adapter exits non-zero and the pod is never marked `idle` ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, §28.5.3) | A closed connection, a missed `pong`, an undecodable message, or an `ended` or `swept` carrying an error makes the adapter report the runtime as not able to serve the next session, and the pod is retired; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod; the adapter closes the listener after its one accept and the supervisor never redials, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod that exits before READY, or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
+| `CH-SUPERVISE` | When no supervisor connects within the adapter's wait before READY, the adapter exits non-zero and the pod is never marked `idle` ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, §28.5.3) | A link failure, or an `error` on `launched`, `ended`, or `swept`, takes the outcome [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod that exits before READY, or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
 ```
 
 The claim-register rows for this card are `WIRED` rows naming the surfaces CODE-2 and CODE-3 create, and CODE-3 lands them.
+
+(g) In the §28.5.3 session-frame write-order table, in the row for a start whose second confirmation is refused after its `session_start` was written, delete `, because `DemoteSDK` does not end the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model))`. The row stays one physical line.
+
+(h) In `spec/04_system-components.md` §4.7.11 item 1 **Mandatory `SO_PEERCRED` startup self-test (adapter prerequisite).** step 4, replace `The pod enters `CrashLoopBackOff`, preventing session assignment.` with `The pod is never marked `idle`.` In `spec/10_gateway-internals.md` §10.3, in the **Pod (adapter) validates gateway identity on every outbound handshake** bullet, delete ` (the pod enters `CrashLoopBackOff`)`.
 
 ### SPEC-8 · The `shutdown`, signal, and exit-code statements (F-4.7.27)
 
@@ -541,41 +606,101 @@ and replace it with:
 
 The citation of §15.4 on the next line stays.
 
-(b) In §28.5.3 **Exit Codes**, append after `non-zero triggers an alert but the session result (if any) is still delivered.`: `In the sidecar model the runtime supervisor reports the exit status to the adapter on `CH-SUPERVISE`.`
+(b) In the §28.5.3 **Exit Codes** table, delete `adapter logs stderr; ` from the row for code 1, and delete ` — adapter treats as crash, pod is not reused` from the row for code 137. Each row stays one physical line. Append after `non-zero triggers an alert but the session result (if any) is still delivered.`: `In the sidecar model the runtime supervisor reports the exit status to the adapter on `CH-SUPERVISE`.`
 
-(c) The string `the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr` occurs three times in `spec/28_communication-channels.md`: in the `CH-MSGSOCK` card's **Degradation.** bullet (§28.5.3), in the **Error reporting via `response`.** paragraph (§28.5.3), and in the §28.8 `CH-MSGSOCK` row. Replace each occurrence with `the adapter synthesizes a `RUNTIME_CRASH` error from the exit status the runtime supervisor reports`, because no runtime output crosses `CH-SUPERVISE`. In the embedded model the adapter observes its own runtime loop, and the review run checks whether the sentence needs an embedded clause. §15.4 states no `RUNTIME_CRASH` construction. The review run checks the §15.4 sites F-4.7.27 names (the `Graceful drain (DRAINING state)` row of the integration-level table, which reads `Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.`, and the Basic-level **shutdown within `deadline_ms`** conformance row) against SPEC-8(a) and corrects any that stays untrue. Whether the adapter writes `shutdown` at pod drain belongs to R16.
+(c) The string `the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr` occurs three times in `spec/28_communication-channels.md`: in the `CH-MSGSOCK` card's **Degradation.** bullet (§28.5.3), in the **Error reporting via `response`.** paragraph (§28.5.3), and in the §28.8 `CH-MSGSOCK` row. Replace each occurrence with `the adapter synthesizes a `RUNTIME_CRASH` error from the exit status the runtime supervisor reports`, because no runtime output crosses `CH-SUPERVISE`. Whether the adapter writes `shutdown` at pod drain belongs to R16.
 
-### SPEC-9 · spec/06_warm-pod-model.md § 6.1 What a Pre-Warmed Pod Looks Like
+(d) In `spec/15_external-api-surface.md` §15.4, make these replacements:
 
-Append to the **Optional: SDK-warm mode.** paragraph, after `This eliminates SDK cold-start latency from the hot path.`:
+1. In the **SDK-warm demotion contract:** paragraph, replace `the adapter sends SIGKILL` with `the process is sent SIGKILL ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**)`.
+2. In §15.4.1, replace `**stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages.` with `**stderr** goes to its container's log and is **not** parsed as protocol messages.`
+3. In the §15.4.6 Basic-level **shutdown within `deadline_ms`** row, replace `the adapter will SIGKILL the process in production` with `the process is sent SIGKILL in production`.
+
+### SPEC-9 · spec/06_warm-pod-model.md § 6.1 and spec/05_runtime-registry-and-pool-model.md § 5.1
+
+(a) In the §6.1 **Optional: SDK-warm mode.** paragraph, replace `The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt.` with:
 
 ```
-In the sidecar model the adapter has the runtime supervisor launch the runtime process at pod warm-up, and the SDK-warm state is that process connected on `CH-MSGSOCK`; `DemoteSDK` ends the process, and the session's start launches a new one after the final manifest exists ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).
+The adapter starts the SDK process during warm-up, before the pod reaches `idle` state, in the sidecar model through the runtime supervisor ([Section 6.2](#62-pod-state-machine); [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**), leaving it waiting for its first prompt.
 ```
 
-In the `preConnect` compatibility table's `recycle.enabled: true` row, replace `the adapter re-establishes SDK-warm state on the `claimed → sdk_connecting` re-warm edge` with `the adapter re-establishes SDK-warm state on the `claimed → sdk_connecting` re-warm edge, which launches a new runtime process when the session demoted the earlier one`.
-
-### SPEC-10 · spec/15_external-api-surface.md § 15.1 REST API
-
-In the admin runtime registration payload's field description, add `command`: required for `type: agent`, the runtime-process argv whose first element is an absolute path ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime), `command`). Add `env`: optional, the runtime-process variables as `name` and `value` pairs, with names beginning `LENNY_` refused ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime), `env`). The review run locates the payload's description in §15.1 and the OpenAPI document.
+(b) In §5.1 **`capabilities.preConnect`**, replace `the warm pool controller pre-connects the agent SDK process during the warm phase.` with `the agent SDK process is pre-connected during the warm phase ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).`
 
 ### SPEC-11 · Launch-ordering wording that proposal 0090 left to 0087
 
 Proposal 0090 left the sentences that place the manifest write "before" the adapter spawns the runtime to this proposal. On a sidecar pod the adapter spawns nothing, and the supervisor launches the process after the manifest exists (SPEC-2). Each replacement below keeps the ordering and drops the spawning subject.
 
-(a) In `spec/28_communication-channels.md`, replace each of the three occurrences of `before it spawns the runtime binary` (the `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR` cards in §28.5.3) with `before the runtime process is launched`.
+(a) In `spec/28_communication-channels.md`, replace each of the three occurrences of `before it spawns the runtime binary` (the `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR` cards in §28.5.3) with `before the runtime process is launched`. In the same file (§28.5.3 adapter-local tools), replace `Adapters MUST populate this array before spawning the runtime;` with `Adapters MUST populate this array before the runtime process is launched;`, and `in `adapterLocalTools` before spawning the runtime.` with `in `adapterLocalTools` before the runtime process is launched.`
 
-(b) In `spec/04_system-components.md` §4.7.6, in the `adapterLocalTools` row, replace `Populated by the adapter before spawning the runtime;` with `Populated by the adapter before the runtime process is launched;`.
+(b) In `spec/04_system-components.md` §4.7.6, in the `adapterLocalTools` row, replace `Populated by the adapter before spawning the runtime;` with `Populated by the adapter before the runtime process is launched;`. In the **Adapter manifest:** paragraph of §4.7, replace `**before the runtime binary is spawned**` with `**before the runtime process is launched**`.
 
 (c) In `spec/04_system-components.md` §4.7.11 item 1, replace `before spawning the agent, and the agent must present` with `before the agent process is launched, and the agent must present`.
 
 (d) In `spec/15_external-api-surface.md` §15.4.3, replace `read-only to the agent container) before spawning the runtime.` with `read-only to the agent container) before the runtime process is launched.`.
 
+### SPEC-12 · spec/29_communication-scenarios.md § 29.1, § 29.2, § 29.4, and spec/28_communication-channels.md § 28.5.3 (per-process connection wording)
+
+(a) In the §29.1 **Participants.** table, insert after the `runtime` row, as one physical line:
+
+```
+| `runtime supervisor` | The platform process that launches and ends the runtime process | [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**, §28.3 |
+```
+
+(b) In §29.2, insert after step 24 a new step 25:
+
+```
+25. On a session whose start launches the runtime process in the sidecar deployment model
+    ([§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**, **Launch.**):
+    `adapter` → `runtime supervisor`, `CH-SUPERVISE`, `intra-pod`. The adapter sends `launch`, and the
+    supervisor launches the runtime's `command` and answers `launched`
+    ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7, §28.5.3
+    `CH-SUPERVISE`).
+```
+
+Renumber the steps after it: 25 becomes 26, 26a, 26b, and 26c become 27a, 27b, and 27c, and 27 through 34 become 28 through 35. Update the citations inside §29.2 to match: `Steps 24 through 31` and `steps 24 through 31` (in the steps that become 23, 33, and 35) become `24 through 32`, `26a, 26b, and 26c` in the step that becomes 27c becomes `27a, 27b, and 27c`, `(step 25)` in the step that becomes 30 becomes `(step 26)`, and `as step 31 states` in the step that becomes 35 becomes `as step 32 states`. The citation of §29.2 steps 15 through 20 in §29.3 is unaffected.
+
+(c) In the steps that become 26, 27a, 27b, 27c, 28, and 29, replace `On the first session of a pod-warm pod` with `On the first session of the runtime process of a pod-warm pod`.
+
+(d) In the step that becomes 30, replace `serves this session on the pod's `CH-MSGSOCK` connection, which the runtime dialled on the pod's first session (step 25)` with `serves this session on the `CH-MSGSOCK` connection of the live runtime process, which that process dialled on its first session (step 26)`. The text wraps across lines in the tree.
+
+(e) In §29.4 step 12, delete `keeps its own process and the runtime process alive across the recycle boundary and ` (wrapped across lines), so the sentence reads `the adapter runs the scrub asynchronously`.
+
+(f) In §29.4 step 14, delete the sentence `The runtime process stays alive for the pod's life`, and attach its citation parenthetical to the preceding sentence, so that sentence ends `sends the runtime process no signal ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row, [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).`
+
+(g) In `spec/28_communication-channels.md` §28.5.3:
+
+1. In **Inbound: `session_end`** rule 1, replace `on the pod's one connection in the sidecar model` with `on the connection of the runtime process serving it in the sidecar model`.
+2. In the **Annotated Protocol Trace — Basic-Level Session** block, replace `the runtime dialled it on the pod's first session.` with `the runtime process dialled it on its first session.`
+
+### SPEC-13 · spec/24_lenny-ctl-command-reference.md § 24.2 Preflight
+
+In the §24.2 command table, insert after the `lenny-ctl preflight --config <values.yaml>` row, as one physical line:
+
+```
+| `lenny-ctl preflight supervisor --runtime-class <name>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8), report each property, and delete the pod. Exits non-zero when a property that gates `restart` fails. | Standalone mode only, through the current `kubeconfig` context; creates a pod | Kubernetes permission to create and delete pods in the agent namespace |
+```
+
+### SPEC-14 · spec/18_build-sequence.md § 18.6 and § 18.30
+
+(a) In §18.6 Phase 2 **Deliverables.**, insert after the `Adapter `SO_PEERCRED` startup self-test` bullet:
+
+```
+- Runtime supervisor per [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**: the static binary in its digest-pinned image, the `lenny-supervisor-stage` init container and its volume per [§13.1](13_security-model.md#131-pod-security), and the adapter's `CH-SUPERVISE` listener per [§28.5.3](28_communication-channels.md#2853-intra-pod).
+```
+
+(b) In §18.30 Phase 12c **Deliverables.**, in the first bullet (pod recycling), replace `and `maxScrubFailures`).` with `and `maxScrubFailures`), and the runtime-process lifetime `recycle.runtimeProcess` with the supervised recycle boundary and `lenny-ctl preflight supervisor` ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)).`
+
 ## Spec files touched
 
-- `spec/04_system-components.md` (SPEC-2, SPEC-3, SPEC-4, SPEC-11)
-- `spec/05_runtime-registry-and-pool-model.md` (SPEC-1, SPEC-5)
-- `spec/06_warm-pod-model.md` (SPEC-9)
+- `spec/04_system-components.md` (SPEC-2, SPEC-3, SPEC-4, SPEC-5, SPEC-7, SPEC-11)
+- `spec/05_runtime-registry-and-pool-model.md` (SPEC-1, SPEC-5, SPEC-9)
+- `spec/06_warm-pod-model.md` (SPEC-5, SPEC-9)
+- `spec/10_gateway-internals.md` (SPEC-2, SPEC-7)
+- `spec/11_policy-and-controls.md` (SPEC-2)
 - `spec/13_security-model.md` (SPEC-6)
-- `spec/15_external-api-surface.md` (SPEC-8(c), SPEC-10, SPEC-11)
-- `spec/28_communication-channels.md` (SPEC-7, SPEC-8, SPEC-11)
+- `spec/15_external-api-surface.md` (SPEC-8(d), SPEC-11)
+- `spec/17_deployment-topology.md` (SPEC-1, SPEC-5)
+- `spec/18_build-sequence.md` (SPEC-14)
+- `spec/24_lenny-ctl-command-reference.md` (SPEC-13)
+- `spec/28_communication-channels.md` (SPEC-7, SPEC-8, SPEC-11, SPEC-12)
+- `spec/29_communication-scenarios.md` (SPEC-5, SPEC-12)
