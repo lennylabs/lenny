@@ -2,6 +2,8 @@
 
 Every step lands the tests the non-spec Testing section places under its deliverables, and classifies each failure those tests expose as Testing **Failures the tests find.** states.
 
+**Precondition.** The direct fix for the test gap T-10.2.11 (summary D26) has landed: the chart renders the gateway's multi-tenant switch from the tenancy configuration, and single-tenant mode ignores the bearer's tenant claim. Do not start S1 until it has.
+
 - [ ] **S1 · spec** — SPEC-1. Lands both receipt edits.
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-3. Lands the §10.2, §27.3.1, and §4.2 edits.
@@ -30,7 +32,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
       Tiers 0, 1, 4, 8. Depends on: S3, S4, S5, S10, S11, S12
 - [ ] **S14 · code** — CODE-9. Lands full_revoke continuation.
       Tiers 0, 1, 3, 4. Depends on: S4, S12
-- [ ] **S15 · docs** — DOCS-1. Lands the operator-guide and `lenny-ctl` reference edits.
+- [ ] **S15 · docs** — DOCS-1. Lands the operator-guide, client-guide, and admin API reference edits.
       Tiers 0, 11. Depends on: S2, S3, S5, S6, S10, S11, S13
 - [ ] **S16 · test** — TEST-1. Lands the harness extension and the cross-cutting scenarios.
       Tiers 0, 4, 7a, 8, 9, 11. Depends on: S10, S11, S13, S14

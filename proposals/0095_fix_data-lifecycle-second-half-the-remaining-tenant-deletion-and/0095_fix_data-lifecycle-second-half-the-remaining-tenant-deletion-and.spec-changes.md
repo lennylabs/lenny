@@ -5,7 +5,8 @@
 After these edits the specification states the following mechanisms. Each staged edit below is the normative home of its rule, and this section names the homes.
 
 - **Redaction receipts outlive the rows they describe.** `audit_redaction_receipts.audit_event_id` carries no foreign key, and verifiers locate a receipt by tenant and sequence number (SPEC-1).
-- **Phase 3 revokes every credential of a deleting tenant.** The controller commits `deleting` first, the tenant then stops being registered for `tenant_id` extraction, the lease step of §11.4 returns the leases of the tenant's sessions, and `TokenStore.DeleteByTenant` and the access-token cache flush follow (SPEC-2). The registration rule that makes the gateway refuse the tenant's bearers lives in §10.2 (SPEC-3). A single-tenant deployment never deletes `default` (SPEC-2).
+- **Phase 3 revokes every credential of a deleting tenant.** The controller commits `deleting` first, the tenant then stops being registered for `tenant_id` extraction, the lease step of §11.4 returns the leases of the tenant's sessions, and `TokenStore.DeleteByTenant` and the access-token cache flush follow (SPEC-2). The registration rule that makes the gateway refuse the tenant's bearers lives in §10.2 (SPEC-3). A single-tenant deployment never deletes `default`, and a multi-tenant deployment deletes it as an ordinary tenant (SPEC-2).
+- **The tenant ID `platform` is reserved** for the platform audit chain, so no tenant's Phase 4 audit entry reaches that chain (SPEC-3).
 - **full_revoke lists from the primary, returns every lease without deny-listing it, and continues past a failed effect** (SPEC-4).
 - **Phase 4 erases every store §12.8 names and deletes the originals of escrowed resources.** The scope table and step 18 name `TokenIssuanceStore`, the Phase 4 order names the issued-token index, the exempt billing rule, and the tenant's definitions, and the escrow marker rule is removed (SPEC-5 and SPEC-6).
 
@@ -15,6 +16,7 @@ After these edits the specification states the following mechanisms. Each staged
 2. **Issued-token rows of an erased user** outlive the erasure job as SPEC-5 step 18 states.
 3. **The access-token cache flush of Phase 3** stays normative. The cache has no production writer, so the flush deletes nothing today, and the non-spec REC-1 records the gap as a departure.
 4. **A replica crash during full_revoke** is outside the SPEC-4 Note: a client disconnect does not stop the effects on the handling replica, and a crash of that replica stops them. Every effect is idempotent, so an operator repeats the call.
+5. **Deleting `default` in a multi-tenant deployment** refuses the initial admin token from Phase 3 onward, and a later upgrade applies the bootstrap tenant seed again. SPEC-2 Edit 2b states both.
 
 ## Staged edits
 
@@ -43,7 +45,7 @@ a receipt outlives the redacted row (see `audit_event_id`), and the receipt itse
 **Edit 2b.** In the paragraph that opens **Tenant deletion lifecycle.**, after `persisted in Postgres and exposed via the admin API.`, insert:
 
 ```markdown
-In a single-tenant deployment ([Section 10.2](10_gateway-internals.md#102-authentication)), the gateway refuses a request to delete or force-delete the built-in `default` tenant with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`.
+In a single-tenant deployment ([Section 10.2](10_gateway-internals.md#102-authentication)), the gateway refuses a request to delete or force-delete the built-in `default` tenant with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`. In a multi-tenant deployment, `default` is deleted like any other tenant, and when the deleted tenant holds the initial `platform-admin` user `lenny-admin` ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation); the gateway's `--admin-token-tenant`, `default` unless set), the gateway refuses that user's admin token from Phase 3 onward. The `lenny-bootstrap` Job applies its tenant seed on every `helm upgrade`, including an entry that names a deleted tenant.
 ```
 
 ### SPEC-3 · spec/10_gateway-internals.md § 10.2 Authentication; spec/27_web-playground.md § 27.3.1 OIDC cookie-to-MCP-bearer exchange; spec/04_system-components.md § 4.2 Session Manager
@@ -69,6 +71,12 @@ Extracted value is well-formed but names no registered tenant ([§10.2](10_gatew
 ```
 
 The other cells of the row are unchanged.
+
+**Edit 3e.** In §10.2 **`tenant_id` format validation.**, after `with `401 TENANT_CLAIM_INVALID_FORMAT` (before the tenant-registered lookup).`, insert:
+
+```markdown
+The tenant ID `platform` is reserved for the platform tenant, under which the platform audit chain is written ([Section 11.7](11_policy-and-controls.md#117-audit-logging)). `POST /v1/admin/tenants` rejects it with `422 RESERVED_IDENTIFIER`, and the seed path (`POST /v1/admin/bootstrap`) records the entry as an `error`.
+```
 
 **Edit 3d.** In spec/04_system-components.md §4.2, keep the label **`tenant_id` claim extraction:** and replace the rest of that paragraph, from `The OIDC claim used to extract the tenant identifier` through `emitted as `auth_failure` audit events.`, with:
 
