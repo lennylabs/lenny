@@ -57,7 +57,9 @@ func assertBindingGeneration(t *testing.T, store sessionstore.Store, registry *p
 // a stream-failure report treats as superseded, so a stream failure on that
 // binding would be evicted instead of reported.
 func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
+	t.Parallel()
 	t.Run("single-call create", func(t *testing.T) {
+		t.Parallel()
 		srv, registry, store := podBindServerWithStore(t, "sess-gen-create")
 		body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
@@ -71,6 +73,7 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 	})
 
 	t.Run("start", func(t *testing.T) {
+		t.Parallel()
 		srv, registry, store := podBindServerWithStore(t, "sess-gen-start")
 		h := srv.Handler()
 		createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
@@ -91,6 +94,7 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 	})
 
 	t.Run("delegated child", func(t *testing.T) {
+		t.Parallel()
 		store := memstore.New()
 		seedDelegatedChild(t, store, "child-gen", `{"schemaVersion": 1, "sources": []}`)
 		raiseGeneration(t, store, "child-gen", 4)
@@ -120,6 +124,7 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 		}`)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			id := "sess-gen-resume"
 			srv, store, registry, _ := podResumeServer(t, id)
 			row := tc.row

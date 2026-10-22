@@ -117,7 +117,9 @@ func assertDeadlineNear(t *testing.T, deadlines []time.Time, readAt time.Time, b
 // seconds after the read, and a launch that blocks past a short bound ends
 // with the launch error, does not commit running, and leaves no binding.
 func TestStartLaunchRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
+	t.Parallel()
 	t.Run("the default bound is 600 seconds", func(t *testing.T) {
+		t.Parallel()
 		probe := &startProbe{}
 		srv, _, _ := launchServer(t, memstore.New(), "sess-bound-default", 0, probe)
 		h := srv.Handler()
@@ -131,6 +133,7 @@ func TestStartLaunchRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
 	})
 
 	t.Run("a launch past the bound fails and does not commit running", func(t *testing.T) {
+		t.Parallel()
 		probe := &startProbe{block: true}
 		store := memstore.New()
 		srv, registry, cluster := launchServer(t, store, "sess-bound-expired", 500*time.Millisecond, probe)
@@ -161,7 +164,9 @@ func TestStartLaunchRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
 // A delegated child's materialization runs its claim and launch under the
 // same bound, taken before the primary read of the child's row.
 func TestMaterializeDelegatedChildRunsUnderTheFinalizingBound_spec_5_2(t *testing.T) {
+	t.Parallel()
 	t.Run("the default bound is 600 seconds", func(t *testing.T) {
+		t.Parallel()
 		store := memstore.New()
 		seedDelegatedChild(t, store, "child-bound", `{"schemaVersion": 1, "sources": []}`)
 		probe := &startProbe{}
@@ -175,6 +180,7 @@ func TestMaterializeDelegatedChildRunsUnderTheFinalizingBound_spec_5_2(t *testin
 	})
 
 	t.Run("a launch past the bound fails and does not commit running", func(t *testing.T) {
+		t.Parallel()
 		store := memstore.New()
 		seedDelegatedChild(t, store, "child-expired", `{"schemaVersion": 1, "sources": []}`)
 		probe := &startProbe{block: true}

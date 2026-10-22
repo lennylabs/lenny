@@ -170,7 +170,9 @@ func (f *driverFixture) claimBound(t *testing.T) bool {
 // advance between the entry write and the commit, and a restore failure
 // after the entry write.
 func TestResumeDriverExits_spec_7_3(t *testing.T) {
+	t.Parallel()
 	t.Run("landed commit", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		got := f.drive(t)
 		if got.State != session.StateRunning || got.CoordinationGeneration != f.row.CoordinationGeneration+1 ||
@@ -187,6 +189,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("terminal write after the primary read supersedes the entry", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.afterRead = func() {
 			_, _ = f.store.Store.Update(context.Background(), "acme", "s", func(r *sessionstore.Session) error {
@@ -211,6 +214,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("entry store error before applying", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.failUpdate[1] = false
 		got := f.drive(t)
@@ -226,6 +230,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("entry store error after applying", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.failUpdate[1] = true
 		got := f.drive(t)
@@ -246,6 +251,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("generation advanced between the entry and the commit", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.afterUpdate[1] = func() {
 			_, _ = f.store.Store.Update(context.Background(), "acme", "s", func(r *sessionstore.Session) error {
@@ -269,6 +275,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("restore failure after the entry write", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, true)
 		got := f.drive(t)
 		if got.State != session.StateResumePending || got.RetryCount != f.row.RetryCount+1 ||
@@ -288,6 +295,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("pod drained between the entry write and the restore", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.afterUpdate[1] = func() {
 			// spec: §4.6.1 — an external drain removes the claimed pod's
@@ -309,6 +317,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("terminal write after the commit", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.afterUpdate[2] = func() {
 			_, _ = f.store.Store.Update(context.Background(), "acme", "s", func(r *sessionstore.Session) error {
@@ -337,6 +346,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 	})
 
 	t.Run("terminal write on the resuming row cancels the attempt", func(t *testing.T) {
+		t.Parallel()
 		f := newDriverFixture(t, false)
 		f.store.afterUpdate[1] = func() {
 			// A same-replica DELETE lands while the attempt restores.

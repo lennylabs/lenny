@@ -102,6 +102,14 @@ func podBindClient(t *testing.T, objs ...client.Object) client.Client {
 // by §4.6.3 field ownership: WPC seeds phase/podIP, the gateway seeds
 // activeSlots/tenantId. Keeping the seed under the rightful manager
 // avoids cross-manager conflicts on the live reconcile.
+//
+// Each call boots a private kube-apiserver and etcd, which costs about eight
+// seconds under -race and dominates this package's run time. The tests that
+// call it (directly or through a fixture) share no other mutable state, so
+// they, and their per-case subtests, call t.Parallel; run serially the
+// package exceeded go test's default ten-minute timeout. A new test that
+// boots a cluster here should do the same unless it touches process-wide
+// state (t.Setenv, the default slog logger, a global metrics registry).
 func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
 	env := envtest.Start(t)
@@ -213,6 +221,7 @@ func podBindBinder(c client.Client, dial func(string) (*adapterclient.Client, er
 }
 
 func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -294,6 +303,7 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 // executed twice for one combined create-and-start, contradicting the §7.1
 // step-3 placement of the pre-check ahead of the step-4 claim.
 func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -377,6 +387,7 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 // ready SLO envelope. The per-phase pod_claim histogram is still emitted
 // exactly once.
 func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -453,6 +464,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 // /v1/sessions/start` path returns SESSION_CREATION_FAILED with no
 // session row left behind; the registry stays empty too.
 func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -551,6 +563,7 @@ func postSessionStep(t *testing.T, h http.Handler, path string, body []byte) *ht
 // stored on the row at create.
 
 func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
+	t.Parallel()
 	srv, registry, cluster, wsRoot := podBindServer(t, "sess-2step-1")
 	h := srv.Handler()
 
@@ -615,6 +628,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 // that re-runs resolveCredentialPools, re-doing credential work the lease
 // assignment at /finalize already completed.
 func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -708,6 +722,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 // applied until /start (the pre-0007 deferred-claim behavior) or the row
 // reached `ready` while the pod was still bare.
 func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
+	t.Parallel()
 	srv, _, _, wsRoot := podBindServer(t, "sess-fin-mat")
 	h := srv.Handler()
 
@@ -774,6 +789,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 // stuck in `finalizing`, or leaked the claimed pod after the prepare phase
 // aborted.
 func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -900,6 +916,7 @@ func manyEntryTar(t *testing.T, count int) []byte {
 // case and fell to the retryable default, so a conforming client would retry the
 // same non-conformant archive indefinitely (F-CS1).
 func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1030,6 +1047,7 @@ type finalizeMaterializationFailureCase struct {
 // CREDENTIAL_POOL_EXHAUSTED, which contradicts the Client visibility bullet a
 // client relies on to retry, or that the failed finalize leaked its pod.
 func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2(t *testing.T) {
+	t.Parallel()
 	cases := []finalizeMaterializationFailureCase{
 		{
 			// The ref names this session's upload prefix, so the finalize
@@ -1061,6 +1079,7 @@ func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			runFinalizeMaterializationFailureCase(t, tc)
 		})
 	}
@@ -1171,6 +1190,7 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 // create-time pod was left holding its claim after the pre-Prepare resolution
 // failed.
 func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1347,6 +1367,7 @@ func (*recordingLeaseAssigner) Release(string) error { return nil }
 // reaches ready. A failure here means reclaimFinalizedPod did not run on the
 // finalizing → ready write-failure branch, so the lease leaked.
 func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
@@ -1441,6 +1462,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 }
 
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
+	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
 	h := srv.Handler()
 
@@ -1514,6 +1536,7 @@ func seedAwaitingSession(t *testing.T, store *memstore.Store, row sessionstore.S
 }
 
 func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, cluster := podResumeServer(t, "sess-resume-1")
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID: "sess-resume-1",
@@ -1556,6 +1579,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 }
 
 func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-nockpt")
 	// No WorkspaceSnapshot: the session never checkpointed. The resume
 	// path rebuilds it from the §14 WorkspacePlan recorded at create.
@@ -1595,6 +1619,7 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 // A failure means the resume reconnects to the no-longer-existing pod,
 // fails Prepare, and reports the resume as failed instead of recovering it.
 func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, cluster := podResumeServer(t, "sess-resume-stale")
 	// No WorkspaceSnapshot (snapshotless rebuild), but a non-empty stale
 	// PodAssignment naming the dead pod the session lost. Before the gate
@@ -1643,6 +1668,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 }
 
 func TestResumeRejectsNonResumableState(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-bad")
 	// A `running` session is not a valid POST /resume precondition —
 	// only `awaiting_client_action` is (§15.1).
@@ -1678,6 +1704,7 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 // resume_pending at its generation with RetryCount unchanged, no binding is
 // published, and the window ends the retries rather than the failure.
 func TestResumeWithNoMatchingPoolWritesNothing_spec_7_3(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-nopool")
 	// The cluster serves only the "echo" runtime; the session targets a
 	// runtime no warm pool covers, so the pod claim cannot resolve.
@@ -1714,6 +1741,7 @@ func TestResumeWithNoMatchingPoolWritesNothing_spec_7_3(t *testing.T) {
 // pre-claim failure writes nothing, so the child stays resume_pending for the
 // next attempt.
 func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1761,6 +1789,7 @@ func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 // from Postgres after a coordinator handoff. The in-memory Registry is
 // a cache; the row column is the source of truth across replicas.
 func TestSessionStartPersistsPodAssignment(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -1817,6 +1846,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 // unchanged and the next watchdog tick attempts again once an idle pod is
 // available. The POST /resume itself is a store write that answers 200.
 func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1872,6 +1902,7 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 // and the symmetric pre-extraction size check have the spec-mandated
 // inputs.
 func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -1927,6 +1958,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 // pod recovery. The resume path bumps it by one and persists the new
 // pod assignment in the same Update.
 func TestResumeBumpsRecoveryGeneration(t *testing.T) {
+	t.Parallel()
 	srv, store, _, _ := podResumeServer(t, "sess-recovery-bump")
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID: "sess-recovery-bump",
@@ -1988,6 +2020,7 @@ func poolBindQueuePool(t *testing.T, name, runtimeRef string, waitSeconds int) p
 // option would be inert. A failure here means the start path does not consult
 // the per-pool claim queue or the queue does not retry the bind.
 func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -2064,6 +2097,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 // dropping the retry hint. A failure here means the wait bound is not enforced
 // or the timeout return value is not the exhaustion envelope.
 func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -2125,6 +2159,7 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 // hide pool under-sizing behind a long wait. A failure here means the start
 // path queues a reject pool.
 func TestSessionStartRejectFailsImmediately(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -2207,6 +2242,7 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 // reached. A failure here means the start path did not take the claimless
 // branch for executionMode=service.
 func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}

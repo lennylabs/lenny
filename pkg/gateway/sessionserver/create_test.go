@@ -134,6 +134,7 @@ func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
 // running state, the pod-bound session the §15 single-shot adapter binder
 // dispatches over. spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func TestCreateAndStartServiceHappyPath(t *testing.T) {
+	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-cas-svc")
 
 	resp, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{
@@ -171,6 +172,7 @@ func TestCreateAndStartServiceHappyPath(t *testing.T) {
 // pre-field code.
 // spec: §7.1 create-and-start atomicity; §15.1.
 func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1504,6 +1506,7 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 // the bound pod. A failure here means createSession skipped the §7.1 step-4
 // claim or did not stamp the §4.6 binding on the row.
 func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1575,6 +1578,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 // two-step /start path keeps WARM_POOL_EXHAUSTED (§5.2), so this asserts the
 // create-handler code, not the shared classifier's default.
 func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1628,6 +1632,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 // claimless contract — every service-mode session would burn a warm pod.
 // A failure here means claimAtCreate did not take the service-mode branch.
 func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1677,6 +1682,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 // A failure here means createSession did not roll back the create-time
 // claim when store.Create failed.
 func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1719,6 +1725,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 // recordSessionCompleted does not run the §4.5 claimless reclaim for a
 // pre-running terminal session, so the pod stays bound forever.
 func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}

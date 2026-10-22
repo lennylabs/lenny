@@ -31,6 +31,7 @@ import (
 // spec: §7.3 (Resume driver; Retry and Resume), §5.2 (Pool Configuration and
 // Execution Modes), §16.1 (Metrics)
 func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}

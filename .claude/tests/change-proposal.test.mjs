@@ -6404,14 +6404,16 @@ t.section("B41. consecutive dead agents stop the run as stopped-dead-agents, unc
 {
   // A firing that finishes hands its count back, so a run of dead agents that
   // spans the seam is one run: seven dead in the child and one more after it
-  // is the eighth.
-  const carried = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:firing:after:1": null }), {
+  // is the eighth. The first agent after a firing is its state save, which is
+  // awaited in line so that a resumed run invokes its agents in the same order.
+  const carried = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "save-state:*": null, "hash:firing:after:1": null }), {
     subworkflows: { "change-proposal-decisions.js": { status: "done", phaseState: {}, deadAgentStreak: 7 } },
   });
   t.check("the count the child returns continues in the parent",
     carried.result && carried.result.status === "stopped-dead-agents" &&
-      matching(carried.calls, "hash:firing:after:1").length === 1,
-    (carried.result && carried.result.status) + "/" + matching(carried.calls, "hash:firing:after:1").length);
+      matching(carried.calls, "save-state:decisions:0").length === 1 &&
+      never(carried.calls, "hash:firing:after:1"),
+    (carried.result && carried.result.status) + "/" + matching(carried.calls, "save-state:decisions:0").length);
   const reset = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:firing:after:1": null }), {
     subworkflows: { "change-proposal-decisions.js": { status: "done", phaseState: {}, deadAgentStreak: 0 } },
   });

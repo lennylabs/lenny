@@ -155,7 +155,9 @@ func resumeToPending(t *testing.T, f *rebindFixture, id string) sessionstore.Ses
 // overwritten and its pod or slot leaks, or a failed attempt gives away the
 // lease the coordinating replica must keep.
 func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
+	t.Parallel()
 	t.Run("leftover binding is released before the new bind", func(t *testing.T) {
+		t.Parallel()
 		f := newRebindFixture(t, "sess-rebind", false)
 		seedAwaitingSession(t, f.store, sessionstore.Session{ID: "sess-rebind", WorkspaceSnapshot: checkpointed()})
 		f.registry.Put(&podsession.BindResult{SessionID: "sess-rebind", TenantID: "acme", SandboxName: "sbx-old"})
@@ -183,6 +185,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 	})
 
 	t.Run("pre-claim failure writes nothing and keeps this replica's lease", func(t *testing.T) {
+		t.Parallel()
 		f := newRebindFixture(t, "sess-keep", true)
 		seedAwaitingSession(t, f.store, sessionstore.Session{ID: "sess-keep", WorkspaceSnapshot: checkpointed()})
 		f.setHolder("sess-keep", "rep-1")
@@ -215,6 +218,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 // lease holder owns, or the resume was refused on a replica that could have
 // recorded it.
 func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		row  sessionstore.Session
@@ -226,6 +230,7 @@ func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
 		}`)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			id := "sess-foreign-" + tc.name
 			f := newRebindFixture(t, id, false)
 			row := tc.row
