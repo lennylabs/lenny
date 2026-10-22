@@ -465,7 +465,7 @@ The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on 
 
 In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive on a `keep` pod, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process on a `keep` pod and to a newly launched one on a `restart` pod;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
 
-(d) In step 3, append `On a pod that runs the runtime supervisor each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
+(d) In the post-cleanup scrub sequence, at the end of step 3, the line `3. Purge environment variables injected for the previous session (tracked by the adapter; restored to the pod baseline set recorded at first boot).`, append `On a pod that runs the runtime supervisor each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
 
 (e) Replace the **What the scrub reaches.** paragraph, from `**What the scrub reaches.** The scrub executes in the adapter's process and reaches what that process can reach.` through `because the pod keeps the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").`, with:
 
@@ -481,7 +481,9 @@ lacks. In the sidecar deployment model
 operate on volumes mounted into both containers, so they clear and verify the
 runtime container's view of those paths. Step 1 signals only processes in the
 adapter container, because `shareProcessNamespace` is forbidden
-([§13.1](13_security-model.md#131-pod-security)). On a `restart` pod ("Runtime-process
+([§13.1](13_security-model.md#131-pod-security)). Steps 1 and 1b run on every pod,
+including a pod that runs the runtime supervisor, because a process started in
+the adapter container during a session can outlive that session. On a `restart` pod ("Runtime-process
 lifetime" above) the runtime end reaches every process in the runtime container other
 than the supervisor, and the sweep reaches what
 [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
