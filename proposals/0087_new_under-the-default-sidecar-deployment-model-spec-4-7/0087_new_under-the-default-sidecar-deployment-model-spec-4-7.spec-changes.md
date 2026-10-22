@@ -49,7 +49,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A runtime process sends the supervisor a catchable signal | As the signal table states | SPEC-2 **Signals.** |
 | A pool sets `restart` on a runtime that is not `restartable` | Pool admission refuses the pool | SPEC-5 |
 | A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server refuses the Runtime | SPEC-1 |
-| A `cleanupCommands` command exits non-zero, or the commands are still running at the `cleanupTimeoutSeconds` deadline | As the `cleanupCommands` row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
+| The supervisor's `cleaned` reply carries an error code | As the `cleanupCommands` row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
 | A pool's `recycle.runtimeProcess` is edited from `keep` to `restart`, and the pool no longer requires `acknowledgeProcessLevelIsolation` | Every acquisition refuses each used `keep` pod and requests its drain; the pods created after the edit are `restart` pods | SPEC-5 |
 | Nonce-only mode | Neither peer-UID check is available, and ordering identifies both ends | SPEC-4 |
 
@@ -255,7 +255,11 @@ container and no supervisor.
   The `cleanupTimeoutSeconds` deadline falls when the commands together have
   run for `cleanupTimeoutSeconds`, and at that deadline the worker sends
   SIGKILL to the running command's session. The §5.2 **Supervised scrub sequence.** table
-  states the outcome of each result.
+  states the outcome of each result. On a `keep` pod the live runtime process
+  can stop or signal the worker, and stop, signal, read, or trace the commands,
+  at the same UID;
+  the effect is confined to its own tenant-pinned pod, and a cleanup it
+  disrupts fails the scrub.
 - **SDK-warm.** On a `preConnect` runtime
   ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) the SDK
   process is the runtime process. Whether a pod launches it at warm-up is fixed
@@ -508,7 +512,7 @@ Insert after step 6 of the post-cleanup scrub sequence and before the **What the
 | Step 0, in the adapter | next | scrub failed; the `cleanupCommands` row is skipped; next | Not applicable | Not applicable | next, because no session is held |
 | First end: `end` with no SIGTERM grace (**End.**) | next | not live; next | link failure | Not applicable | next |
 | First sweep: `sweep` (**Sweep.**) | next | not live; next | link failure | not live; next | next |
-| `cleanupCommands`: `cleanup` (**Cleanup.**) | next | scrub failed, for a command that exits non-zero or cannot run and for commands still running at the `cleanupTimeoutSeconds` deadline; next | link failure | Not applicable | next |
+| `cleanupCommands`: `cleanup` (**Cleanup.**) | next | scrub failed, for a command that exits non-zero, is ended by a signal, or cannot run, for a worker that exits abnormally, and for commands still running at the `cleanupTimeoutSeconds` deadline; next | link failure | Not applicable | next |
 | Second end: `end`, as in the first end | next | not live; next | link failure | Not applicable | next |
 | Second sweep: `sweep`, as in the first sweep | next | not live; next | link failure | not live; next | next |
 | Listener rebind, in the adapter (**End.**) | next | not live; next | Not applicable | Not applicable | next |
