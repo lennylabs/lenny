@@ -38,7 +38,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A `preConnect` pod is created while the pool's SDK-warm circuit breaker is open | No warm-up launch; the pod warms pod-warm, and its first session's start launches the process at step 7 | SPEC-2 **SDK-warm.** |
 | The property self-test fails on a gating property | The adapter logs each failed property; on a `restart` pod the failure has the outcome the **Liveness.** table states for a cause before READY, and a `keep` pod serves | SPEC-4, SPEC-2 **Liveness.** |
 | `launch` fails | `launched` carries an error code and the session's start fails; the pod retires as the **Liveness.** table states | SPEC-2 **Liveness.**, SPEC-7 |
-| The runtime process exits, other than by an `end`, while it holds a session | `exited` reaches the adapter, each session whose entry is registered when the adapter handles it fails with `runtime_crash` into the §7.3 resume flow, and the pod is not live and retires as the **Liveness.** table states | SPEC-2 **Crash.**, **Liveness.** |
+| The runtime process exits, other than by an `end`, while it holds a session | `exited` reaches the adapter, each session the process holds when the adapter handles it fails with `runtime_crash` into the §7.3 resume flow, and the pod is not live and retires as the **Liveness.** table states | SPEC-2 **Crash.**, **Liveness.** |
 | The runtime process exits around the release of a session, the last session of a pod included | The session fails with `runtime_crash` when the adapter handles `exited` before the deregistration of its entry, and does not fail when the adapter handles it after; the pod is not live in both cases | SPEC-2 **Crash.**, **Liveness.** |
 | The runtime process exits, other than by an `end`, while it holds no session, on any pod, such as a `restart` pod between its last release and the boundary's `end` | No session fails, and the pod is not live and retires as the **Liveness.** table states for the pod's phase | SPEC-2 **Crash.**, **Liveness.** |
 | A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | The adapter exits non-zero, and the pod retires through **Exit**, as the **Liveness.** table states | SPEC-2 **Liveness.** |
@@ -309,9 +309,7 @@ container and no supervisor.
   [§4.7.1](#471-role-and-gateway-rpc-contract) rule-8 record of the session's
   start until the deregistration of the session's registry entry. The adapter
   handles `exited` as one step of the
-  [§4.7.1](#471-role-and-gateway-rpc-contract) registry critical section, so
-  an `exited` handled before a session's deregistration fails that session,
-  one handled after it fails none, and the pod is not live in both cases.
+  [§4.7.1](#471-role-and-gateway-rpc-contract) registry critical section.
 - **Liveness.** The adapter holds one not-live state for the pod. It sets
   the state on each cause below, and nothing clears it, because the pod
   retires. While the state is set the adapter refuses every session start,
@@ -474,7 +472,7 @@ From its launch by the runtime supervisor to its end (**Runtime process lifetime
 
 In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
 
-In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor, the step is the setting of the not-live state and the decision of which sessions the exited process holds, which are the sessions whose entries are registered at that step, so an exit handled before a session's deregistration fails that session and one handled after it does not ([Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Crash.** and **Liveness.**).` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
+In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor, the step is the setting of the not-live state and the failing of the sessions the exited process holds ([Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Crash.** and **Liveness.**).` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
 
 In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:** step 3, delete `, which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")`.
 
@@ -673,10 +671,10 @@ Insert after step 6 of the post-cleanup scrub sequence and before the **What the
 |:--|:--|:--|:--|:--|:--|
 | Release of the last session: the `Shutdown` that brings occupancy to zero deregisters the session's registry entry before it writes the session's `session_end` ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)) | next | Not applicable | Not applicable | Not applicable | A crash if the adapter handles `exited` before the deregistration; not live either way; next |
 | Step 0, in the adapter | next | scrub failed; the `cleanupCommands` row is skipped; next | Not applicable | Not applicable | not live; next |
-| First end: `end` with no SIGTERM grace (**End.**) | next | not live; next | link failure | Not applicable | next: an exit during an `end` is part of that end (**Children.**) |
+| First end: `end` with no SIGTERM grace (**End.**) | next | not live; next | link failure | Not applicable | not live; next |
 | First sweep: `sweep` (**Sweep.**) | next | not live; next | link failure | not live; next | not live; next |
 | `cleanupCommands`: `cleanup` (**Cleanup.**) | next | scrub failed, for each error code `cleaned` carries, which **Children.** states; next | link failure | Not applicable | not live; next |
-| Second end: `end`, as in the first end | next | not live; next | link failure | Not applicable | next: an exit during an `end` is part of that end (**Children.**) |
+| Second end: `end`, as in the first end | next | not live; next | link failure | Not applicable | not live; next |
 | Second sweep: `sweep`, as in the first sweep | next | not live; next | link failure | not live; next | not live; next |
 | Listener rebind, in the adapter (**End.**) | next | not live; next | Not applicable | Not applicable | not live; next |
 | Steps 1 to 6, in the adapter | The adapter reports the scrub (`ReportPodScrub`), and the outcomes of the rows above decide the pod | scrub failed; the adapter reports the scrub | Not applicable | Not applicable | not live; next |
