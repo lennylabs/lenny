@@ -5217,19 +5217,31 @@ async function loadDecisionsState() {
     log("resumeState was set but no open-decisions phase state was readable; the first firing collects everything");
     return;
   }
-  const parts = await parallel(
-    meta.chunks.map((want, i) => async () => {
-      for (let t = 1; t <= STATE_TRIES; t++) {
-        const raw = await robustAgent(runExactly(STATE_TOOL + " slice " + DECISIONS_STATE_PATH + " " + i + " " + STATE_CHUNK), {
+  // Retried in rounds, as the save is, rather than in a loop per slot: a retry
+  // inside a slot is invoked when that slot's reader returns, so with two
+  // slices retrying the order of the retries was set by agent latency, which a
+  // resumed run does not reproduce (see saveDecisionsState).
+  const parts = meta.chunks.map(() => null);
+  let unread = meta.chunks.map((_, i) => i);
+  for (let t = 1; t <= STATE_TRIES && unread.length > 0; t++) {
+    const raws = await parallel(
+      unread.map((i) => () =>
+        robustAgent(runExactly(STATE_TOOL + " slice " + DECISIONS_STATE_PATH + " " + i + " " + STATE_CHUNK), {
           label: "resume-state:decisions:" + i + (t > 1 ? ":retry" + t : ""), model: "haiku", effort: "high", phase: "Decisions",
-        });
-        const m = String(raw || "").match(/CP_SLICE_BEGIN([\s\S]*)CP_SLICE_END/);
-        const got = m ? stateSig(m[1]) : null;
-        if (got && got.len === want.len && got.sum === want.sum) return m[1];
+        }),
+      ),
+    );
+    unread = unread.filter((i, k) => {
+      const m = String(raws[k] || "").match(/CP_SLICE_BEGIN([\s\S]*)CP_SLICE_END/);
+      const got = m ? stateSig(m[1]) : null;
+      const want = meta.chunks[i];
+      if (got && got.len === want.len && got.sum === want.sum) {
+        parts[i] = m[1];
+        return false;
       }
-      return null;
-    }),
-  );
+      return true;
+    });
+  }
   let st = null;
   if (parts.every((p) => typeof p === "string")) {
     try {
@@ -5255,33 +5267,31 @@ async function loadDecisionsState() {
     );
   }
 }
-// The save runs beside the rest of the run rather than in front of it: nothing
-// in this run reads the file, which exists for the next relaunch. A save waits
-// for the one before it, because both write the same parts directory, and the
-// run waits for the last one before it returns.
-let pendingStateSave = null;
-function saveDecisionsState() {
-  const prior = pendingStateSave;
+// The save is AWAITED where it is called. It ran beside the rest of the run,
+// which saved a few seconds per firing and broke resume replay: the runtime
+// keys each agent() call on a hash chained over the calls invoked before it,
+// so the save's agents interleaved with the main flow's in an order set by how
+// long each agent took. A resumed run replays agents at once, interleaves them
+// differently, and misses the journal from the first save onward. Nothing may
+// invoke agents concurrently with the main flow except through a parallel()
+// whose invocation order does not depend on agent latency.
+async function saveDecisionsState() {
   // The corpus inventory is left out: a relaunch rebuilds it with one cheap
   // agent, and it keys nothing a firing compares.
   const { corpus, ...persisted } = decisionsState;
   const json = stateText(persisted);
   const transfer = transferText(persisted);
-  pendingStateSave = (async () => {
-    // A save in flight when the dead-agent breaker trips stops at its next
-    // agent call. The save runs beside the run and nothing awaits it on that
-    // path, so the stop is absorbed here rather than left as an unhandled
-    // rejection; the previous state file stands, because the join that
-    // replaces it is the save's last agent.
-    try {
-      if (prior) await prior;
-      await writeStateChunks(json, transfer);
-    } catch (e) {
-      if (!isDeadAgentStop(e)) throw e;
+  // A save cut short by the dead-agent breaker leaves the previous state file
+  // standing, because the join that replaces it is the save's last agent. The
+  // stop is rethrown, so the run halts where any other agent's stop halts it.
+  try {
+    await writeStateChunks(json, transfer);
+  } catch (e) {
+    if (isDeadAgentStop(e)) {
       log("The open-decisions phase state was NOT saved: the dead-agent breaker stopped the run. The previous file stands");
     }
-  })();
-  return pendingStateSave;
+    throw e;
+  }
 }
 async function writeStateChunks(json, transfer) {
   const chunks = stateChunks(transfer);
@@ -5505,7 +5515,7 @@ async function fireDecisionsPhase(trigger) {
   // The state the child leaves behind is what makes a later firing carry an
   // untouched item's disposition forward and see a reversal of one it applied.
   if (res.phaseState && typeof res.phaseState === "object") decisionsState = res.phaseState;
-  saveDecisionsState();
+  await saveDecisionsState();
   const record = {
     firing: n,
     trigger,
@@ -6559,15 +6569,30 @@ async function runReviewLoop(cfg) {
         // an outage must not be able to suppress a finding permanently.
         if (!first) return { f, vs: [], refutedBy: null, dead: true };
         if (!first.confirmed) return { f, vs: [first], refutedBy: verifyOrder[0] };
-        const second = await verifySteps[verifyOrder[1]](f);
-        if (!second) return { f, vs: [first], refutedBy: null, dead: true };
-        return {
-          f,
-          vs: [first, second],
-          refutedBy: second.confirmed ? null : verifyOrder[1],
-        };
+        // The second skeptic runs in a second barrier below rather than here.
+        // Invoked here, the second skeptics started in the order the first ones
+        // finished, which a resumed run does not reproduce because a replayed
+        // agent returns at once, so the resume missed the journal from this
+        // round on. The runtime keys each agent() call on a hash chained over
+        // the calls invoked before it.
+        return { f, vs: [first], refutedBy: null, awaitingSecond: true };
       }),
     );
+    const awaitingSecond = verdicts.map((v, i) => (v && v.awaitingSecond ? i : -1)).filter((i) => i >= 0);
+    if (awaitingSecond.length > 0) {
+      const seconds = await parallel(awaitingSecond.map((i) => () => verifySteps[verifyOrder[1]](verdicts[i].f)));
+      awaitingSecond.forEach((i, k) => {
+        const v = verdicts[i];
+        const second = seconds[k];
+        delete v.awaitingSecond;
+        if (!second) {
+          v.dead = true;
+          return;
+        }
+        v.vs = [v.vs[0], second];
+        v.refutedBy = second.confirmed ? null : verifyOrder[1];
+      });
+    }
 
     const live = verdicts.filter(Boolean);
     // Extend the completeness guard to verification: a verifier that failed after
@@ -8354,9 +8379,6 @@ log(
     : "Review log: the unclosed OPEN and DEFERRED counts could not be read",
 );
 
-// The last state save runs beside the rest of the run; wait for it, so a
-// relaunch finds the state this run ended with.
-if (pendingStateSave) await pendingStateSave;
 // The last agents of the run may have tripped the breaker inside a parallel
 // stage, which absorbs the throw; the result is the stop's rather than a status
 // that reads as a finished run.

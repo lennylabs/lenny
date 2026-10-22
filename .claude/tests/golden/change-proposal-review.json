@@ -227,29 +227,11 @@
     "blocks": []
   },
   {
-    "label": "hash:firing:after:1",
-    "phase": "Review",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
     "label": "save-state:decisions:0",
     "phase": "Decisions",
     "model": "haiku",
     "schema": "",
     "blocks": []
-  },
-  {
-    "label": "hash:spec:after-first-firing",
-    "phase": "Review",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
   },
   {
     "label": "save-state:decisions:check",
@@ -266,6 +248,49 @@
     "model": "haiku",
     "schema": "",
     "blocks": []
+  },
+  {
+    "label": "save-state:decisions:check:2",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "save-state:decisions:0:retry3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:check:3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:firing:after:1",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:spec:after-first-firing",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
   },
   {
     "label": "r1:review:single-source",
@@ -450,15 +475,6 @@
     ]
   },
   {
-    "label": "save-state:decisions:check:2",
-    "phase": "Decisions",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
     "label": "r1:round-boundary",
     "phase": "non-spec R1: fix",
     "model": "haiku",
@@ -468,24 +484,8 @@
     ]
   },
   {
-    "label": "save-state:decisions:0:retry3",
-    "phase": "Decisions",
-    "model": "haiku",
-    "schema": "",
-    "blocks": []
-  },
-  {
     "label": "hash:non-spec:non-spec-loop",
     "phase": "Review",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
-    "label": "save-state:decisions:check:3",
-    "phase": "Decisions",
     "model": "haiku",
     "schema": "",
     "blocks": [
