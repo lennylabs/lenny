@@ -190,6 +190,7 @@ func newSuspensionRig(t *testing.T, withBinder bool) *suspensionRig {
 	r.cp = &fakeSuspensionCheckpointer{order: &r.order}
 	r.exec = &releasingExecutor{order: &r.order}
 	opts := Options{
+		DevTenantHeader:        true,
 		Executor:               r.exec,
 		PodRegistry:            r.registry,
 		SuspensionCheckpointer: r.cp,

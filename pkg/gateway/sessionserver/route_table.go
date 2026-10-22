@@ -100,5 +100,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manage(s.handleElicitationRespond))
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manage(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
-	return mux
+	// spec: §10.2 — a tenant-scoped route runs only for a request whose
+	// tenant resolves from its principal (or, under --dev-mode, from the
+	// dev header). F-10.2.21.
+	return s.requireTenant(mux)
 }

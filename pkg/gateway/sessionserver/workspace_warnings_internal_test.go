@@ -21,7 +21,7 @@ import (
 // spec: §7.4.
 func TestPublishWorkspaceWarnings_EmitsOnePerWarning_spec_7_4_15(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -47,7 +47,7 @@ func TestPublishWorkspaceWarnings_EmitsOnePerWarning_spec_7_4_15(t *testing.T) {
 // F-7.4.15: a nil result or empty warnings is a no-op.
 func TestPublishWorkspaceWarnings_NilSafe_spec_7_4_15(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	srv.publishWorkspaceWarnings(nil)
 	srv.publishWorkspaceWarnings(&podsession.BindResult{TenantID: "default", SessionID: "sess_w"})
@@ -63,7 +63,7 @@ func TestPublishWorkspaceWarnings_NilSafe_spec_7_4_15(t *testing.T) {
 // without parsing the human-readable message.
 func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -102,7 +102,7 @@ func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing
 // structured fields. Other warning codes (empty path) do not leak them.
 func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -158,7 +158,7 @@ func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) 
 // bus with `schemaVersion` and `unknownType` structured fields.
 func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	sv := 1
 	srv.publishParsePlanWarnings("default", "sess_p", []workspaceplan.Warning{{
@@ -198,7 +198,7 @@ func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
 // fields.
 func TestPublishParsePlanWarnings_PathCollision_spec_14_338(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	win := 1
 	lose := 0
@@ -235,7 +235,7 @@ func TestPublishParsePlanWarnings_PathCollision_spec_14_338(t *testing.T) {
 // fabricated short-circuit cannot leak an event.
 func TestPublishParsePlanWarnings_NoOpOnEmpty_spec_14(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	srv.publishParsePlanWarnings("default", "sess_e", nil)
 	srv.publishParsePlanWarnings("default", "", []workspaceplan.Warning{{Code: workspaceplan.WarnPathCollision}})
@@ -253,7 +253,7 @@ func TestPublishParsePlanWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter})
 
 	sv := 1
 	srv.publishParsePlanWarnings("default", "sess_o", []workspaceplan.Warning{{
@@ -296,7 +296,7 @@ func TestPublishWorkspaceWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",

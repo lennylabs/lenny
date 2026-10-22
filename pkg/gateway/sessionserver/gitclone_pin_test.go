@@ -97,8 +97,9 @@ func TestCreatePinsGitCloneShaRef(t *testing.T) {
 	// A ref already in commit-SHA form is pinned directly — the resolver
 	// is never consulted.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_pin_sha" },
-		RefResolver: &pinStubResolver{},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_pin_sha" },
+		RefResolver:     &pinStubResolver{},
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -114,8 +115,9 @@ func TestCreatePinsGitCloneShaRef(t *testing.T) {
 
 func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_pin_branch" },
-		RefResolver: &pinStubResolver{shas: map[string]string{"main": pinSHA}},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_pin_branch" },
+		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -136,9 +138,10 @@ func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
 	creds := &stubVCSCreds{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:         func() string { return "sess_vcs_thread" },
-		RefResolver:    stub,
-		VCSCredentials: creds,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_vcs_thread" },
+		RefResolver:     stub,
+		VCSCredentials:  creds,
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
@@ -164,9 +167,10 @@ func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
 	creds := &stubVCSCreds{err: errors.New("pool exhausted")}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:         func() string { return "sess_vcs_fail" },
-		RefResolver:    stub,
-		VCSCredentials: creds,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_vcs_fail" },
+		RefResolver:     stub,
+		VCSCredentials:  creds,
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
@@ -184,7 +188,8 @@ func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 
 func TestCreateGitCloneTransientResolveError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_transient" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_transient" },
 		RefResolver: &pinStubResolver{err: &workspaceplan.ResolveError{
 			Reason: workspaceplan.ResolveNetworkError, Err: errors.New("connection reset"),
 		}},
@@ -202,7 +207,8 @@ func TestCreateGitCloneTransientResolveError(t *testing.T) {
 
 func TestCreateGitCloneUnresolvableError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_unresolvable" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_unresolvable" },
 		RefResolver: &pinStubResolver{err: &workspaceplan.ResolveError{
 			Reason: workspaceplan.ResolveRefNotFound, Err: errors.New("ref not found"),
 		}},
@@ -222,7 +228,8 @@ func TestCreateGitCloneNoResolverStoresVerbatim(t *testing.T) {
 	// With no RefResolver wired the gateway stores the submitted plan
 	// unchanged — a non-SHA gitClone ref is not pinned and not rejected.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_noresolver" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_noresolver" },
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -264,6 +271,7 @@ func gitCloneAuthPlanJSON(host, ref string) json.RawMessage {
 
 func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_auth_ok" },
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
@@ -278,6 +286,7 @@ func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
 
 func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_auth_unsupported" },
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
 	})
@@ -294,7 +303,8 @@ func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 
 func TestCreateGitCloneAuthAmbiguousHost(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_auth_ambiguous" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_auth_ambiguous" },
 		CredentialPools: vcsPoolStore(
 			t,
 			githubPool("gh-a", "github.com"),
@@ -316,8 +326,9 @@ func TestCreateGitCloneAuthNoPoolStoreSkipsCheck(t *testing.T) {
 	// With no CredentialPools store wired the §14 auth binding check is
 	// skipped, so a gateway without one is unchanged.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_auth_skip" },
-		RefResolver: &pinStubResolver{},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_auth_skip" },
+		RefResolver:     &pinStubResolver{},
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
@@ -331,6 +342,7 @@ func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
 	// A gitClone source with no auth block is public; the binding check
 	// does not apply even when a pool store is wired.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_public" },
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),

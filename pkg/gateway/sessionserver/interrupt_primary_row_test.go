@@ -137,7 +137,7 @@ func TestInterruptChecksThePrimaryRowBeforeDrivingTheAdapter_spec_15_1(t *testin
 			reg := podsession.NewRegistry()
 			reg.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: dialStubAdapter(t, stub)})
 			srv := sessionserver.New(laggingReadStore{Store: base, updateErr: tc.updateErr},
-				sessionserver.Options{PodRegistry: reg})
+				sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -201,7 +201,7 @@ func TestInterruptWithoutBindingSkipsThePrimaryRead_spec_15_1(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
-			srv := sessionserver.New(laggingReadStore{Store: base}, sessionserver.Options{PodRegistry: podsession.NewRegistry()})
+			srv := sessionserver.New(laggingReadStore{Store: base}, sessionserver.Options{DevTenantHeader: true, PodRegistry: podsession.NewRegistry()})
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()

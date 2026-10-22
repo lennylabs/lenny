@@ -106,6 +106,7 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 	// wired as the §8.3 delegation-time availability checker. It reads the
 	// tenant policy, runtime registry, credential pools, and session store.
 	credChecker := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
 		Tenants:         tenants,
 		Runtimes:        runtimes,
 		CredentialPools: credPools,
@@ -113,9 +114,10 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,

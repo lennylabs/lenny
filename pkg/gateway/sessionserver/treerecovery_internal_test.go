@@ -28,7 +28,7 @@ func TestTerminalMarkerReasonMapping_spec_8_10_1027(t *testing.T) {
 	}
 	for _, tc := range cases {
 		store := memstore.New()
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		ctx := context.Background()
 		row := sessionstore.Session{ID: "n1", TenantID: "acme", State: session.StateRunning}
 		if err := store.Create(ctx, row); err != nil {
@@ -49,7 +49,7 @@ func TestTerminalMarkerReasonMapping_spec_8_10_1027(t *testing.T) {
 // registry is unwired, so the recovery degrades to a no-op on a gateway
 // without pod binding (dev / unit-test).
 func TestNodeNeedsRecoveryNilRegistry(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	if srv.podRegistry != nil {
 		t.Skip("test assumes the bare server has no pod registry")
 	}
@@ -65,7 +65,7 @@ func TestNodeNeedsRecoveryNilRegistry(t *testing.T) {
 // safe no-op that leaves the running children untouched.
 func TestRecoverDelegationTreePlumbing_spec_8_10_1016(t *testing.T) {
 	store := memstore.New()
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 	if srv.treeRecovery == nil {
 		t.Fatal("New must build the tree-recovery orchestrator")
 	}
@@ -107,7 +107,7 @@ func TestRecoverDelegationTreePlumbing_spec_8_10_1016(t *testing.T) {
 // A nil orchestrator and an empty root are no-ops that still fire the
 // hook so the resume handler can call the trigger unconditionally.
 func TestRecoverDelegationTreeEmptyRootNoOp(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	done := make(chan string, 1)
 	srv.treeRecoveryHook = func(rootID string) { done <- rootID }
 	srv.recoverDelegationTree(context.Background(), "acme", "")

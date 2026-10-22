@@ -46,6 +46,7 @@ func TestRecordSessionRetryEmitsMetricAndAudit_F_7_3_10_F_7_3_18(t *testing.T) {
 	counter := &recordedRetry{}
 	audit := &retryAuditSink{}
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		IncSessionRetry:    counter.record,
 		LifecycleAuditSink: audit,
 		Clock:              func() time.Time { return time.Date(2026, 5, 26, 11, 0, 0, 0, time.UTC) },
@@ -77,7 +78,7 @@ func TestRecordSessionRetryEmitsMetricAndAudit_F_7_3_10_F_7_3_18(t *testing.T) {
 
 func TestRecordSessionRetryDefaultsFailureClassToUnknown_F_7_3_10(t *testing.T) {
 	counter := &recordedRetry{}
-	srv := New(memstore.New(), Options{IncSessionRetry: counter.record})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, IncSessionRetry: counter.record})
 	srv.recordSessionRetry(context.Background(), sessionstore.Session{
 		ID:       "sess_noclass",
 		TenantID: "acme",
@@ -96,7 +97,7 @@ func TestRecordSessionRetryDefaultsFailureClassToUnknown_F_7_3_10(t *testing.T) 
 // OnSessionRetryAttempt (usage.go).
 // spec: §7.3 (Retry and Resume) "Retry accounting."
 func TestRecordSessionRetryWithoutHooksIsNoOp_F_7_3_10_F_7_3_18(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.recordSessionRetry(context.Background(), sessionstore.Session{
 		ID:       "sess_nohook",
 		TenantID: "acme",
@@ -133,6 +134,7 @@ func TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3(t *testing.T) {
 	audit := &retryAuditSink{}
 	store := memstore.New()
 	srv := New(store, Options{
+		DevTenantHeader:    true,
 		IncSessionRetry:    counter.record,
 		LifecycleAuditSink: audit,
 		RetryPolicyCaps:    session.RetryPolicyCaps{MaxRetries: 2},

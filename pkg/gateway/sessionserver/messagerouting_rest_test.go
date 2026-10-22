@@ -46,9 +46,10 @@ func newRoutingServerWith(t *testing.T, mutate func(*sessionserver.Options)) (*s
 	coord := sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: inbox, DLQ: dlq})
 	store := memstore.New()
 	opts := sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -212,7 +213,8 @@ func TestMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor: executor.NewEchoExecutor(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
 		// No Messaging coordinator.
 	})
 	seedSessionState(t, store, "sess_nb", session.StateResumePending)

@@ -72,13 +72,14 @@ func newOpenAIServers(t *testing.T, clock func() time.Time, id string) (*httptes
 	exec := executor.NewEchoExecutor()
 
 	translatorHandler := translator.NewOpenAIChatHandler(store, exec, translator.OpenAIChatOptions{
-		Clock:  clock,
-		IDFunc: func() string { return id },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return id },
 	})
 	tsOpenAI := httptest.NewServer(translatorHandler.Handler())
 	t.Cleanup(tsOpenAI.Close)
 
-	restHandler := sessionserver.New(store, sessionserver.Options{})
+	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	tsREST := httptest.NewServer(restHandler.Handler())
 	t.Cleanup(tsREST.Close)
 

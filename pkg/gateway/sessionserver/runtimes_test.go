@@ -36,7 +36,7 @@ func TestListRuntimesUnfiltered(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "gemini-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -54,7 +54,7 @@ func TestListRuntimesUnfiltered(t *testing.T) {
 }
 
 func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T)
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "gemini-agent", Type: runtimestore.TypeAgent})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 	srv.SetPlaygroundCaps(playgroundCapsFake{hidden: "gemini-agent"}, nil)
 
 	// origin=playground: gemini-agent is excluded by allowedRuntimes.
@@ -128,7 +128,7 @@ func TestListRuntimesSurfacesOptionsSchemaAndVersion_spec_27_4(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "bare-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -169,7 +169,7 @@ func TestListModelsOpenAIFormat(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "claude-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -196,7 +196,7 @@ func TestListModelsOpenAIFormat(t *testing.T) {
 }
 
 func TestListModelsEmptyWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -218,7 +218,7 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "claude-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	// §9.1: every discovery response embeds a top-level
 	// adapterCapabilities block describing the adapter serving the
@@ -255,7 +255,7 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 // is the OpenAI Chat surface, the historic /v1/models consumer.
 // spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -284,7 +284,7 @@ func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testin
 // open-responses capability block (PathPrefix /v1/responses, session
 // continuity true). spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=open-responses", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -316,7 +316,7 @@ func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testin
 // or forward-compatible consumer still receives a well-formed response.
 // spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesUnknownDefaults_spec_9_1_35(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=does-not-exist", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -336,7 +336,7 @@ func TestListModelsAdapterCapabilitiesUnknownDefaults_spec_9_1_35(t *testing.T) 
 }
 
 func TestDiscoveryAdapterCapabilitiesPresentWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -364,7 +364,7 @@ func TestListRuntimesSurfacesAgentInterface(t *testing.T) {
 			Skills:      []runtimestore.AgentInterfaceSkill{{ID: "review"}},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -394,7 +394,7 @@ func TestListRuntimesSurfacesPublicMetadataRefs(t *testing.T) {
 			{Key: "secret-spec", ContentType: "application/yaml", Visibility: runtimestore.VisibilityInternal, Content: "internalonly"},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -427,7 +427,7 @@ func TestRuntimeMetaServesPublicEntry(t *testing.T) {
 			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"name":"carded"}`},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	// §5.1: a public entry is served opaquely under its content type.
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/carded/meta/agent-card", nil)
@@ -461,7 +461,7 @@ func TestRuntimeMetaHidesNonPublicAndMissing(t *testing.T) {
 			{Key: "secret-spec", Visibility: runtimestore.VisibilityInternal, Content: "internal: true"},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	// §5.1: a non-public entry, a missing key, and a missing runtime
 	// all return an identical 404, so the endpoint does not enumerate.
@@ -488,7 +488,7 @@ func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
 			{Key: "card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"p":1}`},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	// §5.1: an internal entry is served to any authenticated caller.
 	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/spec", nil)
@@ -528,7 +528,7 @@ func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
 	})
 	access := tenantaccessstore.NewMemory()
 	_, _ = access.Grant(context.Background(), tenantaccessstore.KindRuntime, "carded", "acme", "platform-admin", time.Now())
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, TenantAccess: access})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes, TenantAccess: access})
 
 	// §5.1: a tenant entry is served to a caller whose tenant holds a
 	// §4 tenant-access grant for the runtime.
@@ -561,7 +561,7 @@ func TestInternalRuntimeMetaTenantFailsClosedWithoutAccessStore(t *testing.T) {
 			{Key: "cost", Visibility: runtimestore.VisibilityTenant, Content: "secret"},
 		},
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rr := httptest.NewRecorder()
@@ -583,7 +583,7 @@ func TestListRuntimesResolvesDerivedRuntime(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "derived", BaseRuntime: "base",
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -626,7 +626,7 @@ func TestRuntimeMetaResolvesDerivedRuntime(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "derived", BaseRuntime: "base",
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/derived/meta/agent-card", nil)
 	rr := httptest.NewRecorder()
@@ -661,7 +661,8 @@ func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Runtimes: runtimes, Environments: envs, Tenants: tenants,
+		DevTenantHeader: true,
+		Runtimes:        runtimes, Environments: envs, Tenants: tenants,
 	})
 
 	// §9.1: discovery is identity-filtered — a member of security-team
@@ -716,7 +717,8 @@ func TestListRuntimesEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Runtimes: runtimes, Environments: envs, Tenants: tenants,
+		DevTenantHeader: true,
+		Runtimes:        runtimes, Environments: envs, Tenants: tenants,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=research-team", nil)
@@ -746,7 +748,8 @@ func TestListRuntimesEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing
 	tenants := tenantstore.NewMemory()
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", NoEnvironmentPolicy: "allow-all"})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Runtimes: runtimes, Environments: envs, Tenants: tenants,
+		DevTenantHeader: true,
+		Runtimes:        runtimes, Environments: envs, Tenants: tenants,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=does-not-exist", nil)
@@ -776,7 +779,7 @@ func TestListRuntimesEmptyEnvironmentIDStubIsNoOp_spec_10_6_672(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "gemini-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -805,7 +808,7 @@ func TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "claude-agent", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

@@ -89,6 +89,7 @@ func newResumeCredFixture(t *testing.T) *resumeCredFixture {
 		sessions: &faultSessions{Store: inner},
 	}
 	f.srv = New(f.sessions, Options{
+		DevTenantHeader:  true,
 		PodBinder:        &podsession.Binder{Client: c, Namespace: ns},
 		AgentNamespace:   ns,
 		Tenants:          f.tenants,

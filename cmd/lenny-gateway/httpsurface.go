@@ -844,10 +844,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 	})
 
-	// Auth next-to-outermost. AllowDevRoles is only honoured when the
-	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
-	// deployments leave it off so X-Lenny-Roles cannot self-grant
-	// platform-admin.
+	// Auth next-to-outermost. The dev-header transport (AllowDevHeaders,
+	// AllowDevRoles) is honoured only when the dev flag is set
+	// (LENNY_DEV_MODE=true or --dev-mode). Outside dev mode the middleware
+	// requires a verified bearer on every route except the spec's public
+	// routes and deletes any client-sent X-Lenny-* identity header, so a
+	// client can neither self-grant platform-admin through X-Lenny-Roles
+	// nor name a tenant through X-Lenny-Tenant-ID. See
+	// applyAuthPostureOptions. F-10.2.21.
 	//
 	// The §10.2 Bearer path is verified with the bearer verifier built
 	// above: the in-process Token Service signer, so a token minted by
@@ -859,8 +863,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// spec: §10.2 — operator-configurable OIDC tenant claim
 		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
 		TenantClaimName: *tenantIDClaim,
-		AllowDevHeaders: true,
-		AllowDevRoles:   *devMode,
 		Verifier:        w.bearerVerifier,
 		Revocations:     revProp,
 		// §27.6 / §27.3.1 — authoritative per-request
@@ -914,6 +916,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// tenant with 403 TENANT_NOT_FOUND. See applyTenantAuthOptions for the
 	// dev-mode dev-header exception. F-10.2.1, T-10.2.11.
 	applyTenantAuthOptions(&authOpts, *multiTenant, *devMode, w.tenants)
+	// spec: §10.2 — outside dev mode every non-public route requires a
+	// verified bearer and the X-Lenny-* identity headers are ignored.
+	// F-10.2.21.
+	applyAuthPostureOptions(&authOpts, *devMode)
 	handler = authmw.Wrap(handler, authOpts)
 
 	// §16.1 request metrics, wrapped before recovery so panics still

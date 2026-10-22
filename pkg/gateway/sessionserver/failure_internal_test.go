@@ -186,6 +186,7 @@ func newFunnelFixture(t *testing.T, o funnelOpts) *funnelFixture {
 		leases:      newFakeLeaseStore(),
 	}
 	opts := Options{
+		DevTenantHeader:        true,
 		CoordinationLeaseStore: f.leases,
 		ReplicaID:              "rep-1",
 		AgentNamespace:         funnelNS,

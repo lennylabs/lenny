@@ -127,16 +127,17 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 	h.T.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:          h.Store,
-		Terminal:       r.Server,
-		SessionService: r.Server,
-		Delivery:       r.Server,
-		Executor:       r.Executor,
-		InputWaits:     r.InputWaits,
-		Messaging:      h.Messaging,
-		Interactions:   h.Interactions,
-		Clock:          h.Clock.Now,
-		TenantID:       Tenant,
+		DevTenantFallback: true,
+		Store:             h.Store,
+		Terminal:          r.Server,
+		SessionService:    r.Server,
+		Delivery:          r.Server,
+		Executor:          r.Executor,
+		InputWaits:        r.InputWaits,
+		Messaging:         h.Messaging,
+		Interactions:      h.Interactions,
+		Clock:             h.Clock.Now,
+		TenantID:          Tenant,
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))

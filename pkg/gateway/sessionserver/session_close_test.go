@@ -64,7 +64,7 @@ func (e *releaseRecordingExecutor) Release(_ context.Context, _ string, d execut
 func TestTerminalTransitionReleasesWithDisposition_spec_6_2(t *testing.T) {
 	store := memstore.New()
 	exec := &releaseRecordingExecutor{}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	seedRunning(t, store, "sess-disp")
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-disp", nil)
@@ -109,7 +109,7 @@ func seedRunning(t *testing.T, store sessionstore.Store, id string) {
 func TestTerminalTransitionClosesTheExecutor(t *testing.T) {
 	store := memstore.New()
 	exec := &closeRecordingExecutor{}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	seedRunning(t, store, "sess-term")
 
 	// DELETE transitions the running session to cancelled (terminal).
@@ -129,7 +129,7 @@ func TestTerminalTransitionClosesTheExecutor(t *testing.T) {
 func TestNonTerminalTransitionLeavesTheExecutorOpen(t *testing.T) {
 	store := memstore.New()
 	exec := &closeRecordingExecutor{}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	seedRunning(t, store, "sess-int")
 
 	// interrupt transitions running → suspended, a non-terminal state.
@@ -151,7 +151,7 @@ func TestTerminalTransitionSealsTheWorkspaceBeforeClosing(t *testing.T) {
 	order := []string{}
 	exec := &closeRecordingExecutor{order: &order}
 	sealer := &recordingSealer{order: &order}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec, Sealer: sealer})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Sealer: sealer})
 	seedRunning(t, store, "sess-seal")
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-seal", nil)
@@ -174,7 +174,7 @@ func TestTerminalTransitionSealsTheWorkspaceBeforeClosing(t *testing.T) {
 func TestNonTerminalTransitionDoesNotSeal(t *testing.T) {
 	store := memstore.New()
 	sealer := &recordingSealer{}
-	srv := sessionserver.New(store, sessionserver.Options{Sealer: sealer})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Sealer: sealer})
 	seedRunning(t, store, "sess-keep")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-keep/interrupt", nil)

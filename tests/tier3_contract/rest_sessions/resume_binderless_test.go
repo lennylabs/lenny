@@ -31,7 +31,7 @@ import (
 // still in the error catalog or the served OpenAPI document.
 func TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

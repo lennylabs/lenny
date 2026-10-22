@@ -75,6 +75,7 @@ func TestSealWorkspaceRetriesThenSucceeds_spec_7_1_3(t *testing.T) {
 	metric := &sealMetricRec{}
 	sealer := &flakySealer{failUntil: 2} // fail twice, succeed on the 3rd
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:              true,
 		Sealer:                       sealer,
 		SealSleep:                    sleep,
 		ObserveWorkspaceSealDuration: metric.observe,
@@ -108,6 +109,7 @@ func TestSealWorkspaceBackoffBoundedByWindow_spec_7_1_3(t *testing.T) {
 	metric := &sealMetricRec{}
 	sealer := &flakySealer{failUntil: -1} // never succeeds
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:              true,
 		Sealer:                       sealer,
 		SealSleep:                    sleep,
 		ObserveWorkspaceSealDuration: metric.observe,
@@ -160,6 +162,7 @@ func TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent(t *tes
 			metric := &sealMetricRec{}
 			sealer := &flakySealer{failUntil: -1, err: status.Error(code, "workspace exceeds workspaceSizeLimitBytes")}
 			srv := New(memstore.New(), Options{
+				DevTenantHeader:              true,
 				Sealer:                       sealer,
 				SealSleep:                    sleep,
 				ObserveWorkspaceSealDuration: metric.observe,
@@ -201,6 +204,7 @@ func TestRecordSessionCompletedPermanentSealStaysTimeoutClass_spec_7_1_permanent
 	metric := &sealMetricRec{}
 	store := memstore.New()
 	srv := New(store, Options{
+		DevTenantHeader:              true,
 		Sealer:                       &flakySealer{failUntil: -1, err: status.Error(codes.FailedPrecondition, "workspace exceeds workspaceSizeLimitBytes")},
 		ObserveWorkspaceSealDuration: metric.observe,
 		Clock:                        func() time.Time { return time.Unix(0, 0).UTC() },
@@ -232,6 +236,7 @@ func TestRecordSessionCompletedFailsOnSealTimeout_spec_7_1_3(t *testing.T) {
 	audit := &captureLifecycleAudit{}
 	store := memstore.New()
 	srv := New(store, Options{
+		DevTenantHeader:              true,
 		Sealer:                       &flakySealer{failUntil: -1, err: errors.New("minio: 503 slow down")},
 		SealSleep:                    sleep,
 		ObserveWorkspaceSealDuration: metric.observe,
@@ -287,6 +292,7 @@ func TestRecordSessionCompletedCleanSealStaysCompleted_spec_7_1_3(t *testing.T) 
 	metric := &sealMetricRec{}
 	store := memstore.New()
 	srv := New(store, Options{
+		DevTenantHeader:              true,
 		Sealer:                       &flakySealer{failUntil: 0}, // succeeds first try
 		ObserveWorkspaceSealDuration: metric.observe,
 		Clock:                        func() time.Time { return time.Unix(0, 0).UTC() },

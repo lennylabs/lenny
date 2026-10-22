@@ -62,8 +62,8 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// claim and just persists the row, so the echo path is unchanged.
 	// spec: §15 built-in adapter single-shot compute model.
 	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv}
-	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder})
-	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, Transcripts: w.transcripts})
+	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, DevTenantHeader: *w.f.devMode})
+	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, Transcripts: w.transcripts, DevTenantHeader: *w.f.devMode})
 
 	// ----- §4.9 end-user credential registry -----
 	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret

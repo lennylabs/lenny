@@ -81,7 +81,8 @@ func TestConcurrentSuspendedResumesAtQuota_spec_11_1(t *testing.T) {
 		DLQ:   sessioninbox.NewDLQ(rc, 10),
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Tenants: tenants, Executor: executor.NewEchoExecutor(), Messaging: coord,
+		DevTenantHeader: true,
+		Tenants:         tenants, Executor: executor.NewEchoExecutor(), Messaging: coord,
 		PodBinder: &podsession.Binder{}, PodRegistry: podsession.NewRegistry(),
 	})
 	t.Cleanup(srv.Close)

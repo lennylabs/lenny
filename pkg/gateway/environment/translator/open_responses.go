@@ -168,6 +168,8 @@ type OpenResponsesHandler struct {
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
 	cont           *continuity
+	// devTenantHeader mirrors OpenResponsesOptions.DevTenantHeader.
+	devTenantHeader bool
 }
 
 // OpenResponsesOptions configures the handler.
@@ -195,6 +197,15 @@ type OpenResponsesOptions struct {
 	// rehydrate then returns empty prior history and record is a no-op.
 	// spec: §15 built-in adapter single-shot compute model.
 	Transcripts transcriptstore.Store
+
+	// DevTenantHeader, when true, lets a request with no authenticated
+	// principal name its tenant through the X-Lenny-Tenant-ID dev header
+	// and resolves a request with neither to `default`. The gateway sets
+	// it only under --dev-mode. When false, the default, the tenant comes
+	// only from the principal and a request without one is refused with
+	// 401 before any session is created or read (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantHeader bool
 }
 
 // NewOpenResponsesHandler returns a configured handler.
@@ -230,7 +241,8 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		// nil Transcripts store makes rehydrate a no-op returning empty prior
 		// history and record a no-op, preserving the in-memory and unit path.
 		// spec: §15 built-in adapter single-shot compute model.
-		cont: &continuity{sessions: store, transcripts: opts.Transcripts},
+		cont:            &continuity{sessions: store, transcripts: opts.Transcripts},
+		devTenantHeader: opts.DevTenantHeader,
 	}
 }
 
@@ -268,7 +280,11 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 			"input is required")
 		return
 	}
-	tenantID := resolveTenant(r)
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
 	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
@@ -439,7 +455,11 @@ func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.T
 }
 
 func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request) {
-	tenantID := resolveTenant(r)
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
 	id := r.PathValue("id")
 	row, err := h.store.Get(r.Context(), tenantID, id)
 	if err != nil {

@@ -148,6 +148,7 @@ func TestRequestElicitationDropRecordsMetric(t *testing.T) {
 	rec := &fakeElicitationMetrics{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
 		ElicitationMetrics:        rec,
@@ -180,6 +181,7 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
 		ElicitationDepthPolicy:     elicitation.DepthSuppressAtDepth,
@@ -215,6 +217,7 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
 		ElicitationDepthPolicy:     elicitation.DepthSuppressAtDepth,
@@ -276,6 +279,7 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              store,
 		Events:             bus,
 		Interactions:       interactions,

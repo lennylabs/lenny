@@ -47,9 +47,10 @@ func TestSuspendedBacklogCountsTheSuspensionMillisecond_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Messaging:   coord,
-		PodBinder:   &podsession.Binder{},
-		PodRegistry: registry,
+		DevTenantHeader: true,
+		Messaging:       coord,
+		PodBinder:       &podsession.Binder{},
+		PodRegistry:     registry,
 	})
 	t.Cleanup(srv.Close)
 	ctx := context.Background()

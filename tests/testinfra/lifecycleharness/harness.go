@@ -326,6 +326,7 @@ func (h *Harness) AddReplica(id string) *Replica {
 		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
 	}
 	r.Server = sessionserver.New(h.Store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Events:                  bus,
 		IDFunc:                  newIDFunc(id),
 		DefaultIsolationProfile: isolation.ProfileSandboxed,

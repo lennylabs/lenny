@@ -60,6 +60,7 @@ func TestBinderlessResumeRecordsNoResumeAttempt_spec_16_1(t *testing.T) {
 	store := memstore.New()
 	counter := &resumeCounter{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IncSessionResumeAttempt: counter.record,
 	})
 	seedAwaitingParent(t, store, "sess_metric")
@@ -84,7 +85,7 @@ func TestBinderlessResumeRecordsNoResumeAttempt_spec_16_1(t *testing.T) {
 func TestResumeEmitsSessionResumedAuditRow_F_7_3_18(t *testing.T) {
 	store := memstore.New()
 	sink := &lifecycleSink{}
-	srv := sessionserver.New(store, sessionserver.Options{LifecycleAuditSink: sink})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 	seedAwaitingParent(t, store, "sess_audit")
 
 	rr := resumeAndDrive(t, srv, "sess_audit")
@@ -107,7 +108,7 @@ func TestResumeEmitsSessionResumedAuditRow_F_7_3_18(t *testing.T) {
 // proceeds without panic. F-7.3.18.
 func TestResumeWithoutAuditSinkDoesNotPanic_F_7_3_18(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	seedAwaitingParent(t, store, "sess_noaudit")
 	rr := resumeAndDrive(t, srv, "sess_noaudit")
 	if rr.Code != http.StatusOK {
@@ -119,7 +120,7 @@ func TestResumeWithoutAuditSinkDoesNotPanic_F_7_3_18(t *testing.T) {
 // resume call still succeeds. F-7.3.10.
 func TestResumeWithoutMetricsHookSucceeds_F_7_3_10(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	seedAwaitingParent(t, store, "sess_nometric")
 	rr := resumeAndDrive(t, srv, "sess_nometric")
 	if rr.Code != http.StatusOK {

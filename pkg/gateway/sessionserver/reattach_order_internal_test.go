@@ -22,7 +22,7 @@ func TestEmitChildrenReattachedStreamsArchiveInSettlementOrder_spec_8_10_1062(t 
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{Events: bus, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("parent", "", session.StateAwaitingClientAction, now))
@@ -70,7 +70,7 @@ func TestEmitChildrenReattachedSuppressedWhenNoneActive_spec_8_10_1062(t *testin
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{Events: bus, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("p", "", session.StateAwaitingClientAction, now))

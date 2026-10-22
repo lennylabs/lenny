@@ -62,7 +62,7 @@ import (
 func TestMessageBodyIgnoresStaleSlotAddress_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	rec := &recordingExecutor{Executor: executor.NewEchoExecutor()}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: rec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: rec})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	id := createSession(t, ts)
@@ -336,6 +336,7 @@ func slotFailServerWithErr(t *testing.T, cluster client.Client, store sessionsto
 		},
 	}
 	return sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
 		AgentNamespace:          slotFailNamespace,

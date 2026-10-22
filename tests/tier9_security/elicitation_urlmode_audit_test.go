@@ -165,8 +165,9 @@ func newGatewayURLModeElicitationServer(t *testing.T, auditor mcptools.Delegatio
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Interactions: interactions,
+		DevTenantFallback: true,
+		Store:             store,
+		Interactions:      interactions,
 		ElicitationURLModeAllowlist: elicitation.URLModeAllowlist{
 			Enabled:         true,
 			DomainAllowlist: []string{"accounts.example.com"},

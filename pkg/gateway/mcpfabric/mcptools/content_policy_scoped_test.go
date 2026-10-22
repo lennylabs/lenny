@@ -54,13 +54,14 @@ func newMCPContentPolicy(t *testing.T, chain *interceptor.Chain, cp mcptools.Con
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:           store,
-		Executor:        executor.NewEchoExecutor(),
-		Interceptors:    chain,
-		ContentPolicies: cp,
-		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:          func() string { return "sess_mcp" },
-		TenantID:        "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Interceptors:      chain,
+		ContentPolicies:   cp,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store
 }

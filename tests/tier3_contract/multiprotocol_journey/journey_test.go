@@ -72,11 +72,12 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	mem := memorystore.NewInMemory(0, nil)
 
 	restHandler := sessionserver.New(store, sessionserver.Options{
-		Executor: exec,
-		Events:   bus,
-		Memory:   mem,
-		Clock:    clock,
-		IDFunc:   func() string { return idSeed },
+		DevTenantHeader: true,
+		Executor:        exec,
+		Events:          bus,
+		Memory:          mem,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsREST := httptest.NewServer(restHandler.Handler())
 	t.Cleanup(tsREST.Close)
@@ -98,29 +99,32 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Now: clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:          store,
-		SessionCreator: restHandler,
-		SessionService: restHandler,
-		Executor:       exec,
-		Memory:         mem,
-		Events:         bus,
-		Clock:          clock,
-		IDFunc:         func() string { return idSeed },
-		TenantID:       journeyTenant,
+		DevTenantFallback: true,
+		Store:             store,
+		SessionCreator:    restHandler,
+		SessionService:    restHandler,
+		Executor:          exec,
+		Memory:            mem,
+		Events:            bus,
+		Clock:             clock,
+		IDFunc:            func() string { return idSeed },
+		TenantID:          journeyTenant,
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())
 	t.Cleanup(tsMCP.Close)
 
 	chatHandler := translator.NewOpenAIChatHandler(store, exec, translator.OpenAIChatOptions{
-		Clock:  clock,
-		IDFunc: func() string { return idSeed },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsChat := httptest.NewServer(chatHandler.Handler())
 	t.Cleanup(tsChat.Close)
 
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:  clock,
-		IDFunc: func() string { return idSeed },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsResponses := httptest.NewServer(respHandler.Handler())
 	t.Cleanup(tsResponses.Close)

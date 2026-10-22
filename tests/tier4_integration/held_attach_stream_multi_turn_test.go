@@ -210,8 +210,9 @@ func multiTurnRESTServer(t *testing.T, e executor.Executor) (*httptest.Server, s
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    e,
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        e,
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
@@ -301,11 +302,12 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 	multiTurnSeed(t, store, "sess-mcp", session.StateRunning)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: e,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "unused" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          e,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "unused" },
+		TenantID:          "acme",
 	})
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)

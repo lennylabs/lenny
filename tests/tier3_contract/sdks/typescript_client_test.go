@@ -271,7 +271,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	// bus; events published to that bus are the stream the SDK
 	// consumes.
 	bus := sessionevents.NewBus(64)
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Events: bus})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Events: bus})
 
 	// disconnector severs the SDK's first SSE connection mid-stream so
 	// the reconnect path is exercised. It is defined in
@@ -649,7 +649,7 @@ func TestTypeScriptClientIdempotencyKeyHandling(t *testing.T) {
 	// The gateway is wrapped in the §11.5 idempotency middleware so a
 	// replayed key returns the cached create response.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
 	t.Cleanup(ts.Close)
 	h := spawnTSHelper(t, ts.URL)

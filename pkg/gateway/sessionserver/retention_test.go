@@ -50,7 +50,8 @@ func TestExtendRetentionSetsDeadlineFromClock(t *testing.T) {
 	seedSessionForRetention(t, store)
 	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock: func() time.Time { return fixedNow },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return fixedNow },
 	})
 
 	rr := extendRetentionRequest(t, srv.Handler(),
@@ -77,7 +78,7 @@ func TestExtendRetentionSetsDeadlineFromClock(t *testing.T) {
 func TestExtendRetentionRejectsZeroAndNegative(t *testing.T) {
 	store := memstore.New()
 	seedSessionForRetention(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	for _, ttl := range []int64{0, -5} {
 		rr := extendRetentionRequest(t, srv.Handler(),
@@ -91,7 +92,7 @@ func TestExtendRetentionRejectsZeroAndNegative(t *testing.T) {
 func TestExtendRetentionRejectsMalformedJSON(t *testing.T) {
 	store := memstore.New()
 	seedSessionForRetention(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_R/extend-retention",
 		bytes.NewReader([]byte("not-json")))
@@ -105,7 +106,7 @@ func TestExtendRetentionRejectsMalformedJSON(t *testing.T) {
 
 func TestExtendRetentionMissingSessionReturns404(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	rr := extendRetentionRequest(t, srv.Handler(),
 		sessionserver.ExtendRetentionRequest{TTLSeconds: 3600})
@@ -122,7 +123,7 @@ func TestExtendRetentionAcceptsTerminalSession(t *testing.T) {
 	if row.State != session.StateCompleted {
 		t.Fatalf("seed should be completed, got %q", row.State)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	rr := extendRetentionRequest(t, srv.Handler(),
 		sessionserver.ExtendRetentionRequest{TTLSeconds: 60})
 	if rr.Code != http.StatusOK {

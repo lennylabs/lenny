@@ -140,14 +140,15 @@ func newMCPRoutingDeliveryWith(t *testing.T, exec executor.Executor, mutate func
 	}
 	del := &dlqDelivery{coord: coord}
 	deps := mcptools.Deps{
-		Store:      store,
-		Executor:   exec,
-		InputWaits: inputwait.NewRegistry(),
-		Messaging:  coord,
-		Delivery:   del,
-		Clock:      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:     func() string { return "msg_fixed" },
-		TenantID:   "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		InputWaits:        inputwait.NewRegistry(),
+		Messaging:         coord,
+		Delivery:          del,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "msg_fixed" },
+		TenantID:          "acme",
 	}
 	if mutate != nil {
 		mutate(&deps)

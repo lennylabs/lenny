@@ -137,11 +137,12 @@ func testIntraPodResidual(t *testing.T) {
 	// GatewayControl.CallPlatformTool. Leaving it unset mirrors that
 	// intra-pod surface directly.
 	mcptools.Register(srv, mcptools.Deps{
-		Store:      store,
-		Delegation: svc,
-		Runtimes:   runtimes,
-		Clock:      clk,
-		TenantID:   tenant,
+		DevTenantFallback: true,
+		Store:             store,
+		Delegation:        svc,
+		Runtimes:          runtimes,
+		Clock:             clk,
+		TenantID:          tenant,
 	})
 
 	if err := store.Create(context.Background(), sessionstore.Session{

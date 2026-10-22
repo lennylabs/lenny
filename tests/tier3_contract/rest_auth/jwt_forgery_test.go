@@ -38,7 +38,7 @@ func newForgeryTestServer(t *testing.T) (*httptest.Server, *memstore.Store, *jwt
 	signer := jwt.NewHMACSigner("gateway-key-1", []byte("gateway-secret-material"))
 	verifier := jwt.NewRotatingVerifier(signer, 24*time.Hour)
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	wrapped := authmw.Wrap(srv.Handler(), authmw.Options{
 		MultiTenant: false,
 		RequireAuth: true,

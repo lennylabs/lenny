@@ -89,7 +89,7 @@ func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
 			State: session.StateRunning, CreatedAt: time.Unix(int64(10+i), 0),
 		})
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	first := getSessionPage(t, h, "limit=2")
@@ -125,7 +125,7 @@ func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
 // spec: §15.1 — an unsupported sort field is rejected with
 // VALIDATION_ERROR carrying details.fields[0].rule. F-15.1.6.
 func TestListSessionsRejectsUnknownSortField_spec_15_1_1236(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?sort=bogus:asc", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -162,7 +162,7 @@ func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
 	_ = store.Create(ctx, sessionstore.Session{ID: "gold", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(3, 0), Labels: map[string]string{"team": "payments", "tier": "gold"}})
 	_ = store.Create(ctx, sessionstore.Session{ID: "silver", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0), Labels: map[string]string{"team": "payments", "tier": "silver"}})
 	_ = store.Create(ctx, sessionstore.Session{ID: "search", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0), Labels: map[string]string{"team": "search"}})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	got := listSessions(t, h, "label=team=payments")
@@ -188,7 +188,7 @@ func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "acme_s", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	_ = store.Create(ctx, sessionstore.Session{ID: "globex_s", TenantID: "globex", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	admin := func(req *http.Request) {
@@ -224,7 +224,7 @@ func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "live", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0)})
 	_ = store.Create(ctx, sessionstore.Session{ID: "df", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(1, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	// Default includes the derive_failure row.
@@ -246,7 +246,7 @@ func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
 // spec: §14 — a label key that is empty is rejected at the create
 // boundary so the on-row selector set stays well-formed. F-15.1.15.
 func TestCreateRejectsEmptyLabelKey_spec_14_311(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Labels:     map[string]string{"": "oops"},
@@ -263,7 +263,7 @@ func TestCreateRejectsEmptyLabelKey_spec_14_311(t *testing.T) {
 // spec: §14 / §15.1 — labels submitted at create survive
 // the round trip onto the GET /v1/sessions/{id} envelope. F-15.1.15.
 func TestCreateLabelsRoundTripOnGet_spec_15_1_598(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",

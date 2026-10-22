@@ -217,6 +217,12 @@ type Server struct {
 	handlers          map[string]ToolHandler
 	order             []string
 	resultInterceptor ResultInterceptor
+	// toolCallGate, when set, runs before every tools/call on every
+	// transport (POST /mcp, the WebSocket leg, and DispatchTool). A
+	// non-nil *ToolError refuses the call with that error before any tool
+	// handler runs. mcptools installs it outside dev mode to refuse a
+	// call with no authenticated principal. spec: §10.2. F-10.2.21.
+	toolCallGate ToolCallGate
 	// idem holds the §11.5 idempotency wiring (Store + tenant resolver
 	// + allow-list of tools that admit an idempotencyKey field). A
 	// zero IdempotencyConfig disables the per-tool idempotency path.
@@ -234,6 +240,26 @@ type Server struct {
 	// `attach_session` tools/call falls through to the registered snapshot
 	// handler on every transport. spec: §15.2. F-15.2.2.
 	attach AttachConfig
+}
+
+// ToolCallGate decides whether a tools/call may run for the request
+// context. It returns nil to admit the call, or the *ToolError the
+// transport reports instead of running the tool.
+type ToolCallGate func(ctx context.Context) *ToolError
+
+// SetToolCallGate installs the pre-dispatch gate every tools/call passes
+// through. A nil gate (the default) admits every call.
+func (s *Server) SetToolCallGate(g ToolCallGate) {
+	s.toolCallGate = g
+}
+
+// gateToolCall runs the installed gate, admitting the call when none is
+// installed.
+func (s *Server) gateToolCall(ctx context.Context) *ToolError {
+	if s.toolCallGate == nil {
+		return nil
+	}
+	return s.toolCallGate(ctx)
 }
 
 // SetResultInterceptor installs the §4.8 PreToolResult hook. A nil
@@ -352,6 +378,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 		s.WriteLennyError(w, req.ID, errInvalidParams, "VALIDATION_ERROR", "params is not a valid tools/call object", nil)
 		return
 	}
+	// spec: §10.2 — the pre-dispatch gate refuses the call before any
+	// handler, including the attach stream, runs. F-10.2.21.
+	if te := s.gateToolCall(ctx); te != nil {
+		s.WriteLennyError(w, req.ID, errInvalidRequest, te.Code, te.Msg, te.Details)
+		return
+	}
 	// spec: §15.2 — when attach streaming is wired and the
 	// caller requested the Streamable HTTP SSE channel, an attach_session
 	// tools/call is upgraded to the per-session event stream instead of a
@@ -465,6 +497,11 @@ func (s *Server) DispatchTool(ctx context.Context, name string, arguments json.R
 	handler, found := s.handlers[name]
 	if !found {
 		return ToolResult{}, false, nil
+	}
+	// spec: §10.2 — the pre-dispatch gate applies on this entry point
+	// too. F-10.2.21.
+	if te := s.gateToolCall(ctx); te != nil {
+		return toolErrorResult(te.Code, te), true, nil
 	}
 	res, herr := handler(ctx, arguments)
 	if herr != nil {

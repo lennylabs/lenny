@@ -200,6 +200,7 @@ func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanif
 		}
 	}
 	srv := sessionserver.New(sessions, sessionserver.Options{
+		DevTenantHeader:          true,
 		Blobs:                    store,
 		CheckpointManifestReader: mstore,
 		CheckpointManifestWriter: mstore,

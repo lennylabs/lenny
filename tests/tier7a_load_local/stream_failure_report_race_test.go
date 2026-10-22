@@ -145,7 +145,7 @@ func TestStreamFailureReportRacesWatchdogReleaseAndSend_spec_28_5_1(t *testing.T
 		Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Namespace: "lenny-agents",
 	})
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: pe, PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: pe, PodRegistry: reg})
 	pe.SetStreamFailureHandler(srv.ReportAttachStreamFailure)
 	ctx := context.Background()
 

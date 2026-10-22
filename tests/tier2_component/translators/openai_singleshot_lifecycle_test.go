@@ -407,6 +407,7 @@ var _ executor.SessionReleaser = (*ssSpyExecutor)(nil)
 // binder and the spy executor over the real PodExecutor, sharing store.
 func ssChatHandler(store sessionstore.Store, srv *sessionserver.Server, spy *ssSpyExecutor) *translator.OpenAIChatHandler {
 	return translator.NewOpenAIChatHandler(store, spy, translator.OpenAIChatOptions{
+		DevTenantHeader:  true,
 		SingleShotBinder: ssSingleShotBinder{srv: srv},
 		DefaultRuntime:   "echo",
 	})
@@ -488,6 +489,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-ok" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -585,6 +587,7 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-slot" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -646,6 +649,7 @@ func TestSingleShotReleasesAndRetiresOnDispatchError_spec_15(t *testing.T) {
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-senderr" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -703,6 +707,7 @@ func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-timeout" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -759,6 +764,7 @@ func TestSingleShotPoolExhaustionReturnsRetryableEnvelope_spec_7_1(t *testing.T)
 	registry := podsession.NewRegistry()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-exhaust" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -834,6 +840,7 @@ func TestSingleShotCredentialExhaustionHasNoRetryAfter_spec_4_9(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-credexhaust" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -944,7 +951,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 		{
 			name: "concurrency-limit", wantCode: "QUOTA_EXCEEDED", wantStat: http.StatusTooManyRequests,
 			opts: func(sessionstore.Store) sessionserver.Options {
-				return sessionserver.Options{MaxConcurrentSessionsPerRuntime: 1}
+				return sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 1}
 			},
 			seed: func(store sessionstore.Store) {
 				if err := store.Create(context.Background(), ssRunningRow("run-echo-0", "acme", "alice", "echo")); err != nil {
@@ -965,6 +972,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 					t.Fatalf("seed admission-rate counter: %v", err)
 				}
 				return sessionserver.Options{
+					DevTenantHeader:           true,
 					Clock:                     func() time.Time { return fixed },
 					AdmissionRateLimitCounter: c,
 					PerRuntimePerMinute:       1,
@@ -981,6 +989,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 					t.Fatalf("seed tenant: %v", err)
 				}
 				return sessionserver.Options{
+					DevTenantHeader:            true,
 					Tenants:                    ts,
 					Environments:               environmentstore.NewMemory(),
 					DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
@@ -997,7 +1006,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 				}); err != nil {
 					t.Fatalf("seed user: %v", err)
 				}
-				return sessionserver.Options{Users: us}
+				return sessionserver.Options{DevTenantHeader: true, Users: us}
 			},
 			mutate: principal,
 		},
@@ -1008,7 +1017,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 				if err := ts.Create(context.Background(), tenantstore.Tenant{ID: "acme", MaxConcurrentSessions: 1}); err != nil {
 					t.Fatalf("seed tenant: %v", err)
 				}
-				return sessionserver.Options{Tenants: ts}
+				return sessionserver.Options{DevTenantHeader: true, Tenants: ts}
 			},
 			seed: func(store sessionstore.Store) {
 				if err := store.Create(context.Background(), ssRunningRow("quota-echo-0", "acme", "alice", "echo")); err != nil {
@@ -1019,7 +1028,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 		{
 			name: "policy-chain", wantCode: "QUOTA_EXCEEDED", wantStat: http.StatusTooManyRequests,
 			opts: func(sessionstore.Store) sessionserver.Options {
-				return sessionserver.Options{Interceptors: ssRejectChain(t)}
+				return sessionserver.Options{DevTenantHeader: true, Interceptors: ssRejectChain(t)}
 			},
 			mutate: principal,
 		},

@@ -265,12 +265,13 @@ func TestRegisterAdapterUnderTestErrorMatrixEndToEnd(t *testing.T) {
 func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users userstore.Store) (*httptest.Server, *httptest.Server) {
 	t.Helper()
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
-	rest := sessionserver.New(store, sessionserver.Options{Tenants: tenants, Users: users})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenants, Users: users})
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store: store, SessionCreator: rest, SessionService: rest,
+		DevTenantFallback: true,
+		Store:             store, SessionCreator: rest, SessionService: rest,
 		Executor: executor.NewEchoExecutor(), Users: users, Tenants: tenants,
 		IDFunc: func() string { return "sess_mcp_fence" }, TenantID: "acme",
 	})

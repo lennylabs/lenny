@@ -192,7 +192,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// snapshot frame. The push goroutine writes concurrently with this
 		// read loop; nhooyr serializes the two writers on the connection.
 		if s.attach.Events != nil {
-			if req, args, ok := wsAttachRequest(data); ok {
+			// spec: §10.2 — a gated call falls through to dispatchToolCall,
+			// which reports the gate's refusal. F-10.2.21.
+			if req, args, ok := wsAttachRequest(data); ok && s.gateToolCall(watchCtx) == nil {
 				if attachCancel != nil {
 					attachCancel()
 				}
@@ -360,6 +362,11 @@ func (s *Server) dispatchToolCall(ctx context.Context, req jsonRPCRequest) []byt
 		}
 		b, _ := json.Marshal(envelope)
 		return b
+	}
+	// spec: §10.2 — the pre-dispatch gate refuses the call before any
+	// handler runs. F-10.2.21.
+	if te := s.gateToolCall(ctx); te != nil {
+		return marshalLennyError(req.ID, errInvalidRequest, te.Code, te.Msg, te.Details)
 	}
 	handler, ok := s.handlers[params.Name]
 	if !ok {

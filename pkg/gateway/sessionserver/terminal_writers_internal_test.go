@@ -120,7 +120,7 @@ func TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1(t *testing.T) {
 				}
 			}}
 			bus := sessionevents.NewBus(64)
-			srv := New(store, Options{Events: bus})
+			srv := New(store, Options{DevTenantHeader: true, Events: bus})
 			defer srv.Close()
 			rr := terminalRequest(t, srv, tc.method, tc.path)
 			if rr.Code != tc.wantCode {
@@ -195,7 +195,7 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 			bus := sessionevents.NewBus(64)
-			srv := New(store, Options{Events: bus})
+			srv := New(store, Options{DevTenantHeader: true, Events: bus})
 			defer srv.Close()
 			tc.write(srv)
 			completes := eventCount(bus, "s", "session_complete")

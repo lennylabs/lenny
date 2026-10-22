@@ -30,7 +30,7 @@ func TestPersistWorkspaceRootRecordsFirstValue_spec_7_3_15(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 	srv.persistWorkspaceRoot(context.Background(), "acme", "s1", "/workspace")
 	got, err := store.Get(context.Background(), "acme", "s1")
 	if err != nil {
@@ -58,7 +58,7 @@ func TestPersistWorkspaceRootDerivesSlotRootOnce_spec_7_3_15(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 	srv.persistWorkspaceRoot(context.Background(), "acme", "s4", "/workspace")
 	got, err := store.Get(context.Background(), "acme", "s4")
 	if err != nil {
@@ -85,7 +85,7 @@ func TestPersistWorkspaceRootIgnoresEmpty_spec_7_3_15(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 	srv.persistWorkspaceRoot(context.Background(), "acme", "s2", "")
 	got, _ := store.Get(context.Background(), "acme", "s2")
 	if got.WorkspaceRoot != "/workspace/slots/s2/current" {
@@ -109,7 +109,7 @@ func TestPersistWorkspaceRootDoesNotOverwriteRecorded_spec_7_3_15(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 	srv.persistWorkspaceRoot(context.Background(), "acme", "s3", "/replacement-workspace")
 	got, _ := store.Get(context.Background(), "acme", "s3")
 	if got.WorkspaceRoot != "/workspace/slots/s3/current" {

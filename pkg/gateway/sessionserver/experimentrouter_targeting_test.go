@@ -43,6 +43,7 @@ func targetingHarness(t *testing.T, ofrepHandler http.HandlerFunc) targetingResu
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "targeting-test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:      true,
 		Experiments:          exps,
 		Tenants:              ofrepTenant(t, ofrepSrv.URL),
 		ExperimentRejections: reporter,

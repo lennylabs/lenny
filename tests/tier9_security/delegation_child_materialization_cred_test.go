@@ -225,6 +225,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	}
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -245,6 +246,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	// every admitted child.
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
 		Runtimes:          runtimes,
