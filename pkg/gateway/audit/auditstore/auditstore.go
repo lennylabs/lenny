@@ -508,8 +508,15 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // erasure-role connection into the orchestrator is F-12.2.16). Empty
 // tenant id is rejected.
 //
+// The delete covers PII-redacted dead-lettered rows too. Their
+// audit_redaction_receipts rows survive it: the receipt table carries no
+// foreign key onto audit_log.id, holds no personal data, and is exempt
+// from DeleteByTenant, so the delete neither touches the receipts nor
+// fails on them (§12.8 RedactionReceipt schema).
+//
 // spec: §12.1; §11.7 item 7 (erasure_mode
-// escape on the append-only ledger); §12.8 Phase 4 (tenant deletion).
+// escape on the append-only ledger); §12.8 Phase 4 (tenant deletion);
+// §12.8 (RedactionReceipt schema).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, ErrEmptyScope
@@ -526,7 +533,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 		// spec: §12.8 / Phase 4 — skip gdpr.* erasure-receipt rows
 		// so the tenant teardown retains the compliance receipts that must
 		// outlive the tenant (audit_redaction_receipts are separately
-		// exempt, §12.8). The retained gdpr.*-only remnant is a
+		// exempt and reference no audit_log row by key, §12.8). The retained gdpr.*-only remnant is a
 		// standalone compliance set exempt from §11.7 chain verification;
 		// the continuity check skips any tenant in state='deleting' or
 		// state='deleted' (the states the tenant carries from this Phase-4
@@ -591,6 +598,13 @@ type PruneOptions struct {
 // does; the connection must run as the lenny_erasure role. An empty
 // tenant id is rejected so a misconfigured sweep cannot drop another
 // tenant's chain.
+//
+// A PII-redacted dead-lettered row ages out like any other row. Its
+// RedactionReceipt is retained under audit.gdprRetentionDays and outlives
+// the row: audit_redaction_receipts carries no foreign key onto
+// audit_log.id, so the delete leaves the receipt and its signature intact
+// and never fails with a foreign-key violation (§12.8 RedactionReceipt
+// schema).
 //
 // spec: §16.4; §11.7; §12.8.
 func (s *Store) PruneRetention(ctx context.Context, tenantID string, opts PruneOptions) (int, error) {
