@@ -16,15 +16,6 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// permissiveRegistry accepts every tenant. The minimal gateway uses
-// this in single-tenant mode (where the §10.2 dev-header transport
-// flips to MultiTenant=true to round-trip the tenant header).
-// Multi-tenant production deployments use bearerTenantRegistry
-// instead, which consults the real tenantstore.
-type permissiveRegistry struct{}
-
-func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
-
 // userstorePlatformRoles adapts a userstore.Store into the §10.2 platform-managed role resolver consulted by the auth middleware.
 // When a row carries a platform-managed assignment (RoleAssigned) — even
 // one whose Roles slice is empty — its Roles fully replace the OIDC

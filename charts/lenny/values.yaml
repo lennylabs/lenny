@@ -1837,19 +1837,31 @@ tenancy:
   # lenny-direct-mode-isolation webhook rejects the §4.9
   # credential-delivery configurations that expose cross-tenant
   # credential risk: deliveryMode direct with isolationProfile standard,
-  # and deliveryMode proxy with spiffeBinding disabled.
+  # and deliveryMode proxy with spiffeBinding disabled. A multi-tenant
+  # install also sets auth.multiTenant: true; the chart refuses to
+  # render when the two disagree.
   mode: single
 
 # auth configures the §10.2 authentication chain.
 auth:
+  # multiTenant selects the §10.2 tenant-claim extraction mode and flows
+  # to the gateway as --multi-tenant. When false (single-tenant), the
+  # gateway ignores the tenant claim and serves every request as the
+  # built-in `default` tenant. When true (multi-tenant), the gateway
+  # reads the tenant from the claim named by tenantIdClaim, refuses an
+  # absent claim with 401 TENANT_CLAIM_MISSING, and refuses a tenant that
+  # is not registered with 403 TENANT_NOT_FOUND. It must be true exactly
+  # when tenancy.mode is multi: the chart refuses to render, and the
+  # gateway refuses to start, when the two disagree.
+  multiTenant: false
   # tenantIdClaim is the OIDC ID-token claim the gateway extracts the
   # tenant identifier from on every Bearer JWT (§10.2). The
   # default `tenant_id` matches the canonical Lenny claim shape; set to
   # the upstream IdP's tenant claim name when it differs (e.g. a
   # namespaced URI such as `https://acme.example/tenant`). The value
-  # flows to the gateway binary as --tenant-id-claim. The single-tenant
-  # path (tenancy.mode=single) ignores this value and stamps the
-  # built-in `default` tenant on every request.
+  # flows to the gateway binary as --tenant-id-claim. A single-tenant
+  # deployment (auth.multiTenant: false) ignores this value and stamps
+  # the built-in `default` tenant on every request.
   tenantIdClaim: tenant_id
   # oidc names the OIDC issuer the gateway's Bearer-token validation
   # trusts (§10.3). Both keys are required platform

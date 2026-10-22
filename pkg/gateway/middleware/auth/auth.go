@@ -152,6 +152,22 @@ type Options struct {
 	// surface.
 	AllowDevHeaders bool
 
+	// DevHeaderNamesTenant, when true and MultiTenant is false, lets the
+	// X-Lenny-Tenant-ID dev header name the request's tenant directly
+	// (format-checked against the §10.2 tenant_id pattern; an absent
+	// header resolves to the built-in "default" tenant). It applies to
+	// the dev-header transport only: the Bearer path keeps the §10.2
+	// single-tenant rule and ignores the tenant claim. The gateway sets
+	// it only in dev mode, alongside AllowDevHeaders, so the dev and
+	// integration suites can exercise more than one tenant against a
+	// single-tenant gateway. In multi-tenant mode it has no effect and
+	// the dev header is checked against Registry like a Bearer claim.
+	//
+	// spec: §10.2 (single-tenant claim extraction); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID, defaulting
+	// to `default`).
+	DevHeaderNamesTenant bool
+
 	// AllowDevRoles, when true, additionally honours the X-Lenny-Roles
 	// and X-Lenny-Groups dev headers so dev-mode callers can claim RBAC
 	// roles and §10.6 environment groups. SECURITY: This MUST be false
@@ -642,11 +658,7 @@ const serviceCallerType = "service"
 
 func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	tenantHeader := r.Header.Get("X-Lenny-Tenant-ID")
-	tenant, err := auth.ExtractTenant(auth.ExtractRequest{
-		MultiTenant: m.opts.MultiTenant,
-		Claim:       tenantHeader,
-		Registry:    m.opts.Registry,
-	})
+	tenant, err := m.devHeaderTenant(tenantHeader)
 	if err != nil {
 		// Dev-header path: no JWT means no sub / jti claim. The
 		// rejection still produces an audit row + INFO log so the §4.2 observability contract is honoured uniformly across
@@ -670,6 +682,30 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.inner.ServeHTTP(w, r)
+}
+
+// devHeaderTenant resolves the tenant a dev-header request runs as. In
+// multi-tenant mode, and in single-tenant mode without
+// DevHeaderNamesTenant, the header follows the same §10.2 extraction
+// table as a Bearer claim. In single-tenant mode with
+// DevHeaderNamesTenant the header names the tenant directly after the
+// §10.2 format check, and an absent header resolves to the default
+// tenant. spec: §10.2.
+func (m *middleware) devHeaderTenant(header string) (auth.ExtractResult, error) {
+	if m.opts.MultiTenant || !m.opts.DevHeaderNamesTenant {
+		return auth.ExtractTenant(auth.ExtractRequest{
+			MultiTenant: m.opts.MultiTenant,
+			Claim:       header,
+			Registry:    m.opts.Registry,
+		})
+	}
+	if header == "" {
+		return auth.ExtractResult{TenantID: auth.DefaultTenantID, FromDefault: true}, nil
+	}
+	if err := auth.ValidateTenantID(header); err != nil {
+		return auth.ExtractResult{}, err
+	}
+	return auth.ExtractResult{TenantID: header}, nil
 }
 
 // runPreAuth runs the §4.8 PreAuth interceptor chain over the resolved

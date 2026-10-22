@@ -40,15 +40,18 @@ No additional configuration is required.
 
 ### Multi-Tenant Mode
 
-Multi-tenant mode is activated by:
+To run a multi-tenant deployment:
 
-1. Configuring the OIDC claim that carries tenant identity:
+1. Set both tenancy values and name the OIDC claim that carries tenant identity:
    ```yaml
+   tenancy:
+     mode: multi                   # cross-tenant credential-delivery rejections
    auth:
+     multiTenant: true             # tenant-claim extraction and registry check
      tenantIdClaim: "tenant_id"    # OIDC claim name (default)
    ```
-2. Creating tenant records via the admin API or bootstrap seed
-3. Setting `tenant_id` explicitly in API calls (if not using OIDC)
+   The two values must agree. `helm install` refuses to render a chart where `tenancy.mode: multi` and `auth.multiTenant: true` are not set together, and the gateway refuses to start with a contradictory pair.
+2. Create a tenant record for each tenant through the admin API or the bootstrap seed. The gateway refuses a token whose tenant claim names a tenant with no active record with `403 TENANT_NOT_FOUND`.
 
 ### Pod Tenant Pinning and Reuse
 

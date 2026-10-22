@@ -2988,7 +2988,17 @@
         "tests/tier2_component/stores/customrolestore_test.go",
         "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation",
         "tests/tier5_e2e_kind/prompt_journey_auth_modes_test.go::TestPromptJourneyAcrossAuthModes",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "cmd/lenny-gateway/tenancy_test.go::TestValidateTenancyConfigRefusesContradiction",
+        "cmd/lenny-gateway/tenancy_test.go::TestApplyTenantAuthOptionsWiring",
+        "cmd/lenny-gateway/tenancy_test.go::TestGatewayAuthTenantResolutionByMode",
+        "pkg/gateway/middleware/auth/tenant_mode_test.go::TestTenantResolutionBySingleAndMultiTenantMode",
+        "tests/tier0_static/gateway_multi_tenant_render_test.go::TestGatewayMultiTenantFlagRenderAcrossProfiles",
+        "tests/tier0_static/gateway_multi_tenant_render_test.go::TestChartRefusesContradictoryTenancy",
+        "tests/tier4_integration/gateway_tenancy_mode_test.go::TestMultiTenantGatewayRefusesUnregisteredTenantClaim",
+        "tests/tier4_integration/gateway_tenancy_mode_test.go::TestSingleTenantGatewayIgnoresTenantClaim",
+        "tests/tier4_integration/gateway_tenancy_mode_test.go::TestGatewayRefusesContradictoryTenancyFlags",
+        "tests/tier9_security/tenant_claim_spoofing_test.go::TestMultiTenantGatewayRefusesTenantClaimSpoofing"
       ],
       "packages": [
         "pkg/auth"

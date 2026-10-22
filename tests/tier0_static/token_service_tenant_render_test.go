@@ -56,15 +56,15 @@ func TestGatewayTokenServiceTenantRenderAcrossProfiles(t *testing.T) {
 	}{
 		{name: "chart defaults", wantTS: true, wantTenant: "default"},
 		{name: "chart defaults, explicit single tenancy", set: []string{"tenancy.mode=single"}, wantTS: true, wantTenant: "default"},
-		{name: "chart defaults, multi tenancy", set: []string{"tenancy.mode=multi"}, wantTS: true},
+		{name: "chart defaults, multi tenancy", set: []string{"tenancy.mode=multi", "auth.multiTenant=true"}, wantTS: true},
 		{name: "chart defaults, token service disabled", set: []string{"tokenService.enabled=false"}},
-		{name: "chart defaults, token service disabled, multi tenancy", set: []string{"tokenService.enabled=false", "tenancy.mode=multi"}},
+		{name: "chart defaults, token service disabled, multi tenancy", set: []string{"tokenService.enabled=false", "tenancy.mode=multi", "auth.multiTenant=true"}},
 		{name: "tier1 preset", values: "../../charts/lenny/presets/values-tier1.yaml", wantTS: true, wantTenant: "default"},
-		{name: "tier1 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier1.yaml", set: []string{"tenancy.mode=multi"}, wantTS: true},
+		{name: "tier1 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier1.yaml", set: []string{"tenancy.mode=multi", "auth.multiTenant=true"}, wantTS: true},
 		{name: "tier2 preset", values: "../../charts/lenny/presets/values-tier2.yaml", wantTS: true, wantTenant: "default"},
-		{name: "tier2 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier2.yaml", set: []string{"tenancy.mode=multi"}, wantTS: true},
+		{name: "tier2 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier2.yaml", set: []string{"tenancy.mode=multi", "auth.multiTenant=true"}, wantTS: true},
 		{name: "tier3 preset", values: "../../charts/lenny/presets/values-tier3.yaml", wantTS: true, wantTenant: "default"},
-		{name: "tier3 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier3.yaml", set: []string{"tenancy.mode=multi"}, wantTS: true},
+		{name: "tier3 preset, multi tenancy", values: "../../charts/lenny/presets/values-tier3.yaml", set: []string{"tenancy.mode=multi", "auth.multiTenant=true"}, wantTS: true},
 		{name: "dev preset", values: devProfilePath},
 	}
 	for _, tc := range cases {

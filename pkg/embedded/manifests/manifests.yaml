@@ -4062,6 +4062,12 @@ spec:
             # canonical claim name still works without a code change.
             # F-10.2.9.
             - --tenant-id-claim=tenant_id
+            # §10.2 — the auth.multiTenant switch. true refuses an
+            # unregistered tenant claim with 403 TENANT_NOT_FOUND; false
+            # ignores the claim and serves the built-in `default` tenant.
+            # A render-time check in this template keeps it equal to
+            # tenancy.mode == multi. T-10.2.11.
+            - --multi-tenant=false
             # §10.3 — OIDC issuer + client registration the
             # gateway's token validation trusts. Required platform keys
             # outside global.devMode; the gateway fails closed at startup
