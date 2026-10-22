@@ -486,6 +486,12 @@ entries:
     reason: |-
       a runtime scaffold template the Go package that embeds it renders, whose own change selection the completeness check governs
   - member: |-
+      compose/redis-cluster/start.sh
+    class: change-graph-coverage
+    disposition: in-class
+    reason: |-
+      a script of the compose stack that no glob key covers; it leaves the class when the compose tree gains a key
+  - member: |-
       compose/smoke-test.sh
     class: change-graph-coverage
     disposition: in-class
