@@ -118,6 +118,7 @@ func newDriverFixture(t *testing.T, brokenResume bool) *driverFixture {
 	}
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

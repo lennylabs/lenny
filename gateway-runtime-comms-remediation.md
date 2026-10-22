@@ -2898,8 +2898,9 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
 - [x] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Landed
   2026-10-22 (merge `2177ac596`): chart value `auth.multiTenant` renders `--multi-tenant`, a mismatch with
   `tenancy.mode` is refused at render and at gateway startup, and `permissiveRegistry` is deleted. It
-  exposed F-10.2.21 (an unauthenticated request takes its tenant from `X-Lenny-Tenant-ID`), queued as the
-  next direct fix. Added
+  exposed F-10.2.21 (an unauthenticated request takes its tenant from `X-Lenny-Tenant-ID`), fixed directly
+  on 2026-10-22: outside dev mode every non-public route requires a bearer and the tenant comes only from
+  the principal. Added
   2026-10-22 by the owner's OD-3 decision on 0095. Every chart-deployed gateway runs the single-tenant
   branch, which flips the auth middleware to multi-tenant with a registry that admits every tenant, so an
   unregistered tenant claim is admitted instead of refused. The fix renders the switch from the chart, keeps
@@ -3101,6 +3102,18 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
 property, which fails closed, so `restart` is offered on gVisor).** If the spike had failed on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
+
+**Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
+
+- [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
+  `type: mcp` runtime gets no supervisor and no `command` until a proposal defines its launch (Phase 12b,
+  §18). That proposal must bring `type: mcp` sidecars under the runtime supervisor, with the same startup
+  contract, END, sweep, and `CH-SUPERVISE` link as `type: agent` sidecars, and must add `command` for them.
+- [ ] **Remove the interim `restart` refusal when 0084 lands.** Until proposal 0084 adds the
+  per-generation intra-pod MCP nonce, pool admission refuses `recycle.runtimeProcess: restart` (owner
+  decision). The refusal is a code-only gate with explanatory comments and no spec text, because a
+  relaunched runtime process cannot use intra-pod MCP servers whose nonce was bound at the first start.
+  0084's implementation removes the gate and its test.
 
 **Not yet scheduled.** The later phases of the restart design: SDK warm-up for sidecar runtimes, an optional
 restart after a runtime crash, and starting the next runtime before its session arrives.

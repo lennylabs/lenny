@@ -111,6 +111,7 @@ func podBindServerWithLease(t *testing.T, id, replicaID string, leases leasestor
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

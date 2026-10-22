@@ -89,7 +89,7 @@ func TestReportResumeFailureSetupCommand_spec_7_3(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
-			s := New(store, Options{})
+			s := New(store, Options{DevTenantHeader: true})
 			row := seedResumingRow(t, store, "sess-resume-report")
 			err := fmt.Errorf("podsession: resume: %w",
 				&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: tc.cause})
@@ -142,7 +142,7 @@ func TestReportResumeFailureSlotRefusals_spec_7_3(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
-			s := New(store, Options{})
+			s := New(store, Options{DevTenantHeader: true})
 			row := seedResumingRow(t, store, "sess-resume-refusal")
 			s.reportResumeFailure(row, row.CoordinationGeneration, tc.err)
 			got, err := store.Get(context.Background(), "acme", row.ID)
@@ -240,7 +240,7 @@ func TestReportResumeFailureKeepsNewerState_spec_7_3(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
-			s := New(store, Options{})
+			s := New(store, Options{DevTenantHeader: true})
 			row := seedResumingRow(t, store, "sess-newer")
 			gen := row.CoordinationGeneration
 			if _, err := store.Update(context.Background(), "acme", row.ID, func(r *sessionstore.Session) error {

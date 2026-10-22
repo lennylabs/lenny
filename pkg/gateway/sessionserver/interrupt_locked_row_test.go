@@ -78,7 +78,7 @@ func TestInterruptRevalidatesOnTheLockedRow_spec_7_2(t *testing.T) {
 				}
 			}
 			rearm := &countingRearmer{}
-			srv := sessionserver.New(staleReadStore{base}, sessionserver.Options{BudgetKeyRearmer: rearm})
+			srv := sessionserver.New(staleReadStore{base}, sessionserver.Options{DevTenantHeader: true, BudgetKeyRearmer: rearm})
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()

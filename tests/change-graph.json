@@ -84,8 +84,8 @@
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
       "contract": ["tests/tier3_contract/rest_auth/..."],
-      "integration": ["tests/tier4_integration/gateway_tenancy_mode_test.go"],
-      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go"]
+      "integration": ["tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/middleware/idempotency": {
       "unit": ["pkg/gateway/middleware/idempotency/..."],
@@ -238,6 +238,8 @@
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
     "pkg/gateway/core/subsystem": {
@@ -248,8 +250,8 @@
       "static": ["cmd/lenny-gateway/..."],
       "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
-      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go"],
-      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go"]
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/operability/health": {
       "unit": ["pkg/gateway/operability/health/..."],
@@ -681,7 +683,9 @@
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
-      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "tests/testdata/openai_chat": {
       "contract": ["tests/tier3_contract/rest_openai_chat/..."]
@@ -709,7 +713,9 @@
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/ops/auditrate": {
       "unit": ["pkg/ops/auditrate/..."],

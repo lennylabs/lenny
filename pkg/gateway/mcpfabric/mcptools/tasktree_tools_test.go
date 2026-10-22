@@ -135,6 +135,7 @@ func TestGetTaskTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 	observer := &captureTreeCycle{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          "acme",
 		TreeCycleObserver: observer,
@@ -178,6 +179,7 @@ func TestGetTaskTreeAcyclicTreeEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
 	observer := &captureTreeCycle{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          "acme",
 		TreeCycleObserver: observer,

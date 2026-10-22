@@ -34,6 +34,7 @@ func TestCreateSessionUsesConfiguredUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	issuer := uploadtoken.NewIssuer(ring, clock)
 	const ttl = 600 * time.Second
 	srv := New(store, Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_ttl" },
 		UploadTokenIssuer: issuer,
@@ -68,6 +69,7 @@ func TestCreateSessionDefaultUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
 	issuer := uploadtoken.NewIssuer(ring, clock)
 	srv := New(store, Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_def" },
 		UploadTokenIssuer: issuer,
@@ -103,6 +105,7 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 	tracker := uploadtoken.NewMemoryTracker()
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	srv := New(store, Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_expiry" },
 		UploadTokenIssuer:   issuer,

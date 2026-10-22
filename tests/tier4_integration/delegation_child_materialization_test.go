@@ -326,6 +326,7 @@ func materializeServer(
 	store := memstore.New()
 	registry := podsession.NewRegistry()
 	sessionSrv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -341,6 +342,7 @@ func materializeServer(
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		Executor:          podExec,
 		Runtimes:          runtimes,

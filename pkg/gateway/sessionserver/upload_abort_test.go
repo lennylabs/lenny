@@ -46,6 +46,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,

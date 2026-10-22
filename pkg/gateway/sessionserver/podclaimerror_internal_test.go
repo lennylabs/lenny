@@ -37,7 +37,7 @@ func decodeErrorBody(t *testing.T, body []byte) map[string]any {
 // the offending pool and dialect in details and the verbatim spec
 // message. The errors.As check sees through %w wrapping.
 func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	base := &PoolProxyDialectError{Pool: "claude-prod", Dialect: "openai"}
 	for _, tc := range []struct {
 		name string
@@ -78,7 +78,7 @@ func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
 // "concurrent_slots_exhausted". The errors.Is checks see through %w
 // wrapping the binder adds.
 func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	cases := []struct {
 		name       string
 		err        error
@@ -128,7 +128,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 // through %w wrapping. The body carries details.reason=no_idle_pods so an
 // operator can still see the underlying cause, and a Retry-After header.
 func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -176,7 +176,7 @@ func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
 // details block carrying poolName, poolCondition, estimatedReadyIn, and
 // podsWarming.
 func TestWritePodClaimErrorPoolWarming(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	w := httptest.NewRecorder()
 	s.writePodClaimError(w, &podsession.PoolWarmingError{Pool: "acme-pool", PodsWarming: 3},
 		"SESSION_CREATION_FAILED", "could not place the session on a warm pod")
@@ -205,7 +205,7 @@ func TestWritePodClaimErrorPoolWarming(t *testing.T) {
 // a sub-30s estimate still reports the true estimate in the body while
 // the header floors at 30.
 func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
-	s := New(memstore.New(), Options{WarmupEstimateSeconds: 10})
+	s := New(memstore.New(), Options{DevTenantHeader: true, WarmupEstimateSeconds: 10})
 	w := httptest.NewRecorder()
 	s.writePoolWarming(w, &podsession.PoolWarmingError{Pool: "p"})
 	if ra := w.Header().Get("Retry-After"); ra != "30" {
@@ -234,7 +234,7 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(memstore.New(), Options{})
+			s := New(memstore.New(), Options{DevTenantHeader: true})
 			w := httptest.NewRecorder()
 			s.writePodClaimError(w, errors.New("boom"), tc.code, "could not place the session on a warm pod")
 			body := decodeErrorBody(t, w.Body.Bytes())
@@ -272,7 +272,7 @@ func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
 // a wrapped non-status cause reported as Unknown, and Internal) stays the
 // retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.
 func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 
 	t.Run("FailedPrecondition is the non-retryable 422", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -396,7 +396,7 @@ func TestResumeFailureReasonSetupCommand_spec_7_3(t *testing.T) {
 // the two-step STARTING_FAILED) because the typed SlotFailedError takes
 // precedence over the fallback on each.
 func TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	slotFailed := &podsession.SlotFailedError{
 		Category:  string(podsession.SlotReasonWorkspaceValidation),
 		SessionID: "sess-1",

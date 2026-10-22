@@ -24,11 +24,12 @@ func newMCPForMemory(t *testing.T) (*mcp.Server, sessionstore.Store, memorystore
 	mem := memorystore.NewInMemory(0, nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Memory:   mem,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Memory:            mem,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store, mem
 }

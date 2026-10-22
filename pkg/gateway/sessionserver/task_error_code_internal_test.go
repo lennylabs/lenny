@@ -81,7 +81,7 @@ func TestEmitChildFailedCarriesErrorCodeEveryReason_spec_8_10(t *testing.T) {
 		t.Run("reason="+tc.reason, func(t *testing.T) {
 			store := memstore.New()
 			bus := sessionevents.NewBus(0)
-			srv := New(store, Options{Events: bus})
+			srv := New(store, Options{DevTenantHeader: true, Events: bus})
 			now := time.Now()
 			mustCreate(t, store, sessionstore.Session{ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 			child := sessionstore.Session{
@@ -142,7 +142,7 @@ func TestEmitChildFailedOnlyForFailedChild_spec_8_10(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			bus := sessionevents.NewBus(0)
-			opts := Options{}
+			opts := Options{DevTenantHeader: true}
 			if tc.sink {
 				opts.Events = bus
 			}

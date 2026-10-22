@@ -257,6 +257,10 @@ func (w *gatewayWiring) buildSessionServer(
 		EvalPerTenantPerMinute:  *evalRLPerTenantPerMin,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
 		DevMode:                 *devMode,
+		// spec: §10.2 — only a dev-mode gateway lets a request with no
+		// principal name its tenant through X-Lenny-Tenant-ID; outside dev
+		// mode the tenant comes from the verified bearer alone. F-10.2.21.
+		DevTenantHeader: *devMode,
 		// spec: §10.2. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,

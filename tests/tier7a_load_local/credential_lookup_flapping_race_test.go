@@ -159,6 +159,7 @@ func TestCredentialLookupFlappingStoresTwoReplicas_spec_4_9(t *testing.T) {
 	replicas := make([]*sessionserver.Server, 2)
 	for i := range replicas {
 		replicas[i] = sessionserver.New(flapSessions{Store: sessions, l: ledger}, sessionserver.Options{
+			DevTenantHeader:  true,
 			Tenants:          flapTenants{Store: tenants, l: ledger},
 			Runtimes:         flapRuntimes{Store: runtimes, l: ledger},
 			CredentialPools:  pools,

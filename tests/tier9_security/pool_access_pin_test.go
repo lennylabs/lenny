@@ -116,6 +116,7 @@ func TestCreateBodyPoolEnforcesTenantAccess_spec_4(t *testing.T) {
 	}
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pool-403" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

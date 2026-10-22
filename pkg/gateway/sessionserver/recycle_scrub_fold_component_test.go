@@ -137,6 +137,7 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-recycle" },
 		DefaultIsolationProfile: isolation.ProfileMicrovm,
 		PodBinder:               binder,

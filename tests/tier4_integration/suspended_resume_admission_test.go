@@ -52,9 +52,10 @@ func newResumeCapFixture(t *testing.T) *resumeCapFixture {
 		DLQ:   sessioninbox.NewDLQ(rd.Client, 10),
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Tenants:   tenantpg.New(pg.Pool),
-		Messaging: coord,
-		Executor:  executor.NewEchoExecutor(),
+		DevTenantHeader: true,
+		Tenants:         tenantpg.New(pg.Pool),
+		Messaging:       coord,
+		Executor:        executor.NewEchoExecutor(),
 		// A wired binder gives a suspended row without a pod its podless
 		// meaning; no restore runs here, because no watchdog ticks.
 		PodBinder:   &podsession.Binder{},

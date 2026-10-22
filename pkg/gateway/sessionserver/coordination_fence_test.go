@@ -22,7 +22,7 @@ func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC) }
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Clock: clock})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Clock: clock})
 	return srv, store
 }
 

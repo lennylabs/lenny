@@ -47,8 +47,9 @@ func phaseOrderServer(t *testing.T, postAuth, preRoute interceptor.Interceptor) 
 		t.Fatalf("register PreRoute: %v", err)
 	}
 	return sessionserver.New(memstore.New(), sessionserver.Options{
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC) },
-		Interceptors: chain,
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC) },
+		Interceptors:    chain,
 	})
 }
 

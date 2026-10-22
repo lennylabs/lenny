@@ -304,7 +304,7 @@ func TestResumeAfterPodReleasedMovesToResumePending_spec_7_2(t *testing.T) {
 func TestBacklogRecheckerRunPassesAtStart_spec_7_2(t *testing.T) {
 	calls := make(chan struct{}, 4)
 	rc := &BacklogRechecker{
-		Server: New(nil, Options{}),
+		Server: New(nil, Options{DevTenantHeader: true}),
 		Tenants: func(context.Context) ([]string, error) {
 			calls <- struct{}{}
 			return nil, nil

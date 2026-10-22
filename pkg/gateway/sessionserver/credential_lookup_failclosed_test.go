@@ -178,6 +178,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 		ledger:   ledger,
 	}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

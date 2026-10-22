@@ -214,6 +214,7 @@ func TestCredentialDeliveryGateFailsClosedAtFinalize(t *testing.T) {
 	}
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-gate" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

@@ -88,7 +88,7 @@ func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string)
 func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	store := memstore.New()
 	exec := newCancelTrackingExecutor()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 
 	// parent → child → grandchild, all running, default cancel_all cascade.
 	seedRunning(t, store, "p")
@@ -142,7 +142,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 	} {
 		store := memstore.New()
 		exec := newCancelTrackingExecutor()
-		srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
 		if err := store.Create(ctx, sess); err != nil {
@@ -181,7 +181,7 @@ func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T)
 		{http.MethodPost, "/v1/sessions/tc/terminate", session.StateCompleted, "Completed"},
 	} {
 		store := memstore.New()
-		srv := sessionserver.New(store, sessionserver.Options{})
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 		seedRunning(t, store, "tc")
 
 		req := httptest.NewRequest(tc.method, tc.path, nil)
@@ -209,7 +209,7 @@ func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T)
 func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	seedRunning(t, store, "idem")
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/idem", nil)
@@ -241,7 +241,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testing.T) {
 	store := memstore.New()
 	exec := newCancelTrackingExecutor()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 
 	seedRunning(t, store, "p")
 	// c1 detaches, so its child gc must stay running and undrained.

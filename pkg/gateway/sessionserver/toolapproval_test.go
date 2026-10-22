@@ -189,7 +189,7 @@ func TestToolUseApproveUnblocksGate_spec_7_2_18(t *testing.T) {
 	inter := interactionstore.NewMemory()
 	bus := sessionevents.NewBus(8)
 	waits := toolapproval.NewRegistry()
-	srv := sessionserver.New(store, sessionserver.Options{Interactions: inter, ToolApprovalWaits: waits})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Interactions: inter, ToolApprovalWaits: waits})
 	gate := sessionserver.NewToolApprovalGate(store, inter, bus, waits, fixedNow, 0)
 
 	out := make(chan executor.ApprovalDecision, 1)

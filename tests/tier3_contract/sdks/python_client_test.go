@@ -420,7 +420,7 @@ func TestPythonClientIdempotencyKeyHandling(t *testing.T) {
 	// The gateway is wrapped in the §11.5 idempotency middleware so a
 	// replayed key returns the cached create response.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
 	t.Cleanup(ts.Close)
 	h := spawnPythonHelper(t, ts.URL)

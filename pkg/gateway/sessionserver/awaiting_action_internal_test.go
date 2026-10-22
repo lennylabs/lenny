@@ -29,6 +29,7 @@ func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	at := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		Events:             bus,
 		OpsEmitter:         emitter,
 		LifecycleAuditSink: sink,
@@ -83,7 +84,7 @@ func TestEmitAwaitingClientActionEnteredIgnoresWrongState_spec_7_3_13(t *testing
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
 
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
@@ -103,6 +104,7 @@ func TestEmitAwaitingClientActionExpiredEmitsAuditRow_spec_7_3_25(t *testing.T) 
 	sink := &captureLifecycleAudit{}
 	at := time.Date(2026, 5, 26, 11, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		LifecycleAuditSink: sink,
 		Clock:              func() time.Time { return at },
 	})
@@ -122,7 +124,7 @@ func TestEmitAwaitingClientActionExpiredEmitsAuditRow_spec_7_3_25(t *testing.T) 
 
 // spec: nil sinks must never panic — every collaborator is optional.
 func TestAwaitingActionEmittersNoSinkSafe_spec_7_3_13(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateAwaitingClientAction,
 	})
@@ -135,7 +137,7 @@ func TestAwaitingActionEmittersNoSinkSafe_spec_7_3_13(t *testing.T) {
 // via the AwaitingClientActionExpiryNotifier optional interface, so
 // Server satisfies it.
 func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	var _ interface {
 		OnSessionExpiredFromAwaitingClientAction(ctx context.Context, sess sessionstore.Session)
 	} = srv
@@ -158,6 +160,7 @@ func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	at := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		Events:             bus,
 		OpsEmitter:         emitter,
 		LifecycleAuditSink: sink,
@@ -187,6 +190,7 @@ func TestServerImplementsRetryAttemptNotifier_spec_6_2_14(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	var retryCalls []string
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		LifecycleAuditSink: sink,
 		IncSessionRetry:    func(class string) { retryCalls = append(retryCalls, class) },
 	})

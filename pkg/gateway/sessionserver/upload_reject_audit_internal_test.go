@@ -90,7 +90,7 @@ func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, bo
 // upload-rejection class. F-13.4.8.
 func TestRunUploadEmitsRejectedAudit_HashMismatch(t *testing.T) {
 	sink := &captureLifecycleAudit{}
-	srv, issuer, clock := uploadTestServer(t, Options{LifecycleAuditSink: sink})
+	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 	row := seedCreatedSession(t, srv, "sess_hash", clock)
 
 	rr := uploadRequest(t, issuer, srv, row.ID, "hello", map[string]string{
@@ -116,6 +116,7 @@ func TestRunUploadEmitsRejectedAudit_HashMismatch(t *testing.T) {
 func TestRunUploadEmitsRejectedAudit_SessionBytes(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv, issuer, clock := uploadTestServer(t, Options{
+		DevTenantHeader:          true,
 		LifecycleAuditSink:       sink,
 		MaxUploadBytesPerSession: 3,
 	})
@@ -136,7 +137,7 @@ func TestRunUploadEmitsRejectedAudit_SessionBytes(t *testing.T) {
 // audit row (the F-7.4.17 row now carries the explicit outcome). F-13.4.8.
 func TestRunUploadEmitsAcceptedOutcome(t *testing.T) {
 	sink := &captureLifecycleAudit{}
-	srv, issuer, clock := uploadTestServer(t, Options{LifecycleAuditSink: sink})
+	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 	row := seedCreatedSession(t, srv, "sess_ok", clock)
 
 	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil)
@@ -156,7 +157,7 @@ func TestRunUploadEmitsAcceptedOutcome(t *testing.T) {
 // lenny_upload_bytes_total. F-13.4.12.
 func TestRunUploadCountsBytes(t *testing.T) {
 	fm := &fakeUploadMetrics{}
-	srv, issuer, clock := uploadTestServer(t, Options{UploadMetrics: fm})
+	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, UploadMetrics: fm})
 	row := seedCreatedSession(t, srv, "sess_bytes_count", clock)
 
 	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil)
@@ -173,7 +174,8 @@ func TestRunUploadCountsBytes(t *testing.T) {
 func TestRunUploadSamplesQueueDepth(t *testing.T) {
 	fm := &fakeUploadMetrics{}
 	srv, issuer, clock := uploadTestServer(t, Options{
-		UploadMetrics: fm,
+		DevTenantHeader: true,
+		UploadMetrics:   fm,
 		UploadSubsystem: &subsystem.Subsystem{
 			Name:    "upload_handler",
 			Limiter: &subsystem.Limiter{MaxConcurrent: 4},

@@ -41,13 +41,14 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	exec := executor.NewEchoExecutor()
 	mem := memorystore.NewInMemory(0, nil)
 
-	rest := sessionserver.New(store, sessionserver.Options{Memory: mem})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store: store,
+		DevTenantFallback: true,
+		Store:             store,
 		// spec: §15.2.1 rule 1 — wire the shared §15.1 service
 		// so lenny/create_session runs the same gates and returns the same
 		// envelope as REST POST /v1/sessions. F-15.2.4.

@@ -39,6 +39,7 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 	}
 	counter := storagequota.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
@@ -169,6 +170,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,

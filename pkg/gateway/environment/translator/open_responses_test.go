@@ -27,8 +27,9 @@ func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessio
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, executor.NewEchoExecutor(), translator.OpenResponsesOptions{
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc: func() string { return "resp_1" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "resp_1" },
 	})
 	return h, store
 }
@@ -250,9 +251,10 @@ func newContinuityHandler(t *testing.T, exec executor.Executor, ts transcriptsto
 	store := memstore.New()
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: ts,
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     ts,
 	})
 	return h, store
 }
@@ -449,9 +451,10 @@ func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
 	failStore := memstore.New()
 	var n int
 	failH := translator.NewOpenResponsesHandler(failStore, failExec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: appendFailTranscripts{Store: transcriptstore.NewMemory()},
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     appendFailTranscripts{Store: transcriptstore.NewMemory()},
 	})
 	rr := respPostTenant(t, failH.Handler(), "acme", map[string]any{
 		"model": "echo", "input": "one",
@@ -494,9 +497,10 @@ func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 	store := getFailStore{Store: memstore.New(), err: errors.New("session store unavailable")}
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
 		"model": "echo", "input": "hi", "previous_response_id": "resp_prev",

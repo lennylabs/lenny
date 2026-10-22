@@ -507,7 +507,7 @@ func (f *createdTimeoutFixture) seedCreated(t *testing.T, id, pod, scrubPolicy s
 // session server as its terminal hook, and returns the forced failures.
 func (f *createdTimeoutFixture) tick(t *testing.T) watchdog.Result {
 	t.Helper()
-	hook := sessionserver.New(f.store, sessionserver.Options{PodBinder: f.binder})
+	hook := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true, PodBinder: f.binder})
 	w := watchdog.New(f.store, watchdog.StaticTenants{"acme"}, watchdog.Config{
 		MaxCreatedSeconds: watchdog.DefaultMaxCreatedStateSeconds,
 	}, func() time.Time { return f.now }).WithTerminalHook(hook)

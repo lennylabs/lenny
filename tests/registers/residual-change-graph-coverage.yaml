@@ -126,6 +126,12 @@ entries:
     reason: |-
       a node test over the proposal edit audit, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/resume-replay.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/round-boundary.test.sh
     class: change-graph-coverage
     disposition: excluded

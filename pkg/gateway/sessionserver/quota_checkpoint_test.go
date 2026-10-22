@@ -24,7 +24,7 @@ func (r *recCheckpointer) CheckpointSubject(_ context.Context, tenantID, userID 
 // final cumulative token-usage checkpoint for its (tenant, user). F-11.2.4.
 func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{QuotaCheckpointer: cp})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
 	h := srv.Handler()
 
 	rr := createRequest(t, h,
@@ -52,7 +52,7 @@ func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 // terminal transition.
 func TestSessionCompletionNoCheckpointWithoutUser_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{QuotaCheckpointer: cp})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
 	h := srv.Handler()
 
 	id := createSessionID(t, h) // no principal → empty user id

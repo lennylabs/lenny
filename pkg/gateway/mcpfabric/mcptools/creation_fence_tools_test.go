@@ -42,11 +42,12 @@ func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users users
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
-		Users:    users,
-		Tenants:  tenants,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Users:             users,
+		Tenants:           tenants,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -178,7 +179,8 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store: store, Executor: executor.NewEchoExecutor(), Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimes,
 		Users: users, Tenants: gateTenants,
 		Delegation: delegation.NewService(store, delegation.Options{IDFunc: func() string { return "sess_child" }}),
 		IDFunc:     func() string { return "sess_mcp" }, TenantID: "acme",
@@ -219,7 +221,8 @@ func TestMinimalCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store: store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
+		DevTenantFallback: true,
+		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
 		IDFunc: func() string { return "sess_new" }, TenantID: "acme",
 	})
 	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"claude-code","userId":"user_alice"}`)
@@ -243,7 +246,8 @@ func newResolutionMCP(t *testing.T, users userstore.Store) (*mcp.Server, interac
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store: store, Interactions: interactions, Users: users,
+		DevTenantFallback: true,
+		Store:             store, Interactions: interactions, Users: users,
 		ElicitationTimeout: 5 * time.Second, IDFunc: func() string { return "elic_gen" }, TenantID: "acme",
 	})
 	mkUserSession(t, store, "sess_root", "alice", "")

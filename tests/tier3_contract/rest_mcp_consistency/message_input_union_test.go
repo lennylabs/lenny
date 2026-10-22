@@ -41,17 +41,18 @@ func newUnionServers(t *testing.T) (restURL, mcpURL string, store sessionstore.S
 	store = memstore.New()
 	exec := executor.NewEchoExecutor()
 
-	rest := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:    store,
-		Executor: exec,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_union_mcp" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_union_mcp" },
+		TenantID:          "acme",
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())
 	t.Cleanup(tsMCP.Close)
