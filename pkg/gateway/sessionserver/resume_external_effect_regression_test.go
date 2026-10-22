@@ -60,6 +60,7 @@ func (r *startRecordingRuntime) Output(context.Context, string) (<-chan []byte, 
 //     so the re-derivable effect is not suppressed and the at-least-once
 //     guarantee holds by construction.
 func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testing.T) {
+	t.Parallel()
 	rt := &startRecordingRuntime{}
 	// The recorded external effect (a lenny/* platform-tool action, a
 	// connector-tool call, or a delegate_task spawn) happened AFTER the periodic

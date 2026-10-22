@@ -42,6 +42,7 @@ func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status)
 }
 
 func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -102,6 +103,7 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 // Suspended session-condition fact with the InterruptTimeout reason so the
 // session history distinguishes the forced suspend from an acknowledged one.
 func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -154,6 +156,7 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 // spec: §4.7 STATUS_BUSY — the row stays running; no Suspended fact is stamped
 // on the row and the Sandbox stays in the coarse `claimed` phase.
 func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{

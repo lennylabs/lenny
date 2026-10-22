@@ -58,6 +58,7 @@ func callersOf(funcs map[string]scannedFunc, name string, skipPkgs ...string) []
 //
 // spec: §7.1 (Normal Flow), §7.3 (Credential leases on the replacement pod)
 func TestCredentialLeaseReturnHasNamedReleasersOnly_spec_7_3(t *testing.T) {
+	t.Parallel()
 	funcs, _ := scanRepo(t)
 	const ps = "pkg/gateway/podlifecycle/podsession/"
 	exclude := func(keys []string) []string {

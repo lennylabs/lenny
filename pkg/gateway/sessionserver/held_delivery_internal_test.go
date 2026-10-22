@@ -359,6 +359,7 @@ func TestHoldMessageReReadsTheRowFromThePrimary_spec_7_2(t *testing.T) {
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §10.1.2
 // (Coordinator Handoff Protocol)
 func TestDeliverHeldAfterTakeoverDeliversOnlyAtTheTakeoverGeneration_spec_7_2(t *testing.T) {
+	t.Parallel()
 	wait := func(f *heldFixture, n int) bool {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
@@ -381,6 +382,7 @@ func TestDeliverHeldAfterTakeoverDeliversOnlyAtTheTakeoverGeneration_spec_7_2(t 
 		{"suspended", session.StateSuspended, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := newHeldFixture(t, false)
 			row, _ := f.store.Update(context.Background(), "acme", "s", func(r *sessionstore.Session) error {
 				r.State = tc.state
@@ -396,6 +398,7 @@ func TestDeliverHeldAfterTakeoverDeliversOnlyAtTheTakeoverGeneration_spec_7_2(t 
 		})
 	}
 	t.Run("held delivery lock", func(t *testing.T) {
+		t.Parallel()
 		f := newHeldFixture(t, false)
 		row := f.row(t)
 		f.holdInbox(t, "m1", time.Now(), heldPayload(t, "m1", "", "a"))
