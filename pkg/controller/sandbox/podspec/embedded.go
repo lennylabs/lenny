@@ -56,7 +56,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 	pod := basePod(in, runtimeClass)
 	pod.Spec.Containers = []corev1.Container{
 		{
-			Name:  "runtime",
+			Name:  RuntimeContainerName,
 			Image: in.RuntimeImage,
 			Args:  embeddedArgs,
 			// spec: §4.7, §5.2 — the embedded runtime is the adapter and the

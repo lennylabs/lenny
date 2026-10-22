@@ -8,8 +8,8 @@
 //
 // The planner covers only the warm path the WarmPoolController owns:
 // the pod-warm sequence warming → idle, the retirement of an idle pod
-// whose backing Pod has died, and the draining → terminated teardown
-// (§6.2). The claim and session phases (idle → claimed → ... →
+// whose backing Pod has died, the failed → draining reclaim, and the
+// draining → terminated teardown (§6.2). The claim and session phases (idle → claimed → ... →
 // attached) are driven by the gateway, and the SDK-warm path
 // (sdk_connecting) is layered on with the adapter RPCs later; the
 // planner leaves both untouched.
@@ -38,7 +38,12 @@ const (
 	PodReady
 	// PodNotReady: the Pod is Running but not all containers are Ready.
 	PodNotReady
-	// PodFailed: the Pod terminated in a failure state.
+	// PodFailed: the Pod terminated in a failure state, or the Pod is
+	// not yet terminal while its adapter or runtime container has
+	// terminated. Agent pods run with restartPolicy Never, so a
+	// terminated adapter or runtime container never restarts and the
+	// pod cannot serve a session; the reconciler reduces both cases to
+	// this one observation. spec: §6.2 (warm-fill failure), §4.7.10.
 	PodFailed
 	// PodSucceeded: the Pod terminated successfully. A warm agent pod
 	// is not expected to exit 0, so the planner treats this as a defect.
@@ -96,16 +101,49 @@ func Decide(phase state.State, pod PodObservation) Decision {
 		default: // PodReady, PodPending, PodNotReady — leave it warm.
 			return Decision{}
 		}
+	case state.Failed:
+		// §6.2 failed → draining (failed pod reclaimed and replaced).
+		// failed is not a sink: the Sandbox drains so the draining arm
+		// deletes the pod. The warm-pool sizing reconciler does not
+		// count a failed Sandbox as warm inventory, so it has already
+		// provisioned the replacement that restores minWarm. The caller
+		// holds this reclaim while a per-pod SandboxClaim exists (see
+		// HoldFailedReclaim), so a pod with a claim retires through the
+		// claim's release path rather than through this arm.
+		return setPhase(state.Draining)
 	case state.Draining:
 		if pod == PodAbsent {
 			return setPhase(state.Terminated)
 		}
 		return Decision{Action: ActionDeletePod}
 	default:
-		// Terminal phases and the gateway-owned claim/session phases:
-		// the WarmPoolController takes no pod-lifecycle action.
+		// terminated and the gateway-owned claim/session phases: the
+		// WarmPoolController takes no pod-lifecycle action. A claimed or
+		// reserved pod whose adapter has terminated retires through the
+		// gateway's release path (§5.2 Pod retirement policy) or the
+		// orphaned-claim collector (§4.6.1), never through a pod delete
+		// here.
 		return Decision{}
 	}
+}
+
+// HoldFailedReclaim gates the failed → draining reclaim on the per-pod
+// SandboxClaim. When phase is failed and a claim still exists, it
+// replaces the reclaim with no action. The claim is the gateway's
+// occupancy record, and a pod that has one retires through the claim's
+// release path: a terminal claim disposition, which the occupancy
+// projection turns into failed → draining, or the claim delete that a
+// gateway release or the orphaned-claim collector performs. Every other
+// decision passes through unchanged. The hold fails closed: the caller
+// returns an unreadable claim as an error and never reclaims on it.
+//
+// spec: §6.2 (failed → draining), §4.6.1 (orphaned SandboxClaim
+// detection), §4.6.3 (claim release).
+func HoldFailedReclaim(phase state.State, claimPresent bool, d Decision) Decision {
+	if phase == state.Failed && claimPresent {
+		return Decision{}
+	}
+	return d
 }
 
 func setPhase(p state.State) Decision {

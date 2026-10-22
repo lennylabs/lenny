@@ -20,6 +20,15 @@ const (
 	// reconciler) once it has observed the containers ready, which is the
 	// Lenny-controlled claimability handoff to the gateway.
 	ReadinessGateSandboxReady corev1.PodConditionType = "lenny.dev/sandbox-ready"
+
+	// AdapterContainerName is the sidecar-model adapter container
+	// (§4.7.10). The Sandbox-to-Pod reconciler reads its status to detect
+	// an adapter that exited while the pod phase stays Running.
+	AdapterContainerName = "adapter"
+	// RuntimeContainerName is the runtime container in both deployment
+	// models (§4.7.10). In the embedded model it is also the adapter
+	// process, so it is the only container whose exit ends the adapter.
+	RuntimeContainerName = "runtime"
 )
 
 // basePod returns the Pod skeleton common to both deployment models:

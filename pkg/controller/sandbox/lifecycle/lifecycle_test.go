@@ -101,8 +101,14 @@ func TestDecide(t *testing.T) {
 			want:  lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Terminated},
 		},
 		{
-			name:  "a terminal phase takes no action",
+			name:  "failed with no pod is reclaimed through draining",
 			phase: state.Failed,
+			pod:   lifecycle.PodAbsent,
+			want:  lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Draining},
+		},
+		{
+			name:  "terminated takes no action",
+			phase: state.Terminated,
 			pod:   lifecycle.PodAbsent,
 			want:  lifecycle.Decision{Action: lifecycle.ActionNone},
 		},
@@ -152,6 +158,90 @@ func TestDecideOnlyEmitsValidTransitions(t *testing.T) {
 			if err := state.IsValid(phase, d.NextPhase); err != nil {
 				t.Errorf("Decide(%q, %v) emits invalid transition %q → %q: %v",
 					phase, obs, phase, d.NextPhase, err)
+			}
+		}
+	}
+}
+
+// allObservations is every reduced Pod observation the reconciler emits.
+var allObservations = []lifecycle.PodObservation{
+	lifecycle.PodAbsent,
+	lifecycle.PodPending,
+	lifecycle.PodReady,
+	lifecycle.PodNotReady,
+	lifecycle.PodFailed,
+	lifecycle.PodSucceeded,
+}
+
+// spec: 6.2 (Pod State Machine)
+//
+// TestDecideFailedIsReclaimedNotASink pins the §6.2 failed → draining
+// edge ("failed pod reclaimed and replaced"): a failed Sandbox drains
+// whatever its pod looks like, and the draining arm then deletes the pod
+// and reaches terminated. Before the fix the failed phase was a sink and
+// a failed pod held its node resources indefinitely.
+func TestDecideFailedIsReclaimedNotASink(t *testing.T) {
+	want := lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Draining}
+	for _, obs := range allObservations {
+		if d := lifecycle.Decide(state.Failed, obs); d != want {
+			t.Errorf("Decide(failed, %v) = %+v, want %+v", obs, d, want)
+		}
+		// The SDK-warm planner shares the reclaim.
+		if got := lifecycle.DecideSDKWarm(lifecycle.SDKWarmInputs{Phase: state.Failed, Pod: obs}); got != want {
+			t.Errorf("DecideSDKWarm(failed, %v) = %+v, want %+v", obs, got, want)
+		}
+	}
+	// Follow the reclaim to its end: draining deletes a live pod and
+	// advances to terminated once the pod is gone; terminated is final.
+	if d := lifecycle.Decide(state.Draining, lifecycle.PodFailed); d.Action != lifecycle.ActionDeletePod {
+		t.Errorf("Decide(draining, PodFailed) = %+v, want ActionDeletePod", d)
+	}
+	if d := lifecycle.Decide(state.Draining, lifecycle.PodAbsent); d.NextPhase != state.Terminated {
+		t.Errorf("Decide(draining, PodAbsent) = %+v, want terminated", d)
+	}
+	for _, obs := range allObservations {
+		if d := lifecycle.Decide(state.Terminated, obs); d.Action != lifecycle.ActionNone {
+			t.Errorf("Decide(terminated, %v) = %+v, want no action", obs, d)
+		}
+	}
+}
+
+// spec: 6.2 (Pod State Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
+//
+// TestHoldFailedReclaim pins the claim gate on the failed → draining
+// reclaim: a failed Sandbox whose per-pod SandboxClaim still exists is
+// left for the claim's release path, and every other phase and decision
+// passes through unchanged whether or not a claim exists.
+func TestHoldFailedReclaim(t *testing.T) {
+	for _, phase := range state.All() {
+		for _, obs := range allObservations {
+			for _, claim := range []bool{false, true} {
+				d := lifecycle.Decide(phase, obs)
+				got := lifecycle.HoldFailedReclaim(phase, claim, d)
+				want := d
+				if phase == state.Failed && claim {
+					want = lifecycle.Decision{}
+				}
+				if got != want {
+					t.Errorf("HoldFailedReclaim(%q, claim=%v, Decide(%q, %v)) = %+v, want %+v",
+						phase, claim, phase, obs, got, want)
+				}
+			}
+		}
+	}
+}
+
+// spec: 6.2 (Pod State Machine)
+//
+// TestDecideNeverActsOnOccupiedPods pins that the warm-path planner
+// never deletes or re-phases a pod in a gateway-owned occupancy phase,
+// even when the pod is observed failed (for example its adapter exited):
+// a claimed or reserved pod retires through the gateway's release path.
+func TestDecideNeverActsOnOccupiedPods(t *testing.T) {
+	for _, phase := range []state.State{state.Claimed, state.Reserved} {
+		for _, obs := range allObservations {
+			if d := lifecycle.Decide(phase, obs); d.Action != lifecycle.ActionNone {
+				t.Errorf("Decide(%q, %v) = %+v, want no action", phase, obs, d)
 			}
 		}
 	}

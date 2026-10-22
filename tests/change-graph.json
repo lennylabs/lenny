@@ -95,9 +95,16 @@
       "unit": ["pkg/gateway/middleware/circuitbreaker/..."],
       "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
     },
+    "pkg/controller/sandbox": {
+      "unit": ["pkg/controller/sandbox/..."],
+      "component": ["tests/tier2_component/controllers/warmpool_terminated_adapter_test.go"]
+    },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
-      "component": ["tests/tier2_component/controllers/warmpool_test.go"],
+      "component": [
+        "tests/tier2_component/controllers/warmpool_test.go",
+        "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go"
+      ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/warm_pool_test.go",
         "tests/tier5_e2e_kind/sandbox_claim_test.go"
