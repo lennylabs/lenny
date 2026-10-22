@@ -174,10 +174,12 @@ func TestDevHeadersPropagatesRolesOnlyWhenAllowDevRolesIsSet(t *testing.T) {
 }
 
 // TestBearerHonoursConfigurableTenantClaim asserts the §10.2
-// `auth.tenantIdClaim` Helm value flows through: an OIDC token whose
+// `auth.tenantIdClaim` Helm value flows through: an IdP token whose
 // tenant identifier lives under a non-default claim name is admitted
-// when TenantClaimName matches it, and rejected as TENANT_CLAIM_MISSING
-// otherwise. spec: §10.2. F-10.2.9.
+// when the verifier that accepted it is a jwt.TenantClaimVerifier over
+// that claim, and rejected as TENANT_CLAIM_MISSING when the wrapper
+// reads the default claim. spec: §10.2 (Authentication: `tenant_id`
+// extraction). F-10.2.9.
 func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
 	secret := []byte("secret")
 	signer := jwt.NewHMACSigner("test", secret)
@@ -190,14 +192,13 @@ func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
 		"acme_tenant": "acme",
 	})
 
-	// With TenantClaimName="acme_tenant" the request resolves to tenant
-	// "acme" via Extras.
+	// With the wrapper reading "acme_tenant" the request resolves to
+	// tenant "acme" via Extras.
 	inner, got := captureHandler()
 	h := Wrap(inner, Options{
-		Verifier:        signer,
-		MultiTenant:     true,
-		TenantClaimName: "acme_tenant",
-		Registry:        permissiveRegistry{},
+		Verifier:    jwt.NewTenantClaimVerifier(signer, "acme_tenant"),
+		MultiTenant: true,
+		Registry:    permissiveRegistry{},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -214,7 +215,7 @@ func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
 	// invisible and the request is rejected with TENANT_CLAIM_MISSING.
 	inner2, _ := captureHandler()
 	h2 := Wrap(inner2, Options{
-		Verifier:    signer,
+		Verifier:    jwt.NewTenantClaimVerifier(signer, ""),
 		MultiTenant: true,
 		Registry:    permissiveRegistry{},
 	})

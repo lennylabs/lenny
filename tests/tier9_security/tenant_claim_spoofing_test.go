@@ -124,7 +124,7 @@ func spoofErrorCode(body map[string]any) string {
 	return code
 }
 
-// spec: §10.2 (Authentication, tenant_id extraction from OIDC tokens)
+// spec: §10.2 (Authentication, `tenant_id` extraction)
 // diagnosis: a failure means a caller can reach a tenant it does not hold
 // on a multi-tenant gateway: the gateway admitted an unregistered tenant
 // claim, accepted a tenant claim it cannot authenticate (untrusted key or

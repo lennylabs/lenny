@@ -85,7 +85,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 	f := w.f
 	addr := f.addr
 	multiTenant := f.multiTenant
-	tenantIDClaim := f.tenantIDClaim
 	adminSATokenAudience := f.adminSATokenAudience
 	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
@@ -860,11 +859,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
 	// verifier.
 	authOpts := authmw.Options{
-		// spec: §10.2 — operator-configurable OIDC tenant claim
-		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
-		TenantClaimName: *tenantIDClaim,
-		Verifier:        w.bearerVerifier,
-		Revocations:     revProp,
+		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
+		// IdP-key members read the configured `auth.tenantIdClaim`
+		// (embeddedHMACVerifier) and the Token Service member keeps
+		// `tenant_id`. F-10.2.9.
+		Verifier:    w.bearerVerifier,
+		Revocations: revProp,
 		// §27.6 / §27.3.1 — authoritative per-request
 		// revocation check for origin=playground bearers; nil (and thus a
 		// no-op) when the playground is disabled. F-27.6.3 / F-27.3.1.

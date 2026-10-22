@@ -20,7 +20,7 @@ import (
 // two tenancy inputs: the agreeing pairs start, and a contradictory pair or
 // an unknown mode is refused with an error naming the offending key.
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens), §4.9
+// spec: §10.2 (`tenant_id` extraction), §4.9
 // (tenancy.mode: multi), §10.3 (gateway startup configuration validation).
 func TestValidateTenancyConfigRefusesContradiction(t *testing.T) {
 	cases := []struct {
@@ -55,7 +55,7 @@ func TestValidateTenancyConfigRefusesContradiction(t *testing.T) {
 // tenantstore-backed one; the dev-header tenant exception is on only in
 // single-tenant dev mode.
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens), §17.4 (dev mode).
+// spec: §10.2 (`tenant_id` extraction), §17.4 (dev mode).
 func TestApplyTenantAuthOptionsWiring(t *testing.T) {
 	store := tenantstore.NewMemory()
 	for _, tc := range []struct {
@@ -93,7 +93,7 @@ func TestApplyTenantAuthOptionsWiring(t *testing.T) {
 // with 401 TENANT_CLAIM_MISSING. A single-tenant gateway serves every
 // Bearer as `default`, whatever tenant the claim names.
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens).
+// spec: §10.2 (`tenant_id` extraction).
 func TestGatewayAuthTenantResolutionByMode(t *testing.T) {
 	ctx := context.Background()
 	store := tenantstore.NewMemory()

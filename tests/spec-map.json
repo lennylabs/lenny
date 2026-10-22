@@ -2961,6 +2961,14 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerTenantClaimFollowsVerifyingKey_spec_10_2",
+        "pkg/auth/jwt/tenantclaim_test.go::TestTenantClaimVerifierResolvesConfiguredClaim",
+        "pkg/gateway/environment/tenantstore/tenantstore_test.go::TestIsRegisteredImplementsAuthRegistry",
+        "tests/tier2_component/stores/tenantstore_test.go::TestTenantStoreIsRegisteredMatchesRegisteredReading_spec_10_2",
+        "pkg/gateway/externalapi/admin/tenant_lifecycle_guards_test.go::TestCreateTenantRefusesReservedPlatformID_spec_10_2",
+        "pkg/gateway/externalapi/admin/bootstrap_tenant_lifecycle_internal_test.go::TestUpsertTenantsRefusesReservedPlatformID_spec_10_2",
+        "tests/tier9_security/deleting_tenant_bearer_refusal_test.go::TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain",
         "pkg/auth/auth_test.go::TestAllTokenTypesIsExhaustive",
         "pkg/auth/auth_test.go::TestAllRolesIsExhaustive",
         "pkg/auth/auth_test.go::TestRoleIsTenantScoped",
@@ -3478,6 +3486,8 @@
       "title": "Audit Logging",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "cmd/lenny-gateway/auth_seams_test.go::TestAuthFailureTenantNotFoundOnPlatformChain_spec_11_7",
+        "tests/tier9_security/deleting_tenant_bearer_refusal_test.go::TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain",
         "pkg/audit/audit_test.go::TestAllChainIntegritiesIsExhaustive",
         "pkg/audit/audit_test.go::TestChainIntegrityIsAlarming",
         "pkg/audit/audit_test.go::TestAllComplianceProfilesIsExhaustive",
@@ -3751,6 +3761,7 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "pkg/gateway/externalapi/admin/tenant_lifecycle_guards_test.go::TestDefaultTenantDeletionRefusedOutsideMultiTenantMode_spec_12_8",
         "tests/tier2_component/stores/tenant_phase4_entries_test.go",
         "tests/tier2_component/stores/miniostore_test.go::TestMinIOStoreDeleteByTenant_spec_12_8",
         "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8",
@@ -5281,6 +5292,7 @@
       "title": "Packaging and Installation",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "pkg/gateway/externalapi/admin/bootstrap_tenant_lifecycle_internal_test.go::TestUpsertTenantsRefusesDeletingAndDeletedTenants_spec_17_6",
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"

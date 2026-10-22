@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -13,27 +12,18 @@ import (
 )
 
 // playgroundTenantRegistry adapts a tenantstore.Store into the
-// playground.TenantRegistry the §27.2 layer-4 Ready-gate consults. It
-// reports a tenant as registered when the store returns a row that is
-// not soft-deleted; the built-in "default" tenant is always
-// registered so a dev-mode playground against the Embedded-Mode
-// default tenant resolves without a Postgres row.
+// playground.TenantRegistry that the §27.3.1 OIDC callback and apiKey
+// mint admission and the §27.2 layer-4 dev-mode Ready-gate consult. It
+// applies the same registration reading as bearerTenantRegistry
+// (tenantRegistered), so a `deleting` or `deleted` tenant, `default`
+// included, is not registered and a store error refuses.
+// spec: §10.2, §27.3.1, §12.8.
 type playgroundTenantRegistry struct {
 	store tenantstore.Store
 }
 
 func (r playgroundTenantRegistry) IsRegistered(tenantID string) (bool, error) {
-	if tenantID == "default" {
-		return true, nil
-	}
-	row, err := r.store.Get(context.Background(), tenantID)
-	if errors.Is(err, tenantstore.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return row.IsActive(), nil
+	return tenantRegistered(context.Background(), r.store, tenantID)
 }
 
 // playgroundAuditEmitter bridges the playground's §27.3.1 / §10.2

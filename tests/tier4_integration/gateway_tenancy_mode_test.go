@@ -123,7 +123,7 @@ func tenancyErrorCode(body map[string]any) string {
 	return code
 }
 
-// spec: §10.2 (Authentication, tenant_id extraction from OIDC tokens)
+// spec: §10.2 (Authentication, `tenant_id` extraction)
 // diagnosis: a failure means the multi-tenant gateway binary does not
 // consult the tenant registry on the Bearer path: either an unregistered
 // tenant claim is admitted (the T-10.2.11 defect, where the single-tenant
@@ -167,7 +167,7 @@ func TestMultiTenantGatewayRefusesUnregisteredTenantClaim(t *testing.T) {
 	}
 }
 
-// spec: §10.2 (Authentication, tenant_id extraction from OIDC tokens)
+// spec: §10.2 (Authentication, `tenant_id` extraction)
 // diagnosis: a failure means the single-tenant gateway binary lets the
 // Bearer tenant claim select the tenant instead of serving every request
 // as `default`, so a caller could reach another tenant's rows by naming it

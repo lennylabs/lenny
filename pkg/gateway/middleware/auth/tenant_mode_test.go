@@ -48,7 +48,7 @@ func tenantModeRequest(t *testing.T, opts Options, prep func(*http.Request)) (in
 // multi-tenant middleware must check the dev header against the registry
 // even when the exception is on.
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens).
+// spec: §10.2 (`tenant_id` extraction).
 func TestTenantResolutionBySingleAndMultiTenantMode(t *testing.T) {
 	signer := jwt.NewHMACSigner("k", []byte("tenant-mode-secret"))
 	bearer := func(tenant string) func(*http.Request) {

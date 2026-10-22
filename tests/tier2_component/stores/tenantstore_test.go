@@ -19,6 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/tenantstoretest"
 )
 
 func tenantID(t *testing.T) string {
@@ -344,4 +345,40 @@ func TestTenantStoreContract(t *testing.T) {
 			t.Errorf("IsRegistered after soft-delete: got %v,%v want false,nil", reg, err)
 		}
 	})
+}
+
+// spec: 10.2 (Authentication: `tenant_id` extraction), 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
+// diagnosis: the Postgres tenant registry's IsRegistered disagrees with
+// tenantstore.Tenant.Registered for a tenant row in some lifecycle
+// position. Its SQL must report a row registered only when deleted_at is
+// NULL and state is neither deleting nor deleted; a deleting row that
+// reports true means a deleting tenant's bearers are still admitted from
+// Phase 3 on any path that reads the store directly.
+func TestTenantStoreIsRegisteredMatchesRegisteredReading_spec_10_2(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := tenantpg.New(pg.Pool)
+	ctx := context.Background()
+	for _, c := range tenantstoretest.RegistrationCases() {
+		t.Run(c.Name, func(t *testing.T) {
+			row, err := c.Seed(ctx, store, tenantID(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := row.Registered(); got != c.Registered {
+				t.Fatalf("Registered() on the Postgres row = %v, want %v (state %q, deletedAt %v)",
+					got, c.Registered, row.State, row.DeletedAt)
+			}
+			got, err := store.IsRegistered(row.ID)
+			if err != nil {
+				t.Fatalf("IsRegistered: %v", err)
+			}
+			if got != c.Registered {
+				t.Errorf("pgstore IsRegistered = %v, want %v", got, c.Registered)
+			}
+		})
+	}
+	if ok, err := store.IsRegistered(tenantID(t)); err != nil || ok {
+		t.Errorf("IsRegistered(missing) = %v, %v; want false, nil", ok, err)
+	}
 }

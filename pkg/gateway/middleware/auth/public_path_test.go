@@ -129,7 +129,7 @@ func TestPublicPathStillVerifiesPresentedBearer(t *testing.T) {
 // client's value. Before F-10.2.21 the header passed through untouched
 // and the session server read it as the tenant.
 //
-// spec: §10.2 (Authentication; tenant_id extraction from OIDC tokens).
+// spec: §10.2 (Authentication; `tenant_id` extraction).
 func TestIdentityHeadersStrippedOutsideDevHeaders(t *testing.T) {
 	rec := &identityRecorder{}
 	h := Wrap(rec, Options{})
