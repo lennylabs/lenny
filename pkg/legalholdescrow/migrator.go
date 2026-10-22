@@ -47,8 +47,9 @@ type SourceReader interface {
 // EscrowWriter seals re-encrypted payloads into the region-scoped
 // legal-hold escrow bucket. The write is immutable under
 // retain-until-hold-release object lock (COMPLIANCE mode on a MinIO/S3
-// backend); the platform skips escrowed objects in Phase 4 and the
-// escrow-GC job deletes them only after the hold is released.
+// backend). The escrow bucket sits outside every tenant store, so Phase
+// 4's DeleteByTenant deletes the held originals and leaves the escrow
+// copy, which the escrow-GC release deletes only after the hold clears.
 type EscrowWriter interface {
 	// Write stores the sealed payload at the escrow object key. It is
 	// idempotent: re-writing the same key during a re-entered Phase 3.5
@@ -99,16 +100,18 @@ type Escrowed struct {
 	ArtifactURI string
 }
 
-// Ledger records the §12.8 sub-step 2/4 ledger events and marks the
-// escrowed source record so Phase 4's DeleteByTenant skip logic can
-// observe the marker without re-reading the audit chain. A ledger write
+// Ledger records the §12.8 sub-step 2/4 ledger events and persists the
+// durable escrow record. That record is the release pointer: the
+// escrow-GC release reads it to locate and delete the escrow object once
+// the hold clears, after Phase 4 has deleted the original. A ledger write
 // is routed to the region's platform-Postgres (CMP-058); a routing
 // failure aborts the migration on that row (§12.8 sub-step 4
 // fail-closed) rather than leaving escrow ciphertext with no pointer.
 type Ledger interface {
 	// RegionResolved records the residency decision once per override.
 	RegionResolved(ctx context.Context, ev RegionResolved) error
-	// Escrowed records one migrated resource and marks it escrowed.
+	// Escrowed records one migrated resource and persists its escrow
+	// record.
 	Escrowed(ctx context.Context, ev Escrowed) error
 }
 
@@ -126,8 +129,13 @@ type Migrator struct {
 	Source SourceReader
 	// Escrow writes sealed payloads into the region-scoped escrow bucket.
 	Escrow EscrowWriter
-	// Ledger records the §12.8 ledger events and the escrow marker.
+	// Ledger records the §12.8 ledger events and the escrow record.
 	Ledger Ledger
+	// Records is the durable escrow record store. Migrate reads it to skip
+	// a hold that an earlier pass already escrowed (§12.8 Phase 3.5
+	// re-entry), so a re-entered migration whose originals Phase 4 already
+	// deleted does not read a missing original. Nil skips the lookup.
+	Records RecordStore
 	// Clock supplies the migration timestamp. Nil defaults to time.Now UTC.
 	Clock func() time.Time
 }
@@ -164,9 +172,10 @@ func (m *Migrator) now() time.Time {
 }
 
 // Migrate runs the §12.8 sub-steps 2-4 for the resolved holds. It is
-// idempotent: a re-entered migration re-seals and re-writes the same
-// escrow keys (the EscrowWriter no-ops a duplicate) and re-emits the
-// ledger events. It returns ErrRegionUnresolvable when the tenant's
+// idempotent: a hold with an active escrow record is skipped and its
+// recorded escrow key returned, and a hold escrowed without a record (a
+// ledger failure after the write) is re-sealed and re-written under the
+// same key. It returns ErrRegionUnresolvable when the tenant's
 // region has no escrow configuration (the caller maps this to
 // LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE, emits the
 // DataResidencyViolationAttempt audit event, raises the
@@ -208,6 +217,12 @@ func (m *Migrator) Migrate(ctx context.Context, in Input) (Result, error) {
 			// nothing to re-encrypt; the hold itself stays set.
 			continue
 		}
+		if key, done, err := m.alreadyEscrowed(ctx, in.TenantID, h); err != nil {
+			return Result{}, err
+		} else if done {
+			res.EscrowObjectKeys = append(res.EscrowObjectKeys, key)
+			continue
+		}
 		plaintext, err := m.Source.Read(ctx, h)
 		if err != nil {
 			return Result{}, fmt.Errorf("legalholdescrow: read held %s/%s: %w", h.ResourceType, h.ResourceID, err)
@@ -220,10 +235,11 @@ func (m *Migrator) Migrate(ctx context.Context, in Input) (Result, error) {
 		if err := m.Escrow.Write(ctx, key, sealed); err != nil {
 			return Result{}, fmt.Errorf("legalholdescrow: write escrow %s: %w", key, err)
 		}
-		// Sub-step 4: the ledger record + escrow marker is the durable
-		// pointer Phase 4's skip logic reads. A ledger failure aborts the
-		// migration on this row (the escrow object exists but is not yet
-		// pointed at, so the retry re-records it).
+		// Sub-step 4: the ledger record is the durable pointer the
+		// escrow-GC release reads, and Phase 4 does not proceed without it.
+		// A ledger failure aborts the migration on this row (the escrow
+		// object exists but is not yet pointed at, so the retry re-records
+		// it).
 		if err := m.Ledger.Escrowed(ctx, Escrowed{
 			TenantID:        in.TenantID,
 			ResourceType:    h.ResourceType,
@@ -242,4 +258,24 @@ func (m *Migrator) Migrate(ctx context.Context, in Input) (Result, error) {
 		res.EscrowObjectKeys = append(res.EscrowObjectKeys, key)
 	}
 	return res, nil
+}
+
+// alreadyEscrowed reports whether an earlier Phase 3.5 pass escrowed h,
+// returning the recorded escrow object key. A lookup error is returned
+// so the migration aborts rather than reading an original that Phase 4
+// may already have deleted.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3.5)
+func (m *Migrator) alreadyEscrowed(ctx context.Context, tenantID string, h HeldArtifact) (string, bool, error) {
+	if m.Records == nil || h.ArtifactURI == "" {
+		return "", false, nil
+	}
+	recs, err := m.Records.ActiveForArtifact(ctx, tenantID, h.ArtifactURI)
+	if err != nil {
+		return "", false, fmt.Errorf("legalholdescrow: look up escrow record for %s/%s: %w", h.ResourceType, h.ResourceID, err)
+	}
+	if len(recs) == 0 {
+		return "", false, nil
+	}
+	return recs[0].EscrowObjectKey, true, nil
 }

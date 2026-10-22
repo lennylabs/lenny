@@ -61,3 +61,24 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 		{"adminrouter.go", "userLeases = leaserevoke.New(ls, w.credAssign, credRenewalProp, nil)", "the lease revoker's credential assigner"},
 	})
 }
+
+// TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8 pins the gateway's
+// legal-hold escrow wiring: one escrow store is built over the configured
+// escrow bucket from the artifact store's provider options, the Phase 3.5
+// migrator writes to it and reads the durable escrow records for its
+// re-entry skip, and the Releaser deletes from it. The migrator and the
+// Releaser are unit-tested over injected stores, so a production wiring
+// that hands either the artifact store, whose tenant prefix delete would
+// destroy the escrow copies, is caught only here.
+//
+// spec: 12.8 (Compliance Interfaces: --acknowledge-hold-override admin action (tenant scope)), 12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3.5)
+func TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8(t *testing.T) {
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "escrowBlobs, err := blobescrow.NewStore(context.Background(), objectStorageOptions(f), *legalHoldEscrowBucket, *legalHoldEscrowEndpoint)", "the escrow store over the escrow bucket"},
+		{"adminrouter.go", "escrowBlobs: escrowBlobs, records: escrowRecords,", "the escrow store and escrow records in the tenantEscrowMigrator literal"},
+		{"adminrouter.go", "Deleter: blobescrow.Deleter{Blobs: escrowBlobs},", "the escrow store in the Releaser's deleter"},
+		{"legalholdescrow.go", "Source: blobescrow.Source{Blobs: m.blobs},", "the original reader over the artifact store"},
+		{"legalholdescrow.go", "Escrow: blobescrow.Writer{Blobs: m.escrowBlobs, TenantID: req.TenantID},", "the escrow writer over the escrow store"},
+		{"legalholdescrow.go", "Records: m.records,", "the escrow records on the Migrator"},
+	})
+}

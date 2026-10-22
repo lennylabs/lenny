@@ -73,6 +73,7 @@ import (
 	runtimeupgradepg "github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
+	"github.com/lennylabs/lenny/pkg/legalholdescrow/blobescrow"
 	legalholdescrowpg "github.com/lennylabs/lenny/pkg/legalholdescrow/pgstore"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
@@ -808,17 +809,28 @@ func (w *gatewayWiring) buildAdminRouter(
 			} else {
 				escrowRecords = legalholdescrow.NewMemRecordStore()
 			}
+			// §12.8 escrow store: one store over the configured escrow
+			// bucket, separate from the artifact store so Phase 4's tenant
+			// prefix delete never reaches the escrow copies. No bucket
+			// builds no store, and the override fails closed.
+			escrowBlobs, err := blobescrow.NewStore(context.Background(), objectStorageOptions(f),
+				*legalHoldEscrowBucket, *legalHoldEscrowEndpoint)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §12.8 %v", err)
+			}
 			escrowLed := escrowLedger{appender: auditAppender, records: escrowRecords, clock: clockinject.Now}
 			deletionReconciler.Escrow = tenantEscrowMigrator{
-				cfg:       escrowCfg,
-				tenants:   w.tenants,
-				artifacts: w.artifactCatalog,
-				blobs:     w.blobs,
-				cipher:    escrowCipherFactory(w.kmsProvider),
-				ledger:    escrowLed,
-				metrics:   gwMetrics,
-				appender:  auditAppender,
-				clock:     clockinject.Now,
+				cfg:         escrowCfg,
+				tenants:     w.tenants,
+				artifacts:   w.artifactCatalog,
+				blobs:       w.blobs,
+				escrowBlobs: escrowBlobs,
+				records:     escrowRecords,
+				cipher:      escrowCipherFactory(w.kmsProvider),
+				ledger:      escrowLed,
+				metrics:     gwMetrics,
+				appender:    auditAppender,
+				clock:       clockinject.Now,
 			}
 			deletionReconciler.Override = escrowOverrideSink{
 				appender: auditAppender,
@@ -830,7 +842,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			// legal_hold.escrow_released.
 			adminRouter = adminRouter.WithEscrowReleaser(&legalholdescrow.Releaser{
 				Records: escrowRecords,
-				Deleter: blobEscrowDeleter{blobs: w.blobs},
+				Deleter: blobescrow.Deleter{Blobs: escrowBlobs},
 				Ledger:  escrowLed,
 				Clock:   clockinject.Now,
 			})

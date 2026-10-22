@@ -3797,6 +3797,8 @@
         "tests/tier8_chaos/live_session_test.go",
         "tests/tier8_chaos/store_failure_test.go",
         "tests/tier2_component/legalholdescrow/pgstore_test.go",
+        "tests/tier2_component/legalholdescrow/blobescrow_minio_test.go::TestLegalHoldEscrowStoreOnMinIO_spec_12_8",
+        "pkg/legalholdescrow/...",
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go::TestErasureJobInProgressIndexMigration_spec_12_8",
