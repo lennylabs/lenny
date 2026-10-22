@@ -436,14 +436,19 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 var _ blobstore.Eraser = (*Store)(nil)
 
 // DeleteByTenant forwards the §12.8 Phase 4 prefix-scoped bulk delete
-// to the inner store, then drops the tenant's catalog rows so the
-// §12.5 ledger no longer references the erased tenant. The bucket
-// delete runs first: when the inner store aborts on a §12.8 legal
-// hold the error propagates before any catalog row is removed, so a
-// held tenant survives intact. An inner store without the
-// TenantPrefixDeleter contract is a no-op returning (0, nil).
+// to the inner store, then removes every catalog row of the tenant,
+// held rows included, so the §12.5 ledger no longer references the
+// erased tenant. The bucket prefix delete runs first, and an inner-store
+// error returns before the catalog delete so a retried Phase 4 still
+// finds the rows that describe objects left in the bucket. Phase 3.5 is
+// the hold gate: it copies every held original to the legal-hold escrow
+// bucket before Phase 4 runs, so the escrow copy and its ledger record
+// are the retained evidence and the held originals are erased here with
+// the rest of the tenant. An inner store without the TenantPrefixDeleter
+// contract is a no-op returning (0, nil).
 //
-// spec: §12.5 ll. 295; §12.8 Phase 4.
+// spec: §12.5 (Artifact Store); §12.8 (Compliance Interfaces: Tenant
+// deletion lifecycle, Phase 3.5 and Phase 4).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	inner, ok := s.inner.(blobstore.TenantPrefixDeleter)
 	if !ok {
