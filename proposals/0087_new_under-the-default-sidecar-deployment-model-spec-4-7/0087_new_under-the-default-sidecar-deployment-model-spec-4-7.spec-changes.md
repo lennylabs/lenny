@@ -530,7 +530,7 @@ Replace it with:
                                      Runtime supervisor)
 ```
 
-The `warming ──→ failed` edge (warm-fill failure), the `failed ──→ draining` edge, and the `sdk_connecting ──→ terminated` edge (SIGTERM received) stay as they are: an adapter exit before READY is a warm-fill failure, and the **Exit** channel of the **Liveness.** table excludes a pod that is being deleted, so the SIGTERM edge stays the edge of a pod deleted in `sdk_connecting`. The WarmPoolController does not yet honor that exclusion, as the summary's defects section records.
+The `warming ──→ failed` edge (warm-fill failure), the `failed ──→ draining` edge, and the `sdk_connecting ──→ terminated` edge (SIGTERM received) stay as they are: an adapter exit before READY is a warm-fill failure, and the **Exit** channel of the **Liveness.** table excludes a pod that is being deleted, so the SIGTERM edge stays the edge of a pod deleted in `sdk_connecting`. The precursor fix honors that exclusion: it observes a Pod that is being deleted as terminating, so an `sdk_connecting` pod takes the SIGTERM edge, and a `warming` pod, which has no SIGTERM edge, holds in `warming` until the pod is gone (commit `c29693b62`).
 
 ### SPEC-3 · spec/04_system-components.md § 4.7.9 Startup Sequence for `type: agent` Runtimes
 

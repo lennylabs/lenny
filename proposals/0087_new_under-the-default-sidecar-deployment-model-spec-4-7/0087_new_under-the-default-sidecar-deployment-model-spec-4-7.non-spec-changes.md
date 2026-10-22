@@ -142,7 +142,7 @@ This change serializes with R17 under rule S-4.
 - `tests/registers/exceptions-deployment-boundary.yaml`: the rows CODE-3 added for the flags this change renders are deleted.
 - The pod carries the label `lenny.dev/runtime-process` with the rendered lifetime: `restart` when `RuntimeProcess` is `restart`, otherwise `keep`, on every agent pod including embedded ones (D-PODLIFETIME). `DecideImmutableLabels` adds `lenny.dev/runtime-process` to its strictly immutable set, so an UPDATE that changes, adds, or removes it is refused, and a CREATE carries any value. `// spec: §17.2 (item 5); §5.2 (Runtime-process lifetime)`.
 - `pkg/podsecurity/podsecurity.go` refuses a read-write mount of the supervisor volume on any init, regular, or ephemeral container other than `lenny-supervisor-stage` (§13.1 **Runtime supervisor volume.**).
-- No change to `observePod`, `Decide`, or `DecideSDKWarm`. The precursor fix makes them observe a terminated `adapter` or `runtime` container and reclaim a `failed` `Sandbox` that no `SandboxClaim` holds before this proposal lands (summary D-PREREQS), and the **Exit** channel of §4.7.10 **Liveness.** rests on it.
+- No change to `observePod`, `Decide`, or `DecideSDKWarm`. The precursor fix makes them observe a terminated `adapter` or `runtime` container and reclaim a `failed` `Sandbox` that no `SandboxClaim` holds, and observe a Pod that is being deleted as terminating rather than failed (`c29693b62`), before this proposal lands (summary D-PREREQS), and the **Exit** channel of §4.7.10 **Liveness.** rests on it.
 
 ### CODE-5 · Pool field, admission, and the split predicates
 
