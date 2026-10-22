@@ -16,7 +16,7 @@ After these edits the specification states the following mechanisms. Each staged
 2. **Issued-token rows of an erased user** outlive the erasure job as SPEC-5 step 18 states.
 3. **The access-token cache flush of Phase 3** stays normative. The cache has no production writer, so the flush deletes nothing today, and the non-spec REC-1 records the gap as a departure.
 4. **A replica crash during full_revoke** is outside the SPEC-4 Note: a client disconnect does not stop the effects on the handling replica, and a crash of that replica stops them. Every effect is idempotent, so an operator repeats the call.
-5. **Deleting `default` in a multi-tenant deployment** refuses the initial admin token from Phase 3 onward, and every later bootstrap run whose seed still names `default` reports that entry as an `error`. SPEC-2 Edit 2b states both.
+5. **Deleting `default` in a multi-tenant deployment** refuses the initial admin token from Phase 3 onward, and every later bootstrap run whose seed still names `default` reports that entry as an `error`. SPEC-2 Edits 2b and 2c state them.
 
 ## Staged edits
 
@@ -34,7 +34,7 @@ After these edits the specification states the following mechanisms. Each staged
 a receipt outlives the redacted row (see `audit_event_id`), and the receipt itself
 ```
 
-### SPEC-2 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: Tenant deletion lifecycle
+### SPEC-2 · spec/12_storage-architecture.md § 12.8 Compliance Interfaces: Tenant deletion lifecycle; spec/17_deployment-topology.md § 17.6 Packaging and Installation
 
 **Edit 2a.** In the **Tenant deletion lifecycle.** table, replace the row that opens `| 3. Revoke credentials | `deleting`    |` with the row below. The row stays one physical line.
 
@@ -45,8 +45,16 @@ a receipt outlives the redacted row (see `audit_event_id`), and the receipt itse
 **Edit 2b.** In the paragraph that opens **Tenant deletion lifecycle.**, after `persisted in Postgres and exposed via the admin API.`, insert:
 
 ```markdown
-In a single-tenant deployment ([Section 10.2](10_gateway-internals.md#102-authentication)), the gateway refuses a request to delete or force-delete the built-in `default` tenant with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`. In a multi-tenant deployment, `default` is deleted like any other tenant, and when the deleted tenant holds the initial `platform-admin` user `lenny-admin` ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation); the gateway's `--admin-token-tenant`, `default` unless set), the gateway refuses that user's admin token from Phase 3 onward. The `lenny-bootstrap` Job's tenant seed reports an entry that names a tenant in the `deleting` or `deleted` state as an `error` and leaves that tenant unchanged, with or without `--force-update`.
+In a single-tenant deployment ([Section 10.2](10_gateway-internals.md#102-authentication)), the gateway refuses a request to delete or force-delete the built-in `default` tenant with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`. In a multi-tenant deployment, `default` is deleted like any other tenant, and when the deleted tenant holds the initial `platform-admin` user `lenny-admin` ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation); the gateway's `--admin-token-tenant`, `default` unless set), the gateway refuses that user's admin token from Phase 3 onward.
 ```
+
+**Edit 2c.** In §17.6 item 5 **Upsert semantics — full specification.**, after the table row that opens `| Resource exists and `--force-update` would overwrite a security-critical field`, insert the row below. The row stays one physical line.
+
+```markdown
+   | Tenant entry whose `id` is the reserved `platform` ([Section 10.2](10_gateway-internals.md#102-authentication)), or that names an existing tenant in the `deleting` or `deleted` state ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces) **Tenant deletion lifecycle**) | **Error** — no tenant is created or changed. Exit code: 2, or 1 when no entry succeeds. | **Error** — blocked. |
+```
+
+In §17.6 item 3, **Idempotent** bullet, replace `in which case they are updated to match the seed file.` with `in which case item 5 gives the outcome.`
 
 ### SPEC-3 · spec/10_gateway-internals.md § 10.2 Authentication; spec/27_web-playground.md § 27.3.1 OIDC cookie-to-MCP-bearer exchange; spec/04_system-components.md § 4.2 Session Manager
 
@@ -75,7 +83,7 @@ The other cells of the row are unchanged.
 **Edit 3e.** In §10.2 **`tenant_id` format validation.**, after `with `401 TENANT_CLAIM_INVALID_FORMAT` (before the tenant-registered lookup).`, insert:
 
 ```markdown
-The tenant ID `platform` is reserved for the platform tenant, under which the platform audit chain is written ([Section 11.7](11_policy-and-controls.md#117-audit-logging)). `POST /v1/admin/tenants` rejects it with `422 RESERVED_IDENTIFIER`, and the seed path (`POST /v1/admin/bootstrap`) records the entry as an `error`.
+The tenant ID `platform` is reserved for the platform tenant, under which the platform audit chain is written ([Section 11.7](11_policy-and-controls.md#117-audit-logging)). `POST /v1/admin/tenants` rejects it with `422 RESERVED_IDENTIFIER`.
 ```
 
 **Edit 3d.** In spec/04_system-components.md §4.2, keep the label **`tenant_id` claim extraction:** and replace the rest of that paragraph, from `The OIDC claim used to extract the tenant identifier` through `emitted as `auth_failure` audit events.`, with:
@@ -149,7 +157,7 @@ billing Redis stream (`XGROUP DESTROY t:{tenant_id}:billing:stream billing-flush
 - Replace `` → `SessionStore` → `TokenStore` → `CredentialPoolStore` → `` with:
 
 ```markdown
-→ `SessionStore` → `TokenStore` → `TokenIssuanceStore` (every issued-token index row of the tenant; [§10.2](10_gateway-internals.md#102-authentication) refuses every bearer of a deleting or deleted tenant, so rehydration no longer needs a revoked row) → `CredentialPoolStore` →
+→ `SessionStore` → `TokenStore` → `TokenIssuanceStore` (the tenant's issued-token index rows, except those step 18 keeps) → `CredentialPoolStore` →
 ```
 
 - Replace `→ custom role definitions for this tenant → tenant configuration record (including explicit KMS destruction of the `erasure_salt` key material via `ScheduleKeyDeletion` / `DestroyCryptoKeyVersion` if a salt was present; the KMS key destruction is recorded in the erasure receipt).` with:
@@ -204,4 +212,5 @@ Phase 4 then proceeds with `DeleteByTenant`, which deletes the originals of the 
 - `spec/10_gateway-internals.md` (SPEC-3)
 - `spec/11_policy-and-controls.md` (SPEC-4)
 - `spec/12_storage-architecture.md` (SPEC-1, SPEC-2, SPEC-5, SPEC-6)
+- `spec/17_deployment-topology.md` (SPEC-2)
 - `spec/27_web-playground.md` (SPEC-3)
