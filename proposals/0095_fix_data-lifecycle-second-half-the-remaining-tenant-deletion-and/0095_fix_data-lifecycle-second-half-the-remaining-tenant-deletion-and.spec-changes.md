@@ -17,7 +17,7 @@ After these edits the specification states the following mechanisms. Each staged
 2. **Issued-token rows of an erased user or a deleted tenant** outlive the erasure job as the §13.3 retention rule (SPEC-5 Edit 5d) states.
 3. **The access-token cache flush of Phase 3** stays normative. The cache has no production writer, so the flush deletes nothing today, and the non-spec REC-1 records the gap as a departure.
 4. **A replica crash during full_revoke** is outside the SPEC-4 Note: a client disconnect does not stop the effects on the handling replica, and a crash of that replica stops them. Every effect is idempotent, so an operator repeats the call.
-5. **Deleting `default` in a multi-tenant deployment** refuses the initial admin token from Phase 3 onward, and every later bootstrap run whose seed still names `default` reports that entry as an `error`. SPEC-2 Edits 2b and 2c state them.
+5. **Deleting `default` in a multi-tenant deployment** refuses the initial admin token from Phase 3 onward, and every later bootstrap run whose seed still has a `default` tenant entry reports that entry as an `error`. SPEC-2 Edits 2b and 2c state them.
 
 ## Staged edits
 
