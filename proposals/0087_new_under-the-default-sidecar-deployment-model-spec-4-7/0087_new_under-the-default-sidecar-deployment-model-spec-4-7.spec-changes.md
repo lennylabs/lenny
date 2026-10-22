@@ -14,6 +14,8 @@ Each statement has one home in the specification. Every other site cites that ho
 | The `command` field and which runtimes carry it | SPEC-1, §5.1 **`command`** |
 | The `env` field and its reserved prefix | SPEC-1, §5.1 **`env`** |
 | What the supervisor is, when it launches and ends a runtime process, how it runs `cleanupCommands`, its environment and signals, liveness, crash, and pod termination | SPEC-2, §4.7.10 **Runtime supervisor.** |
+| The SDK-warm lifecycle on a sidecar pod: the warm-up launch and the circuit breaker, `ConfigureWorkspace`, `DemoteSDK`, and the re-warm edge | SPEC-2, §4.7.10 **Runtime supervisor.** **SDK-warm.** |
+| What the runtime sweep removes | SPEC-2, §4.7.10 **Runtime supervisor.** **Sweep.** |
 | Startup order | SPEC-3, §4.7.9 steps 4 and 7 |
 | Why the adapter trusts the supervisor, and what the reuse decision rests on | SPEC-4, §4.7.11 item 8 |
 | `recycle.runtimeProcess`, its admission rules, the acknowledgment, the scrub order, which component runs `cleanupCommands` in each deployment model, and what the scrub reaches | SPEC-5, §5.2 |
@@ -26,6 +28,8 @@ Each statement has one home in the specification. Every other site cites that ho
 | Case | Observable outcome | Home |
 |:--|:--|:--|
 | The supervisor never connects | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-3, SPEC-7 |
+| A warm-up launch fails, or its process does not connect on `CH-MSGSOCK` within the adapter's wait | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-2 **Launch.** |
+| A `preConnect` pod is created while the pool's SDK-warm circuit breaker is open | No warm-up launch; the pod warms pod-warm, and its first session's start launches the process at step 7 | SPEC-2 **SDK-warm.** |
 | The property self-test fails on a `restart` pod | The supervisor exits before it dials, and the pod never becomes `idle` | SPEC-4 |
 | `launch` fails | `launched` carries an error code, the session's start fails, and the pod is reported not live | SPEC-2, SPEC-7 |
 | The runtime process exits while a session is bound | `exited` reaches the adapter, each bound session fails with `runtime_crash` into the §7.3 resume flow, and the pod retires at the boundary | SPEC-2 **Crash.**, **Liveness.** |
@@ -75,8 +79,7 @@ env: # optional; see env below
 ```
 On a pod whose pool keeps its runtime process (`recycle.runtimeProcess: keep`,
 or a pool that does not recycle), the runtime process lives as long as the pod
-unless `DemoteSDK` ends it
-([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). On a
+unless `DemoteSDK` ends it (**Runtime supervisor.**, **SDK-warm.** below). On a
 `restart` pod each runtime process lives from its launch to the next
 occupancy-zero boundary at which the pod is reused
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
@@ -111,7 +114,7 @@ Replace with:
 
 ```
 the agent process, is in the sidecar model the runtime process, which `DemoteSDK`
-ends (**Runtime supervisor.** below); in the embedded model it is distinct from
+ends (**Runtime supervisor.**, **SDK-warm.** below); in the embedded model it is distinct from
 the runtime process, and neither `DemoteSDK` nor the SDK re-warm ends the runtime process.
 ```
 
@@ -175,11 +178,14 @@ container and no supervisor.
   runtime process since its creation or its last attested end, after the
   manifest the process reads exists, and after every adapter listener the
   runtime dials is bound; a session that starts while a process is live uses
-  that process. A `preConnect` runtime and a service-mode runtime are launched
-  at pod warm-up, before READY. Every other launch is at startup step 7
-  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)), which on a
-  `preConnect` runtime is a session start after `DemoteSDK`
-  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). On a
+  that process. A service-mode runtime, and a `preConnect` runtime when
+  **SDK-warm.** says so, is launched at pod warm-up, and the adapter signals
+  READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes) step 4) only
+  after that process has connected on `CH-MSGSOCK`; a warm-up launch that
+  fails, or whose process does not connect within the adapter's bounded wait,
+  makes the adapter exit non-zero, and the pod never becomes `idle`. Every
+  other launch is at startup step 7
+  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)). On a
   `restart` pod no launch follows an occupancy-zero boundary before that
   boundary's whole-pod scrub has run
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
@@ -193,13 +199,24 @@ container and no supervisor.
   the end runs, with no SIGTERM grace, at the points the
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
   **Lenny scrub procedure.** names.
-  The end is also the `DemoteSDK` teardown
-  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) and the
+  The end is also the `DemoteSDK` teardown (**SDK-warm.**) and the
   deadline action of a `shutdown`
   ([§28.5.3](28_communication-channels.md#2853-intra-pod)). Between an attested
   end and the next launch the adapter closes and rebinds its `CH-MSGSOCK`
   listener and, when bound, its `CH-RUNTIMEOPS` listener, so no connection the
   ended process opened or left pending reaches the next process.
+- **Sweep.** On a `restart` pod, after an attested end and at the point the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Lenny scrub procedure.** names, a worker the supervisor forks, which holds
+  no `CH-SUPERVISE` descriptor, removes the agent UID's System V shared memory
+  segments, message queues, and semaphore sets, matched on the creating or the
+  owning UID, the agent UID's POSIX message queues, and every entry the agent
+  UID owns, symbolic links included, in the runtime container's writable
+  volumes, which are `/sessions`, `/artifacts`, `/tmp`, `/dev/shm`, and the
+  workspace base other than its `slots/` directory. The sweep leaves `slots/` to scrub
+  step 2, so `cleanupCommands` can still read the ended sessions' trees. The
+  worker follows no symbolic link and bounds its walk. The supervisor then
+  ends every other process again as **End.** states before it answers.
 - **Cleanup.** At every recycle boundary the supervisor runs the deployer's
   `cleanupCommands` at the agent UID in a worker it forks, with the workspace
   base as working directory and the launch environment plus the step-0
@@ -207,6 +224,28 @@ container and no supervisor.
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
   The worker stops the running command when the commands together outlast
   `cleanupTimeoutSeconds`.
+- **SDK-warm.** On a `preConnect` runtime
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) the SDK
+  process is the runtime process. Whether a pod launches it at warm-up is fixed
+  when the WarmPoolController creates the pod: the pod launches it when the
+  pool's SDK-warm circuit breaker is closed at that moment
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like),
+  **Circuit-breaker for SDK-warm pools.**), and otherwise warms pod-warm with no
+  process. `ConfigureWorkspace` gives the session to the live process, and when
+  no process is live it launches one, as **Launch.** permits, at startup step 7
+  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)) after it writes the
+  final manifest. `DemoteSDK` ends the live process (**End.**) with a SIGTERM
+  grace that ends within the request's deadline, and the session's start then
+  launches a new process at step 7. A `DemoteSDK` whose wait for the slot
+  serialization outlasts its deadline sends no `end` and tears nothing down
+  ([§28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame
+  writes.**). A `DemoteSDK` whose `end` fails returns an error, and the runtime
+  is reported not live (**Liveness.**). A `preConnect` runtime is never
+  `restartable` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime),
+  **`command`**), so the pod keeps its live process across each recycle
+  boundary, and the adapter launches nothing on the `claimed → sdk_connecting`
+  re-warm edge ([§6.2](06_warm-pod-model.md#62-pod-state-machine)): the kept
+  process, whichever launch started it, is the pod's SDK-warm process.
 - **Generation.** Each launch starts a new runtime generation. The rule that
   counts the sessions the pod's shared runtime process has been given
   ([§28.6](28_communication-channels.md#286-exclusivity-and-concurrency-model))
@@ -256,7 +295,7 @@ In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:*
 (a) Append to step 4, `4. Adapter signals READY to gateway — pod enters warm pool`, on the same list item:
 
 ```
- In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE`, and on a `preConnect` or service-mode runtime only after the supervisor has launched the runtime process ([§4.7.10](#4710-deployment-model), **Runtime supervisor.**).
+ In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE`, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 ```
 
 (b) Replace step 7, from `7. The runtime process becomes live for the pod's first session.` through `the runtime loop in its own process for each session.`, with:
@@ -381,7 +420,7 @@ In the same paragraph, replace `A runtime that exits after its session makes the
 (c) In **Lenny scrub procedure**, replace `The scrub has two phases: a **pre-cleanup credential purge** (step 0) executed by the adapter before `cleanupCommands`, and a **post-cleanup scrub sequence** (steps 1-6) executed after `cleanupCommands` finish.` with:
 
 ```
-The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a sidecar pod under `recycle.runtimeProcess: restart`, the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and removes the agent UID's IPC objects and its entries in every agent-writable volume ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); the deployer's `cleanupCommands`; on a sidecar pod under `restart`, a second runtime end, which ends every process the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); in the embedded model the adapter runs them in its own container. A failed end or sweep retires the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
+The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a sidecar pod under `recycle.runtimeProcess: restart`, the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and sweeps what the agent UID left ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **End.** and **Sweep.**); the deployer's `cleanupCommands`; on a sidecar pod under `restart`, a second runtime end, which ends every process the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); in the embedded model the adapter runs them in its own container. A failed end or sweep retires the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
 ```
 
 In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process under `keep` and to a newly launched one under `restart`;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
@@ -392,7 +431,7 @@ In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter en
 In the embedded model the kill runs in the adapter container. In the sidecar model the adapter container runs no author process, and the runtime container's processes are ended by the runtime end before `cleanupCommands` under `restart` and are kept under `keep`; see "What the scrub reaches" below.
 ```
 
-In step 1b, append `In the sidecar model the adapter does not run this step; under `recycle.runtimeProcess: restart` the runtime sweep removes the segments the agent UID owns or created, together with its System V message queues and semaphores and its POSIX message queues, and under `keep` they persist (see "What the scrub reaches" below).`
+In step 1b, append `In the sidecar model the adapter does not run this step; under `recycle.runtimeProcess: restart` the runtime sweep removes the agent UID's IPC objects ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **Sweep.**), and under `keep` they persist.`
 
 In step 3, append `In the sidecar model each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
 
@@ -408,11 +447,11 @@ lacks. In the sidecar deployment model
 ([§4.7.10](04_system-components.md#4710-deployment-model)) steps 0, 2, 4, and 6
 operate on volumes mounted into both containers, so they clear and verify the
 runtime container's view of those paths. Under `recycle.runtimeProcess:
-restart` the runtime end and sweep reach every process in the runtime container
-other than the supervisor, the agent UID's System V and POSIX IPC objects, and
-its entries in the workspace base, `/sessions`, `/artifacts`, `/tmp`, and
-`/dev/shm`, so no runtime process persists across the recycle boundary; the
-adapter process persists. Under `keep` the runtime process, its memory, the
+restart` the runtime end reaches every process in the runtime container other
+than the supervisor, and the sweep reaches what
+[§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
+**Sweep.** lists, so no runtime process persists across the recycle boundary;
+the adapter process persists. Under `keep` the runtime process, its memory, the
 processes it started, and its IPC objects persist across the boundary, because
 the pod keeps the runtime process
 ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process
@@ -612,19 +651,23 @@ The citation of §15.4 on the next line stays.
 
 (d) In `spec/15_external-api-surface.md` §15.4, make these replacements:
 
-1. In the **SDK-warm demotion contract:** paragraph, replace `the adapter sends SIGKILL` with `the process is sent SIGKILL ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**)`.
+1. In the **SDK-warm demotion contract:** paragraph, replace `the adapter sends SIGKILL` with `the process is sent SIGKILL ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **SDK-warm.**)`.
 2. In §15.4.1, replace `**stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages.` with `**stderr** goes to its container's log and is **not** parsed as protocol messages.`
 3. In the §15.4.6 Basic-level **shutdown within `deadline_ms`** row, replace `the adapter will SIGKILL the process in production` with `the process is sent SIGKILL in production`.
 
-### SPEC-9 · spec/06_warm-pod-model.md § 6.1 and spec/05_runtime-registry-and-pool-model.md § 5.1
+### SPEC-9 · spec/06_warm-pod-model.md § 6.1 and § 6.2, and spec/05_runtime-registry-and-pool-model.md § 5.1
 
 (a) In the §6.1 **Optional: SDK-warm mode.** paragraph, replace `The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt.` with:
 
 ```
-The adapter starts the SDK process during warm-up, before the pod reaches `idle` state, in the sidecar model through the runtime supervisor ([Section 6.2](#62-pod-state-machine); [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**), leaving it waiting for its first prompt.
+The adapter starts the SDK process during warm-up, before the pod reaches `idle` state, in the sidecar model through the runtime supervisor ([Section 6.2](#62-pod-state-machine); [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **SDK-warm.**), leaving it waiting for its first prompt.
 ```
 
 (b) In §5.1 **`capabilities.preConnect`**, replace `the warm pool controller pre-connects the agent SDK process during the warm phase.` with `the agent SDK process is pre-connected during the warm phase ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).`
+
+(c) In the §6.1 **`preConnect` compatibility with the execution modes.** table, in the row for `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true`, replace `the adapter re-establishes SDK-warm state on the `claimed → sdk_connecting` re-warm edge before the claim enters `reserved` ([Section 6.2](#62-pod-state-machine))` with `the pod takes the `claimed → sdk_connecting` re-warm edge before the claim enters `reserved` ([Section 6.2](#62-pod-state-machine)), on which a sidecar pod's adapter launches nothing ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **SDK-warm.**)`. The row stays one physical line.
+
+(d) In §6.2 **preConnect re-warm on scrub_warning.**, replace `the SDK re-initialization does not clear the warning` with `the re-warm does not clear the warning`, because a sidecar pod's re-warm initializes nothing ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **SDK-warm.**).
 
 ### SPEC-11 · Launch-ordering wording that proposal 0090 left to 0087
 
