@@ -210,6 +210,7 @@ func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 // session was started without the credential its tenant policy requires, a
 // pod or lease leaked on the refusal, or the refusal was not retryable.
 func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T) {
+	t.Parallel()
 	f := newCredOutageFixture(t, "sess-cred-outage")
 	h := f.srv.Handler()
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
@@ -273,6 +274,7 @@ func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T
 // means a child ran without the credential its policy requires or leaked a
 // warm pod on the refusal.
 func TestMaterializeDelegatedChildFailsClosedOnCredentialLookupOutage_spec_8_2(t *testing.T) {
+	t.Parallel()
 	f := newCredOutageFixture(t, "unused")
 	seedDelegatedChild(t, f.store, "child-outage", "")
 
@@ -320,6 +322,7 @@ func TestMaterializeDelegatedChildFailsClosedOnCredentialLookupOutage_spec_8_2(t
 // credential its policy requires, or a failed attempt claimed a pod or
 // advanced the retry count.
 func TestResumeFailsClosedOnCredentialLookupOutage_spec_7_3(t *testing.T) {
+	t.Parallel()
 	f := newCredOutageFixture(t, "sess-resume-outage")
 	seedAwaitingSession(t, f.store, sessionstore.Session{
 		ID: "sess-resume-outage", UserID: "alice@acme.com", WorkspaceSnapshot: checkpointed(),

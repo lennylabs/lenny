@@ -3,6 +3,7 @@
 package sessionserver_test
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -69,10 +71,32 @@ type scannedFunc struct {
 	decl *ast.FuncDecl
 }
 
+// repoScan memoizes scanRepo. Parsing every Go file under pkg/ and cmd/
+// takes several seconds under -race, and the inventory tests that call it
+// only read the result, so the parse runs once per test binary.
+var repoScan struct {
+	once  sync.Once
+	funcs map[string]scannedFunc
+	fset  *token.FileSet
+	err   error
+}
+
 // scanRepo parses every non-test Go file under pkg/ and cmd/ and returns its
-// function declarations keyed by "file func".
+// function declarations keyed by "file func". Callers must treat the map and
+// the declarations as read-only, because every caller shares one copy.
 func scanRepo(t *testing.T) (map[string]scannedFunc, *token.FileSet) {
 	t.Helper()
+	repoScan.once.Do(func() {
+		repoScan.funcs, repoScan.fset, repoScan.err = parseRepoFuncs()
+	})
+	if repoScan.err != nil {
+		t.Fatal(repoScan.err)
+	}
+	return repoScan.funcs, repoScan.fset
+}
+
+// parseRepoFuncs is scanRepo's uncached parse.
+func parseRepoFuncs() (map[string]scannedFunc, *token.FileSet, error) {
 	root := filepath.Join("..", "..", "..")
 	fset := token.NewFileSet()
 	out := map[string]scannedFunc{}
@@ -101,10 +125,10 @@ func scanRepo(t *testing.T) (map[string]scannedFunc, *token.FileSet) {
 			return nil
 		})
 		if err != nil {
-			t.Fatalf("scan %s: %v", dir, err)
+			return nil, nil, fmt.Errorf("scan %s: %w", dir, err)
 		}
 	}
-	return out, fset
+	return out, fset, nil
 }
 
 // terminalAssignment reports the first position at which fn assigns a
@@ -182,6 +206,7 @@ func firstCall(fd *ast.FuncDecl, match func(string) bool) token.Pos {
 // spec: §7.2 (Interactive Session Model), §8.8 (TaskRecord and TaskResult
 // Schema)
 func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
+	t.Parallel()
 	funcs, _ := scanRepo(t)
 	var found []string
 	for key, sf := range funcs {

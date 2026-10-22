@@ -198,6 +198,7 @@ func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut 
 // claimed a pod, never launched, or launched but stayed unregistered and
 // unreachable, so §8.2 steps 5-9 did not execute.
 func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-1", `{
 		"schemaVersion": 1,
@@ -261,6 +262,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 // keep renewing it. A failure here means the lease holder and the binding
 // holder diverged, the exact decoupling co-location removes.
 func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-lease-persist", "")
@@ -316,6 +318,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 // failure here means the publish was gated on the redundant self-renew acquire
 // instead of running unconditionally once the lease is held.
 func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-renew-blip", `{
 		"schemaVersion": 1,
@@ -470,6 +473,7 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 // failure here means a losing delegation leaked its warm pod, which §8.3
 // forbids, or the child was left partially materialized.
 func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-race", "")
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
@@ -522,6 +526,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 // child pod and its lease leaked past a failed terminal persist, or a registry
 // entry survived the failed write.
 func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-persist", "")

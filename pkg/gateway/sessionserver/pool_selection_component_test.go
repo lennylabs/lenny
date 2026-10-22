@@ -51,6 +51,7 @@ func poolSelectTenantAccess(t *testing.T, pools ...string) tenantaccessstore.Sto
 // behavior is back: the session scheduled on a different pool (or the
 // disambiguation picked the wrong one) despite the explicit pin.
 func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -112,6 +113,7 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 // microvm while the default is sandboxed, with isolationProfile omitted, so
 // it must schedule.
 func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -163,6 +165,7 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 // wrong status), instead of the deterministic 400 VALIDATION_ERROR F-CS2
 // requires. The cases share one envtest cluster.
 func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -239,6 +242,7 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 // the runtime + isolation), so the rejection is the authorization gate,
 // not the satisfiability gate.
 func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
