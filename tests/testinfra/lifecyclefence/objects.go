@@ -139,3 +139,56 @@ type failingFinalise struct{ *Manifests }
 func (failingFinalise) Finalise(context.Context, string, string, bool, string) error {
 	return errCopyFailed
 }
+
+// EraseTenant deletes every manifest row of the tenant and every seeded
+// source checkpoint, as the Phase 4 checkpoint_manifests entry does, and
+// returns the number of source checkpoints it removed.
+func (m *Manifests) EraseTenant(ctx context.Context, tenantID string) (int, error) {
+	if err := m.DeleteByTenant(ctx, tenantID); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, r := range m.parents {
+		if r.TenantID == tenantID {
+			delete(m.parents, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// TenantCount returns the number of manifest rows and seeded source
+// checkpoints the tenant still holds.
+func (m *Manifests) TenantCount(tenantID string) int {
+	m.mu.Lock()
+	n := 0
+	for _, r := range m.parents {
+		if r.TenantID == tenantID {
+			n++
+		}
+	}
+	var sessions [][2]string
+	for key := range m.bySession {
+		if key[0] == tenantID {
+			sessions = append(sessions, key)
+		}
+	}
+	m.mu.Unlock()
+	for _, key := range sessions {
+		n += m.Count(key[0], key[1])
+	}
+	return n
+}
+
+// TenantCount returns the number of objects stored under the tenant.
+func (o *Objects) TenantCount(tenantID string) int {
+	n := 0
+	for _, u := range o.Keys() {
+		if u.TenantID == tenantID {
+			n++
+		}
+	}
+	return n
+}

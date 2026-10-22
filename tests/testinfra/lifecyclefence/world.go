@@ -27,8 +27,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// Users is the set of users every World seeds in its tenant.
-var Users = []string{"alice", "bob"}
+// Users is the set of users every World seeds in its tenant. Scenarios erase
+// alice, run the raced suspend's create as bob, and full-revoke carol, so the
+// full_revoke tombstone never refuses a create another operation needs.
+var Users = []string{"alice", "bob", "carol"}
 
 // sourceEntries is the transcript length of each seeded replay source.
 const sourceEntries = 3
@@ -51,6 +53,12 @@ type World struct {
 	Faults *Faults
 	// Audit records the admin router's audit events.
 	Audit *AuditSink
+	// Leases is the credential lease pool. Each seeded live session holds
+	// one lease. A twin World shares it.
+	Leases *Leases
+	// Tokens is the TokenStore. Each user holds tokensPerUser rows. A twin
+	// World shares it.
+	Tokens *Tokens
 
 	// Lister is the drain's listing seam: the session store behind Faults.
 	Lister *FaultySessions
@@ -83,23 +91,71 @@ type World struct {
 	suspendTransitions int
 	// racedSuspends holds each raced suspend's observation for Check.
 	racedSuspends []racedObservation
+	// seededLive lists, per user, the live sessions SeedLive inserted.
+	seededLive map[string][]string
+	// deletion records how far the tenant's deletion has got.
+	deletion deletionProgress
+	// twin is the other tenant of a pair, and twinBaseline its residue
+	// when the pair was built. Check asserts the twin is unchanged.
+	twin         *World
+	twinBaseline Residue
+	// userCommitHooks holds, per user, the hook to run right after that
+	// user's row next commits.
+	userCommitHooks map[string]func()
+}
+
+// tokensPerUser is the number of TokenStore rows each seeded user holds.
+const tokensPerUser = 2
+
+// shared is the backing state two Worlds of a pair share: the blob store,
+// the checkpoint manifests, the lease pool, and the TokenStore, each keyed
+// by tenant as the production stores are.
+type shared struct {
+	objects   *Objects
+	manifests *Manifests
+	leases    *Leases
+	tokens    *Tokens
 }
 
 // NewWorld seeds a fresh tenant with Users, one completed replay source per
-// user with a transcript, and liveSeeds running sessions per user.
+// user with a transcript, liveSeeds running sessions per user each holding
+// one credential lease, and tokensPerUser TokenStore rows per user.
 func NewWorld(t testing.TB, s *Stores, liveSeeds int) *World {
+	t.Helper()
+	return newWorld(t, s, liveSeeds, shared{objects: NewObjects(), manifests: NewManifests(), leases: NewLeases(), tokens: NewTokens()})
+}
+
+// NewTwin seeds a second tenant over the same stores, sharing the World's
+// blob store, manifests, lease pool, and TokenStore, and records its
+// residue. Check then asserts that nothing the World's operations do
+// changes the twin. The twin takes no operation of its own.
+func (w *World) NewTwin(t testing.TB, liveSeeds int) *World {
+	t.Helper()
+	tw := newWorld(t, w.S, liveSeeds, shared{objects: w.Objects, manifests: w.Manifests, leases: w.Leases, tokens: w.Tokens})
+	base, err := tw.Residue(context.Background())
+	if err != nil {
+		t.Fatalf("twin residue: %v", err)
+	}
+	w.twin, w.twinBaseline = tw, base
+	return tw
+}
+
+func newWorld(t testing.TB, s *Stores, liveSeeds int, sh shared) *World {
 	t.Helper()
 	ctx := context.Background()
 	w := &World{
-		S:         s,
-		Tenant:    "t-" + uuid.NewString()[:8],
-		Objects:   NewObjects(),
-		Manifests: NewManifests(),
-		Faults:    &Faults{},
-		Audit:     &AuditSink{},
-		Logger:    newTestLogger(t),
-		sources:   map[string]string{},
-		erasedAt:  map[string]int64{},
+		S:          s,
+		Tenant:     "t-" + uuid.NewString()[:8],
+		Objects:    sh.objects,
+		Manifests:  sh.manifests,
+		Leases:     sh.leases,
+		Tokens:     sh.tokens,
+		Faults:     &Faults{},
+		Audit:      &AuditSink{},
+		Logger:     newTestLogger(t),
+		sources:    map[string]string{},
+		erasedAt:   map[string]int64{},
+		seededLive: map[string][]string{},
 
 		parentCommits: map[string]int64{},
 	}
@@ -113,6 +169,7 @@ func NewWorld(t testing.TB, s *Stores, liveSeeds int) *World {
 			t.Fatalf("seed user %s: %v", u, err)
 		}
 		w.seedSource(t, u)
+		w.Tokens.Seed(w.Tenant, u, tokensPerUser)
 		for i := 0; i < liveSeeds; i++ {
 			w.SeedLive(t, u)
 		}
@@ -159,15 +216,31 @@ func (w *World) seedCheckpoint(t testing.TB, sourceID string) *sessionstore.Work
 	return &sessionstore.WorkspaceSnapshot{Ref: fmt.Sprintf("/%s/%s/%s/%s", w.Tenant, blobstore.ObjectTypeCheckpoint, sourceID, ckpt)}
 }
 
-// SeedLive inserts one running session of user and returns its ID.
+// SeedLive inserts one running session of user holding one credential
+// lease and returns its ID.
 func (w *World) SeedLive(t testing.TB, user string) string {
 	t.Helper()
 	row := sessionstore.Session{ID: uuid.NewString(), TenantID: w.Tenant, UserID: user, RuntimeRef: "echo", State: session.StateRunning}
 	if err := w.S.Sessions.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed live session of %s: %v", user, err)
 	}
+	w.Leases.Grant(w.Tenant, user, row.ID)
+	w.mu.Lock()
+	w.seededLive[user] = append(w.seededLive[user], row.ID)
+	w.mu.Unlock()
 	return row.ID
 }
+
+// SeededLive returns the live sessions SeedLive inserted for user.
+func (w *World) SeededLive(user string) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.seededLive[user]...)
+}
+
+// LeaseRenewer renews one random held lease of any tenant sharing the
+// World's pool, as the LLM proxy renews the leases of running sessions.
+func (w *World) LeaseRenewer(pick func(n int) int) { w.Leases.RenewRandom(pick) }
 
 // sessionGone reports whether the session's row is absent from the store.
 func (w *World) sessionGone(ctx context.Context, id string) bool {

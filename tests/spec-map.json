@@ -3032,7 +3032,10 @@
         "tests/tier4_integration/gateway_require_auth_test.go::TestProductionGatewayKeepsPublicRoutesPublic",
         "tests/tier4_integration/gateway_require_auth_test.go::TestDevGatewayHonoursTenantHeader",
         "tests/tier9_security/unauthenticated_tenant_access_test.go::TestUnauthenticatedRequestCannotNameRegisteredTenant",
-        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8"
       ],
       "packages": [
         "pkg/auth"
@@ -3410,7 +3413,11 @@
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceRefusesEachMarker_spec_12_8",
         "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceRefusesInTransaction_spec_12_8",
         "pkg/gateway/mcpfabric/delegation/reservation_test.go::TestDelegateSoftDisabledOwnerKeepsDelegating_spec_11_4",
-        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeContinuesPastDisconnect_spec_11_4",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeCheckFlagsLiveSession_spec_11_4",
+        "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3917,7 +3924,16 @@
         "tests/testinfra/sessiondriver/createandstart_internal_test.go::TestCreateAndStartSendsTheOwnerUserID",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
         "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8",
-        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionThroughPhase4ErasesTenantAndSparesTwin_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionPhaseExitInvariantsCatchPlantedResidue_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionPhase3And4ErrorsPauseInPhase_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionPhase3And4FaultsPauseInPhase_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionCrashAndTakeoverAfterEachStep_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantRedisPurgesStayInsideTheTenantPrefix_spec_12_8"
       ],
       "packages": [
         "pkg/store",

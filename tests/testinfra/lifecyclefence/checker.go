@@ -33,7 +33,12 @@ func (w *World) Check(t testing.TB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Once the tenant's deletion has left Phase 4 every create's residue
+	// is gone, which checkResidue asserts for the whole tenant.
 	for _, o := range w.Outcomes() {
+		if w.Phase4Done() {
+			break
+		}
 		if msg := w.checkOutcome(ctx, o, erasedAt, reserved); msg != "" {
 			t.Errorf("%s create %s of %s (err %v): %s", o.Path, o.ID, o.Owner, o.Err, msg)
 		}
@@ -47,6 +52,7 @@ func (w *World) Check(t testing.TB) {
 	if err := w.checkOneJobPerUser(ctx); err != nil {
 		t.Error(err)
 	}
+	w.checkResidue(t, ctx)
 }
 
 // reservations returns every reserved session ID of the World's users.

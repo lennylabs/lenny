@@ -374,7 +374,8 @@
     "tests/testinfra/lifecyclefence": {
       "unit": ["tests/testinfra/lifecyclefence/..."],
       "load_local": ["tests/tier7a_load_local/lifecycle_fence_scenarios_test.go"],
-      "chaos": ["tests/tier8_chaos/lifecycle_drain_fault_test.go"]
+      "chaos": ["tests/tier8_chaos/lifecycle_drain_fault_test.go"],
+      "security": ["tests/tier9_security/tenant_deletion_isolation_test.go"]
     },
     "tests/testinfra/lifecycleharness": {
       "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],

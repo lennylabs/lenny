@@ -2,15 +2,19 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-4 integration test: §12.8 tenant deletion against the real
-// cmd/lenny-gateway binary and a migrated Postgres. It seeds a tenant
-// whose sessions hold a delegated tree with archived child results,
-// checkpoints, and eval results, plus live sessions, deletes the tenant
-// through the admin API, and asserts that Phase 2 drains every live
-// session before Phase 4 deletes it, and that Phase 4 completes and
-// leaves none of the tenant's rows behind while a second tenant's rows
-// and live sessions survive. Every run logs how long the deletion took to
-// get through its Phase 2 drain.
+// Tier-4 integration test: §12.8 tenant deletion against two replicas of the
+// real multi-tenant cmd/lenny-gateway binary over a migrated Postgres and a
+// Redis. It seeds a tenant whose sessions hold a delegated tree with
+// archived child results, checkpoints, and eval results, plus live
+// sessions, sticky, billing-stream, delegation-budget, and session queue
+// keys, and a legal hold, deletes the tenant through the admin API, and
+// asserts that Phase 2 drains every live session before Phase 4 deletes it,
+// that the tenant's bearers are refused on every replica from Phase 3 and
+// through the Phase 3.5 pause, and that once the hold clears the deletion
+// completes and leaves none of the tenant's rows, keys, or non-gdpr audit
+// rows behind while a second tenant's rows, keys, and live sessions
+// survive. Every run logs how long the deletion took to get through its
+// Phase 2 drain.
 package tier4_integration_test
 
 import (
@@ -26,7 +30,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
@@ -35,12 +41,16 @@ import (
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	evalstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -350,6 +360,198 @@ func assertGlobexLive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, liv
 	}
 }
 
+// deletionGatewayArgs are the flags of each gateway replica in the tenant
+// deletion test. The T-10.2.11 startup gate requires --tenancy-mode=multi and
+// --multi-tenant=true together. The trusted HMAC key lets the test sign an
+// embedded-OIDC bearer every replica verifies. The playground stays disabled,
+// because a gateway started with it enabled exits at startup (F-27.8.1).
+func deletionGatewayArgs(pgDSN, redisAddr, keyFile string) []string {
+	return []string{
+		"--no-environment-policy", "allow-all", "--dev-mode",
+		"--postgres-dsn=" + pgDSN,
+		// The DDL login provisions each tenant's audit sequence at
+		// bootstrap; the Phase 6 erasure receipt appends to it.
+		"--postgres-billing-audit-ddl-dsn=" + pgDSN,
+		"--redis-url=redis://" + redisAddr + "/0", "--messaging-durable-inbox",
+		"--tenancy-mode=multi", "--multi-tenant=true",
+		"--bearer-trust-hmac-key-file=" + keyFile,
+		"--tenant-deletion-interval=300ms",
+	}
+}
+
+// deletionAdminDo issues an admin request as a platform-admin on the
+// built-in default tenant. A multi-tenant gateway's registry refuses acme
+// before the bootstrap seed creates it and again from Phase 3, so the admin
+// calls name default.
+func deletionAdminDo(t *testing.T, base, method, path string, body any) (int, []byte) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		reader = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, base+path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "default")
+	req.Header.Set("X-Lenny-User-ID", "carol@acme.com")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
+// bearerProbe is one bearer and the replicas that verify its signature.
+type bearerProbe struct {
+	name     string
+	bearer   string
+	replicas []string
+}
+
+// requireBearersRefused asserts every probe's bearer is refused with 403
+// TENANT_NOT_FOUND on every replica that verifies it.
+func requireBearersRefused(t *testing.T, when string, probes []bearerProbe) {
+	t.Helper()
+	for _, p := range probes {
+		for _, base := range p.replicas {
+			code, body := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", p.bearer, nil, nil)
+			if code != http.StatusForbidden || tenancyErrorCode(body) != "TENANT_NOT_FOUND" {
+				t.Errorf("%s: the %s bearer on %s answered %d %q, want 403 TENANT_NOT_FOUND", when, p.name, base, code, tenancyErrorCode(body))
+			}
+		}
+	}
+}
+
+// requireBearersAdmitted asserts no probe's bearer is refused as an
+// unregistered or unverifiable tenant before the deletion.
+func requireBearersAdmitted(t *testing.T, probes []bearerProbe) {
+	t.Helper()
+	for _, p := range probes {
+		for _, base := range p.replicas {
+			code, body := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", p.bearer, nil, nil)
+			if code == http.StatusUnauthorized || tenancyErrorCode(body) == "TENANT_NOT_FOUND" {
+				t.Fatalf("before the deletion the %s bearer on %s answered %d %q", p.name, base, code, tenancyErrorCode(body))
+			}
+		}
+	}
+}
+
+// tenantRedisKeys returns the Redis keys the test seeds for tenant, whose
+// delegation tree is rooted at root: its sticky assignment, its billing
+// stream, its root's delegation-budget counter, and its root's session DLQ
+// and durable inbox.
+func tenantRedisKeys(tenant, root string) []string {
+	return []string{
+		rediskeys.TenantPrefix(tenant) + "exp:exp-1:sticky:alice",
+		rediskeys.TenantPrefix(tenant) + "billing:stream",
+		"{" + root + "}:dlg:tree_size",
+		sessioninbox.DLQKey(tenant, root),
+		sessioninbox.InboxKey(tenant, root),
+	}
+}
+
+// seedTenantRedis writes the keys tenantRedisKeys names.
+func seedTenantRedis(t *testing.T, ctx context.Context, rd *containers.Redis, tenant, root string) {
+	t.Helper()
+	if err := experimentsticky.NewRedis(rd.Client).Put(ctx, tenant, "exp-1", "alice", "treatment"); err != nil {
+		t.Fatalf("seed sticky key of %s: %v", tenant, err)
+	}
+	keys := tenantRedisKeys(tenant, root)
+	if err := rd.Client.XAdd(ctx, &redis.XAddArgs{Stream: keys[1], Values: map[string]any{"seed": "1"}}).Err(); err != nil {
+		t.Fatalf("seed billing stream of %s: %v", tenant, err)
+	}
+	if err := rd.Client.Set(ctx, keys[2], 1, 0).Err(); err != nil {
+		t.Fatalf("seed delegation budget of %s: %v", tenant, err)
+	}
+	if err := rd.Client.ZAdd(ctx, keys[3], redis.Z{Score: float64(time.Now().Add(time.Hour).Unix()), Member: `{"id":"m-dlq"}`}).Err(); err != nil {
+		t.Fatalf("seed DLQ of %s: %v", tenant, err)
+	}
+	if err := rd.Client.RPush(ctx, keys[4], `{"id":"m-inbox"}`).Err(); err != nil {
+		t.Fatalf("seed inbox of %s: %v", tenant, err)
+	}
+}
+
+// requireRedisResidue asserts that none of acme's seeded keys remain and
+// that every globex twin does.
+func requireRedisResidue(t *testing.T, ctx context.Context, rd *containers.Redis, acmeRoot, globexRoot string) {
+	t.Helper()
+	for _, k := range tenantRedisKeys("acme", acmeRoot) {
+		if n := rd.Client.Exists(ctx, k).Val(); n != 0 {
+			t.Errorf("acme key %s survived the deletion", k)
+		}
+	}
+	for _, k := range tenantRedisKeys("globex", globexRoot) {
+		if n := rd.Client.Exists(ctx, k).Val(); n != 1 {
+			t.Errorf("globex key %s is gone after deleting acme", k)
+		}
+	}
+}
+
+// setLegalHold sets or clears the session-level legal hold on one acme
+// session, which pauses the deletion at Phase 3.5 while it is set.
+func setLegalHold(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sessionID string, on bool) {
+	t.Helper()
+	err := pgtenant.InTx(ctx, pool, "acme", func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE sessions SET legal_hold = $2 WHERE tenant_id = 'acme' AND id = $1`, sessionID, on)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("set legal hold %v on %s: %v", on, sessionID, err)
+	}
+}
+
+// tenantState reads the persisted tenant state.
+func tenantState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string) string {
+	t.Helper()
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT coalesce(state, '') FROM tenants WHERE id = $1`, tenant).Scan(&state); err != nil {
+		t.Fatalf("read %s tenant state: %v", tenant, err)
+	}
+	return state
+}
+
+// awaitTenantState polls until the tenant reaches want.
+func awaitTenantState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, gw *gateway.Process, want string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if tenantState(t, ctx, pool, "acme") == want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("acme tenant state = %q after %s, want %s; remaining rows: %v\ngateway tenant-deletion log:\n%s",
+		tenantState(t, ctx, pool, "acme"), within, want, tenantRowCounts(t, ctx, pool, "acme"), tenantDeletionLogLines(gw.Logs()))
+}
+
+// requirePausedAtHold asserts the deletion stays paused before Phase 4 while
+// the hold is set: across several runner intervals the tenant stays
+// deleting and its session rows remain.
+func requirePausedAtHold(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	time.Sleep(2 * time.Second)
+	if state := tenantState(t, ctx, pool, "acme"); state != "deleting" {
+		t.Fatalf("acme tenant state = %q during the legal hold, want deleting", state)
+	}
+	if n := tenantRowCounts(t, ctx, pool, "acme")["sessions"]; n == 0 {
+		t.Fatal("Phase 4 deleted acme's sessions while a legal hold was set")
+	}
+}
+
+// nonGDPRAuditRows counts tenant's audit rows outside the gdpr.* events
+// §12.8 retains.
+func nonGDPRAuditRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE tenant_id = $1 AND event_type NOT LIKE 'gdpr.%'`, tenant).Scan(&n); err != nil {
+		t.Fatalf("count %s audit rows: %v", tenant, err)
+	}
+	return n
+}
+
 // diagnosis: a failure means §12.8 tenant deletion did not finish Phase 4
 // for a tenant with archived delegation trees and checkpoints, or left
 // its rows behind. A tenant stuck in `deleting` with sessions still
@@ -360,46 +562,30 @@ func assertGlobexLive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, liv
 // DeleteByTenant ignores its tenant scope. A session deleted while
 // non-terminal, or a live session deleted without FORCE_TERMINATED, means
 // Phase 2 did not drain the tenant before Phase 4; a globex session no
-// longer running means the drain crossed tenants.
+// longer running means the drain crossed tenants. A bearer admitted from
+// Phase 3 or during the legal-hold pause, on either replica, means the
+// tenant registry still admits a deleting tenant; an acme Redis key left
+// means a Redis-backed eraser was wired nil at the gateway's call site; a
+// globex key gone means one crossed tenants; a non-gdpr acme audit row after
+// the deletion means a refused bearer's TENANT_NOT_FOUND row was written to
+// the deleted tenant's chain rather than the platform chain.
 //
 // spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4), §12.8
 // (Compliance Interfaces: Lifecycle fence and drain), §12.8 (Tenant
-// deletion lifecycle), §8.10 (Delegation Tree Recovery).
+// deletion lifecycle), §8.10 (Delegation Tree Recovery), §10.2
+// (Authentication).
 func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
-	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
-		"--postgres-dsn="+pg.DSN,
-		// The DDL login provisions each tenant's audit sequence at
-		// bootstrap; the Phase 6 erasure receipt appends to it.
-		"--postgres-billing-audit-ddl-dsn="+pg.DSN,
-		"--tenant-deletion-interval=300ms")
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	args := deletionGatewayArgs(pg.DSN, rd.Addr, writeTenancyTrustKey(t))
+	gwA := gateway.StartWith(t, args...)
+	gwB := gateway.StartWith(t, args...)
 	ctx := context.Background()
 
-	adminDo := func(method, path string, body any) (int, []byte) {
-		t.Helper()
-		var reader io.Reader
-		if body != nil {
-			b, _ := json.Marshal(body)
-			reader = bytes.NewReader(b)
-		}
-		req, _ := http.NewRequest(method, gw.BaseURL()+path, reader)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
-		req.Header.Set("X-Lenny-Roles", "platform-admin")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, path, err)
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, raw
-	}
-
-	code, raw := adminDo(http.MethodPost, "/v1/admin/bootstrap", map[string]any{
+	code, raw := deletionAdminDo(t, gwA.BaseURL(), http.MethodPost, "/v1/admin/bootstrap", map[string]any{
 		"tenants": []map[string]any{
 			{"id": "acme", "displayName": "Acme Corp"},
 			{"id": "globex", "displayName": "Globex"},
@@ -410,9 +596,11 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 	}
 
 	acmeTree := seedTenantTree(t, ctx, pg.Pool, "acme")
-	seedTenantTree(t, ctx, pg.Pool, "globex")
+	globexTree := seedTenantTree(t, ctx, pg.Pool, "globex")
 	acmeLive := append(seedLiveSessions(t, ctx, pg.Pool, "acme", liveSessionsPerTenant), acmeTree.root)
 	globexLive := seedLiveSessions(t, ctx, pg.Pool, "globex", liveSessionsPerTenant)
+	seedTenantRedis(t, ctx, rd, "acme", acmeTree.root)
+	seedTenantRedis(t, ctx, rd, "globex", globexTree.root)
 	installSessionDeletionProbe(t, ctx, pg.Pool)
 	globexBefore := tenantRowCounts(t, ctx, pg.Pool, "globex")
 	for table, n := range tenantRowCounts(t, ctx, pg.Pool, "acme") {
@@ -421,36 +609,45 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 		}
 	}
 
+	// The embedded-OIDC bearer verifies on both replicas. A playground
+	// bearer, minted before Phase 3 because the mint runs no registry check,
+	// needs a gateway started with the playground enabled, which exits at
+	// startup today.
+	t.Run("playground bearer", func(t *testing.T) {
+		t.Skip("blocked: F-27.8.1 — a gateway started with --playground-enabled exits at startup, so no playground bearer can be minted")
+	})
+	probes := []bearerProbe{
+		{"embedded OIDC", mintTenancyBearer(t, "acme"), []string{gwA.BaseURL(), gwB.BaseURL()}},
+	}
+	requireBearersAdmitted(t, probes)
+
+	setLegalHold(t, ctx, pg.Pool, acmeTree.child, true)
 	deleteSent := time.Now()
-	if code, raw := adminDo(http.MethodDelete, "/v1/admin/tenants/acme", nil); code != http.StatusAccepted {
+	if code, raw := deletionAdminDo(t, gwA.BaseURL(), http.MethodDelete, "/v1/admin/tenants/acme", nil); code != http.StatusAccepted {
 		t.Fatalf("DELETE /v1/admin/tenants/acme: status %d: %s", code, raw)
 	}
 	t.Logf("tenant deletion Phase 2 drain: %d acme sessions terminal %.3fs after the DELETE request",
 		len(acmeLive), awaitSessionsTerminal(t, ctx, pg.Pool, "acme", acmeLive, deleteSent, 90*time.Second).Seconds())
 
+	awaitTenantState(t, ctx, pg.Pool, gwA, "deleting", 30*time.Second)
+	requirePausedAtHold(t, ctx, pg.Pool)
+	requireBearersRefused(t, "during the Phase 3.5 pause", probes)
+
+	setLegalHold(t, ctx, pg.Pool, acmeTree.child, false)
 	// The runner advances one phase per tick; the tombstone (`deleted`)
 	// is written only after Phase 4 and the Phase 6 receipt succeed.
-	deadline := time.Now().Add(90 * time.Second)
-	var state string
-	for time.Now().Before(deadline) {
-		if err := pg.Pool.QueryRow(ctx, `SELECT coalesce(state, '') FROM tenants WHERE id = 'acme'`).Scan(&state); err != nil {
-			t.Fatalf("read acme tenant state: %v", err)
-		}
-		if state == "deleted" {
-			break
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	if state != "deleted" {
-		t.Fatalf("acme tenant state = %q after 90s, want deleted; remaining rows: %v\ngateway tenant-deletion log:\n%s",
-			state, tenantRowCounts(t, ctx, pg.Pool, "acme"), tenantDeletionLogLines(gw.Logs()))
-	}
+	awaitTenantState(t, ctx, pg.Pool, gwA, "deleted", 90*time.Second)
+	requireBearersRefused(t, "after the tombstone", probes)
 
 	for table, n := range tenantRowCounts(t, ctx, pg.Pool, "acme") {
 		if n != 0 {
 			t.Errorf("%s still holds %d acme rows after tenant deletion", table, n)
 		}
 	}
+	if n := nonGDPRAuditRows(t, ctx, pg.Pool, "acme"); n != 0 {
+		t.Errorf("acme's audit chain holds %d non-gdpr rows after the deletion and the refused bearers", n)
+	}
+	requireRedisResidue(t, ctx, rd, acmeTree.root, globexTree.root)
 	assertDrainedBeforeDeletion(t, ctx, pg.Pool, acmeLive)
 	assertGlobexLive(t, ctx, pg.Pool, globexLive)
 	globexAfter := tenantRowCounts(t, ctx, pg.Pool, "globex")
@@ -459,9 +656,7 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 			t.Errorf("%s globex rows = %d after deleting acme, want %d", table, globexAfter[table], before)
 		}
 	}
-	// Report, without failing, any other tenant-scoped table Phase 4 does
-	// not yet erase, so the gap stays visible.
 	if left := leftoverTenantTables(t, ctx, pg.Pool, "acme"); len(left) > 0 {
-		t.Logf("tenant-scoped tables still holding acme rows outside the seeded set: %v", left)
+		t.Errorf("tenant-scoped tables still holding acme rows after the deletion: %v", left)
 	}
 }

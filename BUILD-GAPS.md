@@ -49626,6 +49626,14 @@ Severity: Medium — the chosen outcome label is being emitted at the wrong obse
 
 Three of the six normative §27.8 metrics are wired to emission call sites (`page_views_total`, `session_revocations_total`, `dev_tenant_not_seeded_total`). Two counters (`sessions_created_total`, `ws_connect_total`) are registered but never incremented. The revocation-propagation histogram emits one outcome label out of three, and the one outcome it does emit is measured at the wrong observation point relative to the spec definition.
 
+
+### - [ ] F-27.8.1 — The gateway exits at startup whenever the playground is enabled, because the `authMode` label fails the metric label validator [Medium] — OPEN
+
+**Spec:** §27.8 Metrics (the `lenny_playground_page_views_total` row names the label `authMode`) and §16.1.1 (metric label names are snake_case).
+**Evidence:** `pkg/gateway/mcpfabric/playground/metrics.go` registers `lenny_playground_page_views_total` with the label `authMode`, which `pkg/observability/metrics/metrics.go` refuses with `label "authMode" is not snake_case`. The gateway treats the error as fatal, so a gateway started with `--playground-enabled` exits before it listens. The tier-4 tenant-deletion test found it when it enabled the dev-mode playground to mint a gateway-signed bearer.
+**Gap:** No configuration that enables the playground starts, and the tenant-deletion test cannot show that a playground bearer minted before Phase 3 is refused from Phase 3.
+**Suggested resolution:** Through the proposal pipeline, rename the §27.8 label to `auth_mode`, then rename it in `metrics.go`. Then remove the skip of the playground-bearer case in `tests/tier4_integration/tenant_deletion_phase4_test.go`. Owner: unassigned.
+
 ---
 
 ## §27.9 Security considerations <a id="27.9"></a>

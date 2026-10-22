@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package lifecyclefence runs the §12.8 lifecycle operations (user erasure,
-// tenant suspension and resume, and tenant-deletion Phases 1 and 2) against
+// tenant suspension and resume, tenant-deletion Phases 1 through 4, and the
+// §11.4 full_revoke) against
 // concurrent session creates on every creation path and concurrent terminal
 // writes, over one posture's production session, tenant, user, erasure-job,
 // and transcript stores, and checks the creation fence's and the drain's
@@ -19,8 +20,15 @@
 // keyed by the new session ID, and that records a violation when a path
 // releases its reservation while anything it wrote remains under the ID.
 // The lifecycle operations are the production code: the admin router's
-// suspend and resume handlers, the shared admin.DrainSessions, the erasure
-// job store and Runner, and the tenantdeletion Reconciler.
+// suspend, resume, and user invalidation handlers, the shared
+// admin.DrainSessions, the erasure job store and Runner, and the
+// tenantdeletion Reconciler. The Reconciler's Phase 3 revoker and Phase 4
+// eraser list are harness seams that follow cmd/lenny-gateway's
+// tenantCredentialRevoker and the Phase 4 order of the stores a World holds,
+// because package main cannot be imported. Each seeded live session holds a
+// credential lease in the World's lease pool, and each user holds TokenStore
+// rows. A twin World is a second tenant sharing the blob store, the
+// manifests, the lease pool, and the TokenStore.
 //
 // The World records a violation, rather than failing the test, when an
 // invariant breaks inside a concurrent goroutine; Check reports every
@@ -43,12 +51,25 @@
 //   - Exactly one tenant.suspended audit row with already_suspended false
 //     is written per suspension-marker transition.
 //   - A user has at most one in-progress erasure job.
+//   - When a tenant-deletion job leaves Phase 3, the tenant row is deleting
+//     and not registered, no session row of the tenant holds a lease, and
+//     the tenant holds no TokenStore row.
+//   - When it leaves Phase 4, and at the end of the scenario, the tenant
+//     holds no session row, reservation, user row, transcript entry,
+//     object, manifest, lease, or TokenStore row.
+//   - A full_revoke that answers 200 leaves no live session of the user
+//     that predates the call, no lease on a session row of the user, and no
+//     failed cancel write.
+//   - A twin tenant is unchanged.
 //
-// Faults lets a test inject a store error into the drain's listing and into
-// one forced termination, and Steps counts each erasure step's runs so a
-// test can assert that a resumed job re-ran no completed step.
+// Faults lets a test inject a store error into the drain's listing, into
+// one forced termination, and into each tenant-deletion Phase 3 step and
+// Phase 4 entry, and run a hook after each of those steps. Steps and
+// DeletionSteps count each step's runs so a test can assert what a resumed
+// job re-ran.
 //
 // spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §12.8
 // (Processing restriction during erasure (GDPR Article 18)), §12.8 (Tenant
-// deletion lifecycle), §15.1 (REST API).
+// deletion lifecycle), §15.1 (REST API), §11.4 (User Invalidation), §10.2
+// (Authentication).
 package lifecyclefence
