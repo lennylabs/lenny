@@ -65,9 +65,9 @@ env: # optional; see env below
 (b) Insert after the **`requireSoPeercred`** paragraph, which ends `so a runtime registered only through the admin API runs with the default of `true`.`, and before the first `#### Derived Runtime` heading (the one directly after that paragraph, not `#### Derived Runtime Instantiation`):
 
 ```
-**`command`** — the argv of the runtime process. Required on a `type: agent` runtime whose `deploymentModel` is `sidecar`, and forbidden on every other runtime. Its first element is an absolute path in the runtime image. The runtime supervisor launches this argv as the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The API server rejects a `Runtime` that breaks either rule or whose first element is not absolute. The RuntimeReconciler mirrors the field into the gateway runtime registry together with `restartable`, which is true for a runtime that carries `command`, has `executionMode: session`, and does not declare `capabilities.preConnect: true` ([Section 5.2](#52-pool-configuration-and-execution-modes), `recycle.runtimeProcess`).
+**`command`** — the argv of the runtime process. Required on a `type: agent` runtime whose `deploymentModel` is `sidecar`, and forbidden on every other runtime. Its first element is an absolute path in the runtime image. The runtime supervisor launches this argv as the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The API server rejects a `Runtime` that breaks either rule or whose first element is not absolute. The RuntimeReconciler mirrors into the gateway runtime registry only the derived flag `restartable`, which is true for a runtime that carries `command`, has `executionMode: session`, and does not declare `capabilities.preConnect: true` ([Section 5.2](#52-pool-configuration-and-execution-modes), `recycle.runtimeProcess`).
 
-**`env`** — optional variables for the runtime process, as a list of `name` and `value` pairs. Forbidden wherever `command` is. Each `name` is a non-empty POSIX variable name, no name appears twice, and no name begins with `LENNY_`, which the platform reserves for its own variables; the API server rejects a `Runtime` that breaks any of these rules. The runtime supervisor applies the pairs as [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, states. The values are readable by the runtime and are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)). The RuntimeReconciler mirrors the field into the gateway runtime registry. The admin registration payload models neither `command` nor `env`.
+**`env`** — optional variables for the runtime process, as a list of `name` and `value` pairs. Forbidden wherever `command` is. Each `name` is a non-empty POSIX variable name, no name appears twice, and no name begins with `LENNY_`, which the platform reserves for its own variables; the API server rejects a `Runtime` that breaks any of these rules. The runtime supervisor applies the pairs as [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, states. The values are readable by the runtime and are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)). The admin registration payload models neither `command` nor `env`.
 ```
 
 (c) Add `command` and `env` to the **Never overridable on derived runtime:** list, and add a `command` row and an `env` row to the table under `#### Normative Merge Algorithm` as **Inherited** with "derived may not set", matching `requireSoPeercred`, because the argv and its environment are properties of the base runtime's image.
@@ -81,6 +81,20 @@ Each reference runtime is a sidecar runtime whose `command` ([§5.1](05_runtime-
 ```
 
 In §26.3, in the claude-code **`Runtime` definition** YAML, insert `command: ["/usr/local/bin/lenny-claude-code-adapter"]` after the line `type: agent` that follows `image: ghcr.io/lennylabs/runtime-claude-code:1.0.0`.
+
+In §26.3 **Bootstrap behavior.**, replace step 2, `Adapter binary boots, registers with the gateway, and signals READY.`, with:
+
+```
+2. The platform adapter boots and signals READY.
+```
+
+In step 3, after `runs any `setupCommands`;`, insert:
+
+```
+the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `command`, as [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** states;
+```
+
+Delete the §26.3 line that begins `**Setup-time image entrypoint:**`.
 
 ### SPEC-2 · spec/04_system-components.md § 4.7.10 Deployment Model and § 4.7.1, spec/11_policy-and-controls.md § 11.4, and spec/10_gateway-internals.md § 10.1
 
@@ -451,20 +465,12 @@ The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on 
 
 In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive on a `keep` pod, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process on a `keep` pod and to a newly launched one on a `restart` pod;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
 
-(d) In step 1, replace `The kill runs in the container that executes the scrub and does not end the runtime process; see "What the scrub reaches" below.` with:
-
-```
-On a pod that runs the runtime supervisor ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) the adapter container runs no author process, and the runtime container's processes are ended on a `restart` pod by the runtime ends the **Lenny scrub procedure** paragraph names and are kept on a `keep` pod. On every other pod the kill runs in the adapter container. See "What the scrub reaches" below.
-```
-
-In step 1b, append `On a pod that runs the runtime supervisor the adapter does not run this step; on a `restart` pod the runtime sweep removes the agent UID's IPC objects ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **Sweep.**), and on a `keep` pod they persist.`
-
-In step 3, append `On a pod that runs the runtime supervisor each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
+(d) In step 3, append `On a pod that runs the runtime supervisor each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
 
 (e) Replace the **What the scrub reaches.** paragraph, from `**What the scrub reaches.** The scrub executes in the adapter's process and reaches what that process can reach.` through `because the pod keeps the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").`, with:
 
 ```
-**What the scrub reaches.** Steps 0 and 2 to 6 execute in the adapter's
+**What the scrub reaches.** Steps 0 to 6 execute in the adapter's
 process, and its file operations resolve beneath their target directory without
 following symbolic links. On a pod that runs the runtime supervisor
 `cleanupCommands` run as
@@ -473,13 +479,16 @@ states, so a symbolic link the agent planted gives them no access the agent
 lacks. In the sidecar deployment model
 ([§4.7.10](04_system-components.md#4710-deployment-model)) steps 0, 2, 4, and 6
 operate on volumes mounted into both containers, so they clear and verify the
-runtime container's view of those paths. On a `restart` pod ("Runtime-process
+runtime container's view of those paths. Step 1 signals only processes in the
+adapter container, because `shareProcessNamespace` is forbidden
+([§13.1](13_security-model.md#131-pod-security)). On a `restart` pod ("Runtime-process
 lifetime" above) the runtime end reaches every process in the runtime container other
 than the supervisor, and the sweep reaches what
 [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
 **Sweep.** lists, so no runtime process persists across the recycle boundary;
-the adapter process persists. On a `keep` pod the runtime process and its memory persist across the
-boundary, because
+the adapter process persists. On a `keep` pod, and on a sidecar pod without the
+runtime supervisor, the runtime process, its memory, and the processes it started
+persist across the boundary, because
 the pod keeps the runtime process
 ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process
 lifetime"). In the embedded model the runtime is the adapter's process, which
@@ -519,7 +528,7 @@ Each site below names the acknowledgment requirement or the kept process by a po
 - §7.1, the `residualStateWarning` row of the `sessionIsolationLevel` table: replace `on a recycling pool that keeps its runtime process across sessions the session may run` with `on a `keep` pod the session may run`. The row stays one physical line.
 - §13.1 **`lenny-cred-readers` membership boundary.**: replace `and on recycling pools that keep a runtime process across sessions` with `and where the runtime-process acknowledgment requires it`.
 
-In §4.6.1, replace `` `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` only`` with `` `lenny.dev/egress-profile`, `lenny.dev/runtime-process`, and `lenny.dev/tenant-id` only``. In the §13.2 **Label immutability note**, replace `` `lenny.dev/egress-profile`, and `lenny.dev/dns-policy` labels are`` with `` `lenny.dev/egress-profile`, `lenny.dev/dns-policy`, and `lenny.dev/runtime-process` labels are``.
+In §4.6.1, replace ``the webhook's immutability list covers `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` only; `lenny.dev/host-schedulable` is explicitly omitted so that`` with ``it is omitted so that``.
 
 In §17.2 item 5 (`lenny-label-immutability`), replace `` `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods`` with `` `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process` labels on agent pods``. In the §16.5 `LabelImmutabilityWebhookUnavailable` row, replace ``the immutable `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, or `lenny.dev/tenant-id` labels on agent pods`` with ``the immutable agent-pod labels ([Section 17.2](17_deployment-topology.md#172-namespace-layout) item 5)``.
 
@@ -673,7 +682,7 @@ The claim-register rows for this card are `WIRED` rows naming the surfaces CODE-
 
 ### SPEC-8 · The `shutdown`, signal, and exit-code statements (F-4.7.27)
 
-(a) In §28.5.3 **Inbound: `shutdown`**, replace `No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.` with `No acknowledgment required. In the sidecar model the adapter learns of the process's exit from the runtime supervisor, and when the process has not exited by the deadline the adapter has the supervisor end it with SIGTERM and then SIGKILL 10 seconds later ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).` In the `CH-MSGSOCK` card's **Timing.** bullet, which wraps across lines, find:
+(a) In §28.5.3 **Inbound: `shutdown`**, replace `No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.` with `No acknowledgment required. A process that has not exited by the deadline is ended as the `CH-MSGSOCK` card's **Timing.** bullet states.` In the `CH-MSGSOCK` card's **Timing.** bullet, which wraps across lines, find:
 
 ```
   is sent SIGTERM and then SIGKILL 10 seconds later

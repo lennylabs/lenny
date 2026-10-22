@@ -15,6 +15,6 @@ implemented-by:
 
 ## Review history
 
-On 2026-10-22, an adversarial review run executed the specification loop for five rounds. The specification loop did not converge. The run recorded no full-pool sweep. The non-specification loop did not run. The run fixed six findings. Findings the specification loop had not closed by the end of its fifth round remain open, and the proposal has not converged.
+On 2026-10-22, an adversarial review run executed the specification loop for twelve rounds. The specification loop did not converge. The run executed three full-pool sweeps. The non-specification loop did not run. The run fixed fourteen findings.
 
-An earlier adversarial review run, dated 2026-10-01, did not execute.
+Findings the specification loop had not closed by the end of its twelfth round remain open. The proposal has not converged.

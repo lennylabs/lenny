@@ -29,11 +29,11 @@ Re-baselined 2026-10-22. The spec steps land after proposal 0090's (landed) and 
 - [ ] **S13 · spec** — SPEC-14. Lands the §18 build-sequence entries.
       Tiers 0, 11. Depends on: S6, S7, S9, S12
 - [ ] **S14 · code** — CODE-1 with its tier-1 and tier-2 tests.
-      Tiers 0, 1, 2. Depends on: S1
+      Tiers 0, 1, 2. Depends on: S1, S8
 - [ ] **S15 · code** — CODE-2 with its C unit, fuzz, and binary-check tests.
       Tiers 0, 1. Depends on: S2, S3, S4, S5, S9, S10
 - [ ] **S16 · code** — CODE-3 with its tier-1, tier-3, and tier-7a tests and its claim rows.
-      Tiers 0, 1, 3, 7a. Depends on: S2, S3, S4, S5, S6, S9, S10, S11, S15
+      Tiers 0, 1, 3, 7a. Depends on: S2, S3, S4, S5, S6, S8, S9, S10, S11, S15
 - [ ] **S17 · code** — CODE-5 with its tier-1, tier-2, and tier-4 tests.
       Tiers 0, 1, 2, 4. Depends on: S6, S14
 - [ ] **S18 · code** — CODE-4 with its tier-1 and tier-2 tests. Serializes with R17 under S-4.
