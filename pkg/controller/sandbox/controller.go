@@ -274,11 +274,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // the planner takes the §6.2 warm-fill failure edge (warming → failed,
 // sdk_connecting → failed) or retires an idle pod.
 //
+// A Pod carrying a deletion timestamp reduces to PodTerminating before
+// any other check. Kubernetes is tearing it down and the kubelet sends
+// SIGTERM to its containers, so an agent container that then exits, or a
+// pod phase that turns Failed, records the expected shutdown rather than
+// a warm-fill failure. The planner routes PodTerminating along the §6.2
+// SIGTERM edge (sdk_connecting → terminated) or the deleted-pod
+// retirement, never through failed.
+//
 // spec: §6.2 (warming → failed on warm-fill failure; adapter healthy is
-// a precondition of warming → idle), §4.7.10 (deployment models).
+// a precondition of warming → idle; sdk_connecting → terminated on
+// SIGTERM), §4.7.10 (deployment models).
 func observePod(pod *corev1.Pod, getErr error) lifecycle.PodObservation {
 	if getErr != nil {
 		return lifecycle.PodAbsent
+	}
+	if !pod.DeletionTimestamp.IsZero() {
+		return lifecycle.PodTerminating
 	}
 	switch pod.Status.Phase {
 	case corev1.PodFailed:
@@ -800,10 +812,12 @@ func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string,
 // WarmPoolController asserts the pod is warm. v1 flips the gate as soon as
 // the containers report ready; the gate exists so claimability is a
 // Lenny-controlled signal rather than implied by container readiness
-// alone. The patch is skipped when the pod is absent, its containers are
-// not yet ready, or the gate is already True. spec: §6.1.
+// alone. The patch is skipped when the pod is absent or terminating, its
+// containers are not yet ready, or the gate is already True. spec: §6.1.
 func (r *Reconciler) syncReadinessGate(ctx context.Context, pod *corev1.Pod, obs lifecycle.PodObservation) error {
-	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
+	// A terminating pod is never made claimable, so the gate is not
+	// flipped on it even when its containers still report ready.
+	if obs == lifecycle.PodAbsent || obs == lifecycle.PodTerminating || pod == nil || pod.Name == "" {
 		return nil
 	}
 	if !podConditionTrue(pod, corev1.ContainersReady) {

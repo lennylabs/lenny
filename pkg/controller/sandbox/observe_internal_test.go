@@ -87,10 +87,23 @@ func podWith(phase corev1.PodPhase, ready bool, statuses []corev1.ContainerStatu
 	}}
 }
 
+// deleting returns a copy of pod carrying a deletion timestamp, the state
+// Kubernetes puts a pod in when a node drain, an eviction, or a delete
+// starts its graceful termination.
+func deleting(pod *corev1.Pod) *corev1.Pod {
+	p := pod.DeepCopy()
+	now := metav1.Now()
+	p.DeletionTimestamp = &now
+	return p
+}
+
 // expectedObservation is the reduction the observer must produce for a
-// pod phase, Pod.Ready value, and agent-container termination flag.
-func expectedObservation(phase corev1.PodPhase, ready, terminated bool) lifecycle.PodObservation {
+// pod phase, Pod.Ready value, agent-container termination flag, and
+// deletion timestamp. A deletion timestamp wins over every other input.
+func expectedObservation(phase corev1.PodPhase, ready, terminated, deleted bool) lifecycle.PodObservation {
 	switch {
+	case deleted:
+		return lifecycle.PodTerminating
 	case phase == corev1.PodFailed:
 		return lifecycle.PodFailed
 	case phase == corev1.PodSucceeded:
@@ -118,15 +131,26 @@ var podPhases = []corev1.PodPhase{
 // because restartPolicy Never keeps the pod Running while another
 // container runs; before the fix observePod keyed on the phase alone
 // and a pod whose adapter exited stayed warming or idle forever.
+//
+// The deletion dimension pins that a pod with a deletion timestamp reduces
+// to PodTerminating whatever its phase, readiness, or container states, so
+// a container that exits on the kubelet's SIGTERM is never read as a
+// warm-fill failure.
 func TestObservePodContainerStates(t *testing.T) {
 	for _, phase := range podPhases {
 		for _, ready := range []bool{false, true} {
 			for _, cc := range containerCases {
-				pod := podWith(phase, ready, cc.statuses)
-				got := observePod(pod, nil)
-				want := expectedObservation(phase, ready, cc.terminated)
-				if got != want {
-					t.Errorf("phase=%q ready=%v %s: observePod = %v, want %v", phase, ready, cc.name, got, want)
+				for _, deleted := range []bool{false, true} {
+					pod := podWith(phase, ready, cc.statuses)
+					if deleted {
+						pod = deleting(pod)
+					}
+					got := observePod(pod, nil)
+					want := expectedObservation(phase, ready, cc.terminated, deleted)
+					if got != want {
+						t.Errorf("phase=%q ready=%v deleted=%v %s: observePod = %v, want %v",
+							phase, ready, deleted, cc.name, got, want)
+					}
 				}
 			}
 		}
@@ -144,6 +168,7 @@ func TestObservePodContainerStates(t *testing.T) {
 // pins the outcomes the fix requires: a warming pod with a terminated
 // agent container fails, an idle one drains, a failed Sandbox drains
 // only with no claim, and a claimed or reserved pod is never acted on.
+// The deleted dimension is pinned by TestDeletedPodDecisionMatrix.
 func TestTerminatedAdapterDecisionMatrix(t *testing.T) {
 	for _, phase := range state.All() {
 		for _, cc := range containerCases {
@@ -187,6 +212,82 @@ func TestTerminatedAdapterDecisionMatrix(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// spec: 6.2 (Pod State Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
+//
+// TestDeletedPodDecisionMatrix runs the full reconcile decision (observePod,
+// then the pod-warm or SDK-warm planner, then the claim hold) for a pod
+// carrying a deletion timestamp, over every Sandbox phase, every pod phase,
+// both readiness values, every agent-container shape, claim presence, and
+// both SDK-warm edges. A deleted pod is never routed through failed:
+// sdk_connecting takes the §6.2 SIGTERM edge to terminated, warming holds
+// without creating, promoting, or failing, idle drains, draining waits, a
+// failed Sandbox keeps its claim-gated reclaim, and claimed, reserved, and
+// terminated are left alone.
+func TestDeletedPodDecisionMatrix(t *testing.T) {
+	for _, phase := range state.All() {
+		for _, podPhase := range podPhases {
+			for _, ready := range []bool{false, true} {
+				for _, cc := range containerCases {
+					for _, claim := range []bool{false, true} {
+						obs := observePod(deleting(podWith(podPhase, ready, cc.statuses)), nil)
+						if obs != lifecycle.PodTerminating {
+							t.Fatalf("observePod on a deleted pod = %v, want PodTerminating", obs)
+						}
+						decisions := map[string]lifecycle.Decision{
+							"pod-warm": lifecycle.Decide(phase, obs),
+							"sdk-warm warm-fill": lifecycle.DecideSDKWarm(lifecycle.SDKWarmInputs{
+								Phase: phase, Pod: obs,
+							}),
+							"sdk-warm recycle": lifecycle.DecideSDKWarm(lifecycle.SDKWarmInputs{
+								Phase: phase, Pod: obs, Recycle: true,
+							}),
+						}
+						for planner, raw := range decisions {
+							name := fmt.Sprintf("%s/%s/pod=%q/ready=%v/%s/claim=%v",
+								planner, phase, podPhase, ready, cc.name, claim)
+							d := lifecycle.HoldFailedReclaim(phase, claim, raw)
+							assertDeletedPodDecision(t, name, phase, planner != "pod-warm", claim, d)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// assertDeletedPodDecision checks one deleted-pod decision against the
+// per-phase outcome TestDeletedPodDecisionMatrix states.
+func assertDeletedPodDecision(t *testing.T, name string, phase state.State, sdkWarm, claim bool, d lifecycle.Decision) {
+	t.Helper()
+	if d.Action == lifecycle.ActionSetPhase {
+		if d.NextPhase == state.Failed {
+			t.Errorf("%s: a deleted pod is routed through failed", name)
+		}
+		if err := state.IsValid(phase, d.NextPhase); err != nil {
+			t.Errorf("%s: invalid edge: %v", name, err)
+		}
+	}
+	if d.Action == lifecycle.ActionCreatePod || d.Action == lifecycle.ActionDeletePod {
+		t.Errorf("%s: decision %+v acts on a pod Kubernetes is already deleting", name, d)
+	}
+	want := lifecycle.Decision{}
+	switch phase {
+	case state.SDKConnecting:
+		if sdkWarm {
+			want = lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Terminated}
+		}
+	case state.Idle:
+		want = lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Draining}
+	case state.Failed:
+		if !claim {
+			want = lifecycle.Decision{Action: lifecycle.ActionSetPhase, NextPhase: state.Draining}
+		}
+	}
+	if d != want {
+		t.Errorf("%s: decision %+v, want %+v", name, d, want)
 	}
 }
 
@@ -242,5 +343,47 @@ func TestClaimToSandbox(t *testing.T) {
 	}
 	if reqs := claimToSandbox(context.Background(), &corev1.Pod{}); reqs != nil {
 		t.Fatalf("claimToSandbox on a non-claim = %+v, want nil", reqs)
+	}
+}
+
+// spec: 6.1 (What a Pre-Warmed Pod Looks Like), 6.2 (Pod State Machine)
+//
+// TestReadinessGateNotFlippedOnTerminatingPod pins that the claimability
+// gate is never set on a pod Kubernetes is deleting, even when its
+// containers still report ready, so a terminating pod cannot become
+// claimable. The same pod without a deletion timestamp gets the gate.
+func TestReadinessGateNotFlippedOnTerminatingPod(t *testing.T) {
+	ctx := context.Background()
+	newPod := func() *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "sb-1", Namespace: "lenny-agents"},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.ContainersReady, Status: corev1.ConditionTrue}},
+			},
+		}
+	}
+	for _, tc := range []struct {
+		obs      lifecycle.PodObservation
+		wantGate bool
+	}{
+		{lifecycle.PodTerminating, false},
+		{lifecycle.PodNotReady, true},
+	} {
+		pod := newPod()
+		c := fake.NewClientBuilder().WithScheme(sdkWarmScheme(t)).
+			WithObjects(pod).WithStatusSubresource(&corev1.Pod{}).Build()
+		r := &Reconciler{Client: c}
+		if err := r.syncReadinessGate(ctx, pod, tc.obs); err != nil {
+			t.Fatalf("obs=%v: syncReadinessGate: %v", tc.obs, err)
+		}
+		var live corev1.Pod
+		if err := c.Get(ctx, client.ObjectKeyFromObject(pod), &live); err != nil {
+			t.Fatalf("get pod: %v", err)
+		}
+		got := podConditionTrue(&live, corev1.PodConditionType(podspec.ReadinessGateSandboxReady))
+		if got != tc.wantGate {
+			t.Errorf("obs=%v: readiness gate set = %v, want %v", tc.obs, got, tc.wantGate)
+		}
 	}
 }

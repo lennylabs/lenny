@@ -48,6 +48,16 @@ const (
 	// PodSucceeded: the Pod terminated successfully. A warm agent pod
 	// is not expected to exit 0, so the planner treats this as a defect.
 	PodSucceeded
+	// PodTerminating: the Pod carries a deletion timestamp. Kubernetes is
+	// tearing it down (a node drain, an eviction, a scale-down, or the
+	// controller's own draining delete), and the kubelet has sent or will
+	// send SIGTERM to its containers. The observation takes precedence
+	// over every other reduction, including a terminated agent container
+	// or a Failed pod phase, because a container that exits on SIGTERM is
+	// the expected lifecycle signal rather than a defect. The planner
+	// therefore never routes it through failed. spec: §6.2
+	// (sdk_connecting → terminated on SIGTERM).
+	PodTerminating
 )
 
 // Action is the single operation the reconciler performs for one
@@ -87,16 +97,20 @@ func Decide(phase state.State, pod PodObservation) Decision {
 			return setPhase(state.Idle)
 		case PodFailed, PodSucceeded:
 			return setPhase(state.Failed)
+		case PodTerminating:
+			return holdTerminatingWarming()
 		default: // PodPending, PodNotReady — the pod is still warming.
 			return Decision{}
 		}
 	case state.Idle:
 		switch pod {
-		case PodAbsent, PodFailed, PodSucceeded:
-			// The warm pod's backing Pod is gone. §6.2 has no
-			// idle → failed edge; retire the Sandbox through
+		case PodAbsent, PodFailed, PodSucceeded, PodTerminating:
+			// The warm pod's backing Pod is gone or being deleted. §6.2
+			// has no idle → failed edge; retire the Sandbox through
 			// idle → draining → terminated so the warm-pool sizing
-			// reconciler provisions a fresh replacement.
+			// reconciler provisions a fresh replacement. A terminating
+			// pod takes the same edge, so a deleted idle pod is never
+			// recorded as failed.
 			return setPhase(state.Draining)
 		default: // PodReady, PodPending, PodNotReady — leave it warm.
 			return Decision{}
@@ -112,10 +126,16 @@ func Decide(phase state.State, pod PodObservation) Decision {
 		// claim's release path rather than through this arm.
 		return setPhase(state.Draining)
 	case state.Draining:
-		if pod == PodAbsent {
+		switch pod {
+		case PodAbsent:
 			return setPhase(state.Terminated)
+		case PodTerminating:
+			// The delete is already in progress; wait for the pod to go
+			// rather than re-issuing it.
+			return Decision{}
+		default:
+			return Decision{Action: ActionDeletePod}
 		}
-		return Decision{Action: ActionDeletePod}
 	default:
 		// terminated and the gateway-owned claim/session phases: the
 		// WarmPoolController takes no pod-lifecycle action. A claimed or
@@ -144,6 +164,20 @@ func HoldFailedReclaim(phase state.State, claimPresent bool, d Decision) Decisio
 		return Decision{}
 	}
 	return d
+}
+
+// holdTerminatingWarming is the decision for a warming Pod that carries a
+// deletion timestamp. §6.2 defines a SIGTERM edge only out of
+// sdk_connecting (sdk_connecting → terminated) and no warming → terminated
+// edge, so the planner takes the fail-closed reading: it neither promotes
+// the pod (warming → idle, warming → sdk_connecting), because a
+// terminating pod must never become claimable, nor fails it, because a
+// deletion is an expected lifecycle signal rather than a warm-fill
+// failure. The Sandbox holds in warming until the pod is gone, and the
+// warming-with-no-pod arm then creates a fresh pod.
+// spec: §6.2 (warm-fill edges; sdk_connecting → terminated on SIGTERM).
+func holdTerminatingWarming() Decision {
+	return Decision{}
 }
 
 func setPhase(p state.State) Decision {
@@ -224,6 +258,8 @@ func DecideSDKWarm(in SDKWarmInputs) Decision {
 			return Decision{Action: ActionCreatePod}
 		case PodFailed, PodSucceeded:
 			return setPhase(state.Failed)
+		case PodTerminating:
+			return holdTerminatingWarming()
 		case PodPending:
 			// The pod is still scheduling; SDK pre-connect has not begun.
 			return Decision{}
@@ -236,6 +272,18 @@ func DecideSDKWarm(in SDKWarmInputs) Decision {
 		}
 	case state.SDKConnecting:
 		switch in.Pod {
+		case PodTerminating:
+			// §6.2 sdk_connecting → terminated: the pod received SIGTERM
+			// (eviction, node drain, or scale-down), the adapter demotes
+			// the SDK and exits, and the pod terminates rather than fails
+			// because the signal is expected. The edge applies on both the
+			// warm-fill and the recycle re-warm leg. terminated is a sink
+			// on which the controller takes no pod action, so a recycling
+			// claim on the pod still retires through the gateway's
+			// release path or the orphaned-claim collector (§4.6.1), and
+			// the occupancy projection does not re-project a terminated
+			// Sandbox from it.
+			return setPhase(state.Terminated)
 		case PodAbsent, PodFailed, PodSucceeded:
 			// §6.2: sdk_connecting → failed on a dead pod, on both the
 			// warm-fill and the recycle re-warm edge.
