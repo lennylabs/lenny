@@ -18,6 +18,8 @@ Each statement has one home in the specification. Every other site cites that ho
 | What the runtime sweep removes | SPEC-2, §4.7.10 **Runtime supervisor.** **Sweep.** |
 | Startup order | SPEC-3, §4.7.9 steps 4 and 7 |
 | Why the adapter trusts the supervisor, and what the reuse decision rests on | SPEC-4, §4.7.11 item 8 |
+| The property self-test, how its result reaches the adapter, and which pods it gates | SPEC-4, §4.7.11 item 8 **Property self-test.** |
+| What a `keep` pod and a `restart` pod are, and where `recycle.runtimeProcess` is read | SPEC-5, §5.2 **Runtime-process lifetime (`recycle.runtimeProcess`).** |
 | `recycle.runtimeProcess`, its admission rules, the acknowledgment, the scrub order, which component runs `cleanupCommands` in each deployment model, and what the scrub reaches | SPEC-5, §5.2 |
 | The supervisor volume and the stage container's identity | SPEC-6, §13.1 |
 | The `CH-SUPERVISE` endpoint, messages, authentication, exclusivity, and failure behavior | SPEC-7, the §28.5.3 card |
@@ -27,14 +29,14 @@ Each statement has one home in the specification. Every other site cites that ho
 
 | Case | Observable outcome | Home |
 |:--|:--|:--|
-| The supervisor never connects | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-3, SPEC-7 |
+| The supervisor never connects, or sends no `ready` | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-3, SPEC-7 |
 | A warm-up launch fails, or its process does not connect on `CH-MSGSOCK` within the adapter's wait | The adapter exits non-zero before READY, and the pod never becomes `idle` | SPEC-2 **Launch.** |
 | A `preConnect` pod is created while the pool's SDK-warm circuit breaker is open | No warm-up launch; the pod warms pod-warm, and its first session's start launches the process at step 7 | SPEC-2 **SDK-warm.** |
-| The property self-test fails on a `restart` pod | The supervisor exits before it dials, and the pod never becomes `idle` | SPEC-4 |
+| The property self-test fails on a gating property | On a `restart` pod the adapter logs the failed properties from `ready` and exits non-zero before READY, and the pod never becomes `idle`; on a `keep` pod the adapter logs them and the pod serves | SPEC-4, SPEC-7 |
 | `launch` fails | `launched` carries an error code, the session's start fails, and the pod is reported not live | SPEC-2, SPEC-7 |
 | The runtime process exits while a session is bound | `exited` reaches the adapter, each bound session fails with `runtime_crash` into the §7.3 resume flow, and the pod retires at the boundary | SPEC-2 **Crash.**, **Liveness.** |
-| A `restart` process exits after its last session and before the boundary | The boundary's `end` finds no process, and the pod does not retire | SPEC-2 |
-| A runtime process on a pod that keeps it exits with no session bound | The pod is reported not live and retires; a session that starts first fails its start | SPEC-2 **Liveness.**, **Launch.** |
+| The runtime process of a `restart` pod exits after its last session and before the boundary | The boundary's `end` finds no process, and the pod does not retire | SPEC-2 |
+| The runtime process of a `keep` pod exits with no session bound | The pod is reported not live and retires; a session that starts first fails its start | SPEC-2 **Liveness.**, **Launch.** |
 | A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | The adapter exits non-zero, and the pod is replaced | SPEC-2 **Liveness.** |
 | A heartbeat escalation on a `keep` pod | The pod is reported not live at the boundary and retires | SPEC-2 **Liveness.** |
 | A process survives two `end` passes, or the sweep fails | The pod is reported not live and retires, whatever `onScrubFailure` says | SPEC-2, SPEC-5 |
@@ -44,7 +46,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A pool sets `restart` on a runtime that is not `restartable` | Pool admission refuses the pool | SPEC-5 |
 | A Runtime's `env` names a variable with the prefix `LENNY_`, or names one variable twice | The API server refuses the Runtime | SPEC-1 |
 | A `cleanupCommands` command exits non-zero, or the commands together outlast `cleanupTimeoutSeconds` | `cleaned` carries an error, and the scrub fails under `onScrubFailure` as a failed cleanup does today | SPEC-5, SPEC-7 |
-| A pool is edited from `keep` to `restart` and no longer requires `acknowledgeProcessLevelIsolation` | Every acquisition refuses each used pod created under `keep` and requests its drain; pods created after the edit run `restart` | SPEC-5 |
+| A pool's `recycle.runtimeProcess` is edited from `keep` to `restart`, and the pool no longer requires `acknowledgeProcessLevelIsolation` | Every acquisition refuses each used `keep` pod and requests its drain; the pods created after the edit are `restart` pods | SPEC-5 |
 | Nonce-only mode | Neither peer-UID check is available, and ordering identifies both ends | SPEC-4 |
 
 ## Staged edits
@@ -77,7 +79,7 @@ env: # optional; see env below
 (a) In the **Runtime process lifetime.** paragraph, replace its first sentence, `The runtime process lives as long as the pod.`, with:
 
 ```
-On a pod whose runtime-process lifetime is `keep`
+On a `keep` pod
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 "Runtime-process lifetime"), the runtime process lives as long as the pod
 unless `DemoteSDK` ends it (**Runtime supervisor.**, **SDK-warm.** below). On a
@@ -153,7 +155,7 @@ or heartbeat escalation, and no occupancy-zero boundary, closes that connection
 Replace with:
 
 ```
-or heartbeat escalation, and, under `keep`, no occupancy-zero boundary, closes that connection
+or heartbeat escalation, and, on a `keep` pod, no occupancy-zero boundary, closes that connection
 ```
 
 (b) Insert after the **Runtime process lifetime.** paragraph and before `**Health check:**`:
@@ -242,8 +244,8 @@ container and no supervisor.
   writes.**). A `DemoteSDK` whose `end` fails returns an error, and the runtime
   is reported not live (**Liveness.**). A `preConnect` runtime is never
   `restartable` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime),
-  **`command`**), so the pod keeps its live process across each recycle
-  boundary, and the adapter launches nothing on the `claimed → sdk_connecting`
+  **`command`**), so each of its pods is a `keep` pod, which keeps its live
+  process across each recycle boundary, and the adapter launches nothing on the `claimed → sdk_connecting`
   re-warm edge ([§6.2](06_warm-pod-model.md#62-pod-state-machine)): the kept
   process, whichever launch started it, is the pod's SDK-warm process.
 - **Generation.** Each launch starts a new runtime generation. The rule that
@@ -259,7 +261,7 @@ container and no supervisor.
   `sweep` failed or `CH-SUPERVISE` failed
   ([§28.5.3](28_communication-channels.md#2853-intra-pod)); a runtime process
   exited other than by an `end` while a session was bound (**Crash.**); or, on
-  a pod that keeps its runtime process, the process exited, or its
+  a `keep` pod, the process exited, or its
   `CH-MSGSOCK` connection ended, other than by an `end`, or a heartbeat
   escalated a session as hung. The pod is then retired
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
@@ -279,10 +281,10 @@ container and no supervisor.
 (c) In the sidecar-versus-embedded trade-off table, in the `Runtime process lifetime` row, replace the sidecar cell, which begins `The pod's lifetime; one connection serves every session`, with the text below. The row stays one physical line.
 
 ```
-The pod's lifetime under `keep`, or one launch to the next reused occupancy-zero boundary under `restart`; launched by the runtime supervisor; one connection per process serves its sessions, each opened by `session_start` and released by `session_end` or by the end of the connection
+The pod's lifetime on a `keep` pod, or one launch to the next reused occupancy-zero boundary on a `restart` pod; launched by the runtime supervisor; one connection per process serves its sessions, each opened by `session_start` and released by `session_end` or by the end of the connection
 ```
 
-(d) In §4.7.1, in the gateway RPC table's `Shutdown` row, replace `ends the session's use of the pod's runtime process, which stays alive for the pod's life` with `ends the session's use of the pod's runtime process, which stays alive until the pod terminates or, under `recycle.runtimeProcess: restart`, until the whole-pod scrub ends it`. In the same row, replace `the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously` with `the adapter keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the §5.2 whole-pod scrub asynchronously`. The row stays one physical line.
+(d) In §4.7.1, in the gateway RPC table's `Shutdown` row, replace `ends the session's use of the pod's runtime process, which stays alive for the pod's life` with `ends the session's use of the pod's runtime process, which stays alive until the pod terminates or, on a `restart` pod ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Runtime-process lifetime"), until the whole-pod scrub ends it`. In the same row, replace `the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously` with `the adapter keeps its own process alive across the recycle boundary, keeps the runtime process alive on a `keep` pod, runs the §5.2 whole-pod scrub asynchronously`. The row stays one physical line.
 
 In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
 
@@ -295,7 +297,7 @@ In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:*
 (a) Append to step 4, `4. Adapter signals READY to gateway — pod enters warm pool`, on the same list item:
 
 ```
- In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE`, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
+ In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE` and sent `ready`, after the property self-test gate of [§4.7.11](#4711-adapter-agent-security-boundary) item 8, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 ```
 
 (b) Replace step 7, from `7. The runtime process becomes live for the pod's first session.` through `the runtime loop in its own process for each session.`, with:
@@ -342,13 +344,20 @@ Insert after item 7, **MCP server security:**, which ends `by directly connectin
      end and sweep. Tenant isolation does not: the tenant pin applies on every
      pool ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
      A killed, frozen, or failed supervisor retires the pod.
-   - **Property self-test.** At startup the supervisor tests that its
-     non-dumpable mark resists same-UID inspection, that it identifies a
-     signal's sender, and that its kill reaches a double-forked descendant. On
-     a `restart` pod a failure makes the supervisor exit before it connects,
-     and the pod never becomes `idle`. PID-namespace init immunity to SIGKILL
-     and SIGSTOP is reported and does not gate, because its failure retires
-     only the pod whose runtime exploits it. `lenny-ctl preflight supervisor`
+   - **Property self-test.** At startup, before it dials, the supervisor
+     tests that its non-dumpable mark resists same-UID inspection, that it
+     identifies a signal's sender, and that its kill reaches a double-forked
+     descendant, and it tests whether it is immune as PID-namespace init to
+     SIGKILL and SIGSTOP. It reports each result in its `ready` message on
+     `CH-SUPERVISE` ([§28.5.3](28_communication-channels.md#2853-intra-pod)),
+     and the adapter logs each failed property. The non-dumpable mark, sender
+     identification, and kill reach gate a `restart` pod
+     ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+     "Runtime-process lifetime"): when one of them failed, the adapter exits
+     non-zero before it signals READY, and the pod never becomes `idle`. On a
+     `keep` pod no property gates. PID-namespace init immunity gates no pod,
+     because its failure retires only the pod whose runtime exploits it.
+     `lenny-ctl preflight supervisor`
      ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)) runs the
      same self-test on a named RuntimeClass, and it is re-run when the
      container runtime version changes, as item 1 requires for `SO_PEERCRED`.
@@ -375,27 +384,34 @@ In the §5.1 derived-runtime example, insert after the line `    maxSessionsPerP
 (b) Insert after the **Recycling and integration levels.** paragraph:
 
 ```
-**Runtime-process lifetime (`recycle.runtimeProcess`).** A reusing recycling
-pool is a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above
-1, and a `recycle.scrubProfile` other than `vm-restart`. On a reusing recycling
-pool `recycle.runtimeProcess` is required and has no default; the pool
-controller rejects it on every other pool. `keep` keeps the runtime process across the recycle boundary
+**Runtime-process lifetime (`recycle.runtimeProcess`).** Every agent pod has a
+runtime-process lifetime, `keep` or `restart`, which the WarmPoolController
+fixes when it creates the pod, from the pool's `recycle.runtimeProcess` at that
+moment, or `keep` on a pool without the field, and records in the immutable pod
+label `lenny.dev/runtime-process`
+([Section 17.2](17_deployment-topology.md#172-namespace-layout), item 5). A
+**`keep` pod** is a pod whose lifetime is `keep`, and a **`restart` pod** is a
+pod whose lifetime is `restart`. A `keep` pod keeps its runtime process across
+the recycle boundary
 ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime
-process lifetime"). `restart` ends the runtime process at each occupancy-zero
-boundary at which the pod is reused, and the next session runs in a newly
-launched process ([Section 4.7.10](04_system-components.md#4710-deployment-model),
-**Runtime supervisor.**). The gateway pool admission path rejects `restart` on a
-pool whose runtime is not `restartable`
+process lifetime"). A `restart` pod ends its runtime process at each
+occupancy-zero boundary at which it is reused, and the next session runs in a
+newly launched process
+([Section 4.7.10](04_system-components.md#4710-deployment-model),
+**Runtime supervisor.**). Pod retirement at `recycle.maxSessionsPerPod` or
+`recycle.maxPodUptimeSeconds` is the same on a `keep` pod and a `restart` pod.
+An acquisition reads an absent or unknown value of the label as `keep`. Every
+other statement of a pod's runtime-process lifetime names a `keep` pod or a
+`restart` pod. Only the WarmPoolController at pod creation, the pool admission
+rules below, and the runtime-process acknowledgment below read
+`recycle.runtimeProcess`. A reusing recycling pool is a pool with
+`recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a
+`recycle.scrubProfile` other than `vm-restart`. On a reusing recycling pool
+`recycle.runtimeProcess` is required and has no default; the pool controller
+rejects it on every other pool. The gateway pool admission path rejects
+`restart` on a pool whose runtime is not `restartable`
 ([Section 5.1](#51-runtime)). The WarmPoolController renders `restart` only for
-a runtime that is `restartable`, and otherwise creates no pod for the pool.
-Pod retirement at `recycle.maxSessionsPerPod` or
-`recycle.maxPodUptimeSeconds` is the same under both values. The
-WarmPoolController fixes a pod's lifetime when it creates the pod, from the
-pool's value at that moment, or `keep` on a pool without the field, in the
-immutable pod label
-`lenny.dev/runtime-process` (`keep` or `restart`;
-[Section 17.2](17_deployment-topology.md#172-namespace-layout), item 5). An
-acquisition reads an absent or unknown value of the label as `keep`. An
+a runtime that is `restartable`, and otherwise creates no pod for the pool. An
 admitted edit of the field applies to the pods created after it. The
 runtime-process acknowledgment below states which pods created before the edit
 an acquisition refuses.
@@ -411,28 +427,28 @@ recycle boundary ([Section 4.7.10](04_system-components.md#4710-deployment-model
 and replace it with:
 
 ```
-adapter-executed and gateway-coordinated. Under `recycle.runtimeProcess: keep`
-the runtime process is kept across the recycle boundary
+adapter-executed and gateway-coordinated. On a `keep` pod ("Runtime-process
+lifetime" below) the runtime process is kept across the recycle boundary
 ([Section 4.7.10](04_system-components.md#4710-deployment-model)),
 ```
 
-In the same paragraph, replace `A runtime that exits after its session makes the pod retire` with `Under `keep`, a runtime that exits after its session makes the pod retire`.
+In the same paragraph, replace `A runtime that exits after its session makes the pod retire` with `On a `keep` pod, a runtime that exits after its session makes the pod retire`.
 
 (c) In **Lenny scrub procedure**, replace `The scrub has two phases: a **pre-cleanup credential purge** (step 0) executed by the adapter before `cleanupCommands`, and a **post-cleanup scrub sequence** (steps 1-6) executed after `cleanupCommands` finish.` with:
 
 ```
-The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a sidecar pod under `recycle.runtimeProcess: restart`, the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and sweeps what the agent UID left ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **End.** and **Sweep.**); the deployer's `cleanupCommands`; on a sidecar pod under `restart`, a second runtime end and sweep, which remove every process and agent-UID object the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); in the embedded model the adapter runs them in its own container. A failed end or sweep retires the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
+The scrub runs in this order: the **pre-cleanup credential purge** (step 0); on a `restart` pod ("Runtime-process lifetime" above), the **runtime end and sweep**, in which the runtime supervisor ends the runtime process and sweeps what the agent UID left ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **End.** and **Sweep.**); the deployer's `cleanupCommands`; on a `restart` pod, a second runtime end and sweep, which remove every process and agent-UID object the commands left; and the **post-cleanup scrub sequence** (steps 1-6). In the sidecar model the runtime supervisor runs `cleanupCommands` ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**); in the embedded model the adapter runs them in its own container. A failed end or sweep retires the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) whatever `onScrubFailure` states. A failed or timed-out `cleanupCommands` run fails the scrub as before.
 ```
 
-In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive under `keep`, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process under `keep` and to a newly launched one under `restart`;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
+In the **Lenny scrub procedure** paragraph, replace the sentence `The adapter ends the ending session's use of the runtime, keeps its own process and the runtime process alive across the recycle boundary, runs the scrub asynchronously,` with `The adapter ends the ending session's use of the runtime, keeps its own process alive across the recycle boundary, keeps the runtime process alive on a `keep` pod, runs the scrub asynchronously,`, and replace `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process;` with `On a `standard` or `in-place` pool whose pod is reused, the next session binds to the same runtime process on a `keep` pod and to a newly launched one on a `restart` pod;`, and replace `the adapter holds no recycle state of its own` with `the adapter holds no recycle state of its own other than the pod's runtime-process lifetime ("Runtime-process lifetime" above)`.
 
 (d) In step 1, replace `The kill runs in the container that executes the scrub and does not end the runtime process; see "What the scrub reaches" below.` with:
 
 ```
-In the embedded model the kill runs in the adapter container. In the sidecar model the adapter container runs no author process, and the runtime container's processes are ended by the runtime ends the **Lenny scrub procedure** paragraph names under `restart` and are kept under `keep`; see "What the scrub reaches" below.
+In the embedded model the kill runs in the adapter container. In the sidecar model the adapter container runs no author process, and the runtime container's processes are ended on a `restart` pod by the runtime ends the **Lenny scrub procedure** paragraph names and are kept on a `keep` pod; see "What the scrub reaches" below.
 ```
 
-In step 1b, append `In the sidecar model the adapter does not run this step; under `recycle.runtimeProcess: restart` the runtime sweep removes the agent UID's IPC objects ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **Sweep.**), and under `keep` they persist.`
+In step 1b, append `In the sidecar model the adapter does not run this step; on a `restart` pod the runtime sweep removes the agent UID's IPC objects ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **Sweep.**), and on a `keep` pod they persist.`
 
 In step 3, append `In the sidecar model each launched runtime process starts from the supervisor's fixed environment ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**).`
 
@@ -447,12 +463,12 @@ states, so a symbolic link the agent planted gives them no access the agent
 lacks. In the sidecar deployment model
 ([§4.7.10](04_system-components.md#4710-deployment-model)) steps 0, 2, 4, and 6
 operate on volumes mounted into both containers, so they clear and verify the
-runtime container's view of those paths. Under `recycle.runtimeProcess:
-restart` the runtime end reaches every process in the runtime container other
+runtime container's view of those paths. On a `restart` pod ("Runtime-process
+lifetime" above) the runtime end reaches every process in the runtime container other
 than the supervisor, and the sweep reaches what
 [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**
 **Sweep.** lists, so no runtime process persists across the recycle boundary;
-the adapter process persists. Under `keep` the runtime process, its memory, the
+the adapter process persists. On a `keep` pod the runtime process, its memory, the
 processes it started, and its IPC objects persist across the boundary, because
 the pod keeps the runtime process
 ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process
@@ -460,12 +476,12 @@ lifetime"). In the embedded model the runtime is the adapter's process, which
 step 1 spares, and step 1 ends the processes the runtime started.
 ```
 
-(f) In the best-effort paragraph, replace `and the kept runtime process (see "What the scrub reaches" above).` with `and, under `recycle.runtimeProcess: keep`, the kept runtime process (see "What the scrub reaches" above).`
+(f) In the best-effort paragraph, replace `and the kept runtime process (see "What the scrub reaches" above).` with `and, on a `keep` pod, the kept runtime process (see "What the scrub reaches" above).`
 
-(g) In the **Deployer acknowledgment (runtime process kept across sessions).** paragraph, replace `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a `recycle.scrubProfile` other than `vm-restart`.` with `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a reusing recycling pool ("Runtime-process lifetime" above) under `recycle.runtimeProcess: keep`.` Replace `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim requires this field, which is a pool with `maxConcurrentSessions` above 1 or the recycling configuration above;` with `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim reuses pods, which is a pool with `maxConcurrentSessions` above 1 or a reusing recycling pool;`. Replace `The recycling configurations outside the rule keep no runtime process across sessions:` with `A recycling pool that is not a reusing recycling pool reuses no pod:`. Replace `When the resolved configuration does not require this field, every acquisition refuses such a pod` with `When the resolved configuration does not reuse pods, every acquisition refuses such a pod`. Replace `An admitted update that takes a pool outside the rule ends reuse at the next acquisition.` with `An admitted update that takes a pool outside the rule ends reuse at the next acquisition of every pod created under `keep`.`. In the paragraph's first sentence, replace `The runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session` with `On a pod created under `keep` the runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session`. Append after `the tenant pinning paragraphs above state how the gateway enforces that.`:
+(g) In the **Deployer acknowledgment (runtime process kept across sessions).** paragraph, replace `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a `recycle.scrubProfile` other than `vm-restart`.` with `Deployers must set `sessionPolicy.acknowledgeProcessLevelIsolation: true` on a reusing recycling pool ("Runtime-process lifetime" above) under `recycle.runtimeProcess: keep`.` Replace `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim requires this field, which is a pool with `maxConcurrentSessions` above 1 or the recycling configuration above;` with `The gateway admits a session to a pod that has served an earlier session only when the pool configuration it resolves for that claim reuses pods, which is a pool with `maxConcurrentSessions` above 1 or a reusing recycling pool;`. Replace `The recycling configurations outside the rule keep no runtime process across sessions:` with `A recycling pool that is not a reusing recycling pool reuses no pod:`. Replace `When the resolved configuration does not require this field, every acquisition refuses such a pod` with `When the resolved configuration does not reuse pods, every acquisition refuses such a pod`. Replace `An admitted update that takes a pool outside the rule ends reuse at the next acquisition.` with `An admitted update that takes a pool outside the rule ends reuse at the next acquisition of every `keep` pod ("Runtime-process lifetime" above).`. In the paragraph's first sentence, replace `The runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session` with `On a `keep` pod ("Runtime-process lifetime" above) the runtime process lives as long as the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"), so a later session`. Append after `the tenant pinning paragraphs above state how the gateway enforces that.`:
 
 ```
-A sequential pool under `recycle.runtimeProcess: restart` does not require this field, because no runtime process serves two sessions; the state that persists there is covered by `acknowledgeBestEffortScrub`. Each pod carries the lifetime it was created under ("Runtime-process lifetime" above). A pod created under `keep` that has served an earlier session is admitted only while the resolved configuration requires this field: after an admitted edit from `keep` to `restart` on a sequential pool, every acquisition refuses such a pod and stamps its drain request as stated above. A pod created under `restart` is admitted after an edit to `keep`, and its runtime process still ends at each reused boundary.
+A sequential pool under `recycle.runtimeProcess: restart` does not require this field, because no runtime process serves two sessions; the state that persists there is covered by `acknowledgeBestEffortScrub`. Each pod carries the lifetime it was created under ("Runtime-process lifetime" above). A `keep` pod that has served an earlier session is admitted only while the resolved configuration requires this field: after an admitted edit of `recycle.runtimeProcess` from `keep` to `restart` on a sequential pool, every acquisition refuses such a pod and stamps its drain request as stated above. A `restart` pod is admitted after an edit of the field to `keep`, and its runtime process still ends at each reused boundary.
 ```
 
 (h) Outside the acknowledgment paragraph, each site that ends a reserved hold or drains a pod names a pool predicate. Replace each predicate with the acknowledgment's per-pod refusal:
@@ -513,7 +529,7 @@ inventory carries `None` in the column. The naming table below the
 (b) In the §28.3 **Channel register**, insert after the `CH-MCP-CONNECTOR` row, as one physical line:
 
 ```
-| `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Both | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness | None |
+| `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Both | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness, and the supervisor's self-test report | None |
 ```
 
 (c) In §28.5.3, replace the intro paragraph, from `This boundary carries the channels between the runtime adapter and the runtime binary inside one agent` through `The runtime is the dialling participant on every channel here.`, with:
@@ -571,8 +587,11 @@ Replace the diagram block that follows with:
   Unix socket JSON Lines transport (§28.3).
 - **Messages.** Each message is a single JSON object terminated by `\n` whose `type` member carries the
   message name. Adapter to supervisor: `launch`, `end`, `sweep`, `cleanup`, and `ping`. Supervisor to
-  adapter: `launched`, `ended`, `swept`, `cleaned`, and `pong`, each answering the request of the matching
-  name, and
+  adapter: `ready`, which the supervisor sends once, as its first message on the connection, and which
+  carries `properties`, the result of each property of its startup self-test
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8) as `pass` or `fail`;
+  `launched`, `ended`, `swept`, `cleaned`, and `pong`, each answering the request of the matching
+  name; and
   `exited`, which reports that a runtime process exited other than by an `end` and carries its exit
   status. Every message carries `gen`, the runtime generation the adapter assigned with its latest
   `launch`, or 0 before the first, and every request and reply
@@ -584,14 +603,14 @@ Replace the diagram block that follows with:
   carries a credential, manifest content, a session identifier, or any byte a runtime process or a
   cleanup command wrote, and no other message carries an environment value. The exit status in `exited` is
   diagnostic and decides nothing but the failure of the bound sessions.
-- **Preconditions.** The adapter accepts the connection after its `SO_PEERCRED` self-test and before it
-  signals READY ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4).
-  It sends `launch`, `end`, `sweep`, and `cleanup` only at the points
+- **Preconditions.** The adapter accepts the connection after its `SO_PEERCRED` self-test, and reads
+  `ready` before it signals READY ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4).
+  It sends no request before `ready`, and sends `launch`, `end`, `sweep`, and `cleanup` only at the points
   [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** and the
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Lenny scrub
   procedure.** name, and `ping` periodically while no other request is outstanding. The adapter has at
   most one request outstanding.
-- **Timing.** The adapter waits a bounded time for the connection before READY. The supervisor repeats a
+- **Timing.** The adapter waits a bounded time for the connection and its `ready` before READY. The supervisor repeats a
   refused dial within a bounded window, and exits when the window ends with no connection. Every request is bounded by the deadline of the operation that
   sends it, and `ping` by its own deadline; a request with no reply within its bound is a link failure.
   The specification states no value for these bounds, the ping interval, or the dial retry interval or window.
@@ -599,12 +618,15 @@ Replace the diagram block that follows with:
   which no container restarts in place, the adapter's closing of its listener after the
   first connection it accepts before READY, and the supervisor's exit when that connection closes
   (**Degradation.**, §28.6).
-- **Degradation.** When no supervisor connects within the adapter's wait, the adapter exits non-zero and
-  the pod is never marked `idle`. A `launched` that carries `error` fails the session's start. A
+- **Degradation.** When no supervisor connects and sends `ready` within the adapter's wait, the adapter
+  exits non-zero and the pod is never marked `idle`. A `ready` that reports a failed property has the
+  outcome [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8 states. A
+  `launched` that carries `error` fails the session's start. A
   `cleaned` that carries `error` fails the scrub as a failed `cleanupCommands` run does. A closed
   connection, a request unanswered within its bound, and a message the adapter cannot decode strictly (an
-  unknown or duplicate key, an unknown code, a reply whose `gen` or `id` matches no outstanding request,
-  or an `exited` whose `gen` is not the current generation) are link failures. A link failure, and a
+  unknown or duplicate key, an unknown code, a first message other than `ready`, a second `ready`, a
+  reply whose `gen` or `id` matches no outstanding request, or an `exited` whose `gen` is not the current
+  generation) are link failures. A link failure, and a
   `launched`, `ended`, or `swept` that carries `error`, take the outcome
   [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states. When the connection closes, the supervisor exits, which ends every process in the
   runtime container.
@@ -620,7 +642,7 @@ pod. Its card states the guards (§28.5.3). No gateway replica holds the channel
 (f) In the §28.8 matrix, insert after the `CH-MCP-CONNECTOR` row, as one physical line:
 
 ```
-| `CH-SUPERVISE` | When no supervisor connects within the adapter's wait before READY, the adapter exits non-zero and the pod is never marked `idle` ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, §28.5.3) | A link failure, or an `error` on `launched`, `ended`, or `swept`, takes the outcome [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod that exits before READY, or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
+| `CH-SUPERVISE` | When no supervisor connects and sends `ready` within the adapter's wait before READY, or `ready` reports a failed property that gates a `restart` pod, the adapter exits non-zero and the pod is never marked `idle` ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8, §28.5.3) | A link failure, or an `error` on `launched`, `ended`, or `swept`, takes the outcome [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** states; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod that exits before READY, or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
 ```
 
 The claim-register rows for this card are `WIRED` rows naming the surfaces CODE-2 and CODE-3 create, and CODE-3 lands them.
@@ -721,7 +743,7 @@ Renumber the steps after it: 25 becomes 26, 26a, 26b, and 26c become 27a, 27b, a
 In the §24.2 command table, insert after the `lenny-ctl preflight --config <values.yaml>` row, as one physical line:
 
 ```
-| `lenny-ctl preflight supervisor --runtime-class <name>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8), report each property, and delete the pod. Exits non-zero when a property that gates `restart` fails. | Standalone mode only, through the current `kubeconfig` context; creates a pod | Kubernetes permission to create and delete pods in the agent namespace |
+| `lenny-ctl preflight supervisor --runtime-class <name>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8), report each property, and delete the pod. Exits non-zero when a property that gates a `restart` pod fails. | Standalone mode only, through the current `kubeconfig` context; creates a pod | Kubernetes permission to create and delete pods in the agent namespace |
 ```
 
 ### SPEC-14 · spec/18_build-sequence.md § 18.6 and § 18.30
@@ -741,7 +763,7 @@ In the §24.2 command table, insert after the `lenny-ctl preflight --config <val
 - `spec/06_warm-pod-model.md` (SPEC-5, SPEC-9)
 - `spec/10_gateway-internals.md` (SPEC-2, SPEC-7)
 - `spec/11_policy-and-controls.md` (SPEC-2)
-- `spec/13_security-model.md` (SPEC-6)
+- `spec/13_security-model.md` (SPEC-5, SPEC-6)
 - `spec/15_external-api-surface.md` (SPEC-8(d), SPEC-11)
 - `spec/16_observability.md` (SPEC-5)
 - `spec/17_deployment-topology.md` (SPEC-1, SPEC-5)
