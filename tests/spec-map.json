@@ -3751,6 +3751,9 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier2_component/stores/tenant_purge_redis_cluster_test.go",
+        "pkg/gateway/billing/billingstore/failover/tenant_purge_test.go",
+        "pkg/gateway/billing/billingstore/failover/redisstream/tenant_purge_test.go",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerResumesFromPersistedPhase_spec_12_8",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerMissingHookFailsJob_spec_12_8",
