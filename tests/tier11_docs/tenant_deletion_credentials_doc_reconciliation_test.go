@@ -110,7 +110,9 @@ func TestTenantDeletionPhaseFourRowAndTombstoneStateWhatIsKept(t *testing.T) {
 // diagnosis: the Legal Holds section still says held resources are kept
 // through tenant deletion, or omits that force-delete copies held evidence to
 // the escrow bucket before Phase 4 deletes the originals, or the pages omit
-// that a deleting tenant's own tenant-admins lose API access. An operator
+// that a deleting tenant's own tenant-admins lose API access, or a Min Role
+// cell of the lenny-ctl Legal Hold Management table lists `tenant-admin`
+// without the `deleting` qualifier. An operator
 // relies on the originals surviving, or waits on a tenant-admin who can no
 // longer release the holds.
 func TestLegalHoldDocsStateEscrowAndDeletingTenantAdminLockout(t *testing.T) {
@@ -135,6 +137,31 @@ func TestLegalHoldDocsStateEscrowAndDeletingTenantAdminLockout(t *testing.T) {
 	ctlPage := filepath.Join("docs", "operator-guide", "lenny-ctl.md")
 	ctlHolds := docHeadingSection(t, ctlPage, readDocPage(t, filepath.Join(root, ctlPage)), "## Legal Hold Management")
 	requireAllContain(t, ctlPage+" Legal Hold Management", ctlHolds, []string{lockout})
+	requireLegalHoldRoleCellsQualified(t, ctlPage, ctlHolds)
+}
+
+// requireLegalHoldRoleCellsQualified checks that every command row of the
+// Legal Hold Management table limits its `tenant-admin` entry in the Min Role
+// column to a tenant that is not `deleting`. A reader scanning the role
+// column alone must not see an unqualified `tenant-admin`.
+func requireLegalHoldRoleCellsQualified(t *testing.T, page, section string) {
+	t.Helper()
+	const qualified = "`platform-admin` / `tenant-admin` (not while the tenant is `deleting`)"
+	rows := 0
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(line, "| `lenny-ctl admin legal-holds") {
+			continue
+		}
+		rows++
+		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		role := strings.TrimSpace(cells[len(cells)-1])
+		if role != qualified {
+			t.Errorf("%s Legal Hold Management: Min Role cell %q, want %q", page, role, qualified)
+		}
+	}
+	if rows == 0 {
+		t.Errorf("%s Legal Hold Management: no `lenny-ctl admin legal-holds` command rows found", page)
+	}
 }
 
 // spec: 12.8 (Compliance Interfaces, Tenant deletion lifecycle), 17.6
