@@ -107,7 +107,9 @@
 
 ## Open decisions for human to make
 
-The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26).
+The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26). One decision remains open.
+
+- **OD-7. Should this proposal file the single-tenant playground revocation miss?** In a single-tenant gateway outside dev mode, the playground `mintAPIKey` path keeps the tenant of a pasted bearer without a registry read, so it can mint a bearer that names a deleted tenant (non-spec **Tenant liveness and the default tenant**, row 5). A playground bearer has no `issued_tokens` row. Its revocation is the Redis marker `t:{tenant_id}:pg:revoked:{jti}`, which is written under the tenant the bearer names, and the auth middleware reads the marker under the resolved tenant, which is `default` in single-tenant mode. A revocation of such a bearer is therefore missed at use, whether or not Phase 4 has run (`pkg/gateway/mcpfabric/playground/sessionrecord.go:192-193`, `pkg/gateway/middleware/auth/auth.go:541-542`, `pkg/auth/auth.go:330-332`). The choice is between naming the miss in the row-5 **New** entry under **Defects in the shipped tree that this proposal does not stage**, so that REC-1 item 8 files it, and leaving it unfiled. The review loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
 
 ## Defects in the shipped tree that this proposal does not stage
 
