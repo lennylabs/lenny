@@ -1919,6 +1919,20 @@ t.section("B18. under a named scope every lens carries the cache instruction, ke
   t.check("NO cache-clear agent exists", never(calls, "cache-clear") && !calls.some((c) => /rm -rf .*cp-cache/.test(c.prompt)));
 }
 
+t.section("B29c. the decisions phase carries the single-source rule verbatim");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const rule = (f) => {
+    const src = readFileSync(resolve(R, ".claude/workflows/" + f), "utf8");
+    const i = src.indexOf("const SINGLE_SOURCE_RULE =");
+    return i < 0 ? null : src.slice(i, src.indexOf(";\n", i));
+  };
+  const main = rule("change-proposal.js");
+  t.check("change-proposal-decisions.js holds the same SINGLE_SOURCE_RULE", main && main === rule("change-proposal-decisions.js"));
+}
+
 t.section("B29b. every argument the script reads is classified");
 {
   const { readFileSync } = await import("fs");
@@ -2536,6 +2550,7 @@ t.section("PS2. the parallel designs are reconciled before any of them is applie
   t.check("after every design", firstIndex(calls, "r1:fix-design:") < firstIndex(calls, "r1:fix-design-reconcile"));
   t.check("and before any fixer", firstIndex(calls, "r1:fix-design-reconcile") < firstIndex(calls, "r1:fix:"));
   t.check("exactly one per round", matching(calls, "r1:fix-design-reconcile").length === 1);
+  t.check("it carries the single-source rule", /STATE EACH RULE ONCE/.test(rec.prompt));
   t.check("it is read-only", /read-only investigator/.test(rec.prompt));
   t.check("it is given every group's design", /"id": "G1"[\s\S]*"id": "G2"[\s\S]*"id": "G3"/.test(rec.prompt));
   t.check("same section is not a conflict; same statement is", /touch the same SECTION are not in conflict/.test(rec.prompt));
@@ -6292,14 +6307,13 @@ t.section("B41. the fix phase reads the tree, and a redesign is stated whole and
   const run = await runWorkflow(WF, ARGS, loopStubs(RD));
   const spec = matching(run.calls, "redesign1:spec:")[0];
   const cons = matching(run.calls, "redesign1:consolidate")[0];
-  const judge = run.calls.find((c) => /^redesign1:review:mechanism:/.test(c.label));
   const apply = matching(run.calls, "redesign1:apply")[0];
-  t.check("a redesign spec agent states each mechanism as a closed table, at high effort",
-    spec && /A CLOSED TABLE FOR EVERY MECHANISM/.test(spec.prompt) && spec.opts.effort === "high");
-  t.check("the consolidator keeps one table per mechanism, at high effort",
-    cons && /closed table of cases whole, in ONE home/.test(cons.prompt) && cons.opts.effort === "high");
-  t.check("the mechanism judge reviews the table row by row", judge && /ROW BY ROW/.test(judge.prompt));
+  t.check("a redesign spec agent runs at high effort", spec && spec.opts.effort === "high");
+  t.check("the consolidator runs at high effort", cons && cons.opts.effort === "high");
   t.check("the apply step runs the related lookup", apply && /RELATED-PASSAGES LOOKUP/.test(apply.prompt));
+  const rfix = matching(run.calls, "redesign1:fix:")[0];
+  t.check("every redesign agent that writes text carries the single-source rule",
+    [spec, cons, apply].every((c) => c && /STATE EACH RULE ONCE/.test(c.prompt)) && (!rfix || /STATE EACH RULE ONCE/.test(rfix.prompt)));
   t.check("every lens is reinstated after the redesign", run.logs.some((l) => /^Reinstating .* after the entry redesign/.test(l)));
   t.check("and the later loop reinstates its own retired lenses, which never read the redesign",
     run.logs.some((l) => /^Reinstating .* in the non-spec loop, whose lenses have not read the redesign/.test(l)));

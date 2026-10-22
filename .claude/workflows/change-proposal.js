@@ -3950,14 +3950,7 @@ async function runRedesign(areas, rnd, why) {
             "what state; every site that sets and every site that clears that state; every caller and every " +
             "type satisfying an interface it changes; what happens when it does not fire and what observes " +
             "that; and the test that pins it, named, at the tier that owns it.\n\n" +
-            "A CLOSED TABLE FOR EVERY MECHANISM YOU KEEP OR INVENT. State the mechanism's behavior as one " +
-            "table with a row for every case it decides: the combinations of state and event it can be in, and " +
-            "for each the outcome, the state it writes, and what observes it. The rows are exhaustive: name the " +
-            "dimensions the cases vary on, and make every combination a row, marking an impossible one " +
-            "impossible with the reason. The table has ONE home in the proposal, named in your edit list, and " +
-            "every other site that describes the mechanism cites a row rather than restating it. On the measured " +
-            "proposal most late review findings were on cases of mechanisms the loop itself had invented and " +
-            "never stated whole, found one case per round.\n\n" +
+            "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
             "PREFER NOT HAVING A MECHANISM. The strongest outcome available to you is finding that some or " +
             "all of what is there is unnecessary and should be deleted rather than specified. Say so plainly " +
             "if you find it, with the evidence. A smaller mechanism beats a better-specified larger one.\n\n" +
@@ -3995,9 +3988,7 @@ async function runRedesign(areas, rnd, why) {
       "twice, or has been rewritten by an earlier edit in your own list, is a defect in the list. Order the " +
       "edits so no edit's anchor is destroyed by one before it. Confirm no edit leaves a dangling reference " +
       "to a deliverable, section, or identifier another edit deletes.\n\n" +
-      "Keep each mechanism's closed table of cases whole, in ONE home in the proposal. Where two " +
-      "specifications tabulate the same mechanism, merge them into one table and check that the merged rows " +
-      "are still exhaustive and do not contradict each other.\n\n" +
+      "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
       "WRITE: a statement of the mechanisms as reconciled; the conflicts with their resolutions and evidence; " +
       "the ordered numbered edit list; the open decisions with defaults; and a plain list of what the " +
       "consolidation deletes outright. Prose follows " + repo + "/.claude/rules/doc-style.md.",
@@ -4016,7 +4007,7 @@ async function runRedesign(areas, rnd, why) {
               READ_ONLY +
               "\n\nSUBPROPOSAL: " + sub + ". TARGET: " + path + ".\n\n" +
               (k === "mechanism"
-                ? "Judge the design. Does each reconciled mechanism work? Read the code it governs and check the state it reads is really set and cleared where claimed, the caller enumeration is complete, the failure mode is observable, and the named test would fail without it. Then review each mechanism's table of cases ROW BY ROW: check that the dimensions it names are the ones the code and the spec actually vary on, that no combination is missing, that each row's outcome is what the tree and the rest of the design produce, and that no two rows contradict. A missing row or a wrong outcome is a finding."
+                ? "Judge the design. Does each reconciled mechanism work? Read the code it governs and check the state it reads is really set and cleared where claimed, the caller enumeration is complete, the failure mode is observable, and the named test would fail without it."
                 : k === "applicability"
                   ? "Judge whether the edit list can be applied. Every anchor must appear in the target's current text exactly once and must survive every earlier edit in the list. Report any anchor that is absent, duplicated, or destroyed by a prior edit, and any edit whose replacement text references something another edit deletes."
                   : "Judge completeness. Does the list touch every place the target states the mechanisms it changes? A mechanism respecified in one deliverable and left standing in another is the defect this redesign exists to end.") +
@@ -4033,7 +4024,8 @@ async function runRedesign(areas, rnd, why) {
       "Correct a redesign subproposal. The only file you may edit is " + sub + ".\n\n" +
         "Findings:\n" + JSON.stringify(fs, null, 2) +
         "\n\nApply exactly these. Re-verify every citation you touch against the repository. Keep the edit " +
-        "list ordered so no anchor is destroyed by an earlier edit.",
+        "list ordered so no anchor is destroyed by an earlier edit.\n\n" +
+        "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n",
       { label: "redesign" + tag + ":fix:r" + r, phase: "Redesign " + tag },
     );
   }
@@ -4043,6 +4035,7 @@ async function runRedesign(areas, rnd, why) {
     "Apply a reviewed redesign to its target proposal.\n\n" +
       "HARD CONSTRAINT: the only file you may edit is " + path + ". Never modify anything under spec/, docs/, " +
       "pkg/, charts/, or schemas/, and do not edit " + sub + ".\n\n" +
+      "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
       "The redesign is at " + sub + ". Read it in full, then apply its edits in the order it gives, checking " +
       "each anchor against the current text before you write. An anchor that does not appear is a defect in " +
       "the redesign rather than a licence to guess: skip that edit, apply the rest, and say which you skipped " +
@@ -6760,6 +6753,7 @@ async function runReviewLoop(cfg) {
           "by that title. A finding you omit keeps the design it already had.\n" +
           "  Use the group ids exactly as they appear below. A `groupId` naming no group in this round " +
           "is dropped, and the resolution you wrote for it is lost.\n\n" +
+          "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
           "PREFER THE SMALLER RESULT. Where two designs each add something and one addition would serve " +
           "both, merge them and say so; that is the most valuable outcome here, because two mechanisms " +
           "doing nearly the same thing is the hair this loop exists to prevent.\n\n" +
