@@ -112,9 +112,10 @@ func TestTenantDeletionPhaseFourRowAndTombstoneStateWhatIsKept(t *testing.T) {
 // the escrow bucket before Phase 4 deletes the originals, or the pages omit
 // that a deleting tenant's own tenant-admins lose API access, or a Min Role
 // cell of the lenny-ctl Legal Hold Management table lists `tenant-admin`
-// without the `deleting` qualifier. An operator
-// relies on the originals surviving, or waits on a tenant-admin who can no
-// longer release the holds.
+// without the `deleting` qualifier or applies that qualifier to
+// `platform-admin` as well. An operator relies on the originals surviving,
+// waits on a tenant-admin who can no longer release the holds, or concludes
+// that no role can release them.
 func TestLegalHoldDocsStateEscrowAndDeletingTenantAdminLockout(t *testing.T) {
 	root := repoRoot(t)
 	requireSpecPhrase(t, root, "12_storage-architecture.md",
@@ -142,11 +143,13 @@ func TestLegalHoldDocsStateEscrowAndDeletingTenantAdminLockout(t *testing.T) {
 
 // requireLegalHoldRoleCellsQualified checks that every command row of the
 // Legal Hold Management table limits its `tenant-admin` entry in the Min Role
-// column to a tenant that is not `deleting`. A reader scanning the role
-// column alone must not see an unqualified `tenant-admin`.
+// column to a tenant that is not `deleting`, and leaves `platform-admin`
+// unrestricted. A reader scanning the role column alone must not see an
+// unqualified `tenant-admin`, and must not read the qualifier as covering
+// `platform-admin`, which is the role that releases a deleting tenant's holds.
 func requireLegalHoldRoleCellsQualified(t *testing.T, page, section string) {
 	t.Helper()
-	const qualified = "`platform-admin` / `tenant-admin` (not while the tenant is `deleting`)"
+	const qualified = "`platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`)"
 	rows := 0
 	for _, line := range strings.Split(section, "\n") {
 		if !strings.HasPrefix(line, "| `lenny-ctl admin legal-holds") {
@@ -158,10 +161,25 @@ func requireLegalHoldRoleCellsQualified(t *testing.T, page, section string) {
 		if role != qualified {
 			t.Errorf("%s Legal Hold Management: Min Role cell %q, want %q", page, role, qualified)
 		}
+		if legalHoldQualifierCoversPlatformAdmin(role) {
+			t.Errorf("%s Legal Hold Management: Min Role cell %q restricts platform-admin on a deleting tenant", page, role)
+		}
 	}
 	if rows == 0 {
 		t.Errorf("%s Legal Hold Management: no `lenny-ctl admin legal-holds` command rows found", page)
 	}
+}
+
+// legalHoldQualifierCoversPlatformAdmin reports whether a Min Role cell
+// carries a `deleting` parenthetical that is not scoped to tenant-admin. A
+// parenthetical placed after both roles without naming tenant-admin reads as
+// restricting both of them.
+func legalHoldQualifierCoversPlatformAdmin(role string) bool {
+	open := strings.Index(role, "(")
+	if open < 0 || !strings.Contains(role[open:], "`deleting`") {
+		return false
+	}
+	return !strings.HasPrefix(role[open+1:], "tenant-admin:")
 }
 
 // spec: 12.8 (Compliance Interfaces, Tenant deletion lifecycle), 17.6

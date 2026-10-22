@@ -295,9 +295,9 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` (not while the tenant is `deleting`) |
-| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` (not while the tenant is `deleting`) |
-| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` (not while the tenant is `deleting`) |
+| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
 
 A tenant-admin of a tenant in the `deleting` state cannot call the API. A platform-admin releases its holds or force-deletes it.
 
