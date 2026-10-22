@@ -42,6 +42,7 @@ func newMCPForElicitationWithRuntimes(t *testing.T, globalTimeout time.Duration,
 	rts := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
 		Runtimes:                  rts,
@@ -123,6 +124,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -168,6 +170,7 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,

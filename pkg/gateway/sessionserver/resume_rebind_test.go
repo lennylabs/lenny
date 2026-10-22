@@ -93,6 +93,7 @@ func newRebindFixture(t *testing.T, id string, noIdlePod bool) *rebindFixture {
 	}
 	f.exec = &unbindingExecutor{registry: f.registry}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(f.cluster, podBindAdapterDialer(t, adapterSrv)),

@@ -79,7 +79,7 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 		store := &primaryMovingStore{Store: memstore.New()}
 		bus := sessionevents.NewBus(64)
 		retries := 0
-		srv := New(store, Options{Events: bus, IncSessionRetry: func(string) { retries++ }})
+		srv := New(store, Options{DevTenantHeader: true, Events: bus, IncSessionRetry: func(string) { retries++ }})
 		defer srv.Close()
 		if err := store.Create(context.Background(), sessionstore.Session{
 			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateAwaitingClientAction, RetryCount: 2,
@@ -120,7 +120,7 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 
 	t.Run("held pod with no binder wired", func(t *testing.T) {
 		store := &primaryMovingStore{Store: memstore.New()}
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		defer srv.Close()
 		if err := store.Create(context.Background(), sessionstore.Session{
 			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",
@@ -143,7 +143,7 @@ func TestResumeEndpointIsAStoreWrite_spec_7_3(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &primaryMovingStore{Store: memstore.New(), move: func(r *sessionstore.Session) { r.State = tc.reaches }}
-			srv := New(store, Options{})
+			srv := New(store, Options{DevTenantHeader: true})
 			defer srv.Close()
 			if err := store.Create(context.Background(), sessionstore.Session{
 				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended, PodAssignment: "pod-a",

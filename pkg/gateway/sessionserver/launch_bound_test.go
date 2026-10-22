@@ -72,6 +72,7 @@ func launchServer(t *testing.T, store sessionstore.Store, id string, maxFinalizi
 	registry := podsession.NewRegistry()
 	dial := podBindAdapterDialer(t, adapterSrv, grpc.ChainUnaryInterceptor(probe.intercept))
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, dial),
@@ -262,6 +263,7 @@ func TestLaunchReadsTheRowFromThePrimary_spec_5_2(t *testing.T) {
 		}
 		var calls int
 		srv := sessionserver.New(&laggingReplicaStore{Store: base, staleState: session.StateReady}, sessionserver.Options{
+			DevTenantHeader:         true,
 			IDFunc:                  func() string { return "unused" },
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
 			PodBinder:               countingBinder(t, &calls),
@@ -287,6 +289,7 @@ func TestLaunchReadsTheRowFromThePrimary_spec_5_2(t *testing.T) {
 		}
 		var calls int
 		srv := sessionserver.New(&laggingReplicaStore{Store: base, staleState: session.StateCreated}, sessionserver.Options{
+			DevTenantHeader:         true,
 			IDFunc:                  func() string { return "unused" },
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
 			PodBinder:               countingBinder(t, &calls),

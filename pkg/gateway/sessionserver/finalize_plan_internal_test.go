@@ -26,7 +26,7 @@ func finalizeTestServer(t *testing.T) (*Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC) }
-	return New(store, Options{Clock: clock}), store
+	return New(store, Options{DevTenantHeader: true, Clock: clock}), store
 }
 
 func seedCreated(t *testing.T, store sessionstore.Store, id string, plan string) {

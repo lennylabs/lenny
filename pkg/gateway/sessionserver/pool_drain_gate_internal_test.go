@@ -22,7 +22,7 @@ func newDrainGateServer(t *testing.T, drainingPool string) (*Server, *memstore.S
 	t.Helper()
 	store := memstore.New()
 	pools := poolstore.NewMemory()
-	s := New(store, Options{Pools: pools})
+	s := New(store, Options{DevTenantHeader: true, Pools: pools})
 	s.clock = func() time.Time { return gateClock }
 	// Resolve every (runtimeRef, profile) to the one pool under test so
 	// the gate exercises without a Kubernetes client.
@@ -106,7 +106,7 @@ func TestRequirePoolNotDrainingAdmits_spec_15_1_797(t *testing.T) {
 	})
 
 	t.Run("no pool store wired", func(t *testing.T) {
-		s := New(memstore.New(), Options{})
+		s := New(memstore.New(), Options{DevTenantHeader: true})
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/v1/sessions", nil)
 		if !s.requirePoolNotDraining(rr, req, "echo", isolation.ProfileSandboxed, "") {

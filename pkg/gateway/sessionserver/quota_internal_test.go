@@ -482,7 +482,7 @@ func TestMessageAdmittedThenRefusedAtResumeIsHeld_spec_7_2(t *testing.T) {
 // spec: §11.1 (Resume admission), §7.3 (Retry and Resume)
 func TestFailureEdgeOutOfSuspendedIsNotAdmissionChecked_spec_11_1(t *testing.T) {
 	store := &capCountStore{Store: memstore.New(), countErr: errCountFailed}
-	srv := New(store, Options{Tenants: newLimitTenants(1)})
+	srv := New(store, Options{DevTenantHeader: true, Tenants: newLimitTenants(1)})
 	defer srv.Close()
 	srv.maxConcSessGlobal = 1
 	seedCounted(t, store, "other")

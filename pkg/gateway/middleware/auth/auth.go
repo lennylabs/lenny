@@ -10,9 +10,10 @@
 //
 //   - Authorization: Bearer <jwt>  — the canonical RFC 6750 path
 //   - X-Lenny-Tenant-ID + X-Lenny-User-ID — dev-mode headers, only
-//     honoured when the Options.AllowDevHeaders flag is true; used
-//     by the existing tier-3 contract suites until they migrate to
-//     signed-token fixtures
+//     honoured when the Options.AllowDevHeaders flag is true, which the
+//     gateway sets only under --dev-mode. Without that flag the
+//     middleware deletes every client-sent identity header before any
+//     other processing.
 //
 // On rejection the middleware emits the §10.2 error envelopes:
 // TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT (401) and
@@ -147,9 +148,12 @@ type Options struct {
 	TenantClaimName string
 
 	// AllowDevHeaders, when true, permits the X-Lenny-Tenant-ID /
-	// X-Lenny-User-ID dev-mode headers as a transport. Convenient
-	// for the existing tier-3 contract suites that predate the JWT
-	// surface.
+	// X-Lenny-User-ID dev-mode headers as a transport. The gateway sets
+	// it only under --dev-mode. When false the middleware deletes the
+	// identity headers (X-Lenny-Tenant-ID, X-Lenny-User-ID, X-Lenny-Roles,
+	// and X-Lenny-Groups) from every request before any other processing,
+	// so a client-sent value never reaches a handler.
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
 	AllowDevHeaders bool
 
 	// DevHeaderNamesTenant, when true and MultiTenant is false, lets the
@@ -183,10 +187,22 @@ type Options struct {
 	AllowDevRoles bool
 
 	// RequireAuth, when true, rejects requests that carry neither a
-	// Bearer token nor (under AllowDevHeaders) the dev tenant header.
-	// When false, unauthenticated requests pass through with no
-	// Principal on the context — useful for /healthz and similar.
+	// Bearer token nor (under AllowDevHeaders) the dev tenant header with
+	// 401 UNAUTHORIZED, except on a route PublicPath admits. When false,
+	// unauthenticated requests pass through with no Principal on the
+	// context. The gateway sets it outside dev mode so that no
+	// authenticated surface is reachable without credentials.
+	// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED).
 	RequireAuth bool
+
+	// PublicPath, when set, reports whether a request targets a route the
+	// specification serves without credentials, such as the liveness and
+	// readiness probes, the OpenAPI document, the JWK Set, or a public
+	// runtime metadata entry. Under RequireAuth such a request passes
+	// through with no Principal on the context instead of being refused.
+	// A request that does carry a Bearer token is still verified on a
+	// public route. nil treats every route as authenticated.
+	PublicPath func(*http.Request) bool
 
 	// Revocations, when set, is consulted after a Bearer JWT verifies:
 	// a token whose jti has been revoked is rejected even though its
@@ -405,6 +421,17 @@ type middleware struct {
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 0) Outside the dev-header posture the identity headers are never a
+	// client input. Delete any the client sent so that no handler, and no
+	// later middleware, can read a client-asserted tenant, user, role, or
+	// group. The Bearer path writes X-Lenny-Tenant-ID back from the
+	// verified principal. Without this, a request on an unauthenticated
+	// path reached its handler still carrying the tenant it named
+	// (F-10.2.21). spec: §10.2 (Authentication).
+	if !m.opts.AllowDevHeaders {
+		stripIdentityHeaders(r.Header)
+	}
+
 	// 1) Try Bearer.
 	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 		m.serveBearer(w, r, strings.TrimPrefix(header, "Bearer "))
@@ -421,7 +448,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3) No credentials.
-	if m.opts.RequireAuth {
+	if m.opts.RequireAuth && (m.opts.PublicPath == nil || !m.opts.PublicPath(r)) {
 		// spec: §15.1 — UNAUTHORIZED (401) is the §15.1 catalog
 		// code for "Missing or invalid authentication credentials". The
 		// details.reason discriminates the missing-bearer case so
@@ -747,6 +774,18 @@ func (m *middleware) runPreAuth(w http.ResponseWriter, r *http.Request, p Princi
 	writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason,
 		map[string]any{"interceptor_ref": res.RejectedBy, "phase": string(interceptor.PhasePreAuth)})
 	return false
+}
+
+// identityHeaders are the dev-mode identity headers the dev-header
+// transport reads. X-Lenny-Tenant-ID is also the header the Bearer path
+// echoes the verified tenant into for handlers that read it.
+var identityHeaders = []string{"X-Lenny-Tenant-ID", "X-Lenny-User-ID", "X-Lenny-Roles", "X-Lenny-Groups"}
+
+// stripIdentityHeaders deletes every client-supplied identity header.
+func stripIdentityHeaders(h http.Header) {
+	for _, name := range identityHeaders {
+		h.Del(name)
+	}
 }
 
 // parseRolesHeader parses the comma-separated X-Lenny-Roles dev header

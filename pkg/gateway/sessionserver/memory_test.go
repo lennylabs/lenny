@@ -29,7 +29,7 @@ func memoryServer(t *testing.T, seed ...sessionstore.Session) (http.Handler, mem
 		}
 	}
 	mem := memorystore.NewInMemory(0, nil)
-	srv := sessionserver.New(store, sessionserver.Options{Memory: mem})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
 	return srv.Handler(), mem
 }
 
@@ -204,7 +204,7 @@ func TestMemoryDeleteRemovesRecord(t *testing.T) {
 func TestMemoryEndpointsUnavailableWhenStoreNil(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), memorySession("sess_x", "alice"))
-	srv := sessionserver.New(store, sessionserver.Options{}) // no Memory wired
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Memory wired
 	h := srv.Handler()
 
 	cases := []struct {

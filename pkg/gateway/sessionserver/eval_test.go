@@ -35,7 +35,7 @@ func evalServer(t *testing.T, maxPerSession int, seed ...sessionstore.Session) (
 		}
 	}
 	evals := evalstore.NewMemory(maxPerSession, nil)
-	srv := sessionserver.New(store, sessionserver.Options{Evals: evals})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals})
 	return srv.Handler(), evals
 }
 
@@ -48,7 +48,7 @@ func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ..
 		}
 	}
 	evals := evalstore.NewMemory(0, nil)
-	srv := sessionserver.New(store, sessionserver.Options{Evals: evals, Experiments: exps})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals, Experiments: exps})
 	return srv.Handler(), evals
 }
 
@@ -121,6 +121,7 @@ func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTena
 		}
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Evals:                   evalstore.NewMemory(0, nil),
 		EvalRateLimitCounter:    ratelimit.NewMemory(),
 		EvalPerSessionPerMinute: perSession,
@@ -327,7 +328,8 @@ func TestEvalEmitsEvalScoreMetric_spec_16_1_164(t *testing.T) {
 	}
 	var got []capturedEvalScore
 	srv := sessionserver.New(store, sessionserver.Options{
-		Evals: evalstore.NewMemory(0, nil),
+		DevTenantHeader: true,
+		Evals:           evalstore.NewMemory(0, nil),
 		ObserveEvalScore: func(tenantID, scorer, variantID string, score float64) {
 			got = append(got, capturedEvalScore{tenantID, scorer, variantID, score})
 		},
@@ -442,7 +444,7 @@ func TestEvalQuotaExceeded(t *testing.T) {
 func TestEvalUnavailableWithoutStore(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), evalSession("sess_1", session.StateRunning))
-	srv := sessionserver.New(store, sessionserver.Options{}) // no Evals wired
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Evals wired
 	rr := postEval(t, srv.Handler(), "sess_1", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("eval with no store: status %d, want 503", rr.Code)

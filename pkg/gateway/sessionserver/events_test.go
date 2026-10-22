@@ -35,8 +35,9 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor: executor.NewEchoExecutor(),
-		Events:   bus,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Events:          bus,
 	})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -105,7 +106,7 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 
 func TestEventsStreamMissingSession(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Events: sessionevents.NewBus(0)})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(0)})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -122,7 +123,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
-	srv := sessionserver.New(store, sessionserver.Options{}) // no Events bus
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Events bus
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_x/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -135,7 +136,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_bk", TenantID: "acme", State: session.StateRunning,
@@ -196,7 +197,7 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(3) // small replay buffer
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_gap", TenantID: "acme", State: session.StateRunning,
@@ -266,7 +267,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(10)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_ok", TenantID: "acme", State: session.StateRunning,
@@ -316,7 +317,7 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(3)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_fresh", TenantID: "acme", State: session.StateRunning,
@@ -408,7 +409,7 @@ func indexOfLine(lines []string, want string) int {
 func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0) // no events published → no local history
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_handoff", TenantID: "acme", State: session.StateRunning,
@@ -465,7 +466,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
@@ -518,7 +519,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(10)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_local", TenantID: "acme", State: session.StateRunning,
@@ -551,7 +552,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_fresh2", TenantID: "acme", State: session.StateRunning,
@@ -584,7 +585,7 @@ func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(16)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_json", TenantID: "acme", State: session.StateRunning,
@@ -620,7 +621,7 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(16)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_pag", TenantID: "acme", State: session.StateRunning,
@@ -659,8 +660,9 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	bus := sessionevents.NewBus(8)
 	fixed := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events: bus,
-		Clock:  func() time.Time { return fixed },
+		DevTenantHeader: true,
+		Events:          bus,
+		Clock:           func() time.Time { return fixed },
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_exp", TenantID: "acme", State: session.StateRunning,

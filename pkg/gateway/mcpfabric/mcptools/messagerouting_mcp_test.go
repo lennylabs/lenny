@@ -42,14 +42,15 @@ func newMCPRouting(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioninbox
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:      store,
-		Executor:   executor.NewEchoExecutor(),
-		InputWaits: inputwait.NewRegistry(),
-		Messaging:  coord,
-		Delivery:   &dlqDelivery{coord: coord},
-		Clock:      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:     func() string { return "msg_fixed" },
-		TenantID:   "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		InputWaits:        inputwait.NewRegistry(),
+		Messaging:         coord,
+		Delivery:          &dlqDelivery{coord: coord},
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "msg_fixed" },
+		TenantID:          "acme",
 	})
 	return srv, store, inbox, dlq
 }
@@ -482,11 +483,12 @@ func TestSendMessageRouting_InboxUnavailable_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "msg_fixed" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "msg_fixed" },
+		TenantID:          "acme",
 		// No Messaging coordinator.
 	})
 	mkSession(t, store, "sess_sus", session.StateSuspended, "")

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -128,6 +130,8 @@ type OpenAIChatHandler struct {
 	defaultRuntime string
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
+	// devTenantHeader mirrors OpenAIChatOptions.DevTenantHeader.
+	devTenantHeader bool
 }
 
 // OpenAIChatOptions configures OpenAIChatHandler.
@@ -158,6 +162,15 @@ type OpenAIChatOptions struct {
 	// Operator-tunable so a deployment can widen or narrow the drain
 	// window that survives a request-context timeout or client disconnect.
 	ReleaseTimeout time.Duration
+
+	// DevTenantHeader, when true, lets a request with no authenticated
+	// principal name its tenant through the X-Lenny-Tenant-ID dev header
+	// and resolves a request with neither to `default`. The gateway sets
+	// it only under --dev-mode. When false, the default, the tenant comes
+	// only from the principal and a request without one is refused with
+	// 401 before any session is created or read (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantHeader bool
 }
 
 // NewOpenAIChatHandler returns a configured handler.
@@ -183,12 +196,13 @@ func NewOpenAIChatHandler(store sessionstore.Store, exec executor.Executor, opts
 		releaseTimeout = defaultSingleShotReleaseTimeout
 	}
 	return &OpenAIChatHandler{
-		store:          store,
-		exec:           exec,
-		clock:          clock,
-		defaultRuntime: rt,
-		binder:         binder,
-		releaseTimeout: releaseTimeout,
+		store:           store,
+		exec:            exec,
+		clock:           clock,
+		defaultRuntime:  rt,
+		binder:          binder,
+		releaseTimeout:  releaseTimeout,
+		devTenantHeader: opts.DevTenantHeader,
 	}
 }
 
@@ -221,7 +235,11 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 			"messages must contain at least one entry")
 		return
 	}
-	tenantID := resolveTenant(r)
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
 	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
@@ -496,14 +514,34 @@ func releaseSingleShot(reqCtx context.Context, exec executor.Executor, timeout t
 	}
 }
 
-// resolveTenant reads the X-Lenny-Tenant-ID dev header, defaulting
-// to "default" for single-tenant mode. Production resolves the
-// tenant from the §10.2 Bearer token.
-func resolveTenant(r *http.Request) string {
-	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-		return v
+// resolveTenant returns the tenant the request runs as and reports
+// whether one resolved. The §10.2 authenticated principal is canonical.
+// Without one, only a dev-mode handler (devTenantHeader) reads the
+// X-Lenny-Tenant-ID dev header, when it passes the §10.2 format check,
+// and otherwise falls back to `default`, the dev-mode single-tenant
+// default. Outside dev mode a request with no principal resolves no
+// tenant, rather than the header or `default`, so an unauthenticated
+// caller cannot choose the tenant its session is created or read under.
+//
+// spec: §10.2 (Authentication); §17.4 (dev mode). F-10.2.21.
+func resolveTenant(r *http.Request, devTenantHeader bool) (string, bool) {
+	if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
+		return p.TenantID, true
 	}
-	return "default"
+	if !devTenantHeader {
+		return "", false
+	}
+	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" && auth.ValidateTenantID(v) == nil {
+		return v, true
+	}
+	return auth.DefaultTenantID, true
+}
+
+// writeUnauthenticated writes the OpenAI-dialect 401 for a request that
+// carries no authenticated principal. spec: §10.2; §15.1 (UNAUTHORIZED).
+func writeUnauthenticated(w http.ResponseWriter) {
+	writeOpenAIError(w, http.StatusUnauthorized, "authentication_error",
+		"request requires a bearer token")
 }
 
 // defaultChatID returns a fresh §12.6 UUIDv8 session identifier. The

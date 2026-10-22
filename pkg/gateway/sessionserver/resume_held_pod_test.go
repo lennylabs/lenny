@@ -45,7 +45,7 @@ func TestResumeHeldPodTransitionsSuspendedWithBoundPod(t *testing.T) {
 	seedResumeRow(t, store, "s-held", session.StateSuspended, "pod-abc")
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-held"}); err != nil {
 		t.Fatalf("resumeHeldPod: %v", err)
@@ -82,7 +82,7 @@ func TestResumeHeldPodTransitionsSuspendedWithBoundPod(t *testing.T) {
 func TestResumeHeldPodTransitionsDevModeShapeWithNoPod(t *testing.T) {
 	store := memstore.New()
 	seedResumeRow(t, store, "s-dev", session.StateSuspended, "")
-	srv := New(store, Options{})
+	srv := New(store, Options{DevTenantHeader: true})
 
 	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-dev"}); err != nil {
 		t.Fatalf("resumeHeldPod (dev-mode shape): %v", err)
@@ -109,7 +109,7 @@ func TestResumeHeldPodMisrouteReturnsSentinelNoTransition(t *testing.T) {
 	seedResumeRow(t, store, "s-run", session.StateRunning, "pod-xyz")
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-run"})
 	if !errors.Is(err, errResumeHeldPodNotSuspended) {
@@ -174,7 +174,7 @@ func TestResumeHeldPodRejectsConcurrentTerminalTransition(t *testing.T) {
 	seedResumeRow(t, inner, "s-race", session.StateSuspended, "pod-race")
 	store := &terminalRaceStore{Store: inner, target: "s-race"}
 	bus := sessionevents.NewBus(64)
-	srv := New(store, Options{Events: bus})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 
 	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-race"})
 	if !errors.Is(err, errResumeHeldPodNotSuspended) {

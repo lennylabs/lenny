@@ -39,6 +39,7 @@ func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash 
 	}
 	ids := []string{o.ID, uuid.NewString()}
 	h := sessionserver.New(p, sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc: func() string {
 			id := ids[0]
 			ids = append(ids[1:], uuid.NewString())

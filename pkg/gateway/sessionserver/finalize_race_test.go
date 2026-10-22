@@ -266,6 +266,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 	bus := sessionevents.NewBus(256)
 	audit := &raceLifecycleSink{}
 	opts := sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return raceSessionID },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

@@ -337,6 +337,10 @@ func (w *gatewayWiring) buildMCPSurface(
 		// chain lookup, the §16.7 audit emission, and the §16.1 tamper
 		// metric to the right tenant. F-9.2.13 / F-15.2.15.
 		TenantID: "default",
+		// spec: §10.2 — only a dev-mode gateway lets a tool call with no
+		// principal fall back to TenantID; outside dev mode the call is
+		// refused with UNAUTHORIZED before any tool runs. F-10.2.21.
+		DevTenantFallback: *devMode,
 		// spec: §7.2; §8.3 — deployment
 		// messagingScope (default + ceiling) and the per-session
 		// send_message rate limits. The same cross-replica rate counter

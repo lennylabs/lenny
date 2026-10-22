@@ -237,7 +237,13 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	}
 
 	sess := newTestServer(t)
-	mux, ok := sess.Config.Handler.(*http.ServeMux)
+	// The session server wraps its mux in the §10.2 tenant gate, which
+	// exposes the mux through Mux() for route introspection.
+	h := sess.Config.Handler
+	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
+		h = u.Mux()
+	}
+	mux, ok := h.(*http.ServeMux)
 	if !ok {
 		t.Fatalf("session server handler is %T, not *http.ServeMux", sess.Config.Handler)
 	}

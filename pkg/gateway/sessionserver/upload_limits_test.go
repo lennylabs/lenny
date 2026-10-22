@@ -34,6 +34,7 @@ func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) 
 	issuer := uploadtoken.NewIssuer(ring, clock)
 	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:                true,
 		Clock:                          clock,
 		IDFunc:                         func() string { return "sess_upload" },
 		UploadTokenIssuer:              issuer,

@@ -66,11 +66,12 @@ func newRBACSessionServer(t *testing.T, roles customrolestore.Store) (*sessionse
 		t.Fatalf("seed session: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		CustomRoles: roles,
-		Clock:       func() time.Time { return now },
-		IDFunc:      func() string { return "sess_new" },
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		CustomRoles:     roles,
+		Clock:           func() time.Time { return now },
+		IDFunc:          func() string { return "sess_new" },
 	})
 	return srv, store
 }
@@ -282,9 +283,10 @@ func TestSessionEndpointCrossTenantRejection(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Clock:       func() time.Time { return now },
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Clock:           func() time.Time { return now },
 	})
 
 	// Caller authenticates as a `user` of acme — a different tenant.
@@ -371,11 +373,12 @@ func TestSessionEndpointMultiTenantRejectsRolelessPrincipal(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Clock:       func() time.Time { return now },
-		IDFunc:      func() string { return "sess_new" },
-		MultiTenant: true,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Clock:           func() time.Time { return now },
+		IDFunc:          func() string { return "sess_new" },
+		MultiTenant:     true,
 	})
 	cases := []struct {
 		op           string

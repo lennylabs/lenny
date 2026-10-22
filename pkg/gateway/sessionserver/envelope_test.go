@@ -67,7 +67,7 @@ func getSessionResp(t *testing.T, h http.Handler, id string) sessionserver.Sessi
 // --- env blocklist (F-14.1.12) ---
 
 func TestCreateRejectsBlockedEnvVar_spec_14_105(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Env:        map[string]string{"ANTHROPIC_API_KEY": "sk-secret"},
@@ -88,7 +88,7 @@ func TestCreateRejectsBlockedEnvVar_spec_14_105(t *testing.T) {
 }
 
 func TestCreateRejectsDeployerBlockedEnvVar_spec_14_105(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{EnvVarBlocklist: []string{"INTERNAL_*"}})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, EnvVarBlocklist: []string{"INTERNAL_*"}})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Env:        map[string]string{"INTERNAL_ENDPOINT": "http://x"},
@@ -107,7 +107,8 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock: clock, IDFunc: func() string { return "sess_env_ok" },
+		DevTenantHeader: true,
+		Clock:           clock, IDFunc: func() string { return "sess_env_ok" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
@@ -137,7 +138,7 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 // create boundary so the on-row annotation map stays well-formed,
 // mirroring the §14 env and label key checks. F-CS4 (0018).
 func TestCreateRejectsEmptyMetadataKey_spec_7_1(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Metadata:   map[string]string{"": "oops"},
@@ -160,7 +161,8 @@ func TestCreateAcceptsNonEmptyMetadataKey_spec_7_1(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock: clock, IDFunc: func() string { return "sess_meta_ok" },
+		DevTenantHeader: true,
+		Clock:           clock, IDFunc: func() string { return "sess_meta_ok" },
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
@@ -192,7 +194,7 @@ func runtimeWithSchema(t *testing.T, schema string) *runtimestore.Memory {
 
 func TestCreateRuntimeOptionsSchemaValid_spec_14_155(t *testing.T) {
 	rs := runtimeWithSchema(t, `{"type":"object","properties":{"streamingMode":{"type":"boolean"}},"additionalProperties":false}`)
-	srv := envelopeServer(t, sessionserver.Options{Runtimes: rs})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"streamingMode":true}`),
@@ -208,7 +210,7 @@ func TestCreateRuntimeOptionsSchemaValid_spec_14_155(t *testing.T) {
 
 func TestCreateRuntimeOptionsSchemaInvalid_spec_14_155(t *testing.T) {
 	rs := runtimeWithSchema(t, `{"type":"object","properties":{"streamingMode":{"type":"boolean"}},"additionalProperties":false}`)
-	srv := envelopeServer(t, sessionserver.Options{Runtimes: rs})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"streamingMode":"yes","bogus":1}`),
@@ -227,7 +229,7 @@ func TestCreateRuntimeOptionsUnschematized_spec_14_155(t *testing.T) {
 	// the RuntimeOptionsUnschematized warning. F-14.1.15.
 	rs := runtimestore.NewMemory()
 	_ = rs.Create(context.Background(), runtimestore.Runtime{Name: "claude-code", Type: runtimestore.TypeAgent})
-	srv := envelopeServer(t, sessionserver.Options{Runtimes: rs})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"anything":true}`),
@@ -248,7 +250,7 @@ func TestCreateRuntimeOptionsUnschematized_spec_14_155(t *testing.T) {
 }
 
 func TestCreateRuntimeOptionsTooLarge_spec_14_155(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	big := `{"x":"` + strings.Repeat("a", 64*1024) + `"}`
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
@@ -266,7 +268,7 @@ func TestCreateRuntimeOptionsTooLarge_spec_14_155(t *testing.T) {
 // --- timeouts (F-14.1.14) ---
 
 func TestCreateRejectsNegativeTimeout_spec_14_154(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: -1},
@@ -278,7 +280,7 @@ func TestCreateRejectsNegativeTimeout_spec_14_154(t *testing.T) {
 
 func TestCreateRejectsTimeoutExceedingRuntimeCap_spec_14_154(t *testing.T) {
 	rs := runtimeWithSchema(t, `{}`) // Limits.MaxSessionAgeSeconds = 3600
-	srv := envelopeServer(t, sessionserver.Options{Runtimes: rs})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 7200},
@@ -297,7 +299,7 @@ func TestCreateRejectsTimeoutExceedingRuntimeCap_spec_14_154(t *testing.T) {
 
 func TestCreateAcceptsAndEchoesTimeouts_spec_14_154(t *testing.T) {
 	rs := runtimeWithSchema(t, `{}`)
-	srv := envelopeServer(t, sessionserver.Options{Runtimes: rs})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 1800, MaxIdleSeconds: 300},
@@ -314,7 +316,7 @@ func TestCreateAcceptsAndEchoesTimeouts_spec_14_154(t *testing.T) {
 // --- credentialPolicy (F-14.1.14) ---
 
 func TestCreateRejectsInvalidPreferredSource_spec_14(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		CredentialPolicy: &sessionstore.CredentialPolicyOverride{PreferredSource: "bogus"},
@@ -330,7 +332,7 @@ func TestCreateRejectsExpandingCredentialPolicy_spec_4_9(t *testing.T) {
 		ID:               "acme",
 		CredentialPolicy: credential.CredentialPolicy{PreferredSource: credential.PreferredSourcePool},
 	})
-	srv := envelopeServer(t, sessionserver.Options{Tenants: ts})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Tenants: ts})
 	// Tenant is pool-only; an override to user-scoped credentials expands.
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
@@ -354,7 +356,7 @@ func TestCreateAcceptsRestrictingCredentialPolicy_spec_4_9(t *testing.T) {
 		ID:               "acme",
 		CredentialPolicy: credential.CredentialPolicy{PreferredSource: credential.PreferUserThenPool},
 	})
-	srv := envelopeServer(t, sessionserver.Options{Tenants: ts})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Tenants: ts})
 	// Tenant allows user-then-pool; narrowing to pool-only is a restriction.
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
@@ -372,7 +374,7 @@ func TestCreateAcceptsRestrictingCredentialPolicy_spec_4_9(t *testing.T) {
 // --- delegationLease + pool (F-14.1.14) ---
 
 func TestCreateRejectsNegativeDelegationLease_spec_14(t *testing.T) {
-	srv := envelopeServer(t, sessionserver.Options{})
+	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	neg := -1
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:      "claude-code",
@@ -397,7 +399,8 @@ func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock: clock, IDFunc: func() string { return "sess_pool" },
+		DevTenantHeader: true,
+		Clock:           clock, IDFunc: func() string { return "sess_pool" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 	depth, kids := 2, 5
@@ -438,7 +441,8 @@ func TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock: clock, IDFunc: func() string { return "sess_pg" },
+		DevTenantHeader: true,
+		Clock:           clock, IDFunc: func() string { return "sess_pg" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 	// The exact JSON the §27.4 SPA emits for a filled delegation selection:

@@ -159,6 +159,7 @@ func newFunnelRaceFixture(t *testing.T, n int) *funnelRaceFixture {
 		t.Fatalf("create pool: %v", err)
 	}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader: true,
 		Executor:        &unbindExecutor{registry: f.registry, events: f.events},
 		PodRegistry:     f.registry,
 		PodBinder:       &podsession.Binder{Client: cl, Namespace: funnelRaceNS},

@@ -56,8 +56,9 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	store := memstore.New()
 	transcripts := transcriptstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcripts,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcripts,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -117,7 +118,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 // taskRecord rather than emitting an empty envelope. F-8.8.1.
 func TestGetSessionOmitsTaskRecordWithoutTranscripts_spec_8_8_806(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: executor.NewEchoExecutor()})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_no_tr", TenantID: "acme", State: session.StateRunning,

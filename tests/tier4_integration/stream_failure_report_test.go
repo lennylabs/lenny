@@ -262,6 +262,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 	f.exec = &recordingPodExecutor{PodExecutor: executor.NewPodExecutor(f.registry, binder)}
 	t.Cleanup(func() { f.exec.EvictStream(id) })
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Executor:                f.exec,
 		PodRegistry:             f.registry,
 		PodBinder:               rep.binder,
@@ -584,6 +585,7 @@ func TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3(t *testi
 	}
 	secondRegistry := podsession.NewRegistry()
 	second := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Executor:                executor.NewPodExecutor(secondRegistry, nil),
 		PodRegistry:             secondRegistry,
 		PodBinder:               streamFailureResumeBinder(t, cluster),

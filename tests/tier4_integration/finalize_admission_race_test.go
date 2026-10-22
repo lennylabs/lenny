@@ -255,6 +255,7 @@ func newAdmissionFixture(t *testing.T) *admissionFixture {
 	store := newAdmissionHookStore(memstore.New())
 	bus := sessionevents.NewBus(256)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return admissionSessionID },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

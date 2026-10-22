@@ -43,6 +43,7 @@ func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
 	counter := &attemptCounter{}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-svc-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),

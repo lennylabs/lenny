@@ -47,7 +47,7 @@ func TestFailSessionWritesNothingOverATerminalRow_spec_7_2(t *testing.T) {
 	seedState(t, store, "s", session.StateCancelled)
 	before, _ := store.Get(context.Background(), "acme", "s")
 	bus := sessionevents.NewBus(16)
-	srv := New(store, Options{Events: bus})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	srv.failSession(context.Background(), "acme", "s")
 
 	after, _ := store.Get(context.Background(), "acme", "s")
@@ -109,7 +109,7 @@ func TestFailFinalizingCommitsAndEmitsTerminalTail_spec_7_2(t *testing.T) {
 	seedState(t, store, "s", session.StateFinalizing)
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	if err := srv.failFinalizing(context.Background(), "acme", "s"); err != nil {
 		t.Fatalf("failFinalizing = %v, want nil", err)
@@ -137,7 +137,7 @@ func TestFailFinalizingLosesToTerminalWriter_spec_15_1(t *testing.T) {
 	seedState(t, store, "s", session.StateCancelled)
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	err := srv.failFinalizing(context.Background(), "acme", "s")
 	var pe *session.PreconditionError
@@ -192,6 +192,7 @@ func TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9(t *testing.T) {
 			mismatches := 0
 			sink := &captureLifecycleAudit{}
 			srv := New(memstore.New(), Options{
+				DevTenantHeader:    true,
 				PreclaimMismatch:   func(string, string) { mismatches++ },
 				LifecycleAuditSink: sink,
 			})

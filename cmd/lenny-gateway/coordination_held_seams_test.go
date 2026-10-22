@@ -98,7 +98,7 @@ func TestCoordinationOptionsCarryTheSessionServerSeams_spec_10_1_2(t *testing.T)
 		t.Fatalf("hold: %v", err)
 	}
 	exec := &heldSeamExecutor{}
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec, Messaging: coord})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Messaging: coord})
 	t.Cleanup(srv.Close)
 	w.sessionSrv = srv
 

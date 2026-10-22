@@ -37,7 +37,7 @@ func TestOnSessionExpiringSoonEmitsEventAndSignalsPod_spec_11_3_240(t *testing.T
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_warn", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus, PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, PodRegistry: reg})
 
 	sub, err := bus.SubscribeForTenant("acme", "sess_warn", 0, 8)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestOnSessionExpiringSoonEmitsEventWithoutBinding_spec_11_3_240(t *testing.
 	if err := store.Create(context.Background(), sess); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus, PodRegistry: podsession.NewRegistry()})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, PodRegistry: podsession.NewRegistry()})
 
 	sub, err := bus.SubscribeForTenant("acme", "sess_nb", 0, 8)
 	if err != nil {

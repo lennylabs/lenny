@@ -31,6 +31,7 @@ func TestAwaitChildrenYieldsDeadlockDetectedPartial_spec_8_8_985(t *testing.T) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		InputWaits:          reg,

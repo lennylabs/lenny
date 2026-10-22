@@ -57,9 +57,10 @@ func newMCPForDelegate(t *testing.T, exec executor.Executor, chain *interceptor.
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     exec,
-		Interceptors: chain,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		Interceptors:      chain,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -208,10 +209,11 @@ func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     newRecordingExecutor(),
-		Interceptors: chain,
-		PolicyAudit:  policy.NewAuditSink(app, nil),
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          newRecordingExecutor(),
+		Interceptors:      chain,
+		PolicyAudit:       policy.NewAuditSink(app, nil),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

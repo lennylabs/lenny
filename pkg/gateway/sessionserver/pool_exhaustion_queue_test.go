@@ -91,6 +91,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 	var idCounter atomic.Int64
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return fmt.Sprintf("sess-q-%d", idCounter.Add(1)) },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),

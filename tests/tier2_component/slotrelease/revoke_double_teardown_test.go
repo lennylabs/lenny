@@ -264,7 +264,7 @@ func (f *releaseFixture) revokedSessionServer(t *testing.T, revokedID string) (*
 	for _, bind := range f.registry.Snapshot() {
 		bind.CoordinationGeneration = 1
 	}
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: f.registry, Executor: f.exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: f.registry, Executor: f.exec})
 	return srv, row
 }
 

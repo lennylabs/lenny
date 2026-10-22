@@ -46,7 +46,7 @@ func meteringServer(t *testing.T, count int) *sessionserver.Server {
 			t.Fatalf("seed billing event: %v", err)
 		}
 	}
-	return sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	return sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 }
 
 func meteringRequest(t *testing.T, h http.Handler, query string, roles ...pkgauth.Role) *httptest.ResponseRecorder {
@@ -90,7 +90,7 @@ func TestMeteringEventsLabelFilter_spec_14_106(t *testing.T) {
 	for _, team := range []string{"search", "ads", "search", "ads", "search"} {
 		seed(team)
 	}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
 	rr := meteringRequest(t, srv.Handler(), "?label=team=search", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
@@ -258,7 +258,7 @@ func TestMeteringEventsRejectsBadSort_spec_15_1_1236(t *testing.T) {
 }
 
 func TestMeteringEventsWithoutBillingStore(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("no billing store: status %d, want 200", rr.Code)

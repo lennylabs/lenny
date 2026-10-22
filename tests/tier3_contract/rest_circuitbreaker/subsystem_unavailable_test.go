@@ -70,8 +70,9 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 	// always wires one, so this is a test-harness prerequisite rather
 	// than a behavior under test.
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events: bus,
-		Blobs:  blobstore.NewMemoryStore(time.Now),
+		DevTenantHeader: true,
+		Events:          bus,
+		Blobs:           blobstore.NewMemoryStore(time.Now),
 		UploadSubsystem: &subsystem.Subsystem{
 			Name:    "upload_handler",
 			Breaker: openUploadBreaker(t),

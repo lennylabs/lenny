@@ -33,6 +33,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
@@ -133,7 +134,14 @@ func (h *Handler) mcpRuntimeFilterDenies(r *http.Request, rt runtimestore.Runtim
 	if envName == "" {
 		return false, ""
 	}
+	// spec: §10.2 — the environment is the caller's tenant's, read from
+	// the authenticated principal. The X-Lenny-Tenant-ID header is the
+	// auth middleware's echo of that principal; outside dev mode the
+	// middleware deletes any client-sent value. F-10.2.21.
 	tenantID := r.Header.Get("X-Lenny-Tenant-ID")
+	if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
+		tenantID = p.TenantID
+	}
 	if tenantID == "" {
 		return false, ""
 	}

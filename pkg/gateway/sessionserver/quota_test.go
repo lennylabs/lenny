@@ -44,7 +44,7 @@ func quotaServer(t *testing.T, limit int, seed []session.State) *sessionserver.S
 			t.Fatalf("seed session: %v", err)
 		}
 	}
-	return sessionserver.New(store, sessionserver.Options{Tenants: tenants})
+	return sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenants})
 }
 
 func TestCreateAllowedUnderConcurrentSessionQuota(t *testing.T) {
@@ -89,7 +89,7 @@ func TestCreateConcurrentSessionQuotaIgnoresTerminalSessions(t *testing.T) {
 func TestCreateConcurrentSessionQuotaUnknownTenantSkipped(t *testing.T) {
 	// The tenant registry has no acme row, so no limit applies.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Tenants: tenantstore.NewMemory()})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenantstore.NewMemory()})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unknown tenant: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -127,6 +127,7 @@ func TestCreateAdmittedWhileCapIsFullOfSuspendedSessions_spec_11_1(t *testing.T)
 	seed[0].State, seed[0].PodAssignment = session.StateSuspended, "pod-a"
 	seed[1].State = session.StateSuspended
 	scoped := concurrencyServer(t, sessionserver.Options{
+		DevTenantHeader:              true,
 		MaxConcurrentSessionsPerUser: 2, MaxConcurrentSessionsPerRuntime: 2, MaxConcurrentSessionsGlobal: 2,
 	}, seed)
 	rr := createRequestAs(t, scoped.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
@@ -174,9 +175,9 @@ func TestCreateRefusalBodyIsTheSharedCapRefusal_spec_11_1(t *testing.T) {
 		scope string
 		opts  sessionserver.Options
 	}{
-		{sessionserver.CapScopeUser, sessionserver.Options{MaxConcurrentSessionsPerUser: 1}},
-		{sessionserver.CapScopeRuntime, sessionserver.Options{MaxConcurrentSessionsPerRuntime: 1}},
-		{sessionserver.CapScopeGlobal, sessionserver.Options{MaxConcurrentSessionsGlobal: 1}},
+		{sessionserver.CapScopeUser, sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerUser: 1}},
+		{sessionserver.CapScopeRuntime, sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 1}},
+		{sessionserver.CapScopeGlobal, sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsGlobal: 1}},
 	} {
 		t.Run(tc.scope, func(t *testing.T) {
 			srv := concurrencyServer(t, tc.opts, runningRows("acme", "alice", "claude-code", 1))

@@ -41,9 +41,10 @@ func newClientToolsMCP(t *testing.T, svc mcptools.SessionService) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:          memstore.New(),
-		SessionService: svc,
-		TenantID:       "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		SessionService:    svc,
+		TenantID:          "acme",
 	})
 	return srv
 }
@@ -82,7 +83,7 @@ func TestClientToolsRegisteredWithService_spec_15_2_3(t *testing.T) {
 
 	// Without a SessionService the tools are not registered.
 	withoutSrv := mcp.NewServer()
-	mcptools.Register(withoutSrv, mcptools.Deps{Store: memstore.New(), TenantID: "acme"})
+	mcptools.Register(withoutSrv, mcptools.Deps{DevTenantFallback: true, Store: memstore.New(), TenantID: "acme"})
 	for _, tool := range withoutSrv.Catalog() {
 		for _, name := range want {
 			if tool.Name == name {

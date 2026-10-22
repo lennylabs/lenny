@@ -146,7 +146,7 @@ func TestRearmBudgetKeys_spec_8_3(t *testing.T) {
 		}
 	}
 	rearm := &recordingRearmer{}
-	s := New(store, Options{BudgetKeyRearmer: rearm})
+	s := New(store, Options{DevTenantHeader: true, BudgetKeyRearmer: rearm})
 	defer s.Close()
 	g1, _ := store.Get(context.Background(), "acme", "g1")
 	s.rearmBudgetKeys(context.Background(), g1)

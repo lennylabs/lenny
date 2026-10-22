@@ -44,8 +44,9 @@ func routerServer(t *testing.T, sessionID string, exps experimentstore.Store) (h
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Experiments: exps,
-		IDFunc:      func() string { return sessionID },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		IDFunc:          func() string { return sessionID },
 	})
 	return srv.Handler(), store
 }
@@ -172,9 +173,10 @@ func TestExperimentRouterEnrollsViaOFREP(t *testing.T) {
 	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Experiments: exps,
-		Tenants:     ofrepTenant(t, ofrepSrv.URL),
-		IDFunc:      func() string { return "sess_ext" },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		Tenants:         ofrepTenant(t, ofrepSrv.URL),
+		IDFunc:          func() string { return "sess_ext" },
 	})
 
 	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
@@ -207,10 +209,11 @@ func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Experiments: exps,
-		Tenants:     ofrepTenant(t, ofrepSrv.URL),
-		OpsEmitter:  emitter,
-		IDFunc:      func() string { return "sess_fail" },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		Tenants:         ofrepTenant(t, ofrepSrv.URL),
+		OpsEmitter:      emitter,
+		IDFunc:          func() string { return "sess_fail" },
 	})
 
 	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
@@ -241,9 +244,10 @@ func TestExperimentRouterEmitsMultiEligibleSkipped(t *testing.T) {
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Experiments: exps,
-		OpsEmitter:  emitter,
-		IDFunc:      func() string { return "sess_multi" },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		OpsEmitter:      emitter,
+		IDFunc:          func() string { return "sess_multi" },
 	})
 
 	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
@@ -293,9 +297,10 @@ func TestExperimentRouterNoSkipEmitsNothing(t *testing.T) {
 
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "replica-test")
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Experiments: exps,
-		OpsEmitter:  emitter,
-		IDFunc:      func() string { return "sess_one" },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		OpsEmitter:      emitter,
+		IDFunc:          func() string { return "sess_one" },
 	})
 
 	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")

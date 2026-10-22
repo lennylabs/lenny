@@ -44,7 +44,7 @@ func TestEmitChildrenReattachedHidesInternalEndpoints_spec_8_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{Events: bus, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("parent", "", session.StateAwaitingClientAction, now))
@@ -77,7 +77,7 @@ func TestEmitChildrenReattachedReplaysPendingElicitation_spec_8_2(t *testing.T) 
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	waits := inputwait.NewRegistry()
-	srv := New(store, Options{Events: bus, InputWaits: waits})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, InputWaits: waits})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("parent", "", session.StateAwaitingClientAction, now))

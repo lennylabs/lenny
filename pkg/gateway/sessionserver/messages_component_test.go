@@ -137,9 +137,10 @@ func concurrentRoutingServer(t *testing.T, reg *podsession.Registry) (*sessionse
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewPodExecutor(reg, binder),
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
+		DevTenantHeader: true,
+		Executor:        executor.NewPodExecutor(reg, binder),
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
 	})
 	return srv, store, inbox
 }

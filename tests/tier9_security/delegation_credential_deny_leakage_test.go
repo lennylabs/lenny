@@ -171,6 +171,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	// and deny leaves), distinct from the delegation Service's own ids.
 	restIDs := denyLeakageIDCounter("sess-leaf-")
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  restIDs,
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -190,9 +191,10 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	// store the finalize path also reads.
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   denyLeakageIDCounter("sess-deleg-"),
 			Runtimes: runtimes,

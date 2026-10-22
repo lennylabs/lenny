@@ -640,8 +640,18 @@ type Deps struct {
 
 	// TenantID is the tenant the MCP session operates within. The
 	// MCP adapter is mounted per-tenant; v1 binds one tenant per
-	// adapter instance.
+	// adapter instance. It is the fallback tenant of a tool call with no
+	// authenticated principal, which only DevTenantFallback admits.
 	TenantID string
+
+	// DevTenantFallback, when true, admits a tool call that carries no
+	// authenticated principal and runs it as TenantID (or `default`).
+	// The gateway sets it only under --dev-mode. When false, the
+	// default, Register installs a pre-dispatch gate that refuses such a
+	// call with UNAUTHORIZED before any tool runs, so no tool resolves its
+	// tenant from the fallback outside dev mode (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantFallback bool
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
 	// true, a session created without an explicit isolation profile
@@ -812,6 +822,12 @@ func Register(srv *mcp.Server, deps Deps) {
 	tenant := deps.TenantID
 	if tenant == "" {
 		tenant = "default"
+	}
+	// spec: §10.2 — outside dev mode every tool call must carry an
+	// authenticated principal; callerTenantID's fallback is then never
+	// reached. F-10.2.21.
+	if !deps.DevTenantFallback {
+		srv.SetToolCallGate(requirePrincipalTenant)
 	}
 
 	// §7.2 send_message governance shared per-adapter state: the
@@ -1865,12 +1881,27 @@ func callerSessionID(ctx context.Context, fallback string) string {
 	return fallback
 }
 
+// requirePrincipalTenant is the pre-dispatch gate Register installs
+// outside dev mode. It refuses a tool call whose context carries no
+// authenticated principal with a tenant, with the §15.1 UNAUTHORIZED
+// code the REST surface returns for a request without credentials.
+// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED). F-10.2.21.
+func requirePrincipalTenant(ctx context.Context) *mcp.ToolError {
+	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+		return nil
+	}
+	return mcp.NewToolError("UNAUTHORIZED", "tool call requires an authenticated principal",
+		map[string]any{"reason": "auth_required"})
+}
+
 // callerTenantID resolves the per-request tenant id from the
 // authenticated principal, falling back to the binary's configured
 // default. The §15.2 / §10.2 production posture mounts the MCP
 // adapter under the auth middleware so every authenticated request
-// carries the caller's tenant on the request context. Tests and the
-// dev-headers transport do not carry a principal; the fallback (the
+// carries the caller's tenant on the request context, and outside dev
+// mode the requirePrincipalTenant gate refuses a call without one
+// before the tool runs. Tests and the dev-headers transport do not
+// carry a principal; under Deps.DevTenantFallback the fallback (the
 // Register-time Deps.TenantID, which defaults to "default") keeps the
 // tool surface usable in those minimal deployments. A bare "default"
 // is the absolute floor — never an empty tenant id, which would

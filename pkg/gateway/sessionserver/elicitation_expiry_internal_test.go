@@ -52,7 +52,7 @@ func TestPostTerminalHookExpiresRaisedElicitations_spec_9_2(t *testing.T) {
 		}
 		inter := interactionstore.NewMemory()
 		seedRaised(t, inter, "s1")
-		s := New(store, Options{Interactions: inter})
+		s := New(store, Options{DevTenantHeader: true, Interactions: inter})
 		defer s.Close()
 		s.OnSessionTerminal(context.Background(), session.StateRunning, row)
 		if _, err := inter.Get(context.Background(), "acme", "s1", "alice", "elic-1"); !errors.Is(err, interactionstore.ErrNotFound) {
@@ -65,7 +65,7 @@ func TestPostTerminalHookExpiresRaisedElicitations_spec_9_2(t *testing.T) {
 			t.Fatal(err)
 		}
 		inter := &failingExpiry{Store: interactionstore.NewMemory()}
-		s := New(store, Options{Interactions: inter})
+		s := New(store, Options{DevTenantHeader: true, Interactions: inter})
 		defer s.Close()
 		s.OnSessionTerminal(context.Background(), session.StateRunning, row)
 		if inter.calls != 1 {

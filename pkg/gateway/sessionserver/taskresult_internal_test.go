@@ -53,7 +53,7 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 		{URI: "lenny-blob://acme/checkpoints/sess_c/ck_1", State: artifactcatalog.StateLive, ArtifactType: artifactcatalog.ArtifactTypeCheckpoint},
 		{URI: "lenny-blob://acme/workspace/sess_c/part_gone", State: artifactcatalog.StateSoftDeleted, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 	}}
-	srv := New(memstore.New(), Options{Clock: taskResultClock, Transcripts: tx, Artifacts: cat})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: taskResultClock, Transcripts: tx, Artifacts: cat})
 
 	res := srv.materializeTaskResult(context.Background(),
 		sessionstore.Session{ID: "sess_c", TenantID: "acme", State: session.StateCompleted}, 0)
@@ -77,7 +77,7 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 // classifier category, and a retriesExhausted sourced from the row's
 // retry budget. Output stays nil for a failure. F-8.8.4.
 func TestMaterializeTaskResultFailedError_spec_8_8_4(t *testing.T) {
-	srv := New(memstore.New(), Options{Clock: taskResultClock})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: taskResultClock})
 	cases := []struct {
 		name              string
 		state             session.State
@@ -162,7 +162,7 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 		t.Fatalf("seed root: %v", err)
 	}
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{Clock: taskResultClock, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: archive})
 
 	// A prior writer recorded this node at schema version 7.
 	prior, _ := json.Marshal(sessionrecord.Result{SchemaVersion: 7, TaskID: "sess_c", State: "completed"})
@@ -223,7 +223,7 @@ func TestMaterializeTaskResultStampsUsage_spec_8_8_3(t *testing.T) {
 	}
 
 	builder := resultrollup.New(store, tokens, archive, func() time.Time { return terminal })
-	srv := New(store, Options{Clock: taskResultClock, TreeArchive: archive, TaskUsage: builder})
+	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: archive, TaskUsage: builder})
 
 	res := srv.materializeTaskResult(ctx, sess, 0)
 	if res.Usage == nil {
@@ -279,6 +279,7 @@ func TestMaterializeTaskResultRetriesExhaustedUsesEffectiveBudget_spec_8_8(t *te
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := New(memstore.New(), Options{
+				DevTenantHeader: true,
 				Clock:           taskResultClock,
 				RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries},
 			})

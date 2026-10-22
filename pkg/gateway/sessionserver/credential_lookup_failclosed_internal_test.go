@@ -364,6 +364,7 @@ func newLookupFixture(t *testing.T, opts lookupFixtureOpts) *lookupFixture {
 		cluster:  cluster,
 	}
 	f.srv = New(sessions, Options{
+		DevTenantHeader: true,
 		PodBinder: &podsession.Binder{
 			Client: cluster, Namespace: lookupNS, SlotCounter: slotcounter.New(rc), Credentials: f.assigner,
 		},
@@ -851,7 +852,7 @@ func TestCreateOverrideRestrictCheckFailsClosed_spec_14(t *testing.T) {
 				t.Fatalf("create tenant: %v", err)
 			}
 			tenants := &faultTenants{Store: memTenants}
-			srv := New(memstore.New(), Options{Tenants: tenants})
+			srv := New(memstore.New(), Options{DevTenantHeader: true, Tenants: tenants})
 			defer srv.Close()
 			if tc.fault != nil {
 				tenants.arm(tc.fault)

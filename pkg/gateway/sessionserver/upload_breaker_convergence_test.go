@@ -70,6 +70,7 @@ func newOutageReplica(t *testing.T, blobs blobstore.Store, threshold int) replic
 	tracker := uploadtoken.NewMemoryTracker()
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_convergence" },
 		UploadTokenIssuer:   issuer,

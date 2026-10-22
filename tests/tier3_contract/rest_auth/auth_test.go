@@ -48,7 +48,7 @@ func newTestServer(t *testing.T, opts authmw.Options) (*httptest.Server, *jwt.HM
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	opts.Verifier = signer
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	wrapped := authmw.Wrap(srv.Handler(), opts)
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)

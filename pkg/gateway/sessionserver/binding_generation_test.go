@@ -97,6 +97,7 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 		cluster, dial, _ := materializeCluster(t)
 		registry := podsession.NewRegistry()
 		srv := sessionserver.New(store, sessionserver.Options{
+			DevTenantHeader:         true,
 			IDFunc:                  func() string { return "unused" },
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
 			PodBinder:               podBindBinder(cluster, dial),

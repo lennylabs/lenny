@@ -65,7 +65,7 @@ func (f *fakePartialLookup) HasActivePartialManifest(_ context.Context, tenant, 
 func TestResumeEmitsSessionResumedFullByDefault(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_resumed_full")
 
 	rr := resumeAndDrive(t, srv, "sess_resumed_full")
@@ -94,6 +94,7 @@ func TestResumeEmitsConversationOnlyWhenEvictionStatePresent(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	lookup := &fakeEvictionLookup{has: map[string]bool{"acme|sess_evicted": true}}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Events:              bus,
 		EvictionStateLookup: lookup,
 	})
@@ -121,6 +122,7 @@ func TestResumeEmitsPartialWorkspaceWhenPartialManifestPresent(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	partial := &fakePartialLookup{has: map[string]bool{"acme|sess_partial": true}}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:       true,
 		Events:                bus,
 		PartialManifestLookup: partial,
 	})
@@ -148,6 +150,7 @@ func TestResumeEmitsFullWhenLookupErrorsAreNonFatal(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Events:              bus,
 		EvictionStateLookup: &fakeEvictionLookup{err: errors.New("transient")},
 	})
@@ -173,7 +176,7 @@ func TestResumeEmitsFullWhenLookupErrorsAreNonFatal(t *testing.T) {
 func TestResumeEmitsResumedBeforeChildrenReattached(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_parent_order")
 	seedTreeSession(t, store, "sess_child_order", "sess_parent_order")
 
@@ -211,7 +214,7 @@ func TestResumeEmitsResumedBeforeChildrenReattached(t *testing.T) {
 func TestResumeEmitsResumedEvenWithoutSnapshot(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now().UTC()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID:               "sess_resumed_cold",

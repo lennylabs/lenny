@@ -34,6 +34,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 	issuer := uploadtoken.NewIssuer(ring, clock)
 	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_t4" },
 		UploadTokenIssuer:   issuer,

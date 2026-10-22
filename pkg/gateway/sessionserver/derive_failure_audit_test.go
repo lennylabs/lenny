@@ -78,6 +78,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 	newSourceSession(t, store)
 	ctr := &captureCounter{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
 		Clock:                    func() time.Time { return time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) },
 		Blobs:                    newFailingBlobs(),
@@ -135,6 +136,7 @@ func TestDeriveFailureNoPersistByDefault_spec_7_1_derive_rule_2(t *testing.T) {
 	newSourceSession(t, store)
 	ctr := &captureCounter{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:       true,
 		IDFunc:                func() string { return "sess_df" },
 		Blobs:                 newFailingBlobs(),
 		IncDeriveFailureAudit: ctr.inc,
@@ -164,6 +166,7 @@ func TestDeriveFailureCASFenceSkipsWrite_spec_7_1_derive_rule_2(t *testing.T) {
 	store := &fenceStore{Store: base, target: "sess_source"}
 	ctr := &captureCounter{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
 		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,
@@ -217,6 +220,7 @@ func TestDeriveFailureFencedByAResumeEntry_spec_7_1(t *testing.T) {
 	store := &resumingSourceStore{Store: base, target: "sess_source"}
 	ctr := &captureCounter{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
 		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,

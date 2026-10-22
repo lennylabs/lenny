@@ -43,7 +43,7 @@ func childFailedEvent(t *testing.T, bus *sessionevents.Bus, sessionID string) ma
 func TestEmitChildFailedInjectsEventOnParentStream_spec_8_10_1082(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := New(store, Options{Events: bus})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	mustCreate(t, store, sessionstore.Session{ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 
@@ -110,7 +110,7 @@ func TestEmitChildFailedRetriesExhaustedFromSpentBudget_spec_8_8(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			bus := sessionevents.NewBus(0)
-			srv := New(store, Options{Events: bus, RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries}})
+			srv := New(store, Options{DevTenantHeader: true, Events: bus, RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries}})
 			now := time.Now()
 			mustCreate(t, store, sessionstore.Session{ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 			child := sessionstore.Session{
@@ -144,7 +144,7 @@ func TestEmitChildFailedRetriesExhaustedFromSpentBudget_spec_8_8(t *testing.T) {
 func TestEmitChildFailedPermanentForNonRetryable_spec_8_10_1082(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := New(store, Options{Events: bus})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	mustCreate(t, store, sessionstore.Session{ID: "p2", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 
@@ -179,7 +179,7 @@ func TestEmitChildFailedSkipsNonFailedTerminals_spec_8_10_1082(t *testing.T) {
 	for _, st := range []session.State{session.StateCompleted, session.StateCancelled, session.StateExpired} {
 		store := memstore.New()
 		bus := sessionevents.NewBus(0)
-		srv := New(store, Options{Events: bus})
+		srv := New(store, Options{DevTenantHeader: true, Events: bus})
 		now := time.Now()
 		mustCreate(t, store, sessionstore.Session{ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 		child := sessionstore.Session{ID: "c", TenantID: "acme", State: st, ParentSessionID: "p", CreatedAt: now, UpdatedAt: now}
@@ -198,7 +198,7 @@ func TestEmitChildFailedSkipsNonFailedTerminals_spec_8_10_1082(t *testing.T) {
 func TestEmitChildFailedSkipsRootSession_spec_8_10_1082(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := New(store, Options{Events: bus})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	root := sessionstore.Session{ID: "root", TenantID: "acme", State: session.StateFailed, FailureReason: string(session.FailurePodEvicted), CreatedAt: now, UpdatedAt: now}
 	mustCreate(t, store, root)
