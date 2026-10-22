@@ -44,7 +44,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | The adapter exits non-zero, and the pod retires through **Exit**, as the **Liveness.** table states | SPEC-2 **Liveness.** |
 | A heartbeat escalation, on any pod, a concurrent `restart` pod included | No later session joins the hung process, and the pod retires as the **Liveness.** table states | SPEC-2 **Liveness.** |
 | A session starts on a pod whose not-live state is set, while a runtime process is live | The start fails, and the pod retires as the **Liveness.** table states | SPEC-2 **Liveness.** |
-| A cause of the not-live state arises while the adapter holds no session and runs no whole-pod scrub, on an `idle` or `reserved` pod or on the recycle re-warm edge of `sdk_connecting` | The adapter exits non-zero at once, and the pod retires through **Exit**. An `idle` pod drains at once. A `reserved` pod stays `reserved` until its hold ends, at `holdExpiresAt` (`gateway.claimHoldTTLSeconds` after the reservation, default 10 seconds), or at `holdExpiresAt` plus the orphaned-claim collector's grace period when the gateway does not end it, and then drains, unless a rebind first fails its start and **Claim** retires it. A pod on the re-warm edge takes `sdk_connecting ──→ failed` and drains when its `recycling` claim ends, at the latest `claimOrphanTimeout` (default 15 minutes) after the claim's last binding-state transition | SPEC-2 **Liveness.** |
+| A cause of the not-live state arises on an `idle` or `reserved` pod or on the recycle re-warm edge of `sdk_connecting` | The adapter exits non-zero at once, and the pod retires through **Exit**, as the **Liveness.** table states for the pod's phase | SPEC-2 **Liveness.** |
 | A pod is deleted while the not-live state is set or after its adapter exited, including SIGTERM during `sdk_connecting` | No reclaim is needed (**None**); the `Sandbox` takes the deletion edge §6.2 states, such as `sdk_connecting ──→ terminated` | SPEC-2 **Liveness.** |
 | On a `restart` pod's boundary, an `end` or `sweep` fails, the sweep's walk reaches its bound, a request gets no reply, or the listener rebind fails | As the step's row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
 | A `restart` pod's newly launched process exits before it holds the session that launched it | As the launch row of the scrub sequence table states | SPEC-5 **Supervised scrub sequence.** |
@@ -322,12 +322,13 @@ container and no supervisor.
   signals READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)
   step 4), and any cause on a service-mode pod, which has no claim and no
   recycle boundary, make the adapter exit non-zero instead. So does a cause
-  that arises while the adapter's registry holds no session entry
-  ([§4.7.1](#471-role-and-gateway-rpc-contract)) and no whole-pod scrub
-  runs, as in the `Sandbox` phases
+  that arises after the adapter signals READY, or after a whole-pod scrub's
+  `ReportPodScrub` samples the runtime as able to serve, and before the
+  adapter next registers a session entry
+  ([§4.7.1](#471-role-and-gateway-rpc-contract)), as in the `Sandbox` phases
   ([§6.2](06_warm-pod-model.md#62-pod-state-machine)) `idle` and
   `reserved` and on the recycle re-warm edge of `sdk_connecting`: the adapter
-  exits at once rather than waiting for a session start to find the state
+  exits at once, or once that `ReportPodScrub` returns, rather than waiting for a session start to find the state
   set, which bounds how long such a pod keeps its place in the pool. The
   table below is the one statement of how a pod on which the state is set, or whose
   adapter exited for a cause, retires. The causes, on every pod unless a
@@ -415,7 +416,7 @@ container and no supervisor.
 |:--|:--|:--|:--|:--|
 | `warming` | Any cause → **Exit** | Link failure → **Exit** | Link failure, gating property → **Exit** | Any cause → **Exit** |
 | `sdk_connecting`, warm-fill edge | Not reached | Not reached | Not reached | Any cause → **Exit** |
-| `idle` | Any cause → **Exit** | Link failure, kept-process exit → **Exit** | Link failure → **Exit** | Link failure, kept-process exit → **Exit** |
+| `idle` | Any cause → **Exit** | Link failure, kept-process exit → **Exit** | Link failure → **Exit** | Link failure, session exit, kept-process exit → **Exit** |
 | `reserved` | Not reached: no claim | Link failure, kept-process exit → **Exit**, once the hold ends | Link failure → **Exit**, once the hold ends | Link failure, kept-process exit → **Exit**, once the hold ends |
 | `claimed`, claim `bound`, `maxConcurrentSessions: 1` | Not reached: no claim | Reply error, link failure, session exit, no connection, hang, kept-process exit → **Claim** | Reply error, link failure, session exit, no connection, hang → **Claim** | Reply error, link failure, session exit, no connection, hang, kept-process exit → **Claim** |
 | `claimed`, claim `bound`, `maxConcurrentSessions` above 1 | Not reached: no claim | Reply error, link failure, session exit, no connection, hang, kept-process exit → **Claim** | Reply error, link failure, session exit, no connection, hang → **Claim** | Not reached: `preConnect` requires `maxConcurrentSessions: 1` |
