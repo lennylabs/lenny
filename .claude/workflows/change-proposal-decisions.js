@@ -1864,22 +1864,29 @@ function readingOf(agentIndex, entry) {
   };
 }
 
-// Sub-task 1's join, which is SCRIPT-SIDE on purpose: three agents returning
+// Sub-task 1's readings and join. The join is SCRIPT-SIDE on purpose: three agents returning
 // dispositions is redundancy only if nothing lets one of them decide the
 // outcome. The inventory is the union of the three collections, and the
 // disposition is `human` unless all three returned `resolve`, so a three-way
 // split is `human` by construction and needs no clause of its own. A dead
 // adjudicator leaves fewer than three readings, which cannot be unanimous, so
 // the item stands as the human's for the same reason.
-async function collectHumanDecisions() {
-  const label = (n) => "f" + firing + ":human-decisions:" + n;
+//
+// The readings and the join are separate functions so the sub-task wave can
+// issue the readings as slots of its own parallel() rather than through a
+// nested one. A nested parallel() yields before it invokes its thunks, so its
+// agents were invoked at a time that depended on how fast the wave's other
+// slots returned, and that broke resume replay (see REPLAY ORDER at the wave).
+const humanDecisionsLabel = (n) => "f" + firing + ":human-decisions:" + n;
+function humanDecisionReadings() {
   const prompt = humanDecisionsBrief();
-  const returns = await parallel(
-    Array.from({ length: HUMAN_READINGS }, (_, k) => k + 1).map(
-      (n) => () =>
-        robustAgent(prompt, { label: label(n), schema: OPEN_DECISIONS_FINDINGS, phase: "Collect" }),
-    ),
+  return Array.from({ length: HUMAN_READINGS }, (_, k) => k + 1).map(
+    (n) => () =>
+      robustAgent(prompt, { label: humanDecisionsLabel(n), schema: OPEN_DECISIONS_FINDINGS, phase: "Collect" }),
   );
+}
+function joinHumanDecisions(returns) {
+  const label = humanDecisionsLabel;
   const byKey = new Map();
   let liveAgents = 0;
   returns.forEach((r, i) => {
@@ -2453,6 +2460,11 @@ async function designAnswers(list) {
   const need = list.filter((item) => item.needsAnswerDesign);
   if (need.length === 0) return;
   log("Designing the answer for " + need.length + " item(s) the gate judged answerable, one agent each");
+  // Two barriers rather than one chain per item. Each item's falsifier used to
+  // follow its own designer inside one slot, so the falsifiers were invoked in
+  // the order the designers finished, which a resumed run cannot reproduce: a
+  // replayed designer returns at once. See REPLAY ORDER at the sub-task wave.
+  const toFalsify = [];
   await parallel(
     need.map((item, i) => () =>
       robustAgent(answerDesignPrompt(item), {
@@ -2483,10 +2495,16 @@ async function designAnswers(list) {
         item.answerKey = d.answerKey;
         item.designedAt = firing;
         log("  " + item.id + ": answer designed — " + String(d.answerKey || "").slice(0, 60));
-        return falsifyDesignedAnswer(item, i);
+        toFalsify[i] = item;
       }),
     ),
   );
+  // Indexed by the designer's slot, so each falsifier keeps the label index it
+  // had when it ran inside the designer's chain.
+  const falsifiers = toFalsify
+    .map((item, i) => (item ? () => falsifyDesignedAnswer(item, i) : null))
+    .filter(Boolean);
+  if (falsifiers.length > 0) await parallel(falsifiers);
 }
 
 // A designed answer is text nothing else in this firing reviews, which is the
@@ -3890,44 +3908,65 @@ log(
     (triage.outOfScopeDefects ? "RUNS" : "skipped") + " — " + String(triage.why || "").slice(0, 240),
 );
 
-const [, humanItems, oosItems, otherItems] = await parallel([
+// REPLAY ORDER. A resumed run replays an agent() call from the journal only
+// while every call before it was invoked with the same prompt and options in
+// the same ORDER: the runtime keys each call on a hash chained over the calls
+// invoked before it. So the order in which this wave invokes its agents must
+// not depend on how long any agent takes, because a replayed agent returns at
+// once and a live one takes minutes.
+//
+// The wave used to start sub-task 4 as a chain inside one slot (the inputs
+// digest, then the corpus inventory, then the sweep) while sub-task 1's
+// readings sat behind a nested parallel(), which yields before it invokes
+// anything. Live, the digest took long enough that the readings were invoked
+// first; on a resume the digest replayed instantly and the corpus inventory
+// was invoked first. The chain diverged there, and a measured resume re-ran
+// firing 1 and every non-spec round after it live, baseline commit included.
+//
+// So the two agents sub-task 4 depends on run first, in sequence, and the wave
+// is one parallel() whose every slot invokes exactly one agent synchronously,
+// in slot order, before anything returns.
+const sweepOtherProposals = await impactInputsUnchanged().then(
+  (unchanged) => !unchanged || owesWork("other-proposals"),
+);
+// Held for the result object, which reports how many proposals the sweep was
+// working from.
+if (sweepOtherProposals) corpus = await corpusInventory();
+// Recorded in the order the phase reads the populations. A skipped sweep's
+// records are marked seen after the wave, which keeps them out of the
+// unmatched report: it would otherwise read a skipped sweep as rows that
+// vanished. Every impact row an earlier firing adjudicated stands as it was.
+if (triage.humanDecisions === false) skippedSubTasks.push("human-decisions");
+if (triage.outOfScopeDefects === false) skippedSubTasks.push("out-of-scope-defects");
+if (!sweepOtherProposals) skippedSubTasks.push("other-proposals");
+const humanReadings = triage.humanDecisions === false ? [] : humanDecisionReadings();
+const wave = await parallel([
   () => checkReversals(),
-  () =>
-    triage.humanDecisions === false
-      ? Promise.resolve(skippedSubTasks.push("human-decisions")).then(() => [])
-      : collectHumanDecisions(),
+  ...humanReadings,
   () =>
     triage.outOfScopeDefects === false
-      ? Promise.resolve(skippedSubTasks.push("out-of-scope-defects")).then(() => [])
+      ? []
       : collectSingle({
-      key: "out-of-scope-defects",
-      title: "Sub-task 3 (out-of-scope defect declarations)",
-      prompt: outOfScopeDefectsBrief(),
-      allowed: ["out-of-scope-stands", "out-of-scope-wrong"],
-      fallback: "out-of-scope-stands",
-    }),
+          key: "out-of-scope-defects",
+          title: "Sub-task 3 (out-of-scope defect declarations)",
+          prompt: outOfScopeDefectsBrief(),
+          allowed: ["out-of-scope-stands", "out-of-scope-wrong"],
+          fallback: "out-of-scope-stands",
+        }),
   () =>
-    impactInputsUnchanged().then((unchanged) => {
-      if (!unchanged || owesWork("other-proposals")) return null;
-      // Every impact row an earlier firing adjudicated stands as it was. The
-      // records are marked seen after the wave, which keeps them out of the
-      // unmatched report: it would otherwise read a skipped sweep as rows that
-      // vanished.
-      skippedSubTasks.push("other-proposals");
-      return [];
-    }).then((skipped) => skipped || corpusInventory().then((rows) => {
-      // Held for the result object, which reports how many proposals the sweep
-      // was working from.
-      corpus = rows;
-      return collectSingle({
-        key: "other-proposals",
-        title: "Sub-task 4 (impacts on other proposals)",
-        prompt: otherProposalsBrief(rows),
-        allowed: ["impact-row"],
-        fallback: "impact-row",
-      });
-    })),
+    !sweepOtherProposals
+      ? []
+      : collectSingle({
+          key: "other-proposals",
+          title: "Sub-task 4 (impacts on other proposals)",
+          prompt: otherProposalsBrief(corpus),
+          allowed: ["impact-row"],
+          fallback: "impact-row",
+        }),
 ]);
+const humanItems = triage.humanDecisions === false ? [] : joinHumanDecisions(wave.slice(1, 1 + humanReadings.length));
+const oosItems = wave[1 + humanReadings.length];
+const otherItems = wave[2 + humanReadings.length];
 // Pushed in the order the phase reads the populations, which is what kept them
 // sequential before.
 items.push(...(humanItems || []), ...(oosItems || []), ...(otherItems || []));

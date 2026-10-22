@@ -1698,26 +1698,40 @@ t.section("D-collect. the reversal check and the three collectors run as one wav
   );
   for (const [what, re] of [
     ["the reversal check", /\(\)\s*=>\s*checkReversals\(\)/],
-    // Sub-task 1 sits behind the triage answer now, so its call is one arm of a
-    // conditional inside the wave's thunk rather than the thunk's whole body.
-    ["sub-task 1", /\(\)\s*=>\s*triage\.humanDecisions === false[\s\S]{0,160}:\s*collectHumanDecisions\(\)/],
+    // Sub-task 1's readings are slots of the wave itself rather than a nested
+    // parallel(), behind the triage answer.
+    ["sub-task 1", /\.\.\.humanReadings,/],
     ["sub-task 3", /key:\s*"out-of-scope-defects"/],
     ["sub-task 4", /key:\s*"other-proposals"/],
   ]) {
     t.check(what + " is in the wave", re.test(block), what + " is not inside the parallel call");
   }
   t.check(
+    "sub-task 1's readings come from the triage-gated reading list",
+    /const humanReadings = triage\.humanDecisions === false \? \[\] : humanDecisionReadings\(\);/.test(block),
+    "humanReadings is not built from humanDecisionReadings behind the triage",
+  );
+  t.check(
     "no collector is awaited on its own before the wave",
-    !/await\s+(checkReversals|collectHumanDecisions|collectSingle|corpusInventory)\(/.test(block),
+    !/await\s+(checkReversals|collectHumanDecisions|collectSingle)\(/.test(block),
     "a collector is still awaited outside the parallel call",
   );
-  // Sub-task 4 needs the corpus, which is gathered once and carried on the
-  // phase state. Chaining it behind the corpus rather than behind the whole
-  // wave is what lets it start immediately on every later firing.
+  // REPLAY ORDER. Every slot of the wave invokes one agent synchronously, so the
+  // order of invocation does not depend on agent latency. The two agents
+  // sub-task 4 depends on, the inputs digest and the corpus inventory, run
+  // before the wave rather than chained inside one of its slots: chained, the
+  // corpus inventory was invoked at a time set by the digest's latency, and a
+  // resumed run invoked it in a different position and stopped replaying.
+  // .claude/tests/resume-replay.test.mjs pins the behaviour; these pin the form.
   t.check(
-    "sub-task 4 chains behind the corpus, not behind the wave",
-    /corpusInventory\(\)\.then\(/.test(block),
-    "sub-task 4 does not chain off corpusInventory",
+    "the inputs digest and the corpus run before the wave, in sequence",
+    /await impactInputsUnchanged\(\)[\s\S]*await corpusInventory\(\)[\s\S]*await parallel\(\[/.test(block),
+    "the digest or the corpus is not awaited ahead of the wave",
+  );
+  t.check(
+    "no agent is chained behind another inside the wave",
+    !/corpusInventory\(\)\.then\(|impactInputsUnchanged\(\)\.then\(\(skipped|parallel\(\[\s*\(\)\s*=>\s*parallel/.test(block),
+    "a slot still chains one agent behind another",
   );
   // The order the populations are pushed in is what kept them sequential.
   const push = block.match(/items\.push\([^;]*\);/);
