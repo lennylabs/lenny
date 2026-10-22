@@ -2888,6 +2888,20 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
     and release mechanism, and after P5 (0094), whose fence and drain it builds on.
   - **Drafting.** Under the drafting rules and the test instruction above.
+  - **Status (2026-10-22).** Drafted as proposal 0095 (`draft/0095-p5b`). The review run halted on the
+    tenancy-mode mechanism, and the owner decided its open decisions: the single-tenant branch that admits
+    every tenant claim is fixed by the separate direct fix for T-10.2.11 below, which lands before 0095's
+    implementation, and 0095's bearer-refusal goal names a gateway in multi-tenant mode (OD-3); a
+    multi-tenant deployment may delete `default`, with a spec edge case and operator documentation for the
+    bootstrap admin token (OD-1); an admin router built without the tenancy setting fails closed as
+    single-tenant (OD-2).
+- [ ] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Added
+  2026-10-22 by the owner's OD-3 decision on 0095. Every chart-deployed gateway runs the single-tenant
+  branch, which flips the auth middleware to multi-tenant with a registry that admits every tenant, so an
+  unregistered tenant claim is admitted instead of refused. The fix renders the switch from the chart, keeps
+  single-tenant mode on `default` with the claim ignored (§10.2), and uses the real tenant registry in
+  multi-tenant mode. It lands before 0095's implementation; a needed spec change stops it for the proposal
+  pipeline.
 
 Redis Cluster readiness (added 2026-10-21, after the analysis of F-12.4.28). Every gateway and `lenny-ops`
 Redis store runs on the cluster client when the chart's `redis.provider` is `cluster`, so each store has to
