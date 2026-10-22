@@ -3103,6 +3103,18 @@ property, which fails closed, so `restart` is offered on gVisor).** If the spike
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
 
+**Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
+
+- [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
+  `type: mcp` runtime gets no supervisor and no `command` until a proposal defines its launch (Phase 12b,
+  §18). That proposal must bring `type: mcp` sidecars under the runtime supervisor, with the same startup
+  contract, END, sweep, and `CH-SUPERVISE` link as `type: agent` sidecars, and must add `command` for them.
+- [ ] **Remove the interim `restart` refusal when 0084 lands.** Until proposal 0084 adds the
+  per-generation intra-pod MCP nonce, pool admission refuses `recycle.runtimeProcess: restart` (owner
+  decision). The refusal is a code-only gate with explanatory comments and no spec text, because a
+  relaunched runtime process cannot use intra-pod MCP servers whose nonce was bound at the first start.
+  0084's implementation removes the gate and its test.
+
 **Not yet scheduled.** The later phases of the restart design: SDK warm-up for sidecar runtimes, an optional
 restart after a runtime crash, and starting the next runtime before its session arrives.
 
