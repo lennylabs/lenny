@@ -2,7 +2,7 @@
 
 ## Design (implementation-facing)
 
-The work splits into two lanes that share no code (summary D20). Part A, erasure store coverage, is MIG-1, CODE-1 to CODE-5, and the Phase 4 half of CODE-8. Part B, revocation, is CODE-6, CODE-7, the Phase 3 half of CODE-8, and CODE-9.
+The work splits into the two lanes of summary D20.
 
 ### Store table
 
@@ -24,7 +24,7 @@ Column rules:
 | `experiment_sticky` | 40 | Experiment sticky assignment cache | `experimentsticky.RedisCache.DeleteByTenant` (CODE-2). nil without Redis. | Unchanged. |
 | `billing_buffer` | 50 | Billing write-ahead buffer | `StreamTier.PurgeTenant` on the wiring's billing stream (CODE-2), gated by the exempt check of CODE-3 item 3. | Unchanged. |
 | `quota` | 60 | `QuotaStore` | Unchanged. | Unchanged. |
-| `artifacts` | 70 | `ArtifactStore` | `DeleteByTenant` on `w.blobs`, the prefix delete. | Unchanged session-scoped `DeleteBySession`. nil when the store does not implement `DeleteBySession`. |
+| `artifacts` | 70 | `ArtifactStore` | `DeleteByTenant` on `w.blobs`, the prefix delete, under CODE-3 item 10. | Unchanged session-scoped `DeleteBySession`. nil when the store does not implement `DeleteBySession`. |
 | `checkpoint_manifests` | 71 | `ArtifactStore` checkpoints | Unchanged. | Session-scoped adapter over `partialmanifeststore` `DeleteByUser(ctx, t, "", []string{sid})`. nil when the store is absent. |
 | `checkpoint_retention` | 72 | `ArtifactStore` checkpoints | Unchanged. | Session-scoped adapter over `checkpointretention` `DeleteByUser(ctx, t, "", []string{sid})`. nil when the store is absent. |
 | `checkpoint_meta` | 73 | `ArtifactStore` checkpoints | Unchanged. nil without Postgres. | Session-scoped adapter over `sessioncheckpointmeta/pgstore` `DeleteByUser(ctx, t, "", []string{sid})`. nil without Postgres. |
@@ -58,7 +58,7 @@ Targets: `pkg/gateway/storage/erasure/order.go`, `pkg/gateway/storage/erasure/er
 
 1. `canonicalRank` holds exactly the names and ranks of the **Store table**: `eval_results` moves to 155, and `coordination_mirror`, `issued_tokens`, `runtime_tenant_access`, `pool_tenant_access`, `user_roles`, `custom_roles`, `tenant_definitions`, and `tenant_config` are added.
 2. Add `userExempt` and `tenantExempt`, each a `map[string]string` from name to reason, holding the **Store table**'s exemptions. Each reason names symbols rather than file and line.
-3. `ValidateOrder` and `ValidateTenantOrder` keep their current checks and add a completeness check: every `canonicalRank` name is wired on that path or in that path's exemption map, and a name that is both wired and exempt is an error. Each error names the store and the path. The startup call sites keep calling them under `log.Fatalf`.
+3. `ValidateOrder` and `ValidateTenantOrder` keep their current checks and add a completeness check: every `canonicalRank` name is wired on that path or in that path's exemption map, and a name that is both wired and exempt, or exempt with an empty reason, is an error. Each error names the store and the path. The startup call sites keep calling them under `log.Fatalf`.
 4. An `Eraser` whose `DeleteByUser` is nil, a `SessionEraser` whose `DeleteBySession` is nil, and a `namedTenantEraser` whose `fn` is nil are skipped and left out of the per-store count map, so a receipt does not report an unrun store as having erased zero rows. The builders list such an entry by name instead of omitting it.
 5. Rewrite the `canonicalRank` and `CanonicalOrder` doc comments: ranks follow the §12.8 tenant Phase 4 order, `ValidateTenantOrder` enforces strict rank, and `ValidateOrder` enforces only the `fkMustPrecede` edges, because the user sequence orders steps 12 and 13 differently. Drop the per-entry "step N" tags that no longer match and the "operator documentation" claim. Replace the line citation in the `fkMustPrecede` comment with a heading citation.
 6. The tier-0 guard fails when `pkg/gateway/storage/evictionstatestore`, its pgstore, `evictionfallback`, `pkg/gateway/session/routingcache`, or the token-service `tokencache` gains a non-test importer outside its own subtree, or when the token service starts calling the cache's `Get`, `Put`, or `Invalidate`. Its failure message names the exemption to revisit.
@@ -71,13 +71,13 @@ Targets: `pkg/gateway/experiment/experimentsticky/experimentsticky.go`, `pkg/gat
 
 1. `RedisCache.DeleteByTenant(ctx, tenantID) (int, error)` beside `DeleteByUser`: `redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(t), rediskeys.TenantPrefix(t)+"exp:*:sticky:*")`. It records no invalidation metric.
 2. `StreamTier` gains `PurgeTenant(ctx, tenantID) (int, error)`.
-   - `redisstream.Tier.PurgeTenant` runs `XGROUP DESTROY` on the tenant's stream and group and then `DEL` of the stream key through the cluster-safe client. A missing key or group counts as success. It then deletes `t.known[tenantID]`, so a later `Publish` on this replica recreates the group.
+   - `redisstream.Tier.PurgeTenant` runs `XGROUP DESTROY` on the tenant's stream and group and then `DEL` of the stream key through the cluster-safe client. A missing key or group counts as success. It leaves `t.known[tenantID]` set, so this replica's flusher does not recreate the stream through `ensureGroup`.
    - `MemStream.PurgeTenant` drops the tenant's entries.
 3. `Pipeline.DeleteByTenant` calls `p.stream.PurgeTenant` before `p.primary.DeleteByTenant` and keeps its Tier 2 buffer drop. A stream purge error returns before the primary delete.
 
 ### CODE-3 · Tenant-path Phase 4 wiring
 
-Targets: `cmd/lenny-gateway/tenant_erasers.go` (`buildTenantErasers`, `tenantErasersBeforeSessions`, and a new `forEachTenantSession`), the `buildTenantErasers` call site in `cmd/lenny-gateway/adminrouter.go`, `cmd/lenny-gateway/billing_pipeline.go` (keep a handle on the billing stream), and the billing retention pruner's tenant lister in `cmd/lenny-gateway/worker_seams.go`.
+Targets: `cmd/lenny-gateway/tenant_erasers.go` (`buildTenantErasers`, `tenantErasersBeforeSessions`, and a new `forEachTenantSession`), the `buildTenantErasers` call site in `cmd/lenny-gateway/adminrouter.go`, `cmd/lenny-gateway/billing_pipeline.go` (keep a handle on the billing stream), the billing retention pruner's tenant lister in `cmd/lenny-gateway/worker_seams.go`, `pkg/blobstore/artifactcatalog/catalog.go` (`PgStore.DeleteByTenant` and the `Store` interface comment), `pkg/blobstore/cataloging/cataloging_test.go`, and the F-12.8.37 entry of `BUILD-GAPS.md`.
 
 1. `forEachTenantSession(ctx, tenantID, fn)` lists `sessions.List(ctx, tenantID, ListFilter{Primary: true})` and calls `fn` for each session ID, returning the first error. Every session-keyed entry of the **Store table** uses it.
 2. Wire every tenant-path cell of the **Store table**. The call site passes the semantic cache, the sticky cache, the billing stream and pipeline, the audit store, the two `TokenStore` stores, the tenant access, user, custom role, connector, environment, experiment, and tenant stores, the coordination mirror store, the tree budget, the delegation budget pgstore, and the messaging coordinator.
@@ -87,6 +87,8 @@ Targets: `cmd/lenny-gateway/tenant_erasers.go` (`buildTenantErasers`, `tenantEra
 6. **Tenant configuration record.** The `tenant_config` entry calls `tenants.Update` with a mutate that nulls every field of `tenantstore.Tenant` except this keep list: `ID`, `State`, `DeletedAt`, `WorkspaceTier`, `DataResidencyRegion`, `BillingErasurePolicy`, `ForceDeleteHoldOverride`, `ForceDeleteJustification`, `ForceDeleteBy`, `ForceDeleteAt`, `CreatedAt`, `UpdatedAt`, and `Version`. Nulling `ErasureSalt` deletes the sealed salt ciphertext. `BillingErasurePolicy` stays on the list because a Phase 4 re-run reads it in item 3, and an empty policy reads as pseudonymize.
 7. **Billing retention after the tombstone.** The billing retention pruner lists tenants with `ListFilter{IncludeDeleted: true}`, so an exempt tenant's billing events age out after its tombstone. `FlusherManager` keeps the current lister.
 8. Audit and billing `DeleteByTenant` run on the connection the Phase 4 erasers already use, which is the posture `PruneRetention` runs under.
+9. **F-12.8.37.** Close F-12.8.37 in `BUILD-GAPS.md` with a resolution note in this step. `TestFiledSuspendResumeFindingsMatchTheTree_spec_7_2` reads the finding's state against an `EraseSession` selector in the body of the methods `buildTenantErasers` or `tenantErasersBeforeSessions`, so the `session_message_queues` entry names `EraseSession` inside one of those two methods.
+10. **Held catalog rows.** `artifactcatalog.PgStore.DeleteByTenant` drops its `legal_hold = false` guard, so the `artifacts` entry deletes the catalog rows of the originals Phase 3.5 escrowed (summary D5). Rewrite its doc comment and the `Store` interface's `DeleteByTenant` comment to name Phase 3.5 as the hold gate. In `pkg/blobstore/cataloging/cataloging_test.go`, change `fakeCatalog.DeleteByTenant` and `TestDeleteByTenantPreservesLegalHeldCatalogRow` so the held row is deleted.
 
 ### CODE-4 · User-path wiring
 
@@ -96,27 +98,30 @@ Targets: `cmd/lenny-gateway/adminrouter.go` (the user eraser list and `buildSess
 2. Rewrite both `DeleteByUser` comments in the lease stores. Each states that the drain runs each session's terminal pipeline before the erasers (0094 D21), and that a residual coordination lease expires within its own TTL, which is `sessionserver.DefaultCoordinationLeaseTTL` at bind and four `--coordination-interval` periods after a Sweeper takeover. Delete the claim that the orchestrator releases leases per session.
 3. `issuedtokenstore.DeleteByUser` adds `AND exp <= now() - interval '1 hour'` to its delete, which deletes only the rows SPEC-5 step 18 deletes. Delete its doc comment's claim that a deleted token can no longer be presented.
 
-### CODE-5 · Escrow in the escrow bucket, and complete session-hold escrow
+### CODE-5 · Phase 3.5 escrow
 
-Targets: `cmd/lenny-gateway/legalholdescrow.go` (`blobEscrowWriter`, `blobEscrowDeleter`, `resolveHolds`, and their doc comments), the escrow wiring in `cmd/lenny-gateway/adminrouter.go`, and the doc comments in `pkg/legalholdescrow/escrow.go`, `pkg/legalholdescrow/migrator.go`, and `pkg/legalholdescrow/records.go`.
+Targets: `cmd/lenny-gateway/legalholdescrow.go` (`blobEscrowWriter`, `blobEscrowDeleter`, `resolveHolds`, `escrowLedger`, `tenantEscrowMigrator`, and their doc comments), the escrow wiring in `cmd/lenny-gateway/adminrouter.go`, `pkg/legalholdescrow/migrator.go` (`Migrator`, `Migrate`), and the doc comments in `pkg/legalholdescrow/escrow.go` and `pkg/legalholdescrow/records.go`.
 
 1. At startup, build one escrow blob store with `blobproviderflags.Resolve`. It uses the artifact store's provider, credentials, and endpoint unless `--legal-hold-escrow-endpoint` overrides the endpoint, sets `Bucket` and `MinIOBucket` to the configured escrow bucket (`escrowCfg.Default.Bucket`), and passes a nil `SSEKeyResolver`, because the payload is already sealed under the escrow KEK. When no escrow bucket is configured, build no store; the migrator then fails closed with `ErrRegionUnresolvable`.
 2. `blobEscrowWriter` and `blobEscrowDeleter` both use that store. The URI keeps `TenantID` set to the original tenant ID, which gives the §12.8 `legal-hold-escrow/{original_tenant_id}/...` layout inside a bucket that the artifact-store prefix delete never reaches. The deleter's `Tombstoner` assertion runs against that store.
-3. Do not write escrow under `jwtaudit.PlatformTenantID` or through `w.objectStore`. The tenant SSE resolver refuses a tenant with no row, and `platform` is a tenant ID an admin can create.
-4. `resolveHolds` returns its error. A `ListLegalHeld` error is returned instead of dropped. For a session hold, it lists `m.artifacts.ListBySession` and appends one `HeldArtifact` per record not yet seen, populated as the artifact branch populates it (`ResourceID` the base64url of `rec.URI`, `BlobURI`, `HoldSetAt`, `SessionID`, and `ArtifactURI`). A listing error aborts Phase 3.5.
-5. Rewrite each comment that describes a Phase 4 skip or a `legal_hold_escrow: true` marker to state that Phase 4 deletes the originals and that the ledger record is the release pointer.
+3. `escrowLedger` appends each ledger event under `jwtaudit.PlatformTenantID` with the original tenant ID as the payload's `target_tenant_id` (§16.7), so the tenant `audit` entry never deletes it.
+4. Do not write the escrow object under `jwtaudit.PlatformTenantID` or through `w.objectStore`. The tenant SSE resolver refuses a tenant with no row, and `platform` is a tenant ID an admin can create.
+5. `resolveHolds` returns its error. A `ListLegalHeld` error is returned instead of dropped. For a session hold, it lists `m.artifacts.ListBySession` and appends one `HeldArtifact` per record not yet seen whose `State` is `artifactcatalog.StateLive`, populated as the artifact branch populates it (`ResourceID` the base64url of `rec.URI`, `BlobURI`, `HoldSetAt`, `SessionID`, and `ArtifactURI`). A listing error aborts Phase 3.5.
+6. `legalholdescrow.Migrator` gains a `Records RecordStore` field, which `tenantEscrowMigrator` sets from `escrowRecords` in `buildAdminRouter`. Before reading a hold's original, `Migrate` calls `Records.ActiveForArtifact(ctx, in.TenantID, h.ArtifactURI)`. A non-empty result skips the hold and adds its `EscrowObjectKey` to the result, and a lookup error aborts the migration (§12.8 Phase 3.5 re-entry). A nil `Records` skips the lookup.
+7. Rewrite each comment that describes a Phase 4 skip or a `legal_hold_escrow: true` marker to state that Phase 4 deletes the originals and that the ledger record is the release pointer.
 
 Per-region escrow clients (`storage.regions.*`) stay out of scope, because `escrowConfigFromFlags` produces only `Default`.
 
 ### CODE-6 · One tenant registration predicate
 
-Targets: `pkg/gateway/environment/tenantstore/tenantstore.go` (new `Tenant.Registered`, `Memory.IsRegistered`), `pkg/gateway/environment/tenantstore/pgstore/pgstore.go` (`IsRegistered`), `cmd/lenny-gateway/auth_seams.go` (`bearerTenantRegistry`, `authFailureAuditAdapter`), `cmd/lenny-gateway/playground_seams.go` (`playgroundTenantRegistry`), the `admin.NewRouter` call in `buildAdminRouter` (`cmd/lenny-gateway/adminrouter.go`), and `pkg/gateway/externalapi/admin/tenants.go` and `forcedelete.go` (`handleDeleteTenant`, `handleForceDeleteTenant`).
+Targets: `pkg/gateway/environment/tenantstore/tenantstore.go` (new `Tenant.Registered`, `Memory.IsRegistered`), `pkg/gateway/environment/tenantstore/pgstore/pgstore.go` (`IsRegistered`), `cmd/lenny-gateway/auth_seams.go` (`bearerTenantRegistry`, `authFailureAuditAdapter`), `cmd/lenny-gateway/playground_seams.go` (`playgroundTenantRegistry`), the `admin.NewRouter` call in `buildAdminRouter` (`cmd/lenny-gateway/adminrouter.go`), `pkg/auth/jwt/` (a new tenant-claim verifier wrapper beside `ClaimChecker`), `cmd/lenny-gateway/token_signing.go` (`embeddedHMACVerifier`), `pkg/gateway/middleware/auth/auth.go` (`serveBearer`, `Options.TenantClaimName`), the `authmw.Options` literal in `cmd/lenny-gateway/httpsurface.go`, `pkg/gateway/externalapi/admin/tenants.go` (`AuditEvent`) and `forcedelete.go` (`handleDeleteTenant`, `handleForceDeleteTenant`), `pkg/gateway/externalapi/admin/audit_sink.go` (`ChainAuditSink.EmitAdminEvent`), and the `auth.tenantIdClaim` comment in `charts/lenny/values.yaml`.
 
 1. `Tenant.Registered()` returns true when `DeletedAt` is zero and `State` is neither `TenantStateDeleting` nor `TenantStateDeleted`. `IsActive` is unchanged.
 2. `Memory.IsRegistered` returns `Registered()` of the row. The pgstore `IsRegistered` selects `deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')`.
 3. `bearerTenantRegistry` and `playgroundTenantRegistry` read the row first. A found row answers `Registered()`, the default tenant included. `ErrNotFound` answers true only for the default tenant. Any other error is returned.
-4. `authFailureAuditAdapter` writes a `TENANT_NOT_FOUND` rejection to the platform chain (empty `ActorTenantID`) and carries the inferred tenant in `Detail` as `target_tenant_id`. It never appends to the refused tenant's chain. The other rejection reasons keep their placement.
+4. `authFailureAuditAdapter` writes a `TENANT_NOT_FOUND` rejection to the platform chain (empty `ActorTenantID`) and sets the inferred tenant as the event's `TargetTenantID`. `admin.AuditEvent` gains `TargetTenantID`, which `ChainAuditSink.EmitAdminEvent` writes as the payload's top-level `target_tenant_id` when non-empty, because the §11.7 CMP-058 residency gate reads only that key and never one under `detail`. It never appends to the refused tenant's chain. The other rejection reasons keep their placement.
 5. `Router` gains a `WithMultiTenant` setter, which `buildAdminRouter` wires from `--multi-tenant`. When the setting is false, `handleDeleteTenant` and `handleForceDeleteTenant` answer a request for `auth.DefaultTenantID` with `409 INVALID_STATE_TRANSITION` before any state write (SPEC-2 Edit 2b). A `Router` built without the setter behaves as multi-tenant.
+6. The configured tenant claim (SPEC-3 Edit 3a) applies only to a token that an IdP key verified. A wrapper in `pkg/auth/jwt` beside `ClaimChecker` sets `Claims.TenantID` to `ClaimString(name)` of every token its inner verifier accepts, and to an empty value when that claim is absent, never keeping the token's own `tenant_id`. `embeddedHMACVerifier` wraps the embedded OIDC member with it under `--tenant-id-claim`, and the Token Service member is not wrapped. `serveBearer` reads `claims.TenantID` for every bearer, and `Options.TenantClaimName` is deleted. The discriminator is the verifying key, never a payload claim such as `iss` or `typ`. In the `auth.tenantIdClaim` comment, replace "on every Bearer JWT" with "on a bearer an IdP key verified; a gateway-issued token uses `tenant_id`".
 
 ### CODE-7 · The lease step writes no deny-list entry
 
@@ -176,9 +181,9 @@ Each sentence that depends on D5, D11, or D18 follows the decision as it stands 
 
 ### REC-1 · Records: closures, departures, filings, and gates
 
-Targets: `BUILD-GAPS.md`; `scripts/seed-claim-register.py`, with `tests/claim-map.json` regenerated from it; `tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go`; the proposal deviations file; and the P5b bullet of `gateway-runtime-comms-remediation.md` (its Outcome and its tick).
+Targets: `BUILD-GAPS.md`; `TEST-GAPS.md`; `scripts/seed-claim-register.py`, with `tests/claim-map.json` regenerated from it; `tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go`; the proposal deviations file; and the P5b bullet of `gateway-runtime-comms-remediation.md` (its Outcome and its tick).
 
-1. **Close** F-11.4.10 (the deny-list and session-set halves), F-11.4.12, F-11.4.13, the F-11.4.14 remainder, F-11.4.17, F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.37, F-12.8.41, and F-12.8.42.
+1. **Close** F-11.4.12, F-11.4.13, the F-11.4.14 remainder, F-11.4.17, F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.41, and F-12.8.42. F-11.4.10 gets a resolution note for its deny-list and session-set halves and stays open, because 0093's accepted departure on it still holds and `TestReleaseOwnershipDeparturesStayRecordedOnOpenFindings` keeps that departure on an open finding.
 2. **N-4** has no BUILD-GAPS entry, so its closure goes only in the plan bullet's Outcome: step 1 closes by 0094 D21 and the CODE-4 comment fix, and step 3 closes by the `redis_caches` exemption and the SPEC-3 registry refusal.
 3. **Leave F-12.8.46 open** and add one sentence: the tenant-path prefix delete removes such objects when the whole tenant is deleted, and the user-erasure case it records is unchanged.
 4. **Narrow F-12.8.44** to Phase 1 issuance and sign-up refusal. A token minted for a deleting tenant is refused at use by the registry refusal.
@@ -187,7 +192,8 @@ Targets: `BUILD-GAPS.md`; `scripts/seed-claim-register.py`, with `tests/claim-ma
 7. **Claim register.** In the generator, update the note of the row "User erasure deletes each session's message queues" to state that tenant deletion erases them too, and regenerate `tests/claim-map.json`.
 8. **New findings.** File each entry of the summary's **Defects in the shipped tree that this proposal does not stage** that is marked **New**, with the owner the entry names, under the next free identifier.
 9. **Records gate.** Update the tier-11 records test so it expects the closures as closed, F-12.8.46 open and unassigned, and each new finding with its owner. Register the gate in `documentConsistencyGates` if the update adds a new file.
-10. **Plan.** Tick the P5b bullet and write its Outcome.
+10. **Test gaps.** In `TEST-GAPS.md`, close T-12.1.3 and T-12.8.4, and annotate T-4.5.4 and T-12.8.9, which stay open, each citing the tests the TEST-1 intro names.
+11. **Plan.** Tick the P5b bullet and write its Outcome.
 
 ## Testing
 
@@ -211,14 +217,15 @@ Tests are stated as intents. Each intent is pinned by at least one test at each 
 ### Tests that land with CODE-2
 
 - **T1.5 (tier 1).** `MemStream.PurgeTenant` removes only the tenant's entries. `Pipeline.DeleteByTenant` purges the stream, the buffer, and the durable rows in that order, and a stream purge error leaves the durable rows untouched.
-- **T2.2 (tier 2, Redis Cluster profile).** `RedisCache.DeleteByTenant` and `Tier.PurgeTenant` remove `acme`'s sticky keys, stream, and group and leave `globex`'s untouched. Each is idempotent, a purge of a tenant with no stream succeeds, and a later `Publish` on the purging replica recreates the group.
+- **T2.2 (tier 2, Redis Cluster profile).** `RedisCache.DeleteByTenant` and `Tier.PurgeTenant` remove `acme`'s sticky keys, stream, and group and leave `globex`'s untouched. Each is idempotent, a purge of a tenant with no stream succeeds, and a `Flush` on the same `Tier`, built with an `Inserter` and published to before the purge, leaves no stream key whatever error it returns, which is the case that discriminates the kept `known` entry.
 
 ### Tests that land with CODE-3
 
-- **T1.6 (tier 1).** An exempt tenant's `billing_buffer` and `billing` entries return `(0, nil)` and touch nothing. A non-exempt tenant's are purged. A Phase 4 re-run after `tenant_config` leaves an exempt tenant's billing event count unchanged; this case is the one that discriminates the keep list.
+- **T1.6 (tier 1).** An exempt tenant's `billing_buffer` and `billing` entries return `(0, nil)` and touch nothing. A non-exempt tenant's are purged. When the tenant read fails, both entries return the error and touch neither the stream nor the durable rows. A Phase 4 re-run after `tenant_config` leaves an exempt tenant's billing event count unchanged; this case is the one that discriminates the keep list.
 - **T1.7 (tier 1).** `tenant_config` nulls every field outside the keep list, including `ErasureSalt`, and leaves every kept field equal. A reflection check over `tenantstore.Tenant` fails when a new field is neither nulled nor kept.
 - **T1.8 (tier 1).** `delegation_budget` calls `PurgeRoot` only for root sessions, `tenant_definitions` treats `ErrNotFound` as deleted, and `forEachTenantSession` stops at the first error.
-- **T2.3 (tier 2).** Against real Postgres, Redis, and MinIO, each new tenant entry deletes `acme`'s rows, keys, or objects, leaves a `globex` twin untouched, and returns success on a second run.
+- **T1.20 (tier 1).** In `pkg/gateway/externalapi/admin/legalhold_escrow_test.go`, an artifact-hold clear whose catalog `Get` finds no row calls `ReleaseForArtifact` with the tenant and artifact ID and answers 200 with `escrowReleased`, zero releases answer 404, and a release error answers 500 with no legal-hold audit event.
+- **T2.3 (tier 2).** Against real Postgres, Redis, and MinIO, each new tenant entry deletes `acme`'s rows, keys, or objects, leaves a `globex` twin untouched, and returns success on a second run. For `artifacts`, run through the cataloging wrapper, `acme` also has a `legal_hold = true` catalog row, and no `artifact_store` row of `acme` remains; this case discriminates CODE-3 item 10.
 - **T2.4 (tier 2).** A `DeleteByTenant` subtest in `tests/tier2_component/stores/miniostore_test.go` (closes the MinIO half of T-4.5.4).
 - **T2.5 (tier 2).** The billing pruner deletes an exempt tombstoned tenant's billing events past `billing.retentionDays`.
 
@@ -230,16 +237,17 @@ Tests are stated as intents. Each intent is pinned by at least one test at each 
 
 ### Tests that land with CODE-5
 
-- **T1.10 (tier 1).** `resolveHolds` returns a `ListLegalHeld` error and a `ListBySession` error, escrows every catalog record of a session-held session exactly once when an artifact hold overlaps it, and the deleter succeeds when the artifact store is the cataloging wrapper.
+- **T1.10 (tier 1).** `resolveHolds` returns a `ListLegalHeld` error and a `ListBySession` error, escrows every live catalog record of a session-held session exactly once when an artifact hold overlaps it and skips a soft-deleted one, and each `escrowLedger` event is appended under `jwtaudit.PlatformTenantID` with `target_tenant_id` set to the tenant. A second `EscrowHolds` for the same tenant after the held originals are deleted succeeds without reading an original and returns the same escrow keys; this case discriminates the re-entry skip. An `ActiveForArtifact` error makes `Migrate` return the error with no `Source.Read`, `Escrow.Write`, or `Ledger.Escrowed` call for that hold. `EscrowHolds` over distinct artifact and escrow stores reads originals only from the artifact store and writes only to the escrow store. Rows in `cmd/lenny-gateway/release_wiring_test.go` pin `escrowRecords` and the escrow store in the `tenantEscrowMigrator` literal in `buildAdminRouter`, and the escrow store in the Releaser's `blobEscrowDeleter`.
 - **T2.7 (tier 2, MinIO).** With an escrow bucket configured, for a tenant with no row in the escrow namespace and for a T4 tenant, escrow `Put` succeeds, `DeleteByTenant` on the original tenant's artifact store leaves the escrow object readable, and the `Releaser` deletes it after the hold clears.
-- **T1.11 (tier 1, tripwire).** `handleSetLegalHold` accepts only `sessionId` or `artifactId`, and a `go/ast` scan of `pkg/gateway/externalapi/admin` finds every `emitLegalHold` call passing `"session"` or `"artifact"`. The failure message names the `audit` tenant entry as the eraser to revisit.
+- **T1.11 (tier 1, tripwire).** `handleSetLegalHold` accepts only `sessionId` or `artifactId`, and a `go/ast` scan of `pkg/gateway/externalapi/admin` finds every `emitLegalHold` and `writeLegalHoldCleared` call passing `"session"` or `"artifact"`, apart from the `emitLegalHold` call inside `writeLegalHoldCleared` that forwards its `resourceType` parameter. The failure message names the `audit` tenant entry as the eraser to revisit.
 
 ### Tests that land with CODE-6
 
-- **T1.12 (tier 1).** Extend `TestIsRegisteredImplementsAuthRegistry` with a table over `active`, `disabling`, `deleting`, `deleted`, and suspended rows for `Memory`, both registry adapters, and `Registered()`: only `deleting` and `deleted` are refused. A `default` row in `deleting` is refused, and a missing `default` row is admitted.
-- **T1.13 (tier 1).** A `TENANT_NOT_FOUND` rejection lands on the platform chain with `target_tenant_id` in its detail, and `TENANT_CLAIM_INVALID_FORMAT` keeps its placement. Retarget any test that asserts a `TENANT_NOT_FOUND` row on the inferred tenant's chain.
+- **T1.12 (tier 1).** Extend `TestIsRegisteredImplementsAuthRegistry` with a table over `active`, `disabling`, `deleting`, `deleted`, and suspended rows for `Memory` and `Registered()`, and add a test in `cmd/lenny-gateway/auth_seams_test.go` that runs the same table over both registry adapters, which are in package `main`: only `deleting` and `deleted` are refused. In the adapter test, a `default` row in `deleting` is refused, a missing `default` row is admitted, and a store error makes both adapters return an error, for `default` and for another tenant; the `default` store-error case is the one that discriminates item 3 from today's shortcut.
+- **T1.13 (tier 1).** A `TENANT_NOT_FOUND` rejection emitted through `admin.NewAuditLogSink` is appended under the platform tenant with `target_tenant_id` as a top-level payload key; that top-level read is the assertion that discriminates item 4, and `TENANT_CLAIM_INVALID_FORMAT` keeps its placement. Retarget any test that asserts a `TENANT_NOT_FOUND` row on the inferred tenant's chain.
 - **T2.8 (tier 2).** The pgstore `IsRegistered` agrees with `Registered()` for every state.
 - **T1.18 (tier 1).** With the single-tenant setting, `DELETE` and force-delete of `default` return `409 INVALID_STATE_TRANSITION` and leave the row `active`. With the multi-tenant setting, both start the lifecycle; that case is the one that discriminates. A row in `cmd/lenny-gateway/release_wiring_test.go` pins the `WithMultiTenant(*multiTenant)` call in `buildAdminRouter`.
+- **T1.19 (tier 1).** Under a non-default `--tenant-id-claim`, through the `token_signing.go` verifier composition and `authmw.Wrap`, the following hold. A Token Service `user_bearer` resolves from `tenant_id` and is not refused with `TENANT_CLAIM_MISSING`. An embedded-key token whose `tenant_id` differs from the configured claim resolves from the configured claim. An embedded-key token that carries `tenant_id` but lacks the configured claim is refused with `TENANT_CLAIM_MISSING`, and that is the assertion that discriminates item 6's fail-closed rule. Retarget `TestBearerHonoursConfigurableTenantClaim` to the wrapper.
 
 ### Tests that land with CODE-7
 
@@ -251,21 +259,22 @@ Tests are stated as intents. Each intent is pinned by at least one test at each 
 ### Tests that land with CODE-8
 
 - **T1.15 (tier 1).** `pausePhase` in `pkg/controller/tenantdeletion/controller_test.go`: a Phase 3 or Phase 4 action error keeps the job in phase with `BlockedReason` set and neither `Phase` nor `State` changed, and the next pass that succeeds advances and clears it. A nil `Revoker` or nil `Eraser` fails the job.
-- **T1.16 (tier 1).** `tenantCredentialRevoker` commits `deleting` before any other call, calls the lease step over every listed session, terminal ones included, then both `TokenStore` deletes, and returns a listing or delete error. A second run is idempotent.
+- **T1.16 (tier 1).** `tenantCredentialRevoker` commits `deleting` before any other call, lists with `ListFilter{Primary: true}`, calls the lease step over every listed session, terminal ones included, then both `TokenStore` deletes, and returns a listing or delete error. A second run is idempotent.
 
 ### Tests that land with CODE-9
 
-- **T1.17 (tiers 1 and 3).** A full_revoke matrix over session states (each non-terminal state and each terminal state), a per-session cancel error, a commit-then-error write whose re-read finds `cancelled` and one whose re-read fails, a client disconnect mid-call, a session created just before the call and visible only on the primary, an elicitation dismissal error, and a listing error. Each case asserts the counts, `failedSessions`, `elicitationDismissalError`, the status code, the audit event, and that the tokens are revoked. The tier-3 half pins the response body fields.
+- **T1.17 (tiers 1 and 3).** A full_revoke matrix over session states (each non-terminal state and each terminal state), a per-session cancel error, a commit-then-error write whose re-read finds `cancelled` and one whose re-read fails, a client disconnect mid-call, a session created just before the call and visible only on the primary, an elicitation dismissal error, and a listing error. Each case asserts the counts, `failedSessions`, `elicitationDismissalError`, the status code, the audit event, and that the tokens are revoked. The re-read-finds-`cancelled` case also asserts one `AfterRevokeWrite` call carrying the re-read row, and the re-read-fails case asserts none; that is the assertion that discriminates CODE-9 item 3. The tier-3 half pins the response body fields.
+- Extend `tests/tier4_integration/full_revoke_two_replica_test.go` with a case that cancels the request context after `users.Update` commits; the test's existing end-state assertions hold. The Postgres session store fails a write on a cancelled context and the tier-1 memory stores do not, so this case is the one that discriminates CODE-9 item 1.
 - Update `users_invalidate_fanout_test.go` and `users_revoke_hook_test.go` for the primary listing, terminal-session lease return, and `failedSessions`.
 
 ### TEST-1 · Cross-cutting lifecycle scenarios
 
-These scenarios exercise the deliverables together and land after the code steps. TEST-1 closes the MinIO half of T-4.5.4 (with T2.4) and extends T-12.8.9 with Phases 3 and 4 against real backends. T-12.1.3 and T-12.8.4 are already covered by `tests/tier4_integration/erasure_job_test.go` and `tests/tier9_security/erasure_isolation_test.go`, and REC-1 records them as closed by those files.
+These scenarios exercise the deliverables together and land after the code steps. TEST-1 closes the MinIO half of T-4.5.4 (with T2.4) and extends T-12.8.9 with Phases 3 and 4 against real backends. T-12.1.3 and T-12.8.4 are already covered by `tests/tier4_integration/erasure_job_test.go` and `tests/tier9_security/erasure_isolation_test.go`, and REC-1 item 10 records all four entries.
 
-- **Harness.** Extend `tests/testinfra/lifecyclefence`. `Deletion` gains `ThroughPhase4`, which wires `tenantCredentialRevoker` and `buildTenantErasers` over the World's stores in place of `noopEraser`. `World.Check` gains the residue invariant: no `acme` or `alice` row, key, or object remains outside the `gdpr.%` rows, the receipts, the tombstone, and the escrow, and `bob` and `globex` are unchanged.
-- **X1 (tier 4).** Extend `tenant_deletion_phase4_test.go` with the residue check after Phase 6. A Lenny-issued bearer and a playground bearer, and an OIDC bearer where the tier-4 gateway harness issues one, are refused from Phase 3 and through a Phase 3.5 pause on a peer replica, and a refused bearer after the audit eraser leaves no non-`gdpr.%` row for `acme`. Keep the full_revoke disconnect case.
+- **Harness.** Extend `tests/testinfra/lifecyclefence`. `Deletion` gains `ThroughPhase4` and a takeover that rebuilds the job at Phase 3, as `ensureJob` does for a `deleting` tenant. Its Phase 3 revoker and Phase 4 eraser list are harness seams that follow `tenantCredentialRevoker` and the **Store table**, as its Phase 1 and Phase 2 seams follow cmd/lenny-gateway's, because package `main` cannot be imported; X1 and the cmd/lenny-gateway tier-1 tests pin the production builders. `World.Check` gains the residue invariant: no `acme` or `alice` row, key, or object remains outside the `gdpr.%` rows, the receipts, the tombstone, the escrow, and the audit rows on the platform chain, and `bob` and `globex` are unchanged.
+- **X1 (tier 4).** Extend `tenant_deletion_phase4_test.go` with the residue check after Phase 6. A Lenny-issued bearer and a playground bearer, and an OIDC bearer where the tier-4 gateway harness issues one, are refused from Phase 3 and through a Phase 3.5 pause on a peer replica, and a refused bearer after the audit eraser leaves no non-`gdpr.%` row for `acme`.
 - **X2 (tier 7a).** Add Phase 3, Phase 4, and full_revoke continuation operations to the lifecyclefence randomized interleavings under `-race`, against concurrent terminal writes and lease renewals.
-- **X3 (tier 8).** Extend the `TestDeletionPhase2FaultsAndTakeover` pattern in `lifecycle_drain_fault_test.go` to faults at each Phase 3 step and each Phase 4 entry, a crash between entries, and a takeover resuming at Phase 3 and at Phase 4. Each case asserts the job pauses in phase and the next pass completes with the residue invariant holding.
+- **X3 (tier 8).** Extend the `TestDeletionPhase2FaultsAndTakeover` pattern in `lifecycle_drain_fault_test.go` to faults at each Phase 3 step and each Phase 4 entry, a crash between entries, and a takeover after a Phase 3 step and after a Phase 4 entry. Each case asserts the job pauses in phase and the next pass completes with the residue invariant holding.
 - **X4 (tier 9).** Cross-tenant isolation for every new tenant entry, `forEachTenantSession`, the sticky `ScanDelete`, the stream purge, and the registry refusal: an `acme` deletion never touches a `globex` row, key, object, or bearer.
 - **X5 (tier 11).** DOCS-1 consistency checks.
 
@@ -275,35 +284,40 @@ These scenarios exercise the deliverables together and land after the code steps
 2. **The access-token cache flush is unwired.** The cache has no production writer, so §12.8 Phase 3 and user-path step 3 flush nothing. The tier-0 guard of CODE-1 item 6 fails when a writer appears.
 3. **F-12.8.35.** Without Postgres, the preStop barrier's private in-memory checkpoint metadata store is erased by no eraser. Its contents are lost at process restart.
 4. **A paused Phase 4 reruns every entry.** The rerun happens every `--tenant-deletion-interval` with no backoff, as Phase 2 does. Counts from a failed attempt are not merged, so the receipt can show 0 for a store an earlier attempt emptied.
-5. **An exempt tenant's billing stream after the tombstone.** Staged events flush while the tenant's flusher runs, and the flusher stops at the tombstone, so events still staged then stay in the stream. A peer replica whose `known` cache still holds the tenant can also recreate a stream with no consumer group by publishing after a purge, which the Phase 2 drain makes improbable.
+5. **A billing stream after the tombstone.** Staged events flush while the tenant's flusher runs, and the flusher stops at the tombstone, so events still staged then stay in the stream. After a purge, a replica whose flusher starts before the tombstone recreates an empty stream and its group, and a publish on any replica recreates a stream with no group, which the Phase 2 drain makes improbable.
 6. **User erasure deletes revoked registered credentials.** The §4.9 startup deny-list rebuild reads revoked `credentials` rows, so a lease still live on an unreleased remote binding (F-12.8.43) loses its user-shaped deny entry after a replica restart. The bound is the lease TTL, or `claimOrphanTimeout` plus one GC sweep.
-7. **A replica crash during full_revoke** stops its remaining effects. Each effect is idempotent, and the operator repeats the call.
 
 ## Files touched on application (non-spec)
 
+- `charts/lenny/values.yaml` (comment)
 - `cmd/lenny-gateway/adminrouter.go`
 - `cmd/lenny-gateway/auth_seams.go`
 - `cmd/lenny-gateway/billing_pipeline.go`
 - `cmd/lenny-gateway/credential_revocation.go`
+- `cmd/lenny-gateway/httpsurface.go`
 - `cmd/lenny-gateway/leader_sweeps.go` (comment)
 - `cmd/lenny-gateway/legalholdescrow.go`
 - `cmd/lenny-gateway/playground_seams.go`
 - `cmd/lenny-gateway/tenant_erasers.go`
 - `cmd/lenny-gateway/tenantdeletion.go`
+- `cmd/lenny-gateway/token_signing.go`
 - `cmd/lenny-gateway/user_revocation.go`
 - `cmd/lenny-gateway/worker_seams.go`
 - `migrations/0188_audit_redaction_receipts_drop_fk.up.sql` and `.down.sql`
+- `pkg/auth/jwt/` (new tenant-claim wrapper)
+- `pkg/blobstore/artifactcatalog/catalog.go` and `pkg/blobstore/cataloging/cataloging_test.go`
 - `pkg/controller/tenantdeletion/controller.go`
 - `pkg/gateway/audit/auditstore/auditstore.go` (comments)
 - `pkg/gateway/billing/billingstore/failover/failover.go`, `memstream.go`, and `redisstream/redisstream.go`
 - `pkg/gateway/credentials/leaserevoke/leaserevoke.go`
 - `pkg/gateway/environment/tenantstore/tenantstore.go` and `pgstore/pgstore.go`
 - `pkg/gateway/experiment/experimentsticky/experimentsticky.go`
-- `pkg/gateway/externalapi/admin/forcedelete.go`, `tenants.go`, and `users.go`
+- `pkg/gateway/externalapi/admin/audit_sink.go`, `forcedelete.go`, `tenants.go`, and `users.go`
+- `pkg/gateway/middleware/auth/auth.go`
 - `pkg/gateway/storage/erasure/erasure.go` and `order.go`
 - `pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go`
 - `pkg/gateway/storage/leasestore/leasestore.go` and `pgstore/pgstore.go` (comments)
-- `pkg/legalholdescrow/escrow.go`, `migrator.go`, and `records.go` (comments)
+- `pkg/legalholdescrow/migrator.go`, and `escrow.go` and `records.go` (comments)
 - `docs/operator-guide/multi-tenancy.md` and `docs/operator-guide/lenny-ctl.md`
-- `BUILD-GAPS.md`, `scripts/seed-claim-register.py`, `tests/claim-map.json`, and `gateway-runtime-comms-remediation.md`
+- `BUILD-GAPS.md`, `TEST-GAPS.md`, `scripts/seed-claim-register.py`, `tests/claim-map.json`, and `gateway-runtime-comms-remediation.md`
 - The tests named under **Testing**
