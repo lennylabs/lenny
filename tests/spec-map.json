@@ -3031,7 +3031,8 @@
         "tests/tier4_integration/gateway_require_auth_test.go::TestProductionGatewayRefusesUnauthenticatedTenantHeader",
         "tests/tier4_integration/gateway_require_auth_test.go::TestProductionGatewayKeepsPublicRoutesPublic",
         "tests/tier4_integration/gateway_require_auth_test.go::TestDevGatewayHonoursTenantHeader",
-        "tests/tier9_security/unauthenticated_tenant_access_test.go::TestUnauthenticatedRequestCannotNameRegisteredTenant"
+        "tests/tier9_security/unauthenticated_tenant_access_test.go::TestUnauthenticatedRequestCannotNameRegisteredTenant",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/auth"
@@ -3408,7 +3409,8 @@
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceClassifiesByDelegationDepth_spec_12_8",
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceRefusesEachMarker_spec_12_8",
         "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceRefusesInTransaction_spec_12_8",
-        "pkg/gateway/mcpfabric/delegation/reservation_test.go::TestDelegateSoftDisabledOwnerKeepsDelegating_spec_11_4"
+        "pkg/gateway/mcpfabric/delegation/reservation_test.go::TestDelegateSoftDisabledOwnerKeepsDelegating_spec_11_4",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3914,7 +3916,8 @@
         "tests/testinfra/kind/deployflag_test.go::TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout",
         "tests/testinfra/sessiondriver/createandstart_internal_test.go::TestCreateAndStartSendsTheOwnerUserID",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
-        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -5295,7 +5298,8 @@
         "pkg/gateway/externalapi/admin/bootstrap_tenant_lifecycle_internal_test.go::TestUpsertTenantsRefusesDeletingAndDeletedTenants_spec_17_6",
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
-        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
       ],
       "packages": [
         "charts/lenny",

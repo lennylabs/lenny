@@ -51,7 +51,7 @@ To run a multi-tenant deployment:
      tenantIdClaim: "tenant_id"    # OIDC claim name (default)
    ```
    The two values must agree. `helm install` refuses to render a chart where `tenancy.mode: multi` and `auth.multiTenant: true` are not set together, and the gateway refuses to start with a contradictory pair.
-2. Create a tenant record for each tenant through the admin API or the bootstrap seed. The gateway refuses a token whose tenant claim names a tenant with no active record with `403 TENANT_NOT_FOUND`.
+2. Create a tenant record for each tenant through the admin API or the bootstrap seed. The gateway refuses a token whose tenant claim names a tenant that has no record or whose record is in the `deleting` or `deleted` state with `403 TENANT_NOT_FOUND`.
 
 ### Pod Tenant Pinning and Reuse
 
@@ -337,15 +337,15 @@ active → disabling → deleting → deleted
 |---|---|---|
 | 1. Soft-disable | `disabling` | New session creation blocked; existing sessions continue |
 | 2. Drain active sessions | `disabling` | Force-terminate every active session in the tenant. The phase completes when no active session remains. When a session cannot be terminated, the phase stays incomplete and the controller retries it on its next pass. |
-| 3. Credential revocation | `deleting` | Revoke all active credential leases via `CredentialPoolStore.RevokeByTenant`; delete stored OAuth/refresh tokens via `TokenStore.DeleteByTenant`; flush tenant-scoped Redis cache entries |
-| 4. Data deletion | `deleting` | Execute `DeleteByTenant` on every store in dependency order: sessions, artifacts, checkpoints, memories, audit logs, billing events (respecting `billingErasurePolicy` and legal holds) |
+| 3. Credential revocation | `deleting` | From this phase a multi-tenant gateway rejects every bearer token of the tenant with `403 TENANT_NOT_FOUND`. The tenant's connector tokens and registered credentials are deleted, and the credential leases its sessions still hold are returned. When an action fails, the job stays in this phase and the controller runs the phase again on its next pass. |
+| 4. Data deletion | `deleting` | Delete the tenant's data from every store in dependency order: caches and artifacts, then session-scoped stores, audit and billing events, sessions, tokens and credentials, and finally the tenant's access rows, roles, and configuration. A tenant whose `billingErasurePolicy` is `exempt` keeps its billing events until `billing.retentionDays` ages them out; otherwise its billing events are deleted. Active legal holds block this phase, and [Legal Holds](#legal-holds) describes the force-delete behavior. When an action fails, the job stays in this phase and the controller runs the phase again on its next pass. |
 | 4a. KMS key scheduling | `deleting` | **T4 tenants only.** Schedule tenant-specific KMS keys for deletion after provider-minimum retention period (AWS: 7 days, GCP: 24h, Vault: immediate). Key is disabled first to block new encrypt/decrypt calls. |
 | 5. CRD cleanup | `deleting` | Remove tenant-specific Kubernetes resources: `SandboxClaim` instances, pool annotations, NetworkPolicy labels |
 | 6. Produce deletion receipt | `deleted` | Write cryptographic erasure receipt to the audit trail recording each phase's completion timestamp, any errors, which sinks were notified, and the final `deleted` state |
 
 > **Legal holds block Phase 4.** Before entering Phase 4, the controller checks for active legal holds on any session or artifact belonging to the tenant. If holds exist, the controller pauses at Phase 3 and emits an `admin.tenant.deletion_blocked` audit event. An operator must explicitly clear the holds or exempt the deletion via `force-delete` before the controller proceeds.
 
-The tenant record itself is retained after Phase 6 with `state = 'deleted'` and all mutable fields nulled. This tombstone prevents tenant ID reuse and allows `GET /v1/admin/tenants/{id}` to return a `410 Gone` response.
+The tenant record itself is retained after Phase 6 with `state = 'deleted'`. Every mutable field is nulled except the fields that a resumed phase or a reader of the tombstone still needs, such as the billing erasure policy, the workspace tier, and the data residency region. This tombstone prevents tenant ID reuse and allows `GET /v1/admin/tenants/{id}` to return a `410 Gone` response.
 
 ```bash
 # Initiate tenant deletion
@@ -357,6 +357,16 @@ lenny-ctl admin tenants get acme
 # Force-delete with legal hold override
 lenny-ctl admin tenants force-delete acme --justification "Legal hold expired"
 ```
+
+#### Deleting the default tenant
+
+In a multi-tenant deployment, the built-in `default` tenant is deleted like any other tenant. The initial `platform-admin` user `lenny-admin` belongs to the tenant that `gateway.adminToken.tenant` names (the gateway's `--admin-token-tenant`, `default` unless set). When that tenant is deleted, the gateway refuses the user's admin token from Phase 3 onward. Before deleting `default`, take the following steps:
+
+1. Keep a working `platform-admin` credential. Set `gateway.adminToken.tenant` to another tenant, upgrade the release, and rotate the initial admin token as [Initial Admin Credential](installation.md#initial-admin-credential) describes. The token already in the `lenny-admin-token` Secret keeps its `default` scope until it is rotated. Alternatively, provision another human `platform-admin` in a different tenant.
+2. Remove the `default` entry from the bootstrap seed's `tenants` list. The seed reports an entry that names a deleting or deleted tenant as an error on every upgrade.
+3. Remove every other seed entry whose `tenantId` is `default`, such as an enabled `bootstrap.defaultGithubVcsPool`.
+
+A single-tenant deployment refuses a request to delete or force-delete `default` with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`.
 
 ### Alerts
 
@@ -412,7 +422,7 @@ Sessions and artifacts support a `legal_hold` boolean flag. When set:
 
 - Artifact retention policy is suspended -- artifacts are not deleted by the GC job regardless of TTL
 - Checkpoint rotation is suspended for held sessions
-- The legal hold reconciler prevents deletion of held resources during tenant deletion (Phase 4 is blocked)
+- An active hold blocks Phase 4 of tenant deletion. When an operator force-deletes the tenant with the hold override, the held evidence is copied to the legal-hold escrow bucket before Phase 4 deletes the originals. The escrow copy is retained until the hold is released.
 
 ### Managing Legal Holds
 
@@ -427,7 +437,7 @@ lenny-ctl admin legal-holds clear --resource-type session --resource-id <session
 lenny-ctl admin legal-holds list --tenant-id <tenant-id>
 ```
 
-Both `platform-admin` and `tenant-admin` roles can manage legal holds. `tenant-admin` callers are automatically scoped to their own tenant. All compliance operations (hold set/cleared, erasure requested/completed) are logged in the audit trail with the requesting admin's identity.
+Both `platform-admin` and `tenant-admin` roles can manage legal holds. `tenant-admin` callers are automatically scoped to their own tenant. A tenant-admin of a tenant in the `deleting` state cannot call the API. A platform-admin releases its holds or force-deletes it. All compliance operations (hold set/cleared, erasure requested/completed) are logged in the audit trail with the requesting admin's identity.
 
 ---
 
