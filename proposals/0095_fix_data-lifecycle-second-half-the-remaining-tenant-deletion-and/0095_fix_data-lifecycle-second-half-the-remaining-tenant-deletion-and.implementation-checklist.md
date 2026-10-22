@@ -22,7 +22,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
       Tiers 0, 1, 2. Depends on: S5
 - [ ] **S9 · code** — CODE-5. Lands the Phase 3.5 escrow changes.
       Tiers 0, 1, 2. Depends on: S5, S6
-- [ ] **S10 · code** — CODE-1, CODE-3, CODE-4. Lands the rank table and completeness check with the wiring of both paths, and closes F-12.8.37.
+- [ ] **S10 · code** — CODE-1, CODE-3, and CODE-4. Lands the rank table and completeness check with the wiring of both paths, and closes F-12.8.37.
       Tiers 0, 1, 2, 4, 9, 11. Depends on: S5, S7, S8, S9
 - [ ] **S11 · code** — CODE-6. Lands the registration predicate, the auth-failure chain, the bearer-path claim selection, the default-tenant deletion guard on `TenancyMode`, the bootstrap seed refusal (item 8, T1.24), the `platform` reservation, and their tests.
       Tiers 0, 1, 2, 9. Depends on: S2, S4

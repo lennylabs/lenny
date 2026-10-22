@@ -107,7 +107,9 @@
 
 ## Open decisions for human to make
 
-None. The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26).
+The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26). One decision remains open.
+
+- **OD-6. Should this proposal file the unrevoked predecessor admin token as a New defect?** DOCS-1 item 6 tells an operator who deletes `default` in a multi-tenant deployment to set `gateway.adminToken.tenant` (the gateway's `--admin-token-tenant`) to another tenant, upgrade, and rotate the initial admin token. Changing the setting never re-mints the token already in the `lenny-admin-token` Secret. The rotation creates `lenny-admin` under the new tenant and mints a new token, but its revocation of the old `default`-scoped token is a silent no-op: the revoke matches on both the token ID and the tenant, finds no row under the new tenant, and treats the miss as success. The old token therefore stays valid until Phase 3 of the `default` deletion refuses it or until it expires. This contradicts the §17.6 rotation procedure, which durably revokes the prior token, although the `default` deletion bounds it in this procedure. The options the review log names are to file it under **Defects in the shipped tree that this proposal does not stage** (through REC-1) with a direct fix as the owner, or to leave it unfiled. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one. (review log, non-spec.7.fix-design-G2.1)
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -145,7 +147,7 @@ Entries marked **New** are filed by REC-1 with the owner they name.
 ## Deliverable index
 
 - SPEC-1 — `spec/12_storage-architecture.md` — the §12.8 `RedactionReceipt` `audit_event_id` bullet and grant paragraph without the foreign key.
-- SPEC-2 — `spec/12_storage-architecture.md` and `spec/17_deployment-topology.md` — the §12.8 tenant deletion `default` rules and Phase 3 row, and the §17.6 seed refusal row.
+- SPEC-2 — `spec/12_storage-architecture.md` and `spec/17_deployment-topology.md` — the §12.8 tenant deletion `default` rules and Phase 3 row, and the §17.6 seed refusal row and item 3 **Idempotent** bullet.
 - SPEC-3 — `spec/10_gateway-internals.md`, `spec/27_web-playground.md`, and `spec/04_system-components.md` — the §10.2 extraction scope, not-registered rule, and `platform` reservation, the §27.3.1 `TENANT_NOT_FOUND` condition, and the §4.2 pointer.
 - SPEC-4 — `spec/11_policy-and-controls.md` — the §11.4 full_revoke steps 1, 2, and 6 and the Note.
 - SPEC-5 — `spec/12_storage-architecture.md` and `spec/13_security-model.md` — the §12.8 `TokenStore` and `TokenIssuanceStore` scope rows, step 18, the Phase 4 row, and the §13.3 issued-token retention rule.
@@ -153,7 +155,7 @@ Entries marked **New** are filed by REC-1 with the owner they name.
 - MIG-1 — `migrations/0188_audit_redaction_receipts_drop_fk.*.sql`, `migrations/audit_redaction_receipts_test.go`, and comments in `cmd/lenny-gateway/leader_sweeps.go` and `pkg/gateway/audit/auditstore/auditstore.go` — the dropped receipt foreign key.
 - CODE-1 — `pkg/gateway/storage/erasure/`, `cmd/lenny-gateway/tenantdeletion.go`, and `tests/tier0_static/erasure_exemption_guard_test.go` — the rank table, exemption maps, completeness check, nil-function skip, and exemption guard.
 - CODE-2 — `pkg/gateway/experiment/experimentsticky/` and `pkg/gateway/billing/billingstore/failover/` — the tenant-scope sticky delete and stream purge.
-- CODE-3 — `cmd/lenny-gateway/tenant_erasers.go`, `adminrouter.go`, `billing_pipeline.go`, `worker_seams.go`, `pkg/blobstore/artifactcatalog/catalog.go`, `pkg/blobstore/cataloging/cataloging_test.go`, and `BUILD-GAPS.md` — the tenant-path Phase 4 wiring and the F-12.8.37 closure.
+- CODE-3 — `cmd/lenny-gateway/tenant_erasers.go`, `adminrouter.go`, `billing_pipeline.go`, `worker_seams.go`, and `billing_security_workers.go`, `pkg/blobstore/artifactcatalog/catalog.go`, `pkg/blobstore/cataloging/cataloging_test.go`, and `BUILD-GAPS.md` — the tenant-path Phase 4 wiring, the tenant listers after the tombstone, and the F-12.8.37 closure.
 - CODE-4 — `cmd/lenny-gateway/adminrouter.go`, `billing_security_workers.go`, and `flags.go`, `pkg/gateway/storage/leasestore/`, and `pkg/gateway/storage/issuedtokenstore/` — the user-path wiring, the issued-token deletes under the §13.3 retention rule (SPEC-5 Edit 5d), and the issued-token GC.
 - CODE-5 — `cmd/lenny-gateway/legalholdescrow.go`, `adminrouter.go`, and `pkg/legalholdescrow/` — Phase 3.5 escrow.
 - CODE-6 — `pkg/gateway/environment/tenantstore/`, `pkg/auth/jwt/`, `pkg/gateway/middleware/auth/`, `cmd/lenny-gateway/auth_seams.go`, `playground_seams.go`, `token_signing.go`, `httpsurface.go`, `pkg/gateway/externalapi/admin/`, and `charts/lenny/values.yaml` — the tenant registration predicate, the bearer-path claim selection, the auth-failure chain, the single-tenant `default` deletion guard, the bootstrap seed refusal, and the `platform` reservation.
