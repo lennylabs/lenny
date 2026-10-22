@@ -62,7 +62,7 @@ func createAndStartRequestAs(t *testing.T, h http.Handler, body sessionserver.Cr
 // spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
-		sessionserver.Options{MaxConcurrentSessionsPerRuntime: 2},
+		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 2},
 		runningRows("acme", "alice", "claude-code", 2))
 	rr := createAndStartRequest(t, srv.Handler(),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
@@ -79,7 +79,7 @@ func TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T
 // authenticated principal's subject. spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
-		sessionserver.Options{MaxConcurrentSessionsPerUser: 2},
+		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerUser: 2},
 		runningRows("acme", "alice@acme.com", "claude-code", 2))
 	rr := createAndStartRequestAs(t, srv.Handler(),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code", UserID: "alice@acme.com"},
@@ -98,6 +98,7 @@ func TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 // spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1(t *testing.T) {
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       2,
 	})
@@ -170,6 +171,7 @@ func TestSessionStartConcurrencyGateRunsBeforeRateGate_spec_11_1(t *testing.T) {
 		}
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:                 true,
 		Clock:                           func() time.Time { return time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC) },
 		MaxConcurrentSessionsPerRuntime: 1,
 		AdmissionRateLimitCounter:       spy,

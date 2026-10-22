@@ -90,6 +90,7 @@ type elicitReplica struct {
 func newElicitReplica(sessions sessionstore.Store, inter interactionstore.Store, idFn func() string) elicitReplica {
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              sessions,
 		Interactions:       inter,
 		ElicitationTimeout: elicitXReplicaTimeout,

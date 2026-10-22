@@ -178,6 +178,7 @@ func (s *Scenario) Setup(ctx context.Context) error {
 	// counter; the limit is set well above the load so the gate would admit,
 	// not deny, if reached. The concurrency cap is the only gate that denies.
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:                 true,
 		IDFunc:                          func() string { return "sess-singleshot-ordering" },
 		DefaultIsolationProfile:         isolation.ProfileSandboxed,
 		MaxConcurrentSessionsPerRuntime: 1,

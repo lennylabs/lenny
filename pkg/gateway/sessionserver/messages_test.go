@@ -32,8 +32,9 @@ func newMessagesServer(t *testing.T) (*sessionserver.Server, sessionstore.Store)
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	return srv, store
 }
@@ -186,7 +187,7 @@ func TestMessagesRejectsMissingSession(t *testing.T) {
 func TestMessagesRejectsWhenExecutorUnwired(t *testing.T) {
 	store := memstore.New()
 	seedRunningSession(t, store, "sess_no_exec")
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	rr := sendMessageRequest(t, srv.Handler(), "sess_no_exec", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
@@ -249,9 +250,10 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 		Name: "oneshot", Type: runtimestore.TypeAgent,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -291,6 +293,7 @@ func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
 		runtimestore.CapabilityOverride{InjectionSupported: &off})
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Executor:            executor.NewEchoExecutor(),
 		Transcripts:         transcriptstore.NewMemory(),
 		Runtimes:            runtimes,
@@ -336,9 +339,10 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 		},
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -372,9 +376,10 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 		Name: "chatty-derived", Type: runtimestore.TypeAgent, BaseRuntime: "chatty-base",
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -504,6 +509,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 	runtimes := transientRuntimeStore{Store: seedInjectionRuntime(t), err: errors.New("registry pg read timeout")}
 	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Executor:                   executor.NewEchoExecutor(),
 		Transcripts:                transcriptstore.NewMemory(),
 		Runtimes:                   runtimes,
@@ -535,6 +541,7 @@ func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t
 	}
 	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Executor:                   executor.NewEchoExecutor(),
 		Transcripts:                transcriptstore.NewMemory(),
 		Runtimes:                   seedInjectionRuntime(t),
@@ -562,9 +569,10 @@ func TestMessagesInjectionNotFoundDegradesOpen_spec_5_1(t *testing.T) {
 	// The registry is wired but has no entry for the session's RuntimeRef,
 	// so Resolve returns ErrNotFound: the gate degrades open.
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimestore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimestore.NewMemory(),
 	})
 	seedInjectionSession(t, store, "s1", "acme")
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
@@ -702,9 +710,10 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		InputWaits:  reg,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		InputWaits:      reg,
 	})
 	seedRunningSession(t, store, "sess_rr")
 	ch, err := reg.Register("sess_rr", "req_alpha", nil)
@@ -747,9 +756,10 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		InputWaits:  reg,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		InputWaits:      reg,
 	})
 	seedRunningSession(t, store, "sess_fall")
 
@@ -914,9 +924,10 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		return func() time.Time { return now }
 	}()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Clock:       clock,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Clock:           clock,
 	})
 	seedRunningSession(t, store, "sess_expired")
 	_ = sendMessageRequest(t, srv.Handler(), "sess_expired", sessionserver.MessageRequest{
@@ -952,9 +963,10 @@ func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Tenants:     tenants,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Tenants:         tenants,
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_susp", sessionserver.MessageRequest{
@@ -978,9 +990,10 @@ func TestMessages_ActiveTenantAdmitted_spec_15_1_818(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Tenants:     tenants,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Tenants:         tenants,
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ok", sessionserver.MessageRequest{

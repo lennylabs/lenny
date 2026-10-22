@@ -26,7 +26,7 @@ import (
 func newTestServer(t *testing.T, reg cbmw.Registry) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	wrapped := cbmw.Wrap(srv.Handler(), reg, cbmw.Options{})
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)

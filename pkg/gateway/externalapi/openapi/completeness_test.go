@@ -475,7 +475,7 @@ func registeredRouteTemplates(t *testing.T) []string {
 	// an otherwise-zero Options registers the full session route table. This
 	// enumerates the non-admin session routes live the same way the admin and
 	// credential muxes are walked, rather than from a hand-maintained list.
-	sess := sessionserver.New(memstore.New(), sessionserver.Options{Clock: clock})
+	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Clock: clock})
 
 	var out []string
 	out = append(out, walkServeMux(t, router.Handler())...)

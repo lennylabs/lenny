@@ -122,7 +122,7 @@ func TestSuspendedBacklogRecheckRegistration_spec_7_2(t *testing.T) {
 		w.f = &gatewayFlags{suspendedBacklogRecheckSeconds: &recheck}
 		w.podBinder = &podsession.Binder{}
 		w.messagingCoord = &sessioninbox.Coordinator{}
-		w.sessionSrv = sessionserver.New(memstore.New(), sessionserver.Options{})
+		w.sessionSrv = sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 		w.sessions = memstore.New()
 		return w
 	}

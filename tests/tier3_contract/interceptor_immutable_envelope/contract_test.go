@@ -84,7 +84,7 @@ func serveCreateStart(t *testing.T, ic interceptor.Interceptor) (int, map[string
 	if err := chain.Register(interceptor.PhasePreRoute, ic); err != nil {
 		t.Fatalf("register interceptor: %v", err)
 	}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Interceptors: chain})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interceptors: chain})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

@@ -69,6 +69,7 @@ func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Sto
 		timeout = 5 * time.Second
 	}
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:           true,
 		Store:                       store,
 		Interactions:                interactions,
 		ElicitationTimeout:          timeout,
@@ -339,6 +340,7 @@ func newMCPForProvenance(t *testing.T) (*mcp.Server, sessionstore.Store, interac
 	bus := sessionevents.NewBus(16)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
 		Events:             bus,

@@ -50,13 +50,14 @@ func newParitySurface(t *testing.T, st session.State) *paritySurface {
 		t.Fatalf("seed: %v", err)
 	}
 	exec := executor.NewEchoExecutor()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	t.Cleanup(srv.Close)
 	rest := httptest.NewServer(srv.Handler())
 	t.Cleanup(rest.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store: store, SessionService: srv, Delivery: srv, Executor: exec,
+		DevTenantFallback: true,
+		Store:             store, SessionService: srv, Delivery: srv, Executor: exec,
 		Clock: func() time.Time { return now }, TenantID: "acme",
 	})
 	m := httptest.NewServer(mcpSrv.Handler())

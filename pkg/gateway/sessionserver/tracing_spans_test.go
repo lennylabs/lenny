@@ -58,6 +58,7 @@ func TestCreateStartsSessionCreateSpan_spec_16_3(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_span_ok" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -87,6 +88,7 @@ func TestCreateSpanRecordsPersistError_spec_16_3(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test")})
 	srv := sessionserver.New(&createRejectingStore{Store: memstore.New()}, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_span_fail" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -147,8 +149,9 @@ func TestMessagesSpanRecordsExecutorError_spec_16_3(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    erroringExecutor{},
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        erroringExecutor{},
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	seedRunningSession(t, store, "sess_prompt_fail")
 

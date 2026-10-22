@@ -98,7 +98,8 @@ func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *s
 	})
 	t.Cleanup(func() { g.exec.EvictStream(id) })
 	srv := sessionserver.New(g.store, sessionserver.Options{
-		Executor: g.exec, PodRegistry: g.registry, Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        g.exec, PodRegistry: g.registry, Transcripts: transcriptstore.NewMemory(),
 	})
 	g.exec.SetStreamFailureHandler(func(tenantID, sessionID, sandboxName string, cause error) {
 		g.reports.Add(1)

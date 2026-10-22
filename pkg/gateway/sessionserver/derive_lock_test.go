@@ -36,8 +36,9 @@ func TestDerive_ContendedLockReturns429_spec_7_1_92(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:     func() string { return "sess_d" },
-		DeriveLock: &fakeLock{contended: true},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_d" },
+		DeriveLock:      &fakeLock{contended: true},
 	})
 
 	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
@@ -60,8 +61,9 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:     func() string { return "sess_d" },
-		DeriveLock: derivelock.NewMemory(time.Second),
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_d" },
+		DeriveLock:      derivelock.NewMemory(time.Second),
 	})
 
 	// First derive succeeds; sess_source is one-shot, so the second
@@ -74,8 +76,9 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	// A second derive against the same source must acquire (the lock
 	// was released after the first), not contend.
 	srv2 := sessionserver.New(store, sessionserver.Options{
-		IDFunc:     func() string { return "sess_d2" },
-		DeriveLock: derivelock.NewMemory(50 * time.Millisecond),
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_d2" },
+		DeriveLock:      derivelock.NewMemory(50 * time.Millisecond),
 	})
 	rr2 := deriveRequest(t, srv2.Handler(), sessionserver.DeriveRequest{})
 	if rr2.Code != http.StatusCreated {
@@ -97,8 +100,9 @@ func TestDerive_MemoryLockSerializesConcurrentRequests_spec_7_1_92(t *testing.T)
 	counter := &concurrentHoldCounter{inner: lock}
 
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:     func() string { return "sess_d" },
-		DeriveLock: counter,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_d" },
+		DeriveLock:      counter,
 	})
 
 	var wg sync.WaitGroup

@@ -25,7 +25,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	idem := idemmw.NewMemoryStore()
 	wrapped := idemmw.Wrap(srv.Handler(), idem, idemmw.Options{})
 	ts := httptest.NewServer(wrapped)

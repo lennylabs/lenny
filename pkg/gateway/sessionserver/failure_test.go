@@ -24,6 +24,7 @@ func failureTestServer(t *testing.T, caps session.RetryPolicyCaps) (*sessionserv
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 		RetryPolicyCaps:   caps,
@@ -540,6 +541,7 @@ func newReportFixture(t *testing.T) *reportFixture {
 		leases:   newComponentLeaseStore(),
 	}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:        true,
 		RetryPolicyCaps:        session.RetryPolicyCaps{MaxRetries: 2},
 		Executor:               f.exec,
 		PodRegistry:            f.registry,

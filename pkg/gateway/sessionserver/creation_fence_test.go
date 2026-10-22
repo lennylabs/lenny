@@ -190,7 +190,7 @@ func TestCreateStoreRefusalAnswers403_spec_12_8(t *testing.T) {
 			f.store.createErr = &sessionstore.CreationRefusal{
 				Code: "TENANT_SUSPENDED", Message: "suspended", Details: map[string]any{"tenantId": "acme"},
 			}
-			h := sessionserver.New(f.store, sessionserver.Options{}).Handler()
+			h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler()
 			rr := postCreate(t, h, path, "alice@acme.com", "alice@acme.com")
 			if rr.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403; body %s", rr.Code, rr.Body.String())
@@ -212,7 +212,7 @@ func TestCreateStoreRefusalAnswers403_spec_12_8(t *testing.T) {
 func TestCreateStoreNonRefusalErrorStays5xx_spec_12_8(t *testing.T) {
 	f := newFenceFixture(t)
 	f.store.createErr = errors.New("connection reset")
-	h := sessionserver.New(f.store, sessionserver.Options{}).Handler()
+	h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true}).Handler()
 	rr := postCreate(t, h, "/v1/sessions", "alice@acme.com", "alice@acme.com")
 	if rr.Code < 500 {
 		t.Fatalf("status = %d, want 5xx", rr.Code)
@@ -278,7 +278,8 @@ func TestCreationGateMatchesFencePredicate_spec_12_8(t *testing.T) {
 					ref := want.Refusal("acme", "bob@acme.com")
 					rc := &countingRateCounter{}
 					h := sessionserver.New(f.store, sessionserver.Options{
-						Tenants: f.tenants, Users: f.users,
+						DevTenantHeader: true,
+						Tenants:         f.tenants, Users: f.users,
 						AdmissionRateLimitCounter: rc, PerRuntimePerMinute: 1000,
 					}).Handler()
 					rr := postCreate(t, h, path, "alice@acme.com", "bob@acme.com")
@@ -331,7 +332,8 @@ func TestCreationGateReadErrorAnswers500_spec_12_8(t *testing.T) {
 			f := newFenceFixture(t)
 			rc := &countingRateCounter{}
 			h := sessionserver.New(f.store, sessionserver.Options{
-				Tenants: tc.tenants, Users: tc.users,
+				DevTenantHeader: true,
+				Tenants:         tc.tenants, Users: tc.users,
 				AdmissionRateLimitCounter: rc, PerRuntimePerMinute: 1000,
 			}).Handler()
 			// The principal has no subject, so the caller check reads
@@ -392,8 +394,9 @@ func derivedObject() blobstore.URI {
 
 func (f *fenceFixture) deriveServer(blobs blobstore.Store, opts ...func(*sessionserver.Options)) http.Handler {
 	o := sessionserver.Options{
-		IDFunc: func() string { return "sess_derived" },
-		Blobs:  blobs, Users: f.users, Tenants: f.tenants,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_derived" },
+		Blobs:           blobs, Users: f.users, Tenants: f.tenants,
 	}
 	for _, m := range opts {
 		m(&o)
@@ -593,8 +596,9 @@ func TestDeriveCopyFailureUndoesChunksAndManifest_spec_12_8(t *testing.T) {
 			ids := []string{"sess_derived", "ckpt_derived"}
 			var outcomes []string
 			h := sessionserver.New(f.store, sessionserver.Options{
-				IDFunc: func() string { id := ids[0]; ids = append(ids[1:], "x"); return id },
-				Blobs:  rec, Users: f.users, Tenants: f.tenants,
+				DevTenantHeader: true,
+				IDFunc:          func() string { id := ids[0]; ids = append(ids[1:], "x"); return id },
+				Blobs:           rec, Users: f.users, Tenants: f.tenants,
 				CheckpointManifestReader: parentManifest{partialmanifeststore.Record{
 					TenantID: "acme", CheckpointID: "ckpt_parent", SessionID: "sess_source", ChunkCount: 1, ChunkEncoding: enc,
 				}},
@@ -735,7 +739,7 @@ func TestSourceOwnerCheckAdmitsAndFailsClosed_spec_12_8(t *testing.T) {
 	})
 	t.Run("read error answers 500", func(t *testing.T) {
 		f := deriveFixture(t)
-		h := sessionserver.New(f.store, sessionserver.Options{Users: erroringUsers{f.users}, Blobs: f.blobs}).Handler()
+		h := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true, Users: erroringUsers{f.users}, Blobs: f.blobs}).Handler()
 		rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", rr.Code)
@@ -832,8 +836,9 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 		t.Fatalf("seed transcript: %v", err)
 	}
 	h := sessionserver.New(f.store, sessionserver.Options{
-		IDFunc:      func() string { return "sess_replay" },
-		Transcripts: transcripts, Users: f.users, Tenants: f.tenants,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_replay" },
+		Transcripts:     transcripts, Users: f.users, Tenants: f.tenants,
 	}).Handler()
 	return f, transcripts, h
 }

@@ -260,6 +260,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	tenants, runtimes, credPools := eagerCredentialStores(t)
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-eager" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

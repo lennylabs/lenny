@@ -64,7 +64,7 @@ func TestPostTerminalHookDrainsDLQ_spec_7_3_12(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := New(memstore.New(), Options{Messaging: coord, Clock: msgTestClock})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Messaging: coord, Clock: msgTestClock})
 	row := sessionstore.Session{ID: "sess-t", TenantID: "acme", State: session.StateCompleted}
 	srv.emitTerminalLifecycle(ctx, row)
 	if len(em.events) != 0 {
@@ -95,7 +95,7 @@ func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := New(memstore.New(), Options{Messaging: coord, Clock: msgTestClock})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Messaging: coord, Clock: msgTestClock})
 	srv.migrateInboxOnResumePending(ctx, sessionstore.Session{
 		ID: "sess-r", TenantID: "acme", State: session.StateResumePending, PoolRef: "pool-a",
 	})
@@ -111,7 +111,7 @@ func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 // A terminal transition or resume with no messaging coordinator wired must
 // not panic (the dev / no-Redis posture).
 func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
-	srv := New(memstore.New(), Options{Clock: func() time.Time { return time.Unix(0, 0) }})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: func() time.Time { return time.Unix(0, 0) }})
 	srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateCompleted,
 	})

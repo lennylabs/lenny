@@ -28,9 +28,10 @@ func routerServerWithPools(t *testing.T, sessionID string, exps experimentstore.
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Experiments: exps,
-		Pools:       pools,
-		IDFunc:      func() string { return sessionID },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		Pools:           pools,
+		IDFunc:          func() string { return sessionID },
 	})
 	return srv.Handler(), store
 }
@@ -206,6 +207,7 @@ func TestExperimentRouterRejectionReporterReceivesEvent(t *testing.T) {
 	seedPool(t, pools, "cc-v2-pool", isolation.ProfileSandboxed)
 	reporter := &recordingRejectionReporter{}
 	h := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:      true,
 		Experiments:          exps,
 		Pools:                pools,
 		ExperimentRejections: reporter,
@@ -239,6 +241,7 @@ func TestExperimentRouterReporterSilentOnSuccessfulRouting(t *testing.T) {
 	seedPool(t, pools, "cc-v2-pool", isolation.ProfileMicrovm)
 	reporter := &recordingRejectionReporter{}
 	h := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:      true,
 		Experiments:          exps,
 		Pools:                pools,
 		ExperimentRejections: reporter,

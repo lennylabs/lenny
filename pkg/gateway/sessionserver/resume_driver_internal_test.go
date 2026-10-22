@@ -173,7 +173,7 @@ func TestBinderlessCommitIsClassifiedOnce_spec_7_3(t *testing.T) {
 			}
 			store := &faultStore{Store: inner, plan: tc.plan}
 			bus := sessionevents.NewBus(64)
-			srv := New(store, Options{Events: bus})
+			srv := New(store, Options{DevTenantHeader: true, Events: bus})
 			defer srv.Close()
 			exit := srv.completeResume(listed, 0, resumeOutcome{})
 			got, _ := inner.Get(context.Background(), "acme", "s")
@@ -243,7 +243,7 @@ func TestDriveResumeRefusals_spec_7_3(t *testing.T) {
 	})
 	t.Run("attempt already in flight", func(t *testing.T) {
 		store := memstore.New()
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		defer srv.Close()
 		row := seed(t, store, "s-busy")
 		cancelled := false
@@ -260,7 +260,7 @@ func TestDriveResumeRefusals_spec_7_3(t *testing.T) {
 	})
 	t.Run("active age over the cap", func(t *testing.T) {
 		store := memstore.New()
-		srv := New(store, Options{AgeCap: func(context.Context, sessionstore.Session) time.Duration { return -time.Second }})
+		srv := New(store, Options{DevTenantHeader: true, AgeCap: func(context.Context, sessionstore.Session) time.Duration { return -time.Second }})
 		defer srv.Close()
 		row := seed(t, store, "s-old")
 		srv.DriveResume(context.Background(), row)
@@ -306,14 +306,14 @@ func TestResumeAttemptRecordIsEmptyAfterEveryExit_spec_7_3(t *testing.T) {
 
 	t.Run("binderless commit", func(t *testing.T) {
 		store := memstore.New()
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		defer srv.Close()
 		srv.DriveResumeAndWait(context.Background(), newRow(t, store, "s"))
 		assertEmpty(t, srv)
 	})
 	t.Run("row left resume_pending", func(t *testing.T) {
 		store := memstore.New()
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		defer srv.Close()
 		row := newRow(t, store, "s")
 		_, _ = store.Update(context.Background(), "acme", "s", func(r *sessionstore.Session) error {
@@ -336,7 +336,7 @@ func TestResumeAttemptRecordIsEmptyAfterEveryExit_spec_7_3(t *testing.T) {
 	t.Run("cancel and lifetime end", func(t *testing.T) {
 		for _, how := range []string{"CancelResumeAttempt", "Close"} {
 			store := memstore.New()
-			srv := New(store, Options{})
+			srv := New(store, Options{DevTenantHeader: true})
 			row := newRow(t, store, "s-"+how)
 			ctx, cancel := context.WithCancel(srv.lifetime())
 			if !srv.resumeAttempts.begin(row.ID, cancel) {
@@ -368,7 +368,7 @@ func TestResumeAttemptRecordIsEmptyAfterEveryExit_spec_7_3(t *testing.T) {
 func TestRecordResumeAttemptCountsOnlyEnteredIncarnations_spec_16_1(t *testing.T) {
 	type entry struct{ pool, outcome string }
 	var got []entry
-	srv := New(memstore.New(), Options{IncSessionResumeAttempt: func(pool, outcome string) {
+	srv := New(memstore.New(), Options{DevTenantHeader: true, IncSessionResumeAttempt: func(pool, outcome string) {
 		got = append(got, entry{pool, outcome})
 	}})
 	defer srv.Close()
@@ -384,7 +384,7 @@ func TestRecordResumeAttemptCountsOnlyEnteredIncarnations_spec_16_1(t *testing.T
 			t.Errorf("entry %d = %v, want %v", i, got[i], want[i])
 		}
 	}
-	New(memstore.New(), Options{}).recordResumeAttempt("pool-a", resumeExitCommitLanded)
+	New(memstore.New(), Options{DevTenantHeader: true}).recordResumeAttempt("pool-a", resumeExitCommitLanded)
 }
 
 // serviceModeResumeServer builds a server whose binder resolves the session's
@@ -417,6 +417,7 @@ func serviceModeResumeServer(t *testing.T, store sessionstore.Store, inner sessi
 		t.Fatalf("get: %v", err)
 	}
 	srv := New(store, Options{
+		DevTenantHeader:         true,
 		PodBinder:               &podsession.Binder{Client: c, Namespace: ns},
 		AgentNamespace:          ns,
 		IncSessionResumeAttempt: inc,

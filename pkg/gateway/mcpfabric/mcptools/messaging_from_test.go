@@ -49,6 +49,7 @@ func newMCPCapturingFrom(t *testing.T) (*mcp.Server, sessionstore.Store, *fromCa
 	exec := &fromCapturingExecutor{msgs: map[string][]executor.Message{}}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:     true,
 		Store:                 store,
 		Executor:              exec,
 		InputWaits:            inputwait.NewRegistry(),

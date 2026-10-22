@@ -194,7 +194,12 @@ func startLiveGateway(t *testing.T) *liveGateway {
 	if err := os.WriteFile(keyPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The tenant markers and the users live in acme, so the gateway runs
+	// multi-tenant: a single-tenant gateway ignores the bearer's tenant
+	// claim and serves every request as the built-in default tenant, where
+	// no marker or user row exists (§10.2 tenant-claim extraction).
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
+		"--tenancy-mode=multi", "--multi-tenant",
 		"--postgres-dsn="+pg.DSN, "--bearer-trust-hmac-key-file="+keyPath)
 	g := &liveGateway{
 		t: t, base: gw.BaseURL(), signer: jwt.NewHMACSigner(keyID, []byte(secret)),
@@ -216,7 +221,10 @@ func startLiveGateway(t *testing.T) *liveGateway {
 	user := func(sub string, role string) map[string]any {
 		return map[string]any{"subject": sub, "tenantId": liveTenant, "email": sub, "roles": []string{role}}
 	}
-	code, body := g.rest("carol@acme.com", pkgauth.RolePlatformAdmin, http.MethodPost, "/v1/admin/bootstrap", map[string]any{
+	// A multi-tenant gateway refuses a bearer naming an unregistered tenant,
+	// so the platform admin who registers acme authenticates in the built-in
+	// default tenant.
+	code, body := g.restIn(pkgauth.DefaultTenantID, "ops@acme.com", pkgauth.RolePlatformAdmin, http.MethodPost, "/v1/admin/bootstrap", map[string]any{
 		"tenants":  []map[string]any{{"id": liveTenant, "displayName": "Acme Corp"}},
 		"runtimes": []map[string]any{runtime("echo"), runtime("echo-child")},
 		"users": []map[string]any{
@@ -229,12 +237,12 @@ func startLiveGateway(t *testing.T) *liveGateway {
 	return g
 }
 
-// bearer signs a token for sub in acme with role.
-func (g *liveGateway) bearer(sub string, role pkgauth.Role) string {
+// bearer signs a token for sub in tenant with role.
+func (g *liveGateway) bearer(tenant, sub string, role pkgauth.Role) string {
 	g.t.Helper()
 	now := time.Now()
 	tok, err := g.signer.Sign(jwt.Claims{
-		Subject: sub, TenantID: liveTenant, Roles: []pkgauth.Role{role},
+		Subject: sub, TenantID: tenant, Roles: []pkgauth.Role{role},
 		Audience: []string{"dev.local"}, IssuedAt: now.Unix(), Expiry: now.Add(time.Hour).Unix(),
 		JWTID: sub + "-" + now.Format(time.RFC3339Nano),
 	})
@@ -244,8 +252,15 @@ func (g *liveGateway) bearer(sub string, role pkgauth.Role) string {
 	return tok
 }
 
-// rest issues a REST request as sub and returns the status and the body.
+// rest issues a REST request as sub in acme and returns the status and the
+// body.
 func (g *liveGateway) rest(sub string, role pkgauth.Role, method, path string, body any) (int, map[string]any) {
+	g.t.Helper()
+	return g.restIn(liveTenant, sub, role, method, path, body)
+}
+
+// restIn is rest with the bearer's tenant claim set to tenant.
+func (g *liveGateway) restIn(tenant, sub string, role pkgauth.Role, method, path string, body any) (int, map[string]any) {
 	g.t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -254,7 +269,7 @@ func (g *liveGateway) rest(sub string, role pkgauth.Role, method, path string, b
 	}
 	req, _ := http.NewRequest(method, g.base+path, reader)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+g.bearer(sub, role))
+	req.Header.Set("Authorization", "Bearer "+g.bearer(tenant, sub, role))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		g.t.Fatalf("%s %s: %v", method, path, err)
@@ -274,7 +289,7 @@ func (g *liveGateway) tool(sub string, role pkgauth.Role, name string, args map[
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `","arguments":` + string(a) + `}}`
 	req, _ := http.NewRequest(http.MethodPost, g.base+"/mcp", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+g.bearer(sub, role))
+	req.Header.Set("Authorization", "Bearer "+g.bearer(liveTenant, sub, role))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		g.t.Fatalf("POST /mcp %s: %v", name, err)

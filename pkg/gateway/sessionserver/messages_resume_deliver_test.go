@@ -97,9 +97,10 @@ func inboxAndDLQServer(t *testing.T, store sessionstore.Store, exec executor.Exe
 		DLQ:   dlq,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    exec,
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
+		DevTenantHeader: true,
+		Executor:        exec,
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
 	})
 	return srv, inbox, dlq
 }

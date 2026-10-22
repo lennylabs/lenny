@@ -59,19 +59,20 @@ func newCapLimitedServers(t *testing.T) (*httptest.Server, *httptest.Server) {
 		}
 	}
 	exec := executor.NewEchoExecutor()
-	rest := sessionserver.New(store, sessionserver.Options{Executor: exec, Tenants: tenants})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Tenants: tenants})
 	t.Cleanup(rest.Close)
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:          store,
-		SessionService: rest,
-		Delivery:       rest,
-		Executor:       exec,
-		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:         func() string { return "msg_cap" },
-		TenantID:       "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		SessionService:    rest,
+		Delivery:          rest,
+		Executor:          exec,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "msg_cap" },
+		TenantID:          "acme",
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())
 	t.Cleanup(tsMCP.Close)

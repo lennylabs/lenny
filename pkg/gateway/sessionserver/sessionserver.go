@@ -122,6 +122,9 @@ type Server struct {
 	storageQuota   storagequota.Counter
 	defaultIsoProf isolation.Profile
 	devMode        bool
+	// devTenantHeader mirrors Options.DevTenantHeader: whether a request
+	// with no principal may name its tenant by header. spec: §10.2.
+	devTenantHeader bool
 	// multiTenant mirrors the §10.2 auth.multiTenant Helm value. When
 	// true, the §10.2 RBAC gate fails closed for an authenticated
 	// principal that carries no roles (the matrix is unconditional in
@@ -982,6 +985,19 @@ type Options struct {
 	// DefaultIsolationProfile is configured.
 	DevMode bool
 
+	// DevTenantHeader, when true, lets a request that carries no
+	// authenticated principal name its tenant through the
+	// X-Lenny-Tenant-ID dev header (format-checked against the §10.2
+	// tenant_id pattern), and resolves a request with neither to the
+	// built-in `default` tenant. The gateway sets it only under
+	// --dev-mode. When false, the default, the tenant comes only from the
+	// authenticated principal or from the tenant an in-process service
+	// caller passes, and a request with neither is refused with 401
+	// UNAUTHORIZED before it reaches a handler (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID).
+	DevTenantHeader bool
+
 	// MultiTenant mirrors the gateway's `--multi-tenant` flag /
 	// `auth.multiTenant` Helm value. When true, the §10.2 RBAC gate on
 	// session-mutating and session-read endpoints fails closed for an
@@ -1663,6 +1679,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		storageQuota:               opts.StorageQuota,
 		defaultIsoProf:             opts.DefaultIsolationProfile,
 		devMode:                    opts.DevMode,
+		devTenantHeader:            opts.DevTenantHeader,
 		multiTenant:                opts.MultiTenant,
 		tenancyMode:                opts.TenancyMode,
 		podBinder:                  opts.PodBinder,

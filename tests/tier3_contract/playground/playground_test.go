@@ -272,7 +272,7 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	// §10.2 auth middleware, verifying with the same signer.
 	store := memstore.New()
 	publicAPI := authmw.Wrap(
-		sessionserver.New(store, sessionserver.Options{}).Handler(),
+		sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler(),
 		authmw.Options{
 			Verifier:    signer,
 			MultiTenant: true,

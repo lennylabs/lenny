@@ -177,6 +177,7 @@ func TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1(t *te
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-disconnect" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -193,6 +194,7 @@ func TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1(t *te
 		cancel:   cancel,
 	}
 	handler := translator.NewOpenAIChatHandler(store, spy, translator.OpenAIChatOptions{
+		DevTenantHeader:  true,
 		SingleShotBinder: ssSingleShotBinder{srv: srv},
 		DefaultRuntime:   "echo",
 	}).Handler()

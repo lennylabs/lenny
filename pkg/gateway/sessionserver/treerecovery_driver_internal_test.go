@@ -58,7 +58,7 @@ func TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					store := memstore.New()
 					reg := podsession.NewRegistry()
-					srv := New(store, Options{PodRegistry: reg})
+					srv := New(store, Options{DevTenantHeader: true, PodRegistry: reg})
 					srv.treePollInterval = 2 * time.Millisecond
 					ctx := context.Background()
 					rows := []sessionstore.Session{
@@ -126,7 +126,7 @@ func TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10(t *testing.T) {
 			inner := memstore.New()
 			store := &flakyPrimary{Store: inner}
 			store.fails.Store(2)
-			srv := New(store, Options{})
+			srv := New(store, Options{DevTenantHeader: true})
 			srv.treePollInterval = 2 * time.Millisecond
 			ctx := context.Background()
 			node := sessionstore.Session{ID: "n", TenantID: "acme", State: session.StateResumePending}
@@ -173,7 +173,7 @@ func TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10(t *testing.T) {
 
 	t.Run("deadline", func(t *testing.T) {
 		store := memstore.New()
-		srv := New(store, Options{})
+		srv := New(store, Options{DevTenantHeader: true})
 		srv.treePollInterval = 2 * time.Millisecond
 		node := sessionstore.Session{ID: "n", TenantID: "acme", State: session.StateResumePending}
 		if err := store.Create(context.Background(), node); err != nil {

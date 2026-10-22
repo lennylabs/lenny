@@ -66,7 +66,7 @@ func TestResolveDelegationTargetClassifiesKind_spec_8_2_23(t *testing.T) {
 	mustCreate(t, rt, runtimestore.Runtime{Name: "claude", Type: runtimestore.TypeAgent, Image: "lenny/claude@sha256:a", IntegrationLevel: "basic"})
 	mustCreate(t, rt, runtimestore.Runtime{Name: "claude-fast", BaseRuntime: "claude"})
 	mustCreate(t, rt, runtimestore.Runtime{Name: "fs-mcp", Type: runtimestore.TypeMCP, Image: "lenny/fs-mcp@sha256:b"})
-	deps := Deps{Runtimes: rt}
+	deps := Deps{DevTenantFallback: true, Runtimes: rt}
 
 	cases := []struct {
 		name     string
@@ -95,7 +95,7 @@ func TestResolveDelegationTargetClassifiesKind_spec_8_2_23(t *testing.T) {
 }
 
 func TestResolveDelegationTargetNoRegistryPassesThrough_spec_8_2(t *testing.T) {
-	ref, kind := resolveDelegationTarget(context.Background(), Deps{}, "anything")
+	ref, kind := resolveDelegationTarget(context.Background(), Deps{DevTenantFallback: true}, "anything")
 	if ref != "anything" || kind != targetKindStandalone {
 		t.Errorf("resolveDelegationTarget(no registry) = (%q, %q), want (\"anything\", standalone)", ref, kind)
 	}

@@ -196,6 +196,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-outage-top" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -258,6 +259,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Run("delegated child during a tenant-store outage", func(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
+			DevTenantFallback: true,
 			Store:             store,
 			Executor:          executor.NewEchoExecutor(),
 			Runtimes:          memRuntimes,

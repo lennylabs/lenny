@@ -26,6 +26,7 @@ func newCreateServerWithRetryCaps(t *testing.T, caps session.RetryPolicyCaps) *s
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	idFn := func() string { return "sess_rp" }
 	return sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            idFn,
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),

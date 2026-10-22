@@ -50,17 +50,18 @@ func newUnwiredMessagingServers(t *testing.T) (*httptest.Server, *httptest.Serve
 	store := memstore.New()
 	exec := executor.NewEchoExecutor()
 
-	rest := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:    store,
-		Executor: exec,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp_unavailable" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp_unavailable" },
+		TenantID:          "acme",
 		// No Messaging coordinator: the buffered branch fails the enqueue.
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())

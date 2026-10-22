@@ -56,7 +56,7 @@ func TestCredentialRejectionEndsInAwaitingClientAction_spec_7_3(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
-			srv := New(store, Options{})
+			srv := New(store, Options{DevTenantHeader: true})
 			defer srv.Close()
 			row := seedResumingRow(t, store, "s")
 			srv.reportResumeFailure(row, row.CoordinationGeneration, assignErr(tc.cause))

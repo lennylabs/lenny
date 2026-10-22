@@ -180,7 +180,7 @@ func newFinalizeRaceFixture(t *testing.T, entryPeers int) *finalizeRaceFixture {
 	if entryPeers > 0 {
 		store.entryGate = newPeerGate(entryPeers)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	return &finalizeRaceFixture{h: srv.Handler(), store: store}
 }
 
