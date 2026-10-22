@@ -107,7 +107,9 @@
 
 ## Open decisions for human to make
 
-No decision is open. The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26).
+One decision is open. The owner settled OD-1, OD-2, and OD-3 on 2026-10-22 (D27, D28, and D26), and the redesign decisions R1 to R3 on the same day (D29, D28, and D26).
+
+- **OD-8. Does the direct fix for the bootstrap seed sections other than tenants need a §17.6 row before it lands?** SPEC-2 Edit 2c adds a row to the §17.6 bootstrap upsert table, under which the seed reports a tenant entry that names a tenant in the `deleting` or `deleted` state as an `error`. The other seed sections keyed by a tenant ID (`users`, `credentialPools`, `delegationPolicies`, and `environments`) read no tenant state, so an entry with `tenantId` naming a deleted tenant still recreates rows under it. The **New** entry "Writers keyed by a tenant ID do not refuse a `deleting` or `deleted` tenant" files them, owner a direct fix. If that fix makes those sections refuse such entries, §17.6 item 5 states no outcome for them. The review loop rejected extending Edit 2c and CODE-6 item 8 to every seed section in this proposal, because that adds a mechanism for a filed, bounded defect. The answer is either that the direct fix lands a §17.6 row through the proposal pipeline first, or that it lands as code alone. The loop routed the question to whoever takes the direct fix and derived no recommendation; the open-decisions-and-impact-review phase supplies one. (Review log, non-spec.15.fix-design-G1.1.)
 
 ## Defects in the shipped tree that this proposal does not stage
 

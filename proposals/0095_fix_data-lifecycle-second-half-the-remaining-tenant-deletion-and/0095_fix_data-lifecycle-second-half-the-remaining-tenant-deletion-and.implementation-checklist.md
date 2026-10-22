@@ -33,7 +33,7 @@ Every step lands the tests the non-spec Testing section places under its deliver
 - [ ] **S14 · code** — CODE-9. Lands full_revoke continuation.
       Tiers 0, 1, 3, 4. Depends on: S3, S12
 - [ ] **S15 · docs** — DOCS-1. Lands the operator-guide, client-guide, and admin API reference edits.
-      Tiers 0, 11. Depends on: S2, S4, S5, S6, S10, S11, S13
+      Tiers 0, 11. Depends on: S2, S3, S4, S5, S6, S10, S11, S13, S14
 - [ ] **S16 · test** — TEST-1. Lands the harness extension and the cross-cutting scenarios.
       Tiers 0, 4, 7a, 8, 9, 11. Depends on: S10, S11, S13, S14, S15
 - [ ] **S17 · docs** — REC-1. Lands the finding and test-gap records, departures, new findings, claim-register note, records gate, and the P5b bullet.
