@@ -223,7 +223,7 @@ func (f *fakeCatalog) DeleteByTenant(_ context.Context, tenantID string) (int, e
 	defer f.mu.Unlock()
 	count := 0
 	for uri, r := range f.rows {
-		if r.TenantID == tenantID && !r.LegalHold {
+		if r.TenantID == tenantID {
 			delete(f.rows, uri)
 			count++
 		}
@@ -945,12 +945,13 @@ func TestDeleteByTenantForwarded(t *testing.T) {
 	}
 }
 
-// TestDeleteByTenantPreservesLegalHeldCatalogRow asserts the catalog's
-// `legal_hold = false` guard keeps a §12.8-held row out of the Phase 4
-// bulk delete; the unheld row in the same tenant is removed.
+// TestDeleteByTenantDeletesLegalHeldCatalogRow asserts the Phase 4
+// tenant delete removes a held catalog row along with the unheld one:
+// Phase 3.5 is the hold gate and has escrowed the held original before
+// Phase 4 runs, so the catalog keeps no row for the tombstoned tenant.
 //
-// spec: §12.5 ll. 295; §12.8.
-func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
+// spec: §12.5; §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
+func TestDeleteByTenantDeletesLegalHeldCatalogRow(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()
 	store := New(inner, cat, Options{})
@@ -969,8 +970,8 @@ func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 	if _, err := store.DeleteByTenant(context.Background(), "acme"); err != nil {
 		t.Fatalf("DeleteByTenant: %v", err)
 	}
-	if _, err := cat.Get(context.Background(), held.String()); err != nil {
-		t.Errorf("legal-held catalog row removed by tenant delete: %v", err)
+	if _, err := cat.Get(context.Background(), held.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
+		t.Errorf("legal-held catalog row survived tenant delete: %v", err)
 	}
 	if _, err := cat.Get(context.Background(), free.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
 		t.Errorf("unheld catalog row survived tenant delete: %v", err)

@@ -8,30 +8,38 @@ import (
 )
 
 // TestValidateTenantOrder_spec_12_8 covers the tenant Phase 4 order
-// check: the gateway's wiring passes, and an unknown store, a duplicate
-// store, and every rank inversion, including the session_tree_archive
-// after sessions inversion that left Phase 4 stuck, are rejected.
+// check over the Store table wiring: the wiring passes, and every rank
+// inversion that left Phase 4 stuck, including session_tree_archive after
+// sessions, is rejected.
 //
 // spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
 func TestValidateTenantOrder_spec_12_8(t *testing.T) {
-	gateway := []string{
-		"leases", "quota", "checkpoint_manifests", "checkpoint_retention", "checkpoint_meta",
-		"transcripts", "interactions", "memory", "session_tree_archive", "eval_results",
-		"sessions", "tokens", "credential_pool",
+	move := func(name, after string) []string {
+		var out []string
+		for _, n := range StoreTableTenantNames() {
+			if n == name {
+				continue
+			}
+			out = append(out, n)
+			if n == after {
+				out = append(out, name)
+			}
+		}
+		return out
 	}
 	cases := []struct {
 		name    string
 		names   []string
 		wantErr string
 	}{
-		{name: "gateway wiring", names: gateway},
-		{name: "empty sequence", names: nil},
-		{name: "minimal no-backend wiring", names: []string{"session_tree_archive", "sessions"}},
-		{name: "archive after sessions", names: []string{"sessions", "session_tree_archive"}, wantErr: "order violation"},
-		{name: "eval results after sessions", names: []string{"sessions", "eval_results"}, wantErr: "order violation"},
-		{name: "tokens before sessions", names: []string{"tokens", "sessions"}, wantErr: "order violation"},
-		{name: "unknown store", names: []string{"sessions", "mystery_store"}, wantErr: "no §12.8 dependency rank"},
-		{name: "duplicate store", names: []string{"session_tree_archive", "session_tree_archive", "sessions"}, wantErr: "more than one slot"},
+		{name: "gateway wiring", names: StoreTableTenantNames()},
+		{name: "empty sequence", names: nil, wantErr: "neither wired nor exempt"},
+		{name: "archive after sessions", names: move("session_tree_archive", "sessions"), wantErr: "order violation"},
+		{name: "eval results after sessions", names: move("eval_results", "sessions"), wantErr: "order violation"},
+		{name: "eval results before billing", names: move("eval_results", "audit"), wantErr: "order violation"},
+		{name: "tokens before sessions", names: move("tokens", "delegation_budget"), wantErr: "order violation"},
+		{name: "unknown store", names: append(StoreTableTenantNames(), "mystery_store"), wantErr: "no §12.8 dependency rank"},
+		{name: "duplicate store", names: append(StoreTableTenantNames(), "tenant_config"), wantErr: "more than one slot"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,7 +63,7 @@ func TestValidateTenantOrder_spec_12_8(t *testing.T) {
 //
 // spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
 func TestValidateTenantOrderEveryAdjacentSwap_spec_12_8(t *testing.T) {
-	order := CanonicalOrder()
+	order := StoreTableTenantNames()
 	if err := ValidateTenantOrder(order); err != nil {
 		t.Fatalf("canonical order rejected: %v", err)
 	}

@@ -61,6 +61,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
@@ -507,69 +508,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// session before the session-keyed user-scoped stores.
 	{
 		sessionScoped := w.buildSessionScopedErasers()
-
-		// §12.8 user-scoped stores, appended in dependency-rank order so
-		// the orchestrator runs them in the sequence ValidateOrder pins.
-		// Each store is wired only when its backend is present, so a
-		// no-Redis / no-Postgres posture erases the subset it can satisfy
-		// rather than dereferencing a nil store.
-		userScoped := []erasure.Eraser{}
-		if w.erasureLeaseStore != nil {
-			// step 1: release the user's active session-coordination leases.
-			// Typed via erasure.FromCounting so the §12.1 erasure contract is
-			// compile-checked at this wiring site (F-12.1.5).
-			userScoped = append(userScoped,
-				erasure.FromCounting("leases", w.erasureLeaseStore))
-		}
-		if erasureSemanticCache != nil {
-			// step 2: purge the user's cached LLM query/response pairs. The
-			// §4.9 SemanticCache is a §12.1 pluggable role; erasure.FromStore
-			// adapts its error-only DeleteByUser to the orchestrator adapter
-			// and compile-checks it against StoreEraser (F-12.1.5).
-			userScoped = append(userScoped,
-				erasure.FromStore("semantic_cache", erasureSemanticCache))
-		}
-		if erasureSticky != nil {
-			// step 4: delete the user's experiment sticky assignments.
-			userScoped = append(userScoped,
-				erasure.Eraser{Name: "experiment_sticky", DeleteByUser: erasureSticky.DeleteByUser})
-		}
-		// step 5: purge staged billing events from the write-ahead buffer
-		// (Redis stream + in-memory) before the Runner's pseudonymizing
-		// phase, so a post-erasure flush cannot re-insert the raw user_id.
-		userScoped = append(userScoped,
-			erasure.Eraser{Name: "billing_buffer", DeleteByUser: w.billingPipeline.PurgeStagedByUser})
-		// step 6: delete the user's rate-limit and budget counters across the
-		// whole §12.2 QuotaStore role — Redis counter, Postgres
-		// token_usage_checkpoint, and the in-memory fail-open accumulator —
-		// so a post-recovery reconcile cannot re-seed the erased user's usage
-		// via the §11.2 line-48 MAX rule. spec: §12.8 step 6 (Redis +
-		// Postgres); §12.2.
-		if quotaEraser := buildQuotaEraser(quotaCounter, w.pgPool, quotaFailOpenAccum); quotaEraser != nil {
-			userScoped = append(userScoped,
-				erasure.Eraser{Name: "quota", DeleteByUser: quotaEraser.DeleteByUser})
-		}
-		userScoped = append(
-			userScoped,
-			// step 8: §9.4 MemoryStore is a §12.1 pluggable role; FromStore
-			// adapts its error-only DeleteByUser and compile-checks it against
-			// StoreEraser. Memory and the session-keyed interaction rows
-			// precede SessionStore (step 17).
-			erasure.FromStore("memory", w.memories),
-			erasure.FromCounting("interactions", w.interactions),
-			// step 17: SessionStore, the FK parent, after every child store.
-			erasure.FromCounting("sessions", w.sessions),
-		)
-		if w.pgPool != nil {
-			// step 18: TokenStore — delete the user's issued OAuth/refresh
-			// tokens (the §13.3 issued-token index keyed by sub).
-			userScoped = append(userScoped,
-				erasure.Eraser{Name: "tokens", DeleteByUser: issuedtokenstore.New(w.pgPool).DeleteByUser})
-		}
-		// step 19: CredentialPoolStore — drop credential lease assignments
-		// referencing the user.
-		userScoped = append(userScoped,
-			erasure.Eraser{Name: "credential_pool", DeleteByUser: credentialPools.DeleteByUser})
+		userScoped := w.buildUserErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)
 
 		erasureCfg := erasure.Config{
 			// spec: §12.8 (Lifecycle fence and drain) — the user's session
@@ -762,7 +701,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// runner ticks only while this replica is the gateway leader.
 	// spec: §12.8. F-12.8.1, F-24.10.3.
 	{
-		tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools)
+		tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)
 		deletionReconciler := &tenantdeletion.Reconciler{
 			Jobs:     tenantdeletion.NewMemory(),
 			Eraser:   &tenantEraser{erasers: tenantErasers},
@@ -1030,56 +969,218 @@ func (w *gatewayWiring) buildAdminRouter(
 	return connectorAuthorizer, connectorInvoker, ruStore, erasureSemanticCache
 }
 
-// buildSessionScopedErasers returns the §12.8 session-scoped erasers, which
-// the orchestrator runs for each of the erased user's sessions before the
-// user-scoped stores. Each is wired only when its backend is present.
+// buildUserErasers returns the §12.8 user-scoped erasers in §12.8 rank
+// order. Every ranked store the user path wires is listed by name; a store
+// whose backend is absent in this posture is listed with a nil function,
+// which the Orchestrator skips. The stores the user path does not wire are
+// recorded in the erasure package's user exemptions, and ValidateOrder
+// refuses a wiring that leaves a ranked store neither wired nor exempt.
 //
-// spec: §12.8 (Compliance Interfaces).
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence, Storage backends in erasure scope).
+func (w *gatewayWiring) buildUserErasers(
+	quotaCounter *quotastore.Counter,
+	quotaFailOpenAccum *quotafailopen.Accumulator,
+	credentialPools credentialpoolstore.Store,
+	semanticCache *semanticcache.InMemory,
+) []erasure.Eraser {
+	erasers := w.userCacheErasers(semanticCache)
+	var quota erasure.DeleteByUserFunc
+	// The whole §12.2 QuotaStore role: Redis counter, Postgres
+	// token_usage_checkpoint, and the in-memory fail-open accumulator, so a
+	// post-recovery reconcile cannot re-seed the erased user's usage.
+	if quotaEraser := buildQuotaEraser(quotaCounter, w.pgPool, quotaFailOpenAccum); quotaEraser != nil {
+		quota = quotaEraser.DeleteByUser
+	}
+	var audit, issued, pool erasure.DeleteByUserFunc
+	// The step-13 audit no-op: the append-only chain has no user-scoped
+	// deletion.
+	if w.auditOpsStore != nil {
+		audit = w.auditOpsStore.DeleteByUser
+	}
+	// TokenIssuanceStore: the user's issued-token rows past the §13.3
+	// trailing hour.
+	if w.pgPool != nil {
+		issued = issuedtokenstore.New(w.pgPool).DeleteByUser
+	}
+	if credentialPools != nil {
+		pool = credentialPools.DeleteByUser
+	}
+	return append(
+		erasers,
+		erasure.Eraser{Name: "quota", DeleteByUser: quota},
+		// MemoryStore is a §12.1 pluggable role; FromStore compile-checks it
+		// against StoreEraser. Memory and the session-keyed interaction rows
+		// precede SessionStore.
+		erasure.FromStore("memory", w.memories),
+		erasure.FromCounting("interactions", w.interactions),
+		erasure.Eraser{Name: "audit", DeleteByUser: audit},
+		// SessionStore, the FK parent, after every child store.
+		erasure.FromCounting("sessions", w.sessions),
+		// TokenStore: connector refresh tokens, then registered user
+		// credentials (§4.9 places them in TokenStore).
+		erasure.Eraser{Name: "tokens", DeleteByUser: sumUserErasers(userDeleterFunc(w.connectorCreds), userDeleterFunc(w.credentials))},
+		erasure.Eraser{Name: "issued_tokens", DeleteByUser: issued},
+		erasure.Eraser{Name: "credential_pool", DeleteByUser: pool},
+	)
+}
+
+// userCacheErasers returns the user-scoped entries for the coordination
+// leases and the caches that precede QuotaStore.
+func (w *gatewayWiring) userCacheErasers(semanticCache *semanticcache.InMemory) []erasure.Eraser {
+	leases := erasure.Eraser{Name: "leases"}
+	if w.erasureLeaseStore != nil {
+		// Typed through FromCounting so the §12.1 erasure contract is
+		// compile-checked at this wiring site.
+		leases = erasure.FromCounting("leases", w.erasureLeaseStore)
+	}
+	semantic := erasure.Eraser{Name: "semantic_cache"}
+	if semanticCache != nil {
+		// The §4.9 SemanticCache is a §12.1 pluggable role; FromStore adapts
+		// its error-only DeleteByUser.
+		semantic = erasure.FromStore("semantic_cache", semanticCache)
+	}
+	sticky := erasure.Eraser{Name: "experiment_sticky"}
+	if w.erasureSticky != nil {
+		sticky.DeleteByUser = w.erasureSticky.DeleteByUser
+	}
+	// Purge staged billing events from the write-ahead buffer (Redis stream
+	// and in-memory) before the erasure job's pseudonymizing phase, so a
+	// post-erasure flush cannot re-insert the raw user_id.
+	buffer := erasure.Eraser{Name: "billing_buffer"}
+	if w.billingPipeline != nil {
+		buffer.DeleteByUser = w.billingPipeline.PurgeStagedByUser
+	}
+	return []erasure.Eraser{leases, semantic, sticky, buffer}
+}
+
+// userDeleter is a store with a counting DeleteByUser.
+type userDeleter interface {
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+}
+
+// userDeleterFunc returns d's DeleteByUser, or nil when d is nil.
+func userDeleterFunc(d userDeleter) erasure.DeleteByUserFunc {
+	if d == nil {
+		return nil
+	}
+	return d.DeleteByUser
+}
+
+// sumUserErasers runs each non-nil eraser in order, stops at the first
+// error, and returns the summed count. It returns nil when every eraser is
+// nil.
+func sumUserErasers(fns ...erasure.DeleteByUserFunc) erasure.DeleteByUserFunc {
+	var live []erasure.DeleteByUserFunc
+	for _, fn := range fns {
+		if fn != nil {
+			live = append(live, fn)
+		}
+	}
+	if len(live) == 0 {
+		return nil
+	}
+	return func(ctx context.Context, tenantID, userID string) (int, error) {
+		total := 0
+		for _, fn := range live {
+			n, err := fn(ctx, tenantID, userID)
+			total += n
+			if err != nil {
+				return total, err
+			}
+		}
+		return total, nil
+	}
+}
+
+// buildSessionScopedErasers returns the §12.8 session-scoped erasers in rank
+// order, which the orchestrator runs for each of the erased user's sessions
+// before the user-scoped stores. A store whose backend is absent is listed
+// with a nil function.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
 func (w *gatewayWiring) buildSessionScopedErasers() []erasure.SessionEraser {
-	sessionScoped := []erasure.SessionEraser{}
-	if te, ok := w.transcripts.(sessionArtifactDeleter); ok {
-		sessionScoped = append(sessionScoped,
-			erasure.SessionEraser{Name: "transcripts", DeleteBySession: te.DeleteBySession})
+	var mirror, artifacts, transcripts, queues, archive, evals, budget erasure.DeleteBySessionFunc
+	// The §10.1.8 Postgres mirror of the step-1 coordination leases.
+	if w.coordMirror != nil {
+		mirror = sessionIDsAdapter(w.coordMirror.DeleteByUser)
 	}
 	if be, ok := w.blobs.(sessionArtifactDeleter); ok {
-		sessionScoped = append(sessionScoped,
-			erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
+		artifacts = be.DeleteBySession
 	}
-	sessionScoped = append(sessionScoped,
-		erasure.SessionEraser{Name: "eval_results", DeleteBySession: w.evals.DeleteBySession})
+	if te, ok := w.transcripts.(sessionArtifactDeleter); ok {
+		transcripts = te.DeleteBySession
+	}
 	// §12.8 step 10: a podless suspended session's held messages can stay in
 	// its Redis DLQ and durable inbox for up to the suspended-session
 	// lifetime, so the erasure deletes both keys for each of the user's
-	// sessions.
-	// spec: §12.8 (Compliance Interfaces).
+	// sessions. session_dlq_archive is erased by ON DELETE CASCADE from
+	// sessions and is exempt on this path.
 	if w.messagingCoord != nil {
-		sessionScoped = append(sessionScoped, erasure.SessionEraser{
-			Name: "session_message_queues", DeleteBySession: w.messagingCoord.EraseSession,
-		})
+		queues = w.messagingCoord.EraseSession
 	}
-	// §12.8 step 11: the session_tree_archive holds settled child
-	// TaskResults keyed by root_session_id with a Postgres FK into
-	// sessions(id) (migration 0100, no ON DELETE action), so it is
-	// erased per owned session before SessionStore. session_dlq_archive
-	// (step 10) is omitted deliberately: its FK is ON DELETE CASCADE
-	// (migration 0056), so the step-17 SessionStore delete cleans it up.
-	sessionScoped = append(sessionScoped,
-		erasure.SessionEraser{Name: "session_tree_archive", DeleteBySession: w.treeArchive.DeleteBySession})
+	// §12.8 step 11: session_tree_archive.root_session_id references
+	// sessions(id) with no ON DELETE action, so it is erased per owned
+	// session before SessionStore.
+	if w.treeArchive != nil {
+		archive = w.treeArchive.DeleteBySession
+	}
+	if w.evals != nil {
+		evals = w.evals.DeleteBySession
+	}
 	// §12.8 step 16: purge the tree-wide Redis delegation-budget keys
-	// ({root_session_id}:dlg:*) for each of the user's root sessions
-	// before SessionStore deletion makes the root ids irrecoverable.
-	// The keys carry no tenant prefix (the {root} hash tag scopes
-	// them); PurgeRoot no-ops on a non-root session id.
+	// ({root_session_id}:dlg:*) for each of the user's root sessions before
+	// SessionStore deletion makes the root ids irrecoverable. PurgeRoot
+	// no-ops on a non-root session id.
 	if w.treeBudgetConcrete != nil {
 		tb := w.treeBudgetConcrete
-		sessionScoped = append(sessionScoped, erasure.SessionEraser{
-			Name: "delegation_budget",
-			DeleteBySession: func(ctx context.Context, _ string, sessionID string) (int, error) {
-				return tb.PurgeRoot(ctx, sessionID)
-			},
-		})
+		budget = func(ctx context.Context, _ string, sessionID string) (int, error) {
+			return tb.PurgeRoot(ctx, sessionID)
+		}
 	}
-	return sessionScoped
+	checkpoints := w.checkpointSessionErasers()
+	return append([]erasure.SessionEraser{
+		{Name: "coordination_mirror", DeleteBySession: mirror},
+		{Name: "artifacts", DeleteBySession: artifacts},
+	}, append(
+		checkpoints,
+		erasure.SessionEraser{Name: "transcripts", DeleteBySession: transcripts},
+		erasure.SessionEraser{Name: "session_message_queues", DeleteBySession: queues},
+		erasure.SessionEraser{Name: "session_tree_archive", DeleteBySession: archive},
+		erasure.SessionEraser{Name: "eval_results", DeleteBySession: evals},
+		erasure.SessionEraser{Name: "delegation_budget", DeleteBySession: budget},
+	)...)
+}
+
+// checkpointSessionErasers returns the session-scoped erasers for the
+// checkpoint stores of the ArtifactStore family. Each store erases by a list
+// of session identifiers, so the adapter erases one session at a time.
+func (w *gatewayWiring) checkpointSessionErasers() []erasure.SessionEraser {
+	var manifests, retention, meta erasure.DeleteBySessionFunc
+	if w.partialManifests != nil {
+		manifests = sessionIDsAdapter(w.partialManifests.DeleteByUser)
+	}
+	if w.checkpointRetention != nil {
+		retention = sessionIDsAdapter(w.checkpointRetention.DeleteByUser)
+	}
+	if w.pgPool != nil {
+		meta = sessionIDsAdapter(sessioncheckpointmetapg.New(w.pgPool, nil).DeleteByUser)
+	}
+	return []erasure.SessionEraser{
+		{Name: "checkpoint_manifests", DeleteBySession: manifests},
+		{Name: "checkpoint_retention", DeleteBySession: retention},
+		{Name: "checkpoint_meta", DeleteBySession: meta},
+	}
+}
+
+// sessionIDsAdapter adapts a store's DeleteByUser over a session-ID list,
+// which ignores the user ID, to a per-session eraser. The store reports no
+// count, so it records 0.
+func sessionIDsAdapter(fn func(ctx context.Context, tenantID, userID string, sessionIDs []string) error) erasure.DeleteBySessionFunc {
+	return func(ctx context.Context, tenantID, sessionID string) (int, error) {
+		return 0, fn(ctx, tenantID, "", []string{sessionID})
+	}
 }
 
 // buildHTTPSurface is an extracted §4.1 composition-root build step (R1).

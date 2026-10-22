@@ -3751,6 +3751,10 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier2_component/stores/tenant_phase4_entries_test.go",
+        "tests/tier2_component/stores/miniostore_test.go::TestMinIOStoreDeleteByTenant_spec_12_8",
+        "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheUsersStoreTableRows_spec_12_8",
+        "tests/tier0_static/erasure_exemption_guard_test.go",
         "tests/tier2_component/stores/tenant_purge_redis_cluster_test.go",
         "pkg/gateway/billing/billingstore/failover/tenant_purge_test.go",
         "pkg/gateway/billing/billingstore/failover/redisstream/tenant_purge_test.go",
@@ -4222,6 +4226,7 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier2_component/stores/issuedtokenstore_retention_test.go",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantCaller",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantIssued",

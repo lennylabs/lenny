@@ -4,136 +4,258 @@ package erasure
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 )
 
-// spec: §12.8 — the DeleteByUser dependency order is a
-// runtime contract; ValidateOrder pins it so a future reorder of the
-// store wiring cannot erase a foreign-key parent before its children.
+func noopUser(context.Context, string, string) (int, error) { return 0, nil }
 
-func noopUser(context.Context, string, string) (int, error)    { return 0, nil }
-func noopSession(context.Context, string, string) (int, error) { return 0, nil }
+// withoutUserEntry returns the Store table user wiring with name removed.
+func withoutUserEntry(name string) Config {
+	cfg := StoreTableUserConfig()
+	var ss []SessionEraser
+	for _, se := range cfg.SessionScoped {
+		if se.Name != name {
+			ss = append(ss, se)
+		}
+	}
+	var us []Eraser
+	for _, e := range cfg.UserScoped {
+		if e.Name != name {
+			us = append(us, e)
+		}
+	}
+	cfg.SessionScoped, cfg.UserScoped = ss, us
+	return cfg
+}
 
-// The canonical wiring the gateway uses passes validation.
-func TestValidateOrder_canonicalConfigPasses(t *testing.T) {
-	cfg := Config{
-		SessionScoped: []SessionEraser{
-			{Name: "transcripts", DeleteBySession: noopSession},
-			{Name: "artifacts", DeleteBySession: noopSession},
-			{Name: "eval_results", DeleteBySession: noopSession},
+// withoutName returns names with name removed.
+func withoutName(names []string, name string) []string {
+	var out []string
+	for _, n := range names {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// TestValidatorsCompletenessAndOrder_spec_12_8 runs both validators over the
+// Store table wiring and over each kind of defective wiring: a ranked store
+// missing from the path, a store both wired and exempt, an exemption with an
+// empty reason, an unranked store, a duplicate, and a rank inversion on the
+// tenant path. Each defect is rejected with the store and the path named.
+//
+// spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope),
+// 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion
+// sequence), 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
+func TestValidatorsCompletenessAndOrder_spec_12_8(t *testing.T) {
+	type tc struct {
+		name    string
+		run     func() error
+		wantErr []string
+	}
+	withExempt := func(m map[string]string, name, reason string, fn func() error) func() error {
+		return func() error {
+			prev, had := m[name]
+			m[name] = reason
+			defer func() {
+				if had {
+					m[name] = prev
+				} else {
+					delete(m, name)
+				}
+			}()
+			return fn()
+		}
+	}
+	tenant := StoreTableTenantNames()
+	swapped := StoreTableTenantNames()
+	swapped[0], swapped[1] = swapped[1], swapped[0]
+	cases := []tc{
+		{name: "user store table wiring", run: func() error { return ValidateOrder(StoreTableUserConfig()) }},
+		{name: "tenant store table wiring", run: func() error { return ValidateTenantOrder(tenant) }},
+		{
+			name:    "user missing ranked store",
+			run:     func() error { return ValidateOrder(withoutUserEntry("checkpoint_meta")) },
+			wantErr: []string{"user erasure", `"checkpoint_meta"`, "neither wired nor exempt"},
 		},
-		UserScoped: []Eraser{
-			{Name: "memory", DeleteByUser: noopUser},
-			{Name: "interactions", DeleteByUser: noopUser},
-			{Name: "sessions", DeleteByUser: noopUser},
+		{
+			name:    "tenant missing ranked store",
+			run:     func() error { return ValidateTenantOrder(withoutName(tenant, "tenant_config")) },
+			wantErr: []string{"tenant deletion Phase 4", `"tenant_config"`, "neither wired nor exempt"},
+		},
+		{
+			name:    "user store both wired and exempt",
+			run:     withExempt(userExempt, "audit", "a reason", func() error { return ValidateOrder(StoreTableUserConfig()) }),
+			wantErr: []string{"user erasure", `"audit"`, "both wired and exempt"},
+		},
+		{
+			name:    "tenant store both wired and exempt",
+			run:     withExempt(tenantExempt, "tokens", "a reason", func() error { return ValidateTenantOrder(tenant) }),
+			wantErr: []string{"tenant deletion Phase 4", `"tokens"`, "both wired and exempt"},
+		},
+		{
+			name:    "user exempt with empty reason",
+			run:     withExempt(userExempt, "billing", "", func() error { return ValidateOrder(StoreTableUserConfig()) }),
+			wantErr: []string{"user erasure", `"billing"`, "empty reason"},
+		},
+		{
+			name:    "tenant exempt with empty reason",
+			run:     withExempt(tenantExempt, "redis_caches", "", func() error { return ValidateTenantOrder(tenant) }),
+			wantErr: []string{"tenant deletion Phase 4", `"redis_caches"`, "empty reason"},
+		},
+		{
+			name: "user unknown store",
+			run: func() error {
+				cfg := StoreTableUserConfig()
+				cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "mystery_store"})
+				return ValidateOrder(cfg)
+			},
+			wantErr: []string{"user erasure", `"mystery_store"`, "no §12.8 dependency rank"},
+		},
+		{
+			name:    "tenant unknown store",
+			run:     func() error { return ValidateTenantOrder(append(StoreTableTenantNames(), "mystery_store")) },
+			wantErr: []string{"tenant deletion Phase 4", `"mystery_store"`, "no §12.8 dependency rank"},
+		},
+		{
+			name: "user duplicate across slots",
+			run: func() error {
+				cfg := StoreTableUserConfig()
+				cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "artifacts"})
+				return ValidateOrder(cfg)
+			},
+			wantErr: []string{"user erasure", `"artifacts"`, "more than one slot"},
+		},
+		{
+			name:    "tenant duplicate",
+			run:     func() error { return ValidateTenantOrder(append([]string{"leases"}, tenant...)) },
+			wantErr: []string{"tenant deletion Phase 4", `"leases"`, "more than one slot"},
+		},
+		{
+			name:    "tenant rank inversion",
+			run:     func() error { return ValidateTenantOrder(swapped) },
+			wantErr: []string{"order violation", `"leases"`, `"coordination_mirror"`},
+		},
+		{
+			name:    "tenant exempt store unranked",
+			run:     withExempt(tenantExempt, "mystery_store", "a reason", func() error { return ValidateTenantOrder(tenant) }),
+			wantErr: []string{"tenant deletion Phase 4", `"mystery_store"`, "no §12.8 dependency rank"},
 		},
 	}
-	if err := ValidateOrder(cfg); err != nil {
-		t.Fatalf("canonical config must validate: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.run()
+			if len(c.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("got %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("got nil, want an error naming %v", c.wantErr)
+			}
+			for _, w := range c.wantErr {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q does not contain %q", err, w)
+				}
+			}
+		})
 	}
 }
 
-// The full §12.8 production wiring (every store the gateway erases once
-// the §12.8 / §12.8 coverage lands) validates: the FK children
-// precede SessionStore and the post-session stores (tokens,
-// credential_pool) follow it. This pins the gateway's orchestrator
-// wiring against the dependency contract.
+// TestCanonicalRankNameSet_spec_12_8 pins the set of ranked store names. A
+// store added to or dropped from the §12.8 scope must change this list in
+// a reviewed edit, together with the Store table wiring on both paths.
 //
-// spec: §12.8.
-func TestValidateOrder_fullProductionWiringPasses_spec_12_8_792(t *testing.T) {
-	cfg := Config{
-		SessionScoped: []SessionEraser{
-			{Name: "transcripts", DeleteBySession: noopSession},
-			{Name: "artifacts", DeleteBySession: noopSession},
-			{Name: "eval_results", DeleteBySession: noopSession},
-			{Name: "session_tree_archive", DeleteBySession: noopSession},
-			{Name: "delegation_budget", DeleteBySession: noopSession},
-		},
-		UserScoped: []Eraser{
-			{Name: "leases", DeleteByUser: noopUser},
-			{Name: "experiment_sticky", DeleteByUser: noopUser},
-			{Name: "billing_buffer", DeleteByUser: noopUser},
-			{Name: "quota", DeleteByUser: noopUser},
-			{Name: "memory", DeleteByUser: noopUser},
-			{Name: "interactions", DeleteByUser: noopUser},
-			{Name: "sessions", DeleteByUser: noopUser},
-			{Name: "tokens", DeleteByUser: noopUser},
-			{Name: "credential_pool", DeleteByUser: noopUser},
-		},
+// spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope)
+func TestCanonicalRankNameSet_spec_12_8(t *testing.T) {
+	// spec: 12.8
+	want := []string{
+		"artifacts", "audit", "billing", "billing_buffer", "checkpoint_manifests",
+		"checkpoint_meta", "checkpoint_retention", "coordination_mirror", "credential_pool",
+		"custom_roles", "delegation_budget", "eval_results", "eviction_state",
+		"experiment_sticky", "interactions", "issued_tokens", "leases", "memory",
+		"pool_tenant_access", "quota", "redis_caches", "runtime_tenant_access",
+		"semantic_cache", "session_dlq_archive", "session_message_queues",
+		"session_tree_archive", "sessions", "tenant_config", "tenant_definitions", "tokens",
+		"transcripts", "user_roles",
 	}
-	if err := ValidateOrder(cfg); err != nil {
-		t.Fatalf("full production wiring must validate: %v", err)
+	got := make([]string, 0, len(canonicalRank))
+	for n := range canonicalRank {
+		got = append(got, n)
 	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("canonicalRank names = %v, want %v", got, want)
+	}
+}
+
+// TestTenantRankOrderFollowsPhase4_spec_12_8 pins the rank order of the
+// §12.8 Phase 4 text: EvalResultStore after the billing EventStore and
+// before the delegation budget keys, and the tail in the order the text
+// lists it.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
+func TestTenantRankOrderFollowsPhase4_spec_12_8(t *testing.T) {
+	if got := strings.Join(CanonicalOrder(), ","); got != strings.Join(withExemptions(storeTableTenant), ",") {
+		t.Fatalf("CanonicalOrder = %s", got)
+	}
+}
+
+// withExemptions merges the tenant exemptions into names at their ranks.
+func withExemptions(names []string) []string {
+	all := append([]string(nil), names...)
+	for n := range tenantExempt {
+		all = append(all, n)
+	}
+	sort.Slice(all, func(i, j int) bool { return canonicalRank[all[i]] < canonicalRank[all[j]] })
+	return all
 }
 
 // session_tree_archive erased after SessionStore is an FK violation
 // (migration 0100 root_session_id → sessions(id), no ON DELETE action).
-func TestValidateOrder_treeArchiveAfterSessionsRejected_spec_12_8_826(t *testing.T) {
-	cfg := Config{
-		UserScoped: []Eraser{
-			{Name: "sessions", DeleteByUser: noopUser},
-			{Name: "session_tree_archive", DeleteByUser: noopUser},
-		},
-	}
-	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("session_tree_archive after sessions must be rejected (FK)")
-	}
-}
-
-// A user-scoped wiring that erases SessionStore before its FK child
-// (interactions) is rejected.
-func TestValidateOrder_sessionsBeforeChildRejected(t *testing.T) {
-	cfg := Config{
-		UserScoped: []Eraser{
-			{Name: "sessions", DeleteByUser: noopUser},
-			{Name: "interactions", DeleteByUser: noopUser},
-		},
-	}
-	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("erasing sessions before interactions must be rejected as an FK order violation")
+//
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestValidateOrderTreeArchiveAfterSessionsRejected_spec_12_8(t *testing.T) {
+	cfg := withoutUserEntry("session_tree_archive")
+	cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "session_tree_archive", DeleteByUser: noopUser})
+	if err := ValidateOrder(cfg); err == nil || !strings.Contains(err.Error(), "FK order violation") {
+		t.Fatalf("session_tree_archive after sessions: got %v, want an FK order violation", err)
 	}
 }
 
 // The eval_results → sessions edge the spec names explicitly is enforced
 // even across the session/user-scoped bucket boundary.
-func TestValidateOrder_evalAfterSessionsRejected(t *testing.T) {
-	// eval_results wired as user-scoped after sessions (a misconfiguration).
-	cfg := Config{
-		UserScoped: []Eraser{
-			{Name: "sessions", DeleteByUser: noopUser},
-			{Name: "eval_results", DeleteByUser: noopUser},
-		},
-	}
-	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("eval_results after sessions must be rejected (§12.8 FK)")
+//
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestValidateOrderEvalAfterSessionsRejected_spec_12_8(t *testing.T) {
+	cfg := withoutUserEntry("eval_results")
+	cfg.UserScoped = append(cfg.UserScoped, Eraser{Name: "eval_results", DeleteByUser: noopUser})
+	if err := ValidateOrder(cfg); err == nil || !strings.Contains(err.Error(), "FK order violation") {
+		t.Fatalf("eval_results after sessions: got %v, want an FK order violation", err)
 	}
 }
 
-// An unranked store name is rejected so a newly added store must be
-// assigned a §12.8 dependency rank.
-func TestValidateOrder_unknownStoreRejected(t *testing.T) {
-	cfg := Config{
-		UserScoped: []Eraser{{Name: "mystery_store", DeleteByUser: noopUser}},
-	}
-	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("a store with no canonical rank must be rejected")
-	}
-}
-
-// A store wired into two slots is rejected.
-func TestValidateOrder_duplicateStoreRejected(t *testing.T) {
-	cfg := Config{
-		SessionScoped: []SessionEraser{{Name: "artifacts", DeleteBySession: noopSession}},
-		UserScoped:    []Eraser{{Name: "artifacts", DeleteByUser: noopUser}},
-	}
-	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("a store wired into two slots must be rejected")
+// The user path is held to the FK edges only, so swapping two user-scoped
+// entries out of rank order, which the tenant path would reject, passes.
+//
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestValidateOrderAllowsNonRankOrderWithinFKEdges_spec_12_8(t *testing.T) {
+	cfg := StoreTableUserConfig()
+	cfg.UserScoped[0], cfg.UserScoped[1] = cfg.UserScoped[1], cfg.UserScoped[0]
+	if err := ValidateOrder(cfg); err != nil {
+		t.Fatalf("a non-rank user order that honors every FK edge was rejected: %v", err)
 	}
 }
 
 // CanonicalOrder is sorted by rank and places sessions after its FK
-// children.
-func TestCanonicalOrder_sessionsAfterChildren(t *testing.T) {
+// children and the post-session stores after it.
+//
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestCanonicalOrderSessionsAfterChildren_spec_12_8(t *testing.T) {
 	order := CanonicalOrder()
 	idx := map[string]int{}
 	for i, n := range order {
@@ -144,8 +266,7 @@ func TestCanonicalOrder_sessionsAfterChildren(t *testing.T) {
 			t.Errorf("%q must precede sessions in the canonical order", child)
 		}
 	}
-	// tokens and credential_pool come after sessions per §12.8 steps 18-19.
-	for _, after := range []string{"tokens", "credential_pool"} {
+	for _, after := range []string{"tokens", "issued_tokens", "credential_pool", "tenant_config"} {
 		if idx[after] <= idx["sessions"] {
 			t.Errorf("%q must follow sessions in the canonical order", after)
 		}

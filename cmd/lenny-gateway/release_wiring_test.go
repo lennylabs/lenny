@@ -82,3 +82,26 @@ func TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8(t *testing.T) {
 		{"legalholdescrow.go", "Records: m.records,", "the escrow records on the Migrator"},
 	})
 }
+
+// TestErasureListsAndTenantListersAreWired_spec_12_8 pins the gateway
+// wiring the eraser and lister tests cannot observe: the semantic cache the
+// tenant-deletion Phase 4 list erases is the one the user erasure and the
+// LLM proxy share; the billing retention pruner, the revocation-cache
+// rehydration, and the issued-token GC list tombstoned tenants; and the
+// billing flusher and the idempotency-key GC keep listing live tenants
+// only. The semantic cache is in-process, so no integration test can tell
+// a nil argument from the shared instance.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 13.3 (Credential Flow: Authoritative durability for revocation), 12.2 (Storage Roles)
+func TestErasureListsAndTenantListersAreWired_spec_12_8(t *testing.T) {
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)", "the shared semantic cache in the tenant Phase 4 list"},
+		{"adminrouter.go", "userScoped := w.buildUserErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)", "the shared semantic cache in the user erasure list"},
+		{"billing_security_workers.go", "billingretention.New(w.billing, allTenantsLister{w.tenants},", "the billing retention pruner over every tenant row"},
+		{"billing_security_workers.go", "w.billingTier.NewFlusherManager(tenantsLister{w.tenants},", "the billing flushers over live tenants"},
+		{"billing_security_workers.go", "lister := allTenantsLister{w.tenants} if err := w.revCache.Rehydrate(context.Background(), lister, issued)", "the revocation-cache rehydration over every tenant row"},
+		{"billing_security_workers.go", "idemGC := idempgstore.New(w.pgPool) lister := tenantsLister{w.tenants}", "the idempotency-key GC over live tenants"},
+		{"billing_security_workers.go", "w.startIssuedTokenGC(issuedtokenstore.New(w.pgPool), time.Duration(*issuedTokenGCIntervalSeconds)*time.Second)", "the issued-token GC start"},
+		{"billing_security_workers.go", "lister := allTenantsLister{w.tenants} sweepIssuedTokens(context.Background(), gc, lister, clockinject.Now)", "the issued-token GC over every tenant row"},
+	})
+}

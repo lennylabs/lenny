@@ -82,7 +82,9 @@ func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, te
 
 // namedTenantEraser pairs a store name with its DeleteByTenant function.
 // Both the (int, error) CountingEraser stores and the (error)-only
-// StoreEraser stores adapt to this single shape.
+// StoreEraser stores adapt to this single signature. A nil fn lists the store
+// by name for a posture whose backend is absent: ValidateTenantOrder counts
+// the name as wired, and tenantEraser skips it.
 type namedTenantEraser struct {
 	name string
 	fn   func(ctx context.Context, tenantID string) (int, error)
@@ -93,6 +95,11 @@ type namedTenantEraser struct {
 // deleted-row tally for the erasure receipt. A store error aborts the
 // phase (it is retried from Phase 4 on a later pass); each DeleteByTenant
 // is idempotent so the retry re-deletes already-removed rows as a no-op.
+// An entry with a nil function is skipped and left out of the tally, so the
+// receipt does not report a store that did not run as having erased zero
+// rows.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
 type tenantEraser struct {
 	erasers []namedTenantEraser
 }
@@ -100,6 +107,9 @@ type tenantEraser struct {
 func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map[string]int, error) {
 	out := make(map[string]int, len(e.erasers))
 	for _, ne := range e.erasers {
+		if ne.fn == nil {
+			continue
+		}
 		n, err := ne.fn(ctx, tenantID)
 		if err != nil {
 			return out, fmt.Errorf("tenant erase %s: %w", ne.name, err)

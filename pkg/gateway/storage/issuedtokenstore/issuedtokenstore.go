@@ -598,15 +598,17 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 }
 
 // DeleteByUser implements the §12.1 mandatory-erasure primitive for the
-// §12.2 TokenIssuanceStore role. It hard-deletes every issued-token row
-// whose subject is userID within tenantID and returns the count
-// removed. RevokeBySubject only marks rows revoked (the row, including
-// its token hash, survives); a GDPR erasure must remove the row
-// outright, so the §12.8 user-erasure path calls DeleteByUser rather
-// than RevokeBySubject. Deleting an erased user's tokens is safe
-// because a deleted token can no longer be presented for validation.
+// §12.2 TokenIssuanceStore role. It hard-deletes the issued-token rows whose
+// subject is userID within tenantID and whose exp precedes the trailing hour,
+// and returns the count removed. A row still inside the hour is kept, revoked
+// or not: the token behind it can still be presented, so a later revocation
+// or rotation must find its row and a restarted replica must load its
+// revocation. The §12.2 expired-row GC deletes the kept rows once they leave
+// the hour.
 //
-// spec: §12.1, §12.8 step `TokenStore`.
+// spec: §12.1, §12.8 (Compliance Interfaces: DeleteByUser
+// dependency-ordered deletion sequence, step 18), §13.3 (Credential Flow:
+// Authoritative durability for revocation).
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -614,7 +616,8 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`DELETE FROM issued_tokens WHERE tenant_id = $1 AND sub = $2`,
+			`DELETE FROM issued_tokens
+			  WHERE tenant_id = $1 AND sub = $2 AND exp <= now() - interval '1 hour'`,
 			tenantID, userID)
 		if err != nil {
 			return err
@@ -628,11 +631,14 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	return deleted, nil
 }
 
-// DeleteByTenant implements the §12.1 mandatory-erasure primitive. It
-// hard-deletes every issued-token row owned by tenantID — the §12.8
-// Phase 4 tenant-teardown path for the TokenIssuanceStore role.
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive for the
+// §12.8 Phase 4 tenant teardown. It hard-deletes the tenant's issued-token
+// rows whose exp precedes the trailing hour and keeps the rest, for the same
+// reason DeleteByUser does. The §12.2 expired-row GC, which visits deleted
+// tenants too, deletes the kept rows once they leave the hour.
 //
-// spec: §12.1, §12.8 Phase 4.
+// spec: §12.1, §12.8 (Compliance Interfaces: Tenant deletion lifecycle),
+// §13.3 (Credential Flow: Authoritative durability for revocation).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByTenant requires a concrete tenant_id")
@@ -640,7 +646,8 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`DELETE FROM issued_tokens WHERE tenant_id = $1`, tenantID)
+			`DELETE FROM issued_tokens
+			  WHERE tenant_id = $1 AND exp <= now() - interval '1 hour'`, tenantID)
 		if err != nil {
 			return err
 		}
