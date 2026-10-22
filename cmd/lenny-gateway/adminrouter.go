@@ -700,12 +700,30 @@ func (w *gatewayWiring) buildAdminRouter(
 	// anchor; an in-memory Job is reconstructed from it each pass. The
 	// runner ticks only while this replica is the gateway leader.
 	// spec: §12.8. F-12.8.1, F-24.10.3.
+	//
+	// leaseRevoker is the §11.4 lease step. It returns each lease to its
+	// pool through the credential assigner, which revokes the lease and
+	// removes its record from the shared lease store, so every replica
+	// rejects the lease's token. The step writes no deny-list entry (§11.4
+	// step 1). Tenant-deletion Phase 3 runs it over every session of the
+	// deleted tenant, and full_revoke runs it over the user's sessions.
+	leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)
 	{
 		tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)
 		deletionReconciler := &tenantdeletion.Reconciler{
 			Jobs:     tenantdeletion.NewMemory(),
 			Eraser:   &tenantEraser{erasers: tenantErasers},
 			Disabler: tenantStateDisabler{tenants: w.tenants, clock: clockinject.Now},
+			// §12.8 Phase 3: commit deleting, return the tenant's leases, and
+			// delete its TokenStore rows through the Phase 4 tokens entry.
+			// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3).
+			Revoker: tenantCredentialRevoker{
+				tenants:  w.tenants,
+				sessions: w.sessions,
+				leases:   leaseRevoker,
+				tokens:   tenantEraserFunc(tenantErasers, "tokens"),
+				clock:    clockinject.Now,
+			},
 			// §12.8 Phase 2: drain the tenant's sessions through the shared
 			// lifecycle drain, each drain bounded by --lifecycle-tick-budget.
 			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
@@ -864,16 +882,9 @@ func (w *gatewayWiring) buildAdminRouter(
 			userPodTerminateProp = fanOut.prop
 			userPods = fanOut
 		}
-		// llmLeases is the §4.9 credential-lease store; both the in-memory
-		// and Postgres-backed implementations expose LeasesBySession, so
-		// the assertion succeeds for either backend. The credential
-		// assigner returns each lease to its pool, which revokes it and
-		// removes its record from the shared lease store, so every
-		// replica rejects the lease's token. The step writes no deny-list
-		// entry (§11.4 step 1).
-		if ls, ok := w.llmLeases.(leaserevoke.LeaseLister); ok {
-			userLeases = leaserevoke.New(ls, w.credAssign, nil)
-		}
+		// The §11.4 lease step built above, over the §4.9 credential-lease
+		// store and the credential assigner.
+		userLeases = leaseRevoker
 		if w.pgPool != nil {
 			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
 		}

@@ -297,6 +297,7 @@ func (w *World) NewDeletion() *Deletion {
 		Jobs:       jobs,
 		Disabler:   disabler{w.S.Tenants},
 		Terminator: phase2Drain{w},
+		Revoker:    noopRevoker{},
 		Eraser:     noopEraser{},
 		Receipts:   noopReceipts{},
 		Logger:     w.Logger,
@@ -409,6 +410,13 @@ func errString(err error) string {
 	}
 	return err.Error()
 }
+
+// noopRevoker stands in for the Phase 3 revoker, which the reconciler
+// requires. The harness models no credential leases or TokenStore rows, so
+// the phase has nothing to act on here.
+type noopRevoker struct{}
+
+func (noopRevoker) RevokeTenantCredentials(context.Context, string) error { return nil }
 
 type noopEraser struct{}
 

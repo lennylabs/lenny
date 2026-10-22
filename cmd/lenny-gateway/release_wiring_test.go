@@ -58,7 +58,8 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
 		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
-		{"adminrouter.go", "userLeases = leaserevoke.New(ls, w.credAssign, nil)", "the lease revoker's credential assigner"},
+		{"adminrouter.go", "leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)", "the lease revoker's credential assigner"},
+		{"adminrouter.go", "userLeases = leaseRevoker", "the lease revoker handed to the admin router"},
 	})
 }
 
