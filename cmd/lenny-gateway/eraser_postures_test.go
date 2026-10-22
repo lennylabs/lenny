@@ -145,6 +145,18 @@ func TestEraserBuildersListEveryStoreInEveryPosture_spec_12_8(t *testing.T) {
 			wantNilUser:   []string{"delegation_budget", "experiment_sticky", "leases", "semantic_cache", "session_message_queues"},
 		},
 		{
+			// --memory-enabled=false leaves w.memories nil; both paths list
+			// memory by name with a nil function so erasure skips it rather
+			// than calling DeleteByUser on a nil store.
+			name: "memory backend disabled",
+			setup: func(_ *testing.T, w *gatewayWiring) *semanticcache.InMemory {
+				w.memories = nil
+				return nil
+			},
+			wantNilTenant: withString(inMemoryNilTenant, "memory"),
+			wantNilUser:   withString(inMemoryNilUser, "memory"),
+		},
+		{
 			name: "full posture",
 			setup: func(t *testing.T, w *gatewayWiring) *semanticcache.InMemory {
 				redisPosture(t, w)
@@ -184,6 +196,13 @@ func TestEraserBuildersListEveryStoreInEveryPosture_spec_12_8(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withString returns names with s added, sorted.
+func withString(names []string, s string) []string {
+	out := append(append([]string(nil), names...), s)
+	sort.Strings(out)
+	return out
 }
 
 // withoutString returns names without s.
@@ -230,5 +249,41 @@ func TestTenantEraserSkipsNilFunctionEntries_spec_12_8(t *testing.T) {
 	}
 	if counts["quota"] != 1 || counts["sessions"] != 1 {
 		t.Errorf("counts = %v, want quota=1 sessions=1", counts)
+	}
+}
+
+// TestUserErasureSkipsMemoryWhenMemoryBackendDisabled_spec_12_8 runs the
+// user erasure over the gateway's user eraser list with the memory backend
+// disabled (--memory-enabled=false leaves the MemoryStore nil). The job
+// completes, skips the memory entry, and leaves it out of the counts rather
+// than calling DeleteByUser on a nil store.
+//
+// spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope), 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestUserErasureSkipsMemoryWhenMemoryBackendDisabled_spec_12_8(t *testing.T) {
+	w := inMemoryEraserWiring()
+	w.memories = nil
+	orch := erasure.New(erasure.Config{
+		UserScoped: w.buildUserErasers(nil, nil, credentialpoolstore.NewMemory(), nil),
+	})
+	var (
+		res erasure.Result
+		err error
+	)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("user erasure panicked with the memory backend disabled: %v", r)
+			}
+		}()
+		res, err = orch.DeleteByUser(context.Background(), "acme", "alice")
+	}()
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if _, ok := res.Deleted["memory"]; ok {
+		t.Errorf("counts carry memory although the backend is disabled: %v", res.Deleted)
+	}
+	if _, ok := res.Deleted["sessions"]; !ok {
+		t.Errorf("counts lack sessions; the entries after memory did not run: %v", res.Deleted)
 	}
 }

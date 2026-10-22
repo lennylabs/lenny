@@ -1006,13 +1006,20 @@ func (w *gatewayWiring) buildUserErasers(
 	if credentialPools != nil {
 		pool = credentialPools.DeleteByUser
 	}
+	// MemoryStore is a §12.1 pluggable role; FromStore compile-checks it
+	// against StoreEraser. With the memory backend disabled
+	// (--memory-enabled=false) w.memories is nil, and wrapping it would hand
+	// the Orchestrator a non-nil closure over a nil interface, so the entry
+	// stays listed by name with a nil function and the Orchestrator skips it.
+	memory := erasure.Eraser{Name: "memory"}
+	if w.memories != nil {
+		memory = erasure.FromStore("memory", w.memories)
+	}
 	return append(
 		erasers,
 		erasure.Eraser{Name: "quota", DeleteByUser: quota},
-		// MemoryStore is a §12.1 pluggable role; FromStore compile-checks it
-		// against StoreEraser. Memory and the session-keyed interaction rows
-		// precede SessionStore.
-		erasure.FromStore("memory", w.memories),
+		// Memory and the session-keyed interaction rows precede SessionStore.
+		memory,
 		erasure.FromCounting("interactions", w.interactions),
 		erasure.Eraser{Name: "audit", DeleteByUser: audit},
 		// SessionStore, the FK parent, after every child store.
