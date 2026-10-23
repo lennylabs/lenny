@@ -19,7 +19,7 @@ sdkWarmBlockingPaths:  # glob patterns; demotion triggered if any uploaded file 
   - .claude/*
 ```
 
-**`capabilities.preConnect`** — when `true`, the warm pool controller pre-connects the agent SDK process during the warm phase. All pods in the pool are SDK-warm. The runtime's adapter must implement `DemoteSDK`. Default: `false`.
+**`capabilities.preConnect`** — when `true`, the agent SDK process is pre-connected during the warm phase ([Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). All pods in the pool are SDK-warm. The runtime's adapter must implement `DemoteSDK`. Default: `false`.
 
 **`sdkWarmBlockingPaths`** — list of glob patterns matched against relative workspace paths (see matching contract in [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). If any uploaded file (including `workspaceDefaults` files) matches a pattern, the gateway demotes the SDK-warm pod before use. Default: `["CLAUDE.md", ".claude/*"]`. The field is only meaningful when `capabilities.preConnect: true`; ignored otherwise. Patterns follow Go `path.Match` extended with `**` (see matching contract in [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).
 
