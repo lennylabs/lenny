@@ -87,7 +87,8 @@ Warm fill (pod-warm path):
 Warm fill (SDK-warm path, preConnect: true):
   warming ──→ sdk_connecting        (adapter starts the SDK process before first claim)
   sdk_connecting ──→ idle           (SDK pre-connect completes — watchdog clock anchored at pod start)
-  sdk_connecting ──→ failed         (sdkConnectTimeoutSeconds watchdog fires — see §6.1)
+  sdk_connecting ──→ failed         (sdkConnectTimeoutSeconds watchdog fires — see §6.1; or the
+                                     adapter or runtime container terminates — see §4.7.10 Runtime supervisor)
   sdk_connecting ──→ terminated     (SIGTERM received: DemoteSDK called with timeout, then process exits)
 
 Occupancy projection (WarmPoolController-computed from the per-pod SandboxClaim):
@@ -98,7 +99,8 @@ Occupancy projection (WarmPoolController-computed from the per-pod SandboxClaim)
   idle ──→ draining                 (recycle.maxPodUptimeSeconds exceeded — WarmPoolController
                                      level-triggers the drain from the pod CreationTimestamp,
                                      regardless of session activity; or gateway-stamped
-                                     lenny.dev/drain-request annotation — see §5.2)
+                                     lenny.dev/drain-request annotation — see §5.2; or the
+                                     adapter or runtime container terminates — see §4.7.10 Runtime supervisor)
   failed ──→ draining               (failed pod reclaimed and replaced)
   draining ──→ terminated           (pod replacement provisioned from warm pool)
 
@@ -119,7 +121,8 @@ the pod projects claimed, bounded by the gateway-side scrub-report timeout):
                                      boundary; or the §5.2 Pod retirement policy retire "Runtime not live")
   sdk_connecting ──→ reserved       (SDK re-warm completes within sdkConnectTimeoutSeconds measured from
                                      the re-warm-start stamp)
-  sdk_connecting ──→ failed         (re-warm watchdog fires)
+  sdk_connecting ──→ failed         (re-warm watchdog fires; or the adapter or runtime
+                                     container terminates — see §4.7.10 Runtime supervisor)
   reserved ──→ claimed              (same-tenant session rebinds within the hold TTL — reserved → bound
                                      claim patch, no acquisition round trip)
   reserved ──→ idle                 (hold TTL expires, or the acquisition path ends the hold on a pool
