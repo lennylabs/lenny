@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: MIG-1 edits an existing tier-2 auditstore test outside its targets
+## MIG-1 edits an existing tier-2 auditstore test outside its targets
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S7 (MIG-1: migration 0188 drops the `audit_redaction_receipts` foreign key).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the MIG-1 targets list against the diff would find an unlisted change to `tests/tier2_component/auditstore/redaction_test.go` and could treat it as scope creep or revert it. A reader searching for `TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840` would find that it no longer exists, and that its assertion is now inverted under the name `TestDeleteByTenantKeepsReceiptOfDeletedRow_spec_12_8`. A reader looking for T2.1 under `tests/tier2_component/auditstore/` would not find it there, because it lives under `tests/tier2_component/migrations/`.
 
-## Proposed: CODE-5 escrow blob adapters and store builder live in a new pkg/ package
+## CODE-5 escrow blob adapters and store builder live in a new pkg/ package
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S9 (CODE-5: Phase 3.5 escrow into the escrow bucket).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader looking for `blobEscrowWriter`, `blobEscrowDeleter`, or a `blobproviderflags.Resolve` call in `cmd/lenny-gateway/legalholdescrow.go` would not find them. The same reader could treat `pkg/legalholdescrow/blobescrow` as an unlisted package and move its contents back into `cmd/`, which would leave T2.7 unable to exercise the shipped code.
 
-## Proposed: escrow object URIs carry a no-expiry TTL
+## escrow object URIs carry a no-expiry TTL
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S9 (CODE-5: Phase 3.5 escrow into the escrow bucket).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would read the 100-year value as a hard-coded non-spec default that the configuration rules require to be operator-tunable, and could add a flag for it or remove it. Removing it returns the defect in which escrow copies read as expired immediately after they are written.
 
-## Proposed: escrow store location for the filesystem provider and scope of the endpoint override
+## escrow store location for the filesystem provider and scope of the endpoint override
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S9 (CODE-5: Phase 3.5 escrow into the escrow bucket).
 
@@ -58,9 +58,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect the filesystem escrow store to share the artifact root, or would look for escrow copies inside it. A reader would also expect `--legal-hold-escrow-endpoint` to change the S3 or Azure endpoint, which it does not.
 
-## Proposed: escrow store construction failure is fatal at startup
+## escrow store construction failure is fatal at startup
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S9 (CODE-5: Phase 3.5 escrow into the escrow bucket).
 
@@ -72,9 +72,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect a gateway whose escrow store fails to build to start and fail each migration individually, when it instead refuses to start. A reader would also expect a configured bucket name alone to make the migrator resolve a region, when a nil store causes `ErrRegionUnresolvable` regardless of the configured bucket.
 
-## Proposed: platform-chain placement covers the escrow-released ledger event
+## platform-chain placement covers the escrow-released ledger event
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S9 (CODE-5: Phase 3.5 escrow into the escrow bucket).
 
@@ -86,9 +86,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect `legal_hold.escrow_released` to be appended under the original tenant, and would look for it on that tenant's chain rather than on the platform chain. A reader seeing both `target_tenant_id` and `tenantId` in the payload could remove one of them as a duplicate, when the residency gate reads `target_tenant_id` and the existing field is retained.
 
-## Proposed: CODE-6 shared registration table lives in a new test-helper package
+## CODE-6 shared registration table lives in a new test-helper package
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S11 (CODE-6: tenant registration predicate, auth-failure chain, claim selection, default deletion guard, seed refusal, platform reservation, and citation retarget).
 
@@ -100,9 +100,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the CODE-6 targets against the diff would find `pkg/gateway/environment/tenantstore/tenantstoretest` as an unlisted package and could treat it as scope creep. Folding the table back into one test file would leave the other two packages without access to it, and the three tiers would no longer run one table.
 
-## Proposed: CODE-6 embedded bearer verifier composition is built by a new helper
+## CODE-6 embedded bearer verifier composition is built by a new helper
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S11 (CODE-6: tenant registration predicate, auth-failure chain, claim selection, default deletion guard, seed refusal, platform reservation, and citation retarget).
 
@@ -114,9 +114,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader looking for the `MultiVerifier` construction inline in `buildTokenSigningStores` would find a call to `embeddedBearerVerifier` instead, and could treat the helper as unlisted and inline it again. Inlining it would leave T1.19 testing a copy of the composition rather than the code the gateway runs.
 
-## Proposed: CODE-7 deny-list interface moves under an unexported name
+## CODE-7 deny-list interface moves under an unexported name
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S12 (CODE-7: lease step without deny-listing).
 
@@ -128,9 +128,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader searching `cmd/lenny-gateway` for `DenyList` would not find the interface the proposal names and could conclude that the move did not land. A reader looking for the marker test under its old name would not find it either.
 
-## Proposed: CODE-7 tier-4 full_revoke test drops its deny list instead of asserting it stays empty
+## CODE-7 tier-4 full_revoke test drops its deny list instead of asserting it stays empty
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S12 (CODE-7: lease step without deny-listing).
 
@@ -142,9 +142,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the tier-4 test against the proposal would find no empty-deny-list assertion and could treat it as a missing deliverable. Adding a deny list back to the tier-4 harness to assert it stays empty would produce an assertion that cannot fail.
 
-## Proposed: the tier-4 playground-bearer refusal case is skipped
+## the tier-4 playground-bearer refusal case is skipped
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S16 (TEST-1: lifecyclefence harness extension and cross-cutting scenarios). Step S17 records it under the triage rule of the non-spec Testing section (**Failures the tests find.**).
 
@@ -156,9 +156,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would take the playground-bearer refusal as pinned at tier 4 when no tier-4 case exercises it. When F-27.8.1 is fixed, the skip is removed and the case mints its playground bearer before Phase 3, as X1 states.
 
-## Proposed: the tier-4 peer-replica refusal probe checks each Lenny-issued bearer only on its minting replica
+## the tier-4 peer-replica refusal probe checks each Lenny-issued bearer only on its minting replica
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
 
 **Reported by:** step S16 (TEST-1: lifecyclefence harness extension and cross-cutting scenarios). Step S17 records it under the triage rule of the non-spec Testing section (**Failures the tests find.**).
 
@@ -197,3 +197,66 @@ Staged events flush while the tenant's flusher runs, and the flusher stops at th
 ### Departure: user erasure deletes revoked registered credentials
 
 The §4.9 startup deny-list rebuild reads revoked `credentials` rows, so a lease still live on an unreleased remote binding (F-12.8.43) loses its user-shaped deny entry after a replica restart. **Bound:** the lease TTL, or `claimOrphanTimeout` plus one GC sweep interval. Recorded on F-12.8.43.
+
+## REC-1 records gate edits the tier-0 slot-address case-file list
+
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
+
+**Reported by:** step S17 (REC-1: records, departures, new findings, claim register, records gate, P5b bullet).
+
+**What the proposal says.** REC-1 item 9 and the step's Targets name `tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go` as the only test file. The step registers the gate in `documentConsistencyGates` only if the update adds a new file.
+
+**What landed instead.** The gate stays in the existing file, which `documentConsistencyGates` already registers. The step also edited `tests/tier0_static/spec_map_slot_address_registration_test.go` to add that file to `slotAddressCaseFiles`.
+
+**Why.** The new `TEST-GAPS.md` checks make the gate file read `TEST-GAPS.md`. The tier-0 gate `TestTheCreditInventoryCarriesEveryAddressGuardCaseFile` requires every tier-11 file that reads `TEST-GAPS.md` to appear in `slotAddressCaseFiles`, and that gate failed until the entry was added.
+
+**What a later reader would otherwise get wrong.** A reader comparing the REC-1 targets against the diff would find an unlisted change to `tests/tier0_static/spec_map_slot_address_registration_test.go` and could treat it as scope creep or revert it, which would fail the tier-0 gate. A reader could also conclude from the targets that the records gate reads only `BUILD-GAPS.md`.
+
+## placement of the non-spec Edge case departures in BUILD-GAPS.md
+
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
+
+**Reported by:** step S17 (REC-1: records, departures, new findings, claim register, records gate, P5b bullet).
+
+**What the proposal says.** REC-1 item 6 records each departure (non-spec Edge cases 1 to 6) in `BUILD-GAPS.md` with its bound. It does not name the finding that carries each departure.
+
+**What landed instead.** Each departure is recorded on one finding as an `**Accepted departure (proposal 0095): ...**` paragraph with a `Bound:` clause. Edge case 1 is on the new F-4.9.40, with a pointer from F-12.8.30. Edge case 2 is on F-12.8.30 (closed). Edge case 3 is on F-12.8.35 (left open). Edge cases 4 and 5 are on F-12.8.34 (closed). Edge case 6 is on F-12.8.43. This file also carries a section titled "Accepted departures recorded from the non-spec Edge cases" with one bounded entry for each.
+
+**Why.** The proposal left the placement open. The step placed each departure on the finding whose mechanism it bounds, so a reader of that finding sees the residue.
+
+**What a later reader would otherwise get wrong.** A reader searching `BUILD-GAPS.md` for a single departures list would not find one, and would need the mapping above to locate each departure. A reader seeing the word "Accepted" in those paragraphs and in this file's section heading could take it as an adjudication of a deviation; it labels the departures the proposal's Edge cases already state, and the placement itself is the proposed deviation recorded here.
+
+## REC-1 New findings filed by section, including entries outside the step's list
+
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
+
+**Reported by:** step S17 (REC-1: records, departures, new findings, claim register, records gate, P5b bullet).
+
+**What the proposal says.** REC-1 item 8 files each summary entry marked **New** under the next free identifier in its section. It does not assign the entries to `BUILD-GAPS.md` sections, and the step's own list in item (8) names a subset of the New entries.
+
+**What landed instead.** The findings are filed by section: §4.9 gets F-4.9.40 and F-4.9.41, §10.2 gets F-10.2.23 and F-10.2.24 (after the existing F-10.2.22), §12.8 gets F-12.8.49 to F-12.8.59, §17.6 gets F-17.6.24, and §27.3 gets F-27.3.12 and F-27.3.13. F-10.2.22 and F-27.8.1 keep their numbers. All 18 New entries are filed, including the nine the step's list left out: ForceTerminate (owner P2), `delegation_tree_budget` (owner P4), the unnamed tenant-keyed tables, the playground mint check, the single-tenant playground revocation, the tenant-keyed writers, admin-token rotation, the single-tenant create and delete, and the dev-mode header.
+
+**Why.** Each finding is filed in the section whose mechanism it concerns. REC-1 item 8 files every entry marked **New**, and the step's list is a subset of those entries.
+
+**What a later reader would otherwise get wrong.** A reader checking the step's item (8) list against `BUILD-GAPS.md` would find nine additional findings and could treat them as unrequested or remove them. A reader could also expect every New finding under a single section, or expect F-10.2.22 or F-27.8.1 to have been renumbered.
+
+## the legal-hold scope tripwire test still states the pre-0095 audit eraser contract
+
+**Status:** accepted (adjudicated 2026-10-23 under the owner's standing delegation)
+
+**Reported by:** the step sweep for stale code that the landed spec edits left behind.
+
+**What the proposal says.** The proposal stages no change to `pkg/gateway/externalapi/admin/legalhold_scope_tripwire_test.go`.
+
+**What landed instead.** The file is unchanged. Its comment and its `legalHoldScopeRevisit` constant, near line 27, still read as follows:
+
+```go
+// The tenant `audit` eraser in Phase 4 deletes the tenant's audit rows
+// with no escrow skip, which is correct only while no audit-range hold can
+// exist, so it has to be revisited before such a scope ships.
+const legalHoldScopeRevisit = "the legal-hold setter accepts a scope beyond session and artifact; revisit the tenant deletion `audit` eraser, which deletes audit rows with no legal-hold escrow skip"
+```
+
+**Why.** The text contradicts the landed spec. In `spec/12_storage-architecture.md`, §12.8 Compliance Interfaces, the **Tenant deletion lifecycle** paragraph for Phase 4 states that "`DeleteByTenant` deletes the originals of resources that Phase 3.5 copied to the legal-hold escrow bucket. The escrow copy and its legal-hold ledger record are the retained evidence". Sub-step 3 of Phase 3.5 adds that "Phase 4 deletes the original rows". An eraser with no escrow skip is therefore the specified behavior, and its correctness no longer depends on the absence of audit-range holds. The constant is a string that the test passes to `t.Fatalf` as its failure message, so editing it changes test behavior that the proposal did not stage, and the sweep left it in place.
+
+**What a later reader would otherwise get wrong.** A reader of `pkg/gateway/externalapi/admin/legalhold_scope_tripwire_test.go` would take the old contract as current. That reader would conclude that the tenant `audit` eraser must gain a legal-hold escrow skip before a hold scope beyond session and artifact ships, when the landed spec specifies that Phase 4 deletes the originals and that the Phase 3.5 escrow copy is the retained evidence.

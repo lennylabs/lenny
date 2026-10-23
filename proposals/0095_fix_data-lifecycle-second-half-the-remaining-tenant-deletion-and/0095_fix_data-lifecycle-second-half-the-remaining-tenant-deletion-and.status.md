@@ -2,15 +2,15 @@
 proposal: 0095_fix_data-lifecycle-second-half-the-remaining-tenant-deletion-and
 title: Data lifecycle second half: remaining erasure stores, Phase 3 lease revocation, audit-receipt foreign key, and full_revoke
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-21
 drafted-by: change-proposal
 reviewed-date: 2026-10-22
 reviewed-by: change-proposal
 approved-date: 2026-10-22
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-23
+implemented-by: jaf
 ---
 
 ## Review history
