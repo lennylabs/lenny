@@ -137,6 +137,31 @@ func TestSupervisedRuntimeLaunchPermitConditions_spec_4_7_10(t *testing.T) {
 		}
 		requireNotLive(t, f.rt, CauseNoConnection)
 	})
+	t.Run("a start cancelled before its deadline leaves the not-live state clear", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+		f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- f.rt.Start(ctx, "a") }()
+		waitFor(t, "the launch", func() bool { return f.sup.count(superviseLaunch) == 1 })
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled Start = %v, want context.Canceled", err)
+		}
+		requireLive(t, f.rt)
+		// The launched process connects after the cancelled start returned;
+		// the next start joins it rather than launching again.
+		go f.sup.startProcess()
+		if err := f.rt.Start(startCtx(t, 5*time.Second), "b"); err != nil {
+			t.Fatalf("Start after a cancelled start: %v", err)
+		}
+		if n := f.sup.count(superviseLaunch); n != 1 || f.rt.RuntimeGeneration() != 1 {
+			t.Fatalf("launches = %d gen = %d, want 1 and 1", n, f.rt.RuntimeGeneration())
+		}
+		requireLive(t, f.rt)
+	})
 	t.Run("a launched process that exits before it holds its session", func(t *testing.T) {
 		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
 		code := 1

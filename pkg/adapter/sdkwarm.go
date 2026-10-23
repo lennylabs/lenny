@@ -339,9 +339,13 @@ func (s *Server) refuseUnconfirmedSDKWarmStart(ctx context.Context, sw SDKWarmRu
 // admits preConnect only at maxConcurrentSessions: 1. With an entry
 // standing, the handler takes the slot's per-slot guard, the §5.2 slot
 // serialization, before it decides anything, and decides the session_end
-// write on the rule-8 record under that guard while the entry stands.
-// DemoteSDK does not end the runtime process (§4.7.10), so the session is
-// released on the runtime with session_end before the SDK is torn down.
+// write on the rule-8 record under that guard while the entry stands. The
+// session_end is written under that guard before the runtime's DemoteSDK
+// runs, because that call takes the session's process away. On a supervised
+// pod it ends the live process through CH-SUPERVISE end with the endDemote
+// disposition and rebinds the listeners, so the session's next start
+// launches a new process (§4.7.10, Runtime supervisor, SDK-warm; Runtime
+// supervisor, End). On the embedded model it closes the in-process runtime.
 //
 // The handler fails closed when the guard is not acquired before the
 // request's deadline: it writes no session_end, tears nothing down, leaves
@@ -397,11 +401,11 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
 	}
 	// Return the pod to pod-warm: the SDK is no longer connected, so clear
-	// the warm-readiness flag. The demotion takes the session off the
-	// pod's shared runtime process (DemoteSDK is r.InProcessRuntime.Close),
-	// so the generation state moves with it before the release evaluates
-	// the pod-surface gate. The release runs under the guard this handler
-	// already holds.
+	// the warm-readiness flag. The demotion took the session's process away
+	// (on a supervised pod an end with the endDemote disposition, on the
+	// embedded model a close of the in-process runtime), so the generation
+	// state moves with it before the release evaluates the pod-surface
+	// gate. The release runs under the guard this handler already holds.
 	s.mu.Lock()
 	s.sdkConnected = false
 	s.mu.Unlock()

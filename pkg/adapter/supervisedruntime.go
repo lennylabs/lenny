@@ -375,7 +375,11 @@ func (r *SupervisedRuntime) endEvent(gen uint64, ev RuntimeEndEvent) {
 // transport within the start's deadline. While the not-live state is set it
 // refuses every start, and a start that finds no live process when no launch
 // is permitted fails. A launched process that does not connect within the
-// deadline of the start that launched it is the no-connection cause.
+// deadline of the start that launched it is the no-connection cause. A start
+// cancelled before its deadline is no Liveness cause: it returns the
+// cancellation and leaves the not-live state clear, the transport's accept
+// loop keeps running, and the next start joins the launched process once it
+// connects.
 // spec: §4.7.9 (step 7); §4.7.10 (Runtime supervisor, Launch; Runtime
 // supervisor, Liveness).
 func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
@@ -386,12 +390,22 @@ func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 		return err
 	}
 	if err := startComposed(ctx, t, sessionID); err != nil {
-		if launched {
+		if launched && connectDeadlinePassed(err) {
 			r.MarkNotLive(CauseNoConnection)
 		}
 		return fmt.Errorf("start supervised runtime: %w", err)
 	}
 	return nil
+}
+
+// connectDeadlinePassed reports that a connection wait ended because the
+// start's deadline passed: the start's context reached its deadline, or the
+// transport's accept bound, which startComposed sets to the time left before
+// that deadline, elapsed. Only that ending is the no-connection cause; a
+// cancellation, an ended connection, and a closed listener are not.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
+func connectDeadlinePassed(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errRuntimeConnectTimeout)
 }
 
 // startComposed waits for the launched process's CH-MSGSOCK connection

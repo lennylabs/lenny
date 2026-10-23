@@ -31,6 +31,13 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // bound. spec: §4.7.10 (Runtime process lifetime); §5.2 (Runtime not live).
 var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 
+// errRuntimeConnectTimeout is the error Start returns when its accept bound
+// elapses before the runtime connects. A caller tells it apart from a
+// cancelled start with errors.Is, because only a wait that ran out its bound
+// means the runtime did not connect in time.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
+var errRuntimeConnectTimeout = errors.New("adapter: runtime did not connect within the accept bound")
+
 // SocketRuntimeProcess is the §4.7 sidecar-model RuntimeProcess: the
 // adapter listens on an abstract Unix socket and the runtime — running
 // in a separate pod container — dials it and exchanges §28.5.3 JSONL
@@ -271,7 +278,7 @@ func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time
 	case <-p.acceptDone:
 		return fmt.Errorf("adapter: accept runtime connection: %w", p.acceptErr)
 	case <-timer.C:
-		return fmt.Errorf("adapter: runtime did not connect within %s", timeout)
+		return fmt.Errorf("%w (%s)", errRuntimeConnectTimeout, timeout)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
