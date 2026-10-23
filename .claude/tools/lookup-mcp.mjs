@@ -24,6 +24,7 @@ const DESCRIPTION = [
   "Put every term, statement, section, and line range you want at this point into ONE call; ten or twenty entries is normal.",
   "exact is complete: every occurrence is listed by location. meaning is a ranking with a match probability, reads markdown only, and is complete only when the output says every passage in scope was judged (narrow paths to a few files for that).",
   "Output is capped at 26000 characters; a passage that does not fit is listed by location and can be fetched with lines.",
+  "When the line under the output header starts with JEV UNAVAILABLE, meaning and related results are unjudged shortlists: do not retry the tool for them; search with exact terms, grep, and Read instead.",
 ].join(" ");
 
 const TOOL = {

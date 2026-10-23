@@ -340,12 +340,18 @@ const RELAY_GUARD =
 // wrong tree, and nothing in the answer looks wrong. Every agent can reach the
 // lookup, so the statement follows the guard in every prompt rather than being
 // copied into the prompts that mention it; it is the same bytes for every agent.
+// The same block says what to do when the lookup's judge (Jev) is down: the tool
+// then prints a JEV UNAVAILABLE marker and unjudged shortlists, and an agent that
+// retried it or read the shortlist as a ranking would loop or under-search.
 const LOOKUP_ROOT =
   "LOOKUP ROOT: this run's repository is " + repo + ". Pass \"root\": \"" + repo + "\" in EVERY " +
   "mcp__lookup__lookup call, and start every shell command that runs lookup.mjs or reads the tree with " +
   "`cd " + repo + " && `. Your working directory may be a different checkout of the same repository, " +
   "and a lookup there returns text from the wrong tree. The first line of lookup output names the tree it " +
-  "searched (`# lookup in <path>`); if that path is not " + repo + ", discard the output and rerun with root.\n\n";
+  "searched (`# lookup in <path>`); if that path is not " + repo + ", discard the output and rerun with root. " +
+  "LOOKUP UNAVAILABLE: when lookup output carries the `JEV UNAVAILABLE` marker on the line under its header, " +
+  "or a lookup errors or times out, do not retry the lookup in this task. Do the search with grep, sed, and Read " +
+  "instead, and say so in your searched or evidence record.\n\n";
 
 if (!MODELS.includes(baseModel)) {
   throw new Error(
@@ -740,7 +746,8 @@ function relatedLookupBlock(forWhom) {
     '                "at": "<file:line of that passage>"}]}\n' +
     "  REQ\n\n" +
     "Put every changed statement into the one call's `related` list. The output lists passages that state " +
-    "or rely on what the change alters, best first, each with file, lines, and text. They are leads: read " +
+    "or rely on what the change alters, best first, each with file, lines, and text (unranked when it carries the " +
+    "JEV UNAVAILABLE marker; LOOKUP UNAVAILABLE above says what to do then). They are leads: read " +
     "each one and decide whether the change makes it wrong. They do not replace your own search for " +
     "identifiers and paraphrases, because the lookup misses about a third of such sites."
   );
