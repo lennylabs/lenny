@@ -538,7 +538,8 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
-        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8"
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
+        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1062,7 +1063,31 @@
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateRejectsAMalformedRegister",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUncoveredInputsField",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnproducedInputsField",
-        "tests/tier7a_load_local/adapter_grace_budget_test.go"
+        "tests/tier7a_load_local/adapter_grace_budget_test.go",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeConcurrentFirstStartsSendOneLaunch_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeLaunchPermitConditions_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeEndAndSweepReplies_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeRunCleanupOutcomes_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeRebindDiscardsABackloggedConnection_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeServesNextSession_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestEndDispositionPrecedence_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestRuntimeExitsRowPerDispositionEventAndPodKind_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestRuntimeExitsHandlesEachGenerationOnce_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestRuntimeCrashFailsOnlyTheSessionsTheProcessHolds_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestAdapterExitAndRebindClosesSelectNoRow_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestLivenessCausesOnTheServer_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestCohortResetsAtEachNewGeneration_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestAttachEndsWithRuntimeCrashWhenTheHeldProcessCrashes_spec_4_7_10",
+        "pkg/adapter/preready_test.go::TestRunPreReadyCells_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedLaunchAgainstLaunchRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedExitedAgainstEndRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedExitedAgainstDeregistrationRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedExitedAgainstHoldTimeoutRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstGatesRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedLaunchAfterScrubOrdering_spec_4_7_10",
+        "cmd/lenny-adapter/supervise_test.go::TestAdapterInputsTable_spec_4_7_10",
+        "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorReportsTheRuntimeExit_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedWarmUpLaunch_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
@@ -1120,7 +1145,8 @@
         "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
         "tests/tier4_integration/concurrent_workspace_test.go",
-        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11"
+        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11",
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorAppliesThePropertyGateOnRestartPodsOnly_spec_4_7_11"
       ],
       "packages": [
         "pkg/adapter"
@@ -1621,7 +1647,16 @@
         "tests/tier7a_load_local/slot_release_paths_race_test.go",
         "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestSlotSetKeyRowsDescribeASet_spec_12_4",
-        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go"
+        "tests/tier7a_load_local/slot_counter_rebuild_race_test.go",
+        "pkg/adapter/podscrub_supervised_test.go::TestSupervisedScrubSequenceCells_spec_5_2",
+        "pkg/adapter/podscrub_supervised_test.go::TestSupervisedScrubOrderOnAKeepPod_spec_5_2",
+        "pkg/adapter/scrub/defaultops_noexec_test.go::TestPurgeIPCShmRemovesSegmentsOwnedOrCreatedByTheAdapterUID_spec_5_2",
+        "pkg/adapter/scrub/defaultops_noexec_test.go::TestPurgeIPCShmErrors_spec_5_2",
+        "pkg/adapter/scrub/defaultops_noexec_test.go::TestKillUserProcessesSignalsEveryProcessWithoutExec_spec_5_2",
+        "pkg/adapter/scrub/defaultops_noexec_test.go::TestScrubFileOperationsFollowNoSymlink_spec_5_2",
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSkipsCleanupAfterAStep0ErrorOnEveryPod_spec_5_2",
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSendsCleanupThroughTheRunnerAndKeepsTheOrder_spec_5_2",
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunNotLiveErrorsLeaveTheScrubOutcome_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1718,7 +1753,9 @@
         "tests/tier9_security/adapter_credential_assignment_precondition_test.go::TestMergedCredentialHandlersRefuseASessionWithNoAssignment_spec_6_1",
         "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "pkg/adapter/runtimeexits_test.go::TestSupervisedShutdownDemoteSDK_spec_6_1",
+        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -6946,7 +6983,21 @@
         "tests/tier3_contract/runtimeops_emitted/deadline_trigger_test.go::TestDeadlineApproachingAcceptsOnlySessionAgeAndBudget_spec_28_5_3",
         "tests/tier3_contract/adapter_jsonl/heartbeat_session_wire_test.go::TestAdapterHeartbeatOnSocketRuntimeNamesTheSession_spec_28_5_3",
         "tests/tier10_conformance/heartbeat_busy_conformance_test.go::TestHeartbeatBusyConformance_spec_15_4_6",
-        "tests/tier7a_load_local/adapter_grace_budget_test.go"
+        "tests/tier7a_load_local/adapter_grace_budget_test.go",
+        "pkg/adapter/supervise_wire_test.go::TestSuperviseDecoderRejectsEveryStrictDecodeFailure_spec_28_5_3",
+        "pkg/adapter/supervise_wire_test.go::TestSuperviseDecoderAcceptsEveryMessageTheSupervisorWrites_spec_28_5_3",
+        "pkg/adapter/supervise_wire_test.go::TestSuperviseRequestEncodingCarriesTheMembersOfEachType_spec_28_5_3",
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorRefusesAMissingLateOrMalformedReady_spec_28_5_3",
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorAcceptsOnlyTheAgentUIDOnceAndClosesItsListener_spec_28_5_3",
+        "pkg/adapter/supervise_test.go::TestSupervisorLinkFailsOnEveryLinkFailureAndThenSendsNothing_spec_28_5_3",
+        "pkg/adapter/supervise_test.go::TestSupervisorLinkDeliversAnExitedOfTheCurrentGeneration_spec_28_5_3",
+        "pkg/adapter/supervise_test.go::TestSupervisorLinkPingsWhileIdleAndFailsOnAMissedPong_spec_28_5_3",
+        "pkg/adapter/podscrub_supervised_test.go::TestScrubDeadlineExceedsTheCleanupRequestBound_spec_28_5_3",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedEndAgainstPingRace_spec_28_5_3",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisorLinkCloseAgainstOutstandingRequest_spec_28_5_3",
+        "cmd/lenny-adapter/supervise_test.go::TestZeroRuntimeUIDRefusedWhenOnlyTheSuperviseSocketIsBound_spec_28_5_3",
+        "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorAndAdapterClientAgreeOnEveryMessage_spec_28_5_3",
+        "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorDialAndConnectionLifetime_spec_28_5_3"
       ],
       "packages": [
         "pkg/adapter",

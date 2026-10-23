@@ -139,6 +139,11 @@ type RuntimeOps struct {
 	// gate reads it through InflightCount.
 	inflight map[string]int
 	closed   bool
+	// rebinding is closed when a Rebind in progress has installed the new
+	// listener, or has failed and closed the channel. Run waits on it when
+	// its Accept returns because Rebind closed the old listener. Nil when no
+	// rebind is in progress. Guarded by mu.
+	rebinding chan struct{}
 
 	// usage receives the §4.7 direct-mode token counts an
 	// llm_request_completed frame carries. Nil (the Basic/Standard path
@@ -209,12 +214,79 @@ func (lc *RuntimeOps) checkRuntimeOpsPeer(conn net.Conn) error {
 // logRefusedPeer records a refused CH-RUNTIMEOPS connection. See
 // logPeerRefusal for the record's fields.
 func (lc *RuntimeOps) logRefusedPeer(err error) {
-	logPeerRefusal(lc.logger, "runtimeops_peer_refused", lc.listener.Addr().String(), lc.auth.ExpectedUID, err)
+	logPeerRefusal(lc.logger, "runtimeops_peer_refused", lc.SocketPath(), lc.auth.ExpectedUID, err)
 }
 
 // SocketPath is the address the runtime dials to reach the channel.
 func (lc *RuntimeOps) SocketPath() string {
-	return lc.listener.Addr().String()
+	return lc.currentListener().Addr().String()
+}
+
+// currentListener returns the listener Run accepts on.
+func (lc *RuntimeOps) currentListener() net.Listener {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.listener
+}
+
+// Rebind closes the listener and the runtime connection and binds a new
+// listener at the same address, which discards every connection an ended
+// runtime process opened or left in the backlog. Run continues on the new
+// listener. A bind failure closes the channel and is returned.
+// spec: §4.7.10 (Runtime supervisor, End); §5.2 (Supervised scrub sequence,
+// Listener rebind).
+func (lc *RuntimeOps) Rebind() error {
+	lc.mu.Lock()
+	if lc.closed {
+		lc.mu.Unlock()
+		return errLifecycleClosed
+	}
+	old, conn := lc.listener, lc.conn
+	done := make(chan struct{})
+	lc.rebinding = done
+	lc.mu.Unlock()
+	defer close(done)
+
+	addr := old.Addr().String()
+	_ = old.Close()
+	if conn != nil {
+		_ = conn.Close()
+	}
+	l, err := net.Listen("unix", addr)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.rebinding = nil
+	if err != nil {
+		lc.closed = true
+		return fmt.Errorf("CH-RUNTIMEOPS rebind %s: %w", addr, err)
+	}
+	if lc.closed {
+		// Close ran during the rebind; the new listener is not served.
+		_ = l.Close()
+		return errLifecycleClosed
+	}
+	lc.listener = lc.auth.wrap(l, lc.checkRuntimeOpsPeer, lc.logRefusedPeerLocked(addr))
+	return nil
+}
+
+// logRefusedPeerLocked returns a refusal logger bound to addr, for a
+// listener installed while mu is held.
+func (lc *RuntimeOps) logRefusedPeerLocked(addr string) func(error) {
+	return func(err error) {
+		logPeerRefusal(lc.logger, "runtimeops_peer_refused", addr, lc.auth.ExpectedUID, err)
+	}
+}
+
+// awaitRebind waits for a rebind in progress and reports whether Run should
+// accept again.
+func (lc *RuntimeOps) awaitRebind() bool {
+	lc.mu.Lock()
+	ch := lc.rebinding
+	lc.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+	return !lc.isClosed()
 }
 
 // SetUsageSink wires the token sink readLoop folds each
@@ -254,8 +326,11 @@ func (lc *RuntimeOps) Run(ctx context.Context) error {
 	defer stop()
 
 	for {
-		conn, err := lc.listener.Accept()
+		conn, err := lc.currentListener().Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) && !lc.isClosed() && lc.awaitRebind() {
+				continue
+			}
 			if lc.isClosed() || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
@@ -726,9 +801,10 @@ func (lc *RuntimeOps) Close() error {
 		ch <- errLifecycleClosed
 		delete(lc.pending, key)
 	}
+	l := lc.listener
 	lc.mu.Unlock()
 
-	err := lc.listener.Close()
+	err := l.Close()
 	if conn != nil {
 		conn.Close()
 	}

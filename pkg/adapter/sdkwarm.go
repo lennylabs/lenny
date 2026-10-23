@@ -67,6 +67,12 @@ func DemoteTimeoutFromEnv() time.Duration {
 // pre-connected, so a SIGTERM handler may call it unconditionally before
 // GracefulStop. A non-positive timeout falls back to DefaultDemoteTimeout.
 // spec: §6.1.
+//
+// While a session is registered it returns without demoting, so the
+// session's runtime process and slot tree survive the start of the drain for
+// the preStop eviction checkpoint; it demotes only an empty registry, through
+// demoteIdleSDK. The rule is the same in the sidecar and the embedded model.
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting); §4.6.1.
 func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	sw, ok := s.sdkWarmRuntime()
 	if !ok {
@@ -74,9 +80,10 @@ func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	}
 	s.mu.Lock()
 	connected := s.sdkConnected
+	registered := len(s.slots) > 0
 	s.mu.Unlock()
-	if !connected {
-		return // SDK-warm but never pre-connected or already demoted.
+	if !connected || registered {
+		return // never pre-connected, already demoted, or a session is registered.
 	}
 	if timeout <= 0 {
 		timeout = DefaultDemoteTimeout
@@ -86,8 +93,8 @@ func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// DemoteSDK clears sdkConnected and releases the session on success.
-		_, _ = s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{})
+		// demoteIdleSDK clears sdkConnected on success.
+		_, _ = s.demoteIdleSDK(ctx, sw)
 	}()
 	select {
 	case <-done:

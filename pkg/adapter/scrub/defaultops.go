@@ -3,99 +3,158 @@
 package scrub
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 )
 
-// DefaultOps runs the real §5.2 scrub host operations inside the agent pod.
-// The process commands (kill -9 -1, ipcrm) are Linux operations executed as
-// the sandbox user; on a non-Linux host they fail at runtime, which is why
-// the orchestrator records step errors rather than panicking. Unit tests
-// inject a fake Ops, so DefaultOps is exercised by the pod, not the suite.
+// DefaultOps runs the real §5.2 scrub host operations inside the agent pod's
+// adapter container. It runs no external command, because the distroless
+// adapter image carries no shell and no ipcrm: step 1 is kill(-1, SIGKILL)
+// from the adapter process, step 1b removes System V segments through
+// shmctl(IPC_RMID), and every file operation resolves beneath its target
+// directory with openat2 and RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS, so a
+// symbolic link the agent planted is never followed.
+//
+// The zero value runs the real operations. The function fields are test
+// seams: no test outside a container may call kill(-1), and a test cannot
+// create a System V segment owned by another UID.
+//
+// spec: §5.2 (Lenny scrub procedure; What the scrub reaches).
 type DefaultOps struct {
-	// SandboxUser, when set, is the user the process-kill commands run as
-	// (the §5.2 "sandbox user"). Empty runs them as the adapter's own user,
-	// which is the dev-loop default where the adapter and runtime share a
-	// uid.
-	SandboxUser string
+	// Kill replaces syscall.Kill.
+	Kill func(pid int, sig syscall.Signal) error
+	// ShmList replaces the read of /proc/sysvipc/shm.
+	ShmList func() (io.ReadCloser, error)
+	// ShmRemove replaces shmctl(id, IPC_RMID).
+	ShmRemove func(id int) error
+	// UID replaces os.Getuid, the UID whose segments step 1b removes.
+	UID func() int
 }
 
-// KillUserProcesses runs scrub step 1: kill -9 -1 terminates every process
-// the sandbox user can signal in the container that runs the scrub, except
-// that container's first process. It never reaches the runtime container in
-// the sidecar model, and in the embedded model it ends only the runtime's
-// child processes, so the runtime process is kept.
-// spec: §5.2 step 1; §5.2 ("What the scrub reaches").
-func (d DefaultOps) KillUserProcesses(ctx context.Context) error {
-	// `kill -9 -1` signals every process except the caller. Running it
-	// through `sh -c` keeps the -1 target literal across su wrapping.
-	if d.SandboxUser != "" {
-		return run(ctx, "su", d.SandboxUser, "-c", "kill -9 -1")
-	}
-	return run(ctx, "sh", "-c", "kill -9 -1")
-}
+// sysvShmPath lists the pod's System V shared-memory segments.
+const sysvShmPath = "/proc/sysvipc/shm"
 
-// PurgeIPCShm runs scrub step 1b: ipcrm --all=shm removes every System V
-// shared-memory segment. spec: §5.2 step 1b.
-func (d DefaultOps) PurgeIPCShm(ctx context.Context) error {
-	return run(ctx, "ipcrm", "--all=shm")
-}
-
-// RemoveAll removes path and its contents (steps 0, 2). A missing path is
-// not an error.
-func (d DefaultOps) RemoveAll(path string) error {
-	return os.RemoveAll(path)
-}
-
-// ClearContents empties dir but leaves dir itself (step 4). A missing dir
-// is not an error.
-func (d DefaultOps) ClearContents(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+// KillUserProcesses runs scrub step 1: kill(-1, SIGKILL) ends every process
+// the adapter's UID can signal in the adapter's container other than the
+// adapter itself and the container's init. It never reaches the runtime
+// container in the sidecar model, and in the embedded model it ends only the
+// processes the runtime started. A namespace with no other process (ESRCH)
+// is a clean step. spec: §5.2 step 1; §5.2 ("What the scrub reaches").
+func (d DefaultOps) KillUserProcesses(_ context.Context) error {
+	kill := d.Kill
+	if kill == nil {
+		kill = syscall.Kill
 	}
-	var firstErr error
-	for _, e := range entries {
-		if rmErr := os.RemoveAll(filepath.Join(dir, e.Name())); rmErr != nil && firstErr == nil {
-			firstErr = rmErr
-		}
-	}
-	return firstErr
-}
-
-// PathState reports existence and (for directories) emptiness (step 6).
-func (d DefaultOps) PathState(path string) (exists bool, empty bool, err error) {
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return false, true, nil
-		}
-		return false, false, statErr
-	}
-	if !info.IsDir() {
-		// A regular file that exists is non-empty for verification purposes
-		// (any leftover task file is a dirty path).
-		return true, false, nil
-	}
-	entries, readErr := os.ReadDir(path)
-	if readErr != nil {
-		return true, false, readErr
-	}
-	return true, len(entries) == 0, nil
-}
-
-// run executes name with args, attributing the command name on failure so
-// a step error names which operation failed.
-func run(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w: %s", name, err, out)
+	if err := kill(-1, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill(-1, SIGKILL): %w", err)
 	}
 	return nil
+}
+
+// PurgeIPCShm runs scrub step 1b: it removes each System V shared-memory
+// segment whose owning UID or creating UID is the adapter's UID. The creating
+// UID is matched as well, because an owner can move the owning UID with
+// IPC_SET. A segment already gone (EINVAL, EIDRM) is not an error.
+// spec: §5.2 step 1b.
+func (d DefaultOps) PurgeIPCShm(_ context.Context) error {
+	ids, err := d.ownedSegments()
+	if err != nil {
+		return err
+	}
+	remove := d.ShmRemove
+	if remove == nil {
+		remove = shmRemove
+	}
+	var errs []error
+	for _, id := range ids {
+		if err := remove(id); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.EIDRM) {
+			errs = append(errs, fmt.Errorf("shmctl(%d, IPC_RMID): %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ownedSegments lists the segment ids step 1b removes. A host with no
+// /proc/sysvipc/shm has no segments to remove.
+func (d DefaultOps) ownedSegments() ([]int, error) {
+	list := d.ShmList
+	if list == nil {
+		list = func() (io.ReadCloser, error) { return os.Open(sysvShmPath) }
+	}
+	rc, err := list()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", sysvShmPath, err)
+	}
+	defer func() { _ = rc.Close() }()
+	uid := os.Getuid()
+	if d.UID != nil {
+		uid = d.UID()
+	}
+	return parseShmList(rc, uid)
+}
+
+// parseShmList selects from a /proc/sysvipc/shm listing the shmid of each
+// row whose uid or cuid is uid. The column positions come from the header,
+// which names them.
+func parseShmList(r io.Reader, uid int) ([]int, error) {
+	sc := bufio.NewScanner(r)
+	if !sc.Scan() {
+		return nil, sc.Err()
+	}
+	col := map[string]int{}
+	for i, name := range strings.Fields(sc.Text()) {
+		col[name] = i
+	}
+	idCol, okID := col["shmid"]
+	uidCol, okUID := col["uid"]
+	cuidCol, okCUID := col["cuid"]
+	if !okID || !okUID || !okCUID {
+		return nil, errors.New("sysvipc shm listing has no shmid, uid, or cuid column")
+	}
+	var ids []int
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		if len(f) <= idCol || len(f) <= uidCol || len(f) <= cuidCol {
+			continue
+		}
+		if f[uidCol] != strconv.Itoa(uid) && f[cuidCol] != strconv.Itoa(uid) {
+			continue
+		}
+		id, err := strconv.Atoi(f[idCol])
+		if err != nil {
+			return nil, fmt.Errorf("sysvipc shm listing: shmid %q: %w", f[idCol], err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, sc.Err()
+}
+
+// RemoveAll removes path and its contents (steps 0, 2) beneath path's parent
+// directory, following no symbolic link. A missing path is not an error.
+// spec: §5.2 ("What the scrub reaches").
+func (d DefaultOps) RemoveAll(path string) error {
+	return removeBeneath(path)
+}
+
+// ClearContents empties dir but leaves dir itself (step 4), following no
+// symbolic link. A missing dir is not an error.
+func (d DefaultOps) ClearContents(dir string) error {
+	return clearBeneath(dir)
+}
+
+// PathState reports existence and, for a directory, emptiness (step 6),
+// following no symbolic link. A symbolic link at path exists and is
+// non-empty for verification purposes.
+func (d DefaultOps) PathState(path string) (exists bool, empty bool, err error) {
+	return pathStateBeneath(path)
 }

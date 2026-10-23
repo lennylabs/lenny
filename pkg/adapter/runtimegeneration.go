@@ -23,13 +23,14 @@ import (
 // occupancy rather than a statement about it. The state below counts the
 // sessions given to the process instead.
 //
-// The runtime process lives as long as the pod (§4.7.10): no session
-// teardown and no occupancy-zero boundary ends it, so a later session on a
-// recycled pod runs in the process that served the earlier ones. The
-// generation therefore counts every session the process has been given for
-// the pod's life and never resets. Once a second session has been given to
-// the process, no session is sole again, and pod-global surfaces fail
-// closed for every later session.
+// No session teardown ends the runtime process, and on a keep pod no
+// occupancy-zero boundary ends it either, so a later session on a recycled
+// pod runs in the process that served the earlier ones. The cohort counts
+// every session the current process has been given and resets only at a new
+// runtime generation, the supervised launch of a new process (§4.7.10,
+// Runtime supervisor, Generation). Once a second session has been given to
+// the process, no session is sole again until a new generation, and
+// pod-global surfaces fail closed for every later session.
 //
 // spec: §28 (CH-MCP-PLATFORM exclusivity); §15.4.3; §4.7.10 (Runtime process
 // lifetime); §9.1; §11.2.
@@ -121,6 +122,19 @@ func (s *Server) noteRuntimeStartedLocked(sessionID string) {
 	if s.runtimeLive == nil {
 		s.runtimeLive = map[string]struct{}{}
 	}
+	// spec: §4.7.10 (Runtime supervisor, Generation) — the cohort counts
+	// from the generation's launch, so it resets when the runtime's
+	// generation changes, and the entry records the generation its session
+	// was given to, which a crash of that generation reads.
+	gen := s.runtimeGeneration()
+	if gen != s.cohortGen {
+		s.cohortGen = gen
+		s.runtimeCohort = 0
+		s.cohortSession = ""
+	}
+	if st, ok := s.slots[sessionID]; ok {
+		st.runtimeGen = gen
+	}
 	if s.cohortSession == sessionID {
 		s.runtimeLive[sessionID] = struct{}{}
 		return
@@ -143,6 +157,22 @@ func (s *Server) noteRuntimeClosed(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.runtimeLive, sessionID)
+}
+
+// generationRuntime is the optional capability of a runtime whose process
+// is launched by generation (the supervised sidecar runtime). A runtime
+// without it has one process for the pod's life, generation 0.
+type generationRuntime interface {
+	RuntimeGeneration() uint64
+}
+
+// runtimeGeneration returns the current runtime generation, 0 for a runtime
+// that has no generations.
+func (s *Server) runtimeGeneration() uint64 {
+	if g, ok := s.Runtime.(generationRuntime); ok {
+		return g.RuntimeGeneration()
+	}
+	return 0
 }
 
 // soleSession returns the session the pod's runtime process has been

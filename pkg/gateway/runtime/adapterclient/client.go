@@ -944,8 +944,9 @@ func (a *AttachStream) CloseSend() error {
 }
 
 // Shutdown tears the named session down: the adapter ends the session's
-// use of the pod's runtime process, which stays alive for the pod's life,
-// removes its per-slot tree, and releases the slot it held. reason is an
+// use of the pod's runtime process, which outlives the session on a keep pod
+// and, on a restart pod, ends in the next whole-pod scrub or when the pod
+// retires, removes its per-slot tree, and releases the slot it held. reason is an
 // opaque cause string surfaced to the adapter, and deadline bounds the
 // graceful phase.
 // A zero deadline lets the adapter apply its default grace period. The

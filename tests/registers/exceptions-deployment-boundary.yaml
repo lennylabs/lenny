@@ -19,6 +19,62 @@ kind: exception-register
 version: 1
 entries:
   # 0087
+  - subject: lenny-adapter --supervise-socket
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The adapter listens for the runtime supervisor's CH-SUPERVISE connection only when the flag is set (§28.5.3). The pod builder renders it as @lenny-supervise on every supervised pod in the step that stages the supervisor into the runtime container; until then no pod runs the supervisor and the adapter runs unsupervised.
+  - subject: lenny-adapter --runtime-process
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The pod's runtime-process lifetime (§5.2). The pod builder renders it from the pool's recycle.runtimeProcess on every supervised pod; it is read only while --supervise-socket is set.
+  - subject: lenny-adapter --launch-mode
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The pod's launch mode (§4.7.10 Runtime supervisor, Launch and SDK-warm). The pod builder renders it on every supervised pod from the pool's execution mode, the runtime's preConnect capability, and the SDK-warm circuit breaker at creation; it is read only while --supervise-socket is set.
+  - subject: lenny-adapter --supervise-ping-interval
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The CH-SUPERVISE ping interval, which the specification leaves unstated (§28.5.3 Timing). The pod builder renders it from its controller setting on every supervised pod; until then the compiled default applies on a supervised pod and no pod is supervised.
+  - subject: lenny-adapter --supervise-ping-timeout
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The CH-SUPERVISE pong deadline, which the specification leaves unstated (§28.5.3 Timing). The pod builder renders it from its controller setting on every supervised pod.
+  - subject: lenny-adapter --supervise-wait-timeout
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The bound on the wait before READY for the supervisor's connection and ready, which the specification leaves unstated (§28.5.3 Timing). The pod builder renders it from its controller setting on every supervised pod.
+  - subject: lenny-adapter --warm-up-timeout
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-23
+    expiry: 2027-03-31
+    blocker: F-4.7.26
+    reason: >-
+      The bound on the warm-up launch's CH-MSGSOCK connection before READY, which the specification leaves unstated (§4.7.10 Launch). The pod builder renders it from its controller setting on every supervised pod.
   # R23
   # R17
   - subject: lenny-adapter --runtime-ops-socket

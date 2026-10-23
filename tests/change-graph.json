@@ -478,6 +478,29 @@
       ],
       "conformance": ["tests/tier10_conformance/..."]
     },
+    "pkg/adapter": {
+      "unit": [
+        "pkg/adapter/...",
+        "cmd/lenny-adapter/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ],
+      "load_local": [
+        "pkg/adapter/supervise_race_load_test.go"
+      ]
+    },
+    "cmd/lenny-adapter": {
+      "unit": [
+        "cmd/lenny-adapter/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ],
+      "load_local": [
+        "pkg/adapter/supervise_race_load_test.go"
+      ]
+    },
     "pkg/adapter/linefanout": {
       "unit": [
         "pkg/adapter/...",
