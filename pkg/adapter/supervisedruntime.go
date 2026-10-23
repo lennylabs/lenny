@@ -148,6 +148,11 @@ type SupervisedRuntime struct {
 	onLaunch func()
 	// writeManifest writes the warm-up manifest before the warm-up launch.
 	writeManifest func() error
+	// connectWatch is the timer that holds a launched process to the
+	// deadline of the start that launched it after that start was cancelled
+	// before its deadline. A successful start and the generation's handled
+	// end stop it. spec: §4.7.10 (Runtime supervisor, Liveness).
+	connectWatch *time.Timer
 }
 
 // NewSupervisedRuntime binds the first CH-MSGSOCK listener and returns the
@@ -347,6 +352,7 @@ func (r *SupervisedRuntime) takeEnd(gen uint64) (EndDisposition, bool) {
 	}
 	r.endHandled = true
 	r.live = false
+	r.stopConnectWatchLocked()
 	return r.disposition, true
 }
 
@@ -376,10 +382,11 @@ func (r *SupervisedRuntime) endEvent(gen uint64, ev RuntimeEndEvent) {
 // refuses every start, and a start that finds no live process when no launch
 // is permitted fails. A launched process that does not connect within the
 // deadline of the start that launched it is the no-connection cause. A start
-// cancelled before its deadline is no Liveness cause: it returns the
-// cancellation and leaves the not-live state clear, the transport's accept
-// loop keeps running, and the next start joins the launched process once it
-// connects.
+// cancelled before its deadline returns the cancellation, and the launched
+// process stays held to that deadline: the transport's accept loop keeps
+// running, a later start joins the process once it connects, and a process
+// that has not connected when the deadline passes is the no-connection
+// cause, whichever start is waiting then.
 // spec: §4.7.9 (step 7); §4.7.10 (Runtime supervisor, Launch; Runtime
 // supervisor, Liveness).
 func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
@@ -389,13 +396,76 @@ func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	waitStart := time.Now()
 	if err := startComposed(ctx, t, sessionID); err != nil {
-		if launched && connectDeadlinePassed(err) {
+		switch {
+		case launched && connectDeadlinePassed(err):
 			r.MarkNotLive(CauseNoConnection)
+		case launched && errors.Is(err, context.Canceled):
+			r.armConnectWatch(t, connectDeadline(ctx, t, waitStart))
 		}
 		return fmt.Errorf("start supervised runtime: %w", err)
 	}
+	r.stopConnectWatch()
 	return nil
+}
+
+// connectDeadline returns the time by which the process a start launched
+// must connect: the start's deadline, or, for a start without one, the end
+// of the transport's accept bound counted from when the wait began.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
+func connectDeadline(ctx context.Context, t *SocketRuntimeProcess, waitStart time.Time) time.Time {
+	if dl, ok := ctx.Deadline(); ok {
+		return dl
+	}
+	return waitStart.Add(t.acceptBound())
+}
+
+// armConnectWatch holds the current generation's process, launched by a
+// start cancelled before its deadline, to that deadline: when it passes and
+// the transport has not installed the process's connection, and the
+// generation's end has not been handled, the not-live state is set with the
+// no-connection cause. The caller holds launchMu. spec: §4.7.10 (Runtime
+// supervisor, Liveness).
+func (r *SupervisedRuntime) armConnectWatch(t *SocketRuntimeProcess, deadline time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.endHandled || r.transport != t {
+		return
+	}
+	gen := r.gen
+	r.stopConnectWatchLocked()
+	r.connectWatch = time.AfterFunc(time.Until(deadline), func() { r.connectDeadlineReached(t, gen) })
+}
+
+// connectDeadlineReached sets the no-connection cause when gen's process has
+// still not connected through t at its launching start's deadline.
+func (r *SupervisedRuntime) connectDeadlineReached(t *SocketRuntimeProcess, gen uint64) {
+	if t.hasConnected() {
+		return
+	}
+	r.mu.Lock()
+	current := r.gen == gen && !r.endHandled && r.transport == t
+	r.mu.Unlock()
+	if current {
+		r.MarkNotLive(CauseNoConnection)
+	}
+}
+
+// stopConnectWatch stops the pending connection watch, if any.
+func (r *SupervisedRuntime) stopConnectWatch() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopConnectWatchLocked()
+}
+
+// stopConnectWatchLocked stops the pending connection watch. The caller
+// holds mu.
+func (r *SupervisedRuntime) stopConnectWatchLocked() {
+	if r.connectWatch != nil {
+		r.connectWatch.Stop()
+		r.connectWatch = nil
+	}
 }
 
 // connectDeadlinePassed reports that a connection wait ended because the

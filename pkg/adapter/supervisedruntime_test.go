@@ -65,6 +65,93 @@ func TestSupervisedRuntimeConcurrentFirstStartsSendOneLaunch_spec_4_7_10(t *test
 	}
 }
 
+// cancelLaunchingStart runs a Start under ctx, waits for its launch, cancels
+// it, and requires the cancellation back.
+func cancelLaunchingStart(t *testing.T, f *supervisedFixture, ctx context.Context, cancel context.CancelFunc) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- f.rt.Start(ctx, "a") }()
+	waitFor(t, "the launch", func() bool { return f.sup.count(superviseLaunch) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Start = %v, want context.Canceled", err)
+	}
+}
+
+// A launched process stays held to the deadline of the start that launched
+// it after that start is cancelled: a process that has not connected when
+// the deadline passes is the no-connection cause, and a process that
+// connected before it is not.
+// spec: 4.7.10 (Runtime supervisor, Liveness; Runtime supervisor, Launch),
+// 5.2 (Runtime not live)
+func TestSupervisedRuntimeCancelledLaunchingStartKeepsConnectDeadline_spec_4_7_10(t *testing.T) {
+	t.Run("an unconnected process is not live once the original deadline passes", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+		f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		deadline, _ := ctx.Deadline()
+		cancelLaunchingStart(t, f, ctx, cancel)
+		requireLive(t, f.rt)
+		requireNotLive(t, f.rt, CauseNoConnection)
+		if time.Now().Before(deadline) {
+			t.Fatal("no-connection cause set before the launching start's deadline")
+		}
+		if err := f.rt.Start(startCtx(t, time.Second), "b"); !errors.Is(err, errRuntimeNotLive) {
+			t.Fatalf("Start after the deadline = %v, want errRuntimeNotLive", err)
+		}
+		if n := f.sup.count(superviseLaunch); n != 1 {
+			t.Fatalf("launches = %d, want 1", n)
+		}
+	})
+	t.Run("a joining start waiting when the original deadline passes", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+		f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		cancelLaunchingStart(t, f, ctx, cancel)
+		if err := f.rt.Start(startCtx(t, time.Second), "b"); err == nil {
+			t.Fatal("joining Start succeeded with no connection")
+		}
+		requireNotLive(t, f.rt, CauseNoConnection)
+	})
+	t.Run("a start without a deadline holds the process to the accept bound", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+		f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+		f.rt.mu.Lock()
+		tr := f.rt.transport
+		f.rt.mu.Unlock()
+		tr.mu.Lock()
+		tr.AcceptTimeout = 300 * time.Millisecond
+		tr.mu.Unlock()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		cancelLaunchingStart(t, f, ctx, cancel)
+		requireLive(t, f.rt)
+		requireNotLive(t, f.rt, CauseNoConnection)
+	})
+	t.Run("a process that connects before the original deadline stays live", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+		f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		cancelLaunchingStart(t, f, ctx, cancel)
+		f.sup.startProcess()
+		waitFor(t, "the connection", func() bool {
+			f.rt.mu.Lock()
+			tr := f.rt.transport
+			f.rt.mu.Unlock()
+			return tr.hasConnected()
+		})
+		time.Sleep(400 * time.Millisecond)
+		requireLive(t, f.rt)
+		if err := f.rt.Start(startCtx(t, 5*time.Second), "b"); err != nil {
+			t.Fatalf("Start after the connection: %v", err)
+		}
+	})
+}
+
 // spec: 4.7.10 (Runtime supervisor, Launch; Runtime supervisor, Liveness),
 // 5.2 (Runtime not live)
 func TestSupervisedRuntimeLaunchPermitConditions_spec_4_7_10(t *testing.T) {

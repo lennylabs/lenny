@@ -1067,6 +1067,7 @@
         "tests/tier7a_load_local/adapter_grace_budget_test.go",
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeConcurrentFirstStartsSendOneLaunch_spec_4_7_10",
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeLaunchPermitConditions_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeCancelledLaunchingStartKeepsConnectDeadline_spec_4_7_10",
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeEndAndSweepReplies_spec_4_7_10",
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeRunCleanupOutcomes_spec_4_7_10",
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedRuntimeRebindDiscardsABackloggedConnection_spec_4_7_10",

@@ -246,12 +246,8 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 		return nil
 	}
 	spawn := p.SpawnPath
-	timeout := p.AcceptTimeout
+	timeout := p.acceptBoundLocked()
 	p.mu.Unlock()
-
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 
 	if spawn != "" {
 		if err := p.spawn(spawn); err != nil {
@@ -264,6 +260,33 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 		return err
 	}
 	return nil
+}
+
+// defaultAcceptTimeout is the accept bound of a transport whose
+// AcceptTimeout is zero.
+const defaultAcceptTimeout = 30 * time.Second
+
+// acceptBound returns how long Start waits for the runtime to connect.
+func (p *SocketRuntimeProcess) acceptBound() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.acceptBoundLocked()
+}
+
+// acceptBoundLocked is acceptBound for a caller that holds mu.
+func (p *SocketRuntimeProcess) acceptBoundLocked() time.Duration {
+	if p.AcceptTimeout <= 0 {
+		return defaultAcceptTimeout
+	}
+	return p.AcceptTimeout
+}
+
+// hasConnected reports whether the accept loop installed the runtime's
+// connection, whether or not it has since ended.
+func (p *SocketRuntimeProcess) hasConnected() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.connected
 }
 
 // awaitConnection waits for the accept loop to install the runtime's
