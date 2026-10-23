@@ -952,6 +952,7 @@ All tunable defaults collected in one place for operator convenience.
 | EventBus retranscribe max attempts before terminal failure (`eventBus.maxRetryAttempts`) | 20                                                  | [§12.6](12_storage-architecture.md#126-interface-design), [§16.5](16_observability.md#165-alerting-rules-and-slos) |
 | T4 KMS continuous probe interval (`storage.t4KmsProbeInterval`; min floor 60 s enforced at Helm-validate) | 300 s (5 min) | [§12.5](12_storage-architecture.md#125-artifact-store), [§16.5](16_observability.md#165-alerting-rules-and-slos) |
 | T4 KMS continuous probe rate limit (`storage.t4KmsProbeRateLimit`) | 10 probes/s | [§12.5](12_storage-architecture.md#125-artifact-store) |
+| Runtime supervisor timing: ping interval (`controller.tuning.supervisePingInterval`), ping timeout (`controller.tuning.supervisePingTimeout`), supervisor wait timeout (`controller.tuning.superviseWaitTimeout`), and warm-up timeout (`controller.tuning.warmUpTimeout`) | The controller's default; the specification states no value | [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE` **Timing.**, [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** |
 
 All values are overridable via Helm values or the corresponding CRD field. See each referenced section for detailed semantics. For per-tier recommended values, see [Section 17.8.2](#1782-capacity-tier-reference).
 
@@ -1166,6 +1167,8 @@ After 48–72 hours of production traffic, the PoolScalingController will have s
 | etcd defrag schedule                                      | Daily off-peak | Daily off-peak                          | Every 12h off-peak                       |
 | etcd quota-backend-bytes                                  | 4 GB           | 8 GB                                    | 8 GB (dedicated cluster recommended)     |
 | etcd monitoring                                           | Standard       | Enhanced (write latency + quota alerts) | Dedicated etcd cluster with full metrics |
+
+The runtime supervisor timing settings in [Section 17.8.1](#1781-operational-defaults--quick-reference) are controller settings with no per-tier value. The WarmPoolController renders each, as an adapter flag, on every pod it creates that runs the runtime supervisor.
 
 **Postgres and connection pooling** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-answer-files)):
 

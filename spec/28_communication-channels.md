@@ -89,7 +89,8 @@ Every channel records six axes.
 
 Three registers carry the entries of the three classes, one row per entry. The provenance column carries
 the entry number the channel inventory in `gateway-runtime-comms.md` assigns, so a reader can recover the
-derivation of every column without the retired prose being reproduced here. The naming table below the
+derivation of every column without the retired prose being reproduced here. A channel added after that
+inventory carries `None` in the column. The naming table below the
 three registers records the spelling each carrier takes for a channel whose identifier changed, per N7.
 
 The link register declares a transport connection that more than one channel row refers to, either as the
@@ -125,6 +126,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `CH-RUNTIMEOPS` | None | `intra-pod` | Control | Runtime | Both | Unix socket JSON Lines | Cooperative quiesce, interrupt acknowledgement, and credential rotation | C9 |
 | `CH-MCP-PLATFORM` | None | `intra-pod` | Content | Runtime | Runtime | JSON-RPC | Platform tool calls, forwarded over `LNK-GWCONTROL` | C10 |
 | `CH-MCP-CONNECTOR` | None | `intra-pod` | Content | Runtime | Runtime | JSON-RPC | Connector tool calls, forwarded over `LNK-GWCONTROL` | C11 |
+| `CH-SUPERVISE` | None | `intra-pod` | Control | Runtime supervisor | Both | Unix socket JSON Lines | Runtime process launch, end, sweep, and liveness, and the supervisor's self-test report | None |
 | `CH-LLMPROXY` | None | `pod-egress` | Content | Runtime | Runtime | HTTP | Proxy-mode model calls | C12 |
 | `CH-OBJSTORE` | None | `pod-egress` | State | Pod adapter | Pod adapter | HTTP | Checkpoint chunk upload and restore | C13 |
 | `CH-EVENTRELAY` | None | `gateway-to-store` | State | Gateway | Gateway | Redis | Cross-replica session event backlog | C16 |
@@ -522,9 +524,12 @@ gateway replica consumes. The §28.3 channel register places one channel on this
 #### 28.5.3 Intra-pod
 
 This boundary carries the channels between the runtime adapter and the runtime binary inside one agent
-pod. The §28.3 channel register places these channels on this boundary, and each carries `None` in its
-Link column, so each channel's own register row together with the endpoint stated in its card describes
-the connection it runs on. The runtime is the dialling participant on every channel here.
+pod, and on a pod that runs the runtime supervisor the channel between the runtime adapter and the runtime supervisor
+([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The §28.3 channel
+register places these channels on this boundary, and each carries `None` in its Link column, so each
+channel's own register row together with the endpoint stated in its card describes the connection it runs
+on. The runtime binary is the dialling participant on every channel here except `CH-SUPERVISE`, which the
+runtime supervisor dials.
 
 ```
   agent pod
@@ -536,12 +541,17 @@ the connection it runs on. The runtime is the dialling participant on every chan
   |  | runtime adapter  |                  <=====  |  runtime binary  |  |
   |  |                  |   CH-MCP-PLATFORM        |                  |  |
   |  |                  |   CH-MCP-CONNECTOR       |                  |  |
+  |  |                  |                          +------------------+  |
+  |  |                  |                          +------------------+  |
+  |  |                  |   CH-SUPERVISE   <=====  | runtime          |  |
+  |  |                  |                          | supervisor       |  |
   |  +------------------+                          +------------------+  |
   |                                                                      |
   +----------------------------------------------------------------------+
 
-  The runtime-ops and MCP channels run on abstract Unix sockets in the Linux
-  abstract namespace. The runtime dials every channel drawn above.
+  The runtime-ops, MCP, and supervisor channels run on abstract Unix sockets
+  in the Linux abstract namespace. The runtime binary dials every channel
+  drawn above except CH-SUPERVISE, which the runtime supervisor dials.
 ```
 
 **`CH-MSGSOCK`**
@@ -689,14 +699,14 @@ The adapter writes one `heartbeat` per interval for each session, from the write
 | Repeat of an SDK-warm start for a session already started (`ConfigureWorkspace` repeat) | None | No confirmation is made and no record is taken | Not applicable |
 | Resume (`Resume`) | `session_start` | After the runtime is made live for the restored session and the first confirmation, and before the `session_started` wait and the record | The open sequence |
 | A start whose open sequence finds that the registry no longer holds the entry its claim was admitted against, because no entry stands or because a later attempt's entry stands | None | Before the record, which is not taken; rule 8 refuses the start at the open sequence's first confirmation | The open sequence |
-| A start whose second confirmation is refused after its `session_start` was written; the registry then holds no entry for the identifier | `session_end` | After the refused confirmation, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK`, because `DemoteSDK` does not end the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model)) | The open sequence |
+| A start whose second confirmation is refused after its `session_start` was written; the registry then holds no entry for the identifier | `session_end` | After the refused confirmation, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK` | The open sequence |
 | A start whose `session_started` wait ends without the frame, or whose `session_started` carries `error` | `session_end` | After the wait ends, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK` | The open sequence; the start then fails on the same path as a start whose `session_start` write fails |
 | A start that fails after the runtime is made live and before the confirmation, because its `session_start` write fails or its open sequence cannot begin before the request's deadline | None | Before the record, which is not taken | The open sequence; the adapter treats the failed write as undelivered |
 | `Shutdown` that removes an entry whose session reached `running` | `session_end` | After the rule-8 record and before the teardown ends the session's use of the runtime | The removal's decision under the registry critical section, with the write made before the cleanup completes |
 | `Shutdown` that removes an entry whose session did not reach `running`, or that removes no entry | None | Before the record, or with no record | The removal's decision under the registry critical section |
 | `DemoteSDK` while the session of the registry's entry is `running` | `session_end` | After the rule-8 record and before the pre-connected SDK is torn down and the entry is removed | The decision, made under the slot serialization while the entry stands |
 | `DemoteSDK` while no session is `running` | None | Not applicable | The decision the row above makes |
-| `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline | None | Not applicable | The request fails before the decision and tears nothing down. A gateway caller then fails the pod and claims a replacement ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row), and the SIGTERM path force-terminates the SDK process ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like), **Adapter SIGTERM behavior during `sdk_connecting`.**); either outcome ends the connection that carries the session |
+| `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline | None | Not applicable | The request fails before the decision and tears nothing down. A gateway caller then fails the pod and claims a replacement ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row), and the connection that carries the session ends with the pod, as the Pod exit row states |
 | Coordinator hold timeout, sidecar model ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | None | Not applicable | The pod-scope teardown ends the connection before the termination removes any entry |
 | Coordinator hold timeout, embedded model | None | Not applicable | The termination's close of the session ends the session's loop |
 | Interrupt, clean or hard | None | Not applicable | The session does not end |
@@ -1396,6 +1406,72 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   others bind, and it does not state what happens to the channel when a connector's authorization is
   revoked mid-session.
 
+**`CH-SUPERVISE`**
+
+- **Link.** `None` (§28.3). The channel's own register row and the endpoint below describe the
+  connection.
+- **Endpoint.** The abstract Unix socket `@lenny-supervise` in the Linux abstract namespace, on every
+  pod that runs the runtime supervisor ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The
+  adapter listens and the runtime supervisor dials. When `SO_PEERCRED` is enforced, the adapter accepts
+  only the agent UID and the supervisor accepts the connection only when its peer is the adapter UID
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8). No manifest-nonce
+  handshake or challenge-response runs on this channel.
+- **Axes.** Control plane, dialled by the runtime supervisor, message authority on both sides,
+  Unix socket JSON Lines transport (§28.3).
+- **Messages.** Each message is a single JSON object terminated by `\n` whose `type` member carries the
+  message name. Adapter to supervisor: `launch`, `end`, `sweep`, `cleanup`, and `ping`. Supervisor to
+  adapter: `ready`, which the supervisor sends once, as its first message on the connection, and which
+  carries `properties`, the result of each property of its startup self-test
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8) as `pass` or `fail`;
+  `launched`, `ended`, `swept`, `cleaned`, and `pong`, each answering the request of the matching
+  name; and
+  `exited`, which reports a runtime process's exit when the
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Children.** table
+  sends one and carries its exit status. Every message carries `gen`, the runtime generation the adapter assigned with its latest
+  `launch`, or 0 before the first, and every request and reply
+  carries `id`, which a reply echoes from its request. A reply carries an optional `error` whose value is
+  one of an enumerated set of codes; it is absent when the request succeeded. `end` carries `graceMs`,
+  the SIGTERM grace before SIGKILL. `cleanup` carries the pool's `cleanupCommands`, each as an argument
+  list, `cleanupTimeoutSeconds` in milliseconds, and the two step-0 cleanup metadata values
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). No message
+  carries a credential, manifest content, a session identifier, or any byte a runtime process or a
+  cleanup command wrote, and no other message carries an environment value. Every `exited` has the outcome
+  of the row of the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that applies. The specification
+  does not name the members that carry the contents of `cleanup` and `exited`, the property names in
+  `properties`, or the error codes; the two platform binaries fix them together.
+- **Preconditions.** The adapter accepts the connection after its `SO_PEERCRED` self-test, and reads
+  `ready` before it signals READY ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4).
+  It sends no request before `ready`, and sends `launch`, `end`, `sweep`, and `cleanup` only at the points
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** and the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Supervised
+  scrub sequence.** name, and `ping` periodically while no other request is outstanding. The adapter has at
+  most one request outstanding.
+- **Timing.** The adapter waits a bounded time for the connection and its `ready` before READY. The supervisor repeats a
+  refused dial within a bounded window, and exits when the window ends with no connection. Every request is bounded by the deadline of the operation that
+  sends it, and `ping` by its own deadline; a request with no reply within its bound is a link failure.
+  For a `cleanup` request that bound, the `cleanup` request bound, exceeds the `cleanupTimeoutSeconds`
+  deadline ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.** **Cleanup.**).
+  The specification states no value for these bounds, the ping interval, or the dial retry interval or window.
+- **Exclusivity.** One connection per pod. The guards are the agent pod's `restartPolicy: Never`, under
+  which no container restarts in place, the adapter's closing of its listener after the
+  first connection it accepts before READY, and the supervisor's exit when that connection closes
+  (**Degradation.**, §28.6).
+- **Degradation.** When no supervisor connects and sends `ready` within the adapter's wait, the adapter
+  exits non-zero before READY, and the pod retires as the
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table states. A `ready` that reports a failed property has the
+  outcome [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8 states. A
+  `launched` that carries `error` fails the session's start. A closed
+  connection, a request unanswered within its bound, and a message the adapter cannot decode strictly (an
+  unknown or duplicate key, an unknown code, a first message other than `ready`, a second `ready`, a
+  reply whose `gen` or `id` matches no outstanding request, or an `exited` whose `gen` is not the current
+  generation) are link failures. A link failure, and a
+  `launched`, `ended`, or `swept` that carries `error`, take the outcome
+  [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** and its table state. During a
+  whole-pod scrub and the launch that follows it, each reply, `cleaned` included, and each link failure take
+  the outcome of their row in the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Supervised scrub sequence.** table. When the connection closes, the supervisor exits, which ends every process in the
+  runtime container.
+
 #### 28.5.4 Inter-replica
 
 This boundary carries the channels between two gateway replicas. The §28.3 channel register places no
@@ -1833,7 +1909,7 @@ the `Checkpoint` operation `CH-CHECKPOINT` carries is serialized against the `In
 specification states outside the channel register by the adapter's pod-level operation lock stated below
 ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-**One operation per pod.** Below the per-session constraint sits one per-pod constraint. The adapter's
+**One operation per pod.** Below the per-session constraint sits a per-pod constraint. The adapter's
 operation lock serializes `Checkpoint` and `Interrupt` across the pod's slots, admits one pending checkpoint
 per distinct session identifier, and coalesces a checkpoint whose session identifier is already pending
 ([§4.7](04_system-components.md#47-runtime-adapter)). Its unit is the pod, and admission to its queue is
@@ -1847,6 +1923,9 @@ while an interrupt is pending on a concurrent-session pod, is dropped with a `BU
 ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no retry rule for a
 checkpoint dropped with `BUSY` on a concurrent-session pod. The specification states no pod-level barrier lock
 beyond this operation lock (§28.5.1).
+
+**One connection per pod.** `CH-SUPERVISE` admits one connection for the pod's life, and its unit is the
+pod. Its card states the guards (§28.5.3). No gateway replica holds the channel.
 
 **Channels the specification states no constraint on.** For `CH-PODHEALTH` (§28.5.1), `CH-ADAPTEREVENTS`
 (§28.5.2), `CH-MSGSOCK`, `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR` (§28.5.3),
@@ -1956,6 +2035,7 @@ it admits is named in that column as a scoping constraint (§28.6).
 | `CH-RUNTIMEOPS` | When the runtime never opened the channel, interrupt degrades as the [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) `Interrupt` row states, and the deadline warning is not delivered, at both Basic level and Standard level. At Standard level a checkpoint degrades to a best-effort snapshot without a runtime pause and credential rotation degrades to the checkpoint and restart path. At Basic level there is no checkpoint support, pod failure loses the in-flight context, and the gateway restarts the session from its last gateway-persisted state ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)) | The specification does not state what the adapter does when the socket fails mid-session while the runtime process is still running (§28.5.3). It states the per-frame timeouts that bound a reply that does not arrive: a missing `interrupt_acknowledged` transitions the session to `suspended` anyway and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response; a missing `credentials_acknowledged` within 60 seconds falls back to the Standard-level rotation path of checkpoint, pod termination, replacement pod, `AssignCredentials`, and `Resume`; and a runtime that has sent `checkpoint_ready` with no `checkpoint_complete` within 60 seconds autonomously resumes normal operation ([§4.7](04_system-components.md#47-runtime-adapter), [§4.4](04_system-components.md#44-event--checkpoint-store)) | The specification states no exclusivity constraint on this channel and names no enforcing guard, so it states nothing about a change of holder (§28.5.3, §28.6). The adapter's pod-level operation lock bounds the operations the frames carry rather than the channel, so a `checkpoint_request` and an `interrupt_request` are not outstanding at the same time ([§4.7](04_system-components.md#47-runtime-adapter)) | The `credential_rotation_timeout` warning event and the `lenny_credential_rotation_timeout_total` counter, the `credential_rotation_inflight_wait_long` warning event on a gate wait beyond 60 seconds ([§4.7](04_system-components.md#47-runtime-adapter)), the `INTERRUPT_TIMEOUT` status on the `Interrupt` RPC response ([§4.7](04_system-components.md#47-runtime-adapter)), and the `checkpoint_timeout` warning the runtime logs ([§4.4](04_system-components.md#44-event--checkpoint-store)) |
 | `CH-MCP-PLATFORM` | When the runtime is Basic-level and connects to no MCP server, delegation, discovery, elicitation, inter-session messaging, and blocking input requests are unavailable with no fallback, and the runtime produces all of its output on `CH-MSGSOCK` ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)) | The specification does not state what the adapter does when the server fails to bind its socket or when the connection drops mid-session (§28.5.3). It states gateway-side bounds on individual tools the channel carries: `lenny/request_input` is bounded by `maxRequestInputWaitSeconds`, after which the gateway delivers a `REQUEST_INPUT_TIMEOUT` tool-call error, and `lenny/request_elicitation` is bounded by `maxElicitationWaitSeconds` with a 30-second timeout on each forwarding hop ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), [§9.2](09_mcp-integration.md#92-elicitation-chain), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)) | The specification states no exclusivity constraint on this channel and names no enforcing guard, so it states nothing about a change of holder (§28.5.3, §28.6). The manifest nonce that authenticates a connection to the pod's intra-pod MCP servers is a scoping constraint, and a connection that does not present a valid nonce is closed before any tool is dispatched. The servers are pod-wide and started at most once per pod, the nonce a server validates against is the one the manifest carried at the start that bound that server and a later session's manifest write does not re-arm it, and the adapter resolves the calling session to the single session the pod's shared runtime process has been given, refusing the call unless that process has been given exactly one session and that session is the caller ([§4.7](04_system-components.md#47-runtime-adapter), [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.6) | The `REQUEST_INPUT_TIMEOUT` tool-call error the gateway delivers on a blocking input request that is not answered ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). The specification names no metric or alert scoped to this channel |
 | `CH-MCP-CONNECTOR` | When the runtime is Basic-level and connects to no MCP server, no connector tool is reachable and there is no fallback ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)) | The specification does not state what the adapter does when one connector server fails to bind its socket while the others bind, and it does not state what happens to the channel when a connector's authorization is revoked mid-session (§28.5.3). On the authorization path a tool call that requires user authorization is answered by an auth challenge the gateway turns into a URL-mode elicitation carried hop by hop up to the client, and the specification does not state what happens to the call that raised the challenge ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc), §28.5.3) | The specification states no exclusivity constraint on this channel and names no enforcing guard, so it states nothing about a change of holder (§28.5.3, §28.6). The same manifest nonce that authenticates a connection to `CH-MCP-PLATFORM` is a scoping constraint here, required on each connector server's connection separately, with each connector server pod-wide and started at most once per pod and the calling session resolved as it is there ([§4.7](04_system-components.md#47-runtime-adapter), §28.6) | The URL-mode elicitation that reaches the client on the authorization path ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)). The specification names no metric or alert scoped to this channel |
+| `CH-SUPERVISE` | When no supervisor connects and sends `ready` within the adapter's wait before READY, or `ready` reports a failed property that gates a `restart` pod, the adapter exits non-zero, and the pod retires as the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table states ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 4, [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8, §28.5.3) | A link failure, or an `error` on `launched`, `ended`, or `swept`, takes the outcome the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table states, and during a whole-pod scrub each reply and link failure takes the outcome of its row in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Supervised scrub sequence.**; the supervisor exits on the close, which ends every process in the runtime container ([§4.7.10](04_system-components.md#4710-deployment-model), [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), §28.5.3) | One connection per pod, and no gateway replica holds the channel (§28.5.3, §28.6) | A pod retired through a channel of the [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Liveness.** table, such as a pod whose adapter exited before READY or a pod retired under "Runtime not live" ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The specification states no metric or alert for this channel (§28.5.3) |
 | `CH-LLMPROXY` | When the pod's pool is not a proxy-mode pool the supplemental egress policy does not select the pod and the default-deny policy drops the connection ([§13.2](13_security-model.md#132-network-isolation)) | The specification does not state a retry, resumption, or buffering policy for a proxy response stream that fails mid-stream (§28.5.5). When the LLM Proxy circuit breaker is open every new request is rejected immediately with `PROVIDER_UNAVAILABLE` rather than hanging, the adapter receives a `PROVIDER_UNAVAILABLE` event and relays it to the runtime as a tool-result error of the same code, streams established before the circuit opened continue to completion or upstream failure, and a single probe request is allowed at each half-open transition. When the lease expires or is revoked the proxy rejects requests before any upstream call ([§4.9](04_system-components.md#49-credential-leasing-service)) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.5, §28.6). The nearest constraint is a per-pod scoping constraint: the lease token is bound to the issuing pod's SPIFFE identity, and a request whose peer SPIFFE URI does not match the lease record is rejected with `LEASE_SPIFFE_MISMATCH` ([§4.9](04_system-components.md#49-credential-leasing-service), §28.6) | The `PROVIDER_UNAVAILABLE` and `CREDENTIAL_REVOKED` errors, the `credential.lease_spiffe_mismatch` audit event ([§4.9](04_system-components.md#49-credential-leasing-service)), and the `LLM_REQUEST_REJECTED` and `LLM_RESPONSE_REJECTED` outcomes of an interceptor rejection ([§4.8](04_system-components.md#48-gateway-policy-engine)) |
 | `CH-OBJSTORE` | When the object store is unreachable on the eviction path and its retries are exhausted, the gateway falls back to writing a minimal session-state record to Postgres. When the Postgres write is also exhausted the gateway logs the committed object keys, the chunk encoding, and the error summary at `WARN`, so an operator can reconstruct the workspace by hand, before entering the total-loss path ([§4.4](04_system-components.md#44-event--checkpoint-store)) | An attempt that ends before every declared byte is confirmed leaves a manifest row flagged `partial = true`; a deadline fire retains its chunks as a recovery aid the resume path reassembles, while a stream truncation, an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the gateway sweeps the prefix by listing it. On the restore path a contiguity failure, a fetch error on a non-final chunk, or a decode error away from the end of the stream aborts reassembly, discards the staging directory, and falls back to the last successful full checkpoint ([§4.4](04_system-components.md#44-event--checkpoint-store), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry policy for a restore `GET` that fails mid-stream (§28.5.5) | The constraint is per capability rather than per connection: a capability names one method and one key, an upload capability additionally names one exact `Content-Length`, the tenant prefix, the method, and the key are bound into the signature, and at most `checkpointGrantWindow` capabilities are outstanding for an attempt at a time, so a request that alters any of them is rejected by the object store before a byte is written or read ([§13.2](13_security-model.md#132-network-isolation), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). Above the transfer the adapter's pod-level operation lock serializes `Checkpoint` across the pod's slots ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no exclusivity constraint on the connection itself (§28.5.5) | The `lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}` counter and the `CheckpointStorageUnavailable` critical alert ([§4.4](04_system-components.md#44-event--checkpoint-store)), and the manifest row flagged `partial = true` ([§4.4](04_system-components.md#44-event--checkpoint-store)) |
 | `CH-EVENTRELAY` | The channel is wired only when Redis is present in the deployment. Single-replica dev mode keeps the session-event bus in memory and writes no stream ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)) | The specification states no buffering or resumption policy for an `XADD` or a blocking read whose transport fails mid-stream, and it does not state what a reader does when an entry it requests is absent from the stream (§28.5.7). The §12.4 failure-behavior table carries no row for this stream, so the general Redis posture applies, under which Redis is not a system of record and the authoritative record of session events is the Postgres `EventStore` ([§12.2](12_storage-architecture.md#122-storage-roles), [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). When both Postgres and Redis are unavailable the platform enters dual-store degraded mode: new sessions are rejected with `503` and in-flight sessions continue on cached coordination state ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes), [§10.1](10_gateway-internals.md#101-horizontal-scaling)) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.7, §28.6). The constraint runs the other way: every gateway replica serving an attached client for the session may read the stream at the same time, which is the reconnection case the stream exists for ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). `REG-COORDLEASE` governs session coordination rather than this channel (§28.3) | The `PLATFORM_DEGRADED` event emitted to clients and the `DualStoreUnavailable` alert in dual-store degraded mode ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes), [§10.1](10_gateway-internals.md#101-horizontal-scaling)), and the single protocol-level `gap_detected` frame carrying `{"lastSeenSeq": N, "nextSeq": M}` a resume request receives for a sequence the replay buffer has evicted ([§10.4](10_gateway-internals.md#104-gateway-reliability), [§15.2](15_external-api-surface.md#152-mcp-api)) |
