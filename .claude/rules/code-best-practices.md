@@ -4,6 +4,8 @@ paths:
   - "cmd/**"
   - "sdks/**"
   - "migrations/**"
+  - "proposals/**"
+  - "docs/**"
 ---
 
 # Code best practices

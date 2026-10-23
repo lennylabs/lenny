@@ -6,6 +6,8 @@ paths:
   - "migrations/**"
   - "charts/**"
   - "tests/**"
+  - "proposals/**"
+  - "docs/**"
 ---
 
 # Test coverage

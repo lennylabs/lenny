@@ -1,6 +1,7 @@
 ---
 paths:
-  - "docs/**/*.md"
+  - "proposals/**"
+  - "docs/**"
 ---
 
 # Documentation content and structure

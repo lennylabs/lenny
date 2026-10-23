@@ -1,6 +1,7 @@
 ---
 paths:
-  - "docs/assets/diagrams/**"
+  - "proposals/**"
+  - "docs/**"
 ---
 
 # Diagram style
