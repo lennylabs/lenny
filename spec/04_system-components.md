@@ -1378,6 +1378,54 @@ The boundary between the adapter and the agent binary is **untrusted**. A compro
 
 7. **MCP server security:** The local MCP servers never expose gateway credentials, mTLS certificates, other sessions, internal Lenny state, or anything about other tenants. The pod sandbox (gVisor/Kata) and network policy are the security boundary, not the protocol. The adapter never advertises the `sampling` MCP capability to the local server. A manifest-nonce handshake is required on all intra-pod MCP connections (platform MCP server and each connector MCP server), which are pod-wide and started at most once per pod: the connecting process must present as `params._lennyNonce` in the MCP `initialize` request (see [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) nonce wire format) the nonce the manifest carried at the start that bound the server it connects to, before any tools are dispatched. A later session's manifest write does not re-arm a running server. The adapter rejects any MCP connection that does not present a valid nonce. The manifest nonce authenticates a connection to the pod's intra-pod MCP servers rather than scoping it to a session: the servers resolve the calling session at call time and refuse the call unless the pod's shared runtime process has been given exactly one session and that session is the caller. This prevents a compromised child process from calling privileged platform tools (e.g., `lenny/delegate_task`, `lenny/memory_write`, `lenny/request_elicitation`) by directly connecting to the MCP socket without manifest access.
 
+8. **Runtime supervisor:**
+   - **Where it runs.** The runtime supervisor
+     ([§4.7.10](#4710-deployment-model), **Runtime supervisor.**) runs at the
+     agent UID on the untrusted side of this boundary. The adapter sends every
+     request on `CH-SUPERVISE`, the supervisor sends only its `ready` report,
+     replies, and exit reports, and no author-controlled byte crosses the
+     channel, so item 2 and item 3 hold.
+   - **Why each end trusts the other.** Each end checks the other's UID as
+     the [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE`
+     card states. The connection is made before any author code exists in the pod: the
+     supervisor is the runtime container's first process, it launches nothing
+     before `launch`, and [§13.1](13_security-model.md#131-pod-security)
+     **Container identity.** gives the agent and adapter UIDs to one container
+     each. In nonce-only mode that ordering alone identifies both ends.
+   - **Protection from author code.** The supervisor is a static binary with no
+     program interpreter that loads no library, clears its environment before
+     anything else, and opens only `/proc` and platform volumes without
+     following symbolic links. It marks itself non-dumpable, so code at the
+     agent UID with every capability dropped cannot attach to it or read its
+     memory or descriptors. Work that reads author-controlled data, and every
+     `cleanupCommands` command, runs in a forked worker that holds no
+     `CH-SUPERVISE` descriptor. Its binary is on a read-only mount.
+   - **What rests on it.** The adapter's decision to give a later session a
+     new runtime process on a `restart` pod rests on the supervisor's attested
+     end and sweep. Tenant isolation does not: the tenant pin applies on every
+     pool ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+     A killed, frozen, or failed supervisor retires the pod
+     ([§4.7.10](#4710-deployment-model), **Runtime supervisor.** **Signals.**
+     and **Liveness.**).
+   - **Property self-test.** At startup, before it dials, the supervisor
+     tests that its non-dumpable mark resists same-UID inspection and that its
+     kill reaches a double-forked descendant, and it tests whether it is
+     immune as PID-namespace init to SIGKILL and SIGSTOP. It reports each
+     result in its `ready` message on `CH-SUPERVISE`
+     ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and the
+     adapter logs each failed property. The non-dumpable mark and kill reach
+     gate a `restart` pod
+     ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+     "Runtime-process lifetime"): a failed one is a cause under
+     [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.**,
+     which states the outcome. On a `keep` pod no property gates.
+     PID-namespace init immunity gates no pod, because its failure retires
+     only the pod whose runtime exploits it.
+     `lenny-ctl preflight supervisor`
+     ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)) runs the
+     same self-test on a named RuntimeClass, and it is re-run when the
+     container runtime version changes, as item 1 requires for `SO_PEERCRED`.
+
 ### 4.8 Gateway Policy Engine
 
 **Role:** Centralized policy evaluation on the request path.
