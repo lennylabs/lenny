@@ -1073,7 +1073,7 @@ Renumber the steps after it: 25 becomes 26, 26a, 26b, and 26c become 27a, 27b, a
 In the §24.2 command table, insert after the `lenny-ctl preflight --config <values.yaml>` row, as one physical line:
 
 ```
-| `lenny-ctl preflight supervisor --runtime-class <name>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8), report each property, and delete the pod. Exits non-zero when a property that gates a `restart` pod fails. | Standalone mode only, through the current `kubeconfig` context; creates a pod | Kubernetes permission to create, get, and delete pods and to get `pods/log` in the agent namespace |
+| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 8), report each property, and delete the pod. Exits non-zero when a property that gates a `restart` pod fails. | Standalone mode only, through the current `kubeconfig` context; creates a pod | Kubernetes permission to create, get, and delete pods and to get `pods/log` in the agent namespace |
 ```
 
 ### SPEC-14 · spec/18_build-sequence.md § 18.6 and § 18.30
