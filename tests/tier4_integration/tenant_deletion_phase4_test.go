@@ -423,7 +423,7 @@ func mintImpersonationBearer(t *testing.T, base, tenant, subject string) string 
 	t.Helper()
 	code, raw := deletionAdminDo(t, base, http.MethodPost, "/v1/admin/impersonation", map[string]any{
 		"targetTenantId": tenant, "targetUserId": subject,
-		"reason": "tenant deletion bearer probe", "ticketId": "TEST-1", "durationSeconds": 600,
+		"reason": "tenant deletion bearer probe", "ticketId": "tenant-deletion-bearer-probe", "durationSeconds": 600,
 	})
 	if code != http.StatusOK {
 		t.Fatalf("impersonate %s/%s on %s: status %d: %s", tenant, subject, base, code, raw)

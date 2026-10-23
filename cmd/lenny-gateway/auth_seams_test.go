@@ -308,10 +308,12 @@ func TestBearerTenantClaimFollowsVerifyingKey_spec_10_2(t *testing.T) {
 // `tenant_id`, and an embedded OIDC bearer, verified by the trusted-key
 // member and resolved from the configured tenant claim, are each admitted
 // for a registered tenant and refused with 403 TENANT_NOT_FOUND for a tenant
-// in `deleting` or `deleted`. The tier-4 tenant deletion test cannot mint a
-// Lenny-issued bearer against the gateway binary, because the gateway's
-// Token Service verifier key is generated and sealed at process start, so
-// this test is the one that pins the Token Service member of the refusal.
+// in `deleting` or `deleted`. This test pins both verifier members over
+// every registration state at tier 1. The tier-4 tenant deletion test
+// complements it against the gateway binary: it mints Lenny-issued bearers
+// through the platform-admin impersonation endpoint and probes each one on
+// the replica that signed it, because each replica signs with its own
+// per-process Token Service key.
 //
 // spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 10.2 (Authentication: `tenant_id` extraction)
 func TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8(t *testing.T) {
