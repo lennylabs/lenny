@@ -3942,6 +3942,7 @@
         "tests/tier9_security/tenant_path_store_isolation_test.go::TestTenantPathEntriesNeverTouchAnotherTenant_spec_12_8",
         "tests/testinfra/lifecyclefence/checker_test.go::TestUserErasureErasesTokenStoreRowsAndSourceCheckpoint_spec_12_8",
         "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8",
+        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
@@ -3949,7 +3950,10 @@
         "pkg/store",
         "pkg/compliance"
       ],
-      "blocked_until_phase": "13"
+      "blocked_until_phase": "13",
+      "migrations": [
+        "migrations/0188_audit_redaction_receipts_drop_fk.up.sql"
+      ]
     },
     "12.9": {
       "title": "Data Classification",
@@ -5067,7 +5071,8 @@
         "pkg/observability/logging/logging_test.go::TestHandlerEmitsRequiredSlogKeys",
         "pkg/observability/logging/logging_test.go::TestHandlerProjectsCorrelationFieldsFromContext",
         "pkg/observability/logging/logging_test.go::TestHandlerSkipsEmptyCorrelationFields",
-        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether"
+        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether",
+        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8"
       ],
       "packages": [
         "pkg/observability/logging"
