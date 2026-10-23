@@ -1,0 +1,148 @@
+# Summary: Lenny-issued bearer tokens verify only on the process that signed them
+
+## Summary
+
+**Problem statement.** Every gateway replica and every Token Service replica draws its own random HS256 key at startup and holds it in plaintext, and each verifier trusts only its own key. In a default multi-replica install, gateway-minted bearers fail on peer replicas, `POST /v1/oauth/token` bearers verify on no gateway, Token Service replicas reject each other's tokens, and every token stops verifying when its signer restarts. `lenny-ops` requires in production an HMAC key that no component signs with. The code also departs from the §10.2 rule that the signing key never exists in gateway memory. The spec is silent on the algorithm, key identity, verifier key distribution, signing topology, and rotation state, and it contradicts itself on which component mints, on per-interaction token refresh, and on where signing sits relative to the advisory lock. The owner has settled remote asymmetric KMS signing, a fixed token lifetime, and a 15-minute default.
+
+**What changes.**
+- §10.2, §4.3, §17.4, §18, §25.4, and §25.15: one ES256 key named by the `platform:jwt-signing` alias, signed remotely on AWS, GCP, or Azure and derived from the master key on `local`. A key set loaded once at startup by the gateway, the Token Service, and `lenny-ops`, and a three-rollout rotation, with `lenny-ops` applying the §13.3 revocation check to Lenny-issued tokens (SPEC-1, SPEC-2, SPEC-6, SPEC-9, SPEC-11).
+- §10.2 and §27: a fixed token lifetime and the renamed `auth.capabilityTokenTtlSeconds` knob (SPEC-3, CODE-8, CHART-1).
+- §10.2, §15, §16, and §17.8: throttling as backpressure, a sign-rate metric, a near-quota alert, and sign-rate sizing (SPEC-4, SPEC-5, SPEC-8, CODE-3, CODE-7, CODE-11, CHART-5).
+- §13.3 and §8.2: signing before the write-before-issue transaction, with an in-lock revocation re-read of the subject and actor (SPEC-7, CODE-9).
+- `pkg/kms`, `pkg/auth/jwt`, and the three binaries: the KMS `Sign` and `PublicKey` seam, the remote signer and `KeySet`, the wiring, and deletion of the HMAC signer, `RotatingVerifier`, and the published JWKS endpoint (CODE-1, CODE-2, CODE-4, CODE-5, CODE-6, CODE-10, CODE-12).
+- Chart, docs, records, and cross-process tests: the local master key Secret, `lenny-ops` KMS wiring, gateway and `lenny-ops` KMS egress, the runbook rewrite, and the every-replica tier-4 probe (CHART-2, CHART-4, SPEC-10, DOCS-1, DOCS-2, REC-1, TEST-1).
+
+**Decisions.**
+- D1. The design has the fewest moving parts that resolve the defect: one ES256 key shared by the gateway and the Token Service, identity through the existing alias map, a thumbprint `kid`, a static key set, Helm-held rotation state, and the production code path in dev. Every addition below answers a failure mode this design creates or a requirement it leaves unmet.
+- D2. ES256 is the only algorithm in every environment, and verifiers accept only `alg: ES256`. All three cloud providers offer it natively, so no algorithm knob is added.
+- D3. The providers are AWS KMS, GCP Cloud KMS, and Azure Key Vault, matching `kms.provider`, with `local` for dev. Vault Transit is removed because no adapter exists.
+- D4. `kms.Provider` gains `Sign` and `PublicKey` and the `ErrThrottled` sentinel. Only six types implement it, so the compiler forces every adapter to sign and resolution stays on `providerflags.Resolve`.
+- D5. Key identity uses two reserved aliases in the existing map: `platform:jwt-signing` and the optional verify-only `platform:jwt-verify`. No new flags or values carry key identity.
+- D6. On a cloud provider a `platform:jwt-*` alias must name an immutable key version, and startup rejects a repointable reference. The `kid` is computed once from the startup fetch, so a repointed reference would make every new token fail everywhere.
+- D7. `kid` is the RFC 7638 thumbprint. A KMS reference string would give one key two `kid`s and leak resource names into tokens.
+- D8. The key set is loaded once at startup and never refreshed. An unknown `kid` makes no KMS call, and a process that cannot load its set exits. Running processes therefore verify through a KMS outage, which keeps "existing sessions are unaffected" true.
+- D9. The gateway and the Token Service both sign with the one key. §4.3 item 3 lists what the Token Service mints, and §10.2 "Signing topology" lists what the gateway mints in process. The gateway and Token Service ServiceAccounts hold `Sign` and `GetPublicKey`, and `lenny-ops` holds `GetPublicKey` only.
+- D10. Rotation is three Helm rollouts, and step 2 re-mints the bootstrap admin credential with the existing `rotate-token` route. The admin token's 10-year lifetime would otherwise lock the operator out at step 3. `RotatingVerifier`'s timed overlap window is deleted, because it started at pod start and conflicts with config-held state.
+- D11. The step-3 wait is the `lenny-gateway` per-dialect cap, which SPEC-7 now states numerically in §13.3 so the rotation rule rests on spec text.
+- D12. Dev uses the local provider's master-key-derived ES256 key, and a mapped `platform:jwt-*` reference is the derivation input so rotation works under `local`. The chart renders one lookup-preserved master key Secret when `kms.provider=local`. No new gate is added, because local signing runs the production path and the existing production refusal of `local` applies. `--bearer-trust-hmac-key-file` stays as the dev embedded-OIDC trust hook and is refused under `lenny-ops --production`.
+- D13. `playground.bearerTtlSeconds` becomes `auth.capabilityTokenTtlSeconds`, named for owner decision 3's capability token lifetime, and governs the bearers `POST /v1/playground/token` mints, whose holders re-exchange before `exp`. A token whose holder has no refresh path keeps its cap: the session-creation `session_capability` token, which pods present and which is the delegation `actor_token`, keeps its per-dialect cap, and delegated children keep the §13.3 child formula. A 900 s session-creation token would fail pod→gateway calls and delegation 15 minutes into a session.
+- D14. Signing stays outside the advisory lock, because a 5–30 ms remote sign held under it would serialize a tenant's mints. The in-lock re-read covers the subject and the actor. It implements the existing §13.3 and §8.2 actor freshness rule and the §13.3 no-grace-period rule, and it stops two concurrent rotations of one subject from both committing. `subject_token_revoked` is a new `invalid_grant` reason.
+- D15. Throttling returns the existing 503 `KMS_SIGNING_UNAVAILABLE` with `Retry-After` and never trips the breaker, so no new error code is added. No client-side sign rate limit is added: the provider throttle already enforces the quota fleet-wide with the same 503, while a static per-replica split of the quota refuses demand the quota could serve, because the Token Service does not autoscale. One new counter, `lenny_jwt_sign_requests_total`, is added. The errors counter keeps its name, takes the code's `reason` label, and stops counting throttled requests, so the existing alert expression stays correct. Its spec text now matches the code's `rate(…[30s]) > 1`.
+- D16. `kms.signQuotaPerSecond` has no default and is required on cloud providers. Provider quotas vary by account and region, so a shipped default would be wrong for most installs.
+- D17. The published `/.well-known/jwks.json`, `--jwks-publish`, and the `jwksAdvertisesAsymmetric` notice are deleted. No spec section defines the endpoint and no in-platform verifier reads it.
+- D18. `platform.jwt_signing_key_rotated` is dropped from §18. No §16.7 entry defines it, and a configuration rollout has no Lenny-side transition to emit from.
+- D19. The gateway and `lenny-ops` reach KMS through a `kms.endpointCIDR` peer whenever `kms.provider` is not `local`, and the chart refuses `0.0.0.0/0` on a cloud provider. The gateway has no unconditional external-HTTPS rule to reach a public endpoint through, and an unrestricted peer would cancel the NET-057 excepts.
+- D20. Capacity text goes in §17.8 only. The `issued_tokens` write-rate gap in the §12.3 table predates this change, so this proposal leaves it unstaged.
+- D21. There is one spec pass and one implementation pass, and every adapter gains signing before any binary switches. No interim production posture or claim-register row is needed.
+
+**Watch out for.**
+- SPEC-1, SPEC-4, SPEC-6, and SPEC-9 contradict each other unless they land in one pass (spec-changes **Design**).
+- Each implementation step must compile on its own. CODE-10 lands before CODE-4, and CODE-12 deletes the old types only after CODE-4, CODE-5, and CODE-6 (non-spec **Design**).
+- The local key derivation must not use `ecdsa.GenerateKey` with the HKDF reader (CODE-1 item 3).
+- After CODE-4 and CODE-5 a cloud install fatals unless `platform:jwt-signing` maps to an immutable key-version reference. The old `platform:token-service-signing` alias is no longer read.
+- Only one `PublicKey` fetch per process: build the signer from the key set (non-spec **One key-set construction**).
+- `tokenservice.NewServer`'s signer-as-verifier fallback must go, or the Token Service rejects every token (CODE-5 item 2).
+- `lenny-ops` has no `--dev-mode`, and its production signal is `--production` (CODE-6 items 2 and 5).
+- A `0.0.0.0/0` KMS egress peer on the gateway or `lenny-ops`, copied from `allow-token-service`, weakens the SSRF boundary (CHART-4).
+- The rotation tests now expect a retried rotation to fail (CODE-9 item 3), and the tier-4 rotation test depends on CODE-1 item 3.
+- Proposal 0095's files are not edited when its tier-4 narrowing is removed (TEST-1 item 3).
+
+## Goals
+
+- A Lenny-issued token verifies on every gateway replica, every Token Service replica, and `lenny-ops`, and survives a restart of its signer.
+- On a cloud provider, no private signing key exists in any Lenny process.
+- The spec states the algorithm, key identity, key distribution, signing topology, rotation procedure, dev posture, and token lifetime, and its contradictions on these points are resolved.
+- A KMS quota burst degrades mints with retryable 503s rather than tripping the breaker fleet-wide, and the spec sizes the sign rate and the quota.
+- A revoked subject or actor cannot produce a token, including through a concurrent rotation.
+
+## Non-goals
+
+- Persisting the sealed HS256 key and reloading it through `KMSSignerFromSealed` (F-10.2.22's suggestion). Owner decision 1 rejects it, because every verifier would hold forging power and the key would sit in memory.
+- A per-replica KMS-signed intermediate key, as a default or as a documented mitigation. Owner decision 1 rejects it as a default, and the non-tripping throttle path plus quota sizing remove the capacity motive.
+- Separate gateway and Token Service signing keys that each verifier trusts. Every verifier would trust both, so the split adds an alias pair, a rotation, and an IAM binding with no containment, and the gateway already mints impersonation bearers and the 10-year admin token.
+- Routing every gateway mint through the Token Service over a new internal RPC. `tokensv1` has no mint RPC. The change would add protocol surface and a hop on the playground and admin paths, contradict the §13.3 and §17.6 gateway-direct admin rotation, and leave key distribution unsolved.
+- A JWKS endpoint served by the gateway or the Token Service as the verifier distribution channel. It needs a refresh rule, an unknown-`kid` fetch path, publisher trust, and startup ordering between components, and `GetPublicKey` over immutable key versions needs none of them.
+- Keeping `/.well-known/jwks.json` as an output, always on, default on, or opt-in. No spec section defines it and no in-platform verifier reads it; a later proposal can add it together with a consumer.
+- Public keys distributed in a Helm-rendered ConfigMap with `activateAt` scheduling, a 30 s re-read, and post-sign self-verification. It adds an operator copy step, a key-drift failure, clock-driven key selection, and propagation-lag rules. Fail-closed startup during a KMS outage is the accepted cost of the simpler design.
+- Automatic leader-gated re-keying of the bootstrap admin token when the signing `kid` changes. The manual `rotate-token` step in rotation step 2 resolves the lockout with no new trigger.
+- An exactly-once `platform.jwt_signing_key_rotated` audit emission, or emission through an extended §16.7 deployment-config event. No §16.7 entry defines the event, and rotation is a configuration rollout.
+- A Postgres `signing_keys` table driven by a leader, or the runbook's `tokenService.signingKeySealed` and `signingKid` values. Helm values already hold which key signs and which verifies, and the table would add a migration, a coordinator, and a boot dependency on Postgres.
+- Keeping `RotatingVerifier`'s in-process 24 h overlap timer. It starts at pod start, which is the wrong clock, and conflicts with config-held rotation state.
+- Discovering rotation state from the KMS or relying on provider-native automatic rotation. AWS asymmetric keys have no version namespace, and AWS and GCP do not auto-rotate asymmetric keys, so behavior would differ per provider.
+- A periodic or on-miss public-key refresh. Pinned versions are immutable, and an on-miss fetch would let an attacker-chosen `kid` drive KMS calls.
+- `kid` as the KMS key reference string or as an operator-configured value (D7).
+- New dedicated key-identity flags and values. The existing alias map already carries per-alias provider key references.
+- A separate `kms.SigningKeys` or `kms.Signer` interface. `Provider` has six implementations, so extending it keeps one resolution path and one set of fakes.
+- A HashiCorp Vault Transit adapter. No adapter, chart option, or validated need exists, and the §12.5 and §12.8 Vault mentions are outside this change.
+- An HS256 dev signer for Lenny-issued tokens, or a third dev shared-key mechanism. The local provider's ES256 key from the existing `--kms-master-key-file` runs the production code path.
+- Retiring `--bearer-trust-hmac-key-file` by having the CLI mint dev bearers from the local signing key. That widens the change into §17.4 and the embedded dev IdP stand-in, which is a different issuer.
+- Requiring `LENNY_DEV_MODE` for local signing in addition to the production refusal of `local`. Local signing is no longer a bypass, and an extra gate would break non-dev-mode tier-4 stacks.
+- Keeping `playground.bearerTtlSeconds` beside the new lifetime value. Two values for one token class would need a precedence rule.
+- Applying the 900 s lifetime to `user_bearer` and service tokens, to the bootstrap admin credential, to the session-creation `session_capability` token, or to delegated children. The shared key fixes the restart and replica defect, the admin credential is retired by rotation, and the session and delegation tokens have no refresh path (D13).
+- Letting the self-rotation grant extend `exp` past `subject_token.exp`. It would allow an unbounded refresh chain without upstream re-authentication.
+- Dropping the capacity strand. The validated scope names throttling backpressure, a sign-rate metric, a near-quota alert, and capacity text. D15 covers the scope's per-replica limit.
+- Deleting the §13.3 re-read clause instead of implementing it. The `exp` clamp bounds expiry only, and §13.3 and §8.2 already require a revocation re-read.
+- Holding the remote sign inside the advisory lock to match the current §13.3 wording (D14).
+- Renaming `lenny_gateway_kms_signing_errors_total` now that the Token Service also emits it. The rename only causes churn, and the `job` label identifies the process.
+- A new error code for throttling. `KMS_SIGNING_UNAVAILABLE` is already 503 `TRANSIENT` and retryable.
+- Splitting the implementation into a local-only part 1 and a cloud part 2 (D21).
+- Readiness-gated retry instead of fatal exit when the key set cannot load. Fatal exit matches the existing startup posture, and a crashlooping pod is equally fail-closed.
+- RS256 or EdDSA. RS256 roughly quadruples signature size, and EdDSA is not available for KMS signing on every listed provider.
+- A per-request verified-token cache to offset ES256 verification cost. The problem does not exhibit the cost, and §17.8 records it as a sizing note.
+- Implementing the session-creation `session_capability` mint and delegation child-token signing. They are out of scope per the problem, and §10.2 "Signing topology" states which signer each will use.
+- Adding an `issued_tokens` row to the §12.3 write-IOPS table (D20).
+
+## Open decisions for human to make
+
+None yet. The review loops write this section.
+
+## Defects in the shipped tree that this proposal does not stage
+
+- Session creation (`POST /v1/sessions`) mints no `session_capability` token, although §10.2 says the session-creation path does; `pkg/gateway/sessionserver` has no signer. It is out of scope per the problem statement, and SPEC-1 names the gateway signer it will use.
+- Delegation child tokens are claim records that are never signed and never written to `issued_tokens`, and the gateway's `childtoken.Minter` checks the actor against the revocation cache under its own lock rather than through the Token Service. It is out of scope per the problem statement, and SPEC-1 names the Token Service as the signer.
+- The §7.1 `uploadToken` key ring is also seeded per process (`cmd/lenny-gateway/token_signing.go`). It is a separate finding with a different key and consumer.
+- No upstream-IdP JWKS verifier exists in production (T-10.2.1). It is a separate verifier path.
+- The spec names production mode `LENNY_ENV=production`, while `providerflags` refuses `local` on `--environment=prod` (`LENNY_ENV=prod`). The drift predates this change and spans every production gate.
+- The §12.3 write-IOPS table has no `issued_tokens` row for token issuance. It is a pre-existing sizing gap (D20).
+- F-10.2.23 and F-10.2.24 (tenancy-mode behavior) are out of scope per the problem statement.
+
+## Impacts on other proposals
+
+| Proposal | Status | What this change does to it | What it must do |
+|:--|:--|:--|:--|
+| 0095 (data lifecycle second half) | Implemented | Removes the tier-4 per-replica narrowing of `lennyIssuedProbes` that its deviations file records, because Lenny-issued bearers now verify on every replica. | Nothing. Its files are not edited, and this proposal records the removal in REC-1 and TEST-1. |
+| 0017 (embedded mode runs the production stack) | Applied (single-file record) | Keeps `--bearer-trust-hmac-key-file` as the gateway's dev embedded-OIDC trust hook and replaces the §17.4 "In-process random KEK" row with the master-key-backed local provider that also derives the signing key. | Nothing. Its files are not edited. |
+
+## Deliverable index
+
+- SPEC-1 — spec/10_gateway-internals.md, spec/16_observability.md, spec/17_deployment-topology.md, spec/27_web-playground.md — signing algorithm, providers, reference immutability, dev posture, signing topology, playground signer references, `typ` stamping, and the `session_mint` audit type.
+- SPEC-2 — spec/10_gateway-internals.md — verifier key set and three-rollout rotation, replacing "Key rotation".
+- SPEC-3 — spec/10_gateway-internals.md, spec/27_web-playground.md — fixed lifetime and `auth.capabilityTokenTtlSeconds`.
+- SPEC-4 — spec/10_gateway-internals.md, spec/15_external-api-surface.md — KMS signing failure mode with throttling backpressure and `Retry-After`.
+- SPEC-5 — spec/16_observability.md — signing errors and sign requests metrics, and the two signing alerts.
+- SPEC-6 — spec/04_system-components.md — §4.3 item 3 minting topology.
+- SPEC-7 — spec/13_security-model.md, spec/08_recursive-delegation.md — signing outside the lock, the step (1a) re-read, `subject_token_revoked`, the per-dialect caps, and the §13.3 in-process mint exception.
+- SPEC-8 — spec/17_deployment-topology.md — §17.8 lifetime and quota defaults and the KMS Sign rate paragraph.
+- SPEC-9 — spec/17_deployment-topology.md — §17.4 KMS row, state and resets, and dev guard rails.
+- SPEC-10 — spec/13_security-model.md, spec/25_agent-operability.md, spec/17_deployment-topology.md — gateway and `lenny-ops` KMS endpoint egress.
+- SPEC-11 — spec/18_build-sequence.md, spec/25_agent-operability.md — §18.33 rotation bullet, §25.4 startup, authentication, and `/v1/admin/me` degradation sentences, and §25.15 Postgres outage rows.
+- CODE-1 — pkg/kms — `Sign`, `PublicKey`, `ErrThrottled`, local derivation, and reference validation.
+- CODE-2 — pkg/auth/jwt — context-taking `Sign`, remote ES256 signer, and `KeySet`.
+- CODE-3 — pkg/auth/jwt/breakersigner.go — throttling, `Retry-After`, and the outcome hook.
+- CODE-4 — cmd/lenny-gateway and gateway mint packages — gateway wiring to the shared signer and key set.
+- CODE-5 — cmd/lenny-token-service, pkg/tokenservice — Token Service wiring and removal of the verifier fallback.
+- CODE-6 — cmd/lenny-ops — KMS flags, key set, and production refusal of `local` and the HMAC trust flag.
+- CODE-7 — gateway and Token Service mint error paths and metrics — `Retry-After` and sign metrics.
+- CODE-8 — cmd/lenny-gateway, pkg/gateway/mcpfabric/playground — `--capability-token-ttl-seconds`.
+- CODE-9 — pkg/gateway/storage/issuedtokenstore, pkg/tokenservice — in-transaction source-token revocation re-read.
+- CODE-10 — cmd/lenny-gateway, pkg/gateway/audit/jwtaudit, pkg/auth/jwt/jwks.go — deletion of the JWKS endpoint and the rotation observer.
+- CODE-11 — pkg/alerting/rules — `KMSSignQuotaApproaching` and the `KMSSigningUnavailable` text, with regenerated rule files.
+- CODE-12 — pkg/auth/jwt — deletion of the HMAC `KMSSigner`, `RotatingVerifier`, and `PublicJWK`.
+- CHART-1 — charts/lenny values, schema, presets, pkg/chart/values — lifetime key, quota key, and comments.
+- CHART-2 — charts/lenny templates — local master key Secret and KMS flags on all three deployments.
+- CHART-4 — charts/lenny/templates/system-network-policies.yaml, ops-network-policies.yaml, values.yaml — KMS endpoint egress for the gateway and `lenny-ops`.
+- CHART-5 — charts/lenny PrometheusRule template — `KMSSignQuotaApproaching` rendering.
+- DOCS-1 — docs/runbooks/jwt-key-rotation.md — runbook rewrite.
+- DOCS-2 — docs/reference and docs/operator-guide pages — configuration, playground, security, and error catalog edits.
+- REC-1 — BUILD-GAPS.md, TEST-GAPS.md — finding and test-gap records.
+- TEST-1 — tests/testinfra, tests/tier4_integration, tests/tier5_e2e_kind, tier-9 suite, tests/spec-map.json — cross-process tests and harness.

@@ -1,0 +1,69 @@
+
+## Implementation checklist
+
+Every step lands the tests that the non-spec Testing section places under its deliverables. S1, S4, S6, and S9 land in one spec pass (see the spec-changes **Design** section).
+
+- [ ] **S1 · spec** — SPEC-1. Lands the §10.2 signing model, signing topology, and playground signer edits.
+      Tiers 0, 11. Depends on: —
+- [ ] **S2 · spec** — SPEC-2. Lands the §10.2 verifier key set and rotation paragraph.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S3 · spec** — SPEC-3. Lands the §10.2 and §27 lifetime edits.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S4 · spec** — SPEC-4. Lands the §10.2 failure-mode paragraph and the §15 row.
+      Tiers 0, 11. Depends on: S1, S2
+- [ ] **S5 · spec** — SPEC-5. Lands the §16.1 and §16.5 rows.
+      Tiers 0, 11. Depends on: S4
+- [ ] **S6 · spec** — SPEC-6. Lands the §4.3 item 3 edit.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S7 · spec** — SPEC-7. Lands the §13.3 and §8.2 edits.
+      Tiers 0, 11. Depends on: —
+- [ ] **S8 · spec** — SPEC-8. Lands the §17.8.1 rows and the §17.8.2 paragraph.
+      Tiers 0, 11. Depends on: S3, S4
+- [ ] **S9 · spec** — SPEC-9. Lands the §17.4 edits.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S10 · spec** — SPEC-10. Lands the §13.2.4, §25.4, and §17.1 egress edits.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S11 · spec** — SPEC-11. Lands the §18.33 and §25.4 authentication edits.
+      Tiers 0, 11. Depends on: S2
+- [ ] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
+      Tiers 0, 1, 6. Depends on: S1, S2
+- [ ] **S13 · code** — CODE-2. Lands the context-taking `Sign`, the remote ES256 signer, and `KeySet`.
+      Tiers 0, 1. Depends on: S1, S2, S12
+- [ ] **S14 · code** — CODE-3. Lands the breaker backpressure changes.
+      Tiers 0, 1, 7a. Depends on: S4, S5, S13
+- [ ] **S15 · code** — CODE-10. Lands the JWKS endpoint and rotation observer deletion.
+      Tiers 0, 1, 4. Depends on: S2, S11
+- [ ] **S16 · code** — CODE-4. Lands the gateway wiring.
+      Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S13, S14, S15
+- [ ] **S17 · code** — CODE-5. Lands the Token Service wiring.
+      Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S13, S14
+- [ ] **S18 · code** — CODE-6. Lands the `lenny-ops` wiring.
+      Tiers 0, 1, 4, 5, 9. Depends on: S1, S2, S11, S13
+- [ ] **S19 · code** — CODE-12. Lands the deletion of the HMAC signer and `RotatingVerifier`.
+      Tiers 0, 1. Depends on: S16, S17, S18
+- [ ] **S20 · code** — CODE-7. Lands the outcome mapping, the sign-rate flags, and the sign metrics.
+      Tiers 0, 1, 2, 3, 7a. Depends on: S4, S5, S8, S14, S16, S17
+- [ ] **S21 · code** — CODE-8. Lands the lifetime flag rename.
+      Tiers 0, 1, 3, 5. Depends on: S3, S16
+- [ ] **S22 · code** — CODE-9. Lands the in-transaction revocation re-read.
+      Tiers 0, 1, 2, 7a, 9. Depends on: S7, S17
+- [ ] **S23 · code** — CODE-11. Lands the alert catalog change and its generated files.
+      Tiers 0, 1, 11. Depends on: S5
+- [ ] **S24 · code** — CHART-1. Lands the values, schema, and preset changes.
+      Tiers 0, 1, 5. Depends on: S1, S3, S8, S21
+- [ ] **S25 · code** — CHART-2. Lands the local master key Secret and the KMS flags on all three deployments.
+      Tiers 0, 5. Depends on: S1, S9, S18, S24
+- [ ] **S26 · code** — CHART-3. Lands the sign-rate flags.
+      Tiers 0, 5. Depends on: S8, S20, S24
+- [ ] **S27 · code** — CHART-4. Lands the `lenny-ops` KMS egress rule.
+      Tiers 0, 5, 9. Depends on: S10, S25
+- [ ] **S28 · code** — CHART-5. Lands the PrometheusRule rendering.
+      Tiers 0, 11. Depends on: S5, S23, S24
+- [ ] **S29 · test** — TEST-1. Lands the harness change and the cross-process tests.
+      Tiers 0, 4, 5, 9, 11. Depends on: S16, S17, S18, S19, S22, S25
+- [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
+      Tiers 0, 11. Depends on: S2, S23
+- [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, and error catalog edits.
+      Tiers 0, 11. Depends on: S1, S3, S4, S8
+- [ ] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
+      Tiers 0, 11. Depends on: S29, S30, S31
