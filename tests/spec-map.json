@@ -3036,7 +3036,8 @@
         "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
-        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8"
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/auth"
@@ -3529,7 +3530,9 @@
         "tests/tier9_security/write_before_issue_failclosed_test.go",
         "tests/tier9_security/audit_sequence_precondition_test.go",
         "tests/tier9_security/audit_integrity_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/audit",
@@ -3938,7 +3941,9 @@
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantRedisPurgesStayInsideTheTenantPrefix_spec_12_8",
         "tests/tier9_security/tenant_path_store_isolation_test.go::TestTenantPathEntriesNeverTouchAnotherTenant_spec_12_8",
         "tests/testinfra/lifecyclefence/checker_test.go::TestUserErasureErasesTokenStoreRowsAndSourceCheckpoint_spec_12_8",
-        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8"
+        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/store",
@@ -6582,7 +6587,9 @@
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

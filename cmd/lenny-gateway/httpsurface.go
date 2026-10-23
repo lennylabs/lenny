@@ -453,7 +453,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
-		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
+		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
 		// bounded by min(runtime, playground) on both axes, and record the
