@@ -127,6 +127,18 @@ type orderedStore struct {
 	// that write apply before it reports the error.
 	failID         string
 	commitThenFail bool
+	// rereadFail makes the primary re-read of a failed cancel write fail.
+	rereadFail bool
+}
+
+// GetPrimary records the primary re-read of a failed cancel write and fails
+// it when rereadFail is set.
+func (s *orderedStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	s.log.add("reread:" + id)
+	if s.rereadFail {
+		return sessionstore.Session{}, errors.New("pgtenant: primary unreachable")
+	}
+	return s.Get(ctx, tenantID, id)
 }
 
 func (s *orderedStore) List(ctx context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
@@ -234,7 +246,7 @@ func (rec *revokeRecorder) assertClaimEndsAtOnce(t *testing.T, id string) {
 
 // TestFullRevokeRunsItsStepsInOrder_spec_11_4 asserts the full_revoke order
 // over every pre-revoke state: the listing, then the lease step over every
-// listed non-terminal session, then per session the claim, the cancel
+// listed session, terminal ones included, then per session the claim, the cancel
 // write, and AfterRevokeWrite, then the pre-running reclaim of the sessions
 // cancelled from created, finalizing, or ready, then the end of every
 // claim, then the binding release. A row another writer ends between the
@@ -260,10 +272,13 @@ func TestFullRevokeRunsItsStepsInOrder_spec_11_4(t *testing.T) {
 		t.Fatalf("full_revoke: status %d, body %v", code, resp)
 	}
 	cancelled := []string{"s_created", "s_finalizing", "s_ready", "s_running", "s_suspended"}
-	listed := append(append([]string(nil), cancelled...), "s_raced")
+	listed := append(append([]string(nil), cancelled...), "s_raced", "s_done")
 	sort.Strings(listed)
 	if strings.Join(rec.leases.got, ",") != strings.Join(listed, ",") {
-		t.Errorf("lease step sessions = %v, want every listed non-terminal session %v", rec.leases.got, listed)
+		t.Errorf("lease step sessions = %v, want every listed session %v", rec.leases.got, listed)
+	}
+	if rec.log.index("update:s_done") >= 0 {
+		t.Errorf("events = %v; a terminal session got a cancel write", rec.log.snapshot())
 	}
 	ev := rec.log.snapshot()
 	leases := rec.log.index("leases")
@@ -357,26 +372,31 @@ func TestFullRevokeRunsTheRevokeHookPerCancelledSession_spec_11_4(t *testing.T) 
 	}
 }
 
-// TestPartialFullRevokeFansOutOnlyTheCancelledSessions_spec_11_4 asserts the
+// TestPartialFullRevokeContinuesPastAFailedCancelWrite_spec_11_4 asserts the
 // cancel-store-error case. Three ready sessions are listed and the second
-// cancel write fails: the lease step receives all three, the handler answers
-// 500, only the first session reaches the pre-running reclaim and the
-// binding release, the failing write's claim ends before the next recorded
-// call, and no claim is still open when the handler returns. The
-// committed-error variant's failing write applies before it reports the
-// error: its row is cancelled but outside the returned set, so it reaches
-// neither the reclaim nor the binding release, and its claim also ends at
-// once.
+// cancel write fails. The lease step receives all three, the loop continues
+// to the third write, the handler answers 200 with the failing session in
+// failedSessions, and only the first and third sessions reach the
+// pre-running reclaim, the binding release, and sessionsTerminated. A write
+// that reports an error is re-read from the primary while its claim is still
+// open, and the claim ends right after. When the write committed and the
+// re-read finds the row cancelled, AfterRevokeWrite runs once on the re-read
+// row; when the write did not apply, or the re-read fails, it does not run.
+// No claim is still open when the handler returns.
 //
-// spec: §7.3 (Retry and Resume), §11.4 (User Invalidation)
-func TestPartialFullRevokeFansOutOnlyTheCancelledSessions_spec_11_4(t *testing.T) {
+// spec: §7.3 (Retry and Resume), §11.4 (User Invalidation: Full revoke
+// propagation mechanism)
+func TestPartialFullRevokeContinuesPastAFailedCancelWrite_spec_11_4(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		commitThenFail bool
+		rereadFail     bool
 		wantFailed     session.State
+		wantHookOnFail bool
 	}{
 		{name: "write_not_applied", wantFailed: session.StateReady},
-		{name: "write_committed_then_error", commitThenFail: true, wantFailed: session.StateCancelled},
+		{name: "write_committed_then_error", commitThenFail: true, wantFailed: session.StateCancelled, wantHookOnFail: true},
+		{name: "write_committed_then_error_reread_fails", commitThenFail: true, rereadFail: true, wantFailed: session.StateCancelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := newRevokeRecorder(
@@ -389,34 +409,75 @@ func TestPartialFullRevokeFansOutOnlyTheCancelledSessions_spec_11_4(t *testing.T
 			// failing row is chosen from the order the writes run in.
 			rows, _ := rec.store.Store.List(context.Background(), "acme", sessionstore.ListFilter{UserID: "alice@acme.com"})
 			first, failing, third := rows[0].ID, rows[1].ID, rows[2].ID
-			rec.store.failID, rec.store.commitThenFail = failing, tc.commitThenFail
-			code, _ := rec.revoke(t)
-			if code != http.StatusInternalServerError {
-				t.Fatalf("partial full_revoke: status %d, want 500", code)
+			rec.store.failID, rec.store.commitThenFail, rec.store.rereadFail = failing, tc.commitThenFail, tc.rereadFail
+			code, resp := rec.revoke(t)
+			if code != http.StatusOK {
+				t.Fatalf("partial full_revoke: status %d, want 200; body %v", code, resp)
 			}
 			if strings.Join(rec.leases.got, ",") != "run_1,run_2,run_3" {
 				t.Errorf("lease step sessions = %v, want all three listed sessions", rec.leases.got)
 			}
-			if strings.Join(rec.hook.reclaimed, ",") != first+":ready" {
-				t.Errorf("reclaimed = %v, want only %s", rec.hook.reclaimed, first)
+			done := sortedCopy([]string{first, third})
+			sort.Strings(rec.hook.reclaimed)
+			if strings.Join(rec.hook.reclaimed, ",") != done[0]+":ready,"+done[1]+":ready" {
+				t.Errorf("reclaimed = %v, want only %v", rec.hook.reclaimed, done)
 			}
-			if strings.Join(rec.pods.got, ",") != first {
-				t.Errorf("binding release sessions = %v, want only [%s]", rec.pods.got, first)
+			if strings.Join(rec.pods.got, ",") != strings.Join(done, ",") {
+				t.Errorf("binding release sessions = %v, want only %v", rec.pods.got, done)
 			}
-			if len(rec.hook.ids) != 1 || rec.hook.ids[0] != first+":cancelled" {
-				t.Errorf("revoke hook calls = %v, want only %s", rec.hook.ids, first)
+			wantHook := []string{first + ":cancelled", third + ":cancelled"}
+			if tc.wantHookOnFail {
+				wantHook = append(wantHook, failing+":cancelled")
 			}
-			rec.assertClaimEndsAtOnce(t, failing)
-			if rec.log.index("update:"+third) >= 0 {
-				t.Errorf("events = %v; the write after the failing one ran", rec.log.snapshot())
+			if got := sortedCopy(rec.hook.ids); strings.Join(got, ",") != strings.Join(sortedCopy(wantHook), ",") {
+				t.Errorf("revoke hook calls = %v, want %v", got, sortedCopy(wantHook))
+			}
+			assertFailedWriteReread(t, rec, failing, tc.wantHookOnFail)
+			if rec.log.index("update:"+third) < 0 {
+				t.Errorf("events = %v; the write after the failing one did not run", rec.log.snapshot())
 			}
 			if n := rec.hook.openClaims(); n != 0 {
 				t.Errorf("%d claims still open after the handler returned", n)
+			}
+			assertFailedSessions(t, resp, failing)
+			if resp["sessionsTerminated"] != float64(2) {
+				t.Errorf("sessionsTerminated = %v, want 2", resp["sessionsTerminated"])
 			}
 			row, _ := rec.store.Get(context.Background(), "acme", failing)
 			if row.State != tc.wantFailed {
 				t.Errorf("failing row state = %q, want %q", row.State, tc.wantFailed)
 			}
 		})
+	}
+}
+
+// assertFailedWriteReread asserts the events after a failed cancel write of
+// id: the primary re-read, then AfterRevokeWrite when wantHook is set, then
+// the end of the claim the write opened.
+func assertFailedWriteReread(t *testing.T, rec *revokeRecorder, id string, wantHook bool) {
+	t.Helper()
+	want := []string{"update:" + id, "reread:" + id}
+	if wantHook {
+		want = append(want, "after:"+id)
+	}
+	want = append(want, "end:"+id)
+	ev := rec.log.snapshot()
+	i := rec.log.index("update:" + id)
+	if i < 0 || i+len(want) > len(ev) || strings.Join(ev[i:i+len(want)], ",") != strings.Join(want, ",") {
+		t.Errorf("events = %v; want %v in sequence after the failed write", ev, want)
+	}
+}
+
+// assertFailedSessions asserts that the response's failedSessions names
+// exactly id, with a non-empty error.
+func assertFailedSessions(t *testing.T, resp map[string]any, id string) {
+	t.Helper()
+	failed, _ := resp["failedSessions"].([]any)
+	if len(failed) != 1 {
+		t.Fatalf("failedSessions = %v, want one entry for %s", resp["failedSessions"], id)
+	}
+	entry, _ := failed[0].(map[string]any)
+	if entry["sessionId"] != id || entry["error"] == "" || entry["error"] == nil {
+		t.Errorf("failedSessions[0] = %v, want sessionId %s with the error text", entry, id)
 	}
 }

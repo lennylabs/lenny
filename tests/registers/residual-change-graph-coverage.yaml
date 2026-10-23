@@ -606,24 +606,6 @@ entries:
     reason: |-
       a packaging formula, which no test tier is selected from
   - member: |-
-      pkg/gateway/mcpfabric/playground/ui/app.css
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
-  - member: |-
-      pkg/gateway/mcpfabric/playground/ui/app.js
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
-  - member: |-
-      pkg/gateway/mcpfabric/playground/ui/index.html
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
-  - member: |-
       pkg/loadctl/web/assets/style.css
     class: change-graph-coverage
     disposition: in-class

@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -417,6 +418,49 @@ func (t *Tier) PurgeUser(ctx context.Context, tenantID, userID string) (int, err
 		purged++
 	}
 	return purged, nil
+}
+
+// PurgeTenant implements failover.StreamTier. It is the tenant-deletion
+// Phase 4 erasure of the Redis-stream half of the billing write-ahead
+// buffer: it reads the stream length, destroys the billing-flusher
+// consumer group with XGROUP DESTROY, and DELs the stream key. Each
+// command names the one tenant-prefixed key, so it routes to the master
+// that owns the tenant's hash slot on a Redis Cluster. A missing stream
+// or a missing group counts as success, so a repeated purge, or a purge
+// of a tenant that never staged an event, returns 0 and a nil error.
+// Returns the number of staged entries the stream held.
+//
+// The purge leaves t.known[tenantID] set. ensureGroup skips a tenant it
+// already knows, so this replica's flusher for the tenant (Flush and
+// Reclaim) does not recreate the stream through XGROUP CREATE MKSTREAM
+// after the purge; its XREADGROUP fails on the missing key instead and
+// leaves no key behind.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (t *Tier) PurgeTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, fmt.Errorf("redisstream: PurgeTenant requires a non-empty tenant_id")
+	}
+	key := streamKey(tenantID)
+	n, err := t.client.XLen(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstream: purge tenant %s xlen: %w", tenantID, err)
+	}
+	if err := t.client.XGroupDestroy(ctx, key, consumerGroup).Err(); err != nil && !isMissingStream(err) {
+		return 0, fmt.Errorf("redisstream: purge tenant %s xgroup destroy: %w", tenantID, err)
+	}
+	if err := t.client.Del(ctx, key).Err(); err != nil {
+		return 0, fmt.Errorf("redisstream: purge tenant %s del: %w", tenantID, err)
+	}
+	return int(n), nil
+}
+
+// isMissingStream reports whether err is the Redis reply to an XGROUP
+// subcommand on a key that does not exist. XGROUP DESTROY of a missing
+// group on an existing stream replies 0 rather than an error, so this is
+// the only "nothing to destroy" error PurgeTenant sees.
+func isMissingStream(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "requires the key to exist")
 }
 
 // ackAndDel XACKs then XDELs a flushed stream entry.

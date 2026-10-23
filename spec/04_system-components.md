@@ -193,7 +193,7 @@ The derivation is sound only while a request addresses a session in the one way 
 
 **Single-tenant default:** For single-tenant deployments, `tenant_id` defaults to a built-in value (`default`). The field is always present internally — RLS policies and queries always filter by it — but single-tenant deployers never need to set or think about it; the gateway automatically applies the default tenant. Multi-tenant mode is enabled by configuring OIDC claims that carry tenant identity, or by setting `tenant_id` explicitly in the API. No additional configuration is required for single-tenant use.
 
-**`tenant_id` claim extraction:** The OIDC claim used to extract the tenant identifier is configurable via the `auth.tenantIdClaim` Helm value (default: `tenant_id`). In single-tenant deployments this value is ignored — all requests are assigned the `default` tenant. In multi-tenant deployments the gateway reads the configured claim from the validated OIDC ID token and uses its string value as the `tenant_id`. If the claim is absent from the token or its value is an empty string, the gateway rejects the request with `401 Unauthorized` and error code `TENANT_CLAIM_MISSING`; it does not fall back to the default tenant. If the claim value is present but does not match any registered tenant, the gateway rejects the request with `403 Forbidden` and error code `TENANT_NOT_FOUND`. Both rejection reasons are logged (INFO level, with `user_id` and `jti` for traceability) and emitted as `auth_failure` audit events.
+**`tenant_id` claim extraction:** The gateway extracts and validates the `tenant_id` of every request as [Section 10.2](10_gateway-internals.md#102-authentication) **`tenant_id` extraction** states.
 
 ### 4.3 Token Service
 

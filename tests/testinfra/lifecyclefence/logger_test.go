@@ -86,7 +86,7 @@ func TestDeletionReconcilerLogsPhase2PauseThroughTestLog_spec_12_8(t *testing.T)
 	if _, err := d.Tick(ctx); err != nil {
 		t.Fatalf("faulted Phase 2 tick: %v", err)
 	}
-	if !tb.logged("tenant deletion paused at Phase 2") {
+	if !tb.logged("tenant deletion paused in phase", "phase=terminate_sessions") {
 		t.Fatalf("the Phase 2 pause warning never reached the test log: %v", tb.lines)
 	}
 }

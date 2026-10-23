@@ -17,6 +17,7 @@ package tier4_integration_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -24,9 +25,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -580,4 +583,171 @@ func TestErasureJobsCompleteWithSmallPool_spec_12_8(t *testing.T) {
 	for _, id := range jobs {
 		awaitErasureCompleted(t, base, id, 60*time.Second)
 	}
+}
+
+// eraseTwinTables names the rows the wired-store erasure test seeds for
+// one user's session in each store the user path erases by session.
+var eraseTwinTables = []struct{ name, insert, count string }{
+	{
+		name:   "session_checkpoints",
+		insert: `INSERT INTO session_checkpoints (tenant_id, session_id, ref) VALUES ($1, $2, 'ref-1')`,
+		count:  `SELECT COUNT(*) FROM session_checkpoints WHERE tenant_id = $1 AND session_id = $2`,
+	},
+	{
+		name:   "session_checkpoint_meta",
+		insert: `INSERT INTO session_checkpoint_meta (tenant_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		count:  `SELECT COUNT(*) FROM session_checkpoint_meta WHERE tenant_id = $1 AND session_id = $2`,
+	},
+	{
+		name: "checkpoint_manifest",
+		insert: `INSERT INTO checkpoint_manifest (tenant_id, checkpoint_id, session_id, chunk_object_key_prefix,
+			chunk_size_bytes, checkpoint_started_at, checkpoint_timeout_at)
+			VALUES ($1, gen_random_uuid(), $2, $1 || '/checkpoints/' || $2 || '/', 1048576, now(), now() + interval '1 hour')`,
+		count: `SELECT COUNT(*) FROM checkpoint_manifest WHERE tenant_id = $1 AND session_id = $2`,
+	},
+	{
+		name:   "coordination_lease",
+		insert: `INSERT INTO coordination_lease (tenant_id, session_id, coordinator_replica) VALUES ($1, $2, 'replica-x') ON CONFLICT DO NOTHING`,
+		count:  `SELECT COUNT(*) FROM coordination_lease WHERE tenant_id = $1 AND session_id = $2`,
+	},
+}
+
+// eraseTwinUserTables names the rows the wired-store erasure test seeds
+// for one user in the two TokenStore stores.
+var eraseTwinUserTables = []struct{ name, insert, count string }{
+	{
+		name: "connector_credentials",
+		insert: `INSERT INTO connector_credentials (tenant_id, connector_id, user_id, access_token_blob, access_token_hash, refresh_token_blob)
+			VALUES ($1, 'github', $2, '\x01', '\x02', '\x03')`,
+		count: `SELECT COUNT(*) FROM connector_credentials WHERE tenant_id = $1 AND user_id = $2`,
+	},
+	{
+		name:   "credentials",
+		insert: `INSERT INTO credentials (tenant_id, ref, user_id, provider) VALUES ($1, 'cred-' || $2, $2, 'anthropic_direct')`,
+		count:  `SELECT COUNT(*) FROM credentials WHERE tenant_id = $1 AND user_id = $2`,
+	},
+}
+
+// seedEraseTwin writes one row per store for the user and their session.
+func seedEraseTwin(t *testing.T, pg *containers.Postgres, user, sid string) {
+	t.Helper()
+	err := pgtenant.InTx(t.Context(), pg.Pool, "acme", func(tx pgx.Tx) error {
+		for _, tb := range eraseTwinTables {
+			if _, err := tx.Exec(t.Context(), tb.insert, "acme", sid); err != nil {
+				return fmt.Errorf("%s: %w", tb.name, err)
+			}
+		}
+		for _, tb := range eraseTwinUserTables {
+			if _, err := tx.Exec(t.Context(), tb.insert, "acme", user); err != nil {
+				return fmt.Errorf("%s: %w", tb.name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("seed store rows for %s: %v", user, err)
+	}
+}
+
+// eraseTwinCounts returns each store's row count for the user and session.
+func eraseTwinCounts(t *testing.T, pg *containers.Postgres, user, sid string) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	for _, tb := range eraseTwinTables {
+		out[tb.name] = dbCountErasure(t, pg, tb.count, "acme", sid)
+	}
+	for _, tb := range eraseTwinUserTables {
+		out[tb.name] = dbCountErasure(t, pg, tb.count, "acme", user)
+	}
+	return out
+}
+
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence), 12.8 (Compliance Interfaces: Storage backends in erasure scope), 10.1.8, 4.9
+// diagnosis: user erasure through the gateway binary left a checkpoint
+// row, a coordination-mirror row, a connector refresh token, or a
+// registered credential of the erased user, or deleted one of another
+// user's, or a replica restarted after the erasure did not come back up.
+// Each store is one the user path wires, so a surviving row means
+// its eraser is not wired, and a missing bob row means an eraser ignores
+// its scope. The restarted replica rebuilds the credential deny list from
+// the revoked registered credentials; once user erasure deletes those rows,
+// a lease still live on an unreleased remote binding loses its user-shaped
+// deny entry after the restart, bounded by the lease TTL or by the orphan
+// claim timeout plus one GC sweep.
+func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	args := []string{
+		"--no-environment-policy", "allow-all", "--dev-mode",
+		"--postgres-dsn=" + pg.DSN, "--postgres-billing-audit-ddl-dsn=" + pg.DSN,
+		"--redis-url=redis://" + rd.Addr + "/0", "--tenant-deletion-interval=1s",
+	}
+	gw := gateway.StartWith(t, args...)
+	base := gw.BaseURL()
+
+	const alice, bob = "alice@acme.com", "bob@acme.com"
+	code, _ := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
+		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"runtimes": []map[string]any{{
+			"name": "echo", "image": "lenny/echo@sha256:abc", "labels": map[string]string{"tier": "test"},
+		}},
+		"users": []map[string]any{
+			{"subject": alice, "tenantId": "acme", "email": alice, "roles": []string{"tenant-admin"}},
+			{"subject": bob, "tenantId": "acme", "email": bob, "roles": []string{"tenant-admin"}},
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("bootstrap: status %d", code)
+	}
+	start := func(user string) string {
+		t.Helper()
+		code, created := erasureAdminDo(t, base, http.MethodPost, "/v1/sessions/start", "", map[string]any{
+			"runtimeRef": "echo", "userId": user,
+		})
+		sid, _ := created["id"].(string)
+		if code != http.StatusCreated || sid == "" {
+			t.Fatalf("create session for %s: %d (%v)", user, code, created)
+		}
+		return sid
+	}
+	aliceSID, bobSID := start(alice), start(bob)
+	seedEraseTwin(t, pg, alice, aliceSID)
+	seedEraseTwin(t, pg, bob, bobSID)
+
+	jobID := eraseUser(t, base, alice)
+	awaitErasureCompleted(t, base, jobID, 15*time.Second)
+
+	for store, n := range eraseTwinCounts(t, pg, alice, aliceSID) {
+		if n != 0 {
+			t.Errorf("%s: %d rows of the erased user survived, want 0", store, n)
+		}
+	}
+	for store, n := range eraseTwinCounts(t, pg, bob, bobSID) {
+		if n != 1 {
+			t.Errorf("%s: %d rows of another user remain, want 1", store, n)
+		}
+	}
+
+	// A replica started after the erasure rebuilds its deny list from the
+	// store and reaches readiness.
+	restarted := gateway.StartWith(t, args...)
+	if code, job := erasureAdminDo(t, restarted.BaseURL(), http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, "platform-admin", nil); code != http.StatusOK || job["phase"] != "completed" {
+		t.Fatalf("restarted replica: erasure job status %d (%v), want the completed job", code, job)
+	}
+}
+
+// eraseUser starts an erasure of user in acme and returns the job id.
+func eraseUser(t *testing.T, base, user string) string {
+	t.Helper()
+	code, resp := erasureAdminDo(t, base, http.MethodPost, "/v1/admin/users/"+user+"/erase", "platform-admin",
+		map[string]any{"tenantId": "acme"})
+	jobID, _ := resp["jobId"].(string)
+	if code != http.StatusAccepted || jobID == "" {
+		t.Fatalf("erase %s: status %d (%v)", user, code, resp)
+	}
+	return jobID
 }

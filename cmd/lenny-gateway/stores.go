@@ -95,16 +95,8 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	billingAuditDSN := f.billingAuditDSN
 	billingAuditDDLDSN := f.billingAuditDDLDSN
 	primaryDDLDSN := f.primaryDDLDSN
-	minioAccessKey := f.minioAccessKey
-	minioBucket := f.minioBucket
 	minioEndpoint := f.minioEndpoint
-	minioSecretKey := f.minioSecretKey
-	minioUseSSL := f.minioUseSSL
-	objectStorageAccountURL := f.objectStorageAccountURL
-	objectStorageBucket := f.objectStorageBucket
-	objectStorageFilesystemRoot := f.objectStorageFilesystemRoot
 	objectStorageProvider := f.objectStorageProvider
-	objectStorageRegion := f.objectStorageRegion
 	poolerMode := f.poolerMode
 	postgresDSN := f.postgresDSN
 	readDSN := f.readDSN
@@ -424,22 +416,12 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// tenant's Put is fail-closed under the per-tenant SSE-KMS alias
 	// regardless of which provider serves the bucket. F-17.5.1 /
 	// F-12.7.3.
-	objectStore, err := blobproviderflags.Resolve(context.Background(), blobproviderflags.Options{
-		Provider:        *objectStorageProvider,
-		Bucket:          *objectStorageBucket,
-		Region:          *objectStorageRegion,
-		AzureAccountURL: *objectStorageAccountURL,
-		FilesystemRoot:  *objectStorageFilesystemRoot,
-		MinIOEndpoint:   *minioEndpoint,
-		MinIOAccessKey:  *minioAccessKey,
-		MinIOSecretKey:  *minioSecretKey,
-		MinIOBucket:     *minioBucket,
-		MinIOUseSSL:     *minioUseSSL,
-		// §12.5 ll. 297-303 SSEKeyResolver: look up the writing
-		// tenant's workspaceTier on every Put and hand the backend the
-		// per-tenant SSE-KMS alias for T4 tenants.
-		SSEKeyResolver: newSSEKeyResolver(tenants),
-	})
+	objectStoreOpts := objectStorageOptions(f)
+	// §12.5 ll. 297-303 SSEKeyResolver: look up the writing tenant's
+	// workspaceTier on every Put and hand the backend the per-tenant
+	// SSE-KMS alias for T4 tenants.
+	objectStoreOpts.SSEKeyResolver = newSSEKeyResolver(tenants)
+	objectStore, err := blobproviderflags.Resolve(context.Background(), objectStoreOpts)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §17.9.3 object storage: %v", err)
 	}
@@ -548,6 +530,25 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.blobsCataloged = blobsCataloged
 	w.pools = pools
 	return checkpointRetention
+}
+
+// objectStorageOptions maps the §17.9.3 object-storage flags onto the
+// provider options, without an SSE-KMS resolver. The artifact store adds
+// the tenant resolver; the legal-hold escrow store reuses the provider,
+// credentials, and endpoint with its own bucket (escrowStoreOptions).
+func objectStorageOptions(f *gatewayFlags) blobproviderflags.Options {
+	return blobproviderflags.Options{
+		Provider:        *f.objectStorageProvider,
+		Bucket:          *f.objectStorageBucket,
+		Region:          *f.objectStorageRegion,
+		AzureAccountURL: *f.objectStorageAccountURL,
+		FilesystemRoot:  *f.objectStorageFilesystemRoot,
+		MinIOEndpoint:   *f.minioEndpoint,
+		MinIOAccessKey:  *f.minioAccessKey,
+		MinIOSecretKey:  *f.minioSecretKey,
+		MinIOBucket:     *f.minioBucket,
+		MinIOUseSSL:     *f.minioUseSSL,
+	}
 }
 
 // objectStoreBackendName returns the human-readable backend name for

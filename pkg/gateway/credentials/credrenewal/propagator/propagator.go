@@ -146,8 +146,9 @@ func New(denyList *denylist.DenyList, worker CredentialRevoker, bus *pubsub.Bus,
 // publishes key so peer replicas do the same. The signature matches
 // denylist.DenyList.Revoke, so a Propagator is a drop-in wherever the
 // raw deny list or the §4.9 credential-deny-list propagator is wired:
-// the §11.4 full_revoke fan-out and the emergency-revocation path route
-// through it with no other change.
+// the emergency-revocation path routes through it with no other change.
+// The §11.4 full_revoke lease step writes no deny-list entry and does
+// not call it.
 func (p *Propagator) Revoke(key credential.CredentialKey) {
 	p.applyLocal(key)
 	payload, err := json.Marshal(key)
@@ -186,12 +187,13 @@ func (p *Propagator) Revoked(key credential.CredentialKey) bool { return p.denyL
 func (p *Propagator) Len() int { return p.denyList.Len() }
 
 // IsCrossReplicaPropagator is a marker that wiring sites (notably the
-// §11.4 full_revoke fan-out — see cmd/lenny-gateway/user_revocation.go)
-// require to refuse a bare *denylist.DenyList that would silently lose
-// cross-replica fan-out. A Propagator constructed with a nil bus still
-// returns true: the local-only single-replica posture is a deliberate
-// constructor choice, not an accidental wiring downgrade. spec: §11.4
-// step 6.
+// §4.9 emergency-revocation lease terminator; see
+// cmd/lenny-gateway/credential_revocation.go) require to refuse a bare
+// *denylist.DenyList that would silently lose cross-replica fan-out. A
+// Propagator constructed with a nil bus still satisfies it: the local-only
+// single-replica posture is a deliberate constructor choice rather than
+// an accidental wiring downgrade. spec: §4.9 (Credential Leasing Service:
+// Emergency Credential Revocation).
 func (p *Propagator) IsCrossReplicaPropagator() {}
 
 // Run subscribes to the credential-revocation channel and applies a

@@ -257,6 +257,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	w.billingLedger = billingLedger
 	w.billingPipeline = billingPipeline
 	w.billingTier = billingTier
+	w.billingStream = billingStream
 	w.effectiveAuditRetentionDays = effectiveAuditRetentionDays
 	w.grantCheckRegulated = grantCheckRegulated
 	w.resolvedGrantCheckInterval = resolvedGrantCheckInterval

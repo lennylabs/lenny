@@ -185,8 +185,9 @@ func (s *Store) Len() int {
 // LeasesBySession returns every lease this replica holds whose
 // SessionID is one of sessionIDs. It backs the §11.4 full_revoke
 // credential-lease revocation step: the caller resolves a revoked
-// user's sessions, collects their leases here, removes them, and adds
-// each lease's credential to the §4.9 deny list. The returned slice is
+// user's sessions, collects their leases here, and returns each lease
+// to its pool, which revokes it; the step writes no §4.9 deny-list
+// entry. The returned slice is
 // a copy, so the caller may iterate it while removing the leases. An
 // empty sessionIDs set yields no leases.
 func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {

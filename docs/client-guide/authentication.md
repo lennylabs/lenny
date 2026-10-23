@@ -66,19 +66,19 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 The gateway validates the token signature, checks expiry, and extracts:
 
 - `user_id`: the authenticated user
-- `tenant_id`: the tenant context (extracted from the identity-provider claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
+- `tenant_id`: the tenant context (see [Tenant Context](#tenant-context))
 - Role claims (e.g., `lenny_role`): determines authorization level
 
 ### Tenant Context
 
-In multi-tenant deployments, every request is scoped to a tenant. The tenant is extracted from the identity token:
+In multi-tenant deployments, every request is scoped to a tenant. The gateway reads the tenant from the claim configured via `auth.tenantIdClaim` (default: `tenant_id`) in an identity-provider token, and from the `tenant_id` claim in a token the gateway issued:
 
 | Condition | Behavior |
 |---|---|
 | Single-tenant deployment (`auth.multiTenant: false`) | Tenant claim is ignored; all requests use the built-in `default` tenant |
 | Claim present and tenant registered | Request proceeds with the extracted `tenant_id` |
 | Claim absent or empty | `401 Unauthorized` with code `TENANT_CLAIM_MISSING` |
-| Claim present but tenant not registered | `403 Forbidden` with code `TENANT_NOT_FOUND` |
+| Claim present but tenant not registered, or the tenant is in the `deleting` or `deleted` state | `403 Forbidden` with code `TENANT_NOT_FOUND` |
 
 There is no silent fallback to a default tenant in multi-tenant mode.
 

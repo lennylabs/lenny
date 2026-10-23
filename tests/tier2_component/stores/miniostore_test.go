@@ -24,16 +24,22 @@ import (
 func startMinIOStore(t *testing.T) (*miniostore.Store, *containers.MinIO) {
 	t.Helper()
 	mc := containers.StartMinIO(t, containers.MinIOOptions{})
-	store, err := miniostore.New(miniostore.Config{
+	store, err := minioStoreFor(mc)
+	if err != nil {
+		t.Fatalf("miniostore.New: %v", err)
+	}
+	return store, mc
+}
+
+// minioStoreFor builds a MinIO-backed blob store over the container's
+// bucket.
+func minioStoreFor(mc *containers.MinIO) (*miniostore.Store, error) {
+	return miniostore.New(miniostore.Config{
 		Endpoint:  mc.Endpoint,
 		AccessKey: mc.AccessKey,
 		SecretKey: mc.SecretKey,
 		Bucket:    mc.Bucket,
 	})
-	if err != nil {
-		t.Fatalf("miniostore.New: %v", err)
-	}
-	return store, mc
 }
 
 func blobURI(part string, ttl time.Duration) blobstore.URI {
@@ -165,5 +171,52 @@ func TestMinIOStoreTenantPrefixRejectsCrossTenant(t *testing.T) {
 	// returns ErrNotFound rather than a stored blob.
 	if _, err := inner.Stat(foreign); !errors.Is(err, blobstore.ErrNotFound) {
 		t.Errorf("inner Stat foreign: got %v, want ErrNotFound (guard must reject before S3)", err)
+	}
+}
+
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 12.5
+// diagnosis: the MinIO store's tenant prefix delete, which tenant-deletion
+// Phase 4 runs as the artifacts entry, left an object under the deleted
+// tenant's prefix, removed an object of another tenant, or failed on a
+// re-run. The prefix delete must remove every object under the tenant's
+// prefix, including objects of every object type, and nothing else.
+func TestMinIOStoreDeleteByTenant_spec_12_8(t *testing.T) {
+	store, _ := startMinIOStore(t)
+	ctx := context.Background()
+	put := func(tenant string, objType blobstore.ObjectType, session string) blobstore.URI {
+		u := blobstore.URI{TenantID: tenant, ObjectType: objType, SessionID: session, PartID: "p", TTL: time.Hour, Encoding: blobstore.Encoding}
+		if _, err := store.Put(u, "text/plain", strings.NewReader(tenant)); err != nil {
+			t.Fatalf("Put %v: %v", u, err)
+		}
+		return u
+	}
+	acme := []blobstore.URI{
+		put("acme", blobstore.ObjectTypeUpload, "s1"),
+		put("acme", blobstore.ObjectTypeWorkspace, "s2"),
+		put("acme", blobstore.ObjectTypeCheckpoint, "s2"),
+	}
+	twin := put("globex", blobstore.ObjectTypeUpload, "s1")
+	// A tenant whose ID shares a prefix with acme must not be reached.
+	sibling := put("acme-2", blobstore.ObjectTypeUpload, "s1")
+
+	n, err := store.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != len(acme) {
+		t.Errorf("DeleteByTenant removed %d objects, want %d", n, len(acme))
+	}
+	for _, u := range acme {
+		if _, err := store.Stat(u); !errors.Is(err, blobstore.ErrNotFound) {
+			t.Errorf("acme object %v survived: %v", u, err)
+		}
+	}
+	for _, u := range []blobstore.URI{twin, sibling} {
+		if _, err := store.Stat(u); err != nil {
+			t.Errorf("object %v of another tenant lost: %v", u, err)
+		}
+	}
+	if n, err := store.DeleteByTenant(ctx, "acme"); err != nil || n != 0 {
+		t.Errorf("second DeleteByTenant = (%d, %v), want (0, nil)", n, err)
 	}
 }

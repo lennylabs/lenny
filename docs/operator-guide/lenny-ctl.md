@@ -109,6 +109,7 @@ Seed Day-1 configuration into an empty deployment.
 | Resource exists, identical | No-op | No-op |
 | Resource exists, differs | Skip (logged as WARN) | Update (PUT with overwrite) |
 | Security-critical field change | Error (blocked) | Error (blocked) |
+| Tenant entry whose `id` is the reserved `platform`, or that names an existing tenant in the `deleting` or `deleted` state | Error (no tenant is created or changed; exit code 2, or 1 when no entry succeeds) | Error (blocked) |
 
 ### Exit Codes
 
@@ -294,9 +295,11 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` |
-| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` |
-| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` |
+| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` (tenant-admin: not while its tenant is `deleting`) |
+
+A tenant-admin of a tenant in the `deleting` state cannot call the API. A platform-admin releases its holds or force-deletes it.
 
 ---
 

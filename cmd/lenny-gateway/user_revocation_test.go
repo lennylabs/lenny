@@ -17,23 +17,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/credential"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
-
-// newLocalRevocationDenyList builds the §11.4 step-1 deny list the lease
-// step requires: a *credrenewalprop.Propagator wrapping a fresh
-// single-replica DenyList with a nil bus. The returned denylist.DenyList is
-// the underlying state for assertions. spec: §11.4 step 1.
-func newLocalRevocationDenyList() (*credrenewalprop.Propagator, *denylist.DenyList) {
-	dl := denylist.New()
-	return credrenewalprop.New(dl, nil, nil), dl
-}
 
 // poolLease returns a valid pool-backed proxy lease bound to session.
 func poolLease(leaseID, sessionID string) credential.Lease {

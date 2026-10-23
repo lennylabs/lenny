@@ -53,6 +53,97 @@ func (d tenantStateDisabler) SoftDisableTenant(ctx context.Context, tenantID str
 	return err
 }
 
+// tenantSessionLister lists a tenant's sessions. sessionstore.Store
+// satisfies it.
+type tenantSessionLister interface {
+	List(ctx context.Context, tenantID string, filter sessionstore.ListFilter) ([]sessionstore.Session, error)
+}
+
+// tenantCredentialRevoker is the §12.8 Phase 3 CredentialRevoker. It runs
+// three steps in order and returns the first error, which keeps the job at
+// Phase 3 for the next pass. Each step is idempotent.
+//
+//  1. It commits TenantState deleting on the tenant row unless the row is
+//     already deleting or deleted. The runner's syncBack normally writes
+//     the state in the pass that completes Phase 2; committing it here
+//     keeps the gateway's tenant registry refusing the tenant's bearers
+//     before the other Phase 3 actions, even when that write failed.
+//  2. It lists the tenant's sessions from the primary, terminal ones
+//     included, and returns every credential lease they hold through the
+//     §11.4 lease step. credential_leases carries no tenant column, so the
+//     sessions are the only path to the tenant's leases. A lease-store
+//     error inside the step is silent, because LeasesBySession returns no
+//     error: such a lease stays valid until it expires, the stale-slot
+//     reaper reclaims it, or a later pass returns it. The step therefore
+//     does not fail closed on a lease-store error.
+//  3. It runs the tokens entry of the Phase 4 eraser list, which deletes
+//     the tenant's TokenStore rows (connector refresh tokens and
+//     registered credentials). A nil function means no TokenStore backend
+//     is wired in this posture.
+//
+// The access-token cache flush that §12.8 Phase 3 names has no code here.
+// The token service constructs that cache and never writes to it, so a
+// flush would delete nothing; the tier-0 guard
+// TestErasureExemptionsHaveNoProductionWriter_spec_12_8 fails when a
+// writer appears.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3), §11.4 (User Invalidation).
+type tenantCredentialRevoker struct {
+	tenants  tenantstore.Store
+	sessions tenantSessionLister
+	leases   admin.UserLeaseRevoker
+	tokens   tenantEraseFunc
+	clock    func() time.Time
+}
+
+// RevokeTenantCredentials runs the Phase 3 steps for tenantID.
+func (c tenantCredentialRevoker) RevokeTenantCredentials(ctx context.Context, tenantID string) error {
+	if err := c.commitDeleting(ctx, tenantID); err != nil {
+		return fmt.Errorf("tenant deletion phase 3: commit deleting: %w", err)
+	}
+	rows, err := c.sessions.List(ctx, tenantID, sessionstore.ListFilter{Primary: true})
+	if err != nil {
+		return fmt.Errorf("tenant deletion phase 3: list sessions: %w", err)
+	}
+	if len(rows) > 0 {
+		ids := make([]string, len(rows))
+		for i, s := range rows {
+			ids[i] = s.ID
+		}
+		c.leases.RevokeUserLeases(tenantID, "", ids)
+	}
+	if c.tokens != nil {
+		if _, err := c.tokens(ctx, tenantID); err != nil {
+			return fmt.Errorf("tenant deletion phase 3: delete tokens: %w", err)
+		}
+	}
+	return nil
+}
+
+// commitDeleting moves the tenant row to deleting unless it is already
+// deleting or deleted.
+func (c tenantCredentialRevoker) commitDeleting(ctx context.Context, tenantID string) error {
+	_, err := c.tenants.Update(ctx, tenantID, func(t *tenantstore.Tenant) error {
+		if t.State != tenantstore.TenantStateDeleting && t.State != tenantstore.TenantStateDeleted {
+			t.State = tenantstore.TenantStateDeleting
+			t.UpdatedAt = c.clock()
+		}
+		return nil
+	})
+	return err
+}
+
+// tenantEraserFunc returns the function of the entry named name in
+// erasers, or nil when the entry is absent or has no function.
+func tenantEraserFunc(erasers []namedTenantEraser, name string) tenantEraseFunc {
+	for _, e := range erasers {
+		if e.name == name {
+			return e.fn
+		}
+	}
+	return nil
+}
+
 // tenantSessionTerminator is the §12.8 Phase 2 SessionTerminator. It
 // runs the lifecycle drain over the whole tenant under a per-drain
 // budget, so one tenant's drain delays the other tenants' deletion by at
@@ -82,7 +173,9 @@ func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, te
 
 // namedTenantEraser pairs a store name with its DeleteByTenant function.
 // Both the (int, error) CountingEraser stores and the (error)-only
-// StoreEraser stores adapt to this single shape.
+// StoreEraser stores adapt to this single signature. A nil fn lists the store
+// by name for a posture whose backend is absent: ValidateTenantOrder counts
+// the name as wired, and tenantEraser skips it.
 type namedTenantEraser struct {
 	name string
 	fn   func(ctx context.Context, tenantID string) (int, error)
@@ -93,6 +186,11 @@ type namedTenantEraser struct {
 // deleted-row tally for the erasure receipt. A store error aborts the
 // phase (it is retried from Phase 4 on a later pass); each DeleteByTenant
 // is idempotent so the retry re-deletes already-removed rows as a no-op.
+// An entry with a nil function is skipped and left out of the tally, so the
+// receipt does not report a store that did not run as having erased zero
+// rows.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
 type tenantEraser struct {
 	erasers []namedTenantEraser
 }
@@ -100,6 +198,9 @@ type tenantEraser struct {
 func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map[string]int, error) {
 	out := make(map[string]int, len(e.erasers))
 	for _, ne := range e.erasers {
+		if ne.fn == nil {
+			continue
+		}
 		n, err := ne.fn(ctx, tenantID)
 		if err != nil {
 			return out, fmt.Errorf("tenant erase %s: %w", ne.name, err)

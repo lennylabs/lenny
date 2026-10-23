@@ -203,8 +203,8 @@ func markDeadLettered(t *testing.T, ctx context.Context, pg *containers.Postgres
 
 // rowIDBySeq returns the audit_log.id of tenant's row at seq, read on the
 // container pool. Used to seed an audit_redaction_receipts row whose
-// audit_event_id FK (§12.8, migration 0160) references a real
-// audit_log row.
+// audit_event_id (§12.8) names a real audit_log row; the column carries
+// no foreign key, because the receipt outlives the row.
 func rowIDBySeq(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string, seq uint64) string {
 	t.Helper()
 	var id string
@@ -267,13 +267,11 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 	markDeadLettered(t, ctx, pg, "teardown", 2, 6)
 
 	// Seed a standalone audit_redaction_receipts row. It references a
-	// surviving gdpr.% row (seq3) so this test isolates the §12.8
-	// gdpr.% skip from the separately-tracked FK-ordering defect (a receipt
-	// referencing a to-be-deleted dead_lettered row blocks the teardown
-	// DELETE; see TestDeleteByTenantFKBlocksReceiptReferencedRow below and
-	// BUILD-GAPS.md F-12.8.25). DeleteByTenant deletes only audit_log, so
-	// the receipt remnant §12.8 keeps exempt must survive
-	// regardless.
+	// surviving gdpr.% row (seq3) so this test isolates the §12.8 gdpr.%
+	// skip; a receipt naming a deleted row is covered by
+	// TestDeleteByTenantKeepsReceiptOfDeletedRow_spec_12_8 below.
+	// DeleteByTenant deletes only audit_log, so the receipt remnant §12.8
+	// keeps exempt must survive regardless.
 	seedReceipt(t, ctx, pg, "teardown", rowIDBySeq(t, ctx, pg, "teardown", 3), 3)
 	if got := receiptCount(t, ctx, pg, "teardown"); got != 1 {
 		t.Fatalf("pre-teardown receipts = %d, want 1", got)
@@ -307,43 +305,40 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 	}
 }
 
-// spec: 12.8 (DeleteByTenant gdpr.* skip, line 840), 12.8 (receipt
-// exemption, line 831)
-// diagnosis: this pins the CURRENT behavior of the audit_redaction_receipts
-// -> audit_log FK (migration 0160, NO ACTION) when Phase-4 DeleteByTenant
-// deletes a redacted dead_lettered row that a receipt references: the delete
-// aborts with a foreign-key violation (SQLSTATE 23503). §12.8
-// exempt the receipts and require them to outlive the tenant, but they
-// reference a non-gdpr.% dead_lettered row the teardown must purge, so the
-// two requirements collide. Proposal 0028 did not address this ordering and
-// asserts "no new migration", so the fix (skip receipt-referenced rows,
-// delete the receipts first, or make the FK ON DELETE SET NULL) is out of
-// 0028 scope and needs a spec decision; it is tracked as BUILD-GAPS.md
-// F-12.8.25. This test records the collision so that fix flips it green
-// rather than discovering the abort in production teardown.
-func TestDeleteByTenantFKBlocksReceiptReferencedRow_spec_12_8_line840(t *testing.T) {
+// spec: 12.8 (Compliance Interfaces: RedactionReceipt schema), 12.8
+// (Compliance Interfaces: tenant deletion Phase 4)
+// diagnosis: a failure means Phase-4 DeleteByTenant cannot delete a
+// redacted dead_lettered row that a RedactionReceipt names, or deleting
+// it took the receipt with it. The receipt outlives the row it names and
+// audit_redaction_receipts carries no foreign key onto audit_log.id
+// (migration 0188), so the teardown deletes the row and leaves the
+// receipt. Against the schema before migration 0188 the delete aborts
+// with a foreign-key violation (SQLSTATE 23503) and deletes nothing.
+func TestDeleteByTenantKeepsReceiptOfDeletedRow_spec_12_8(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
 	store := auditstore.New(pg.Router(t))
 	ctx := context.Background()
-	seedTenant(t, ctx, pg, "fk-block")
+	seedTenant(t, ctx, pg, "fk-free")
 
 	at := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
 	// seq1 is a dead_lettered ordinary row; a receipt references it.
-	mustAppend(t, ctx, store, "fk-block", "tool.called", at)
-	markDeadLettered(t, ctx, pg, "fk-block", 1)
-	seedReceipt(t, ctx, pg, "fk-block", rowIDBySeq(t, ctx, pg, "fk-block", 1), 1)
+	mustAppend(t, ctx, store, "fk-free", "tool.called", at)
+	markDeadLettered(t, ctx, pg, "fk-free", 1)
+	seedReceipt(t, ctx, pg, "fk-free", rowIDBySeq(t, ctx, pg, "fk-free", 1), 1)
 
-	// The teardown DELETE of the non-gdpr.% referenced row violates the
-	// audit_redaction_receipts FK, so DeleteByTenant returns an error and
-	// deletes nothing (the transaction aborts). This is the known collision
-	// BUILD-GAPS.md F-12.8.25 tracks.
-	_, err := store.DeleteByTenant(ctx, "fk-block")
-	if err == nil {
-		t.Fatalf("DeleteByTenant unexpectedly succeeded; the F-12.8.25 receipt FK-ordering fix has landed, flip this test to assert receipt retention and close F-12.8.25")
+	deleted, err := store.DeleteByTenant(ctx, "fk-free")
+	if err != nil {
+		t.Fatalf("DeleteByTenant with a receipt naming a deleted row: %v, want success", err)
 	}
-	if !strings.Contains(err.Error(), "audit_redaction_receipts") {
-		t.Fatalf("DeleteByTenant error = %v, want a foreign-key violation on audit_redaction_receipts", err)
+	if deleted != 1 {
+		t.Errorf("DeleteByTenant deleted %d rows, want the receipt-referenced row", deleted)
+	}
+	if seqs := remainingSeqs(t, ctx, store, "fk-free"); len(seqs) != 0 {
+		t.Errorf("after teardown remaining seqs = %v, want none", seqs)
+	}
+	if got := receiptCount(t, ctx, pg, "fk-free"); got != 1 {
+		t.Errorf("post-teardown receipts = %d, want 1 (the receipt outlives the row it names)", got)
 	}
 }
 

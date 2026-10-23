@@ -47,9 +47,7 @@ func TestSemanticCacheWiredAsStep2EraserPurgesUser(t *testing.T) {
 		{Name: "sessions", DeleteByUser: func(context.Context, string, string) (int, error) { return 1, nil }},
 	}})
 
-	if err := erasure.ValidateOrder(erasure.Config{UserScoped: []erasure.Eraser{
-		{Name: "semantic_cache"}, {Name: "sessions"},
-	}}); err != nil {
+	if err := erasure.ValidateOrder(erasure.GatewayUserWiringConfig()); err != nil {
 		t.Fatalf("ValidateOrder rejected the semantic_cache wiring: %v", err)
 	}
 

@@ -33,6 +33,7 @@ func newPhase2Reconciler(term tenantdeletion.SessionTerminator) (*tenantdeletion
 	r := &tenantdeletion.Reconciler{
 		Jobs:       jobs,
 		Terminator: term,
+		Revoker:    &fakeAction{},
 		Eraser:     &fakeEraser{counts: map[string]int{}},
 		Receipts:   &fakeReceipts{},
 		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),

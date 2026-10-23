@@ -22,7 +22,7 @@ const multiTenantFlag = "--multi-tenant"
 // including a tenancy.mode: multi install, ran with the flag's false
 // default and admitted an unregistered tenant claim.
 //
-// spec: §10.2 (Authentication, tenant_id extraction from OIDC tokens),
+// spec: §10.2 (Authentication, `tenant_id` extraction),
 // §4.9 (tenancy.mode: multi), §17.4 (Local Development Mode).
 func TestGatewayMultiTenantFlagRenderAcrossProfiles(t *testing.T) {
 	helm.SkipUnlessAvailable(t)
@@ -75,7 +75,7 @@ func TestGatewayMultiTenantFlagRenderAcrossProfiles(t *testing.T) {
 // tenant claim, and a single-tenant install cannot render a gateway that
 // enforces it.
 //
-// spec: §10.2 (Authentication, tenant_id extraction from OIDC tokens),
+// spec: §10.2 (Authentication, `tenant_id` extraction),
 // §4.9 (tenancy.mode: multi).
 func TestChartRefusesContradictoryTenancy(t *testing.T) {
 	helm.SkipUnlessAvailable(t)

@@ -82,7 +82,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --tenancy-mode=single
-  # spec: §10.2 (tenant_id extraction from OIDC tokens) — the chart
+  # spec: §10.2 (`tenant_id` extraction) — the chart
   # renders the auth.multiTenant switch as the gateway's --multi-tenant
   # flag, so a multi-tenant install runs the registry-checking branch
   # that refuses an unregistered tenant with 403 TENANT_NOT_FOUND, and a

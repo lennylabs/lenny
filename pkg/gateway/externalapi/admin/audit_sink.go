@@ -138,6 +138,12 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	if callerKind != "" {
 		fields["caller_kind"] = callerKind
 	}
+	// spec: §11.7 — a row about another tenant carries that tenant as
+	// the top-level target_tenant_id, the only key the cross-tenant
+	// residency gate reads.
+	if event.TargetTenantID != "" {
+		fields["target_tenant_id"] = event.TargetTenantID
+	}
 	payload, _ := json.Marshal(fields)
 	at := event.At
 	if at.IsZero() {

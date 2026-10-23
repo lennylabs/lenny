@@ -9,11 +9,12 @@ import (
 	"time"
 )
 
-// Record is the durable §12.8 sub-step 4 escrow ledger row: the marker
-// Phase 4's DeleteByTenant skip logic reads to leave an escrowed object in
-// place, and the index the escrow-GC release path queries when a hold is
-// cleared on a tombstoned tenant. One record per migrated resource,
-// identified by its escrow object key.
+// Record is the durable §12.8 sub-step 4 escrow ledger row. It is the
+// release pointer the escrow-GC release path queries when a hold is
+// cleared, including on a tombstoned tenant whose originals Phase 4 has
+// deleted, and the record a re-entered Phase 3.5 reads to skip a hold it
+// already escrowed. One record per migrated resource, identified by its
+// escrow object key.
 //
 // spec: §12.8.
 type Record struct {

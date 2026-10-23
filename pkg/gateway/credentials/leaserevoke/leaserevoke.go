@@ -2,10 +2,12 @@
 
 // Package leaserevoke is the §11.4 full_revoke credential lease step: it
 // returns every §4.9 credential lease a revoked user's sessions hold to its
-// pool and then adds each lease's credential to the cross-replica deny
-// list. The admin router drives it through admin.UserLeaseRevoker; the
-// gateway binary constructs it over its lease store, its credential
-// assigner, and its credential-lease revocation propagator.
+// pool. Returning a lease revokes it: Release removes the lease record from
+// the shared lease store, so every replica rejects the lease's token. The
+// step writes no credential deny-list entry, because a pool credential is
+// shared with other users and a deny-list entry for it would lock them out.
+// The admin router drives it through admin.UserLeaseRevoker; the gateway
+// binary constructs it over its lease store and its credential assigner.
 package leaserevoke
 
 import (
@@ -28,58 +30,38 @@ type Releaser interface {
 	Release(leaseID string) error
 }
 
-// DenyList is the §4.9 deny list a revoked credential is added to. The
-// marker method IsCrossReplicaPropagator is intentional: §11.4 step 1 must
-// reach every replica's deny list, and a bare *denylist.DenyList carries a
-// revocation only on the calling replica. Requiring the marker bars an
-// accidental wiring downgrade, because only the credential-lease
-// revocation propagator (which applies locally and publishes on Redis
-// pub/sub) satisfies it. A propagator built with a nil bus still satisfies
-// the marker; that is the explicit local-only single-replica posture.
-//
-// spec: §11.4 step 1 (User Invalidation)
-type DenyList interface {
-	Revoke(key credential.CredentialKey)
-	IsCrossReplicaPropagator()
-}
-
-// Revoker returns and deny-lists the credential leases held by a revoked
-// user's sessions. It satisfies admin.UserLeaseRevoker.
+// Revoker returns the credential leases held by a revoked user's sessions.
+// It satisfies admin.UserLeaseRevoker.
 type Revoker struct {
 	leases   LeaseLister
 	assigner Releaser
-	denyList DenyList
 	logger   *slog.Logger
 }
 
-// New returns a Revoker over the lease store, the credential assigner, and
-// the cross-replica deny list. A nil logger logs through slog.Default.
-func New(leases LeaseLister, assigner Releaser, denyList DenyList, logger *slog.Logger) *Revoker {
+// New returns a Revoker over the lease store and the credential assigner.
+// A nil logger logs through slog.Default.
+func New(leases LeaseLister, assigner Releaser, logger *slog.Logger) *Revoker {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Revoker{leases: leases, assigner: assigner, denyList: denyList, logger: logger}
+	return &Revoker{leases: leases, assigner: assigner, logger: logger}
 }
 
 // RevokeUserLeases runs the full_revoke lease step for the named sessions.
-// It enumerates their leases, returns every one to its pool through the
-// assigner's Release, which removes the lease record and returns the pool
-// slot, and only then adds each lease's source-aware credential identity to
-// the deny list. It returns the number of leases enumerated, which is the
-// number deny-listed and the response's leasesRevoked count.
+// It enumerates their leases and returns every one to its pool through the
+// assigner's Release, which revokes the lease and removes its record, so
+// the returned lease's token is rejected on every replica. The step
+// deny-lists no credential. It returns the number of leases enumerated,
+// which is the response's leasesRevoked count.
 //
-// Every Release precedes the first deny-list write. The deny list's
-// in-process revoke hook rotates every direct-delivery lease it still finds
-// on a revoked credential, so a deny-list write while a later lease of a
-// revoked session is still recorded on the same pool credential would push
-// that revoked session a fresh key. Removing the record also rejects the
-// lease token on every replica through the shared lease store, whatever
-// happens to the deny-list publish. A Release error is logged with the
-// lease and session identifiers, and the lease is still deny-listed and
-// counted: the assigner removes the record either way, and the deny list
-// is what stops the token.
+// A Release error is logged with the lease and session identifiers, and
+// the lease is still counted. Each assigner removes the record whether or
+// not the rest of the release succeeded, and a repeated call returns a
+// lease that survived a failed step. A lease-store listing error is not
+// visible here, because LeasesBySession returns no error; such a lease is
+// bounded by its expiry, the stale-slot reaper, or a repeated call.
 //
-// spec: §11.4 step 1 (User Invalidation), §4.9 (Credential Leasing Service)
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism), §4.9 (Credential Leasing Service)
 func (r *Revoker) RevokeUserLeases(tenantID, userID string, sessionIDs []string) int {
 	leases := r.leases.LeasesBySession(sessionIDs)
 	for _, lease := range leases {
@@ -88,9 +70,6 @@ func (r *Revoker) RevokeUserLeases(tenantID, userID string, sessionIDs []string)
 				"lease_id", lease.LeaseID, "session_id", lease.SessionID,
 				"tenant_id", tenantID, "user_id", userID, "error", err)
 		}
-	}
-	for _, lease := range leases {
-		r.denyList.Revoke(lease.CredentialKey())
 	}
 	return len(leases)
 }

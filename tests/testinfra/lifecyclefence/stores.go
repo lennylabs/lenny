@@ -25,10 +25,12 @@ import (
 )
 
 // Transcripts is the part of the transcript store a World uses: seeding a
-// source session's transcript and reading a session's entries.
+// source session's transcript, reading a session's entries, and the
+// tenant-deletion Phase 4 transcripts entry.
 type Transcripts interface {
 	Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) error
 	Get(ctx context.Context, tenantID, sessionID string) ([]transcriptstore.Entry, error)
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Stores is one posture's production stores, wired as cmd/lenny-gateway

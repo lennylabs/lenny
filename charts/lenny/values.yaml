@@ -1848,15 +1848,17 @@ auth:
   # to the gateway as --multi-tenant. When false (single-tenant), the
   # gateway ignores the tenant claim and serves every request as the
   # built-in `default` tenant. When true (multi-tenant), the gateway
-  # reads the tenant from the claim named by tenantIdClaim, refuses an
-  # absent claim with 401 TENANT_CLAIM_MISSING, and refuses a tenant that
-  # is not registered with 403 TENANT_NOT_FOUND. It must be true exactly
+  # reads the tenant from the claim named by tenantIdClaim on a bearer an
+  # IdP key verified, and from `tenant_id` on a gateway-issued token,
+  # refuses an absent claim with 401 TENANT_CLAIM_MISSING, and refuses a
+  # tenant that is not registered with 403 TENANT_NOT_FOUND. It must be true exactly
   # when tenancy.mode is multi: the chart refuses to render, and the
   # gateway refuses to start, when the two disagree.
   multiTenant: false
   # tenantIdClaim is the OIDC ID-token claim the gateway extracts the
-  # tenant identifier from on every Bearer JWT (§10.2). The
-  # default `tenant_id` matches the canonical Lenny claim shape; set to
+  # tenant identifier from on a bearer an IdP key verified; a
+  # gateway-issued token uses `tenant_id` (§10.2). The default
+  # `tenant_id` matches the canonical Lenny claim shape; set to
   # the upstream IdP's tenant claim name when it differs (e.g. a
   # namespaced URI such as `https://acme.example/tenant`). The value
   # flows to the gateway binary as --tenant-id-claim. A single-tenant

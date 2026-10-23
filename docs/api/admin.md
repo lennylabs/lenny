@@ -414,6 +414,8 @@ platform-admin
 
 Create a tenant. Also provisions the tenant's two per-tenant Postgres sequences, one for the billing ledger and one for the audit ledger. Each sequence name is a fixed per-ledger prefix (`billing_seq_` or `audit_seq_`) followed by a 40-character hexadecimal digest of the tenant ID, so every name stays within the Postgres identifier length limit and no two tenants collide.
 
+The tenant ID `platform` is reserved for the platform tenant, under which the platform audit chain is written. A request that names it is rejected with `422 RESERVED_IDENTIFIER`.
+
 **Request body:**
 
 ```json
@@ -457,6 +459,8 @@ platform-admin
 {: .label .label-red }
 
 Delete a tenant. Blocked if any non-terminal sessions, pools, or credential pools exist.
+
+In a single-tenant deployment, a request to delete the built-in `default` tenant is rejected with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`.
 
 ### POST /v1/admin/tenants/{id}/suspend
 {: .d-inline-block }
@@ -848,6 +852,8 @@ platform-admin tenant-admin
 {: .label .label-red .label-blue }
 
 Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response. `tenant-admin` is scoped to their own tenant.
+
+In `full_revoke` mode, when the user's sessions cannot be listed, the call still revokes the user's tokens and dismisses the user's pending elicitations, and then answers `500 INTERNAL_ERROR` with the per-effect counts in the error details.
 
 ### POST /v1/admin/users/{userId}/erase
 {: .d-inline-block }

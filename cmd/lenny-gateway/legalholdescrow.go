@@ -3,23 +3,24 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
+	"github.com/lennylabs/lenny/pkg/legalholdescrow/blobescrow"
 )
 
 // This file wires the §12.8 Phase 3.5 force-delete override / escrow path
@@ -54,61 +55,12 @@ func escrowCipherFactory(provider kms.Provider) legalholdescrow.CipherFactory {
 	}
 }
 
-// blobEscrowSource reads a held artifact's plaintext from the live
-// tenant-keyed ArtifactStore (the §4 store decrypts under the tenant KEK,
-// still live at Phase 3.5).
-type blobEscrowSource struct{ blobs blobstore.Store }
-
-func (s blobEscrowSource) Read(_ context.Context, a legalholdescrow.HeldArtifact) ([]byte, error) {
-	u, err := blobstore.ParseURI(a.BlobURI)
-	if err != nil {
-		return nil, err
-	}
-	_, rc, err := s.blobs.Get(u)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	return io.ReadAll(rc)
-}
-
-// blobEscrowWriter migrates re-encrypted payloads into the region-scoped
-// legal-hold escrow bucket. The escrow object lives under the
-// `legal_hold_escrow` object type, keyed by the §12.8 escrow object key.
-// In production the bucket is a MinIO/S3 endpoint with COMPLIANCE-mode
-// object-lock (retain-until-hold-release); the escrow-GC and the Phase 4
-// skip logic enforce the retention contract at the platform layer.
-type blobEscrowWriter struct {
-	blobs    blobstore.Store
-	tenantID string
-}
-
-func (w blobEscrowWriter) Write(_ context.Context, key string, sealed []byte) error {
-	u := blobstore.URI{
-		TenantID:   w.tenantID,
-		ObjectType: blobstore.ObjectType("legal_hold_escrow"),
-		SessionID:  "escrow",
-		// The §12.8 escrow object key carries slashes and the original blob
-		// URI; base64url it into the part id so it is a single valid object
-		// segment across every backend.
-		PartID:   base64.RawURLEncoding.EncodeToString([]byte(key)),
-		Encoding: blobstore.Encoding,
-	}
-	if _, err := w.blobs.Put(u, "application/octet-stream", bytes.NewReader(sealed)); err != nil {
-		// An idempotent re-entry overwrites the same key; a backend that
-		// rejects an overwrite (the §4.5 immutability guarantee) is treated
-		// as already-escrowed.
-		if errors.Is(err, blobstore.ErrConflict) {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 // escrowLedger records the §12.8 sub-step 2/4 ledger events as audit rows
-// on the platform tenant (retained under audit.gdprRetentionDays so they
-// survive the tenant tombstone). When a RecordStore is wired it also
+// appended under the platform tenant with the original tenant as
+// target_tenant_id (§16.7, the §11.7 cross-tenant write path), retained
+// under audit.gdprRetentionDays, so the tenant's Phase 4 audit eraser
+// never deletes them and they survive the tenant tombstone. When a
+// RecordStore is wired it also
 // persists the durable escrow record the §12.8 escrow-GC release
 // path queries, and serves as the ReleaseLedger that emits
 // legal_hold.escrow_released.
@@ -120,22 +72,33 @@ type escrowLedger struct {
 
 func (l escrowLedger) RegionResolved(ctx context.Context, ev legalholdescrow.RegionResolved) error {
 	payload, err := json.Marshal(map[string]any{
-		"tenantId":        ev.TenantID,
-		"tenantDeleteJob": ev.TenantDeleteJob,
-		"requestedRegion": ev.RequestedRegion,
-		"resolvedRegion":  ev.ResolvedRegion,
-		"escrowKekId":     ev.EscrowKEKID,
+		"tenantId":         ev.TenantID,
+		"target_tenant_id": ev.TenantID,
+		"tenantDeleteJob":  ev.TenantDeleteJob,
+		"requestedRegion":  ev.RequestedRegion,
+		"resolvedRegion":   ev.ResolvedRegion,
+		"escrowKekId":      ev.EscrowKEKID,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = l.appender.Append(ctx, ev.TenantID, "legal_hold.escrow_region_resolved", payload, l.clock())
+	return l.appendPlatform(ctx, "legal_hold.escrow_region_resolved", payload)
+}
+
+// appendPlatform appends one ledger event under the platform tenant. The
+// payload carries target_tenant_id so the §11.7 residency gate routes the
+// row to the original tenant's region.
+//
+// spec: §12.8 (Compliance Interfaces: --acknowledge-hold-override admin action (tenant scope)), §16.7 (Section 25 Audit Events)
+func (l escrowLedger) appendPlatform(ctx context.Context, eventType string, payload []byte) error {
+	_, err := l.appender.Append(ctx, jwtaudit.PlatformTenantID, eventType, payload, l.clock())
 	return err
 }
 
 func (l escrowLedger) Escrowed(ctx context.Context, ev legalholdescrow.Escrowed) error {
 	payload, err := json.Marshal(map[string]any{
 		"tenantId":          ev.TenantID,
+		"target_tenant_id":  ev.TenantID,
 		"resourceType":      ev.ResourceType,
 		"resourceId":        ev.ResourceID,
 		"originalHoldSetAt": ev.OriginalHoldSet.UTC().Format(time.RFC3339Nano),
@@ -148,14 +111,14 @@ func (l escrowLedger) Escrowed(ctx context.Context, ev legalholdescrow.Escrowed)
 	if err != nil {
 		return err
 	}
-	if _, err := l.appender.Append(ctx, ev.TenantID, "legal_hold.escrowed", payload, l.clock()); err != nil {
+	if err := l.appendPlatform(ctx, "legal_hold.escrowed", payload); err != nil {
 		return err
 	}
-	// Persist the durable escrow record the §12.8 release path
-	// queries. The save shares the migration's logical step (it is the
-	// "mark the record legal_hold_escrow: true" marker), so a save failure
-	// aborts the migration on this row rather than leaving an escrow object
-	// with no release pointer.
+	// Persist the durable escrow record. It is the release pointer the
+	// §12.8 escrow-GC release reads to locate and delete the escrow object
+	// after Phase 4 has deleted the original, so a save failure aborts the
+	// migration on this row rather than leaving an escrow object with no
+	// release pointer.
 	if l.records != nil {
 		return l.records.Save(ctx, legalholdescrow.Record{
 			TenantID:        ev.TenantID,
@@ -179,60 +142,27 @@ func (l escrowLedger) Escrowed(ctx context.Context, ev legalholdescrow.Escrowed)
 // object. escrowLedger satisfies legalholdescrow.ReleaseLedger.
 func (l escrowLedger) EscrowReleased(ctx context.Context, ev legalholdescrow.Released) error {
 	payload, err := json.Marshal(map[string]any{
-		"tenantId":        ev.TenantID,
-		"resourceType":    ev.ResourceType,
-		"resourceId":      ev.ResourceID,
-		"escrowObjectKey": ev.EscrowObjectKey,
-		"escrowRegion":    ev.EscrowRegion,
-		"clearedAt":       ev.ClearedAt.UTC().Format(time.RFC3339Nano),
-		"clearedBy":       ev.ClearedBy,
+		"tenantId":         ev.TenantID,
+		"target_tenant_id": ev.TenantID,
+		"resourceType":     ev.ResourceType,
+		"resourceId":       ev.ResourceID,
+		"escrowObjectKey":  ev.EscrowObjectKey,
+		"escrowRegion":     ev.EscrowRegion,
+		"clearedAt":        ev.ClearedAt.UTC().Format(time.RFC3339Nano),
+		"clearedBy":        ev.ClearedBy,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = l.appender.Append(ctx, ev.TenantID, "legal_hold.escrow_released", payload, l.clock())
-	return err
-}
-
-// blobEscrowDeleter physically removes a released escrow object from the
-// escrow bucket. The escrow object lives at the same blob URI the
-// blobEscrowWriter wrote (PartID = base64url(escrow object key)); clearing
-// the hold lifts the retain-until-hold-release object lock so the object
-// becomes deletable. spec: §12.8.
-type blobEscrowDeleter struct {
-	blobs blobstore.Store
-}
-
-func (d blobEscrowDeleter) Delete(_ context.Context, tenantID, _ string, key string) error {
-	// HardDeleteObject lives on the §4.5 Tombstoner sub-interface; the
-	// escrow GC needs a physical single-object delete (the retain-until-
-	// hold-release lock having been lifted by the clear). A backend that
-	// cannot hard-delete cannot GC escrow.
-	tomb, ok := d.blobs.(blobstore.Tombstoner)
-	if !ok {
-		return errors.New("legalholdescrow: blob store does not support escrow object deletion")
-	}
-	u := blobstore.URI{
-		TenantID:   tenantID,
-		ObjectType: blobstore.ObjectType("legal_hold_escrow"),
-		SessionID:  "escrow",
-		PartID:     base64.RawURLEncoding.EncodeToString([]byte(key)),
-		Encoding:   blobstore.Encoding,
-	}
-	if err := tomb.HardDeleteObject(u); err != nil {
-		// An already-absent object is a no-op: a re-cleared hold must not
-		// fail the release.
-		if errors.Is(err, blobstore.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	return nil
+	return l.appendPlatform(ctx, "legal_hold.escrow_released", payload)
 }
 
 // tenantEscrowMigrator is the gateway-side tenantdeletion.EscrowMigrator.
 // It resolves the tenant's escrow region, enumerates the held artifact
-// blobs, and drives the legalholdescrow.Migrator. On an unresolvable
+// blobs, and drives the legalholdescrow.Migrator, which reads originals
+// from the artifact store (blobs) and writes copies only to the escrow
+// store (escrowBlobs). A nil escrow store (no escrow bucket configured)
+// fails the override closed as an unresolvable region. On an unresolvable
 // region it emits the DataResidencyViolationAttempt audit event,
 // increments lenny_legal_hold_escrow_region_unresolvable_total, and
 // returns tenantdeletion.ErrEscrowRegionUnresolvable so the controller
@@ -243,12 +173,19 @@ type tenantEscrowMigrator struct {
 	cfg       legalholdescrow.Config
 	tenants   tenantstore.Store
 	artifacts artifactcatalog.Store
-	blobs     blobstore.Store
-	cipher    legalholdescrow.CipherFactory
-	ledger    legalholdescrow.Ledger
-	metrics   *gatewaymetrics.Metrics
-	appender  policy.AuditAppender
-	clock     func() time.Time
+	// blobs is the tenant-keyed artifact store the held originals are
+	// read from.
+	blobs blobstore.Store
+	// escrowBlobs is the escrow store the sealed copies are written to.
+	escrowBlobs blobstore.Store
+	// records is the durable escrow record store; Migrate reads it to skip
+	// a hold an earlier pass already escrowed.
+	records  legalholdescrow.RecordStore
+	cipher   legalholdescrow.CipherFactory
+	ledger   legalholdescrow.Ledger
+	metrics  *gatewaymetrics.Metrics
+	appender policy.AuditAppender
+	clock    func() time.Time
 }
 
 func (m tenantEscrowMigrator) EscrowHolds(ctx context.Context, req tenantdeletion.EscrowRequest) (tenantdeletion.EscrowOutcome, error) {
@@ -257,18 +194,27 @@ func (m tenantEscrowMigrator) EscrowHolds(ctx context.Context, req tenantdeletio
 		residency = t.DataResidencyRegion
 	}
 
-	// Resolve the held artifact blobs (those carrying a hold) so they can
-	// be re-encrypted; the session-level hold tuples are carried as
-	// blobless entries so the override is recorded even with no held blob.
-	holds := m.resolveHolds(ctx, req)
+	// Resolve the held artifact blobs so they can be re-encrypted. A
+	// listing error aborts Phase 3.5, because Phase 4's prefix delete would
+	// otherwise destroy held artifacts that were never escrowed.
+	holds, err := m.resolveHolds(ctx, req)
+	if err != nil {
+		return tenantdeletion.EscrowOutcome{}, err
+	}
 
+	cfg := m.cfg
+	if m.escrowBlobs == nil {
+		// No escrow store: fail closed as an unresolvable region.
+		cfg = legalholdescrow.Config{}
+	}
 	mig := &legalholdescrow.Migrator{
-		Config: m.cfg,
-		Cipher: m.cipher,
-		Source: blobEscrowSource{blobs: m.blobs},
-		Escrow: blobEscrowWriter{blobs: m.blobs, tenantID: req.TenantID},
-		Ledger: m.ledger,
-		Clock:  m.clock,
+		Config:  cfg,
+		Cipher:  m.cipher,
+		Source:  blobescrow.Source{Blobs: m.blobs},
+		Escrow:  blobescrow.Writer{Blobs: m.escrowBlobs, TenantID: req.TenantID},
+		Ledger:  m.ledger,
+		Records: m.records,
+		Clock:   m.clock,
 	}
 	res, err := mig.Migrate(ctx, legalholdescrow.Input{
 		TenantID:        req.TenantID,
@@ -291,43 +237,45 @@ func (m tenantEscrowMigrator) EscrowHolds(ctx context.Context, req tenantdeletio
 }
 
 // resolveHolds maps the controller's held-resource tuples to concrete
-// escrow inputs: each held artifact blob under the tenant is resolved to
-// its blob URI, and session-level holds are carried as blobless entries.
-func (m tenantEscrowMigrator) resolveHolds(ctx context.Context, req tenantdeletion.EscrowRequest) []legalholdescrow.HeldArtifact {
-	var artifactRecs []artifactcatalog.Record
-	if m.artifacts != nil {
-		recs, err := m.artifacts.ListLegalHeld(ctx, req.TenantID)
-		if err == nil {
-			artifactRecs = recs
-		}
+// escrow inputs. An artifact hold (ResourceID the owning session) yields
+// each held artifact of that session from ListLegalHeld; a session hold
+// yields every live catalog record of the session from ListBySession,
+// because Phase 4's prefix delete removes every original. Each artifact is
+// escrowed once however many holds cover it, and a non-live record is
+// skipped. Session-level tuples are also carried as blobless entries so
+// the override is recorded even with no held blob. Any listing error is
+// returned.
+//
+// spec: §12.8 (Compliance Interfaces: --acknowledge-hold-override admin action (tenant scope))
+func (m tenantEscrowMigrator) resolveHolds(ctx context.Context, req tenantdeletion.EscrowRequest) ([]legalholdescrow.HeldArtifact, error) {
+	heldBySession, err := m.heldArtifactsBySession(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
 	}
-	bySession := map[string][]artifactcatalog.Record{}
-	for _, r := range artifactRecs {
-		bySession[r.SessionID] = append(bySession[r.SessionID], r)
-	}
-
 	var holds []legalholdescrow.HeldArtifact
 	seen := map[string]bool{}
+	add := func(sessionID string, rec artifactcatalog.Record) {
+		if seen[rec.URI] {
+			return
+		}
+		seen[rec.URI] = true
+		holds = append(holds, heldArtifactFromRecord(sessionID, rec))
+	}
 	for _, h := range req.Holds {
-		if h.ResourceType == "artifact" {
-			for _, rec := range bySession[h.ResourceID] {
-				if seen[rec.URI] {
-					continue
-				}
-				seen[rec.URI] = true
-				holds = append(holds, legalholdescrow.HeldArtifact{
-					ResourceType: "artifact",
-					ResourceID:   base64.RawURLEncoding.EncodeToString([]byte(rec.URI)),
-					BlobURI:      rec.URI,
-					HoldSetAt:    rec.LegalHoldSetAt,
-					// §12.8 escrow-GC release keys: the owning session
-					// (h.ResourceID) and the raw artifact URI, so clearing either
-					// the session hold or the artifact's own hold releases it.
-					SessionID:   h.ResourceID,
-					ArtifactURI: rec.URI,
-				})
+		switch h.ResourceType {
+		case "artifact":
+			for _, rec := range heldBySession[h.ResourceID] {
+				add(h.ResourceID, rec)
 			}
 			continue
+		case "session":
+			recs, err := m.liveSessionArtifacts(ctx, req.TenantID, h.ResourceID)
+			if err != nil {
+				return nil, err
+			}
+			for _, rec := range recs {
+				add(h.ResourceID, rec)
+			}
 		}
 		// session / audit_range / workspace_snapshot: recorded, no blob body.
 		holds = append(holds, legalholdescrow.HeldArtifact{
@@ -335,7 +283,58 @@ func (m tenantEscrowMigrator) resolveHolds(ctx context.Context, req tenantdeleti
 			ResourceID:   h.ResourceID,
 		})
 	}
-	return holds
+	return holds, nil
+}
+
+// heldArtifactsBySession groups the tenant's artifact-held catalog records
+// by owning session. A ListLegalHeld error is returned.
+func (m tenantEscrowMigrator) heldArtifactsBySession(ctx context.Context, tenantID string) (map[string][]artifactcatalog.Record, error) {
+	bySession := map[string][]artifactcatalog.Record{}
+	if m.artifacts == nil {
+		return bySession, nil
+	}
+	recs, err := m.artifacts.ListLegalHeld(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list legal-held artifacts for tenant %q: %w", tenantID, err)
+	}
+	for _, r := range recs {
+		bySession[r.SessionID] = append(bySession[r.SessionID], r)
+	}
+	return bySession, nil
+}
+
+// liveSessionArtifacts returns the live catalog records of a held session.
+// A ListBySession error is returned.
+func (m tenantEscrowMigrator) liveSessionArtifacts(ctx context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error) {
+	if m.artifacts == nil {
+		return nil, nil
+	}
+	recs, err := m.artifacts.ListBySession(ctx, tenantID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list artifacts of held session %q: %w", sessionID, err)
+	}
+	live := recs[:0:0]
+	for _, r := range recs {
+		if r.State == artifactcatalog.StateLive {
+			live = append(live, r)
+		}
+	}
+	return live, nil
+}
+
+// heldArtifactFromRecord builds the escrow input for one catalog record.
+// The §12.8 escrow-GC release keys are the owning session and the raw
+// artifact URI, so clearing either the session hold or the artifact's own
+// hold releases it.
+func heldArtifactFromRecord(sessionID string, rec artifactcatalog.Record) legalholdescrow.HeldArtifact {
+	return legalholdescrow.HeldArtifact{
+		ResourceType: "artifact",
+		ResourceID:   base64.RawURLEncoding.EncodeToString([]byte(rec.URI)),
+		BlobURI:      rec.URI,
+		HoldSetAt:    rec.LegalHoldSetAt,
+		SessionID:    sessionID,
+		ArtifactURI:  rec.URI,
+	}
 }
 
 // reportResidencyViolation emits the §12.8 DataResidencyViolationAttempt
