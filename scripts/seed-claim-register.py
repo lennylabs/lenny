@@ -461,7 +461,9 @@ EXPLICIT = [
         "surface": "`cmd/lenny-gateway/adminrouter.go` `buildSessionScopedErasers`, "
                    "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EraseSession`",
         "note": "the user-erasure job deletes the DLQ and durable inbox keys of each of the "
-                "user's sessions; tenant deletion does not yet (BUILD-GAPS.md F-12.8.37)",
+                "user's sessions, and tenant deletion Phase 4 erases them too: its "
+                "session_message_queues entry in `cmd/lenny-gateway/tenant_erasers.go` lists the "
+                "tenant's sessions from the primary and calls `Coordinator.EraseSession` for each",
     },
     {
         "claim": "Pod release returns only the credential leases at or below the binding's "
