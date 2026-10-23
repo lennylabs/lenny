@@ -236,7 +236,7 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 **Stores:**
 
 - Event cursors / stream offsets
-- Session logs and runtime stderr
+- Session logs
 - Workspace checkpoint references
 - Agent session file snapshots
 - Resume metadata
