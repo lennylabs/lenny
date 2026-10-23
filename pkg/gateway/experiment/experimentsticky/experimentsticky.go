@@ -27,6 +27,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // DefaultTTL bounds how long a cached assignment survives without a
@@ -83,20 +86,27 @@ func NewRedis(client redis.UniversalClient, opts ...Option) *RedisCache {
 // assignmentKey is the §12.4 canonical sticky-cache key
 // `t:{tenant_id}:exp:{experiment_id}:sticky:{user_id}`.
 func assignmentKey(tenantID, experimentID, userID string) string {
-	return fmt.Sprintf("t:%s:exp:%s:sticky:%s", tenantID, experimentID, userID)
+	return rediskeys.TenantPrefix(tenantID) + "exp:" + experimentID + ":sticky:" + userID
 }
 
 // flushPattern is the §10.7 flush glob
 // `t:{tenant_id}:exp:{experiment_id}:sticky:*`.
 func flushPattern(tenantID, experimentID string) string {
-	return fmt.Sprintf("t:%s:exp:%s:sticky:*", tenantID, experimentID)
+	return rediskeys.TenantPrefix(tenantID) + "exp:" + experimentID + ":sticky:*"
 }
 
 // userErasurePattern is the §12.8 step-4 per-user purge glob
 // `t:{tenant_id}:exp:*:sticky:{user_id}` — every experiment in which the
 // user holds a sticky variant assignment.
 func userErasurePattern(tenantID, userID string) string {
-	return fmt.Sprintf("t:%s:exp:*:sticky:%s", tenantID, userID)
+	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:" + userID
+}
+
+// tenantErasurePattern is the §12.8 tenant-deletion Phase 4 purge glob
+// `t:{tenant_id}:exp:*:sticky:*`: every sticky assignment of every
+// experiment the tenant ran.
+func tenantErasurePattern(tenantID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:*"
 }
 
 // nonEmpty rejects an empty key component. An empty tenant, experiment, or
@@ -144,12 +154,13 @@ func (c *RedisCache) Put(ctx context.Context, tenantID, experimentID, userID, va
 // and records one §16.1 invalidation observation. It is invoked when an
 // experiment transitions to `paused` or `concluded`; `paused → active`
 // requires no flush. transition is the target status, carried as the §16.1 metric label. Returns the number of keys removed. SCAN is cursor-
-// based so a large keyspace does not stall Redis.
+// based so a large keyspace does not stall Redis, and it runs on the master
+// that owns the tenant's hash slot (redisconn.ScanDelete).
 func (c *RedisCache) Flush(ctx context.Context, tenantID, experimentID, transition string) (int, error) {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(experimentID) == "" {
 		return 0, fmt.Errorf("experimentsticky: flush requires a non-empty tenant_id and experiment_id")
 	}
-	deleted, err := c.scanDelete(ctx, flushPattern(tenantID, experimentID))
+	deleted, err := redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), flushPattern(tenantID, experimentID))
 	// The invalidation is recorded for the flush operation itself: §10.7
 	// names the counter "incremented on each flush", independent of how many
 	// keys the sweep removed (an experiment with no cached users still
@@ -173,44 +184,28 @@ func (c *RedisCache) DeleteByUser(ctx context.Context, tenantID, userID string) 
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
 		return 0, fmt.Errorf("experimentsticky: DeleteByUser requires a non-empty tenant_id and user_id")
 	}
-	return c.scanDelete(ctx, userErasurePattern(tenantID, userID))
+	return redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), userErasurePattern(tenantID, userID))
 }
 
-// scanDelete SCANs the keyspace for pattern and deletes matched keys in
-// batches, returning the count removed. Keys that expire between SCAN and
-// DEL simply do not count.
-func (c *RedisCache) scanDelete(ctx context.Context, pattern string) (int, error) {
-	const delBatch = 256
-	var (
-		batch   []string
-		deleted int
-	)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		n, err := c.client.Del(ctx, batch...).Result()
-		if err != nil {
-			return err
-		}
-		deleted += int(n)
-		batch = batch[:0]
-		return nil
+// DeleteByTenant removes every experiment sticky assignment the tenant
+// holds, across all of its experiments and users. It is the tenant-deletion
+// Phase 4 erasure of the experiment sticky cache: it DELs
+// `t:{tenant_id}:exp:*:sticky:*` with the same node-routed cursor sweep
+// Flush and DeleteByUser use, so on a Redis Cluster the sweep runs on the
+// master that owns the tenant's hash slot. It records no §16.1
+// invalidation observation, because the metric counts the §10.7
+// pause/conclude transitions of one experiment and a tenant teardown is
+// not one. Returns the number of keys removed; a tenant with no
+// assignments returns 0 and a nil error.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (c *RedisCache) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, fmt.Errorf("experimentsticky: DeleteByTenant requires a non-empty tenant_id")
 	}
-	iter := c.client.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		batch = append(batch, iter.Val())
-		if len(batch) >= delBatch {
-			if err := flush(); err != nil {
-				return deleted, err
-			}
-		}
+	n, err := redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), tenantErasurePattern(tenantID))
+	if err != nil {
+		return n, fmt.Errorf("experimentsticky: delete tenant %s sticky assignments: %w", tenantID, err)
 	}
-	if err := iter.Err(); err != nil {
-		return deleted, err
-	}
-	if err := flush(); err != nil {
-		return deleted, err
-	}
-	return deleted, nil
+	return n, nil
 }

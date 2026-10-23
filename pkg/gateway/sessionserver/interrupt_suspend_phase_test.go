@@ -42,6 +42,7 @@ func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status)
 }
 
 func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -62,8 +63,9 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	})
 
 	srv := sessionserver.New(store, sessionserver.Options{
-		PodBinder:   binder,
-		PodRegistry: reg,
+		DevTenantHeader: true,
+		PodBinder:       binder,
+		PodRegistry:     reg,
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_sus/interrupt", nil)
@@ -102,6 +104,7 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 // Suspended session-condition fact with the InterruptTimeout reason so the
 // session history distinguishes the forced suspend from an acknowledged one.
 func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -121,7 +124,7 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 		SandboxName: "sbx-to", Adapter: adapter,
 	})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodBinder: binder, PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodBinder: binder, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_to/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -154,6 +157,7 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 // spec: §4.7 STATUS_BUSY — the row stays running; no Suspended fact is stamped
 // on the row and the Sandbox stays in the coarse `claimed` phase.
 func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -173,7 +177,7 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 		SandboxName: "sbx-bz", Adapter: adapter,
 	})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodBinder: binder, PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodBinder: binder, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_busy/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -210,7 +214,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 	// No binder, no registry — row-only mode.
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nb/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

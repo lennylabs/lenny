@@ -51,6 +51,22 @@ The tag defaults to .Chart.AppVersion when the component pins none.
 {{- end -}}
 
 {{/*
+lenny.agentNamespaceNames renders the agentNamespaces entries' names as one
+comma-separated string, the form the lenny-controller and lenny-preflight
+--agent-namespaces flags parse. It renders an empty string when
+agentNamespaces is empty. Invoke with the root context:
+
+  {{ include "lenny.agentNamespaceNames" . }}
+*/}}
+{{- define "lenny.agentNamespaceNames" -}}
+{{- $names := list -}}
+{{- range .Values.agentNamespaces -}}
+{{- $names = append $names .name -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
+
+{{/*
 lenny.imagePullSecrets renders the imagePullSecrets list for a Lenny
 component pod spec from platform.registry.pullSecretName (§17.8.6). It
 emits nothing when no pull secret is configured, so a public-registry

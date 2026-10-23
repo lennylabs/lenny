@@ -41,6 +41,7 @@ const ARGS = {
   humanReadings: 3,
   collectorModel: "haiku",
   collectorEffort: "medium",
+  maxConsecutiveDeadAgents: 11,
 };
 
 // The refuted premise the run-wide list carries. `rejected` is the one argument
@@ -59,7 +60,10 @@ const STUBS = {
   "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
   "snap*": "DONE",
   diffcount: "0",
-  "spec-nonspec-handoff": "reconciled",
+  // The handoff is the last agent before the first firing, and it dies on all
+  // four attempts, so the run-wide dead-agent count the parent forwards is 4
+  // rather than a 0 a hard-coded value could fake.
+  "spec-nonspec-handoff": null,
   // A steady lane digest, so no recheck runs and the two post-loop firings are
   // the whole set this file reads.
   "hash:*": "0123456789ab",
@@ -127,6 +131,8 @@ const EXPECTED = {
   humanReadings: 3,
   collectorModel: "haiku",
   collectorEffort: "medium",
+  maxConsecutiveDeadAgents: 11,
+  deadAgentStreak: 4,
 };
 
 for (const [key, value] of Object.entries(EXPECTED)) {

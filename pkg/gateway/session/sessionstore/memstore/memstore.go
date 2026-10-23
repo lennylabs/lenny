@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -26,31 +28,82 @@ type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]sessionstore.Session
 
+	// reservations holds the session-ID reservations of the creation fence,
+	// keyed by reservationKey(tenantID, sessionID). Guarded by mu, so a
+	// reservation and the session row that ends it change together.
+	// spec: §12.8 (Lifecycle fence and drain).
+	reservations map[string]reservation
+
+	// markers reads the creation fence's marker rows. Nil admits every
+	// insert. Called under mu (WithCreationMarkers).
+	markers sessionstore.MarkerReader
+
+	// copyTranscript copies a transcript inside CreateWithTranscript, under
+	// mu. Nil makes CreateWithTranscript return ErrTranscriptCopierUnwired.
+	copyTranscript TranscriptCopier
+
 	// podLockMu guards podLocks. podLocks holds the per-pod mutex the
 	// §12.4 Redis-outage capacity gate (ReserveSlotUnderLock) takes so the
 	// in-memory backend serializes the count-and-decide the same way the
 	// Postgres backend serializes it under a per-pod advisory xact lock.
 	podLockMu sync.Mutex
 	podLocks  map[string]*sync.Mutex
+
+	// now is the clock Update stamps UpdatedAt from and accrues the §6.2
+	// active session age against. New wires the wall clock; NewWithClock
+	// lets a test step it.
+	now func() time.Time
 }
 
-// New returns an empty in-memory store.
-func New() *Store {
-	return &Store{
-		sessions: make(map[string]sessionstore.Session),
-		podLocks: make(map[string]*sync.Mutex),
+// Option configures a Store at construction.
+type Option func(*Store)
+
+// New returns an empty in-memory store on the wall clock.
+func New(opts ...Option) *Store {
+	return NewWithClock(nil, opts...)
+}
+
+// NewWithClock returns an empty in-memory store whose Update reads now for
+// the UpdatedAt stamp and the §6.2 active-age accrual, so a test can advance
+// a session's active age deterministically. A nil now selects the wall clock.
+func NewWithClock(now func() time.Time, opts ...Option) *Store {
+	if now == nil {
+		now = time.Now
 	}
+	s := &Store{
+		sessions:     make(map[string]sessionstore.Session),
+		reservations: make(map[string]reservation),
+		podLocks:     make(map[string]*sync.Mutex),
+		now:          now,
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
-// Create inserts the row. Returns ErrAlreadyExists when ID is taken.
-func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
+// Create inserts the row. Returns ErrAlreadyExists when ID is taken. It
+// runs the creation fence first and deletes the reservation whose ID and
+// owner match the row (fence.go).
+// spec: §12.8 (Lifecycle fence and drain).
+func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createLocked(ctx, sess, nil)
+}
+
+// createLocked is the shared insert of Create, CreateReserved, and
+// CreateWithTranscript. Callers hold s.mu. before runs after every check
+// and before the row is stored, so its error stores nothing.
+func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, before func(sessionstore.Session) error) error {
+	if err := s.fenceLocked(ctx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0); err != nil {
+		return err
+	}
 	if _, ok := s.sessions[sess.ID]; ok {
 		return sessionstore.ErrAlreadyExists
 	}
 	if sess.CreatedAt.IsZero() {
-		sess.CreatedAt = time.Now().UTC()
+		sess.CreatedAt = s.now().UTC()
 	}
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
@@ -59,10 +112,11 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
 	}
-	// spec: §4.2 — a newly created session row carries
+	// spec: §4.2, §10.1.1 — a newly created session row carries
 	// coordination_generation = 1, so the value a replica holds for a
-	// session no coordinator has taken over is positive and §10.1.2
-	// step 1's first compare-and-swap mints 2 strictly above it.
+	// session no takeover and no resume driver write has advanced is
+	// positive and each §10.1.2 step 1 compare-and-swap mints a value
+	// strictly above the one it fences.
 	if sess.CoordinationGeneration == 0 {
 		sess.CoordinationGeneration = 1
 	}
@@ -84,6 +138,12 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 			sess.RootSessionID = sess.ID
 		}
 	}
+	if before != nil {
+		if err := before(sess); err != nil {
+			return err
+		}
+	}
+	s.deleteOwnReservationLocked(sess)
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -100,6 +160,12 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
 	return row, nil
+}
+
+// GetPrimary implements sessionstore.PrimaryReader. The in-memory store has
+// no read pool, so it is Get. spec: §12.3 (Postgres HA Requirements).
+func (s *Store) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return s.Get(ctx, tenantID, id)
 }
 
 // GetByID returns the session row whose ID equals id regardless of
@@ -132,6 +198,8 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
 	prevUpdatedAt := row.UpdatedAt
+	prevState := row.State
+	prevAge := row.AccumulatedSessionAgeSeconds
 	prevRecoveryGen := row.RecoveryGeneration
 	prevCoordGen := row.CoordinationGeneration
 	prevRetryCount := row.RetryCount
@@ -164,7 +232,14 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	if row.SchemaVersion == 0 {
 		row.SchemaVersion = 1
 	}
-	row.UpdatedAt = monotonicNext(prevUpdatedAt, time.Now().UTC())
+	now := monotonicNext(prevUpdatedAt, s.now().UTC())
+	// spec: §6.2 (maxSessionAge timer behavior across states) — the store is
+	// the only writer of the accumulated active age: discard any value the
+	// mutator set, then accrue the active age the row gained since its
+	// previous write, against the same instant the UpdatedAt stamp records.
+	row.AccumulatedSessionAgeSeconds = prevAge
+	sessionstore.AccrueSessionAge(prevState, prevUpdatedAt, &row, now)
+	row.UpdatedAt = now
 	s.sessions[id] = row
 	return row, nil
 }
@@ -180,7 +255,9 @@ func monotonicNext(prev, now time.Time) time.Time {
 }
 
 // List returns every row for the tenant in created-at descending
-// order, after applying the supplied filter.
+// order, after applying the supplied filter. The store has one backing,
+// so f.Primary changes nothing: every read already sees every committed
+// write. spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilter) ([]sessionstore.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -228,6 +305,31 @@ func labelsContain(have, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// ListPodlessSuspended returns at most limit of the tenant's suspended
+// sessions that name no pod, with an id after afterID (every id when afterID
+// is empty), in id order. It backs the gateway leader's §7.2 backlog
+// re-check, which pages through the podless suspended population by id.
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (s *Store) ListPodlessSuspended(_ context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error) {
+	s.mu.RLock()
+	out := make([]sessionstore.Session, 0)
+	for _, row := range s.sessions {
+		if row.TenantID != tenantID || row.State != session.StateSuspended || row.PodAssignment != "" {
+			continue
+		}
+		if afterID != "" && row.ID <= afterID {
+			continue
+		}
+		out = append(out, row)
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // ListByRoot implements Store — every row whose RootSessionID equals
@@ -282,26 +384,79 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 			deleted++
 		}
 	}
+	// spec: §12.8 (Lifecycle fence and drain) — the erasure ends the
+	// user's reservations with the session rows.
+	for k, r := range s.reservations {
+		if r.TenantID == tenantID && r.UserID == userID {
+			delete(s.reservations, k)
+		}
+	}
 	return deleted, nil
 }
 
-// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
-// source. It counts live (non-terminal) sessions bound to podID across
-// every tenant. An empty podID matches no slot (sessions with no pod
-// binding carry an empty pod_assignment and are never counted).
-func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error) {
+// GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
+// It returns the identifiers of the non-terminal sessions whose
+// pod_assignment names podID across every tenant (the slot-holder
+// predicate). An empty podID matches no session.
+func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, error) {
 	if podID == "" {
-		return 0, nil
+		return nil, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	count := 0
+	var ids []string
 	for _, row := range s.sessions {
 		if row.PodAssignment == podID && !session.IsTerminal(row.State) {
-			count++
+			ids = append(ids, row.ID)
 		}
 	}
-	return count, nil
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// ListPodsWithActiveSlots implements Store: the distinct pods that a
+// non-terminal best-effort-per-slot session row names, across tenants.
+// spec: §12.4 (Redis failure behavior).
+func (s *Store) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]bool{}
+	var pods []string
+	for _, row := range s.sessions {
+		if row.PodAssignment == "" || row.ScrubPolicy != "best-effort-per-slot" || session.IsTerminal(row.State) {
+			continue
+		}
+		if !seen[row.PodAssignment] {
+			seen[row.PodAssignment] = true
+			pods = append(pods, row.PodAssignment)
+		}
+	}
+	sort.Strings(pods)
+	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the identifiers in ids whose
+// row is terminal with a TerminatedAt earlier than terminatedBefore, across
+// tenants, with the pgstore filter that drops identifiers that are not
+// UUIDs, because sessions.id is a UUID column there.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(_ context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var stale []string
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		row, ok := s.sessions[id]
+		if !ok || !session.IsTerminal(row.State) || row.TerminatedAt.IsZero() {
+			continue
+		}
+		if row.TerminatedAt.Before(terminatedBefore) {
+			stale = append(stale, id)
+		}
+	}
+	return stale, nil
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity
@@ -373,7 +528,9 @@ func (s *Store) PoolDrainStats(_ context.Context, poolRef string) (int, time.Tim
 }
 
 // CountActiveSessions implements the §11.2 per-tenant concurrent-session
-// quota count: the number of live (non-terminal) sessions for tenantID.
+// quota count: the number of non-terminal sessions other than suspended
+// ones for tenantID, as session.CountsTowardConcurrencyCaps defines.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, nil
@@ -382,7 +539,7 @@ func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, er
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -390,8 +547,9 @@ func (s *Store) CountActiveSessions(_ context.Context, tenantID string) (int, er
 }
 
 // CountActiveSessionsByUser implements the §11.1 per-user
-// concurrent-session admission count: live (non-terminal) sessions
-// owned by userID within tenantID.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) owned by userID
+// within tenantID. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -400,7 +558,7 @@ func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID st
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && row.UserID == userID && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && row.UserID == userID && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -408,8 +566,9 @@ func (s *Store) CountActiveSessionsByUser(_ context.Context, tenantID, userID st
 }
 
 // CountActiveSessionsByRuntime implements the §11.1 per-runtime
-// concurrent-session admission count: live (non-terminal) sessions
-// targeting runtimeRef within tenantID.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) targeting
+// runtimeRef within tenantID. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtimeRef string) (int, error) {
 	if tenantID == "" || runtimeRef == "" {
 		return 0, nil
@@ -418,7 +577,7 @@ func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtim
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if row.TenantID == tenantID && row.RuntimeRef == runtimeRef && !session.IsTerminal(row.State) {
+		if row.TenantID == tenantID && row.RuntimeRef == runtimeRef && session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -426,14 +585,15 @@ func (s *Store) CountActiveSessionsByRuntime(_ context.Context, tenantID, runtim
 }
 
 // CountActiveSessionsGlobal implements the §11.1 global
-// concurrent-session admission count: live (non-terminal) sessions
-// across every tenant.
+// concurrent-session admission count: non-terminal sessions other than
+// suspended ones (session.CountsTowardConcurrencyCaps) across every
+// tenant. spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsGlobal(_ context.Context) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
 	for _, row := range s.sessions {
-		if !session.IsTerminal(row.State) {
+		if session.CountsTowardConcurrencyCaps(row.State) {
 			count++
 		}
 	}
@@ -485,6 +645,13 @@ func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) 
 		if row.TenantID == tenantID {
 			delete(s.sessions, id)
 			deleted++
+		}
+	}
+	// spec: §12.8 (Lifecycle fence and drain) — tenant deletion ends the
+	// tenant's reservations with its session rows.
+	for k, r := range s.reservations {
+		if r.TenantID == tenantID {
+			delete(s.reservations, k)
 		}
 	}
 	return deleted, nil

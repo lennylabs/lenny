@@ -14,6 +14,7 @@ package transcriptstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -179,6 +180,40 @@ func (m *Memory) Page(_ context.Context, tenantID, sessionID string, afterSeq ui
 		}
 	}
 	return out, nil
+}
+
+// CopySession copies the transcript of sourceSessionID into
+// destSessionID under the store's lock, renumbering Seq from 1 in the
+// source order and keeping each entry's role, content, timestamp, and schema
+// version; each copied entry gets a new ID. A source with no entries copies
+// nothing and returns nil. A destination that already holds entries is an
+// error and copies nothing, as the Postgres copy fails on the
+// (session_id, seq) unique constraint.
+//
+// The in-memory session store calls it from CreateWithTranscript while it
+// holds its own lock, so the lock order is the session store's lock, then
+// this store's lock. No method of this store calls into the session store,
+// so the order is never reversed.
+// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+func (m *Memory) CopySession(_ context.Context, tenantID, sourceSessionID, destSessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	src := m.transcripts[key(tenantID, sourceSessionID)]
+	if len(src) == 0 {
+		return nil
+	}
+	dk := key(tenantID, destSessionID)
+	if len(m.transcripts[dk]) > 0 {
+		return fmt.Errorf("transcriptstore: copy into %s: destination already has a transcript", destSessionID)
+	}
+	out := make([]Entry, len(src))
+	for i, e := range src {
+		e.ID = uuid.NewString()
+		e.Seq = uint64(i) + 1
+		out[i] = e
+	}
+	m.transcripts[dk] = out
+	return nil
 }
 
 // DeleteBySession removes the session's transcript and returns the

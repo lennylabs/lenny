@@ -160,7 +160,7 @@
         "type": { "const": "deadline_approaching" },
         "sessionId": { "type": "string", "minLength": 1, "description": "The session the frame concerns. A runtime that keeps per-session context drops, without a reply, a frame that names a session it does not hold." },
         "remainingMs": { "type": "integer", "minimum": 0 },
-        "trigger": { "enum": ["session_age", "budget", "idle"] }
+        "trigger": { "enum": ["session_age", "budget"] }
       },
       "required": ["type", "sessionId", "remainingMs", "trigger"],
       "additionalProperties": false

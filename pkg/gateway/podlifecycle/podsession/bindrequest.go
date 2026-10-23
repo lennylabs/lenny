@@ -3,7 +3,9 @@
 package podsession
 
 import (
+	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -124,6 +126,30 @@ type BindRequest struct {
 	// (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// OnClaimed is the post-claim hook. The binder calls it once per binder
+	// call, after the pod claim and any slot reservation and before the first
+	// RPC to the pod, so a resume writes `resuming` only once it holds a pod.
+	// A hook error releases the claim and is returned unwrapped. Nil is a
+	// no-op, which is the create and start paths. spec: §7.3 (Retry and
+	// Resume).
+	OnClaimed func(context.Context) error
+	// attemptScoped marks a request Bind built for one whole-sequence bind
+	// attempt. On it a Prepare or Launch failure releases only the §4.9
+	// leases the attempt minted (mintedLeaseIDs) and deletes the claim,
+	// rather than revoking every lease the session holds, which would strip
+	// a lease another attempt for the same session minted. The decomposed
+	// /finalize and /start path never sets it. spec: §7.3 (Retry and Resume),
+	// §4.9 (Credential Leasing Service).
+	attemptScoped bool
+	// mintedLeaseIDs carries the lease identifiers this attempt's Prepare
+	// minted into its Launch, on an attemptScoped request only.
+	mintedLeaseIDs []string
+	// CoordinationGeneration is the session's coordination_generation the
+	// binding attempt holds. The binder records it on every lease the
+	// attempt mints. The resume driver sets it to its entry generation on a
+	// snapshotless rebuild; create, finalize, start, and a delegated child
+	// leave it 0. spec: §7.3 (Credential leases on the replacement pod).
+	CoordinationGeneration int64
 }
 
 // BindResult reports the pod a session was bound to.
@@ -204,7 +230,131 @@ type BindResult struct {
 	// trail on the session row so it is visible through §15.1
 	// GET /v1/sessions/{id} and the §11.7 audit log. F-7.5.4 / F-7.5.11.
 	SetupOutputs []*adapterv1.SetupCommandOutput
+	// BindAttempt is the §4.7.1 token of the attempt that created the
+	// adapter's registry entry for this binding. ReleaseUncommitted names
+	// it on the reclaim of a restore whose commit did not land, so the
+	// reclaim removes only the entry this attempt created. Bind sets it
+	// from the token Prepare minted, materializeSlot and Resume from their
+	// own. spec: §4.7.1 (Role and Gateway RPC Contract), §7.3 (Resume
+	// driver).
+	BindAttempt string
+	// Pool and MaxConcurrentSessions are the pool the binding was claimed
+	// from and its per-pod session bound (1 on an exclusive pool). They
+	// bound and label an uncommitted restore's compensation reclaim.
+	Pool                  string
+	MaxConcurrentSessions int32
+	// MintedLeaseIDs are the §4.9 leases the binding attempt minted. A
+	// pod release returns them with the session's leases at or below the
+	// binding's CoordinationGeneration, and an uncommitted restore returns
+	// exactly these. spec: §7.3 (Credential leases on the replacement pod).
+	MintedLeaseIDs []string
+	// crashed records that the binding's CH-ATTACH stream ended in a
+	// reported stream failure before the release unbound it. A release
+	// whose unbind follows that end retires a pod that serves one session
+	// whatever disposition it passes. No site clears it: a later binding
+	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
+	// and Execution Modes), §28.5.1 (Gateway-to-pod).
+	crashed atomic.Bool
+	// sealEpoch counts the binding's seal transitions: it is odd while the
+	// binding is marked sealed and even otherwise, and every mark and every
+	// clear moves it by one. The mark is set before the gateway asks the
+	// adapter to seal and stays set while the adapter may refuse the
+	// session's messages. A Send captures the epoch when it writes a message
+	// and reads the stream's end as a refusal only when the epoch it captured
+	// is odd and still current, that is, when the message was written after
+	// the seal mark and the same seal held until the stream ended. A message
+	// written before the seal can have reached the runtime, because work the
+	// runtime began before the seal without producing activity does not
+	// prevent it. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+	// (maxClientIdleSeconds clock behavior across states).
+	sealEpoch atomic.Int64
+	// sealGranted is the odd seal epoch the adapter confirmed it sealed
+	// under, or zero. The mark is placed before the adapter decides the
+	// seal, so during the call it says nothing about whether the adapter
+	// refuses messages: a message written then reaches the runtime when it
+	// arrives before the seal. Only a granted seal makes a stream end a
+	// refusal, so SealHeldSince requires the captured epoch to be granted.
+	// An unseal whose outcome is unknown withdraws the grant, because the
+	// adapter may already have lifted the seal. spec: §4.7.1 (Role and
+	// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior
+	// across states).
+	sealGranted atomic.Int64
 }
+
+// MarkSealed marks the binding sealed under a new odd seal epoch and returns
+// it. A binding already marked moves to the next odd epoch and stays marked,
+// so each seal call opens its own epoch and a grant covers only the messages
+// written after that call's mark. Keeping the earlier epoch would let a later
+// sealed answer re-grant an epoch whose grant an unseal with an unknown
+// outcome withdrew, and a message the runtime received in between would then
+// read as refused and be delivered a second time. spec: §4.7.1 (Role and
+// Gateway RPC Contract), §6.2 (maxClientIdleSeconds clock behavior across
+// states).
+func (r *BindResult) MarkSealed() int64 {
+	for {
+		e := r.sealEpoch.Load()
+		next := e + 1
+		if e%2 == 1 {
+			next = e + 2
+		}
+		if r.sealEpoch.CompareAndSwap(e, next) {
+			return next
+		}
+	}
+}
+
+// ClearSealed clears the binding's seal mark, after an unseal lifted the
+// seal or when the adapter did not seal the session. A binding not marked
+// keeps its epoch. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) ClearSealed() {
+	for {
+		e := r.sealEpoch.Load()
+		if e%2 == 0 || r.sealEpoch.CompareAndSwap(e, e+1) {
+			return
+		}
+	}
+}
+
+// Sealed reports whether the binding is marked sealed.
+func (r *BindResult) Sealed() bool { return r.sealEpoch.Load()%2 == 1 }
+
+// SealEpoch returns the binding's seal epoch, odd while the binding is
+// marked sealed. A caller compares two reads to tell whether one seal held
+// between them.
+func (r *BindResult) SealEpoch() int64 { return r.sealEpoch.Load() }
+
+// GrantSealed records that the adapter sealed the session under epoch, the
+// odd epoch SealEpoch returned after the mark that preceded the seal call.
+// An epoch that is even or no longer current records nothing, since the
+// mark it names was cleared. spec: §4.7.1 (Role and Gateway RPC Contract).
+func (r *BindResult) GrantSealed(epoch int64) {
+	if epoch%2 == 1 && r.sealEpoch.Load() == epoch {
+		r.sealGranted.Store(epoch)
+	}
+}
+
+// WithdrawSealGrant withdraws a recorded grant and keeps the mark, after an
+// unseal whose outcome is unknown: the adapter may still refuse the
+// session's messages, or may have lifted the seal and delivered them, so a
+// stream end no longer reads as a refusal. spec: §4.7.1 (Role and Gateway
+// RPC Contract).
+func (r *BindResult) WithdrawSealGrant() { r.sealGranted.Store(0) }
+
+// SealHeldSince reports whether the binding is marked sealed under the same
+// seal it was marked sealed under when SealEpoch returned epoch, and the
+// adapter granted that seal and no unknown unseal outcome withdrew the
+// grant. A mark the adapter has not yet granted reports false.
+func (r *BindResult) SealHeldSince(epoch int64) bool {
+	return epoch%2 == 1 && r.sealEpoch.Load() == epoch && r.sealGranted.Load() == epoch
+}
+
+// MarkCrashed records that the binding's attach stream ended in a reported
+// stream failure, so a later Release retires the pod. spec: §28.5.1
+// (Gateway-to-pod).
+func (r *BindResult) MarkCrashed() { r.crashed.Store(true) }
+
+// Crashed reports whether MarkCrashed was called on the binding.
+func (r *BindResult) Crashed() bool { return r.crashed.Load() }
 
 // SetupCommandFailure wraps a §7.5 setup-command failure with the partial
 // captured output the adapter returned before the abort. The gateway

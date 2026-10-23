@@ -498,8 +498,10 @@ func (m *Metrics) RecordSDKDemotion(pool string, teardownSeconds float64) {
 
 // IncSessionRetry increments the §16.1 / §7.3
 // `lenny_session_retry_total{failure_class}` counter for one retry of
-// a logical session. Each successful pod recovery (the v1 retry path,
-// fired by sessionserver.bumpRecoveryGeneration) bumps it once. The
+// a logical session. Each spend edge bumps it once: a reported failure
+// into resume_pending (sessionserver transitionToResumePending) and the
+// resuming watchdog's resuming → resume_pending write. A successful
+// restore does not bump it. The
 // failure_class label echoes the session's §7.1 FailureClass at retry
 // time; the caller supplies "unknown" for a session with no recorded
 // class so the label cardinality stays bounded by the §7.1 closed
@@ -523,13 +525,13 @@ func (m *Metrics) IncDeriveFailureAudit(outcome string) {
 	m.deriveFailureAudit.WithLabelValues(outcome).Inc()
 }
 
-// IncSessionResumeAttempt increments the §16.1 / §7.3
-// `lenny_session_resume_attempts_total{pool, outcome}` counter for one
-// POST /v1/sessions/{id}/resume call. Outcome is "success" when the
-// row transitions to running or "failure" when the pod-claim step
-// fails. The pool label echoes the session's §5.2 PoolRef at resume
-// time (empty for a session whose pool was never resolved). spec:
-// §7.3, §16.1. F-7.3.10.
+// IncSessionResumeAttempt increments the
+// `lenny_session_resume_attempts_total{pool, outcome}` counter once for each
+// resume attempt whose entry write the resume driver saw take effect:
+// "success" for a commit that landed, "failure" for a failure after the entry
+// write or a commit that did not land. The pool label echoes the session's
+// §5.2 PoolRef at attempt time (empty for a session whose pool was never
+// resolved). spec: §16.1 (Metrics), §7.3 (Resume driver).
 func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 	if m == nil {
 		return
@@ -540,17 +542,41 @@ func (m *Metrics) IncSessionResumeAttempt(pool, outcome string) {
 // IncSessionExpiry increments the §16.1
 // `lenny_session_expiry_total{pool, reason}` counter for one session the
 // watchdog terminated on a platform expiry clock. reason is the §16.1.1
-// vocabulary value the watchdog resolved from the expiry edge — "max_idle_time"
-// for the §6.2 maxClientIdleSeconds idle clock or "max_session_age" for the
-// §11.3 maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
+// vocabulary value the watchdog resolved from the expiry edge: "max_idle_time"
+// for both the §6.2 idle expiry of a session that cannot be idle-suspended and
+// the §6.2 suspended-session lifetime, or "max_session_age" for the §11.3
+// maxSessionAge age cap and the §7.3 awaiting_client_action wall-clock
 // deadline. The pool label echoes the session's §5.2 PoolRef at expiry time
-// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1.
-// F-11.3.7.
+// (empty for a session whose pool was never resolved). spec: §16.1; §16.1.1;
+// §6.2 (maxClientIdleSeconds clock behavior across states; Pod State
+// Machine). F-11.3.7.
 func (m *Metrics) IncSessionExpiry(pool, reason string) {
 	if m == nil {
 		return
 	}
 	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
+}
+
+// IncSessionPodReleasedDuringSuspension increments
+// `lenny_session_pod_released_during_suspension_total{pool, tenant_id}` once
+// for a suspended session whose pod or slot the suspension release
+// released. Nil-safe. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionPodReleasedDuringSuspension(pool, tenantID string) {
+	if m == nil || m.sessionPodReleasedDuringSuspension == nil {
+		return
+	}
+	m.sessionPodReleasedDuringSuspension.WithLabelValues(pool, tenantID).Inc()
+}
+
+// IncSessionSuspensionCheckpointFailed increments
+// `lenny_session_suspension_checkpoint_failed_total{pool, tenant_id}` once
+// for a checkpoint before a suspension release that failed. Nil-safe.
+// spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+func (m *Metrics) IncSessionSuspensionCheckpointFailed(pool, tenantID string) {
+	if m == nil || m.sessionSuspensionCheckpointFailed == nil {
+		return
+	}
+	m.sessionSuspensionCheckpointFailed.WithLabelValues(pool, tenantID).Inc()
 }
 
 // IncWarmpoolWarmupFailure increments the §16.1
@@ -1198,10 +1224,12 @@ func (m *Metrics) IncSlotCompensationSuperseded(outcome, cause, pool, podName st
 
 // IncSlotRehydration increments the §5.2
 // `lenny_slot_rehydration_total` counter for the (pod, pool) pair.
-// Called by the concurrent-mode slot claimer when a pod's slot counter
-// was seeded from Postgres after a Redis restart — once per pod per
-// Redis restart.
-// spec: §5.2 ("lenny_slot_rehydration_total counter (labeled
+// Called by the concurrent-mode slot claimer when a pod's slot set was
+// seeded from Postgres because the pod's rehydrated flag was absent, once
+// per rehydration, on the replica whose reservation or release performed
+// it. A Redis restart, the §10.1.4 whole-pod reset, and the end of a Redis
+// outage each clear the flag.
+// spec: §5.2 (Post-recovery rehydration atomicity: "lenny_slot_rehydration_total counter (labeled
 // by pod, pool) is emitted on each rehydration event").
 func (m *Metrics) IncSlotRehydration(pod, pool string) {
 	if m == nil {
@@ -1224,7 +1252,8 @@ func (m *Metrics) IncSlotPodReplacement(pool string) {
 
 // SetAdapterLeakedSlots sets the §6.2
 // gauge for podID to count: the number of slots on the pod whose cleanup
-// timed out and remain counted in active_slots until the pod terminates.
+// timed out and remain counted in the active_slots set as leaked:<sessionId>
+// members until the pod terminates.
 // Called by the concurrent-workspace slot path when a slot is leaked (and
 // to zero a pod's series when it terminates). spec: §6.2.
 func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {
@@ -1686,24 +1715,23 @@ func (m *Metrics) IncErasureJobFailed(tenantID, failurePhase string) {
 	m.erasureJobFailed.WithLabelValues(tenantID, failurePhase).Inc()
 }
 
-// IncErasureJobsActive increments the §12.8 in-progress
-// erasure-job gauge when a job begins execution.
-func (m *Metrics) IncErasureJobsActive() { m.erasureJobsActive.Inc() }
-
-// DecErasureJobsActive decrements the in-progress erasure-job gauge when
-// a job reaches a terminal phase.
-func (m *Metrics) DecErasureJobsActive() { m.erasureJobsActive.Dec() }
-
 // ObserveErasureJobDuration records a completed (or failed) erasure
 // job's wall-clock duration in the §12.8 histogram.
 func (m *Metrics) ObserveErasureJobDuration(seconds float64) {
 	m.erasureJobDuration.Observe(seconds)
 }
 
-// SetErasureJobDeadlineSeconds publishes the §12.8 erasure SLA
-// deadline the §16.5 ErasureJobOverdue alert compares against.
-func (m *Metrics) SetErasureJobDeadlineSeconds(seconds float64) {
-	m.erasureJobDeadlineSeconds.Set(seconds)
+// SetErasureJobsActive sets the §12.8 in-progress erasure-job gauge to
+// the count of in-progress jobs the leader's sampler read from the job
+// store. spec: §12.8 (Erasure SLA enforcement).
+func (m *Metrics) SetErasureJobsActive(n int) { m.erasureJobsActive.Set(float64(n)) }
+
+// SetErasureJobOverdue publishes how many seconds an in-progress erasure
+// job is past its own deadline (negative before it). The §16.5
+// ErasureJobOverdue alert fires when the value is positive.
+// spec: §12.8 (Erasure SLA enforcement).
+func (m *Metrics) SetErasureJobOverdue(tenantID, jobID string, seconds float64) {
+	m.erasureJobOverdueSeconds.WithLabelValues(tenantID, jobID).Set(seconds)
 }
 
 // SetErasureJobAge publishes the age of an in-progress erasure job so
@@ -1713,10 +1741,12 @@ func (m *Metrics) SetErasureJobAge(tenantID, jobID string, ageSeconds float64) {
 	m.erasureJobAgeSeconds.WithLabelValues(tenantID, jobID).Set(ageSeconds)
 }
 
-// ClearErasureJobAge removes the age series for a terminal job so a
-// completed erasure no longer reads as in-progress.
+// ClearErasureJobAge removes both the age and the overdue series of a job
+// that is no longer in progress, so a finished erasure neither reads as
+// in progress nor keeps ErasureJobOverdue firing.
 func (m *Metrics) ClearErasureJobAge(tenantID, jobID string) {
 	m.erasureJobAgeSeconds.DeleteLabelValues(tenantID, jobID)
+	m.erasureJobOverdueSeconds.DeleteLabelValues(tenantID, jobID)
 }
 
 // RecordNoEnvironmentPolicyAllowAll increments the §10.6

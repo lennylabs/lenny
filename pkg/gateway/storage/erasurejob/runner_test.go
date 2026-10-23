@@ -29,15 +29,15 @@ func userEraser(name string, n int) erasure.Eraser {
 }
 
 func TestRunnerStartRecordsInitiatedJob(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), fixedClock(at))
+	r := newRunner(jobs, erasure.New(erasure.Config{}), fixedClock(at))
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	job, err := jobs.Get(context.Background(), id)
+	job, err := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if err != nil {
 		t.Fatalf("Get after Start: %v", err)
 	}
@@ -53,22 +53,22 @@ func TestRunnerStartRecordsInitiatedJob(t *testing.T) {
 }
 
 func TestRunnerRunCompletesJob(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 11, 0, 0, 0, time.UTC)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
 		userEraser("sessions", 3),
 		userEraser("interactions", 5),
 	}})
-	r := erasurejob.NewRunner(jobs, orch, fixedClock(at))
+	r := newRunner(jobs, orch, fixedClock(at))
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted {
 		t.Errorf("Phase = %q, want completed", job.Phase)
 	}
@@ -89,19 +89,19 @@ func TestRunnerRunCompletesJob(t *testing.T) {
 // spec: §12.8 — after store deletion the runner drives the
 // step-14 dead-letter redaction and records the per-row count on the job.
 func TestRunnerRunDeadLetterRedaction_recordsCount(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
 	var gotTenant, gotUser string
-	r := erasurejob.NewRunner(jobs, orch, nil).
+	r := newRunner(jobs, orch, nil).
 		WithDeadLetterRedaction(func(_ context.Context, tenantID, userID string) (int, error) {
 			gotTenant, gotUser = tenantID, userID
 			return 3, nil
 		})
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted {
 		t.Errorf("Phase = %q, want completed", job.Phase)
 	}
@@ -116,19 +116,19 @@ func TestRunnerRunDeadLetterRedaction_recordsCount(t *testing.T) {
 // spec: §12.8 — a redaction error aborts the job under the
 // deadletter_redaction failure phase, with store deletion already durable.
 func TestRunnerRunDeadLetterRedaction_failsJob(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
 	var failurePhase string
-	r := erasurejob.NewRunner(jobs, orch, nil).
+	r := newRunner(jobs, orch, nil).
 		WithFailureObserver(func(_, phase string) { failurePhase = phase }).
 		WithDeadLetterRedaction(func(context.Context, string, string) (int, error) {
 			return 0, errors.New("permission denied")
 		})
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err == nil {
 		t.Fatal("expected redaction error to surface")
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}
@@ -142,7 +142,7 @@ func TestRunnerRunDeadLetterRedaction_failsJob(t *testing.T) {
 }
 
 func TestRunnerRunRecordsFailure(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
 		userEraser("first", 2),
 		{Name: "broken", DeleteByUser: func(context.Context, string, string) (int, error) {
@@ -150,16 +150,16 @@ func TestRunnerRunRecordsFailure(t *testing.T) {
 		}},
 		userEraser("after", 9),
 	}})
-	r := erasurejob.NewRunner(jobs, orch, nil)
+	r := newRunner(jobs, orch, nil)
 
-	id, err := r.Start(context.Background(), "acme", "alice")
+	id, err := runnerStart(context.Background(), r, "acme", "alice")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := r.Run(context.Background(), id); err == nil {
 		t.Fatal("Run should return the erasure error")
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}
@@ -177,7 +177,7 @@ func TestRunnerRunRecordsFailure(t *testing.T) {
 }
 
 func TestRunnerRunIsIdempotentForTerminalJob(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	calls := 0
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name: "sessions",
@@ -186,9 +186,9 @@ func TestRunnerRunIsIdempotentForTerminalJob(t *testing.T) {
 			return 1, nil
 		},
 	}}})
-	r := erasurejob.NewRunner(jobs, orch, nil)
+	r := newRunner(jobs, orch, nil)
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -201,20 +201,20 @@ func TestRunnerRunIsIdempotentForTerminalJob(t *testing.T) {
 }
 
 func TestRunnerRunUnknownJob(t *testing.T) {
-	r := erasurejob.NewRunner(erasurejob.NewMemory(), erasure.New(erasure.Config{}), nil)
+	r := newRunner(newJobStore(t), erasure.New(erasure.Config{}), nil)
 	if err := r.Run(context.Background(), "erasure_absent"); !errors.Is(err, erasurejob.ErrNotFound) {
 		t.Errorf("Run unknown job: got %v, want ErrNotFound", err)
 	}
 }
 
 func TestRunnerRunEmptyOrchestratorCompletes(t *testing.T) {
-	jobs := erasurejob.NewMemory()
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil)
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	jobs := newJobStore(t)
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil)
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted || job.Total != 0 {
 		t.Errorf("job = %+v, want completed with Total 0", job)
 	}
@@ -224,16 +224,16 @@ func TestRunnerRunEmptyOrchestratorCompletes(t *testing.T) {
 // erasure preflight passes, the job proceeds through store deletion to
 // completion as normal.
 func TestRunnerRunMemoryPreflightPasses(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("memory", 2)}})
-	r := erasurejob.NewRunner(jobs, orch, nil).
+	r := newRunner(jobs, orch, nil).
 		WithMemoryPreflight(func(context.Context) error { return nil })
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted {
 		t.Errorf("Phase = %q, want completed", job.Phase)
 	}
@@ -244,7 +244,7 @@ func TestRunnerRunMemoryPreflightPasses(t *testing.T) {
 // and increments lenny_erasure_job_failed_total{failure_phase=
 // memory_store_preflight} via the failure observer.
 func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	deletions := 0
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name: "memory",
@@ -256,7 +256,7 @@ func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
 
 	var gotTenant, gotPhase string
 	observed := 0
-	r := erasurejob.NewRunner(jobs, orch, nil).
+	r := newRunner(jobs, orch, nil).
 		WithFailureObserver(func(tenantID, phase string) {
 			observed++
 			gotTenant, gotPhase = tenantID, phase
@@ -265,7 +265,7 @@ func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
 			return errors.New("backend DeleteByUser regressed to a no-op")
 		})
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	err := r.Run(context.Background(), id)
 	if err == nil {
 		t.Fatal("Run should return the preflight failure")
@@ -273,7 +273,7 @@ func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
 	if deletions != 0 {
 		t.Errorf("store deletion ran %d times — the preflight must abort before step 8", deletions)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}
@@ -290,16 +290,16 @@ func TestRunnerRunMemoryPreflightFailsAbortsBeforeDeletion(t *testing.T) {
 // orchestrator errors, confirming the §12.8 CMP-026 phase label threads
 // through every fail path.
 func TestRunnerFailureObserverStoreDeletePhase(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name:         "broken",
 		DeleteByUser: func(context.Context, string, string) (int, error) { return 0, errors.New("store down") },
 	}}})
 	var gotPhase string
-	r := erasurejob.NewRunner(jobs, orch, nil).
+	r := newRunner(jobs, orch, nil).
 		WithFailureObserver(func(_, phase string) { gotPhase = phase })
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err == nil {
 		t.Fatal("Run should return the store error")
 	}
@@ -325,20 +325,20 @@ func (s stubBillingStore) CountUser(context.Context, string, string) (int, error
 
 func TestRunnerRunPseudonymizesBilling(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory()
 	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
 	billing := billingstore.NewMemory()
 	seedBilling(t, billing, "acme", "alice@acme", 4)
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted {
 		t.Fatalf("Phase = %q, want completed", job.Phase)
 	}
@@ -355,7 +355,7 @@ func TestRunnerRunPseudonymizesBilling(t *testing.T) {
 
 func TestRunnerRunBillingExemptTenant(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory()
 	seedTenant(t, tenants, tenantstore.Tenant{
 		ID: "acme", BillingErasurePolicy: tenantstore.BillingErasureExempt,
@@ -363,14 +363,14 @@ func TestRunnerRunBillingExemptTenant(t *testing.T) {
 	billing := billingstore.NewMemory()
 	seedBilling(t, billing, "acme", "alice@acme", 2)
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseCompleted {
 		t.Fatalf("Phase = %q, want completed", job.Phase)
 	}
@@ -384,17 +384,17 @@ func TestRunnerRunBillingExemptTenant(t *testing.T) {
 
 func TestRunnerRunBillingPseudonymizeFails(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory() // "acme" intentionally not seeded
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(billingstore.NewMemory(), tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err == nil {
 		t.Fatal("Run should fail when the tenant is absent from the registry")
 	}
 
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}
@@ -405,21 +405,21 @@ func TestRunnerRunBillingPseudonymizeFails(t *testing.T) {
 
 func TestRunnerRunBillingVerificationFails(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory()
 	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
 	// A billing store that reports events still keyed to the user
 	// after pseudonymization — the §12.8 verification must fail closed.
 	stub := stubBillingStore{pseudonymized: 5, remaining: 3}
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(stub, tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err == nil {
 		t.Fatal("Run should fail when billing erasure verification does not pass")
 	}
 
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	if job.Phase != erasurejob.PhaseFailed {
 		t.Errorf("Phase = %q, want failed", job.Phase)
 	}
@@ -459,16 +459,16 @@ func samePhases(a, b []erasurejob.Phase) bool {
 // the completion receipt can present the per-phase timeline. Without a
 // BillingEraser the sequence is initiated → store_deleting → completed.
 func TestRunnerRunRecordsPhaseLog(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	at := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
-	r := erasurejob.NewRunner(jobs, orch, fixedClock(at))
+	r := newRunner(jobs, orch, fixedClock(at))
 
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	want := []erasurejob.Phase{
 		erasurejob.PhaseInitiated,
 		erasurejob.PhaseStoreDeleting,
@@ -488,19 +488,19 @@ func TestRunnerRunRecordsPhaseLog(t *testing.T) {
 // pseudonymizing and verifying.
 func TestRunnerRunPhaseLogWithBilling(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory()
 	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
 	billing := billingstore.NewMemory()
 	seedBilling(t, billing, "acme", "alice@acme", 2)
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	want := []erasurejob.Phase{
 		erasurejob.PhaseInitiated,
 		erasurejob.PhaseStoreDeleting,
@@ -517,19 +517,19 @@ func TestRunnerRunPhaseLogWithBilling(t *testing.T) {
 // the log omits it.
 func TestRunnerRunPhaseLogExemptSkipsVerifying(t *testing.T) {
 	ctx := context.Background()
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	tenants := tenantstore.NewMemory()
 	seedTenant(t, tenants, tenantstore.Tenant{
 		ID: "acme", BillingErasurePolicy: tenantstore.BillingErasureExempt,
 	})
 
-	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+	r := newRunner(jobs, erasure.New(erasure.Config{}), nil).
 		WithBilling(erasurejob.NewBillingEraser(billingstore.NewMemory(), tenants))
-	id, _ := r.Start(ctx, "acme", "alice@acme")
+	id, _ := runnerStart(ctx, r, "acme", "alice@acme")
 	if err := r.Run(ctx, id); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	job, _ := jobs.Get(ctx, id)
+	job, _ := jobs.Get(ctx, erasurejob.AllTenants, id)
 	want := []erasurejob.Phase{
 		erasurejob.PhaseInitiated,
 		erasurejob.PhaseStoreDeleting,
@@ -544,18 +544,18 @@ func TestRunnerRunPhaseLogExemptSkipsVerifying(t *testing.T) {
 // spec: §12.8 — a failed job's phase log ends with the failed
 // transition so the timeline shows where the erasure stopped.
 func TestRunnerRunPhaseLogOnFailure(t *testing.T) {
-	jobs := erasurejob.NewMemory()
+	jobs := newJobStore(t)
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
 		{Name: "broken", DeleteByUser: func(context.Context, string, string) (int, error) {
 			return 0, errors.New("store down")
 		}},
 	}})
-	r := erasurejob.NewRunner(jobs, orch, nil)
-	id, _ := r.Start(context.Background(), "acme", "alice")
+	r := newRunner(jobs, orch, nil)
+	id, _ := runnerStart(context.Background(), r, "acme", "alice")
 	if err := r.Run(context.Background(), id); err == nil {
 		t.Fatal("Run should return the erasure error")
 	}
-	job, _ := jobs.Get(context.Background(), id)
+	job, _ := jobs.Get(context.Background(), erasurejob.AllTenants, id)
 	seq := phaseSeq(job)
 	if len(seq) == 0 || seq[len(seq)-1] != erasurejob.PhaseFailed {
 		t.Errorf("PhaseLog = %v, want a trailing failed transition", seq)

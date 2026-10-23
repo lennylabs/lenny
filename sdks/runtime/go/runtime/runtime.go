@@ -434,7 +434,7 @@ func (p *process) routeFrame(line []byte) (done bool, err error) {
 		}
 		p.routeMessage(env)
 	case "heartbeat":
-		if err := p.w.write(outboundHeartbeatAck{Type: "heartbeat_ack"}); err != nil {
+		if err := p.w.write(p.heartbeatAck(line)); err != nil {
 			return false, fmt.Errorf("runtime: write heartbeat_ack: %w", err)
 		}
 	case "tool_result":
@@ -445,6 +445,27 @@ func (p *process) routeFrame(line []byte) (done bool, err error) {
 		p.cfg.logf("runtime: ignoring unknown frame type %q", ft.Type)
 	}
 	return false, nil
+}
+
+// heartbeatAck builds the answer to one heartbeat. A heartbeat naming a
+// session the process holds is answered with that sessionId and, while the
+// session has a message routed and not finished or an unreleased busy hold,
+// busy: true. A heartbeat naming no session, or one the process does not
+// hold, is answered with the bare ack.
+// spec: §28.5.3 (CH-MSGSOCK), §15.7 (Runtime Author SDKs).
+func (p *process) heartbeatAck(line []byte) outboundHeartbeatAck {
+	ack := outboundHeartbeatAck{Type: "heartbeat_ack"}
+	var hb inboundHeartbeat
+	if err := json.Unmarshal(line, &hb); err != nil || hb.SessionID == "" {
+		return ack
+	}
+	st := p.sessions.lookup(hb.SessionID)
+	if st == nil {
+		return ack
+	}
+	ack.SessionID = st.id
+	ack.Busy = st.work.busy()
+	return ack
 }
 
 // decodeMessage decodes one §28.5.3 message frame. A malformed frame is

@@ -21,7 +21,8 @@ This page presents a complete file summarizer runtime in Go. It implements the B
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by reading workspace files and summarizing them
 //   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
-//   - Handles "heartbeat" by responding with "heartbeat_ack"
+//   - Handles "heartbeat" by responding with "heartbeat_ack", reporting
+//     busy for the session whose message is in progress
 //   - Handles "shutdown" by exiting cleanly
 //   - Ignores unknown message types for forward compatibility
 //
@@ -83,9 +84,12 @@ type Response struct {
 	Output    []MessagePart `json:"output"`
 }
 
-// HeartbeatAck acknowledges a heartbeat ping.
+// HeartbeatAck acknowledges a heartbeat ping. SessionID and Busy report
+// that the runtime is doing work for the session the heartbeat names.
 type HeartbeatAck struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Busy      bool   `json:"busy,omitempty"`
 }
 
 // ---- State ----
@@ -113,6 +117,10 @@ var phase int
 // currentFileIndex tracks which file we are reading next.
 var currentFileIndex int
 
+// busySessions holds each session whose message is in progress, from
+// handleMessage until writeResponse answers it.
+var busySessions = map[string]bool{}
+
 // ---- Main loop ----
 
 func main() {
@@ -139,8 +147,13 @@ func main() {
 			handleToolResult(msg)
 
 		case "heartbeat":
-			// Respond immediately, within 10 seconds.
-			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+			// Respond immediately, within 10 seconds. While a message for the
+			// session the heartbeat names is in progress, report busy.
+			if busySessions[msg.SessionID] {
+				writeJSON(HeartbeatAck{Type: "heartbeat_ack", SessionID: msg.SessionID, Busy: true})
+			} else {
+				writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+			}
 
 		case "shutdown":
 			fmt.Fprintf(os.Stderr, "file-summarizer: shutdown (reason=%s)\n", msg.Reason)
@@ -166,6 +179,7 @@ func handleMessage(msg InboundMessage) {
 	fileList = nil
 	currentFileIndex = 0
 	phase = 1
+	busySessions[msg.SessionID] = true
 
 	// Extract the user's request text.
 	requestText := ""
@@ -302,6 +316,7 @@ func writeResponse(sessionID, text string) {
 		},
 	}
 	writeJSON(resp)
+	delete(busySessions, sessionID)
 	phase = 0
 }
 
@@ -354,7 +369,7 @@ func truncate(s string, n int) string {
 - **Sequential file reading:** Files are read one at a time via `tool_call`/`tool_result` to keep the state machine simple. A production runtime could use multiple outstanding tool calls for parallel reads.
 - **Atomic tool call IDs:** The `toolCallCounter` uses `atomic.Int64` for thread-safe ID generation, even though the main loop is single-threaded (future-proofing).
 - **Truncation:** File contents are truncated to 500 characters per file. A production summarizer would pass the full content to an LLM.
-- **Heartbeat interleaving:** Heartbeats may arrive between tool calls. The main loop handles them regardless of the current `phase`.
+- **Heartbeat interleaving:** Heartbeats may arrive between tool calls. The main loop handles them regardless of the current `phase`, and while a message is in progress it acknowledges a heartbeat that names that message's session with `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 
 ---
 

@@ -139,7 +139,7 @@ func Start(t testing.TB, opts Options) *Fixture {
 		},
 	})
 
-	lease, err := assign.Assign(poolName, sessionID, "", tenantID)
+	lease, err := assign.Assign(poolName, sessionID, "", tenantID, 0)
 	if err != nil {
 		t.Fatalf("proxylease.Start: mint proxy lease: %v", err)
 	}

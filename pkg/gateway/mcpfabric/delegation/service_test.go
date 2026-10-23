@@ -421,6 +421,26 @@ func (c *countingStore) Create(ctx context.Context, s sessionstore.Session) erro
 	return c.inner.Create(ctx, s)
 }
 
+func (c *countingStore) Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error {
+	return c.inner.Reserve(ctx, tenantID, ownerUserID, sessionID, delegatedChild)
+}
+
+func (c *countingStore) ReleaseReservation(ctx context.Context, tenantID, sessionID string) error {
+	return c.inner.ReleaseReservation(ctx, tenantID, sessionID)
+}
+
+func (c *countingStore) ReservedSessionIDs(ctx context.Context, tenantID, userID string) ([]string, error) {
+	return c.inner.ReservedSessionIDs(ctx, tenantID, userID)
+}
+
+func (c *countingStore) CreateReserved(ctx context.Context, s sessionstore.Session) error {
+	return c.inner.CreateReserved(ctx, s)
+}
+
+func (c *countingStore) CreateWithTranscript(ctx context.Context, s sessionstore.Session, transcriptSourceID string) error {
+	return c.inner.CreateWithTranscript(ctx, s, transcriptSourceID)
+}
+
 func (c *countingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	c.gets++
 	return c.inner.Get(ctx, tenantID, id)
@@ -454,8 +474,16 @@ func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (in
 	return c.inner.DeleteByTenant(ctx, tenantID)
 }
 
-func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+func (c *countingStore) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
 	return c.inner.GetActiveSlotsByPod(ctx, podID)
+}
+
+func (c *countingStore) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
+	return c.inner.ListPodsWithActiveSlots(ctx)
+}
+
+func (c *countingStore) ListStaleTerminalSessions(ctx context.Context, ids []string, before time.Time) ([]string, error) {
+	return c.inner.ListStaleTerminalSessions(ctx, ids, before)
 }
 
 func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {

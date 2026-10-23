@@ -25,7 +25,7 @@ This page covers the conformance suite, the test categories per integration leve
 | **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, and `shutdown` |
 | **Session lifetime** | One process serves sequential and concurrent sessions opened by `session_start` and released by `session_end` |
 | **Forward compatibility** | Unknown message types are ignored rather than rejected |
-| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds |
+| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds, and carries `busy: true` with the heartbeat's `sessionId` while a `message` for that session is outstanding |
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
 | **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
 | **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
@@ -78,7 +78,8 @@ A category that sends a session-scoped frame first writes `session_start` for th
 |----------|-----------------|
 | stdin/stdout protocol framing | The binary reads newline-delimited JSON on stdin and writes newline-delimited JSON on stdout, flushes every outbound message before the next read, and ignores unknown inbound `type` values rather than aborting. |
 | `message` / `response` round-trip | A canonical `message` produces a structurally valid `response` carrying the `sessionId` the inbound `message` was addressed with, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","sessionId":"...","text":"..."}`. The response validates against the published JSON Lines schema. |
-| heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. Missing the window triggers the adapter's unresponsive-agent escalation. |
+| heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. If no acknowledgment arrives, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. |
+| heartbeat busy | After `session_start` for a session, the harness writes a `message` for the session and then a `heartbeat` naming it, before it reads the `response`. When the binary writes the `heartbeat_ack` before that `response`, the ack carries `busy: true` and the session's `sessionId`. The harness does not fail a `heartbeat_ack` that carries `busy: true` with no `message` outstanding. |
 | shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the adapter SIGKILLs the process in production, losing unflushed output. |
 | `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
 | session lifetime | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then writes `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
@@ -271,6 +272,8 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
 
 ### Testing Heartbeat
 
+The adapter sends a `heartbeat` for each session, naming the session in `sessionId`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension).
+
 ```go
 func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
     cmd := exec.Command("./my-agent")
@@ -280,7 +283,7 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
     defer cmd.Process.Kill()
 
     // Send heartbeat
-    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890}` + "\n"))
+    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890,"sessionId":"sess_test"}` + "\n"))
 
     // Read response with timeout
     scanner := bufio.NewScanner(stdout)

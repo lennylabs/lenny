@@ -108,3 +108,57 @@ func TestDLQ_SweepExpired_NoneExpired_spec_7_2_341(t *testing.T) {
 		t.Fatalf("expired = %+v, want none", expired)
 	}
 }
+
+// TestDLQSameMillisecondEntriesKeepEnqueueOrder_spec_7_2 enqueues messages
+// accepted in the same millisecond, under message IDs whose byte order is
+// the reverse of their enqueue order, and checks that PeekOldest and
+// DrainAll return them in enqueue order, that an entry enqueued after the
+// head of a tie was removed still sorts last, and that CountAcceptedAfter
+// counts every tied entry from its own millisecond onward and none from the
+// next millisecond.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6)
+func TestDLQSameMillisecondEntriesKeepEnqueueOrder_spec_7_2(t *testing.T) {
+	d := NewDLQ(newRedisT(t), 10)
+	ctx := context.Background()
+	at := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	enq := func(id string) {
+		t.Helper()
+		m := msg(id, "snd")
+		m.EnqueuedAt = at
+		if _, err := d.Enqueue(ctx, "acme", "s", m, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enq("m-z")
+	enq("m-y")
+	enq("m-x")
+	head, member, ok, err := d.PeekOldest(ctx, "acme", "s")
+	if err != nil || !ok || head.MessageID != "m-z" {
+		t.Fatalf("PeekOldest = %q ok=%v err=%v, want m-z, the first enqueued", head.MessageID, ok, err)
+	}
+	if _, err := d.Remove(ctx, "acme", "s", member); err != nil {
+		t.Fatal(err)
+	}
+	enq("m-a")
+	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at); err != nil || n != 3 {
+		t.Fatalf("CountAcceptedAfter(the shared millisecond) = %d err=%v, want 3", n, err)
+	}
+	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at.Add(time.Millisecond)); err != nil || n != 0 {
+		t.Fatalf("CountAcceptedAfter(the millisecond after) = %d err=%v, want 0", n, err)
+	}
+	if n, err := d.CountAcceptedAfter(ctx, "acme", "s", at.Add(-time.Millisecond)); err != nil || n != 3 {
+		t.Fatalf("CountAcceptedAfter(the millisecond before) = %d err=%v, want 3", n, err)
+	}
+	out, err := d.DrainAll(ctx, "acme", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range out {
+		got = append(got, m.MessageID)
+	}
+	if len(got) != 3 || got[0] != "m-y" || got[1] != "m-x" || got[2] != "m-a" {
+		t.Fatalf("drain = %v, want [m-y m-x m-a], the enqueue order", got)
+	}
+}

@@ -78,6 +78,9 @@ func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
+	if r.refuseSingleTenantDefaultDeletion(w, id) {
+		return
+	}
 	// spec: §15.1 — honour If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return
@@ -202,7 +205,7 @@ func (r *Router) writeTenantUpdateError(w http.ResponseWriter, err error) {
 // sessions. It mirrors the controller-side enumerator so the force-delete
 // preflight and the Phase 3.5 enumeration agree on what is held. When no
 // SessionStore is wired the preflight cannot run and the result is empty.
-func (r *Router) activeTenantHolds(ctx context.Context, tenantID string) ([]heldResource, error) {
+func (r *Router) activeTenantHolds(ctx context.Context, tenantID string) ([]HeldResource, error) {
 	if r.sessions == nil {
 		return nil, nil
 	}
@@ -210,20 +213,9 @@ func (r *Router) activeTenantHolds(ctx context.Context, tenantID string) ([]held
 	if err != nil {
 		return nil, err
 	}
-	var holds []heldResource
-	for _, s := range rows {
-		if s.LegalHold {
-			holds = append(holds, heldResource{ResourceType: "session", ResourceID: s.ID})
-		}
-		if r.artifactHolds != nil {
-			held, herr := r.artifactHolds.IsLegalHeldAt(ctx, tenantID, s.ID)
-			if herr != nil {
-				return nil, herr
-			}
-			if held {
-				holds = append(holds, heldResource{ResourceType: "artifact", ResourceID: s.ID})
-			}
-		}
+	var artifacts ArtifactHoldChecker
+	if r.artifactHolds != nil {
+		artifacts = r.artifactHolds
 	}
-	return holds, nil
+	return holdsInSessions(ctx, artifacts, tenantID, rows)
 }

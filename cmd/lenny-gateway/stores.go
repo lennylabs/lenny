@@ -41,6 +41,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"
 )
 
@@ -57,11 +59,12 @@ import (
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 store
 // router; §4.9 credentials; §15.1 pod placement.
 func (w *gatewayWiring) buildStores() {
-	// checkpointRetention is the only persistence local without an
-	// accumulator field: it is constructed by the §4.4/§12.5 retention step
-	// and consumed only by the §15.1 pod-lifecycle checkpointer, so it is
-	// threaded through an explicit return rather than onto the accumulator.
+	// checkpointRetention is constructed by the §4.4/§12.5 retention step
+	// and consumed by the §15.1 pod-lifecycle checkpointer through an
+	// explicit return. It is also recorded on the accumulator because the
+	// §12.8 tenant-deletion Phase 4 eraser must erase the same instance.
 	checkpointRetention := w.buildPersistenceStores()
+	w.checkpointRetention = checkpointRetention
 	w.buildRedisAndQuota()
 	w.buildStoreRouterAndSecurityBus()
 	// spec: §4.1 / §11.2.1 — build the billing failover pipeline. Records
@@ -92,16 +95,8 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	billingAuditDSN := f.billingAuditDSN
 	billingAuditDDLDSN := f.billingAuditDDLDSN
 	primaryDDLDSN := f.primaryDDLDSN
-	minioAccessKey := f.minioAccessKey
-	minioBucket := f.minioBucket
 	minioEndpoint := f.minioEndpoint
-	minioSecretKey := f.minioSecretKey
-	minioUseSSL := f.minioUseSSL
-	objectStorageAccountURL := f.objectStorageAccountURL
-	objectStorageBucket := f.objectStorageBucket
-	objectStorageFilesystemRoot := f.objectStorageFilesystemRoot
 	objectStorageProvider := f.objectStorageProvider
-	objectStorageRegion := f.objectStorageRegion
 	poolerMode := f.poolerMode
 	postgresDSN := f.postgresDSN
 	readDSN := f.readDSN
@@ -119,6 +114,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		capOverrides     runtimecapoverride.Store
 		transcripts      transcriptstore.Store
 		users            userstore.Store
+		erasureJobs      erasurejob.Store
 		connectors       connectorstore.Store
 		billing          billingstore.Store
 		pgPool           *pgxpool.Pool
@@ -272,26 +268,45 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			}
 			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
 		}
-		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool))
+		// spec: §12.8 (Lifecycle fence and drain) — the replay transcript
+		// copy runs on the replayed session's insert transaction.
+		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool),
+			sessionpg.WithTranscriptCopier(transcriptpg.CopySessionTx))
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
 		capOverrides = capoverridepg.New(pool)
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
+		// spec: §12.8 (Processing restriction during erasure (GDPR Article
+		// 18)) — the erasure job and the user's restriction flag are one
+		// transaction on the primary.
+		erasureJobs = erasurepg.New(pool)
 		connectors = connectorpg.New(pool)
 		// billing is constructed below via the §12.3 R-03 StoreRouter,
 		// once the Redis client (if any) is resolved, so the ledger never
 		// holds a raw pool. F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.7.1.
-		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, erasure jobs, connectors, and billing events to Postgres")
 	} else {
-		sessMem := memstore.New()
 		tenantMem := tenantstore.NewMemory()
 		runtimeMem := runtimestore.NewMemory()
 		capMem := runtimecapoverride.NewMemory()
 		transcriptMem := transcriptstore.NewMemory()
 		userMem := userstore.NewMemory()
+		// spec: §12.8 (Lifecycle fence and drain) — the in-memory session
+		// store fences every insert on this branch's tenant and user
+		// stores, and copies a replayed transcript under its own lock.
+		// Source Mode restores these same stores, so it shares the wiring.
+		sessMem := memstore.New(
+			memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenantMem, userMem)),
+			memstore.WithTranscriptCopier(transcriptMem.CopySession),
+		)
 		connectorMem := connectorstore.NewMemory()
 		billingMem := billingstore.NewMemory()
+		// spec: §12.8 (Processing restriction during erasure (GDPR Article
+		// 18)) — the in-memory job store writes the flag on this branch's
+		// user store in the same step as the job.
+		erasureMem := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(userMem))
+		erasureJobs = erasureMem
 		sessions = sessMem
 		tenants = tenantMem
 		runtimes = runtimeMem
@@ -316,6 +331,11 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 				log.Fatalf("lenny-gateway: §17.4 sqlite: %v", err)
 			}
 			sqliteDB = db
+			// erasure_jobs is registered first, so every flush exports the
+			// jobs before any store an eraser writes, and no restored job
+			// phase is ahead of the stores it erased. spec: §17.4 (Source
+			// Mode), §12.8 (Erasure job phase field (crash recovery)).
+			sqliteDB.Register("erasure_jobs", erasureMem)
 			sqliteDB.Register("sessions", sessMem)
 			sqliteDB.Register("tenants", tenantMem)
 			sqliteDB.Register("runtimes", runtimeMem)
@@ -326,6 +346,15 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			sqliteDB.Register("billing_events", billingMem)
 			if err := sqliteDB.Restore(context.Background()); err != nil {
 				log.Fatalf("lenny-gateway: §17.4 sqlite restore: %v", err)
+			}
+			// spec: §12.8 (Processing restriction during erasure (GDPR
+			// Article 18)) — the erasure_jobs and users snapshots are two
+			// exports, so a restored in-progress job can sit beside a clear
+			// flag. Re-set the flag for every in-progress job before the
+			// gateway serves a request or the runner starts, and refuse to
+			// start when that fails rather than serve the user unrestricted.
+			if err := erasureMem.ReassertRestrictions(context.Background()); err != nil {
+				log.Fatalf("lenny-gateway: §17.4 sqlite restore: re-set erasure restrictions: %v", err)
 			}
 			var flushCtx context.Context
 			flushCtx, sqliteFlushCancel = context.WithCancel(context.Background())
@@ -338,7 +367,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			sqliteDB.StartAutoFlush(flushCtx, 2*time.Second, func(err error) {
 				log.Printf("lenny-gateway: §17.4 sqlite flush: %v", err)
 			})
-			log.Printf("lenny-gateway: §17.4 Source Mode embedded SQLite store at %s (sessions, tenants, runtimes, transcripts, users, connectors, billing persist across restart)", *sqlitePath)
+			log.Printf("lenny-gateway: §17.4 Source Mode embedded SQLite store at %s (erasure jobs, sessions, tenants, runtimes, transcripts, users, connectors, billing persist across restart)", *sqlitePath)
 		} else {
 			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
 		}
@@ -387,22 +416,12 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// tenant's Put is fail-closed under the per-tenant SSE-KMS alias
 	// regardless of which provider serves the bucket. F-17.5.1 /
 	// F-12.7.3.
-	objectStore, err := blobproviderflags.Resolve(context.Background(), blobproviderflags.Options{
-		Provider:        *objectStorageProvider,
-		Bucket:          *objectStorageBucket,
-		Region:          *objectStorageRegion,
-		AzureAccountURL: *objectStorageAccountURL,
-		FilesystemRoot:  *objectStorageFilesystemRoot,
-		MinIOEndpoint:   *minioEndpoint,
-		MinIOAccessKey:  *minioAccessKey,
-		MinIOSecretKey:  *minioSecretKey,
-		MinIOBucket:     *minioBucket,
-		MinIOUseSSL:     *minioUseSSL,
-		// §12.5 ll. 297-303 SSEKeyResolver: look up the writing
-		// tenant's workspaceTier on every Put and hand the backend the
-		// per-tenant SSE-KMS alias for T4 tenants.
-		SSEKeyResolver: newSSEKeyResolver(tenants),
-	})
+	objectStoreOpts := objectStorageOptions(f)
+	// §12.5 ll. 297-303 SSEKeyResolver: look up the writing tenant's
+	// workspaceTier on every Put and hand the backend the per-tenant
+	// SSE-KMS alias for T4 tenants.
+	objectStoreOpts.SSEKeyResolver = newSSEKeyResolver(tenants)
+	objectStore, err := blobproviderflags.Resolve(context.Background(), objectStoreOpts)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §17.9.3 object storage: %v", err)
 	}
@@ -490,6 +509,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.capOverrides = capOverrides
 	w.transcripts = transcripts
 	w.users = users
+	w.erasureJobs = erasureJobs
 	w.connectors = connectors
 	w.billing = billing
 	w.pgPool = pgPool
@@ -510,6 +530,25 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	w.blobsCataloged = blobsCataloged
 	w.pools = pools
 	return checkpointRetention
+}
+
+// objectStorageOptions maps the §17.9.3 object-storage flags onto the
+// provider options, without an SSE-KMS resolver. The artifact store adds
+// the tenant resolver; the legal-hold escrow store reuses the provider,
+// credentials, and endpoint with its own bucket (escrowStoreOptions).
+func objectStorageOptions(f *gatewayFlags) blobproviderflags.Options {
+	return blobproviderflags.Options{
+		Provider:        *f.objectStorageProvider,
+		Bucket:          *f.objectStorageBucket,
+		Region:          *f.objectStorageRegion,
+		AzureAccountURL: *f.objectStorageAccountURL,
+		FilesystemRoot:  *f.objectStorageFilesystemRoot,
+		MinIOEndpoint:   *f.minioEndpoint,
+		MinIOAccessKey:  *f.minioAccessKey,
+		MinIOSecretKey:  *f.minioSecretKey,
+		MinIOBucket:     *f.minioBucket,
+		MinIOUseSSL:     *f.minioUseSSL,
+	}
 }
 
 // objectStoreBackendName returns the human-readable backend name for

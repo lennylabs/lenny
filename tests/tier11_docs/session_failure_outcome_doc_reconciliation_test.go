@@ -106,7 +106,7 @@ var failureOutcomeEdgesStated = []struct {
 			"| `input_required` | `awaiting_client_action` |",
 			"| `suspended` | `awaiting_client_action` |",
 			"when its session's stream to the pod fails",
-			"a failed session on a pool with `maxConcurrentSessions: 1`",
+			"the release of a failed session on a pool with `maxConcurrentSessions: 1`, deletes the claim instead of patching it to `recycling`",
 		},
 	},
 	{

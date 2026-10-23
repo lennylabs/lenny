@@ -132,6 +132,21 @@ const maxFinalGateFailures = input.maxFinalGateFailures || 5;
 // runs. An unknown cost is treated as expensive but is never a reason to skip a
 // first run.
 const expensiveTierSeconds = input.expensiveTierSeconds || 300;
+// A step's first final gate runs every tier the step reaches. A later one,
+// after a fix round, re-runs only the tiers the previous final gate failed and
+// the tiers the commits since it can reach, and carries the rest forward. Every
+// tier of a long step can pass in an hour-long full pass while one fails, and
+// re-running the whole set after a one-file fix spent most of a step's
+// wall-clock re-proving tiers nothing had touched. The end-of-proposal Verify
+// phase still runs the full set before anything merges.
+//
+// fullFinalPassesBeforeScoping exists for resuming a run that started before
+// this scoping. A resumed run replays an agent only when its prompt is
+// unchanged, so the final passes already in the journal must be re-issued with
+// the full-pass prompt they were issued with. Set it to the number of final
+// passes the journal holds; the first scoped pass is the one after them.
+const fullFinalPassesBeforeScoping = input.fullFinalPassesBeforeScoping || 0;
+let finalPassesIssued = 0;
 // Consecutive rounds that must have tried and failed before the judges may
 // return "unproductive". That verdict says the loop will not do work that is
 // legal and real, which is a claim about a pattern; one or two rounds that
@@ -408,6 +423,7 @@ const ARG_CLASS = {
   maxPhaseOscillations: "forward",
   maxFinalGateFailures: "forward",
   expensiveTierSeconds: "forward",
+  fullFinalPassesBeforeScoping: "forward",
 };
 
 // ---- What a spec-lane step needs -----------------------------------------
@@ -1764,6 +1780,9 @@ for (let i = 0; i < plan.steps.length; i++) {
   let testRounds = 0;
   let oscillations = 0;
   let finalGateFailures = 0;
+  // The step's previous final gate: the commit it covered and its result. A
+  // later final gate scopes against it.
+  let lastFinal = null;
   let lastPhase = null;
   // A fired detector RE-ARMS rather than re-firing: without that, oscillation
   // six, seven and eight each cost a three-judge panel, and the machinery meant
@@ -2187,23 +2206,31 @@ for (let i = 0; i < plan.steps.length; i++) {
     // remaining question is whether a FULL tier pass has covered this tree.
     if (!fullVerifyCurrent) {
       log("Step " + step.id + ": review clean after scoped runs; full tier pass as the final gate");
+      finalPassesIssued++;
+      const finalSha = (res && res.commit) || "";
+      const scopeFinal = !!(lastFinal && lastFinal.sha && finalSha) &&
+        finalPassesIssued > fullFinalPassesBeforeScoping;
+      if (scopeFinal) log("Step " + step.id + ": final gate scoped to the changes since " + lastFinal.sha);
       const fg = await agentTry(
-        "Run the FULL test set for one build step of an applied spec proposal and report whether it is green. " +
-          "You did not write this code. Work in " +
-          repo +
-          ". Do not edit anything; only run tests and report.\n\n" +
-          stepHeader +
-          "\n\nThe step's design review is clean and its code is committed. Earlier rounds ran only the tiers " +
-          "each fix could affect, so no single run has covered the tree as it now stands. Run tier 0 and " +
-          "tier 1 for every package this step changed (`git diff " +
-          stepRef +
-          "..HEAD`), and every higher tier this step must run: " +
-          ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
-          ". Skip none of them except a tier that genuinely needs a cloud-only resource, which you name. " +
-          MEMORY_SAFE_NOTE + PREFLIGHT_NOTE +
-          "\n\nReport green, the tiers you ran, the changed-line coverage if you measured it, and every failure.",
+        scopeFinal
+          ? FINAL_SCOPED_PROMPT(step, stepHeader, stepRef, lastFinal)
+          : "Run the FULL test set for one build step of an applied spec proposal and report whether it is green. " +
+            "You did not write this code. Work in " +
+            repo +
+            ". Do not edit anything; only run tests and report.\n\n" +
+            stepHeader +
+            "\n\nThe step's design review is clean and its code is committed. Earlier rounds ran only the tiers " +
+            "each fix could affect, so no single run has covered the tree as it now stands. Run tier 0 and " +
+            "tier 1 for every package this step changed (`git diff " +
+            stepRef +
+            "..HEAD`), and every higher tier this step must run: " +
+            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+            ". Skip none of them except a tier that genuinely needs a cloud-only resource, which you name. " +
+            MEMORY_SAFE_NOTE + PREFLIGHT_NOTE +
+            "\n\nReport green, the tiers you ran, the changed-line coverage if you measured it, and every failure.",
         { schema: VERIFY, label: "verify:" + step.id + ":final", phase: "Build" },
       );
+      if (fg) lastFinal = { sha: finalSha, result: fg };
       if (fg && fg.green) {
         fullVerifyCurrent = true;
         log("Step " + step.id + ": full tier pass green");
@@ -2783,11 +2810,34 @@ async function captureHead(label, phaseName) {
   return r && r.sha ? r.sha.trim() : null;
 }
 
+// The prompt for a step's final gate after its first one. The previous final
+// gate covered prior.sha; the tiers it passed or carried forward stay certified
+// unless the commits since can reach them. REVERIFY_SCOPE holds the rules, so
+// the step gate and the proposal's Verify loop scope the same way.
+function FINAL_SCOPED_PROMPT(step, stepHeader, stepRef, prior) {
+  return (
+    "Run the final test gate for one build step of an applied spec proposal and report whether it is green. " +
+    "You did not write this code. Work in " + repo + ". Do not edit anything; only run tests and report.\n\n" +
+    stepHeader +
+    "\n\nThe step's design review is clean and its code is committed. The step's changes are everything since " +
+    stepRef + ". An earlier final gate for this step covered commit " + prior.sha + " and was not green; the " +
+    "fix rounds since then committed on top of it. Confirm `git merge-base --is-ancestor " + prior.sha + " HEAD` " +
+    "succeeds; if it does not, the earlier gate certifies nothing, so run tier 0 and tier 1 for every package " +
+    "this step changed and every tier the step must run (" + ((step.tiers || []).join(", ") || "none beyond tier 0/1") +
+    "), and say so in notes.\n\n" +
+    REVERIFY_SCOPE(prior.sha, prior.result, Array.from(new Set(["0", "1"].concat(step.tiers || [])))) +
+    " A carried-forward tier counts as passing for `green`.\n\n" +
+    MEMORY_SAFE_NOTE + PREFLIGHT_NOTE +
+    "\n\nReport green, the tiers you ran, the tiers you carried forward with why, the changed-line coverage if you " +
+    "measured it, and every failure."
+  );
+}
+
 // The prompt block telling a re-verify agent which tiers to run. fromSha is
 // HEAD before the fix; prior is the last VERIFY result, whose passing tiers
 // are carried forward when the fix cannot reach them.
-function REVERIFY_SCOPE(fromSha, prior) {
-  const fullSet = tierSet.join(", ") || "from the diff";
+function REVERIFY_SCOPE(fromSha, prior, tiers) {
+  const fullSet = (tiers || tierSet).join(", ") || "from the diff";
   if (!fromSha || !prior) {
     return "SCOPE: run every reached tier (" + fullSet + "), because there is no earlier full pass and fix range to scope against.";
   }

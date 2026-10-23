@@ -106,7 +106,7 @@ type recordingAssigner struct {
 	released []string // session ids passed to ReleaseSession
 }
 
-func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.assigns = append(a.assigns, sessionID)
 	a.mu.Unlock()
@@ -118,15 +118,26 @@ func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv
 	}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.mu.Lock()
 	a.released = append(a.released, sessionID)
 	a.mu.Unlock()
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.mu.Lock()
+	a.released = append(a.released, sessionID)
+	a.mu.Unlock()
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*recordingAssigner) Release(string) {}
+func (*recordingAssigner) Release(string) error { return nil }
 
 func (a *recordingAssigner) assignCount() int {
 	a.mu.Lock()
@@ -249,6 +260,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	tenants, runtimes, credPools := eagerCredentialStores(t)
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-eager" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

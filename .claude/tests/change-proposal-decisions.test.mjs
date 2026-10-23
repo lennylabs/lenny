@@ -558,7 +558,10 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 
   // All three dead is not two dead: there is no reading at all, so sub-task 1's
   // population is unadjudicated rather than swept clean.
-  const allDead = await fire3({}, { "f1:human-decisions:*": null });
+  // Twelve dead attempts in a row would trip the dead-agent breaker, which is a
+  // different behaviour with its own section; the threshold is raised so this
+  // case reads the per-population handling it pins.
+  const allDead = await fire3({ maxConsecutiveDeadAgents: 100 }, { "f1:human-decisions:*": null });
   t.check(
     "three dead adjudicators leave the population unadjudicated",
     (allDead.result.unadjudicated || []).includes("human-decisions"),
@@ -1695,26 +1698,40 @@ t.section("D-collect. the reversal check and the three collectors run as one wav
   );
   for (const [what, re] of [
     ["the reversal check", /\(\)\s*=>\s*checkReversals\(\)/],
-    // Sub-task 1 sits behind the triage answer now, so its call is one arm of a
-    // conditional inside the wave's thunk rather than the thunk's whole body.
-    ["sub-task 1", /\(\)\s*=>\s*triage\.humanDecisions === false[\s\S]{0,160}:\s*collectHumanDecisions\(\)/],
+    // Sub-task 1's readings are slots of the wave itself rather than a nested
+    // parallel(), behind the triage answer.
+    ["sub-task 1", /\.\.\.humanReadings,/],
     ["sub-task 3", /key:\s*"out-of-scope-defects"/],
     ["sub-task 4", /key:\s*"other-proposals"/],
   ]) {
     t.check(what + " is in the wave", re.test(block), what + " is not inside the parallel call");
   }
   t.check(
+    "sub-task 1's readings come from the triage-gated reading list",
+    /const humanReadings = triage\.humanDecisions === false \? \[\] : humanDecisionReadings\(\);/.test(block),
+    "humanReadings is not built from humanDecisionReadings behind the triage",
+  );
+  t.check(
     "no collector is awaited on its own before the wave",
-    !/await\s+(checkReversals|collectHumanDecisions|collectSingle|corpusInventory)\(/.test(block),
+    !/await\s+(checkReversals|collectHumanDecisions|collectSingle)\(/.test(block),
     "a collector is still awaited outside the parallel call",
   );
-  // Sub-task 4 needs the corpus, which is gathered once and carried on the
-  // phase state. Chaining it behind the corpus rather than behind the whole
-  // wave is what lets it start immediately on every later firing.
+  // REPLAY ORDER. Every slot of the wave invokes one agent synchronously, so the
+  // order of invocation does not depend on agent latency. The two agents
+  // sub-task 4 depends on, the inputs digest and the corpus inventory, run
+  // before the wave rather than chained inside one of its slots: chained, the
+  // corpus inventory was invoked at a time set by the digest's latency, and a
+  // resumed run invoked it in a different position and stopped replaying.
+  // .claude/tests/resume-replay.test.mjs pins the behaviour; these pin the form.
   t.check(
-    "sub-task 4 chains behind the corpus, not behind the wave",
-    /corpusInventory\(\)\.then\(/.test(block),
-    "sub-task 4 does not chain off corpusInventory",
+    "the inputs digest and the corpus run before the wave, in sequence",
+    /await impactInputsUnchanged\(\)[\s\S]*await corpusInventory\(\)[\s\S]*await parallel\(\[/.test(block),
+    "the digest or the corpus is not awaited ahead of the wave",
+  );
+  t.check(
+    "no agent is chained behind another inside the wave",
+    !/corpusInventory\(\)\.then\(|impactInputsUnchanged\(\)\.then\(\(skipped|parallel\(\[\s*\(\)\s*=>\s*parallel/.test(block),
+    "a slot still chains one agent behind another",
   );
   // The order the populations are pushed in is what kept them sequential.
   const push = block.match(/items\.push\([^;]*\);/);
@@ -2516,6 +2533,55 @@ t.section("D41. the reversal check counts only staged and summary edits");
   t.check("it counts a recorded removal as standing while the thing stays removed",
     rc && /A REMOVAL STANDS WHILE THE THING STAYS REMOVED/.test(rc.prompt));
   t.check("and matches on content rather than exact characters", rc && /differs only in capitalisation, whitespace, punctuation/.test(rc.prompt));
+}
+
+
+t.section("D-DEAD. consecutive dead agents stop the firing with a marker the parent honours");
+{
+  // Every agent dead: the firing returns the marker rather than recording dead
+  // agents through every stage, and it never reaches its baseline commit.
+  const all = await runWorkflow(WF, ARGS(), () => null);
+  t.check("an all-dead firing returns rather than throwing", !all.error, all.error && all.error.message);
+  t.check("with status stopped-dead-agents", all.result && all.result.status === "stopped-dead-agents", all.result && all.result.status);
+  t.check("naming its count and threshold",
+    all.result.deadAgentStop.consecutive === 8 && all.result.deadAgentStop.threshold === 8 && all.result.deadAgentStreak === 8,
+    JSON.stringify(all.result.deadAgentStop));
+  t.check("and the agents that died", (all.result.deadAgents || []).length > 0, JSON.stringify(all.result.deadAgents));
+  t.check("the baseline commit never runs", never(all.calls, "f1:commit"));
+  t.check("nor any Apply", never(all.calls, "f1:apply"));
+  t.check("only the in-flight collectors pass the threshold", all.calls.length <= 8 + 3, String(all.calls.length));
+  t.check("the phase state is not handed back, because the firing did not finish", all.result.phaseState === undefined);
+
+  // The parent's count continues here: seven already dead in the parent, so the
+  // eighth is this firing's first dead attempt.
+  const carried = await runWorkflow(WF, ARGS({ deadAgentStreak: 7 }), () => null);
+  t.check("the parent's count carries into the firing",
+    carried.result.status === "stopped-dead-agents" && carried.result.deadAgentStop.consecutive === 8,
+    JSON.stringify(carried.result.deadAgentStop));
+  t.check("so no agent retries past the first dead batch", carried.calls.length <= 3, String(carried.calls.length));
+
+  // The threshold is the parent's.
+  const low = await runWorkflow(WF, ARGS({ maxConsecutiveDeadAgents: 2 }), () => null);
+  t.check("maxConsecutiveDeadAgents sets the threshold",
+    low.result.status === "stopped-dead-agents" && low.result.deadAgentStop.threshold === 2, JSON.stringify(low.result.deadAgentStop));
+
+  // A thrown call is a dead attempt, counted and retried rather than fatal.
+  const thrown = await runWorkflow(WF, ARGS(), () => {
+    throw new Error("the subagent finished without calling StructuredOutput");
+  });
+  t.check("throwing agents trip the breaker too", !thrown.error && thrown.result.status === "stopped-dead-agents",
+    thrown.error ? thrown.error.message : thrown.result.status);
+
+  // A live firing resets the count and hands it back for the parent to continue.
+  const live = await fire({ deadAgentStreak: 5 }, {});
+  t.check("a live firing finishes", live.result && live.result.status === "done", live.result && live.result.status);
+  t.check("and returns the count reset to zero", live.result.deadAgentStreak === 0, String(live.result.deadAgentStreak));
+
+  // Deaths short of the threshold, with live answers between them, do not stop.
+  const some = await fire({}, { "f1:other-proposals": null });
+  t.check("dead agents short of the threshold do not stop the firing",
+    some.result && some.result.status === "done", some.result && some.result.status);
+  t.check("and are still recorded as dead", (some.result.deadAgents || []).length > 0, JSON.stringify(some.result.deadAgents));
 }
 
 t.done();

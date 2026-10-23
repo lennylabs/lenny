@@ -24,6 +24,7 @@ func failureTestServer(t *testing.T, caps session.RetryPolicyCaps) (*sessionserv
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 		RetryPolicyCaps:   caps,
@@ -158,11 +159,12 @@ func TestReportSessionFailureNonRetryableDuringResumingEntersAwaiting(t *testing
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-r4", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateResuming, RetryCount: 0,
+		State: session.StateResuming, RetryCount: 0, CoordinationGeneration: 1,
 	}
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-r4", Reason: "workspace_validation_failed",
+		ExpectedCoordinationGeneration: 1,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -321,40 +323,63 @@ func TestReportSessionFailureUsesPerSessionMaxRetries(t *testing.T) {
 	}
 }
 
-// PodAssignment is stamped onto the row when supplied so the §15.1
-// /resume handler can correlate the new pod's claim with the failed
-// pod's name on the audit chain.
+// TestReportSessionFailureStampsPodAssignment pins the slot-holder
+// predicate on the failure funnel's edge writes: the resume_pending and
+// awaiting_client_action edges clear pod_assignment, because the funnel
+// releases the pod's slot and a resume claims a fresh pod, while the failed
+// edge still stamps the supplied pod on the terminal row, which no
+// slot-holder reader counts.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
+// pod failure)
 func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
-	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
-	row := sessionstore.Session{
-		ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateRunning, PodAssignment: "old-pod",
+	cases := []struct {
+		name       string
+		retryCount int64
+		reason     string
+		wantState  session.State
+		wantPod    string
+	}{
+		{"resume_pending edge clears", 0, "pod_evicted", session.StateResumePending, ""},
+		{"awaiting_client_action edge clears", 2, "pod_evicted", session.StateAwaitingClientAction, ""},
+		{"failed edge stamps the supplied pod", 0, "workspace_validation_failed", session.StateFailed, "evicted-pod-1"},
 	}
-	seedRow(t, store, row)
-	_, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
-		TenantID: "acme", SessionID: "sess-r8", Reason: "pod_evicted",
-		PodAssignment: "evicted-pod-1",
-	})
-	if err != nil {
-		t.Fatalf("ReportSessionFailure: %v", err)
-	}
-	got, err := store.Get(context.Background(), "acme", "sess-r8")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.PodAssignment != "evicted-pod-1" {
-		t.Errorf("PodAssignment = %q, want evicted-pod-1", got.PodAssignment)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
+			row := sessionstore.Session{
+				ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateRunning, PodAssignment: "old-pod", RetryCount: tc.retryCount,
+			}
+			seedRow(t, store, row)
+			disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-r8", Reason: tc.reason,
+				PodAssignment: "evicted-pod-1",
+			})
+			if err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if disp.To != tc.wantState {
+				t.Fatalf("To = %q, want %q", disp.To, tc.wantState)
+			}
+			got, err := store.Get(context.Background(), "acme", "sess-r8")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.PodAssignment != tc.wantPod {
+				t.Errorf("PodAssignment = %q, want %q", got.PodAssignment, tc.wantPod)
+			}
+		})
 	}
 }
 
-// spec: §7.2 (a) — every exit from `resuming` that aborts
-// the in-flight resume bumps coordination_generation by exactly one in
-// the same logical write that records the new state. The bump fences
-// any stale coordinator still mid-restore against the prior generation
-// so its next operational RPC fails the §4.2 CoordinatorFence check.
-// recovery_generation is frozen — the interrupted resume is not retried
-// (the next /resume call mints a fresh one). F-7.1.14.
-func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_14(t *testing.T) {
+// spec: §7.3 (Resume driver), §6.2 (Pod State Machine) — a resume attempt
+// reports a failure after its entry write at the generation G that write
+// committed. The report's exit from `resuming` to awaiting_client_action
+// writes at G and leaves coordination_generation unchanged, because the entry
+// write already advanced it once for the incarnation, and leaves
+// recovery_generation frozen. F-7.1.14.
+func TestReportSessionFailureExitFromResumingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-cg1", TenantID: "acme", RuntimeRef: "claude-code",
@@ -364,6 +389,7 @@ func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-cg1", Reason: "workspace_validation_failed",
+		ExpectedCoordinationGeneration: 7,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -375,20 +401,19 @@ func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != 8 {
-		t.Errorf("CoordinationGeneration = %d, want 8 (bumped by 1)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 7 {
+		t.Errorf("CoordinationGeneration = %d, want 7 unchanged", got.CoordinationGeneration)
 	}
 	if got.RecoveryGeneration != 3 {
-		t.Errorf("RecoveryGeneration = %d, want 3 (frozen on snapshot-close)", got.RecoveryGeneration)
+		t.Errorf("RecoveryGeneration = %d, want 3 (frozen)", got.RecoveryGeneration)
 	}
 }
 
-// spec: §7.2 — the bump also fires on the retryable+budget
-// branch (resuming → resume_pending) because the in-flight resume is
-// aborted before the next attempt; without the fence, a stale
-// coordinator could still race the new resume_pending → resuming
-// transition. F-7.1.14.
-func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2_F_7_1_14(t *testing.T) {
+// spec: §7.3 (Resume driver; Retry and Resume) — the retryable branch from
+// `resuming` (resume_pending with RetryCount + 1) also writes at G and leaves
+// coordination_generation unchanged; the next attempt's entry write advances
+// it. F-7.1.14.
+func TestReportSessionFailureResumingToResumePendingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-cg2", TenantID: "acme", RuntimeRef: "claude-code",
@@ -398,6 +423,7 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-cg2", Reason: "pod_evicted",
+		ExpectedCoordinationGeneration: 1,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -409,8 +435,49 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != 2 {
-		t.Errorf("CoordinationGeneration = %d, want 2 (bumped on resuming → resume_pending)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 1 || got.RetryCount != 1 {
+		t.Errorf("row = gen %d retry %d, want gen 1 retry 1", got.CoordinationGeneration, got.RetryCount)
+	}
+}
+
+// spec: §7.3 (Resume driver), §6.2 (Pod State Machine)
+// diagnosis: a failure report on a `resuming` row writes only when its
+// ExpectedCoordinationGeneration matches the row's generation, so a report
+// with the field unset, or from an attempt a later entry write or a takeover
+// has passed, writes nothing and leaves the row, its RetryCount, and its
+// UpdatedAt unchanged. A failure means a stale attempt's report spent a retry
+// of, or parked, the incarnation that replaced it.
+func TestReportSessionFailureOnResumingRequiresTheAttemptGeneration_spec_7_3(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		expected int64
+	}{
+		{"unset", 0},
+		{"behind a bump", 4},
+		{"ahead of the row", 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
+			seedRow(t, store, sessionstore.Session{
+				ID: "sess-gen", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateResuming, CoordinationGeneration: 5,
+			})
+			before, _ := store.Get(context.Background(), "acme", "sess-gen")
+			for _, reason := range []string{"pod_evicted", "workspace_validation_failed"} {
+				if _, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+					TenantID: "acme", SessionID: "sess-gen", Reason: reason,
+					ExpectedCoordinationGeneration: tc.expected,
+				}); err != nil {
+					t.Fatalf("ReportSessionFailure(%s): %v", reason, err)
+				}
+			}
+			got, _ := store.Get(context.Background(), "acme", "sess-gen")
+			if got.State != session.StateResuming || got.RetryCount != 0 ||
+				got.CoordinationGeneration != 5 || !got.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Errorf("row = %q retry %d gen %d updated %v, want resuming retry 0 gen 5 updated %v",
+					got.State, got.RetryCount, got.CoordinationGeneration, got.UpdatedAt, before.UpdatedAt)
+			}
+		})
 	}
 }
 
@@ -474,6 +541,7 @@ func newReportFixture(t *testing.T) *reportFixture {
 		leases:   newComponentLeaseStore(),
 	}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:        true,
 		RetryPolicyCaps:        session.RetryPolicyCaps{MaxRetries: 2},
 		Executor:               f.exec,
 		PodRegistry:            f.registry,

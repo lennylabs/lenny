@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -31,6 +32,12 @@ import (
 // DLQ so tests can assert the message landed in the right buffer.
 func newRoutingServer(t *testing.T) (*sessionserver.Server, sessionstore.Store, *sessioninbox.MemoryInbox, *sessioninbox.DLQ) {
 	t.Helper()
+	return newRoutingServerWith(t, nil)
+}
+
+// newRoutingServerWith is newRoutingServer with an Options mutator.
+func newRoutingServerWith(t *testing.T, mutate func(*sessionserver.Options)) (*sessionserver.Server, sessionstore.Store, *sessioninbox.MemoryInbox, *sessioninbox.DLQ) {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
@@ -38,12 +45,16 @@ func newRoutingServer(t *testing.T) (*sessionserver.Server, sessionstore.Store, 
 	dlq := sessioninbox.NewDLQ(rc, 10)
 	coord := sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: inbox, DLQ: dlq})
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
-	})
-	return srv, store, inbox, dlq
+	opts := sessionserver.Options{
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	return sessionserver.New(store, opts), store, inbox, dlq
 }
 
 func seedSessionState(t *testing.T, store sessionstore.Store, id string, state session.State) {
@@ -85,10 +96,13 @@ func TestMessageRouting_InputRequiredBuffersInbox_spec_7_2_319(t *testing.T) {
 	}
 }
 
-// TestMessageRouting_SuspendedBuffersInbox covers §7.2 path 6: a
-// suspended target buffers the message in the inbox with a `queued`
-// receipt (the pod-held resume-and-deliver is a pod-adapter behaviour).
-func TestMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
+// TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6 covers §7.2
+// path 6 for a suspended session that holds its pod, with or without
+// `delivery: "immediate"`: the coordinating replica resumes it and delivers
+// the message, and nothing waits in the inbox.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6(t *testing.T) {
 	srv, store, inbox, _ := newRoutingServer(t)
 	seedSessionState(t, store, "sess_sus", session.StateSuspended)
 
@@ -100,11 +114,43 @@ func TestMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
 	}
 	var resp sessionserver.MessageResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.DeliveryReceipt.Status != session.DeliveryStatusQueued {
-		t.Errorf("status = %q, want queued", resp.DeliveryReceipt.Status)
+	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
-	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 1 {
-		t.Errorf("inbox depth = %d, want 1", n)
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0", n)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_sus"); row.State != session.StateRunning {
+		t.Errorf("state = %q, want running", row.State)
+	}
+}
+
+// TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6
+// pins that §7.2 path 6 wins for a suspended session whose runtime was
+// interrupted while blocked in lenny/request_input: the wait stays in the
+// registry, yet a message without a matching inReplyTo resumes the
+// session and is delivered, and nothing waits in the inbox.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+func TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(t *testing.T) {
+	waits := inputwait.NewRegistry()
+	srv, store, inbox, _ := newRoutingServerWith(t, func(o *sessionserver.Options) { o.InputWaits = waits })
+	seedSessionState(t, store, "sess_sus", session.StateSuspended)
+	if _, err := waits.Register("sess_sus", "req_blocked", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_sus", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("after-interrupt")}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0 (path 6 never enqueues to the inbox)", n)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_sus"); row.State == session.StateSuspended {
+		t.Errorf("state = %q, want the session moved out of suspended", row.State)
 	}
 }
 
@@ -167,10 +213,11 @@ func TestMessageRouting_RunningDelivers_spec_7_2_path2(t *testing.T) {
 func TestMessageRouting_InboxUnavailableWhenUnwired_spec_15_4(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor: executor.NewEchoExecutor(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
 		// No Messaging coordinator.
 	})
-	seedSessionState(t, store, "sess_nb", session.StateSuspended)
+	seedSessionState(t, store, "sess_nb", session.StateResumePending)
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_nb", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("x")}},

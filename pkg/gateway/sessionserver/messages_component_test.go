@@ -137,9 +137,10 @@ func concurrentRoutingServer(t *testing.T, reg *podsession.Registry) (*sessionse
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewPodExecutor(reg, binder),
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
+		DevTenantHeader: true,
+		Executor:        executor.NewPodExecutor(reg, binder),
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
 	})
 	return srv, store, inbox
 }
@@ -171,6 +172,7 @@ func seedConcurrentSession(t *testing.T, store sessionstore.Store, id string, st
 // outbound, it lets one slot's input_required block a sibling
 // slot's delivery, or it began honoring a client-supplied address.
 func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
+	t.Parallel()
 	rec01 := &perSlotAdapter{}
 	rec02 := &perSlotAdapter{}
 	cl01 := dialPerSlotAdapter(t, rec01)
@@ -248,6 +250,7 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 // address or rejecting a message that carries none on a concurrent pod,
 // rather than deriving the address from the session.
 func TestMessagesIgnoresAClientAddressAndRoutesBySession(t *testing.T) {
+	t.Parallel()
 	rec := &perSlotAdapter{}
 	cl := dialPerSlotAdapter(t, rec)
 	reg := podsession.NewRegistry()
@@ -291,6 +294,7 @@ func TestMessagesIgnoresAClientAddressAndRoutesBySession(t *testing.T) {
 // slot address again, which a bind on a pool of one leaves empty and the
 // adapter cannot attribute.
 func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
+	t.Parallel()
 	rec := &perSlotAdapter{}
 	cl := dialPerSlotAdapter(t, rec)
 	reg := podsession.NewRegistry()

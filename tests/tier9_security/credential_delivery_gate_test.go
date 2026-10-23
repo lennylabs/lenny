@@ -68,7 +68,7 @@ type leaseCountingAssigner struct {
 	assigns int
 }
 
-func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.assigns++
 	a.mu.Unlock()
@@ -77,11 +77,15 @@ func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 		Payload: []byte(`{"deliveryMode":"proxy","materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt"}}`),
 	}, nil
 }
-func (a *leaseCountingAssigner) ReleaseSession(string) {}
+func (a *leaseCountingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (a *leaseCountingAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*leaseCountingAssigner) Release(string) {}
+func (*leaseCountingAssigner) Release(string) error { return nil }
 
 func (a *leaseCountingAssigner) count() int {
 	a.mu.Lock()
@@ -210,6 +214,7 @@ func TestCredentialDeliveryGateFailsClosedAtFinalize(t *testing.T) {
 	}
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-gate" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

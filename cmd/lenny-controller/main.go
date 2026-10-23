@@ -169,18 +169,20 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 // GC's warmpool.SessionLookup contract: a claim is reclaimable when no
 // non-terminal session backs it. The per-pod claim (§4.6.3) carries no
 // session identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding: GetActiveSlotsByPod counts the live
-// (non-terminal) sessions bound to the Sandbox, and a pod with none has
-// no live session. A pod whose sessions all reached a terminal state (or
+// `pod_assignment` binding: GetActiveSlotsByPod returns the pod's slot
+// holders (the non-terminal sessions whose row names the Sandbox), and a
+// pod with none has no live session. The failure funnel clears a
+// recovering session's pod_assignment, so such a session does not hold
+// its earlier pod. A pod whose sessions all reached a terminal state (or
 // whose gateway crashed before persisting any session) reports inactive.
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }
 
 func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
-	n, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
+	ids, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	return len(ids) > 0, nil
 }

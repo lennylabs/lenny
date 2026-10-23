@@ -94,7 +94,7 @@ type firingCase struct {
 	resultLabels map[string]string
 }
 
-// spec: 25.13 (bundled alerting rules fire in Prometheus), 16.5 (alert catalog)
+// spec: 25.13 (bundled alerting rules fire in Prometheus), 16.5 (alert catalog), 12.8 (Compliance Interfaces: Erasure SLA enforcement)
 // diagnosis: a Prometheus-only §16.5 alert did not fire in the real
 // Prometheus rule engine under its documented triggering condition, or
 // fired with the wrong severity/labels/annotations. The rendered PromQL
@@ -178,6 +178,29 @@ func TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions(t *testing.T) 
 				{Series: `lenny_checkpoint_duration_seconds_bucket{le="5"}`, Values: "0+10x20"},
 				{Series: `lenny_checkpoint_duration_seconds_bucket{le="+Inf"}`, Values: "0+10x20"},
 			},
+		},
+		{
+			// ErasureJobOverdue:
+			//   max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0
+			// Without leader election every replica publishes the same job's
+			// overdue series under its own instance label. erasure_a is past
+			// its deadline on both instances and must fire exactly once,
+			// labelled by its tenant and job; erasure_b is before its
+			// deadline and must not fire. promtool requires the firing set
+			// to equal the expected set, so a second alert for erasure_a
+			// (one per instance) or any alert for erasure_b fails the case.
+			// Two instances return NaN from the scalar() comparison the
+			// expression replaced, which could never fire. spec: 12.8
+			// (Compliance Interfaces: Erasure SLA enforcement).
+			alert:    "ErasureJobOverdue",
+			interval: "30s",
+			evalTime: "1m",
+			inputSeries: []promtoolSeries{
+				{Series: `lenny_erasure_job_overdue_seconds{tenant_id="acme",job_id="erasure_a",instance="gw-0"}`, Values: "3600x4"},
+				{Series: `lenny_erasure_job_overdue_seconds{tenant_id="acme",job_id="erasure_a",instance="gw-1"}`, Values: "3600x4"},
+				{Series: `lenny_erasure_job_overdue_seconds{tenant_id="globex",job_id="erasure_b",instance="gw-0"}`, Values: "-3540x4"},
+			},
+			resultLabels: map[string]string{"tenant_id": "acme", "job_id": "erasure_a"},
 		},
 	}
 

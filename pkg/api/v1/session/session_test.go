@@ -150,21 +150,6 @@ func TestValidateTerminateAdmitsEveryNonTerminal(t *testing.T) {
 	}
 }
 
-func TestValidateResumeAdmitsAwaitingClientActionOnly(t *testing.T) {
-	if err := Validate(PreconditionRequest{
-		Endpoint:     EndpointResume,
-		CurrentState: StateAwaitingClientAction,
-	}); err != nil {
-		t.Errorf("resume from awaiting_client_action should be allowed, got %v", err)
-	}
-	if err := Validate(PreconditionRequest{
-		Endpoint:     EndpointResume,
-		CurrentState: StateSuspended,
-	}); err == nil {
-		t.Errorf("resume from suspended should be rejected per §15.1")
-	}
-}
-
 // Upload: created always; running only when midSessionUpload capability
 // is enabled.
 func TestValidateUploadMidSessionGated(t *testing.T) {

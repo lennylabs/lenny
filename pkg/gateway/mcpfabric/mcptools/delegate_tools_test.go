@@ -93,13 +93,14 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:      store,
-		Executor:   executor.NewEchoExecutor(),
-		Runtimes:   runtimes,
-		Delegation: svc,
-		Clock:      func() time.Time { return now },
-		IDFunc:     func() string { return "sess_mcp" },
-		TenantID:   "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Delegation:        svc,
+		Clock:             func() time.Time { return now },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",

@@ -18,17 +18,19 @@ import os
 import sys
 import threading
 from dataclasses import dataclass, field
-from typing import Any, BinaryIO, Protocol
+from typing import Any, BinaryIO, Callable, Protocol
 
 from .lifecycle import Lifecycle, LifecycleHooks, LifecycleHost
 from .mcp import PlatformTools
 from .session import (
     CLOSE,
+    BusyHold,
     CredentialFileError,
     SessionRecord,
     SessionStart,
     SessionTable,
     load_credential_bundle,
+    no_hold,
     session_error_response,
 )
 from .tool import AdapterToolset, ToolCallRegistry
@@ -87,6 +89,29 @@ class HandlerTools:
     # credentials is the session's current credential bundle, or None
     # when the session's session_start named no credential file.
     credentials: CredentialBundle | None = None
+    # _hold takes a busy hold on the message's session.
+    _hold: Callable[[], BusyHold] | None = field(default=None, repr=False, compare=False)
+
+    def hold_busy(self) -> BusyHold:
+        """Report work the handler does for the session after
+        :meth:`Handler.on_message` returns, such as a background task, a
+        tool call made outside a turn, or a wait on children.
+
+        It takes one busy hold at once and returns it as a context manager
+        whose exit releases it; ``release()`` releases it explicitly, and a
+        second release does nothing. While the hold is unreleased the SDK
+        answers each heartbeat naming the session with ``busy: true``, so
+        the platform does not idle-suspend the session and release its
+        pod. Work after a handler returns is reported only through a hold,
+        and a release of the session's pod can end work that no hold
+        reports. The session's ``session_end`` clears every hold.
+
+        spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3
+        (CH-MSGSOCK).
+        """
+        if self._hold is None:
+            return no_hold()
+        return self._hold()
 
 
 class Handler(Protocol):
@@ -321,7 +346,7 @@ class _Process:
                 raise ProtocolError(f"malformed message envelope: {err}") from err
             self._route_message(env)
         elif kind == "heartbeat":
-            self._writer.write({"type": "heartbeat_ack"})
+            self._writer.write(self._heartbeat_ack(frame))
         elif kind == "tool_result":
             self._handle_tool_result(frame)
         elif kind == "shutdown":
@@ -330,6 +355,29 @@ class _Process:
         else:
             _logf(self._opts, f"runtime: ignoring unknown frame type {kind!r}")
         return False
+
+    def _heartbeat_ack(self, frame: dict[str, Any]) -> dict[str, Any]:
+        """Build the answer to one heartbeat.
+
+        A heartbeat naming a session the process holds is answered with
+        that ``sessionId`` and, while the session has a message routed and
+        not finished or an unreleased busy hold, ``busy: true``. A
+        heartbeat naming no session, or one the process does not hold, is
+        answered with the bare ack.
+
+        spec: §28.5.3 (CH-MSGSOCK), §15.7 (Runtime Author SDKs).
+        """
+        ack: dict[str, Any] = {"type": "heartbeat_ack"}
+        session_id = frame.get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            return ack
+        rec = self._sessions.lookup(session_id)
+        if rec is None:
+            return ack
+        ack["sessionId"] = rec.id
+        if rec.busy():
+            ack["busy"] = True
+        return ack
 
     # --- sessions -------------------------------------------------------
 
@@ -396,6 +444,9 @@ class _Process:
             return
         self._writer.end_owner(rec)
         self._registry.cancel_owner(rec)
+        # spec: §15.7 (Busy reporting) — the session's session_end zeroes
+        # its busy counts.
+        rec.zero_busy()
         with rec.lock:
             rec.end_read = True
         rec.queue.put(CLOSE)
@@ -418,6 +469,10 @@ class _Process:
         session_id = env.session_id or ""
         rec = self._sessions.lookup(session_id)
         if rec is not None:
+            # spec: §28.5.3 (heartbeat_ack busy) — the message counts as
+            # work from before its handler can dequeue it until the
+            # handler that took it returns.
+            rec.add_pending(1)
             rec.queue.put(env)
             return
         if self._sessions.ended_since(session_id):
@@ -450,8 +505,15 @@ class _Process:
             if item is CLOSE:
                 break
             if rec.ending():
+                rec.add_pending(-1)
                 continue
-            self._dispatch(rec, item)
+            try:
+                self._dispatch(rec, item)
+            finally:
+                # The message stops counting as the session's work once
+                # its handling returned, after the response or error
+                # response it produced was written.
+                rec.add_pending(-1)
         self._release(rec)
 
     def _create(self, rec: SessionRecord) -> None:
@@ -496,6 +558,7 @@ class _Process:
             tracing_context=rec.start.tracing_context,
             llm=rec.start.llm,
             manifest_snapshot=manifest,
+            _hold=rec.hold_busy,
         )
         try:
             self._handler.on_create(req)
@@ -624,6 +687,7 @@ class _Process:
             ),
             platform=self._tools,
             credentials=rec.get_credentials(),
+            _hold=rec.hold_busy,
         )
         try:
             reply = self._handler.on_message(msg, tools)

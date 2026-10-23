@@ -54,10 +54,26 @@ type InProcessRuntime struct {
 	// runtime loop wrote.
 	outReader *io.PipeReader
 	// hub broadcasts the loop's output to every Output subscriber. Each
-	// Start creates one, and its single reader starts at the first Output,
-	// so the loop's output stays in the pipe until a consumer subscribes.
+	// Start creates one. Its single reader starts at the first Output, so
+	// the loop's output stays in the pipe until a consumer subscribes,
+	// unless an activity tap is recorded, in which case the reader starts
+	// where the hub is created so the tap reads every frame whether or not
+	// Output is ever called.
 	hub      *linefanout.Hub
 	loopDone chan struct{}
+	// tap is the adapter's activity tap, recorded by TapOutput and set on
+	// each hub Start creates. Guarded by mu. spec: §4.7.1.
+	tap func(line []byte)
+}
+
+// TapOutput records fn as the activity tap of every hub Start creates.
+// The hub's reader calls fn with each frame the loop writes, before the
+// broadcast and whether or not a subscriber is registered.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
+func (r *InProcessRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
 }
 
 // NewInProcessRuntime returns an embedded-model RuntimeProcess that runs
@@ -84,6 +100,10 @@ func (r *InProcessRuntime) Start(ctx context.Context, sessionID string) error {
 	r.inWriter = inWriter
 	r.outReader = outReader
 	r.hub = linefanout.New()
+	if r.tap != nil {
+		r.hub.Tap(r.tap)
+		r.hub.Serve(outReader, maxEmbeddedFrameBytes, nil)
+	}
 	r.loopDone = make(chan struct{})
 	done := r.loopDone
 
@@ -118,7 +138,8 @@ func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 }
 
 // Output subscribes to every §28.5.3 JSONL frame the runtime loop writes.
-// One reader per loop, started at the first Output, broadcasts each frame to
+// One reader per loop, started at the first Output or, for a tapped
+// runtime, at Start, broadcasts each frame to
 // the live subscribers, as SocketRuntimeProcess does: the Attach stream and a
 // start's session_started wait each subscribe, and a subscriber whose ctx
 // ends is removed and consumes nothing afterwards. The channel closes when

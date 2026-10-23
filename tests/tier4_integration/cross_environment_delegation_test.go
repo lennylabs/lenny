@@ -110,11 +110,12 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Environments: envs,
-		Tenants:      tenants,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Environments:      envs,
+		Tenants:           tenants,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,
@@ -508,7 +509,7 @@ type poolRecordingAssigner struct {
 	pools []string
 }
 
-func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.pools = append(a.pools, pool)
 	a.mu.Unlock()
@@ -520,11 +521,15 @@ func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 	}, nil
 }
 
-func (a *poolRecordingAssigner) ReleaseSession(string) {}
+func (a *poolRecordingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (a *poolRecordingAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*poolRecordingAssigner) Release(string) {}
+func (*poolRecordingAssigner) Release(string) error { return nil }
 
 func (a *poolRecordingAssigner) assignedPools() []string {
 	a.mu.Lock()
@@ -611,6 +616,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 	}
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-inherit-child" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

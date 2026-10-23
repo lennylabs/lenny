@@ -11,11 +11,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §12.8 — requireTenantState rejects new session
+// spec: §12.8 (Lifecycle fence and drain) — requireCreationAllowed rejects new session
 // creation for a tenant that has left the `active` TenantState with 403
 // TENANT_NOT_ACTIVE, carrying the offending state in the details.
 // F-12.8.12.
-func TestRequireTenantStateRejectsDisabling_spec_12_8_865(t *testing.T) {
+func TestRequireCreationAllowedTenantRejectsDisabling_spec_12_8_865(t *testing.T) {
 	for _, state := range []string{
 		tenantstore.TenantStateDisabling,
 		tenantstore.TenantStateDeleting,
@@ -27,7 +27,7 @@ func TestRequireTenantStateRejectsDisabling_spec_12_8_865(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-		if ok := s.requireTenantState(rec, req, "acme"); ok {
+		if ok := s.requireCreationAllowed(rec, req, "acme", ""); ok {
 			t.Fatalf("state %q admitted a session create", state)
 		}
 		if rec.Code != http.StatusForbidden {
@@ -45,7 +45,7 @@ func TestRequireTenantStateRejectsDisabling_spec_12_8_865(t *testing.T) {
 
 // An active tenant — and a row with the empty pre-lifecycle value, read
 // as active — admits the create. F-12.8.12.
-func TestRequireTenantStateAdmitsActive_spec_12_8_865(t *testing.T) {
+func TestRequireCreationAllowedTenantAdmitsActive_spec_12_8_865(t *testing.T) {
 	store := tenantstore.NewMemory()
 	_ = store.Create(context.Background(), tenantstore.Tenant{ID: "acme", State: tenantstore.TenantStateActive})
 	// A second tenant written with no explicit state; Memory.Create
@@ -57,7 +57,7 @@ func TestRequireTenantStateAdmitsActive_spec_12_8_865(t *testing.T) {
 	for _, id := range []string{"acme", "globex"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-		if ok := s.requireTenantState(rec, req, id); !ok {
+		if ok := s.requireCreationAllowed(rec, req, id, ""); !ok {
 			t.Fatalf("active tenant %q rejected: %d %s", id, rec.Code, rec.Body.String())
 		}
 	}
@@ -65,11 +65,11 @@ func TestRequireTenantStateAdmitsActive_spec_12_8_865(t *testing.T) {
 
 // An unknown tenant carries no state to consult; the create proceeds
 // (the §10.2 tenant-claim path governs unknown tenants). F-12.8.12.
-func TestRequireTenantStateUnknownTenantAdmits_spec_12_8_865(t *testing.T) {
+func TestRequireCreationAllowedTenantUnknownTenantAdmits_spec_12_8_865(t *testing.T) {
 	s := &Server{tenants: tenantstore.NewMemory()}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-	if ok := s.requireTenantState(rec, req, "ghost"); !ok {
+	if ok := s.requireCreationAllowed(rec, req, "ghost", ""); !ok {
 		t.Fatalf("unknown tenant must admit, got %d %s", rec.Code, rec.Body.String())
 	}
 }

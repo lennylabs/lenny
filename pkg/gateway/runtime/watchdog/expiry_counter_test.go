@@ -35,6 +35,9 @@ type expiryCall struct {
 	reason string
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*expiryCapture) BeginTerminal(string) func() { return func() {} }
+
 func (c *expiryCapture) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminal = append(c.terminal, sess)
 }
@@ -135,7 +138,7 @@ func TestExpiryCounterAwaitingActionReasonMaxAge_spec_16_1_1(t *testing.T) {
 		PoolRef: "pool-c", CreatedAt: born, UpdatedAt: born,
 	})
 	hook := &expiryCapture{}
-	// Disable the idle clock (which also runs in awaiting_client_action) and
+	// Disable the idle clock (which is paused in awaiting_client_action) and
 	// the age cap so the §7.3 awaiting-action deadline is the only edge that
 	// fires. The 900s default awaiting-action deadline applies.
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{

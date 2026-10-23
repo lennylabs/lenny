@@ -137,6 +137,20 @@ func (f *Fencer) Fence(ctx context.Context, adapter *adapterclient.Client, tenan
 	return f.fence(ctx, adapter, tenantID, sessionID)
 }
 
+// FenceAt announces generation, the coordination_generation the caller
+// committed at, to the pod's adapter. It runs the Fence policy loop at that
+// generation, and on a stale rejection it relinquishes without retrying at a
+// re-read value: the pod accepted a higher generation, so a takeover raced
+// the caller's commit and owns the pod. A pod that accepts the generation
+// therefore records exactly the generation the caller stamps on its binding.
+// The resume driver calls it after its commit to running.
+//
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica
+// Behavior), §11.3.
+func (f *Fencer) FenceAt(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string, generation int64) (relinquished bool, err error) {
+	return f.loop(ctx, adapter, tenantID, sessionID, generation, false)
+}
+
 // fence is the policy loop, parameterized over the FenceClient interface
 // so tests can drive the stale/transient/accept paths without a real pod.
 func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID string) (bool, error) {
@@ -144,6 +158,13 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 	if err != nil {
 		return false, fmt.Errorf("coordfence: read coordination_generation for %s/%s: %w", tenantID, sessionID, err)
 	}
+	return f.loop(ctx, fc, tenantID, sessionID, gen, true)
+}
+
+// loop issues the fence at gen within the attempt budget. On a stale
+// rejection it re-reads the authoritative generation and retries at an
+// advanced value when rereadOnStale is set, and relinquishes otherwise.
+func (f *Fencer) loop(ctx context.Context, fc FenceClient, tenantID, sessionID string, gen int64, rereadOnStale bool) (bool, error) {
 	if gen <= 0 {
 		// The adapter requires a positive generation; the first
 		// coordination_generation a session row carries is 1. A
@@ -168,14 +189,16 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 			// mid-flight, retry with the new value, otherwise the pod is
 			// genuinely ahead and this replica must relinquish.
 			f.incStale()
-			newGen, rerr := f.generations.CoordinationGeneration(ctx, tenantID, sessionID)
-			if rerr == nil && newGen > gen {
-				gen = newGen
-				f.incRetry()
-				f.log("coordfence: %s/%s stale fence, retrying at generation %d", tenantID, sessionID, gen)
-				continue
+			if rereadOnStale {
+				newGen, rerr := f.generations.CoordinationGeneration(ctx, tenantID, sessionID)
+				if rerr == nil && newGen > gen {
+					gen = newGen
+					f.incRetry()
+					f.log("coordfence: %s/%s stale fence, retrying at generation %d", tenantID, sessionID, gen)
+					continue
+				}
 			}
-			f.log("coordfence: %s/%s stale fence with no generation advance; relinquishing", tenantID, sessionID)
+			f.log("coordfence: %s/%s stale fence at generation %d; relinquishing", tenantID, sessionID, gen)
 			return f.relinquish(ctx, tenantID, sessionID)
 		default:
 			// Transient transport / deadline fault. Retry within budget.

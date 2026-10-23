@@ -10,9 +10,10 @@
 //
 //   - Authorization: Bearer <jwt>  — the canonical RFC 6750 path
 //   - X-Lenny-Tenant-ID + X-Lenny-User-ID — dev-mode headers, only
-//     honoured when the Options.AllowDevHeaders flag is true; used
-//     by the existing tier-3 contract suites until they migrate to
-//     signed-token fixtures
+//     honoured when the Options.AllowDevHeaders flag is true, which the
+//     gateway sets only under --dev-mode. Without that flag the
+//     middleware deletes every client-sent identity header before any
+//     other processing.
 //
 // On rejection the middleware emits the §10.2 error envelopes:
 // TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT (401) and
@@ -134,23 +135,30 @@ type Options struct {
 	// "default" tenant.
 	MultiTenant bool
 
-	// TenantClaimName is the JWT payload claim the middleware reads the
-	// tenant identifier from in multi-tenant mode. Defaults to
-	// "tenant_id" when empty (the §10.2 canonical name). Operators set
-	// this via the `auth.tenantIdClaim` Helm value / `--tenant-id-claim`
-	// gateway flag when their OIDC provider stamps tenant identity under
-	// a different claim name. The middleware reads the standard
-	// `claims.TenantID` field when the name is "tenant_id"; for other
-	// names it resolves the claim via Claims.ClaimString so it picks up
-	// the value from the raw JWT payload.
-	// spec: §10.2. F-10.2.9.
-	TenantClaimName string
-
 	// AllowDevHeaders, when true, permits the X-Lenny-Tenant-ID /
-	// X-Lenny-User-ID dev-mode headers as a transport. Convenient
-	// for the existing tier-3 contract suites that predate the JWT
-	// surface.
+	// X-Lenny-User-ID dev-mode headers as a transport. The gateway sets
+	// it only under --dev-mode. When false the middleware deletes the
+	// identity headers (X-Lenny-Tenant-ID, X-Lenny-User-ID, X-Lenny-Roles,
+	// and X-Lenny-Groups) from every request before any other processing,
+	// so a client-sent value never reaches a handler.
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
 	AllowDevHeaders bool
+
+	// DevHeaderNamesTenant, when true and MultiTenant is false, lets the
+	// X-Lenny-Tenant-ID dev header name the request's tenant directly
+	// (format-checked against the §10.2 tenant_id pattern; an absent
+	// header resolves to the built-in "default" tenant). It applies to
+	// the dev-header transport only: the Bearer path keeps the §10.2
+	// single-tenant rule and ignores the tenant claim. The gateway sets
+	// it only in dev mode, alongside AllowDevHeaders, so the dev and
+	// integration suites can exercise more than one tenant against a
+	// single-tenant gateway. In multi-tenant mode it has no effect and
+	// the dev header is checked against Registry like a Bearer claim.
+	//
+	// spec: §10.2 (single-tenant claim extraction); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID, defaulting
+	// to `default`).
+	DevHeaderNamesTenant bool
 
 	// AllowDevRoles, when true, additionally honours the X-Lenny-Roles
 	// and X-Lenny-Groups dev headers so dev-mode callers can claim RBAC
@@ -167,10 +175,22 @@ type Options struct {
 	AllowDevRoles bool
 
 	// RequireAuth, when true, rejects requests that carry neither a
-	// Bearer token nor (under AllowDevHeaders) the dev tenant header.
-	// When false, unauthenticated requests pass through with no
-	// Principal on the context — useful for /healthz and similar.
+	// Bearer token nor (under AllowDevHeaders) the dev tenant header with
+	// 401 UNAUTHORIZED, except on a route PublicPath admits. When false,
+	// unauthenticated requests pass through with no Principal on the
+	// context. The gateway sets it outside dev mode so that no
+	// authenticated surface is reachable without credentials.
+	// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED).
 	RequireAuth bool
+
+	// PublicPath, when set, reports whether a request targets a route the
+	// specification serves without credentials, such as the liveness and
+	// readiness probes, the OpenAPI document, the JWK Set, or a public
+	// runtime metadata entry. Under RequireAuth such a request passes
+	// through with no Principal on the context instead of being refused.
+	// A request that does carry a Bearer token is still verified on a
+	// public route. nil treats every route as authenticated.
+	PublicPath func(*http.Request) bool
 
 	// Revocations, when set, is consulted after a Bearer JWT verifies:
 	// a token whose jti has been revoked is rejected even though its
@@ -389,6 +409,17 @@ type middleware struct {
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 0) Outside the dev-header posture the identity headers are never a
+	// client input. Delete any the client sent so that no handler, and no
+	// later middleware, can read a client-asserted tenant, user, role, or
+	// group. The Bearer path writes X-Lenny-Tenant-ID back from the
+	// verified principal. Without this, a request on an unauthenticated
+	// path reached its handler still carrying the tenant it named
+	// (F-10.2.21). spec: §10.2 (Authentication).
+	if !m.opts.AllowDevHeaders {
+		stripIdentityHeaders(r.Header)
+	}
+
 	// 1) Try Bearer.
 	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 		m.serveBearer(w, r, strings.TrimPrefix(header, "Bearer "))
@@ -405,7 +436,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3) No credentials.
-	if m.opts.RequireAuth {
+	if m.opts.RequireAuth && (m.opts.PublicPath == nil || !m.opts.PublicPath(r)) {
 		// spec: §15.1 — UNAUTHORIZED (401) is the §15.1 catalog
 		// code for "Missing or invalid authentication credentials". The
 		// details.reason discriminates the missing-bearer case so
@@ -466,17 +497,13 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			"the presented token has been revoked", nil)
 		return
 	}
-	// spec: §10.2 — the OIDC claim used to derive tenant_id is
-	// configurable via `auth.tenantIdClaim`. Default is `tenant_id`; an
-	// operator can point at any string claim. F-10.2.9.
-	claimName := m.opts.TenantClaimName
-	if claimName == "" {
-		claimName = "tenant_id"
-	}
+	// spec: §10.2 (Authentication: `tenant_id` extraction) — the
+	// verifier that accepted the token has already resolved
+	// claims.TenantID: an IdP-key member reads the configured
+	// `auth.tenantIdClaim` (jwt.TenantClaimVerifier) and a gateway-issued
+	// token keeps its own `tenant_id`. The middleware never selects a
+	// claim by payload content. F-10.2.9.
 	rawTenant := claims.TenantID
-	if claimName != "tenant_id" {
-		rawTenant = claims.ClaimString(claimName)
-	}
 	tenant, terr := auth.ExtractTenant(auth.ExtractRequest{
 		MultiTenant: m.opts.MultiTenant,
 		Claim:       rawTenant,
@@ -642,11 +669,7 @@ const serviceCallerType = "service"
 
 func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	tenantHeader := r.Header.Get("X-Lenny-Tenant-ID")
-	tenant, err := auth.ExtractTenant(auth.ExtractRequest{
-		MultiTenant: m.opts.MultiTenant,
-		Claim:       tenantHeader,
-		Registry:    m.opts.Registry,
-	})
+	tenant, err := m.devHeaderTenant(tenantHeader)
 	if err != nil {
 		// Dev-header path: no JWT means no sub / jti claim. The
 		// rejection still produces an audit row + INFO log so the §4.2 observability contract is honoured uniformly across
@@ -670,6 +693,30 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.inner.ServeHTTP(w, r)
+}
+
+// devHeaderTenant resolves the tenant a dev-header request runs as. In
+// multi-tenant mode, and in single-tenant mode without
+// DevHeaderNamesTenant, the header follows the same §10.2 extraction
+// table as a Bearer claim. In single-tenant mode with
+// DevHeaderNamesTenant the header names the tenant directly after the
+// §10.2 format check, and an absent header resolves to the default
+// tenant. spec: §10.2.
+func (m *middleware) devHeaderTenant(header string) (auth.ExtractResult, error) {
+	if m.opts.MultiTenant || !m.opts.DevHeaderNamesTenant {
+		return auth.ExtractTenant(auth.ExtractRequest{
+			MultiTenant: m.opts.MultiTenant,
+			Claim:       header,
+			Registry:    m.opts.Registry,
+		})
+	}
+	if header == "" {
+		return auth.ExtractResult{TenantID: auth.DefaultTenantID, FromDefault: true}, nil
+	}
+	if err := auth.ValidateTenantID(header); err != nil {
+		return auth.ExtractResult{}, err
+	}
+	return auth.ExtractResult{TenantID: header}, nil
 }
 
 // runPreAuth runs the §4.8 PreAuth interceptor chain over the resolved
@@ -711,6 +758,18 @@ func (m *middleware) runPreAuth(w http.ResponseWriter, r *http.Request, p Princi
 	writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason,
 		map[string]any{"interceptor_ref": res.RejectedBy, "phase": string(interceptor.PhasePreAuth)})
 	return false
+}
+
+// identityHeaders are the dev-mode identity headers the dev-header
+// transport reads. X-Lenny-Tenant-ID is also the header the Bearer path
+// echoes the verified tenant into for handlers that read it.
+var identityHeaders = []string{"X-Lenny-Tenant-ID", "X-Lenny-User-ID", "X-Lenny-Roles", "X-Lenny-Groups"}
+
+// stripIdentityHeaders deletes every client-supplied identity header.
+func stripIdentityHeaders(h http.Header) {
+	for _, name := range identityHeaders {
+		h.Del(name)
+	}
 }
 
 // parseRolesHeader parses the comma-separated X-Lenny-Roles dev header

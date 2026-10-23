@@ -48,8 +48,8 @@ func clampDirectUsagePollIntervalSeconds(seconds int) int {
 // pull past the tick. It is derived from the poll interval rather than fixed
 // so a long interval does not carry a disproportionately short deadline;
 // the cap keeps a short interval from letting a slow adapter overrun the
-// tick. A hung pod that never answers is bounded by this deadline and still
-// idle-terminates through the §6.2 non-zero-delta gate (a timed-out
+// tick. A hung pod that never answers is bounded by this deadline and is still
+// idle-suspended through the §6.2 non-zero-delta gate (a timed-out
 // pull records no delta, so the idle clock is untouched).
 func directUsagePullTimeout(interval time.Duration) time.Duration {
 	const cap = 5 * time.Second
@@ -249,8 +249,8 @@ func (l *directUsageLoop) pollOnce(ctx context.Context) {
 // since the snapshot is skipped and the loop never dials a closed adapter.
 // The pull runs under a per-call timeout derived from the poll interval so a
 // wedged adapter cannot pin the loop; a failed or timed-out pull records no
-// delta, so the §6.2 idle clock is untouched and a hung pod still
-// idle-terminates.
+// delta, so the §6.2 idle clock is untouched and a hung pod is still
+// idle-suspended.
 func (l *directUsageLoop) pullSession(ctx context.Context, sessionID string, lease credential.Lease, timeout time.Duration) {
 	b, ok := l.registry.Get(sessionID)
 	if !ok {

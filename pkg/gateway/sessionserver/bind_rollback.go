@@ -12,17 +12,35 @@ import (
 
 // rollbackBinding releases a successful startOnPod result whose
 // caller has decided to abort the §7.1 atomic-creation flow
-// before the session row was persisted. Exclusive session-mode
-// bindings drop through Binder.Release with a `failed` disposition;
-// concurrent-slot bindings drop through ReleaseSlot. Best-effort:
-// the §6.2 reclaim path runs regardless, so a release error here is
-// logged and swallowed. spec: §7.1 atomic-creation rollback.
+// before the binding was registered: registerBinding failed in /start,
+// create-and-start failed its lease or its row create, or delegated-child
+// materialization failed. Exclusive session-mode bindings drop through
+// Binder.Release with a `failed` disposition, which retires the pod;
+// concurrent-slot bindings drop through ReleaseSlot with recycling
+// disabled, so the last release deletes the claim rather than recycling a
+// pod whose binding was never published. Best-effort: a release error is
+// logged and swallowed, and the §4.6.1 orphan-claim GC bounds a claim it
+// leaves.
+//
+// spec: §7.1 (atomic-creation rollback); §4.6.3 (SandboxClaim: a release
+// that ends the occupancy without reuse); §5.2 (Recycle lifecycle).
 func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindResult) {
 	if result == nil || s.podBinder == nil {
 		return
 	}
 	var err error
 	if result.SlotID != "" {
+		// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy
+		// without reuse), §5.2 (Recycle lifecycle) — the binding was never
+		// registered, so the occupancy ends without reuse. Recycle is
+		// cleared before the release, so the last release on a recycling
+		// pool deletes the claim rather than patching it to `recycling` and
+		// sending the whole-pod recycle Shutdown for an unpublished binding.
+		// The result is cleared in place rather than copied, because
+		// BindResult carries atomic state that must not be copied, and no
+		// registry or other caller holds a binding that was never
+		// registered.
+		result.Recycle = false
 		err = s.podBinder.ReleaseSlot(ctx, result)
 	} else {
 		err = s.podBinder.Release(ctx, result, "failed")
@@ -48,15 +66,15 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 //     Launch already reclaimed the pod, and the only release on a pre-bind
 //     ResolvePool/pool-warming/manifest failure inside startOnPod.
 //   - Slot reservation (SlotID set): release only when the binder did not
-//     reach BindReservedSlot. BindReservedSlot owns the non-idempotent
-//     active_slots release on its own failures (slotbinder.go), surfaced as a
-//     *podsession.SlotBindError, so releasing again would double-decrement the
-//     counter. But startOnPod runs ResolvePool, the PoolWarmingUp gate, and
+//     reach BindReservedSlot. BindReservedSlot releases the session's
+//     active_slots member on its own failures (slotbinder.go), surfaced as a
+//     *podsession.SlotBindError, and a second keyed release would remove
+//     nothing. But startOnPod runs ResolvePool, the PoolWarmingUp gate, and
 //     runtimeManifestFields BEFORE BindReservedSlot; a failure there (a
 //     transient kube-API error on the second ResolvePool of the same request,
 //     a pool that warmed down) returns a non-SlotBindError without ever
 //     releasing the create-time reservation. Releasing it here keeps the
-//     active_slots increment from leaking to the §4.6.1 orphan-GC backstop,
+//     session's active_slots member from leaking to the §4.6.1 orphan-GC backstop,
 //     matching the §7.1 atomicity envelope the decomposed createSession path
 //     already honors through its own rollbackClaim.
 //
@@ -79,33 +97,24 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 }
 
 // rollbackClaim releases a pod claimed at /create when a later create
-// step fails before the session row is persisted (§7.1
-// atomic-creation rollback). The claim holds no live connection, so the
-// release runs against the persisted binding. The disposition follows the
-// claim kind: an exclusive Claim is released through ReclaimClaimed, which
-// deletes the per-pod SandboxClaim and revokes any lease; a §5.2
-// concurrent-slot reservation (SlotID set) is released through
-// ReleaseSlotReservation, which decrements the pod's active_slots without
-// deleting the per-pod claim or disturbing sibling slots. No lease is
-// assigned at create (§4.4 of the proposal), so the lease revoke is a
-// no-op here. Best-effort: the §4.6.1 orphan-claim GC reclaims a claim a
-// release error leaves behind, so the error is logged and swallowed.
-// spec: §7.1; §4.5, §4.6
-// (proposal); §5.2 (slot reservation release).
+// step fails before the session row is persisted (§7.1 atomic-creation
+// rollback). The claim holds no live connection, so the release runs
+// against the persisted binding through ReclaimClaimed, the same
+// pre-running release the post-terminal hook uses. A §5.2 concurrent-slot
+// reservation (SlotID set) releases the session's slot member and deletes
+// the shared claim only when that release empties the set; an exclusive
+// claim is deleted by name. No lease is assigned at create, so the lease
+// revoke inside ReclaimClaimed is a no-op here. Best-effort: the §4.6.1
+// orphan-claim GC reclaims a claim a release error leaves behind, so the
+// error is logged and swallowed.
+//
+// spec: §7.1 (atomic-creation rollback); §4.6.3 (SandboxClaim: a release
+// that ends the occupancy without reuse); §5.2 (Slot assignment atomicity).
 func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResult, sessionID string) {
 	if claim == nil || s.podBinder == nil {
 		return
 	}
-	if claim.SlotID != "" {
-		// No workspace RPC runs at create, so the adapter holds nothing for
-		// the slot and the release is not leaked.
-		if err := s.podBinder.ReleaseSlotReservation(ctx, claim.SandboxName, claim.SlotID, false); err != nil {
-			log.Printf("sessionserver: rollback create-time slot reservation %s on pod %s for session %s: %v",
-				claim.SlotID, claim.SandboxName, sessionID, err)
-		}
-		return
-	}
-	if err := s.podBinder.ReclaimClaimed(ctx, claim.SandboxName, sessionID); err != nil {
+	if err := s.podBinder.ReclaimClaimed(ctx, claim.SandboxName, sessionID, claim.SlotID != ""); err != nil {
 		log.Printf("sessionserver: rollback create-time claim %s for session %s: %v", claim.SandboxName, sessionID, err)
 	}
 }

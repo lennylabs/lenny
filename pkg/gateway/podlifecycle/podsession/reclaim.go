@@ -45,7 +45,9 @@ func (b *Binder) reclaimOnFailure(ctx context.Context, sb *lennyv1.Sandbox, cl *
 // false before assignCredentials runs, so the revoke is a no-op then (Gap 2).
 // It is best-effort — the caller already returns the underlying error, and a
 // drain lost to a concurrent reclamation does not change the outcome, because
-// the orphaned claim is collected and the pod recycled (§4.6.1). spec: §6.2
+// the orphaned claim is collected and the pod recycled (§4.6.1). The drain
+// runs on a detached context, so a reclaim reached after the request context
+// ended still deletes the claim. spec: §6.2
 // (claimed → draining on a failed claim disposition); §4.6.1 orphan-claim
 // collection; §7.1 step 23 (lease release).
 func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox, leaseAssigned bool, sessionID string) {
@@ -55,33 +57,94 @@ func (b *Binder) failPhase(ctx context.Context, sb *lennyv1.Sandbox, leaseAssign
 		// active-session counter leaks for the abandoned session.
 		b.releaseCredentials(sessionID)
 	}
-	if err := b.drain(ctx, sb); err != nil {
+	if err := b.deleteClaimDetached(ctx, sb.Name); err != nil {
 		log.Printf("podsession: drain failed sandbox %s after pre-attached setup failure: %v", sb.Name, err)
 	}
 }
 
 // ReclaimClaimed releases a pod claimed at /create that no live BindResult
-// covers: a `created`/`finalizing`/`ready` session retired by the §4.5
-// created-expiry sweeper or by /terminate, whose pod↔session binding is the
-// persisted SandboxName + pool alone (§4.6). It deletes the per-pod
-// SandboxClaim (returning the pod to the pool per the §4.6.1 occupancy
-// projection) and revokes any §4.9 credential lease the session holds, keyed
-// by sessionID (Credentials.ReleaseSession). The lease revoke is mandatory
-// rather than best-effort-skipped: a `finalizing`/`ready` session always
-// holds a lease assigned at finalize (§4.3), and ReleaseSession is a no-op
-// for a `created` session that never assigned one, so the unconditional
-// revoke fails closed without over-releasing. spec: §4.5 (proposal), §4.6
-// (proposal), §7.1 step 23 (lease release); §4.6.1 (occupancy projection on
-// claim DELETE).
-func (b *Binder) ReclaimClaimed(ctx context.Context, sandboxName, sessionID string) error {
-	// Revoke the lease first so a DELETE error does not strand the
-	// credential's active-session slot; ReleaseSession is keyed by sessionID
-	// and is a no-op for a session that holds no lease.
+// covers: a `created`, `finalizing`, or `ready` session that a terminal write
+// ended (DELETE, terminate, cancel_child, a watchdog pre-running timeout, or a
+// finalize failure), a create-time rollback, or a Prepare or Launch reconnect
+// failure. The pod-session binding is the persisted SandboxName alone (§4.6).
+//
+// It releases the session's §4.9 credential leases first, keyed by
+// sessionID (Credentials.ReleaseSession), so a later claim error does not
+// strand a lease; ReleaseSession is a no-op for a session that holds none.
+// Then it ends the occupancy without reuse, by pool kind:
+//
+//   - perSlot true (a concurrent-workspace pool): the session's member of the
+//     pod's slot set is released through ReleaseSlotReservation, which never
+//     recycles. The release deletes the shared per-pod SandboxClaim only when
+//     it removed the member and left the set empty, so a live sibling keeps
+//     its claim. No claim is deleted by name.
+//   - perSlot false (an exclusive pool): the per-pod SandboxClaim is deleted
+//     by name on a detached context, so a reclaim reached after the caller's
+//     context ended still returns the pod; the §4.6.1 occupancy projection
+//     drains it. A recycling exclusive pool is not patched to `recycling`,
+//     because a pre-running session never used the pod.
+//
+// The caller passes perSlot from the session row's frozen scrubPolicy rather
+// than a live pool lookup, because maxConcurrentSessions can change after
+// create.
+//
+// spec: §5.2 (Slot assignment atomicity; Recycle lifecycle), §6.2 (leaked
+// slot semantics), §4.6.3 (SandboxClaim: a release that ends the occupancy
+// without reuse), §7.1 step 23 (lease release).
+func (b *Binder) ReclaimClaimed(ctx context.Context, sandboxName, sessionID string, perSlot bool) error {
 	b.releaseCredentials(sessionID)
-	if err := podclaim.DeleteClaim(ctx, b.Client, b.Namespace, sandboxName); err != nil {
+	if perSlot {
+		// No workspace RPC ran for a pre-running slot, so the adapter holds
+		// nothing for it and the release is not leaked.
+		if err := b.ReleaseSlotReservation(ctx, sandboxName, sessionID, false); err != nil {
+			return fmt.Errorf("podsession: reclaim slot on pod %s for session %s: %w", sandboxName, sessionID, err)
+		}
+		return nil
+	}
+	if err := b.deleteClaimDetached(ctx, sandboxName); err != nil {
 		return fmt.Errorf("podsession: reclaim claimed pod %s for session %s: %w", sandboxName, sessionID, err)
 	}
 	return nil
+}
+
+// detachedReleaseContext returns a context for a release that must run even
+// when the caller's context has ended. It keeps the caller's values, drops its
+// cancellation and deadline, and is bounded by the §5.2 per-slot cleanup
+// floor. A bind attempt's context ends on its attempt deadline, on a server
+// shutdown, or when a terminal write cancels the attempt, and a release issued
+// on that context fails, leaving the claim to the §4.6.1 orphan-claim GC.
+//
+// spec: §7.1 (normal flow); §7.3 (Retry and Resume); §5.2 (per-slot cleanup
+// floor).
+func detachedReleaseContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), slotCleanupFloor)
+}
+
+// deleteClaimDetached deletes the per-pod SandboxClaim of sandboxName on a
+// detached context (detachedReleaseContext), returning the pod to the pool
+// through the §4.6.1 occupancy projection. A claim already gone is a no-op.
+//
+// spec: §4.6.1 (occupancy projection on claim DELETE); §7.3 (Retry and
+// Resume).
+func (b *Binder) deleteClaimDetached(ctx context.Context, sandboxName string) error {
+	rctx, cancel := detachedReleaseContext(ctx)
+	defer cancel()
+	return podclaim.DeleteClaim(rctx, b.Client, b.Namespace, sandboxName)
+}
+
+// releaseClaimAfterFailure deletes the claim a binder call made when a
+// failure after the claim ends the call: a post-claim hook error, or a
+// resolve, dial, or handshake failure. No compensation RPC is sent, because
+// no entry-touching RPC has run, and no §4.9 credential lease is released,
+// because none has been minted. A delete error is logged; the §4.6.1
+// orphan-claim GC collects a claim the delete could not remove.
+//
+// spec: §7.3 (Retry and Resume); §4.6.1 (orphan-claim collection).
+func (b *Binder) releaseClaimAfterFailure(ctx context.Context, sandboxName, sessionID string, cause error) {
+	if err := b.deleteClaimDetached(ctx, sandboxName); err != nil {
+		log.Printf("podsession: release claim on pod %s for session %s after a post-claim failure (%v): %v",
+			sandboxName, sessionID, cause, err)
+	}
 }
 
 // drain releases a session-mode pod by deleting its per-pod occupancy

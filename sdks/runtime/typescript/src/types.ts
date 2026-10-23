@@ -259,6 +259,15 @@ export interface CreateRequest {
   llm?: LLMConfig;
   // manifestSnapshot is the parsed pod-scoped adapter manifest.
   manifestSnapshot?: AdapterManifest;
+  // holdBusy reports work the runtime starts when the session opens,
+  // before any message, that outlives onCreate. It takes one busy hold at
+  // once and returns its release, which drops the hold once; a second call
+  // does nothing. While a hold is unreleased the SDK answers each heartbeat
+  // naming the session with busy: true. Work after a handler settles is
+  // reported only through a hold, and a release of the session's pod can
+  // end work that no hold reports.
+  // spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3 (CH-MSGSOCK).
+  holdBusy(): () => void;
 }
 
 // Message is the §15.7 per-turn envelope handed to Handler.onMessage
@@ -357,6 +366,17 @@ export interface HandlerTools {
   // credentials is the session's current credential bundle, or undefined
   // when the session's session_start named no credential file.
   credentials?: CredentialBundle;
+  // holdBusy reports work the handler does for the session after onMessage
+  // settles, such as a background task, a tool call made outside a turn,
+  // or a wait on children. It takes one busy hold at once and returns its
+  // release, which drops the hold once; a second call does nothing. While
+  // a hold is unreleased the SDK answers each heartbeat naming the session
+  // with busy: true, so the platform does not idle-suspend the session and
+  // release its pod. Work after a handler settles is reported only through
+  // a hold, and a release of the session's pod can end work that no hold
+  // reports. The session's session_end clears every hold.
+  // spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3 (CH-MSGSOCK).
+  holdBusy(): () => void;
 }
 
 // AdapterTools and PlatformTools are declared in their own modules;

@@ -26,17 +26,26 @@ type reclaimRecordingAssigner struct {
 	released []string
 }
 
-func (a *reclaimRecordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *reclaimRecordingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
 
-func (a *reclaimRecordingAssigner) ReleaseSession(sessionID string) {
+func (a *reclaimRecordingAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *reclaimRecordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.released = append(a.released, sessionID)
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*reclaimRecordingAssigner) Release(string) {}
+func (*reclaimRecordingAssigner) Release(string) error { return nil }
 
 // reclaimTestServer builds a white-box Server wired with a fake-client binder
 // (holding a seeded per-pod SandboxClaim for podName), a live registry, and a
@@ -225,7 +234,8 @@ func TestTerminalReclaimPreRunningNoBinderIsSkipped(t *testing.T) {
 // spec: §4.6 — a created session that holds a pod claim but is force-terminated
 // while the gateway has a binder reclaims the pod by name. This pins the
 // created state (the most common pre-running abandon case) to the by-name
-// reclaim path so the §4.5 created-expiry sweeper and /terminate share it.
+// reclaim path, which the watchdog's CREATED_TIMEOUT write and /terminate
+// both reach through the post-terminal hook.
 func TestTerminalReclaimPreRunningCreatedStateReclaims(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-created")
 

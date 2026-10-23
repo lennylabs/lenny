@@ -190,6 +190,13 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)) — the source session's owner, when restricted, refuses the
+	// derive before the isolation-downgrade audit event, the reservation,
+	// and the copy, whatever the new owner's and the tenant's markers.
+	if !s.requireSourceOwnerNotRestricted(w, r, tenantID, source.UserID) {
+		return
+	}
 
 	var req DeriveRequest
 	if r.ContentLength > 0 {
@@ -319,6 +326,13 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	derivedID := s.idFn()
 	derivedRef := derivedSnapshotRef(tenantID, derivedID)
+	// spec: §12.8 (Lifecycle fence and drain) — reserve derivedID for its
+	// owner before any object is copied under it. The reservation runs the
+	// creation fence over the tenant and the new owner. Every error return
+	// below that precedes the insert undoes the copy and releases it.
+	if !s.reserveDerivedSession(w, r, tenantID, userID, derivedID) {
+		return
+	}
 	// spec: §10.1.7 / §7.1 derive — when the parent's checkpoint is a
 	// chunked manifest, derive copies every chunk under the parent's
 	// chunk_object_key_prefix into the derived session's own prefix and
@@ -329,12 +343,14 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if newRef, handled, cerr := s.deriveChunkedCheckpoint(r.Context(), source, derivedID, now); handled {
 		if cerr != nil {
 			if errors.Is(cerr, blobstore.ErrNotFound) {
+				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 				s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
 				s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 					"parent workspace checkpoint chunk is absent in storage",
 					map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
 				return
 			}
+			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 			s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 				"workspace checkpoint copy failed: "+cerr.Error(), nil)
@@ -359,12 +375,14 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 				// derive_failure audit row before the error is returned.
 				// F-15.1.14.
 				if errors.Is(err, blobstore.ErrNotFound) {
+					s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 					s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
 					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
 						"parent workspace snapshot object is absent in storage",
 						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
 					return
 				}
+				s.undoDerivedWrites(r.Context(), tenantID, derivedID)
 				s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
 				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 					"workspace snapshot copy failed: "+err.Error(), nil)
@@ -398,7 +416,18 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		ParentSessionID:        source.ID,
 		ParentWorkspaceRef:     source.WorkspaceSnapshot.Ref,
 	}
-	if err := s.store.Create(r.Context(), derived); err != nil {
+	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
+		// reservation the owner's erasure ended, undoes the copy, releases
+		// the reservation, and answers 403. Any other insert error keeps
+		// the objects and the reservation, because such an error can
+		// follow a committed insert.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+			s.writeCreationRefusal(w, ref)
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -606,20 +635,24 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // because none ever existed.
 //
 // The write is guarded by a §10.1 coordinator-handoff CAS fence: the
-// source's `coordination_generation` is re-read and compared against the
-// stamp captured at derive admission (the generation on the `source` row
-// the handler already holds). If a replacement coordinator has
-// incremented it (replica crash or Postgres failover mid-copy), the
-// stale replica skips the write so no orphan `failed` row becomes
-// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1. F-15.1.14.
+// source's `coordination_generation` is re-read from the primary and
+// compared against the stamp captured at derive admission (the generation on
+// the `source` row the handler already holds). The fence skips the write
+// whenever the source's coordination_generation has advanced since
+// admission: a replacement coordinator's handoff (replica crash or Postgres
+// failover mid-copy), and a resume_pending → resuming write that started a
+// new resuming incarnation of the source. The row records the Terminated
+// fact in its own Create. spec: §7.1 (Normal Flow) derive rule 2 (CAS-fenced
+// INSERT); §15.1. F-15.1.14.
 func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
 	if !s.persistDeriveFailureRows {
 		return
 	}
-	// CAS fence: re-read the source and confirm the coordinator that
-	// admitted this derive is still authoritative. A changed generation
-	// means a handoff occurred; the stale replica must not write.
-	cur, err := s.store.Get(ctx, source.TenantID, source.ID)
+	// spec: §7.1 (Normal Flow) — CAS fence on the primary row: the write is
+	// skipped whenever the source's coordination_generation has advanced
+	// since admission, so a stale replica, or an admission an entry write
+	// overtook, persists no row.
+	cur, err := s.readPrimary(ctx, source.TenantID, source.ID)
 	if err != nil || cur.CoordinationGeneration != source.CoordinationGeneration {
 		s.recordDeriveFailureAudit("fenced")
 		return
@@ -638,6 +671,7 @@ func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.S
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	sessionstore.MarkTerminated(&row, "", now)
 	if err := s.store.Create(ctx, row); err != nil {
 		s.recordDeriveFailureAudit("error")
 		return

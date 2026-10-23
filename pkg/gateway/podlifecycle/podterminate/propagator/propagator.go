@@ -1,35 +1,32 @@
 // SPDX-License-Identifier: MIT
 
-// Package propagator fans a §11.4 full_revoke pod-termination out across
+// Package propagator fans a §11.4 full_revoke binding release out across
 // gateway replicas over Redis pub/sub.
 //
-// On §11.4 full_revoke the gateway sends the §4.7 Terminate RPC (reason
-// USER_REVOKED) to every pod hosting one of the revoked user's sessions
-// (step 2: "For each session in the user's task tree"). A pod binding
-// lives in one replica's per-replica podsession.Registry, so the
-// handling replica reaches only the pods it itself coordinates; a pod
-// bound on a peer replica keeps running until the §8.10 orphan sweep
-// reaps it. The credential-lease and token revocations (steps 5-6)
-// already fan out over pub/sub, but the Terminate RPC (steps 2-4) did
-// not, so a revoked user's peer-replica pods ran for up to the
-// orphan-sweep window without the session teardown the spec mandates.
+// On §11.4 full_revoke the gateway releases the pod binding of every
+// session the revoke cancelled on the replica that holds it (step 2). The
+// release sends the pod the §4.7 Shutdown RPC through the session release.
+// A pod binding lives in one replica's per-replica podsession.Registry, so
+// the handling replica reaches only the bindings it holds itself; the
+// credential-lease and token revocations already fan out over pub/sub, and
+// this package carries the release request the same way.
 //
-// Propagator closes that gap. Publish marshals the user's session ids
-// and publishes them on a Redis channel; Run subscribes and applies a
-// peer replica's request to the local LocalTerminator, which terminates
-// the pods this replica holds among those sessions. The handling replica
-// terminates its own pods synchronously (for the response counts) and
-// stamps its publish with its replica id so it does not re-terminate
-// them when its own message round-trips. A full_revoke on any replica
-// then reaches every replica's pods.
+// Publish marshals the user's session ids and publishes them on a Redis
+// channel; Run subscribes and applies a peer replica's request to the local
+// LocalTerminator, which releases the bindings this replica holds among
+// those sessions. The handling replica releases its own bindings
+// synchronously (for the response counts) and stamps its publish with its
+// replica id so it does not release them again when its own message
+// round-trips. A full_revoke on any replica then reaches every replica's
+// bindings.
 //
 // Redis pub/sub is at-most-once, matching the §4.9 credential-deny-list
 // and §13.3 token-revocation fan-outs the gateway already runs. A
-// dropped request leaves the peer's pod running until the §8.10 orphan
-// sweep reaps it (the pre-existing backstop), and the credential and
-// token revocations that did land already bar the pod from reaching the
-// LLM proxy or calling back into the gateway. Propagator does not
-// redeliver.
+// dropped request leaves a peer's binding to that peer's coordination
+// Sweeper, which releases the binding of every terminal row it lists, and
+// the credential and token revocations that did land already bar the pod
+// from reaching the LLM proxy or calling back into the gateway. Propagator
+// does not redeliver.
 package propagator
 
 import (
@@ -45,15 +42,14 @@ import (
 // credential key and drives the pod adapter rather than a deny list.
 const Channel = "lenny:session:terminate"
 
-// Request is the cross-replica §11.4 step-2 pod-termination payload: the
-// revoked user's session ids whose hosting pods each replica must
-// terminate. Origin is the publishing replica's id, used so a replica
-// skips its own request (it already terminated those pods synchronously
-// for the response counts). spec: §11.4 step 2.
+// Request is the cross-replica §11.4 step-2 binding-release payload: the
+// session ids the revoke cancelled, whose bindings each replica releases.
+// Origin is the publishing replica's id, used so a replica skips its own
+// request (it already released those bindings synchronously for the
+// response counts). spec: §11.4 step 2.
 type Request struct {
 	TenantID   string   `json:"tenantId"`
 	UserID     string   `json:"userId"`
-	Reason     string   `json:"reason"`
 	Origin     string   `json:"origin"`
 	SessionIDs []string `json:"sessionIds"`
 }
@@ -89,8 +85,9 @@ type Propagator struct {
 type Option func(*Propagator)
 
 // WithErrorHandler sets a callback invoked when a publish fails. A
-// publish failure is not fatal: the handling replica already terminated
-// its own pods and the §8.10 orphan sweep reaps a missed peer's pod.
+// publish failure is not fatal: the handling replica already released
+// its own bindings, and a peer's coordination Sweeper releases the
+// binding of every terminal row it lists.
 func WithErrorHandler(fn func(error)) Option {
 	return func(p *Propagator) { p.onError = fn }
 }

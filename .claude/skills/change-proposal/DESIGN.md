@@ -163,7 +163,8 @@ wherever it can be:
   whitespace before it checks or joins a part; no state line starts with whitespace. Every chunk is checked against a length and a
   code-point checksum the script computes, and a chunk that does not match is moved again. A save that cannot
   be verified leaves the previous file in place, and a load that cannot be verified starts the phase fresh.
-  The save runs beside the rest of the run, and the run waits for it before it returns.
+  The save is awaited where it is called, so its agents never interleave with the main flow's (see
+  **Resume replay** below).
 
 A single-agent save of a 117 KB state, measured on one run, hit the output limit twice per attempt, held the
 run for eleven to sixteen minutes, and then wrote 2 of 72 records unchecked. A state saved before record files
@@ -341,7 +342,9 @@ A **warrant gate** runs before the full pass. The counters that wake it are crud
 
 **The pass is a tripwire** (`introspectMode: "advisory"`, the default). `healthy` continues, with no panel. **Any other verdict stops the run at once**, with status `stopped-redesign`, `stopped-prune`, `stopped-reframe`, or `stopped-halt`, carrying the pass's reasoning and its proposed next steps. The pass does not act, no panel second-guesses it, and nothing is carried forward inside the run. Measured over three runs, the remedies the loop executed on its own diagnoses made things worse: the first redesign it ordered created the five-site restatement the second one diagnosed, and each one cleared the retirement set and bought a full-pool round. A directive carried to the fixers could not deliver a restructure either, because fixers act on findings and a restructure is nobody's finding. Correcting course belongs to this skill, which holds the whole conversation, can restructure and review the result, and can ask a person. A wrong stop costs one relaunch with `resumeState`; a wrong continue costs every remaining round.
 
-The script's own counters (`hardSignals`: confirmed findings that did not fall across `haltWindow` rounds, or one finding title confirmed `haltRepeatTitle` times) ride along on the stop as information and decide nothing. The pass runs on `introspectModel` (`opus`) at `introspectEffort` (`high`): it is a handful of calls per run and the one stage whose judgement spans the whole run.
+The script's own counters (`hardSignals`: confirmed findings that did not fall across `haltWindow` rounds, one finding title confirmed `haltRepeatTitle` times, or the self-inflicted signal below) ride along on the stop as information and decide nothing. The pass runs on `introspectModel` (`opus`) at `introspectEffort` (`high`): it is a handful of calls per run and the one stage whose judgement spans the whole run.
+
+One hard signal also wakes the pass. When more than `selfInflictedShare` (0.5) of a round's confirmed findings are defects in text this run's own fixes wrote (`introducedBy: this-run`) in `selfInflictedWindow` (2) consecutive rounds of one loop, the next pass is forced regardless of `introspectEvery` and the warrant gate, and its brief states the signal and asks the pass to weigh `redesign` and `reframe` before `healthy`. A review loop whose findings are mostly repairs of its own text does not converge by continuing, because each fix supplies the next round's findings. One streak forces one pass; another forced pass needs a fresh window of rounds after it. A round whose findings carry no `introducedBy` value other than `unknown` has no share, so the signal never fires on data the reviewers did not supply.
 
 The warrant gate applies only to a churn-counter wake. A wake from a sweep that confirmed findings carries no counter output and, like a cadence wake, runs the full pass; a gated skip does not reset the cadence clock. The first pass of a run measures growth from the run's first pre-fix snapshot.
 
@@ -367,6 +370,48 @@ It is a caller-chosen string rather than a per-run nonce on purpose:
 `resumeFromRunId` replays an agent only when its prompt is byte-identical, so a
 nonce would bust the harness's own cache and re-run live everything the resume
 exists to skip.
+
+## Resume replay: why agent order is fixed
+
+A relaunch with `resumeFromRunId` returns an agent's journaled result only while every agent call before it
+was invoked with the same prompt and options in the same order. The runtime keys each call on a hash chained
+over the calls invoked before it, so the first call that differs in prompt, options, or position runs live, and
+so does every call after it. A replayed agent returns at once and a live one takes minutes, so any order that
+depends on how long an agent took differs on the resume.
+
+The rule the workflows follow:
+
+- **No prompt or option depends on a value that differs between a run and its resume.** A script cannot read
+  the clock, the tree, or git, so every such value reaches a prompt through an agent's result, and a replayed
+  agent returns the same result. A commit SHA or a digest taken by an agent is therefore safe to put in a later
+  prompt. `budget.spent()` is the exception, because replayed calls spend nothing, and no prompt reads it.
+- **No agent is invoked beside the main flow.** A save or any other agent-calling step is awaited where it is
+  called. The decisions-state save ran beside the run, and its agents interleaved with the next round's lenses
+  in an order set by their latencies.
+- **Inside `parallel()`, each slot invokes one agent, synchronously.** The runtime invokes every slot in order
+  in one pass, so the first agent of each slot is invoked in a fixed order. An agent a slot invokes after
+  awaiting its first one is invoked when that agent returns, which is a different moment on the resume.
+  A step with two agents in sequence runs as two `parallel()` barriers, and a `parallel()` is never nested
+  inside another one's slot beside slots that call agents, because the nested one yields before it invokes
+  anything.
+
+A run that broke the rule was measured: stopped by the account limit in its seventh non-spec round and
+relaunched with identical arguments, it re-ran the post-spec-loop open-decisions firing live, baseline commit
+included, and every non-spec round after it. The firing's prompts were byte-identical. Its sub-task wave
+invoked the corpus inventory after the impact-inputs digest, inside one slot, beside the human-decisions reading
+behind a nested `parallel()`. Live, the digest took long enough that the reading was invoked first; on the
+resume the digest replayed at once and the corpus inventory was invoked first. The same rule removed the other
+orderings of that kind: the answer designer and its falsifier, the split verifier's second skeptic, and
+the per-slot retries that read the decisions state back.
+
+A retry is the remaining exposure. `robustAgent` retries a result that lacks a required field, and that retry
+is invoked when the discarded result returns. One such retry in a `parallel()` stage still replays; two in
+the same stage can swap. An agent that returned nothing is journaled as failed and never replays, so a resume
+re-runs live from the first agent that died.
+
+`.claude/tests/resume-replay.test.mjs` runs the workflows against a model of the journal, live with latencies
+that vary by label and stopped part-way, then resumed, and requires every call before the stop to replay
+byte-identical. Its negative controls are the orderings above, and each diverges under the model.
 
 ## The base tier: why it is pinned
 

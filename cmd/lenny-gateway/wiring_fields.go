@@ -35,12 +35,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
@@ -123,6 +125,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
@@ -315,12 +318,18 @@ type gatewayWiringFields struct {
 	mtlsDenyProp                *mtlsdenylistprop.Propagator
 	mux                         *http.ServeMux
 	podBinder                   *podsession.Binder
-	recommendationStore         *recommendations.WindowStore
-	revCache                    *revocation.Cache
-	revProp                     *revocationprop.Propagator
-	sessions                    sessionstore.Store
-	sessionSrv                  *sessionserver.Server
-	storageCounter              storagequota.Counter
+	// slotCounter is the §5.2 slot set shared by every concurrent-mode
+	// reservation and release; its §12.4 recovery probe runs on
+	// watchdogCtx, and the leader-run stale-slot reaper reads and removes
+	// its members. Nil when no Redis is wired, which also leaves the reaper
+	// unregistered.
+	slotCounter         *slotcounter.Counter
+	recommendationStore *recommendations.WindowStore
+	revCache            *revocation.Cache
+	revProp             *revocationprop.Propagator
+	sessions            sessionstore.Store
+	sessionSrv          *sessionserver.Server
+	storageCounter      storagequota.Counter
 	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
 	// (live artifact_store bytes plus outstanding checkpoint reservations)
 	// buildRedisAndQuota composes once and every storage-counter consumer
@@ -338,28 +347,36 @@ type gatewayWiringFields struct {
 	uploadTracker             *uploadtoken.MemoryTracker
 	wd                        *watchdog.Watchdog
 	billingTier               *redisstream.Tier
-	connectorStateStore       *connectoroauth.MemoryStateStore
-	deadlockManager           *deadlock.Manager
-	dsMonitor                 *dualstore.Monitor
-	pools                     poolstore.Store
-	treeArchive               treearchive.Store
-	userPodTerminateProp      *podterminateprop.Propagator
-	blobsCataloged            *cataloging.Store
-	quotaBudgetTracker        *quotabudget.Tracker
-	quotaCheckpointSvc        *quotacheckpoint.Service
-	quotaFailOpenAccum        *quotafailopen.Accumulator
-	sessionUsage              sessionusage.Store
-	treeBudgetConcrete        *treebudget.Reserver
-	artifactCatalog           artifactcatalog.Store
-	blobs                     blobstore.Store
-	credRenewalWorker         *credrenewal.Worker
-	credentialPools           credentialpoolstore.Store
-	evals                     evalstore.Store
-	immediateGCSweep          func(ctx context.Context, tenantID string)
-	partialManifests          partialmanifeststore.Store
-	securityBus               *pubsub.Bus
-	memories                  memorystore.Store
-	memoryBackendLabel        string
+	// billingStream is the billing pipeline's Tier 1 stream (the Redis
+	// stream, or the in-process MemStream without Redis), which the §12.8
+	// tenant-deletion billing_buffer entry purges.
+	billingStream        failover.StreamTier
+	connectorStateStore  *connectoroauth.MemoryStateStore
+	deadlockManager      *deadlock.Manager
+	dsMonitor            *dualstore.Monitor
+	pools                poolstore.Store
+	treeArchive          treearchive.Store
+	userPodTerminateProp *podterminateprop.Propagator
+	blobsCataloged       *cataloging.Store
+	quotaBudgetTracker   *quotabudget.Tracker
+	quotaCheckpointSvc   *quotacheckpoint.Service
+	quotaFailOpenAccum   *quotafailopen.Accumulator
+	sessionUsage         sessionusage.Store
+	treeBudgetConcrete   *treebudget.Reserver
+	artifactCatalog      artifactcatalog.Store
+	blobs                blobstore.Store
+	credRenewalWorker    *credrenewal.Worker
+	credentialPools      credentialpoolstore.Store
+	evals                evalstore.Store
+	immediateGCSweep     func(ctx context.Context, tenantID string)
+	partialManifests     partialmanifeststore.Store
+	// checkpointRetention is the §12.5 checkpoint retention catalog
+	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
+	// erases the tenant's rows through it.
+	checkpointRetention checkpointretention.Store
+	securityBus         *pubsub.Bus
+	memories            memorystore.Store
+	memoryBackendLabel  string
 
 	// tokenServiceConn is the §4.3 token-service gRPC connection. buildStores
 	// dials it; runGateway closes it on exit (the original deferred close is
@@ -428,4 +445,20 @@ type gatewayWiringFields struct {
 	uploadIssuer       *uploadtoken.Issuer
 	uploadVerifier     *uploadtoken.Verifier
 	users              userstore.Store
+	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
+	// builds for the posture: the Postgres store over the primary pool, or
+	// erasurejob.Memory writing the flag through the branch's user store.
+	// The admin router, the erasure runner, and the sampler read it.
+	erasureJobs erasurejob.Store
+	// erasureRunner and erasureSampler are the §12.8 erasure executor and
+	// SLA sampler the admin router builds. startLeaderElectedSweeps
+	// registers both on the gateway-leader gate, so only the leader runs
+	// them. Nil when no erasure surface is built.
+	erasureRunner  *erasurejob.Runner
+	erasureSampler *erasurejob.Sampler
+	// tenantDeletion is the §12.8 tenant-deletion runner the admin router
+	// builds when a receipt sink is wired. startLeaderElectedSweeps sets its
+	// elector to the gateway-leader elector and launches it. Nil when no
+	// receipt sink is wired.
+	tenantDeletion *tenantDeletionRunner
 }

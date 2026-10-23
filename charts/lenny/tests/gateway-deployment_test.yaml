@@ -67,6 +67,7 @@ tests:
       value: Deployment
     set:
       tenancy.mode: multi
+      auth.multiTenant: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
@@ -81,6 +82,62 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --tenancy-mode=single
+  # spec: §10.2 (`tenant_id` extraction) — the chart
+  # renders the auth.multiTenant switch as the gateway's --multi-tenant
+  # flag, so a multi-tenant install runs the registry-checking branch
+  # that refuses an unregistered tenant with 403 TENANT_NOT_FOUND, and a
+  # single-tenant install ignores the claim. T-10.2.11.
+  - it: renders --multi-tenant=true under auth.multiTenant true and tenancy.mode multi
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      tenancy.mode: multi
+      auth.multiTenant: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --multi-tenant=true
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --multi-tenant=false
+  - it: renders --multi-tenant=false at the single-tenant chart defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --multi-tenant=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenancy-mode=single
+  # spec: §10.2, §4.9 — a pair of tenancy values that disagree fails
+  # the render closed in both directions. T-10.2.11.
+  - it: refuses tenancy.mode multi without auth.multiTenant
+    set:
+      tenancy.mode: multi
+    asserts:
+      - failedTemplate:
+          errorMessage: "§10.2: auth.multiTenant=false contradicts tenancy.mode=multi; set auth.multiTenant: true with tenancy.mode: multi, or auth.multiTenant: false with tenancy.mode: single."
+  - it: refuses auth.multiTenant true under tenancy.mode single
+    set:
+      auth.multiTenant: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "§10.2: auth.multiTenant=true contradicts tenancy.mode=single; set auth.multiTenant: true with tenancy.mode: multi, or auth.multiTenant: false with tenancy.mode: single."
+  - it: refuses a tenancy.mode other than single or multi
+    set:
+      tenancy.mode: dev
+    asserts:
+      - failedTemplate:
+          errorMessage: "§4.9: tenancy.mode=dev must be single or multi."
+  - it: refuses a non-boolean auth.multiTenant
+    set:
+      auth.multiTenant: "true"
+    asserts:
+      - failedTemplate:
+          errorMessage: "§10.2: auth.multiTenant=true must be a boolean."
   # spec: §17.6 / F-17.6.7 — the noEnvironmentPolicy platform
   # default is the spec-canonical global.* key; an operator override
   # under global flows through to the gateway flag (it was previously
@@ -1074,6 +1131,7 @@ tests:
             @.name != "LENNY_CLAIM_HOLD_TTL_SECONDS" &&
             @.name != "LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS" &&
             @.name != "LENNY_CREDENTIAL_POOL_LOW_THRESHOLD" &&
+            @.name != "LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS" &&
             @.name != "LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS" &&
             @.name != "LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS" &&
             @.name != "LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT" &&
@@ -1160,6 +1218,7 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CLAIM_HOLD_TTL_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS}, any: true, count: 1}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT}, any: true, count: 1}
@@ -3094,6 +3153,59 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-jitter-fraction=0.2
+
+  # spec: §6.2 (Pod State Machine), §7.2 (Message delivery routing — seven
+  # paths, path 6) — the suspension bounds render as gateway flags with
+  # their defaults: the interrupt pod hold (900s), the suspended-session
+  # lifetime (604800s), and the backlog re-check interval (300s).
+  - it: renders the suspension bound flags with their defaults
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-pod-hold-seconds=900
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-session-seconds=604800
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --suspended-backlog-recheck-seconds=300
+
+  # spec: §6.2 (Pod State Machine) — operators override the suspension
+  # bounds via Helm; the rendered flags match the values.
+  - it: honors the suspension bound overrides
+    set:
+      gateway.maxSuspendedPodHoldSeconds: 600
+      gateway.maxSuspendedSessionSeconds: 86400
+      gateway.suspendedBacklogRecheckSeconds: 60
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-pod-hold-seconds=600
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-suspended-session-seconds=86400
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --suspended-backlog-recheck-seconds=60
+
+  # spec: §8.3 (Delegation Policy and Lease) — the delegation budget key
+  # TTL renders as LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS (default 691200).
+  - it: renders the delegation budget key TTL
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS
+            value: "691200"
 
   # spec: §4.4 — operators may override the periodic checkpoint
   # cadence via Helm; the rendered flag matches the value.

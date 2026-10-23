@@ -113,8 +113,10 @@ t.section("B2. Validate dispatches six lenses plus one consolidator");
   );
 }
 {
+  // Every agent dying in a row is also what trips the dead-agent breaker (see
+  // B41), so the threshold is raised here to pin the per-stage status.
   const { result, calls } = await runWorkflow(
-    WF, NEW_ARGS,
+    WF, { ...NEW_ARGS, maxConsecutiveDeadAgents: 100 },
     newStubs({ "validate:": null, "validate:consolidate": null }),
   );
   t.check("every lens failing is reported, not papered over", result.status === "interrupted", result.status);
@@ -2249,7 +2251,12 @@ t.section("B26b. a round that ends the loop still closes, and a stopped run does
   }
   // Every reviewer dying ends the loop the same way, and that round wrote log
   // shards and owes the next launch a snapshot exactly as any other does.
-  const dead = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" }, "*:review:*": null }));
+  // The threshold is raised so the dead-agent breaker (B41) does not end the
+  // run before the round closes; the breaker has its own section.
+  const dead = await runWorkflow(
+    WF, { ...REVIEW_ARGS, maxConsecutiveDeadAgents: 100 },
+    loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" }, "*:review:*": null }),
+  );
   t.check(
     "a round whose reviewers all died closes too",
     matching(dead.calls, "r1:round-boundary").length === 1,
@@ -2312,6 +2319,7 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
     {
       ...REVIEW_ARGS, ...ACTING, introspectEvery: 99, maxSpecReviewRounds: 2,
       maxNonSpecReviewRounds: 2, allowNonSpecOnUnconvergedSpec: true,
+      selfInflictedWindow: 99, // fixture findings are all "this-run"; only churn may wake a pass
     },
     introStubs({
       "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
@@ -6284,7 +6292,7 @@ t.section("B40. the draft stage keeps the design simple, and the writer writes o
   t.check("and keeps the never-cut list", writer && /NEVER CUT, however lean the text/.test(writer.prompt));
 }
 
-t.section("B41. the fix phase reads the tree, and a redesign is stated whole and reviewed by every lens");
+t.section("B41a. the fix phase reads the tree, and a redesign is stated whole and reviewed by every lens");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
     "*:expand:*": sites([SITE_P]),
@@ -6319,6 +6327,152 @@ t.section("B41. the fix phase reads the tree, and a redesign is stated whole and
     run.logs.some((l) => /^Reinstating .* in the non-spec loop, whose lenses have not read the redesign/.test(l)));
   const off = await runWorkflow(WF, { ...ARGS, redesignFullSweep: false }, loopStubs(RD));
   t.check("and redesignFullSweep false keeps the retired set", !off.logs.some((l) => /^Reinstating/.test(l)));
+}
+
+t.section("B41. consecutive dead agents stop the run as stopped-dead-agents, uncommitted and resumable");
+{
+  // An account usage limit makes every agent return null. Before the breaker,
+  // a run retried each call, recorded the dead agent, and went on to the next
+  // round, firing, recheck, and state save until the 1000-agent cap ended it.
+  // `gate` keeps a stub table's answers but kills every call `isDead` names, so
+  // a scenario can be live up to a point and dead after it.
+  const gate = (table, isDead) =>
+    Object.fromEntries(
+      Object.entries(table).map(([k, v]) => [k, (call) => (isDead(call) ? null : typeof v === "function" ? v(call) : v)]),
+    );
+  const commits = (calls) => calls.filter((c) => /git commit/.test(c.prompt.replace(/Do not commit[^.]*\./g, "")));
+
+  // Every agent dead from the first call.
+  const all = await runWorkflow(WF, REVIEW_ARGS, () => null);
+  t.check("an all-dead run returns rather than throwing", !all.error, all.error && all.error.message);
+  t.check("with status stopped-dead-agents", all.result && all.result.status === "stopped-dead-agents", all.result && all.result.status);
+  t.check("after exactly the threshold of dead calls", all.calls.length === 8, String(all.calls.length));
+  t.check("the stop names its count, threshold, last agent, and source",
+    all.result.deadAgentStop.consecutive === 8 && all.result.deadAgentStop.threshold === 8 &&
+      all.result.deadAgentStop.lastLabel === "conventions" && all.result.deadAgentStop.source === "change-proposal",
+    JSON.stringify(all.result.deadAgentStop));
+  t.check("no decisions firing runs, so nothing is committed", never(all.calls, "workflow:") && commits(all.calls).length === 0);
+  t.check("and the result says so", all.result.committed === false && all.result.stateSaved === false);
+  t.check("no loop is certified", all.result.review.converged === false);
+  t.check("the stop is logged with what to do", all.logs.some((l) => /DEAD-AGENT STOP: 8 consecutive/.test(l) && /re-login or wait/.test(l)));
+  t.check("the resume hint names the run tag", all.result.resume.runTag === "0081_fix_x", all.result.resume.runTag);
+  t.check("and both resume routes",
+    /resumeFromRunId/.test(all.result.resume.resumeFromRunId) && /resumeState: true/.test(all.result.resume.resumeState) &&
+      /runTag "0081_fix_x"/.test(all.result.resume.resumeState));
+  t.check("and no completed round, because none ran", all.result.resume.lastCompleted === null);
+
+  // The threshold is the caller's.
+  const three = await runWorkflow(WF, { ...REVIEW_ARGS, maxConsecutiveDeadAgents: 3 }, () => null);
+  t.check("maxConsecutiveDeadAgents sets the threshold",
+    three.result.status === "stopped-dead-agents" && three.calls.length === 3, String(three.calls.length));
+
+  // New mode: the breaker trips inside Validate's parallel fan-out, which
+  // absorbs the throw, and the run still reports the stop rather than
+  // `interrupted`.
+  const fresh = await runWorkflow(WF, NEW_ARGS, () => null);
+  t.check("a new-mode run stops the same way", fresh.result && fresh.result.status === "stopped-dead-agents",
+    fresh.result && fresh.result.status);
+  t.check("before any design stance runs", never(fresh.calls, "draft:") && never(fresh.calls, "write"));
+  t.check("with only the in-flight validation lenses past the threshold", fresh.calls.length <= 8 + 6, String(fresh.calls.length));
+
+  // A thrown agent call is a dead attempt as well.
+  const thrown = await runWorkflow(WF, REVIEW_ARGS, () => {
+    throw new Error("the subagent finished without calling StructuredOutput");
+  });
+  t.check("throwing agents trip the breaker too", thrown.result && thrown.result.status === "stopped-dead-agents" && thrown.calls.length === 8,
+    thrown.result && thrown.result.status + "/" + thrown.calls.length);
+}
+{
+  // Seven dead calls, one live, repeating: one short of the threshold every
+  // time, so every live answer resets the count and the run goes on to its end.
+  const gate = (table, isDead) =>
+    Object.fromEntries(
+      Object.entries(table).map(([k, v]) => [k, (call) => (isDead(call) ? null : typeof v === "function" ? v(call) : v)]),
+    );
+  let n = 0;
+  const mixed = await runWorkflow(
+    WF, { ...REVIEW_ARGS, maxSpecReviewRounds: 1, maxNonSpecReviewRounds: 1 },
+    gate(loopStubs(), () => ++n % 8 !== 0),
+  );
+  t.check("fewer consecutive deaths than the threshold do not stop the run",
+    !mixed.error && mixed.result && mixed.result.status !== "stopped-dead-agents",
+    mixed.error ? mixed.error.message : mixed.result && mixed.result.status);
+  t.check("although far more than the threshold died in total", n > 8 * 4, String(n));
+  t.check("and the run reaches its decisions firings", !never(mixed.calls, "workflow:"));
+}
+{
+  // Live through round 1 of the spec loop, dead from its boundary on. The
+  // resume hint names the round whose boundary wrote the loop's resume state.
+  const gate = (table, isDead) =>
+    Object.fromEntries(
+      Object.entries(table).map(([k, v]) => [k, (call) => (isDead(call) ? null : typeof v === "function" ? v(call) : v)]),
+    );
+  let closed = false;
+  const stubs = gate(loopStubs(seedRound1()), (call) => {
+    const dead = closed;
+    if (call.label === "r1:round-boundary") closed = true;
+    return dead;
+  });
+  const mid = await runWorkflow(WF, REVIEW_ARGS, stubs);
+  t.check("a run that dies mid-loop stops", mid.result && mid.result.status === "stopped-dead-agents", mid.result && mid.result.status);
+  t.check("naming the last completed loop and round",
+    JSON.stringify(mid.result.resume.lastCompleted) === JSON.stringify({ loop: "spec", round: 1 }),
+    JSON.stringify(mid.result.resume.lastCompleted));
+  t.check("and where it stopped", mid.result.deadAgentStop.at && mid.result.deadAgentStop.at.loop === "spec",
+    JSON.stringify(mid.result.deadAgentStop.at));
+  t.check("in the hint's prose as well", /spec round 1/.test(mid.result.resume.resumeState), mid.result.resume.resumeState);
+  const after = mid.calls.length - 1 - firstIndex(mid.calls, "r1:round-boundary");
+  t.check("it stops after exactly the threshold of dead calls past the live boundary", after === 8, String(after));
+  t.check("so no later round starts", never(mid.calls, "r3:"));
+  t.check("no firing runs and no status is written",
+    never(mid.calls, "workflow:") && never(mid.calls, "status:") && never(mid.calls, "verify-checklist"));
+  t.check("and the loop is not certified", mid.result.review.converged === false && mid.result.review.loopsFinished.length === 0);
+}
+{
+  // The decisions subworkflow is a separate script, so it cannot throw the
+  // parent's stop. It returns a marker, and the parent honours it.
+  const child = {
+    status: "stopped-dead-agents",
+    firing: 1,
+    trigger: "post-spec-loop",
+    deadAgentStop: { consecutive: 8, threshold: 8, lastLabel: "f1:commit" },
+    deadAgentStreak: 8,
+    deadAgents: ["f1:commit"],
+  };
+  const run = await runWorkflow(WF, REVIEW_ARGS, loopStubs(), {
+    subworkflows: { "change-proposal-decisions.js": child },
+  });
+  const at = firstIndex(run.calls, "workflow:");
+  t.check("the child's dead-agent marker stops the parent", run.result && run.result.status === "stopped-dead-agents",
+    run.result && run.result.status);
+  t.check("as the child's stop", run.result.deadAgentStop.source === "change-proposal-decisions" &&
+    run.result.deadAgentStop.lastLabel === "f1:commit" && run.result.deadAgentStop.firing === 1 &&
+    run.result.deadAgentStop.trigger === "post-spec-loop", JSON.stringify(run.result.deadAgentStop));
+  t.check("after one firing", matching(run.calls, "workflow:").length === 1);
+  t.check("with no agent after it", at >= 0 && run.calls.length === at + 1, labels(run.calls.slice(at)).join(","));
+  t.check("so the non-spec loop, the status, and the checklist pass never run",
+    never(run.calls, "status:") && never(run.calls, "verify-checklist") && never(run.calls.slice(at), "r1:"));
+}
+{
+  // A firing that finishes hands its count back, so a run of dead agents that
+  // spans the seam is one run: seven dead in the child and one more after it
+  // is the eighth. The first agent after a firing is its state save, which is
+  // awaited in line so that a resumed run invokes its agents in the same order.
+  const carried = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "save-state:*": null, "hash:firing:after:1": null }), {
+    subworkflows: { "change-proposal-decisions.js": { status: "done", phaseState: {}, deadAgentStreak: 7 } },
+  });
+  t.check("the count the child returns continues in the parent",
+    carried.result && carried.result.status === "stopped-dead-agents" &&
+      matching(carried.calls, "save-state:decisions:0").length === 1 &&
+      never(carried.calls, "hash:firing:after:1"),
+    (carried.result && carried.result.status) + "/" + matching(carried.calls, "save-state:decisions:0").length);
+  const reset = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:firing:after:1": null }), {
+    subworkflows: { "change-proposal-decisions.js": { status: "done", phaseState: {}, deadAgentStreak: 0 } },
+  });
+  t.check("and a child that ended live leaves the parent's retries intact",
+    reset.result && reset.result.status !== "stopped-dead-agents" &&
+      matching(reset.calls, "hash:firing:after:1").length === 4,
+    (reset.result && reset.result.status) + "/" + matching(reset.calls, "hash:firing:after:1").length);
 }
 
 t.done();

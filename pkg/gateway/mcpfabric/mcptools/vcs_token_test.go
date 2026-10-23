@@ -41,9 +41,10 @@ func vcsTokenServer(t *testing.T, r vcscred.Resolver, a mcptools.VCSLeaseAuditor
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		TenantID:        "fallback",
-		VCSCreds:        r,
-		VCSLeaseAuditor: a,
+		DevTenantFallback: true,
+		TenantID:          "fallback",
+		VCSCreds:          r,
+		VCSLeaseAuditor:   a,
 	})
 	return srv
 }
@@ -211,7 +212,7 @@ func TestVCSTokenNoUsableCredentialIsConfigError_spec_26_2_119(t *testing.T) {
 // F-26.2.5.
 func TestVCSTokenNotRegisteredWithoutResolver_spec_26_2_119(t *testing.T) {
 	srv := mcp.NewServer()
-	mcptools.Register(srv, mcptools.Deps{TenantID: "fallback"})
+	mcptools.Register(srv, mcptools.Deps{DevTenantFallback: true, TenantID: "fallback"})
 	if _, ok, _ := srv.DispatchTool(context.Background(), "lenny/vcs_token", json.RawMessage(`{"host":"github.com"}`)); ok {
 		t.Fatal("lenny/vcs_token registered without a VCSCreds resolver")
 	}

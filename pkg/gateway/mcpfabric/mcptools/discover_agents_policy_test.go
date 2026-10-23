@@ -58,15 +58,16 @@ func policyFilterHarness(t *testing.T, parentRuntimeRef string) (*mcp.Server, ru
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Delegation:   svc,
-		Environments: envs,
-		Tenants:      tenants,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Delegation:        svc,
+		Environments:      envs,
+		Tenants:           tenants,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, runtimes, policies
 }

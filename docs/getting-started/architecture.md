@@ -229,7 +229,7 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 | `SandboxTemplate` | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy |
 | `SandboxWarmPool` | Manages warm pod inventory with configurable `minWarm`/`maxWarm` |
 | `Sandbox` | Represents a managed agent pod. Status subresource carries the coarse occupancy phase, projected from the claim. |
-| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, or when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions. |
+| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions, or when a release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
 
 **Key responsibilities:**
 

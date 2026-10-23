@@ -506,7 +506,7 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 // SignalDeadline delivers the §11.3 pre-expiry warning to the
 // pod's runtime over the CH-RUNTIMEOPS. remainingMs is the wall-clock
 // left before the session's deadline; trigger names which deadline is
-// approaching ("session_age", "budget", or "idle"). The returned bool
+// approaching ("session_age" or "budget"). The returned bool
 // reports whether the adapter forwarded the warning (false when the
 // runtime has no CH-RUNTIMEOPS — Basic/Standard integration level,
 // §15). The call is one-way; the adapter does not wait for a
@@ -585,6 +585,40 @@ func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordi
 		CheckpointRef: resp.GetCheckpointRef(),
 		QuiescedMs:    resp.GetQuiescedMs(),
 	}, nil
+}
+
+// SealSession runs the §4.7.1 SealSession RPC: the adapter seals sessionID
+// against `message` delivery when it observed no activity for the session in
+// the last idleSeconds (§4.7.1 **Session seal.**). sealed reports whether the
+// session is sealed; when it is not, idleAge is the time since the session's
+// last activity, zero while a platform or connector call is in flight. The
+// request carries the caller's coordination generation, which the adapter
+// compares against the generation it last fenced for the session.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) SealSession(ctx context.Context, sessionID string, generation int64, idleSeconds int) (sealed bool, idleAge time.Duration, err error) {
+	resp, err := c.rpc.SealSession(ctx, &adapterv1.SealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+		IdleSeconds:            int64(idleSeconds),
+	})
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.GetSealed(), time.Duration(resp.GetIdleAgeSeconds()) * time.Second, nil
+}
+
+// UnsealSession runs the §4.7.1 UnsealSession RPC, lifting sessionID's seal
+// (§4.7.1 **Session seal.**). The request carries the caller's coordination
+// generation, which the adapter compares as it does for SealSession.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *Client) UnsealSession(ctx context.Context, sessionID string, generation int64) error {
+	_, err := c.rpc.UnsealSession(ctx, &adapterv1.UnsealSessionRequest{
+		SessionId:              &adapterv1.SessionId{Value: sessionID},
+		CoordinationGeneration: generation,
+	})
+	return err
 }
 
 // ExportSpec is one §8.7 fileExport entry passed to the adapter's
@@ -912,8 +946,8 @@ func (a *AttachStream) CloseSend() error {
 // Shutdown tears the named session down: the adapter ends the session's
 // use of the pod's runtime process, which stays alive for the pod's life,
 // removes its per-slot tree, and releases the slot it held. reason is an
-// opaque cause string surfaced to the adapter — the §11.4 full_revoke
-// fan-out passes `USER_REVOKED` — and deadline bounds the graceful phase.
+// opaque cause string surfaced to the adapter, and deadline bounds the
+// graceful phase.
 // A zero deadline lets the adapter apply its default grace period. The
 // returned bool reports whether the session's close and slot teardown
 // completed cleanly.
@@ -921,7 +955,11 @@ func (a *AttachStream) CloseSend() error {
 // The request is addressed by the session identifier alone, which under
 // §5.2 also names the slot that session holds, and the handler is
 // idempotent: a request naming a session the adapter has already released
-// is a no-op reporting a clean exit.
+// is a no-op that answers absent. That answer reports a clean exit except
+// while another Shutdown's teardown of the session is in flight, or after
+// the last Shutdown that removed the session's entry reported an unclean
+// exit; in both cases the session's runtime may still run, so the answer
+// reports an unclean exit (§4.7.1 rule 11).
 //
 // spec: §4.7 (Shutdown row); §4.7.10 (runtime process lifetime); §5.2;
 // §11.4.
@@ -1020,8 +1058,8 @@ type RecycleScrub struct {
 // before this call bounds it. The returned bool reports whether the ending
 // session's runtime exited cleanly.
 //
-// The plain Shutdown helper leaves the recycle sub-message nil (the
-// terminate path, on which the pod is replaced).
+// The plain Shutdown helper leaves the recycle sub-message nil, and the
+// claim effect of that release is the one §4.6.3 assigns.
 //
 // spec: §4.7 Shutdown recycle disposition; §5.2 whole-pod scrub trigger.
 func (c *Client) ShutdownRecycle(ctx context.Context, sessionID string, rc RecycleScrub) (bool, error) {

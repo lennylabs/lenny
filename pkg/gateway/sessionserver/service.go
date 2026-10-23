@@ -68,8 +68,10 @@ func (s *Server) serviceMux() http.Handler {
 // code/category/HTTP-status/retryable the REST surface would have
 // written. The caller's authenticated principal rides on ctx exactly as
 // it does on a real request (the §10.2 permission gate runs and admits a
-// roleless dev principal); tenantID is stamped on the synthetic request's
-// X-Lenny-Tenant-ID header for the principal-less transport.
+// roleless dev principal); tenantID is recorded on the synthetic request's
+// context as its service tenant, which resolveTenant consults after the
+// principal. A client-sent X-Lenny-Tenant-ID header plays no part here.
+// spec: §10.2 (Authentication). F-10.2.21.
 //
 // target is the full request target including any query string (for
 // example "/v1/sessions/abc/start" or "/v1/sessions?state=running").
@@ -89,12 +91,9 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 	} else {
 		reader = bytes.NewReader(nil)
 	}
-	req := httptest.NewRequest(method, target, reader).WithContext(ctx)
+	req := httptest.NewRequest(method, target, reader).WithContext(contextWithServiceTenant(ctx, tenantID))
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
-	}
-	if tenantID != "" {
-		req.Header.Set("X-Lenny-Tenant-ID", tenantID)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -144,10 +143,11 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 // surfaces cannot drift in validation order, error codes, or response
 // shaping. The caller's authenticated principal and explicit-environment
 // binding ride on ctx exactly as they do on a real request; tenantID is
-// stamped on the synthetic request's X-Lenny-Tenant-ID header so a caller
-// with no principal (the dev-headers / minimal transport) still scopes the
-// row to the resolved tenant (resolveTenant prefers a principal when one is
-// present, so this header is inert under an authenticated principal).
+// recorded on the synthetic request's context as its service tenant, so a
+// caller with no principal still scopes the row to the tenant it resolved
+// (resolveTenant prefers a principal when one is present, so the service
+// tenant is inert under an authenticated principal). A call with neither
+// is refused with UNAUTHORIZED. spec: §10.2. F-10.2.21.
 //
 // spec: §15.2.1 rule 1; §15.1 session-creation flow. F-15.2.4.
 func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
@@ -160,13 +160,10 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 			Message:    "create request is not serialisable: " + err.Error(),
 		}
 	}
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body)).WithContext(ctx)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		httpReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
-	}
 	rec := httptest.NewRecorder()
-	s.handleCreate(rec, httpReq)
+	s.guardTenant(s.handleCreate)(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse
@@ -222,9 +219,10 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 // response header rather than in the body, and it is zero when absent (the
 // §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim rejection sets no header). The
 // caller's authenticated principal rides on ctx as it does on a real
-// request; tenantID is stamped on the synthetic request's X-Lenny-Tenant-ID
-// header so a principal-less transport still scopes the row to the resolved
-// tenant.
+// request; tenantID is recorded on the synthetic request's context as its
+// service tenant, so a principal-less caller still scopes the row to the
+// tenant it resolved, and a call with neither is refused with
+// UNAUTHORIZED. spec: §10.2. F-10.2.21.
 //
 // spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
@@ -237,13 +235,10 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 			Message:    "create request is not serialisable: " + err.Error(),
 		}
 	}
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body)).WithContext(ctx)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		httpReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
-	}
 	rec := httptest.NewRecorder()
-	s.handleCreateAndStart(rec, httpReq)
+	s.guardTenant(s.handleCreateAndStart)(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse

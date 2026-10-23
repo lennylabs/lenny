@@ -17,6 +17,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint"
@@ -199,9 +202,10 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// days for session logs, 7 days for stream cursors). Only wired when
 		// a durable Postgres pool exists; the in-memory dev gateway has no
 		// partitioned EventStore tables. audit_log stays on the DELETE-based
-		// pruner above (native partitioning of audit_log conflicts with the
-		// §12.8 audit_redaction_receipts FK onto audit_log.id; see
-		// BUILD-GAPS F-16.4.6).
+		// pruner above. audit_redaction_receipts carries no foreign key onto
+		// audit_log.id (§12.8 RedactionReceipt schema), so a receipt never
+		// blocks deleting or dropping the audit rows it names; native
+		// partitioning of audit_log is tracked in BUILD-GAPS F-16.4.6.
 		if w.pgPool != nil {
 			partMaint := partitionmaint.New(
 				partitionmaint.NewPGDriver(w.pgPool),
@@ -457,12 +461,49 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		})
 	}
 
+	// ----- §12.8 user-erasure executor and SLA sampler -----
+	// The runner's Poll and the sampler run only on the leader, so one
+	// replica executes erasure jobs and publishes the per-job SLA series.
+	// spec: §12.5, §12.8 (Erasure job phase field (crash recovery)).
+	if w.erasureRunner != nil {
+		addErasureSweep(leaderGate, w.erasureRunner, w.erasureSampler, *f.tenantDeletionInterval)
+	}
+	// ----- §12.8 tenant-deletion runner -----
+	// The runner polls this elector each tick rather than registering on
+	// the gate: a lease loss cancels the leader context, which would fail
+	// the replica's in-memory deletion job mid-phase.
+	if w.tenantDeletion != nil {
+		w.tenantDeletion.elector = leaderElector
+		go w.tenantDeletion.Start(w.watchdogCtx)
+	}
+
+	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+	w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+
 	// spec: §12.5 — drive the lenny-gateway-leader election
 	// and run every registered gateway-singleton sweep only while this
 	// replica holds the lease (or always, under the AlwaysLeader fallback).
 	// Started after every leaderGate.Add above so the full set is gated.
 	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len())
 	go leaderGate.Run(w.watchdogCtx)
+}
+
+// erasureSamplerInterval is the cadence of the erasure-SLA sampler.
+const erasureSamplerInterval = 30 * time.Second
+
+// addErasureSweep registers the erasure runner's Poll and the erasure
+// sampler on the gateway-leader gate, so only the leader executes erasure
+// jobs and publishes the per-job SLA series. A lease loss ends both: the
+// runs stop at their next store call, and the sampler clears every series
+// it published. interval is the runner's poll cadence.
+//
+// spec: §12.5 (lenny-gateway-leader gate), §12.8 (Erasure job phase field
+// (crash recovery)), §12.8 (Erasure SLA enforcement).
+func addErasureSweep(gate *gatewayleader.Gate, runner *erasurejob.Runner, sampler *erasurejob.Sampler, interval time.Duration) {
+	gate.Add("erasure-job-sweep", func(ctx context.Context) { runner.Poll(ctx, interval) })
+	if sampler != nil {
+		gate.Add("erasure-job-sampler", func(ctx context.Context) { sampler.Run(ctx, erasureSamplerInterval) })
+	}
 }
 
 // hardPrunePartialManifests runs the §12.5 ll. 341 tombstone hard-prune
@@ -523,4 +564,58 @@ func reclaimAbandonedManifests(ctx context.Context, release checkpointer.Backsto
 		reclaimed++
 	}
 	return reclaimed, nil
+}
+
+// addSuspendedBacklogRecheck registers the backlog re-check of podless
+// suspended sessions on the gateway-leader gate. It registers only when a pod
+// binder, the messaging coordinator, and a session store that lists podless
+// suspended rows are all wired: without a binder no suspension releases a
+// pod, and without the coordinator no message is held.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §12.5
+// (Artifact Store)
+func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run func(context.Context))) {
+	if w.podBinder == nil || w.messagingCoord == nil || w.sessionSrv == nil {
+		return
+	}
+	lister, ok := w.sessions.(sessionserver.PodlessSuspendedLister)
+	if !ok {
+		return
+	}
+	tenants := tenantsLister{w.tenants}
+	rechecker := &sessionserver.BacklogRechecker{
+		Server:   w.sessionSrv,
+		Lister:   lister,
+		Tenants:  tenants.ListTenants,
+		Interval: time.Duration(*w.f.suspendedBacklogRecheckSeconds) * time.Second,
+	}
+	add("suspended-backlog-recheck", rechecker.Run)
+}
+
+// addStaleSlotReaper registers the stale-slot reaper on the gateway-leader
+// gate. It registers only when the pod binder, the slot counter, and the
+// session store are wired: without the counter there is no slot set to
+// reap, and the binder is the releaser that tears a stale slot down before
+// its member is removed.
+// spec: §5.2 (Slot assignment atomicity), §12.5 (Artifact Store)
+func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(context.Context))) {
+	if w.podBinder == nil || w.slotCounter == nil || w.sessions == nil {
+		return
+	}
+	f := w.f
+	reaper, err := slotreaper.New(slotreaper.Config{
+		Pods:        w.sessions,
+		Members:     w.slotCounter,
+		Sessions:    w.sessions,
+		Releaser:    w.podBinder,
+		Rate:        *f.slotReaperRate,
+		Interval:    *f.slotReaperInterval,
+		TerminalAge: *f.slotReaperTerminalAge,
+		Now:         clockinject.Now,
+	})
+	if err != nil {
+		log.Fatalf("lenny-gateway: §5.2 stale-slot reaper: %v", err)
+	}
+	log.Printf("lenny-gateway: §5.2 stale-slot reaper cadence %s, rate %d/s, terminal age %s",
+		*f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
+	add("stale-slot-reaper", reaper.Run)
 }

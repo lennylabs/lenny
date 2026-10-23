@@ -150,7 +150,7 @@ func registerRateLimitFlags(f *controllerFlags) {
 	flag.StringVar(&f.postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	flag.StringVar(&f.agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
-		"comma-separated agent namespaces. When set, the §13.2 NET-022 cluster-CIDR drift detector audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes. When empty, drift detection is disabled.")
+		"comma-separated agent namespaces. With --postgres-dsn, the leader runs the §4.6.1 orphaned-SandboxClaim GarbageCollect loop and the agent_pod_state mirror reconciler over these namespaces; without this flag neither runs. The §13.2 NET-022 cluster-CIDR drift detector also audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes.")
 	flag.StringVar(&f.redisURL, "redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis connection URL for the §25.5 operational event stream. When set, controller-emitted pool_state_changed events land on ops:events:stream alongside the gateway-emitted events. When empty, events stay in the controller-local in-memory buffer.")
 	flag.StringVar(&f.redisPassword, "redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
@@ -174,8 +174,8 @@ func registerLifecycleFlags(f *controllerFlags) {
 		"§4.6.1 cold-start fill grace period. The WarmPoolExhausted and WarmPoolLow alerts are suppressed for a pool during this window from pool creation, controller startup, or a minWarm 0→positive re-activation, to avoid false positives while the pool fills toward minWarm.")
 	flag.DurationVar(&f.statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
 		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
-	flag.DurationVar(&f.claimOrphanTimeout, "claim-orphan-timeout", 5*time.Minute,
-		"§4.6.1 SandboxClaim orphan timeout: a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup.")
+	flag.DurationVar(&f.claimOrphanTimeout, "claim-orphan-timeout", 15*time.Minute,
+		"§4.6.1 SandboxClaim orphan timeout (claimOrphanTimeout): a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup. The gateway's --slot-reaper-terminal-age must equal it, and it must be at least one second more than the largest of the gateway's --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and --workspace-seal-max-duration-seconds (§5.2). Default 15m.")
 	flag.DurationVar(&f.reservedHoldGrace, "reserved-hold-grace", 60*time.Second,
 		"§4.6.1 reserved-claim grace period: a reserved SandboxClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
 	flag.IntVar(&f.workqueueMaxDepth, "workqueue-max-depth", 500,

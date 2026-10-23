@@ -151,9 +151,9 @@ func grantDefaultTenantAccess(ctx context.Context, client *ctl.Client, out io.Wr
 // gateway's admin package.
 //
 // The seed carries no Pools entry. Under the §17.4 no-Postgres development
-// profile the PoolScalingController (registered only with a Postgres DSN
-// and a non-empty --agent-namespaces) never runs, so a seeded poolstore
-// pool row would never materialize into a SandboxWarmPool CRD. The
+// profile the PoolScalingController (the lenny-pool-scaling-controller
+// Deployment, rendered only with a Postgres DSN) never runs, so a seeded
+// poolstore pool row would never materialize into a SandboxWarmPool CRD. The
 // embedded bring-up instead applies the echo SandboxTemplate/SandboxWarmPool
 // pair directly through the dynamic-apply path (ApplyEchoPoolFromConfig), so
 // the unconditionally-registered WarmPoolController pre-warms the pod. spec:

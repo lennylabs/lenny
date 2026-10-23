@@ -5,6 +5,7 @@ package podsession
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -23,19 +24,29 @@ type CredentialAssigner interface {
 	// pod's SPIFFE identity for proxy-mode SPIFFE-binding; an empty value
 	// disables binding. tenantID is recorded on the lease so the §4.9
 	// LLM proxy can attribute proxy-extracted usage to the right tenant
-	// (spec: §4.9).
-	AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error)
+	// (spec: §4.9). generation is the request's coordination generation,
+	// recorded on the lease (spec: §7.3 (Credential leases on the
+	// replacement pod)).
+	AssignProto(poolName, sessionID, spiffeURI, tenantID string, generation int64) (*adapterv1.CredentialLease, error)
 	// ReleaseSession releases every §4.9 credential lease the session
-	// holds back to its pool. It is the §7.1 step 23 teardown the binder
-	// runs when a session's pod is released, so a completed session's
-	// pool slots are returned rather than leaking. A session with no
-	// leases is a no-op. spec: §7.1.
-	ReleaseSession(sessionID string)
+	// holds back to its pool. The binder calls it only to release a
+	// pre-running claim binding (ReclaimClaimed and the failed-phase
+	// reclaim), whose leases are the ones /finalize minted. A session
+	// with no leases is a no-op. A non-nil error reports a lease the
+	// authoritative store may still hold. spec: §7.1.
+	ReleaseSession(sessionID string) error
+	// ReleaseThrough releases each of the session's leases whose
+	// recorded generation is at or below generation. A pod release calls
+	// it with its binding's stamp. spec: §7.3 (Credential leases on the
+	// replacement pod), §10.1.5 (Stale Replica Behavior).
+	ReleaseThrough(sessionID string, generation int64) error
 	// Release releases the one §4.9 credential lease leaseID names back to
 	// its pool. A failed bind attempt calls it for each lease it minted, so
 	// the release never reaches a lease a successor attempt for the same
-	// session minted. An unknown lease is a no-op. spec: §7.1, §4.9.
-	Release(leaseID string)
+	// session minted. An unknown lease is a no-op. A non-nil error
+	// reports a lease the authoritative store may still hold.
+	// spec: §7.1, §4.9.
+	Release(leaseID string) error
 }
 
 // UserCredentialAssigner materializes a session's §4.9 user-source
@@ -50,7 +61,7 @@ type CredentialAssigner interface {
 //
 // spec: §4.9.
 type UserCredentialAssigner interface {
-	MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string) (*adapterv1.CredentialLease, error)
+	MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string, generation int64) (*adapterv1.CredentialLease, error)
 }
 
 // CredentialAssignmentError reports that a §4.9 credential lease
@@ -96,7 +107,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 	var minted []string
 	if hasPool {
 		for provider, pool := range req.CredentialPools {
-			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
+			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID, req.CoordinationGeneration)
 			if err != nil {
 				// The §4.9 pre-claim check (CredentialRouter) passed for this
 				// provider, yet the assignment failed — the race at §4.9. Surface a typed error so the caller can release the pod,
@@ -120,7 +131,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 		// lease store the pool path uses, so the pod sees a single
 		// AssignCredentials set and teardown releases both alike.
 		for _, provider := range req.UserCredentialProviders {
-			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
+			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider, req.CoordinationGeneration)
 			if err != nil {
 				return minted, &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
 			}
@@ -132,13 +143,46 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 	return minted, cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
-// releaseCredentials returns the session's §4.9 credential leases to
-// their pool at teardown (§7.1 step 23). It is a no-op when the binder
-// has no credential service, mirroring assignCredentials so a deployment
-// without credential pools tears down cleanly.
+// releaseCredentials returns every §4.9 credential lease of the session to
+// its pool. Its callers release a pre-running claim binding (ReclaimClaimed
+// and the failed-phase reclaim), whose only leases are the ones /finalize
+// minted. A pod release calls releasePodCredentials instead. It is a no-op
+// when the binder has no credential service, mirroring assignCredentials so
+// a deployment without credential pools tears down cleanly.
+//
+// A failed release is logged with the session and the cause. Teardown
+// continues, because the pod and the session's terminal state do not
+// depend on the Token Service, but the failure means a pool slot may
+// still be held, so it is never dropped silently.
+//
+// spec: §7.1 (Normal Flow, step 23).
 func (b *Binder) releaseCredentials(sessionID string) {
 	if b.Credentials == nil {
 		return
 	}
-	b.Credentials.ReleaseSession(sessionID)
+	if err := b.Credentials.ReleaseSession(sessionID); err != nil {
+		log.Printf("podsession: release credential leases for session %s: %v", sessionID, err)
+	}
+}
+
+// releasePodCredentials returns the §4.9 leases a published binding holds:
+// the leases its attempt minted (result.MintedLeaseIDs), by identifier, and
+// every lease of the session whose recorded coordination generation is at or
+// below the binding's stamp (result.CoordinationGeneration). A lease a later
+// incarnation minted at a higher generation is never returned, so a pod
+// release on a replica that lost the session leaves a peer restore's leases
+// in place. Only Release and ReleaseSlot call it. A failed release is logged
+// with the session and the cause, as releaseCredentials logs it.
+//
+// spec: §7.3 (Credential leases on the replacement pod), §10.1.5 (Stale
+// Replica Behavior).
+func (b *Binder) releasePodCredentials(result *BindResult) {
+	if b.Credentials == nil {
+		return
+	}
+	b.releaseAttemptCredentials(result.MintedLeaseIDs)
+	if err := b.Credentials.ReleaseThrough(result.SessionID, result.CoordinationGeneration); err != nil {
+		log.Printf("podsession: release credential leases through generation %d for session %s: %v",
+			result.CoordinationGeneration, result.SessionID, err)
+	}
 }

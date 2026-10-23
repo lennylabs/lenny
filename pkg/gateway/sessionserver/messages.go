@@ -87,8 +87,9 @@ type MessagePayload struct {
 	// `immediate`. Any other value is rejected with
 	// `400 INVALID_DELIVERY_VALUE`. The minimal gateway returns the
 	// response synchronously regardless of the flag; the
-	// interrupt-and-deliver / resume-and-deliver paths land with the
-	// §7.2 inbox + DLQ machinery (F-7.2.4).
+	// interrupt-and-deliver path lands with the §7.2 inbox + DLQ
+	// machinery (F-7.2.4). A message to a `suspended` session resumes
+	// it whatever this value (§7.2 path 6).
 	// spec: §15.4.
 	Delivery string `json:"delivery,omitempty"`
 
@@ -150,10 +151,11 @@ type MessageResponse struct {
 //   - the §7.2 inbox + DLQ persistence (F-7.2.4),
 //   - cross-replica coordinator routing.
 //
-// A `delivery: "immediate"` message to a `suspended`, pod-held session
-// takes the §7.2 path-6 atomic resume-and-deliver on the coordinating
-// replica (deliverMessageBatch): it resumes suspended → running and
-// delivers, failing closed to `queued` inbox buffering on failure.
+// A message to a `suspended` session takes §7.2 path 6
+// (deliverMessageBatch) whatever its `delivery` value: on the coordinating
+// replica a session that holds its pod resumes suspended → running and the
+// message is delivered, and every other case, including a failed resume,
+// holds the message in the session's DLQ with a `queued` receipt.
 //
 // Slot routing is internal: the client supplies no slot address, and the
 // session identifier the request already carries names the slot that

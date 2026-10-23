@@ -129,6 +129,9 @@ type SocketRuntimeProcess struct {
 	// hub is the installed connection's subscriber set, which its single
 	// reader broadcasts to. spec: §28.5.3.
 	hub *linefanout.Hub
+	// tap is the adapter's activity tap, recorded by TapOutput and set on
+	// each hub the transport creates. Guarded by mu. spec: §4.7.1.
+	tap func(line []byte)
 	// ended records that the runtime's connection has ended: the fan-out
 	// reader sets it when its scan ends, before it closes the subscribers,
 	// and CloseListener sets it before it closes the connection. It is
@@ -319,8 +322,26 @@ func (p *SocketRuntimeProcess) install(conn net.Conn, br *bufio.Reader) {
 	p.connected = true
 	// The connection gets its own subscriber set, which its reader acts on.
 	p.hub = linefanout.New()
+	if p.tap != nil {
+		// spec: §4.7.1 (Session seal) — a tapped connection's reader
+		// starts where the hub is created, so the tap reads every frame
+		// whether or not an Output subscriber or a Start comes first.
+		p.hub.Tap(p.tap)
+		p.startReaderLocked()
+	}
 	p.mu.Unlock()
 	close(p.connReady)
+}
+
+// TapOutput records fn as the activity tap of every connection the
+// transport installs. The connection's reader calls fn with each frame the
+// runtime writes, before the broadcast and whether or not a subscriber is
+// registered. Call it before the first Start.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
+func (p *SocketRuntimeProcess) TapOutput(fn func(line []byte)) {
+	p.mu.Lock()
+	p.tap = fn
+	p.mu.Unlock()
 }
 
 // endAccept records why the accept loop ended without a connection and

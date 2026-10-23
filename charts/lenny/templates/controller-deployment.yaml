@@ -71,6 +71,9 @@ spec:
                    agree on one port. F-16.9.2. */}}
             - --metrics-bind-address=:{{ .Values.controller.metricsPort }}
             - --health-probe-bind-address=:8081
+            # §4.6.1 claimOrphanTimeout. The gateway's --slot-reaper-terminal-age
+            # renders the same value (§5.2 Slot assignment atomicity).
+            - --claim-orphan-timeout={{ .Values.controller.claimOrphanTimeoutSeconds | default 900 }}s
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}
@@ -92,6 +95,19 @@ spec:
                    gateway platform tool surface. The gateway always serves
                    GatewayControl on gateway.grpcPort. F-9.1.1. */}}
             - --gateway-grpc-addr=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.grpcPort }}
+            {{- /* spec: §4.6.1 — the leader-elected orphaned-SandboxClaim
+                   GarbageCollect loop and the agent_pod_state mirror
+                   reconciler list the agent namespaces, and the binary
+                   registers both only when --agent-namespaces names at least
+                   one namespace and LENNY_POSTGRES_DSN is set. §13.2 — the
+                   NET-022 cluster-CIDR drift detector audits the agent
+                   namespaces' egress NetworkPolicies from the same list.
+                   Without this flag no chart install ran the GC (F-4.6.30).
+                   The flag is omitted when agentNamespaces is empty, because
+                   there is then no agent namespace to sweep. */}}
+            {{- with (include "lenny.agentNamespaceNames" .) }}
+            - --agent-namespaces={{ . }}
+            {{- end }}
             {{- if .Values.controller.egressCaptureImage }}
             - --egress-capture-image={{ .Values.controller.egressCaptureImage }}
             {{- end }}

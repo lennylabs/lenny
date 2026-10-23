@@ -53,7 +53,7 @@ var _ leasestore.LeaseStore = (*Store)(nil)
 // matches the Redis key form so the two stores lock the same logical
 // resource namespace.
 func leaseKey(tenantID, sessionID string) string {
-	return "t:" + tenantID + ":lease:session:" + sessionID
+	return leasestore.Key(tenantID, sessionID)
 }
 
 // advisoryLock takes the per-(tenant, session) transaction-level
@@ -182,15 +182,19 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (leasestore
 	return leasestore.Lease{TenantID: tenantID, SessionID: sessionID, Holder: holder, ExpiresAt: expires}, nil
 }
 
-// DeleteByUser satisfies the §12.1 mandatory-erasure primitive. Session
-// leases are coordination state keyed by session, not user data, and
-// every lease carries a TTL that self-expires, so there is nothing
-// user-scoped to erase here; the §12.8 step-1 lease release for the
-// user's sessions is driven per session by the erasure orchestrator. It
-// rejects empty arguments (§12.8) and otherwise returns
-// (0, nil), matching the Redis store's behavior.
+// DeleteByUser satisfies the §12.1 mandatory-erasure primitive and is the
+// user-erasure step-1 entry. It deletes nothing: session leases are
+// coordination state keyed by session, and deleting a lease a replica still
+// holds would void that holder's fence. The erasure job drains each of the
+// user's sessions through its terminal pipeline before any eraser runs, and
+// the terminal pipeline releases the session's coordination lease. A
+// residual lease expires within its own TTL, which is
+// sessionserver.DefaultCoordinationLeaseTTL at bind and four
+// --coordination-interval periods after a coordination Sweeper takeover. It
+// rejects empty arguments (§12.8) and otherwise returns (0, nil).
 //
-// spec: §12.1; §12.8 step 1.
+// spec: §12.1; §12.8 (Compliance Interfaces: DeleteByUser
+// dependency-ordered deletion sequence, step 1; Lifecycle fence and drain).
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, leasestore.ErrEmptyScope

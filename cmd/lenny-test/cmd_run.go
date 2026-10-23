@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,9 @@ func runRun(args []string) int {
 	tierFlag := fs.String("tier", "", "single tier")
 	maxTierFlag := fs.String("max-tier", "", "run all tiers up to and including this one")
 	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
-	sinceFlag := fs.String("since", "", "diff against the given git ref (e.g. main, HEAD~5) instead of the working tree")
+	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
+	allFlag := fs.Bool("all", false, "with --changed or --pkg, run the unit tier over every package (./...) instead of the packages the selection reaches")
+	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed, how many hops of in-module importers of a touched package join the unit scope (0: touched packages only; -1: full transitive closure)")
 	specFlag := fs.String("spec", "", "comma-separated spec sections")
 	pkgFlag := fs.String("pkg", "", "comma-separated source packages")
 	subsetFlag := fs.String("subset", "", "comma-separated subset names (requires --tier)")
@@ -73,6 +76,8 @@ func runRun(args []string) int {
 		verdictFile: *verdictFile,
 		cached:      *cachedFlag,
 		noInfra:     *noInfraFlag,
+		all:         *allFlag,
+		rdepsDepth:  *rdepsFlag,
 	}
 
 	if !sel.valid() {
@@ -110,6 +115,8 @@ type selector struct {
 	verdictFile string
 	cached      bool
 	noInfra     bool
+	all         bool // run the unit tier over ./... whatever the selection
+	rdepsDepth  int  // importer hops --changed adds; see defaultRdepsDepth
 }
 
 func (s selector) valid() bool {
@@ -120,6 +127,9 @@ func (s selector) valid() bool {
 // resolvedSelector lists the tiers to execute and the tests within each tier.
 type resolvedSelector struct {
 	tiers []tierPlan
+	// notes carries selection-level warnings (unmapped changed paths, a
+	// changed module-wide build file) that dry-run and run both print.
+	notes []string
 }
 
 type tierPlan struct {
@@ -127,6 +137,10 @@ type tierPlan struct {
 	subsets []string
 	tests   []string
 	notes   string
+	// pkgs scopes the unit tier to these `go test` package patterns.
+	// Nil runs the tier's full target set (`./...`); a non-nil value,
+	// even an empty one, is a scope.
+	pkgs []string
 }
 
 // resolve expands the selector into a concrete plan.
@@ -150,6 +164,7 @@ func (s selector) resolve() (resolvedSelector, error) {
 	// --group / --tier are mutually exclusive with the others (each
 	// names a complete plan).
 	var raw []tierPlan
+	var notes []string
 	switch {
 	case s.group != "":
 		raw = tiersForGroup(s.group)
@@ -162,25 +177,21 @@ func (s selector) resolve() (resolvedSelector, error) {
 		}
 		raw = []tierPlan{{name: s.tier, subsets: s.subsets}}
 	case s.changed, len(s.specs) > 0, len(s.pkgs) > 0:
-		// Union the discovery selectors. Each contributes tiers; the
-		// union de-duplicates via planFromTierSet.
-		tierSet := map[string]bool{}
+		// Union the discovery selectors. Each contributes tiers and,
+		// for the unit tier, a package scope; see mergeDiscoveryPlans.
+		var plans [][]tierPlan
 		if s.changed {
-			for _, t := range resolveChangedPlanFor(s.since) {
-				tierSet[t.name] = true
-			}
+			changed, changedNotes := resolveChangedPlanFor(s.since, selectOpts{rdepsDepth: s.rdepsDepth, all: s.all})
+			plans = append(plans, changed)
+			notes = append(notes, changedNotes...)
 		}
 		if len(s.specs) > 0 {
-			for _, t := range resolveSpecsPlan(s.specs) {
-				tierSet[t.name] = true
-			}
+			plans = append(plans, resolveSpecsPlan(s.specs))
 		}
 		if len(s.pkgs) > 0 {
-			for _, t := range resolvePkgsPlan(s.pkgs) {
-				tierSet[t.name] = true
-			}
+			plans = append(plans, resolvePkgsPlan(s.pkgs))
 		}
-		raw = planFromTierSet(tierSet)
+		raw = mergeDiscoveryPlans(plans, s.all)
 		if len(raw) == 0 {
 			// No tiers resolved — when --max-tier is set we still
 			// honor it as the explicit plan; otherwise fall back to
@@ -216,7 +227,7 @@ func (s selector) resolve() (resolvedSelector, error) {
 		raw = filtered
 	}
 
-	return resolvedSelector{tiers: raw}, nil
+	return resolvedSelector{tiers: raw, notes: notes}, nil
 }
 
 // indexOf returns the index of needle in haystack, or -1.
@@ -230,27 +241,50 @@ func indexOf(haystack []string, needle string) int {
 }
 
 func printDryRun(s selector, r resolvedSelector) int {
-	fmt.Printf("lenny-test (dry run)\n")
-	fmt.Printf("  selector: %s\n", describe(s))
-	fmt.Printf("  tiers:\n")
+	writeDryRun(os.Stdout, s, r)
+	return 0
+}
+
+// writeDryRun prints the resolved plan: each tier, its subsets and
+// tests, the unit tier's package scope, and the selection notes.
+func writeDryRun(w io.Writer, s selector, r resolvedSelector) {
+	fmt.Fprintf(w, "lenny-test (dry run)\n")
+	fmt.Fprintf(w, "  selector: %s\n", describe(s))
+	fmt.Fprintf(w, "  tiers:\n")
 	if len(r.tiers) == 0 {
-		fmt.Printf("    (none resolved)\n")
-		return 0
+		fmt.Fprintf(w, "    (none resolved)\n")
 	}
 	for _, t := range r.tiers {
 		extra := ""
 		if t.notes != "" {
 			extra = " — " + t.notes
 		}
-		fmt.Printf("    - %s%s\n", t.name, extra)
+		fmt.Fprintf(w, "    - %s%s\n", t.name, extra)
 		for _, sub := range t.subsets {
-			fmt.Printf("        subset: %s\n", sub)
+			fmt.Fprintf(w, "        subset: %s\n", sub)
 		}
 		for _, test := range t.tests {
-			fmt.Printf("        test:   %s\n", test)
+			fmt.Fprintf(w, "        test:   %s\n", test)
+		}
+		if t.name == tierUnit {
+			writeUnitScope(w, t.pkgs)
 		}
 	}
-	return 0
+	for _, n := range r.notes {
+		fmt.Fprintf(w, "  note: %s\n", n)
+	}
+}
+
+// writeUnitScope prints the unit tier's package patterns.
+func writeUnitScope(w io.Writer, pkgs []string) {
+	if pkgs == nil {
+		fmt.Fprintf(w, "        pkg:    ./... (every package)\n")
+		return
+	}
+	fmt.Fprintf(w, "        packages: %d pattern(s)\n", len(pkgs))
+	for _, p := range pkgs {
+		fmt.Fprintf(w, "        pkg:    %s\n", p)
+	}
 }
 
 func describe(s selector) string {
@@ -266,6 +300,13 @@ func describe(s selector) string {
 	}
 	if s.changed {
 		parts = append(parts, "changed")
+		if s.since != "" {
+			parts = append(parts, "since="+s.since)
+		}
+		parts = append(parts, fmt.Sprintf("rdeps-depth=%d", s.rdepsDepth))
+	}
+	if s.all {
+		parts = append(parts, "all")
 	}
 	if len(s.specs) > 0 {
 		parts = append(parts, "spec="+strings.Join(s.specs, ","))
@@ -280,13 +321,20 @@ func describe(s selector) string {
 //
 // Phase 0 executor:
 //   - static  → invokes `go vet ./...`. (golangci-lint is the future Phase 1 addition.)
-//   - unit    → invokes `go test ./...` if there is any Go code under pkg/.
+//   - unit    → invokes `go test` over the plan's package scope, or `./...`
+//     when the plan is unscoped.
 //   - others  → recorded as skipped with reason "phase-0-not-implemented".
 //
-// tierExecFn runs one tier and returns (status, detail, *tierResult).
-// All tier-specific executors implement this signature; runStaticTier
-// (which has no tierResult) is wrapped to fit.
-type tierExecFn func(subsets []string) (string, string, *tierResult)
+// tierExecFn runs one tier's plan and returns (status, detail,
+// *tierResult). All tier-specific executors implement this signature;
+// runStaticTier (which has no tierResult) and the subset-driven
+// executors are wrapped to fit.
+type tierExecFn func(p tierPlan) (string, string, *tierResult)
+
+// withSubsets adapts an executor that reads only the plan's subsets.
+func withSubsets(fn func(subsets []string) (string, string, *tierResult)) tierExecFn {
+	return func(p tierPlan) (string, string, *tierResult) { return fn(p.subsets) }
+}
 
 // tierStep is one entry in the execute() dispatch table. It pairs a
 // tier-name string with the executor that runs it, an optional
@@ -305,7 +353,7 @@ type tierStep struct {
 // Building the table here keeps execute()'s loop body small and the
 // per-tier wiring readable from one place.
 func tierSteps() map[string]tierStep {
-	wrapStatic := func(subsets []string) (string, string, *tierResult) {
+	wrapStatic := func(_ tierPlan) (string, string, *tierResult) {
 		st, msg := runStaticTier()
 		return st, msg, nil
 	}
@@ -315,23 +363,23 @@ func tierSteps() map[string]tierStep {
 			nextActionHint: "Fix static-tier failures before moving to higher tiers.",
 		},
 		tierUnit: {
-			name: tierUnit, exec: func(_ []string) (string, string, *tierResult) { return runUnitTier() }, useSynthesize: true,
+			name: tierUnit, exec: func(p tierPlan) (string, string, *tierResult) { return runUnitTier(p.pkgs) }, useSynthesize: true,
 			nextActionHint: "Fix unit-tier failures before moving to higher tiers.",
 		},
 		tierComponent: {
-			name: tierComponent, exec: runComponentTier, useSynthesize: true,
+			name: tierComponent, exec: withSubsets(runComponentTier), useSynthesize: true,
 			nextActionHint: "Fix component-tier failures before moving to higher tiers.",
 		},
 		tierContract: {
-			name: tierContract, exec: runContractTier, useSynthesize: true,
+			name: tierContract, exec: withSubsets(runContractTier), useSynthesize: true,
 			nextActionHint: "Fix contract-tier failures before moving to higher tiers.",
 		},
 		tierConformance: {
-			name: tierConformance, exec: runConformanceTier, useSynthesize: true,
+			name: tierConformance, exec: withSubsets(runConformanceTier), useSynthesize: true,
 			nextActionHint: "Fix conformance-tier failures before moving to higher tiers.",
 		},
 		tierIntegration: {
-			name: tierIntegration, exec: runIntegrationTier, useSynthesize: true,
+			name: tierIntegration, exec: withSubsets(runIntegrationTier), useSynthesize: true,
 			nextActionHint: "Fix integration-tier failures before moving to higher tiers.",
 			infraSetup: func(v *verdict) {
 				// §7 infra fields: Phase 0 uses the default profile;
@@ -340,7 +388,7 @@ func tierSteps() map[string]tierStep {
 			},
 		},
 		tierE2EKind: {
-			name: tierE2EKind, exec: runE2EKindTier, useSynthesize: true,
+			name: tierE2EKind, exec: withSubsets(runE2EKindTier), useSynthesize: true,
 			nextActionHint: "Fix e2e-Kind-tier failures before moving to higher tiers.",
 			infraSetup: func(v *verdict) {
 				if name := os.Getenv("LENNY_KIND_CLUSTER"); name != "" {
@@ -351,41 +399,41 @@ func tierSteps() map[string]tierStep {
 			},
 		},
 		tierLoadLocal: {
-			name: tierLoadLocal, exec: func(_ []string) (string, string, *tierResult) {
+			name: tierLoadLocal, exec: func(_ tierPlan) (string, string, *tierResult) {
 				return runTaggedTier("load_local", "./tests/tier7a_load_local/...", tierLongTimeout, true)
 			},
 			nextActionHint: "Fix load_local-tier failures before moving to higher tiers.",
 		},
 		tierLoadKind: {
-			name: tierLoadKind, exec: func(_ []string) (string, string, *tierResult) {
+			name: tierLoadKind, exec: func(_ tierPlan) (string, string, *tierResult) {
 				return runTaggedTier("load_kind", "./tests/tier7b_load_kind/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix load_kind-tier failures before moving to higher tiers.",
 		},
 		tierChaos: {
-			name: tierChaos, exec: func(_ []string) (string, string, *tierResult) {
+			name: tierChaos, exec: func(_ tierPlan) (string, string, *tierResult) {
 				return runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix chaos-tier failures before moving to higher tiers.",
 		},
 		tierSecurity: {
-			name: tierSecurity, exec: func(_ []string) (string, string, *tierResult) {
+			name: tierSecurity, exec: func(_ tierPlan) (string, string, *tierResult) {
 				return runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix security-tier failures before moving to higher tiers.",
 		},
 		tierDocs: {
-			name: tierDocs, exec: func(_ []string) (string, string, *tierResult) { return runDocsTier() },
+			name: tierDocs, exec: func(_ tierPlan) (string, string, *tierResult) { return runDocsTier() },
 			nextActionHint: "Fix docs-tier failures before moving to higher tiers.",
 		},
 		tierLoadCloud: {
-			name: tierLoadCloud, exec: func(_ []string) (string, string, *tierResult) {
+			name: tierLoadCloud, exec: func(_ tierPlan) (string, string, *tierResult) {
 				return runTaggedTier("load_cloud", "./tests/tier12_load_cloud/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix load_cloud-tier failures; tier 12 sits after every other tier and gates pre-release.",
 		},
 		tierE2ECloud: {
-			name: tierE2ECloud, exec: func(_ []string) (string, string, *tierResult) { return runE2ECloudTier() },
+			name: tierE2ECloud, exec: func(_ tierPlan) (string, string, *tierResult) { return runE2ECloudTier() },
 			nextActionHint: "Fix e2e-cloud-tier failures before moving to higher tiers.",
 		},
 	}
@@ -408,6 +456,15 @@ func execute(s selector, r resolvedSelector) int {
 		}
 	}
 
+	for _, n := range r.notes {
+		fmt.Fprintf(os.Stderr, "lenny-test: note: %s\n", n)
+	}
+	for _, t := range r.tiers {
+		if t.name == tierUnit && t.pkgs != nil {
+			fmt.Fprintf(os.Stderr, "lenny-test: unit tier scoped to %d package pattern(s); --dry-run lists them, --all runs every package\n", len(t.pkgs))
+		}
+	}
+
 	steps := tierSteps()
 	overallStatus := verdictstatus.VerdictPass
 
@@ -421,7 +478,7 @@ func execute(s selector, r resolvedSelector) int {
 		if step.infraSetup != nil {
 			step.infraSetup(v)
 		}
-		st, msg, result := step.exec(t.subsets)
+		st, msg, result := step.exec(t)
 		if result != nil {
 			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 		} else {
@@ -866,25 +923,25 @@ func tierStatusRank(status string) int {
 	return 0
 }
 
-func runUnitTier() (string, string, *tierResult) {
-	// `go test ./...` over the repo. Race detection is on by default
-	// per §17.4. When LENNY_COVER_PROFILE is set, coverage is
-	// emitted to that path so `lenny-test coverage --go` can later
-	// roll it up.
+// runUnitTier runs `go test` over pkgs, or over the whole module
+// (`./...`) when pkgs is nil. --changed and --pkg pass the scope they
+// resolved; --tier unit, --max-tier, and --all leave it nil.
+func runUnitTier(pkgs []string) (string, string, *tierResult) {
+	// Race detection is on by default per §17.4. When
+	// LENNY_COVER_PROFILE is set, coverage is emitted to that path so
+	// `lenny-test coverage --go` can later roll it up.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
 	if !hasGoCode() {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
-	extra := []string{"-race", "-count=1", fmt.Sprintf("-timeout=%s", tierUnitTimeout)}
-	if profile := coverProfilePath(); profile != "" {
-		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
-			extra = append(extra, "-coverprofile="+profile, "-covermode=atomic")
-		}
+	if pkgs != nil && len(pkgs) == 0 {
+		// A scoped plan with nothing in scope. Running `go test` with no
+		// package argument would test the working directory instead.
+		return "pass", "no packages in the selected scope", &tierResult{}
 	}
-	extra = append(extra, "./...")
-	result, runErr := runGoTestJSON(extra...)
+	result, runErr := runGoTestJSON(unitTierArgs(pkgs, coverProfilePath())...)
 	if runErr != nil && result.Failed == 0 {
 		// go test exited non-zero but no per-test failure was recorded
 		// (build error, vet error, etc.). Surface the raw tail.
@@ -894,6 +951,23 @@ func runUnitTier() (string, string, *tierResult) {
 		return "fail", summarizeFailures(result), result
 	}
 	return "pass", "", result
+}
+
+// unitTierArgs returns the `go test` arguments for the unit tier: race
+// on, coverage to profile when profile is non-empty, and pkgs as the
+// package patterns, or `./...` when pkgs is nil. Coverage applies to
+// whatever packages run, so a scoped run writes a scoped profile.
+func unitTierArgs(pkgs []string, profile string) []string {
+	args := []string{"-race", "-count=1", fmt.Sprintf("-timeout=%s", tierUnitTimeout)}
+	if profile != "" {
+		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
+			args = append(args, "-coverprofile="+profile, "-covermode=atomic")
+		}
+	}
+	if pkgs == nil {
+		return append(args, "./...")
+	}
+	return append(args, pkgs...)
 }
 
 // summarizeFailures produces a one-line summary of a tier's failed

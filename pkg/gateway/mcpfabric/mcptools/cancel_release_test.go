@@ -57,13 +57,16 @@ func (e *releaseRecordingExecutor) dispositionOf(id string) (executor.Dispositio
 func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 	store := memstore.New()
 	exec := &releaseRecordingExecutor{released: map[string]executor.Disposition{}}
+	hook := newHookTerminal(exec)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: exec,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		Terminal:          hook,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 
 	// sess_root → sess_a (target) → sess_a1 (running), all cancel_all.
@@ -74,6 +77,12 @@ func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 	resp := call(t, srv.Handler(), "lenny/cancel_child",
 		`{"parentSessionId":"sess_root","childSessionId":"sess_a"}`)
 	_ = resultText(t, resp)
+	calls := hook.waitSettled(t, 2)
+	for _, c := range calls {
+		if c.from != session.StateRunning || c.to != session.StateCancelled {
+			t.Errorf("hook call %+v, want running -> cancelled with the locked row's fromState", c)
+		}
+	}
 
 	// Both cancelled sessions must be drained with the cancelled disposition.
 	for _, id := range []string{"sess_a", "sess_a1"} {

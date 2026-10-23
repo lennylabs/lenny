@@ -54,7 +54,9 @@ func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, sandboxName stri
 		log.Info("sessionserver: attach stream failure belongs to a superseded binding; not reported")
 		return
 	}
-	row, err := s.store.Get(ctx, tenantID, sessionID)
+	// spec: §12.3 (Postgres HA Requirements) — the peer-takeover check reads
+	// the primary row, so a lagging read-pool row does not hide a takeover.
+	row, err := s.readPrimary(ctx, tenantID, sessionID)
 	if err != nil {
 		log.Warn("sessionserver: read session for attach stream failure; not reported", "error", err)
 		return
@@ -95,24 +97,21 @@ func (s *Server) reportedStreamBinding(sessionID, sandboxName string) *podsessio
 }
 
 // reportSupersededByPeer reports whether a peer replica has taken the session
-// over since this replica published bind. RecordHandoff bumps the row's
-// coordination_generation on every takeover, so a row generation above the
-// binding's means another replica coordinates the session; a zero binding
-// generation counts as superseded, so a publish site that never stamped its
-// binding fails closed.
+// over since this replica published bind, by the package's one stale-binding
+// predicate, bindingStale. A resume
+// commit stamps its binding at the generation it committed at, so a stream
+// failure on that binding is reported rather than dropped.
 //
 // Only the states ReportSessionFailure acts on are checked. In any other
-// state the report is a no-op there, and the binding stays: handleResume
-// bumps the generation on its failure exit after it may have published a
-// binding, and leaves the row in awaiting_client_action or failed, where that
-// binding waits for the next resume's release or the terminal release.
+// state the report is a no-op there, and the binding stays for the next
+// resume's release or the terminal binding release.
 //
 // spec: §10.1.1 (one coordinating replica per session); §10.1.5 (a replica
 // that is no longer the coordinator stops its RPCs).
 func reportSupersededByPeer(row sessionstore.Session, bind *podsession.BindResult) bool {
 	switch row.State {
 	case session.StateRunning, session.StateInputRequired, session.StateSuspended, session.StateResuming:
-		return bind.CoordinationGeneration == 0 || row.CoordinationGeneration > bind.CoordinationGeneration
+		return bindingStale(bind.CoordinationGeneration, row.CoordinationGeneration)
 	default:
 		return false
 	}
@@ -124,14 +123,21 @@ func reportSupersededByPeer(row sessionstore.Session, bind *podsession.BindResul
 // reopened over the binding. It runs only while the registry still returns
 // bind, so a binding published since is left alone. It makes no binder call,
 // so the pod the new coordinator serves is not drained, and it writes no row,
-// lease, or generation, because this replica does not hold the lease.
-// spec: §10.1.5.
+// lease, or generation, because this replica does not hold the lease. It
+// closes this replica's adapter connection to the pod, which the removal
+// makes unreachable: the new coordinator holds its own connection. The
+// compare-and-remove makes this call the connection's single closer when the
+// Sweeper evicts the same binding concurrently.
+// spec: §10.1.5 (Stale Replica Behavior); §10.1.1 (Stateless Replicas and
+// Per-Session Coordination).
 func (s *Server) evictStaleBinding(sessionID string, bind *podsession.BindResult) {
-	if cur, ok := s.podRegistry.Get(sessionID); !ok || cur != bind {
+	if !s.podRegistry.RemoveIf(sessionID, bind) {
 		return
 	}
-	s.podRegistry.Remove(sessionID)
 	if se, ok := s.executor.(streamEvicter); ok {
 		se.EvictStream(sessionID)
+	}
+	if err := bind.CloseAdapter(); err != nil {
+		slog.Warn("sessionserver: close evicted adapter connection", "session_id", sessionID, "error", err)
 	}
 }

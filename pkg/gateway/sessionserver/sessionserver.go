@@ -122,6 +122,9 @@ type Server struct {
 	storageQuota   storagequota.Counter
 	defaultIsoProf isolation.Profile
 	devMode        bool
+	// devTenantHeader mirrors Options.DevTenantHeader: whether a request
+	// with no principal may name its tenant by header. spec: §10.2.
+	devTenantHeader bool
 	// multiTenant mirrors the §10.2 auth.multiTenant Helm value. When
 	// true, the §10.2 RBAC gate fails closed for an authenticated
 	// principal that carries no roles (the matrix is unconditional in
@@ -199,11 +202,13 @@ type Server struct {
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
 	// maxConcSessGlobal / maxConcSessPerUser / maxConcSessPerRuntime are
-	// the §11.1 concurrent-session admission caps (live
-	// non-terminal session counts) for the global, per-user, and
-	// per-runtime scopes. The per-tenant scope is enforced separately by
-	// requireSessionQuota against the tenant record. A non-positive value
-	// leaves the corresponding scope unlimited. F-11.1.3.
+	// the §11.1 concurrent-session admission caps (counts of non-terminal
+	// sessions other than suspended ones) for the global, per-user, and
+	// per-runtime scopes. Session creation and every resume of a
+	// suspended session (admitResume) are checked against them. The
+	// per-tenant scope is enforced separately against the tenant record.
+	// A non-positive value leaves the corresponding scope unlimited.
+	// F-11.1.3.
 	maxConcSessGlobal     int
 	maxConcSessPerUser    int
 	maxConcSessPerRuntime int
@@ -379,12 +384,105 @@ type Server struct {
 	// the pod's leaked slots, which remain counted in active_slots until the
 	// pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
-	// slotAccountLocks orders, per session, the failure funnel's slot
-	// accounting before a same-replica resume releases the session's earlier
-	// binding, so a drain the accounting requests is stamped before the
-	// release can reach the occupancy-zero recycle edge. The zero value is
-	// ready to use. spec: §5.2 "whole-pod replacement trigger".
+	// slotAccountLocks orders, per session, the failure funnel's identity
+	// check and release of the reported binding against a resume attempt's
+	// releaseEarlierBinding, claim, and commit, and the funnel's slot
+	// accounting before that release, so the funnel never tears down a
+	// replacement binding and a drain the accounting requests is stamped
+	// before the release can reach the occupancy-zero recycle edge. The
+	// failure funnel holds it on both pool kinds from before its edge
+	// through its release; releaseEarlierBinding, the terminal binding
+	// release, and the post-terminal hook's release step take it before
+	// they release. Never take it while holding
+	// deliveryLocks. The zero value is ready to use. spec: §5.2 "whole-pod
+	// replacement trigger"; §7.3 (Credential leases on the replacement pod).
 	slotAccountLocks sessionLocks
+	// deliveryLocks makes, per session on this replica, each delivery of
+	// held messages one critical section against the message paths, a
+	// commit to running, and the takeover delivery. It is a second instance
+	// of the lock type slotAccountLocks uses, and never nests with it. The
+	// lock is not reentrant. The zero value is ready to use. spec: §7.2
+	// (Message delivery routing — seven paths, path 6).
+	deliveryLocks sessionLocks
+	// resumeAttempts records the resume attempt in flight on this replica
+	// per session, with its cancel function, so DriveResume starts at most
+	// one attempt per session and CancelResumeAttempt can stop it. The
+	// attempt goroutine removes its own entry on every return. The zero
+	// value is ready to use. spec: §7.3 (Resume driver).
+	resumeAttempts attemptRecord
+	// terminalClaims counts each session's open terminal-writer claims and
+	// marks a terminal binding release in flight, so a binding release
+	// defers to a writer's post-terminal hook on this replica and at most
+	// one release runs per session. The zero value is ready to use.
+	// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica
+	// Behavior).
+	terminalClaims terminalClaimRecord
+	// suspensions is the suspension record: at most one suspension release
+	// or idle suspension per session in flight on this replica. The
+	// goroutine that runs it removes its own entry on every return.
+	// spec: §6.2 (Pod State Machine).
+	suspensions inflightSet
+	// suspensionRetries is the retry record: a session whose checkpoint
+	// before a suspension release failed is not released or idle-suspended
+	// again for 60 s. spec: §6.2 (Pod State Machine).
+	suspensionRetries retryRecord
+	// backlogResumes is the backlog-resume record: at most one
+	// ResumeSuspended started by the backlog check per session in flight on
+	// this replica. spec: §7.2 (Message delivery routing — seven paths,
+	// path 6).
+	backlogResumes inflightSet
+	// suspensionCheckpointer takes the checkpoint a suspension release
+	// takes before it releases the pod. Nil releases nothing: a suspension
+	// release without a checkpoint would lose the workspace. spec: §6.2
+	// (Pod State Machine).
+	suspensionCheckpointer SuspensionCheckpointer
+	// budgetRearmer re-arms the TTL of a suspended session's delegation
+	// budget keys on each committed transition into or out of suspended.
+	// Nil re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	budgetRearmer BudgetKeyRearmer
+	// sealerFor returns the runtime adapter's session seal for a binding.
+	// Nil uses the binding's adapter client; a unit test replaces it with a
+	// fake. spec: §4.7.1 (Role and Gateway RPC Contract).
+	sealerFor func(*podsession.BindResult) sessionSealer
+	// incPodReleasedDuringSuspension and incSuspensionCheckpointFailed
+	// increment the §16.1 suspension-release counters, labeled by pool and
+	// tenant. Nil disables the emission. spec: §16.1 (Metrics).
+	incPodReleasedDuringSuspension func(pool, tenantID string)
+	incSuspensionCheckpointFailed  func(pool, tenantID string)
+	// lifetimeCtx is the server-lifetime context: background work the
+	// server starts (a resume attempt, its commit and tail, a takeover
+	// delivery, a terminal binding release) runs on it, and Close cancels
+	// it. Nil on a Server built without New, which then uses
+	// context.Background().
+	lifetimeCtx    context.Context
+	lifetimeCancel context.CancelFunc
+	// primaryReadTimeout bounds every sessionstore.ReadPrimary call the
+	// server makes. A non-positive value uses
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3 (Postgres HA
+	// Requirements).
+	primaryReadTimeout time.Duration
+	// maxResumePending and maxResuming are the platform caps of the
+	// resume_pending window (maxResumeWindowSeconds) and of the resuming
+	// watchdog, which bound a resume attempt before and after its entry
+	// write. Zero selects the watchdog defaults. spec: §7.3 (Resume
+	// driver); §6.2 (Pod State Machine).
+	maxResumePending time.Duration
+	maxResuming      time.Duration
+	// maxFinalizing is the launch bound (Options.MaxFinalizing).
+	maxFinalizing time.Duration
+	// ageCap resolves a row's effective active-age cap with the same
+	// resolver the watchdog's maxSessionAge sweep uses, so the resume
+	// driver refuses an over-cap row against the value the sweep applies.
+	// Nil applies the platform default. spec: §6.2 (maxSessionAge timer
+	// behavior across states).
+	ageCap func(ctx context.Context, row sessionstore.Session) time.Duration
+	// treePollInterval is how often tree recovery reads a node's row while
+	// it waits for the node's restore. Zero selects one second.
+	treePollInterval time.Duration
+	// afterFunc arms a resume attempt's bound: it calls f after d and
+	// returns the function that disarms it. Nil uses time.AfterFunc; a test
+	// substitutes it to observe the bound.
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
 	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
@@ -520,10 +618,13 @@ type Server struct {
 	// New (defaults to the platform default blocklist alone). spec: §14. F-14.1.12.
 	envBlocklist *envblock.Matcher
 
-	// incSessionResumeAttempt, when set, increments the §16.1
-	// lenny_session_resume_attempts_total{pool, outcome} counter for the
-	// resume call. Nil disables the emission. spec: §16.1 catalog.
-	// F-7.3.10.
+	// incSessionResumeAttempt, when set, increments the
+	// lenny_session_resume_attempts_total{pool, outcome} counter: the resume
+	// driver counts each resume attempt whose entry write it saw take effect
+	// once, through recordResumeAttempt, the only caller, with outcome
+	// "success" for a commit that landed and "failure" for a failure after
+	// the entry write or a commit that did not land. Nil disables the
+	// emission. spec: §16.1 (Metrics), §7.3 (Resume driver).
 	incSessionResumeAttempt func(pool, outcome string)
 
 	// incSessionRetry, when set, increments the §16.1
@@ -756,9 +857,9 @@ type Options struct {
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
 	// minted token. Per §7.1 the token TTL equals
 	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
-	// configured timeout through this field, the watchdog's
-	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
-	// budgets never drift. A non-positive value falls through to
+	// configured timeout through this field and the watchdog's
+	// MaxCreatedSeconds so the two budgets never drift. A non-positive
+	// value falls through to
 	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	UploadTokenTTL time.Duration
 
@@ -883,6 +984,19 @@ type Options struct {
 	// selects the §5.3 dev-mode fallback (`standard`) when no
 	// DefaultIsolationProfile is configured.
 	DevMode bool
+
+	// DevTenantHeader, when true, lets a request that carries no
+	// authenticated principal name its tenant through the
+	// X-Lenny-Tenant-ID dev header (format-checked against the §10.2
+	// tenant_id pattern), and resolves a request with neither to the
+	// built-in `default` tenant. The gateway sets it only under
+	// --dev-mode. When false, the default, the tenant comes only from the
+	// authenticated principal or from the tenant an in-process service
+	// caller passes, and a request with neither is refused with 401
+	// UNAUTHORIZED before it reaches a handler (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID).
+	DevTenantHeader bool
 
 	// MultiTenant mirrors the gateway's `--multi-tenant` flag /
 	// `auth.multiTenant` Helm value. When true, the §10.2 RBAC gate on
@@ -1056,6 +1170,55 @@ type Options struct {
 	// DefaultStreamFailureReportTimeout. spec: §28.5.1 (CH-ATTACH
 	// Degradation.).
 	StreamFailureReportTimeout time.Duration
+
+	// PrimaryReadTimeout bounds each sessionstore.ReadPrimary call a
+	// one-shot decision makes on the session server. Operator-tunable
+	// through --session-primary-read-timeout; a non-positive value selects
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3 (Postgres HA
+	// Requirements).
+	PrimaryReadTimeout time.Duration
+
+	// SuspensionCheckpointer takes the checkpoint a suspension release takes
+	// before it releases a suspended session's pod. The gateway wires the
+	// checkpoint service. Nil leaves every suspended pod held.
+	// spec: §6.2 (Pod State Machine).
+	SuspensionCheckpointer SuspensionCheckpointer
+
+	// BudgetKeyRearmer re-arms the TTL of a session tree's delegation budget
+	// keys on each committed transition into or out of suspended. Nil
+	// re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	BudgetKeyRearmer BudgetKeyRearmer
+
+	// IncSessionPodReleasedDuringSuspension and
+	// IncSessionSuspensionCheckpointFailed, when set, increment the §16.1
+	// lenny_session_pod_released_during_suspension_total and
+	// lenny_session_suspension_checkpoint_failed_total counters, labeled by
+	// pool and tenant. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+	IncSessionPodReleasedDuringSuspension func(pool, tenantID string)
+	IncSessionSuspensionCheckpointFailed  func(pool, tenantID string)
+
+	// MaxResumePending and MaxResuming are the platform caps the watchdog
+	// applies to resume_pending (the maxResumeWindowSeconds window) and to
+	// resuming. The resume driver bounds an attempt by the window left
+	// before its entry write and by MaxResuming after it. Zero selects the
+	// watchdog defaults. spec: §7.3 (Resume driver).
+	MaxResumePending time.Duration
+	MaxResuming      time.Duration
+
+	// MaxFinalizing bounds a slot launch: the two-step /start launch and a
+	// delegated child's materialization each run on a context carrying this
+	// deadline, taken before the session row is read from the primary. On a
+	// concurrent-workspace pool the launch performs the materialization and
+	// setup that finalizing performs on an exclusive pool, so the gateway
+	// wires --max-finalizing-state-timeout-seconds. Zero selects the
+	// watchdog default. spec: §5.2 (Slot assignment atomicity).
+	MaxFinalizing time.Duration
+
+	// AgeCap resolves a row's effective maxSessionAge cap. The gateway
+	// wires the resolver the watchdog's maxSessionAge sweep uses, so the
+	// resume driver and the sweep apply one value. Nil applies the platform
+	// default cap. spec: §6.2 (maxSessionAge timer behavior across states).
+	AgeCap func(ctx context.Context, row sessionstore.Session) time.Duration
 
 	// ObserveWorkspaceSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram.
@@ -1434,12 +1597,12 @@ type Options struct {
 	// in force. spec: §14. F-14.1.12.
 	EnvVarBlocklist []string
 
-	// IncSessionResumeAttempt, when set, increments the §16.1
-	// lenny_session_resume_attempts_total{pool, outcome} counter on
-	// every POST /v1/sessions/{id}/resume call (after the precondition
-	// check passes). outcome is "success" when the row transitions to
-	// running, "failure" when the pod-claim step fails. Nil disables
-	// the emission. spec: §16.1 catalog. F-7.3.10.
+	// IncSessionResumeAttempt, when set, increments the
+	// lenny_session_resume_attempts_total{pool, outcome} counter once for
+	// each resume attempt whose entry write the resume driver saw take
+	// effect: "success" for a commit that landed, "failure" for a failure
+	// after the entry write or a commit that did not land. Nil disables the
+	// emission. spec: §16.1 (Metrics), §7.3 (Resume driver).
 	IncSessionResumeAttempt func(pool, outcome string)
 
 	// IncSessionRetry, when set, increments the §16.1
@@ -1455,9 +1618,11 @@ type Options struct {
 	// lenny_session_expiry_total{pool, reason} counter when the watchdog
 	// terminates a session on a platform expiry clock. reason is the
 	// §16.1.1 vocabulary value the watchdog resolved from the expiry edge
-	// ("max_idle_time" for the §6.2 idle clock, "max_session_age" for the
-	// §11.3 age cap and the §7.3 awaiting_client_action deadline). Nil
-	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
+	// ("max_idle_time" for the §6.2 idle expiry of a session that cannot be
+	// idle-suspended and for the §6.2 suspended-session lifetime,
+	// "max_session_age" for the §11.3 age cap and the §7.3
+	// awaiting_client_action deadline). Nil disables the emission.
+	// spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
 	// IncWarmpoolWarmupFailure, when set, increments the §16.1
@@ -1514,6 +1679,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		storageQuota:               opts.StorageQuota,
 		defaultIsoProf:             opts.DefaultIsolationProfile,
 		devMode:                    opts.DevMode,
+		devTenantHeader:            opts.DevTenantHeader,
 		multiTenant:                opts.MultiTenant,
 		tenancyMode:                opts.TenancyMode,
 		podBinder:                  opts.PodBinder,
@@ -1633,6 +1799,16 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.streamFailureReportTimeout <= 0 {
 		s.streamFailureReportTimeout = DefaultStreamFailureReportTimeout
 	}
+	s.primaryReadTimeout = opts.PrimaryReadTimeout
+	s.suspensionCheckpointer = opts.SuspensionCheckpointer
+	s.budgetRearmer = opts.BudgetKeyRearmer
+	s.incPodReleasedDuringSuspension = opts.IncSessionPodReleasedDuringSuspension
+	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
+	s.maxResumePending = opts.MaxResumePending
+	s.maxResuming = opts.MaxResuming
+	s.maxFinalizing = opts.MaxFinalizing
+	s.ageCap = opts.AgeCap
+	s.lifetimeCtx, s.lifetimeCancel = context.WithCancel(context.Background())
 	if s.sealSleep == nil {
 		s.sealSleep = sleepWithContext
 	}
@@ -1676,10 +1852,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	// spec: §8.10 — the bottom-up delegation-tree
 	// recovery driver. The required seams (lister, reattacher, terminal
 	// marker) are always available here, so the orchestrator is built
-	// unconditionally; its work is gated to genuinely orphaned nodes by
-	// nodeNeedsRecovery, which is a no-op when the pod registry is
-	// unwired (dev / unit-test) so resume keeps its per-session
-	// behavior.
+	// unconditionally. nodeNeedsRecovery selects a node by its row state,
+	// resume_pending, because the pod registry holds only this replica's
+	// bindings and a node bound on a peer is not orphaned.
 	s.treeRecovery = treerecovery.New(treerecovery.Config{
 		Lister:       store,
 		Reattacher:   sessionNodeReattacher{s: s},
@@ -1711,6 +1886,32 @@ func New(store sessionstore.Store, opts Options) *Server {
 	// half-open transitions deterministically.
 	s.targetingBreaker = newTargetingBreaker(s.clock, opts.SetExperimentTargetingCircuitOpen)
 	return s
+}
+
+// Close cancels the server-lifetime context, so every resume attempt,
+// commit tail, takeover delivery, and terminal binding release the server
+// started stops at its next context check. The gateway calls it on
+// shutdown. It is idempotent. spec: §7.3 (Resume driver).
+func (s *Server) Close() {
+	if s.lifetimeCancel != nil {
+		s.lifetimeCancel()
+	}
+}
+
+// lifetime returns the server-lifetime context, or context.Background() on
+// a Server built without New.
+func (s *Server) lifetime() context.Context {
+	if s.lifetimeCtx == nil {
+		return context.Background()
+	}
+	return s.lifetimeCtx
+}
+
+// readPrimary reads the session row from the primary for a one-shot
+// decision, bounded by the server's primary-read timeout. spec: §12.3
+// (Postgres HA Requirements).
+func (s *Server) readPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return sessionstore.ReadPrimary(ctx, s.store, s.primaryReadTimeout, tenantID, id)
 }
 
 // randomSessionID returns a fresh §12.6 UUIDv8 session identifier.

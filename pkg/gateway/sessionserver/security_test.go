@@ -27,7 +27,7 @@ import (
 
 func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_a" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_a" }})
 
 	// Session belongs to acme.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -52,7 +52,7 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 
 func TestResolveTenantRejectsMalformedHeader(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_b" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_b" }})
 
 	// No Principal. Header carries a non-§10.2-conforming value — it
 	// should fall through to "default" rather than reach the store
@@ -88,6 +88,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_X" },
 		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, clock),
@@ -155,7 +156,7 @@ func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	body, _ := json.Marshal(sessionserver.ExtendRetentionRequest{
 		TTLSeconds: sessionserver.ExtendRetentionMaxSeconds + 1,
@@ -177,7 +178,7 @@ func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	body, _ := json.Marshal(sessionserver.ExtendRetentionRequest{
 		TTLSeconds: sessionserver.ExtendRetentionMaxSeconds,
@@ -193,7 +194,7 @@ func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 
 func TestCreateRejectsOversizedJSONBody(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	// 2 MiB JSON payload — well past the 1 MiB cap.
 	huge := strings.Repeat("a", 2*1024*1024)
@@ -218,7 +219,7 @@ func TestResolveTenantAuthHeaderHijackBlocked(t *testing.T) {
 	} {
 		_ = store.Create(context.Background(), t)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_globex", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "globex") // attacker-controlled

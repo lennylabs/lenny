@@ -211,6 +211,13 @@ func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed 
 			s.cancelSlotExpiryTimerLocked(st, provider)
 		}
 		st.ack.release()
+		// spec: §28.5.3 (CH-MSGSOCK) — the removal cancels the entry's
+		// heartbeat monitor and leaves it on the removed entry, so a later
+		// writeSessionEnd for the entry joins the goroutine before its
+		// write.
+		if st.hb != nil {
+			st.hb.cancel()
+		}
 		delete(s.slots, sessionID)
 	}
 	return st, removed

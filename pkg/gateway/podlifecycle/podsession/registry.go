@@ -47,6 +47,41 @@ func (r *Registry) Remove(sessionID string) (b *BindResult, ok bool) {
 	return b, ok
 }
 
+// RemoveIf drops the session's binding only when the registry still holds b,
+// and reports whether it did. A binding published since b, or one another
+// caller already removed, is left alone. Because the comparison and the
+// delete run under one hold of the lock, exactly one of several concurrent
+// evictors of the same binding removes it, and that caller alone owns the
+// binding's adapter connection afterwards (see BindResult.CloseAdapter).
+// spec: §10.1.5 (Stale Replica Behavior).
+func (r *Registry) RemoveIf(sessionID string, b *BindResult) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, ok := r.sessions[sessionID]
+	if !ok || cur != b {
+		return false
+	}
+	delete(r.sessions, sessionID)
+	return true
+}
+
+// CloseAdapter closes the binding's gateway-to-pod adapter connection. A nil
+// binding or a binding without an adapter is a no-op. Call it only on a
+// binding the caller removed from the Registry (Remove returned it, or
+// RemoveIf returned true): the remover is the single owner of the connection,
+// so each connection is closed exactly once and a binding still published is
+// never closed under a concurrent reader. An eviction that drops a binding
+// without closing it leaks the gRPC channel and its background goroutines
+// for the rest of the process lifetime.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.5
+// (Stale Replica Behavior).
+func (b *BindResult) CloseAdapter() error {
+	if b == nil || b.Adapter == nil {
+		return nil
+	}
+	return b.Adapter.Close()
+}
+
 // Len reports how many session bindings this replica holds.
 func (r *Registry) Len() int {
 	r.mu.Lock()

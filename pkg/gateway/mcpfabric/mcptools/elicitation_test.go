@@ -5,6 +5,8 @@ package mcptools_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -48,11 +51,17 @@ type chainOpts struct {
 	// lifecycle, when set, receives the §16.1 admit/terminal lifecycle
 	// notifications. F-9.2.14.
 	lifecycle mcptools.ElicitationLifecycleRecorder
+	// wrapStore, when set, wraps the session store the tools read, so a
+	// test can make the primary and the read pool disagree.
+	wrapStore func(sessionstore.Store) sessionstore.Store
 }
 
 func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Store, interactionstore.Store) {
 	t.Helper()
-	store := memstore.New()
+	var store sessionstore.Store = memstore.New()
+	if opts.wrapStore != nil {
+		store = opts.wrapStore(store)
+	}
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	timeout := opts.timeout
@@ -60,6 +69,7 @@ func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Sto
 		timeout = 5 * time.Second
 	}
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:           true,
 		Store:                       store,
 		Interactions:                interactions,
 		ElicitationTimeout:          timeout,
@@ -330,6 +340,7 @@ func newMCPForProvenance(t *testing.T) (*mcp.Server, sessionstore.Store, interac
 	bus := sessionevents.NewBus(16)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
 		Events:             bus,
@@ -836,7 +847,7 @@ func TestMCPRespondToElicitationResolves(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), ownerPrincipal, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"option-A"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, "responded") {
@@ -870,7 +881,7 @@ func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), authmw.Principal{Subject: "bob", TenantID: "acme"}, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_bob","elicitationId":"elic_x","response":"option-A"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
@@ -896,7 +907,7 @@ func TestMCPDismissElicitation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	_ = call(t, srv.Handler(), "lenny/dismiss_elicitation",
+	_ = callAs(t, srv.Handler(), ownerPrincipal, "lenny/dismiss_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","reason":"user_cancelled"}`)
 	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
 	if err != nil {
@@ -930,7 +941,7 @@ func TestMCPRespondToElicitationAlreadyResolvedSurfacesConflict(t *testing.T) {
 		}); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
-	resp := call(t, srv.Handler(), "lenny/respond_to_elicitation",
+	resp := callAs(t, srv.Handler(), ownerPrincipal, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","response":"second"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
@@ -963,3 +974,146 @@ func readErrorEnvelope(t *testing.T, result map[string]any) map[string]any {
 	t.Fatalf("no lenny/error block in %+v", content)
 	return nil
 }
+
+// splitPrimaryStore answers a primary read from a row the read pool has not
+// yet seen: GetPrimary reports primaryState, or primaryErr when set, while
+// Get keeps returning the stored row.
+type splitPrimaryStore struct {
+	sessionstore.Store
+	primaryState session.State
+	primaryErr   error
+}
+
+func (s *splitPrimaryStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if s.primaryErr != nil {
+		return sessionstore.Session{}, s.primaryErr
+	}
+	row, err := s.Get(ctx, tenantID, id)
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	row.State = s.primaryState
+	return row, nil
+}
+
+// toolErrorCode reads the error code of a failed tool call, or "" when the
+// call did not fail with a tool error.
+func toolErrorCode(t *testing.T, resp map[string]any) string {
+	t.Helper()
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		return ""
+	}
+	code, _ := readLennyErrorEnvelope(t, result)["code"].(string)
+	return code
+}
+
+// TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2 pins that the
+// lenny/request_elicitation terminal-state check reads the primary: a raise
+// is refused when the primary row is terminal although the read pool still
+// shows the session running, nothing is recorded and the pending gauge is
+// untouched, and a primary read error answers the session lookup error.
+//
+// spec: 9.2 (Elicitation Chain)
+func TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2(t *testing.T) {
+	const args = `{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`
+	t.Run("terminal on the primary", func(t *testing.T) {
+		lc := &recordingLifecycleMetric{}
+		srv, store, interactions := newMCPForChain(t, chainOpts{
+			lifecycle: lc,
+			wrapStore: func(st sessionstore.Store) sessionstore.Store {
+				return &splitPrimaryStore{Store: st, primaryState: session.StateCompleted}
+			},
+		})
+		mkUserSession(t, store, "sess_root", "alice", "")
+		mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+
+		resp := call(t, srv.Handler(), "lenny/request_elicitation", args)
+		if code := toolErrorCode(t, resp); code != "INVALID_STATE_TRANSITION" {
+			t.Fatalf("error code = %q, want INVALID_STATE_TRANSITION for a session terminal on the primary: %+v", code, resp)
+		}
+		if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+			t.Error("a refused raise recorded an elicitation")
+		}
+		if lc.getPendingMax() != 0 {
+			t.Errorf("pendingMax = %d, want 0: a refused raise must not increment the pending gauge", lc.getPendingMax())
+		}
+	})
+	t.Run("primary read error", func(t *testing.T) {
+		lc := &recordingLifecycleMetric{}
+		srv, store, interactions := newMCPForChain(t, chainOpts{
+			lifecycle: lc,
+			wrapStore: func(st sessionstore.Store) sessionstore.Store {
+				return &splitPrimaryStore{Store: st, primaryErr: errors.New("primary unreachable")}
+			},
+		})
+		mkUserSession(t, store, "sess_root", "alice", "")
+		mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+
+		resp := call(t, srv.Handler(), "lenny/request_elicitation", args)
+		if code := toolErrorCode(t, resp); code != "RESOURCE_NOT_FOUND" {
+			t.Fatalf("error code = %q, want the session lookup error RESOURCE_NOT_FOUND: %+v", code, resp)
+		}
+		if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+			t.Error("a raise whose primary read failed recorded an elicitation")
+		}
+		if lc.getPendingMax() != 0 {
+			t.Errorf("pendingMax = %d, want 0", lc.getPendingMax())
+		}
+	})
+}
+
+// TestRequestElicitationWaiterExitsWhenExpired_spec_9_2 pins the waiter's
+// exit when ExpireRaisedBy deletes the pending elicitation of the raising
+// session: the blocked lenny/request_elicitation call returns an error well
+// before maxElicitationWait, the error is not ELICITATION_TIMEOUT, and the
+// pending gauge is decremented exactly once.
+//
+// spec: 9.2 (Elicitation Chain)
+func TestRequestElicitationWaiterExitsWhenExpired_spec_9_2(t *testing.T) {
+	lc := &recordingLifecycleMetric{}
+	srv, store, interactions := newMCPForChain(t, chainOpts{lifecycle: lc, timeout: time.Minute})
+	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		done <- call(t, srv.Handler(), "lenny/request_elicitation",
+			`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
+	}()
+	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	n, err := interactions.ExpireRaisedBy(context.Background(), "acme", "sess_leaf")
+	if err != nil || n != 1 {
+		t.Fatalf("ExpireRaisedBy = %d, %v; want the raised elicitation deleted", n, err)
+	}
+
+	var resp map[string]any
+	select {
+	case resp = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the waiter kept polling after its elicitation was deleted")
+	}
+	result, _ := resp["result"].(map[string]any)
+	if resp["error"] == nil && result["isError"] != true {
+		t.Fatalf("the waiter answered success after its elicitation was deleted: %+v", resp)
+	}
+	if strings.Contains(fmt.Sprint(resp), "ELICITATION_TIMEOUT") {
+		t.Errorf("the waiter answered ELICITATION_TIMEOUT for a deleted elicitation: %+v", resp)
+	}
+	if lc.getTimeouts() != 0 {
+		t.Errorf("timeouts = %d, want 0", lc.getTimeouts())
+	}
+	if d := lc.getPendingDelta(); d != 0 {
+		t.Errorf("pendingDelta = %d, want 0: the gauge is decremented exactly once", d)
+	}
+	if lc.roundtripCount() != 1 {
+		t.Errorf("roundtrips = %d, want 1", lc.roundtripCount())
+	}
+}
+
+// ownerPrincipal is the authenticated owner of the sessions the
+// elicitation-resolution tests resolve against. The MCP resolution tools
+// key the (tenant, session, user, elicitation) triple on the principal's
+// subject, as the REST resolution endpoints do.
+// spec: §9.2 (respond_to_elicitation authorization).
+var ownerPrincipal = authmw.Principal{Subject: "alice", TenantID: "acme"}

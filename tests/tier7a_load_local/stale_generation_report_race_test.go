@@ -73,7 +73,7 @@ func TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5(t *testing.T) {
 	reg := podsession.NewRegistry()
 	pe := &releaseCountingExecutor{PodExecutor: executor.NewPodExecutor(reg, nil)}
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: pe, PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: pe, PodRegistry: reg})
 	pe.SetStreamFailureHandler(srv.ReportAttachStreamFailure)
 	ctx := context.Background()
 

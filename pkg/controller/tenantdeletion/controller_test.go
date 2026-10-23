@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -316,15 +318,17 @@ func TestResumesFromPersistedPhaseAfterInterruption(t *testing.T) {
 }
 
 func TestPhaseFailureMarksJobFailed(t *testing.T) {
-	// §12.8: a phase error marks the job failed with the cause; the
-	// controller does not advance past the failed phase.
-	eraser := &fakeEraser{err: errors.New("postgres unreachable")}
-	r, _ := newReconciler(t, eraser, &fakeReceipts{}, &fakeAction{})
+	// §12.8: an action error in a phase that does not pause in phase
+	// (here the Phase 6 receipt write) marks the job failed with the
+	// cause; the controller does not advance past the failed phase.
+	// Phase 2, 3, and 4 errors pause instead (TestPhase3And4ActionErrorsPauseInPhaseAndResume_spec_12_8).
+	receipts := &fakeReceipts{err: errors.New("postgres unreachable")}
+	r, _ := newReconciler(t, &fakeEraser{counts: map[string]int{}}, receipts, &fakeAction{})
 	ctx := context.Background()
 	if err := r.Start(ctx, "acme", "T3"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Advance to Phase 4 (delete_data), which fails.
+	// Advance to Phase 6 (produce_receipt), which fails.
 	var lastErr error
 	for i := 0; i < 10; i++ {
 		lastErr = r.ReconcileTenant(ctx, "acme")
@@ -348,8 +352,8 @@ func TestPhaseFailureMarksJobFailed(t *testing.T) {
 func TestRetryResumesFailedJob(t *testing.T) {
 	// §12.8: a failed §12.8 deletion job can be retried from the
 	// recorded phase.
-	eraser := &fakeEraser{err: errors.New("postgres unreachable")}
-	r, _ := newReconciler(t, eraser, &fakeReceipts{}, &fakeAction{})
+	receipts := &fakeReceipts{err: errors.New("postgres unreachable")}
+	r, _ := newReconciler(t, &fakeEraser{counts: map[string]int{}}, receipts, &fakeAction{})
 	ctx := context.Background()
 	if err := r.Start(ctx, "acme", "T3"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -362,15 +366,15 @@ func TestRetryResumesFailedJob(t *testing.T) {
 		}
 	}
 	// The store recovers; clear the error and retry.
-	eraser.err = nil
+	receipts.err = nil
 	if err := r.Retry(ctx, "acme"); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	j, _ := r.Jobs.Get(ctx, "acme")
-	// Retry resumes from the first incomplete phase — delete_data,
+	// Retry resumes from the first incomplete phase — produce_receipt,
 	// which is where the failure happened.
-	if j.Phase != tenantdeletion.PhaseDeleteData {
-		t.Errorf("phase after Retry = %q, want delete_data", j.Phase)
+	if j.Phase != tenantdeletion.PhaseProduceReceipt {
+		t.Errorf("phase after Retry = %q, want produce_receipt", j.Phase)
 	}
 	final := runToCompletion(t, r, "acme")
 	if final.Phase != tenantdeletion.PhaseCompleted {
@@ -450,5 +454,165 @@ func TestReconcileSetsSLAClockOnStart(t *testing.T) {
 	j, _ := jobs.Get(context.Background(), "acme")
 	if !j.StartedAt.Equal(fixed) {
 		t.Errorf("StartedAt = %v, want %v", j.StartedAt, fixed)
+	}
+}
+
+// newPausingReconciler builds a Reconciler whose Phase 3 revoker and Phase
+// 4 eraser are separate stubs, with a logger writing into the returned
+// buffer, so a test can fail one phase and keep the others clean.
+func newPausingReconciler(revoker tenantdeletion.CredentialRevoker, eraser tenantdeletion.TenantEraser) (*tenantdeletion.Reconciler, *tenantdeletion.Memory, *bytes.Buffer) {
+	jobs := tenantdeletion.NewMemory()
+	var logs bytes.Buffer
+	return &tenantdeletion.Reconciler{
+		Jobs:       jobs,
+		Terminator: &fakeAction{},
+		Revoker:    revoker,
+		Eraser:     eraser,
+		Receipts:   &fakeReceipts{},
+		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}, jobs, &logs
+}
+
+// advanceTo reconciles acme until its job reaches phase, failing the test
+// when it does not within the pass budget.
+func advanceTo(t *testing.T, r *tenantdeletion.Reconciler, jobs *tenantdeletion.Memory, phase tenantdeletion.Phase) tenantdeletion.Job {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		j, err := jobs.Get(ctx, "acme")
+		if err != nil {
+			t.Fatalf("Get job: %v", err)
+		}
+		if j.Phase == phase {
+			return j
+		}
+		if err := r.ReconcileTenant(ctx, "acme"); err != nil {
+			t.Fatalf("ReconcileTenant on the way to %q: %v", phase, err)
+		}
+	}
+	t.Fatalf("job did not reach %q", phase)
+	return tenantdeletion.Job{}
+}
+
+// A Phase 3 revoker error or a Phase 4 eraser error keeps the job in its
+// phase with the error in BlockedReason, writes neither Phase nor State,
+// returns nil, and logs a warning naming the tenant and the phase. The next
+// pass re-runs the action, and once it succeeds the job advances and the
+// reason clears. Before the fix either error moved the job to the terminal
+// failed phase, from which no production path resumes it.
+//
+// spec: 12.8 (Compliance Interfaces: Idempotency and resumption), 12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3)
+func TestPhase3And4ActionErrorsPauseInPhaseAndResume_spec_12_8(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase tenantdeletion.Phase
+		next  tenantdeletion.Phase
+		// arm returns the reconciler and a function that clears the fault.
+		arm func() (*tenantdeletion.Reconciler, *tenantdeletion.Memory, *bytes.Buffer, func())
+	}{
+		{
+			name: "phase 3 revoker error", phase: tenantdeletion.PhaseRevokeCredentials, next: tenantdeletion.PhaseLegalHoldSegregation,
+			arm: func() (*tenantdeletion.Reconciler, *tenantdeletion.Memory, *bytes.Buffer, func()) {
+				rev := &fakeAction{err: errors.New("token store unreachable")}
+				r, jobs, logs := newPausingReconciler(rev, &fakeEraser{counts: map[string]int{}})
+				return r, jobs, logs, func() { rev.err = nil }
+			},
+		},
+		{
+			name: "phase 4 eraser error", phase: tenantdeletion.PhaseDeleteData, next: tenantdeletion.PhaseDestroyKMSKey,
+			arm: func() (*tenantdeletion.Reconciler, *tenantdeletion.Memory, *bytes.Buffer, func()) {
+				er := &fakeEraser{err: errors.New("token store unreachable"), counts: map[string]int{"sessions": 2}}
+				r, jobs, logs := newPausingReconciler(&fakeAction{}, er)
+				return r, jobs, logs, func() { er.err = nil }
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, jobs, logs, clear := tc.arm()
+			ctx := context.Background()
+			if err := r.Start(ctx, "acme", "T3"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			before := advanceTo(t, r, jobs, tc.phase)
+			for pass := 0; pass < 3; pass++ {
+				if err := r.ReconcileTenant(ctx, "acme"); err != nil {
+					t.Fatalf("paused pass %d returned %v, want nil", pass, err)
+				}
+			}
+			j, _ := jobs.Get(ctx, "acme")
+			if j.Phase != tc.phase || j.State != before.State {
+				t.Fatalf("phase/state = %q/%q, want %q/%q unchanged", j.Phase, j.State, tc.phase, before.State)
+			}
+			if !strings.Contains(j.BlockedReason, "token store unreachable") {
+				t.Errorf("BlockedReason = %q, want the action error", j.BlockedReason)
+			}
+			if j.Failure != "" || !j.CompletedAt.IsZero() {
+				t.Errorf("a paused job must not carry a failure, got Failure=%q CompletedAt=%v", j.Failure, j.CompletedAt)
+			}
+			if _, done := j.PhaseLog[tc.phase]; done {
+				t.Errorf("a paused %q must not be recorded as completed", tc.phase)
+			}
+			out := logs.String()
+			if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "tenant_id=acme") ||
+				!strings.Contains(out, "phase="+string(tc.phase)) || !strings.Contains(out, "token store unreachable") {
+				t.Errorf("pause log = %q, want a WARN naming the tenant, the phase, and the error", out)
+			}
+
+			clear()
+			if err := r.ReconcileTenant(ctx, "acme"); err != nil {
+				t.Fatalf("recovered pass: %v", err)
+			}
+			j, _ = jobs.Get(ctx, "acme")
+			if j.Phase != tc.next {
+				t.Fatalf("phase after recovery = %q, want %q", j.Phase, tc.next)
+			}
+			if j.BlockedReason != "" {
+				t.Errorf("BlockedReason after advance = %q, want empty", j.BlockedReason)
+			}
+			if j = runToCompletion(t, r, "acme"); j.Phase != tenantdeletion.PhaseCompleted {
+				t.Fatalf("final phase = %q (%s), want completed", j.Phase, j.Failure)
+			}
+		})
+	}
+}
+
+// A reconciler with no Phase 3 revoker or no Phase 4 eraser is
+// misconfigured, and the job fails at that phase rather than pausing or
+// advancing. Before the fix a nil revoker advanced past Phase 3 and left
+// the tenant's leases held and its TokenStore rows in place.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3), 12.8 (Compliance Interfaces: Idempotency and resumption)
+func TestPhase3NilRevokerAndPhase4NilEraserFailTheJob_spec_12_8(t *testing.T) {
+	cases := []struct {
+		name    string
+		revoker tenantdeletion.CredentialRevoker
+		eraser  tenantdeletion.TenantEraser
+		phase   tenantdeletion.Phase
+		want    string
+	}{
+		{"nil revoker", nil, &fakeEraser{counts: map[string]int{}}, tenantdeletion.PhaseRevokeCredentials, "Phase 3 requires a CredentialRevoker"},
+		{"nil eraser", &fakeAction{}, nil, tenantdeletion.PhaseDeleteData, "Phase 4 requires a TenantEraser"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, jobs, _ := newPausingReconciler(tc.revoker, tc.eraser)
+			ctx := context.Background()
+			if err := r.Start(ctx, "acme", "T3"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			advanceTo(t, r, jobs, tc.phase)
+			err := r.ReconcileTenant(ctx, "acme")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ReconcileTenant at %q = %v, want %q", tc.phase, err, tc.want)
+			}
+			j, _ := jobs.Get(ctx, "acme")
+			if j.Phase != tenantdeletion.PhaseFailed || !strings.Contains(j.Failure, tc.want) {
+				t.Fatalf("job = %q (%s), want failed with %q", j.Phase, j.Failure, tc.want)
+			}
+			if j.BlockedReason != "" {
+				t.Errorf("a misconfiguration must fail rather than pause, got BlockedReason %q", j.BlockedReason)
+			}
+		})
 	}
 }

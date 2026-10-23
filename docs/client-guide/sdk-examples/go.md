@@ -106,7 +106,7 @@ endpoint.
 | `Finalize` | `POST /v1/sessions/{id}/finalize` | `created` to `ready`. |
 | `Start` | `POST /v1/sessions/{id}/start` | `ready` to `running`. |
 | `Interrupt` | `POST /v1/sessions/{id}/interrupt` | `running` to `suspended`. |
-| `Resume` | `POST /v1/sessions/{id}/resume` | A session awaiting client action back to `running`. |
+| `Resume` | `POST /v1/sessions/{id}/resume` | Moves a session in `awaiting_client_action`, or a `suspended` session whose pod was released, to `resume_pending`, and a `suspended` session whose pod is held to `running`. |
 | `Terminate` | `POST /v1/sessions/{id}/terminate` | A non-terminal session to `completed`. |
 | `DeleteSession` | `DELETE /v1/sessions/{id}` | A non-terminal session to `cancelled`. |
 

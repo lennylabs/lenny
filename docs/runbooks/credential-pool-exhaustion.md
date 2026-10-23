@@ -13,6 +13,7 @@ symptoms:
   - "session creation returns CREDENTIAL_POOL_EXHAUSTED"
   - "lenny_credential_pool_available reaches 0"
   - "elevated rate of provider 429 responses"
+  - "suspended or recovering sessions wait in resume_pending and do not return to running"
 tags:
   - credentials
   - rate-limiting
@@ -27,13 +28,14 @@ related:
 
 # credential-pool-exhaustion
 
-A credential pool has no assignable credentials. New sessions that require a credential from this pool fail with `CREDENTIAL_POOL_EXHAUSTED`. Existing sessions with active leases are unaffected until lease expiry.
+A credential pool has no assignable credentials. New sessions that require a credential from this pool fail with `CREDENTIAL_POOL_EXHAUSTED`. The restore of a suspended or recovering session onto a replacement pod also needs new leases from the pool, so while the pool is exhausted such a session waits in `resume_pending` until a credential frees or its resume window (`maxResumeWindowSeconds`) elapses. Existing sessions with active leases are unaffected until lease expiry.
 
 ## Trigger
 
 - `CredentialPoolExhausted` alert — no assignable credentials for the configured sustain window.
 - `CredentialPoolLow` alert — pool availability below the configured warning threshold.
 - Session creation returns `CREDENTIAL_POOL_EXHAUSTED`.
+- Sessions that a pod failure or a resume of a suspended session moved to `resume_pending` stay there and do not return to `running`.
 - `/v1/admin/health` returns `credentialPools: degraded` or `unhealthy`.
 
 Exact alert thresholds are deployer-configurable — see [Metrics Reference](../reference/metrics.html#alert-rules).

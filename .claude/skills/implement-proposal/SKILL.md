@@ -65,6 +65,8 @@ The review runs **before** the tests because most fixes in a step answer that re
 
 **A step is never ticked on a gate that did not pass.** The full set runs against the exact tree being ticked, which is the guarantee every scoped run in between borrows against.
 
+**A step's first final gate runs the full set; a later one is scoped.** After a final gate fails and a fix round commits, the next final gate re-runs the tiers the previous gate failed, the tests it named, and the tiers the commits since that gate can reach, and carries the rest forward. It applies the same class table and widening rules as the Verify loop's re-runs, and it falls back to the full set when the previous gate's commit is unknown or is not an ancestor of HEAD. The proposal-wide Verify phase still runs every tier before anything merges. When resuming a run that started before this scoping existed, set `fullFinalPassesBeforeScoping` to the number of final gates its journal holds, so those gates replay from the cache with their original full-pass prompts.
+
 ### Which tiers a fix runs
 
 Two mechanisms, because "be smarter" has to be made mechanical or it regresses to running everything.
@@ -142,7 +144,7 @@ Invoke by `{scriptPath}`, never by name: a name resolves to a cached copy, so a 
 }
 ```
 
-Arguments, all with defaults: `baseModel` (`opus`), `baseEffort` (`medium`), `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `sweepComments` (true), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
+Arguments, all with defaults: `baseModel` (`opus`), `baseEffort` (`medium`), `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `fullFinalPassesBeforeScoping` (0), `leaseTtlHours` (24), `sweepComments` (true), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
 
 `spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` rather than silently skipping the interleaved spec step. That result carries `stoppedAt`, the non-spec step the run stopped at, and `specStepsBehind`, the spec steps that sit behind it and did not land.
 

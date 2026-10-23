@@ -57,6 +57,25 @@ One runtime process serves any number of sessions, one after another and at once
 
 Calls for different sessions run concurrently, so keep per-session state keyed by session identifier and make the handler safe for concurrent use. Work done in `OnCreate` delays the session's `session_started`. When the adapter waits for that frame, its wait is bounded, and a start whose wait ends before the frame arrives fails. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines `session_start`, `session_started`, and `session_end`.
 
+## Busy reporting
+
+The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`, and the SDK answers each one. It answers a `heartbeat` that names a session the process holds with that `sessionId`, and with `busy: true` from reading a `message` for the session until its handler has returned and the SDK has written any response the handler produced, or while a busy hold taken for the session is held. A handler takes a busy hold for work it does for the session after its handler returns, such as the rest of a turn whose reply is streaming and not final, a tool call it does not await, background work, or waiting on children, and releases the hold when that work ends. The SDK does not report work for which no hold is held.
+
+In Go, `runtime.HoldBusy(ctx)` takes a hold on the session the context names and returns its release; `OnCreate`, `OnMessage`, and `OnTerminate` each receive such a context. In Python and TypeScript, the `CreateRequest` also carries the session's busy hold (`hold_busy` and `holdBusy`).
+
+```go
+func (h *worker) OnMessage(ctx context.Context, msg runtime.Message) (runtime.Reply, error) {
+    release := runtime.HoldBusy(ctx)
+    go func() {
+        defer release()
+        h.process(msg) // work for the session that outlives this handler
+    }()
+    return runtime.TextReply("started"), nil
+}
+```
+
+The `busy` report is one part of what keeps a session from idle suspension. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension).
+
 ## Integration levels
 
 A bare `Run(h)` clears the Basic level. Options raise the level:

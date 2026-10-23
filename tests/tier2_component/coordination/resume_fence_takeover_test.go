@@ -94,7 +94,10 @@ func TestResumeFenceThenTakeoverAccepted_spec_10_1(t *testing.T) {
 		TTL:       30 * time.Second,
 		Interval:  time.Hour,
 	})
-	gen := sw.RecordHandoff(ctx, tenant, sessID)
+	gen, holdsPod := sw.RecordHandoff(ctx, tenant, sessID, 1)
+	if !holdsPod {
+		t.Fatal("RecordHandoff reported no held pod for a running row with a pod assignment")
+	}
 	if gen != 2 {
 		t.Fatalf("post-handoff generation = %d, want 2 (strictly above the resume fence)", gen)
 	}

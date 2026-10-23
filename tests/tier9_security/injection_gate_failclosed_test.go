@@ -154,6 +154,7 @@ func TestInjectionGateFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *te
 	}
 	rec := &failClosedCauseRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Executor:                   executor.NewEchoExecutor(),
 		Transcripts:                transcriptstore.NewMemory(),
 		Runtimes:                   seedInjectionCapableRuntime(t),
@@ -185,9 +186,10 @@ func TestInjectionGateFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T)
 		err:   errors.New("registry store pg read timeout"),
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{

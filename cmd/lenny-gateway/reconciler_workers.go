@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/quota"
-	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
 // startReconcilerWorkers launches the §8.10 orphan-cleanup job, the §10.1
@@ -132,28 +133,36 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			return row.State, true
 		}
 		deadlockFail := func(ctx context.Context, tenantID, sessionID string) {
+			// spec: §7.2 — a funnel terminal writer: the claim opens before
+			// the write, the write applies only over a non-terminal locked
+			// row and records the Terminated fact, and the terminal pipeline
+			// runs exactly when it applied.
+			end := w.sessionSrv.BeginTerminal(sessionID)
+			defer end()
 			var fromState session.State
+			now := time.Now()
 			updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
 				if session.IsTerminal(s.State) {
-					return nil // a concurrent terminal transition won the race
+					return sessionstore.ErrSuperseded
 				}
 				fromState = s.State
 				s.State = session.StateFailed
 				s.FailureClass = session.FailureClassRuntime
 				s.FailureReason = string(session.FailureDeadlockTimeout)
+				sessionstore.MarkTerminated(s, fromState, now)
 				return nil
 			})
+			if errors.Is(err, sessionstore.ErrSuperseded) {
+				return
+			}
 			if err != nil {
 				log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
 				return
 			}
-			if updated.State == session.StateFailed &&
-				updated.FailureReason == string(session.FailureDeadlockTimeout) {
-				// spec: §4.6 — a deadlock-timeout fails a blocked running
-				// session, so fromState routes its teardown through the §6.2
-				// executor recycle path rather than the pre-running reclaim.
-				w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
-			}
+			// spec: §4.6 — a deadlock-timeout fails a blocked running
+			// session, so fromState routes its teardown through the §6.2
+			// executor recycle path rather than the pre-running reclaim.
+			w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
 		}
 		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
 			deadlockLookup, deadlockFail)
@@ -194,6 +203,15 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 		go w.storageRecoveryReconciler.Run(w.watchdogCtx)
 	}
 
+	// ----- §12.4 slot-set recovery probe -----
+	// Probes Redis on the recovery interval; when an outage ends it runs
+	// the add-only rebuild of the per-pod slot sets, so a replica with no
+	// slot traffic still restores them before fast-path enforcement
+	// resumes. Active only when the slot counter is wired.
+	if w.slotCounter != nil {
+		go w.slotCounter.RunRecovery(w.watchdogCtx)
+	}
+
 	// ----- §11.2 delegation tree budget checkpoint + reconstruction -----
 	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
 	// active tree's Redis dlg:* counters to the delegation_tree_budget
@@ -206,9 +224,10 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// are all wired. F-11.2.5 / F-12.4.8.
 	if w.treeBudgetConcrete != nil && w.pgPool != nil && w.sessions != nil {
 		w.delegationBudgetReconciler = &delegationbudget.Reconciler{
-			Probe: func(ctx context.Context) bool {
-				return redisconn.PingWithTimeout(w.redisClient, 2*time.Second) == nil
-			},
+			// §12.4: the dlg:* counters live on the Delegation concern's
+			// instance, so its outage and recovery edges are read there.
+			// F-12.4.30.
+			Probe:           concernRedisProbe(w.concernRedis, storerouter.RedisConcernDelegation),
 			Counters:        delegationbudget.CounterAdapter{Reserver: w.treeBudgetConcrete},
 			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
 			Store:           delegationbudgetpg.New(w.pgPool),
@@ -234,9 +253,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// and the session-completion final write wired above. F-11.2.4.
 	if w.quotaCheckpointSvc != nil {
 		quotaCheckpointReconciler := &quotacheckpoint.Reconciler{
-			Probe: func(ctx context.Context) bool {
-				return redisconn.PingWithTimeout(w.redisClient, 2*time.Second) == nil
-			},
+			// §12.4: the token-usage counters live on the Quota concern's
+			// instance. F-12.4.30.
+			Probe:    concernRedisProbe(w.concernRedis, storerouter.RedisConcernQuota),
 			Service:  w.quotaCheckpointSvc,
 			Interval: time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
 		}

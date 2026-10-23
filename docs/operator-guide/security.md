@@ -81,15 +81,15 @@ auth:
 
 | Configuration | Behavior |
 |---|---|
-| Single-tenant mode | `tenantIdClaim` is ignored; all requests use the `default` tenant |
-| Multi-tenant mode | Gateway reads `tenantIdClaim` from the validated OIDC ID token |
+| Single-tenant mode (`auth.multiTenant: false`, the default) | `tenantIdClaim` is ignored; all requests use the `default` tenant |
+| Multi-tenant mode (`auth.multiTenant: true` with `tenancy.mode: multi`) | Gateway reads `tenantIdClaim` from a validated OIDC ID token and `tenant_id` from a gateway-issued token |
 
 **Rejection conditions:**
 
 | Condition | Response |
 |---|---|
 | Claim absent or empty string | `401 Unauthorized` with error code `TENANT_CLAIM_MISSING` |
-| Claim value doesn't match any tenant | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
+| Claim value names no registered tenant, or names a tenant in the `deleting` or `deleted` state | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
 
 Both rejection reasons are logged (INFO level, with `user_id` and `jti`) and emitted as `auth_failure` audit events.
 
@@ -486,6 +486,7 @@ Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layer
 ### Erasure Process
 
 - **Processing restriction (Article 18):** Before full deletion, a `processing_restricted` flag can be set on a user, blocking all new session creation while the erasure job runs.
+- **Session drain:** Before any data is deleted, the erasure job force-terminates the user's running sessions. When it cannot terminate them, the job fails and the processing restriction stays set.
 - **Erasure SLA:** 72 hours for T3 data, 1 hour for T4 data.
 - **Billing pseudonymization:** Configurable per-tenant via `billingErasurePolicy`:
   - `default` -- billing events are pseudonymized using a per-tenant `erasure_salt` (salt is deleted immediately after pseudonymization for GDPR Recital 26 compliance)

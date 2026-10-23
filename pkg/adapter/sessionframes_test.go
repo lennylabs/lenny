@@ -805,7 +805,7 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 		if err := s.writeSessionStart("sess-2", s.nextStartID(), manifestInputs{}); err != nil {
 			t.Fatalf("writeSessionStart: %v", err)
 		}
-		s.writeSessionEnd("sess-2")
+		s.writeSessionEnd("sess-2", nil)
 		expectLog(t, rt, "start", "close")
 	})
 }

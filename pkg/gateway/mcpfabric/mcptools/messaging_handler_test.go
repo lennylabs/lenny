@@ -25,6 +25,7 @@ func newMCPMessaging(t *testing.T, def, max session.MessagingScope, limits mcpto
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:     true,
 		Store:                 store,
 		Executor:              executor.NewEchoExecutor(),
 		InputWaits:            inputwait.NewRegistry(),
@@ -140,12 +141,13 @@ func TestSendMessageCrossTenantDenied_spec_7_2_268(t *testing.T) {
 	store := &foreignTenantStore{Store: memstore.New(), foreignID: "sess_foreign"}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:      store,
-		Executor:   executor.NewEchoExecutor(),
-		InputWaits: inputwait.NewRegistry(),
-		Clock:      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:     func() string { return "sess_mcp" },
-		TenantID:   "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		InputWaits:        inputwait.NewRegistry(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_foreign","message":"hi"}`)
 	result, _ := resp["result"].(map[string]any)

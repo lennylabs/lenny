@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
@@ -203,6 +204,11 @@ func (w *gatewayWiring) buildMCPSurface(
 		// pointer to *sessionserver.Server, which implements
 		// delegation.ExperimentRouter via ApplyExperimentRouting.
 		ExperimentRouter: sessionSrv,
+		// spec: §12.8 (Lifecycle fence and drain) — the undo of a
+		// refused or failed delegation deletes its export objects through
+		// the blob store's per-session deletion. A store without it leaves
+		// the option nil, and the undo keeps the child ID's reservation.
+		SessionObjects: delegationSessionObjects(w.blobs),
 	})
 	// §8.3 / §4.8: now that delegationSvc exists, fill
 	// in the holder so the DelegationPolicyEvaluator measures TaskSpec.input
@@ -281,7 +287,18 @@ func (w *gatewayWiring) buildMCPSurface(
 		// spec: §8.8 (TaskRecord and TaskResult Schema) — resolve
 		// retriesExhausted against the deployer retry caps the session
 		// server's failure path enforces.
-		RetryBudget:        sessionSrv,
+		RetryBudget: sessionSrv,
+		// spec: §7.2 (Interactive Session Model) — the cancel tools open
+		// the session server's terminal claim and run its post-terminal
+		// hook, so an MCP cancel seals, drains, emits the terminal events,
+		// and releases the pod as every other terminal writer does.
+		Terminal: sessionSrv,
+		// spec: §7.2 (Message delivery routing — seven paths, path 6) —
+		// lenny/send_message and lenny/delegate_task take the session
+		// server's delivery lock, deliver held messages, hold a message to a
+		// suspended or recovering target, and resume a suspended one.
+		Delivery:           sessionSrv,
+		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
 		ElicitationMetrics: gwMetrics,
@@ -320,6 +337,10 @@ func (w *gatewayWiring) buildMCPSurface(
 		// chain lookup, the §16.7 audit emission, and the §16.1 tamper
 		// metric to the right tenant. F-9.2.13 / F-15.2.15.
 		TenantID: "default",
+		// spec: §10.2 — only a dev-mode gateway lets a tool call with no
+		// principal fall back to TenantID; outside dev mode the call is
+		// refused with UNAUTHORIZED before any tool runs. F-10.2.21.
+		DevTenantFallback: *devMode,
 		// spec: §7.2; §8.3 — deployment
 		// messagingScope (default + ceiling) and the per-session
 		// send_message rate limits. The same cross-replica rate counter
@@ -397,4 +418,15 @@ func (w *gatewayWiring) buildMCPSurface(
 	w.revCache = revCache
 	w.deadlockTracker = deadlockTracker
 	w.deadlockManager = deadlockManager
+}
+
+// delegationSessionObjects returns the blob store as the delegation
+// service's session-object deleter when it can delete by session, and nil
+// otherwise, the same assertion buildSessionScopedErasers makes.
+// spec: §12.8 (Lifecycle fence and drain).
+func delegationSessionObjects(blobs blobstore.Store) delegation.SessionObjectDeleter {
+	if d, ok := blobs.(sessionArtifactDeleter); ok {
+		return d
+	}
+	return nil
 }

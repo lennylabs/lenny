@@ -626,7 +626,7 @@ type Deps struct {
 
 	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
 	// lenny/send_message routes a message to a non-delivering target
-	// (input_required / suspended → inbox; recovering / pre-running →
+	// (input_required → inbox; suspended / recovering / pre-running →
 	// DLQ) instead of forcing it onto the executor, returning a
 	// `queued` delivery receipt per the §7.2 paths 3/5/6/7. A nil
 	// coordinator (no Redis) surfaces inbox_unavailable for those
@@ -640,8 +640,18 @@ type Deps struct {
 
 	// TenantID is the tenant the MCP session operates within. The
 	// MCP adapter is mounted per-tenant; v1 binds one tenant per
-	// adapter instance.
+	// adapter instance. It is the fallback tenant of a tool call with no
+	// authenticated principal, which only DevTenantFallback admits.
 	TenantID string
+
+	// DevTenantFallback, when true, admits a tool call that carries no
+	// authenticated principal and runs it as TenantID (or `default`).
+	// The gateway sets it only under --dev-mode. When false, the
+	// default, Register installs a pre-dispatch gate that refuses such a
+	// call with UNAUTHORIZED before any tool runs, so no tool resolves its
+	// tenant from the fallback outside dev mode (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantFallback bool
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
 	// true, a session created without an explicit isolation profile
@@ -665,6 +675,60 @@ type Deps struct {
 	// a nil auditor disables the emission. spec: §26.2; §4.9.2.
 	// F-26.2.5.
 	VCSLeaseAuditor VCSLeaseAuditor
+
+	// Terminal is the session server's terminal-writer seam. The
+	// lenny/cancel_session handler and lenny/cancel_child's cancelSubtree
+	// open a terminal claim through BeginTerminal before each terminal
+	// Update and run the post-terminal hook through AfterTerminalWrite
+	// after a write that applied, so a cancel seals, drains, emits the
+	// terminal events, and releases the pod as every other terminal writer
+	// does. Nil records the Terminated fact alone. spec: §7.2 (Interactive
+	// Session Model), §15.1 (REST API).
+	Terminal Terminal
+
+	// Delivery is the session server's delivery of held messages and resume
+	// of suspended sessions. lenny/send_message takes the session's
+	// delivery lock, delivers held messages before a path-2 send, holds a
+	// message to a suspended or recovering target in the DLQ, and resumes a
+	// suspended target; lenny/delegate_task delivers a child's held
+	// messages after its task input. With a nil Delivery, lenny/send_message
+	// delivers no held message and answers a held or resume decision with
+	// error and inbox_unavailable. spec: §7.2 (Message delivery routing —
+	// seven paths, path 6).
+	Delivery SessionDelivery
+
+	// PrimaryReadTimeout bounds every sessionstore.ReadPrimary call the
+	// tools make: the lenny/send_message classification read and its
+	// re-read after a sealed refusal, the lenny/delegate_task child read,
+	// and the lenny/request_elicitation terminal-state check. A
+	// non-positive value selects sessionstore.DefaultPrimaryReadTimeout.
+	// spec: §12.3 (Postgres HA Requirements).
+	PrimaryReadTimeout time.Duration
+}
+
+// SessionDelivery is the session server's delivery seam the message tools
+// consume. *sessionserver.Server satisfies it.
+//
+//   - LockDelivery takes the session's per-replica delivery lock, honoring
+//     ctx, and returns its release. The lock is not reentrant.
+//   - HoldMessage holds a message in the session's DLQ and re-reads the
+//     primary row, answering queued, dropped, or terminal.
+//   - DeliverHeld delivers the held messages of a session its caller found
+//     `running` with the lock held, reading no row.
+//   - ResumeSuspended resumes a `suspended` session a message is held for;
+//     it takes the lock itself, so the caller must not hold it.
+//   - AdmitResume runs the resume admission check on a `suspended` row
+//     before its message is held: nil, a *sessionserver.CapRefusal, or a
+//     lookup or count error.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission)
+type SessionDelivery interface {
+	LockDelivery(ctx context.Context, sessionID string) (func(), error)
+	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
+	DeliverHeld(ctx context.Context, row sessionstore.Session) error
+	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
+	AdmitResume(ctx context.Context, row sessionstore.Session) error
 }
 
 // VCSLeaseAuditor records a §4.9.2 VCS credential lease the
@@ -759,6 +823,12 @@ func Register(srv *mcp.Server, deps Deps) {
 	if tenant == "" {
 		tenant = "default"
 	}
+	// spec: §10.2 — outside dev mode every tool call must carry an
+	// authenticated principal; callerTenantID's fallback is then never
+	// reached. F-10.2.21.
+	if !deps.DevTenantFallback {
+		srv.SetToolCallGate(requirePrincipalTenant)
+	}
 
 	// §7.2 send_message governance shared per-adapter state: the
 	// fixed-window + lifetime rate limiter and the deployment-resolved
@@ -788,8 +858,7 @@ func Register(srv *mcp.Server, deps Deps) {
 	}
 
 	// §15.2 session-lifecycle surface: attach_session (when the session store
-	// is wired), create_session, send_message, interrupt_session, and
-	// cancel_session.
+	// is wired), create_session, send_message, and cancel_session.
 	registerSessionLifecycleTools(srv, deps, env)
 
 	// §8.5/§8.9 delegation-tree surface: get_task_tree, cancel_child, and
@@ -987,20 +1056,6 @@ type taskHandle struct {
 	// Out-of-spec but stable — useful for the caller to surface the tree
 	// position without re-walking the lineage.
 	Depth int `json:"depth"`
-}
-
-// senderFrom builds the §15.4 from-object for a delivered
-// lenny/send_message. An authenticated inter-session sender is attributed
-// as kind `agent` with its session id; an unattributed send (no principal
-// session binding and no fromSessionId) returns the zero value so the
-// executor stamps its default gateway-client identity. The gateway always
-// sets `from` — a caller cannot. spec: §15.4; §13.5
-// mitigation 6. F-13.5.11.
-func senderFrom(senderID string) executor.MessageFrom {
-	if senderID == "" {
-		return executor.MessageFrom{}
-	}
-	return executor.MessageFrom{Kind: "agent", ID: senderID}
 }
 
 // recordChainRejection emits the §16.7 interceptor.rejected audit row
@@ -1358,40 +1413,35 @@ type discoveredAgent struct {
 	Description      string `json:"description,omitempty"`
 }
 
-// requireActiveDelegator enforces the §11.4 rule that hard_disable
-// "also block[s] new delegated tasks". It resolves the parent session's
-// owning user and rejects the delegation with USER_INVALIDATED when that
-// user is no longer active. When no user store is wired, the parent
-// session is unresolvable, or the owning user has no registry row, the
-// delegation proceeds — mirroring the REST session-creation gate, which
-// admits principals that were never provisioned through the admin user
-// API. spec: §11.4; F-11.4.1.
+// requireActiveDelegator is the early creation gate of a delegated child.
+// It reads the parent session's owning user's row and the tenant row and
+// refuses with the code CreationMarkers.Refusal answers for a delegated
+// child, so it answers the fence's code for the same marker state: a
+// soft-disabled owner's in-flight work keeps delegating (§11.4), while a
+// hard-disabled or fully revoked owner, a restricted owner, and a
+// suspended or non-active tenant refuse. A missing row carries no marker,
+// and an unwired store reads nothing. A marker read error answers the
+// INTERNAL_ERROR tool error. When the parent session is unresolvable the
+// gate stays out of the way so the delegation service returns its
+// canonical PARENT_NOT_FOUND. The fence in the child's insert transaction
+// remains the serialization point.
+// spec: §11.4 (User Invalidation), §12.8 (Lifecycle fence and drain).
 func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessionID string) error {
-	if deps.Users == nil || deps.Store == nil || parentSessionID == "" {
+	if (deps.Users == nil && deps.Tenants == nil) || deps.Store == nil || parentSessionID == "" {
 		return nil
 	}
 	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
 	if err != nil {
-		// A missing or unreadable parent is the delegation service's
-		// concern (it returns PARENT_NOT_FOUND); the user gate stays out
-		// of the way so the canonical error surfaces downstream.
 		return nil
 	}
-	if parent.UserID == "" {
-		return nil
-	}
-	user, err := deps.Users.Get(ctx, tenant, parent.UserID)
-	if errors.Is(err, userstore.ErrNotFound) {
-		return nil
-	}
+	m, err := sessionstore.StoreMarkers(deps.Tenants, deps.Users)(ctx, tenant, parent.UserID)
 	if err != nil {
 		return mcp.NewToolError("INTERNAL_ERROR",
-			"user-invalidation check failed: "+err.Error(), nil)
+			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
-	if !user.IsActive() {
-		return mcp.NewToolError("USER_INVALIDATED",
-			"the owning user has been invalidated and cannot spawn new delegated tasks",
-			map[string]any{"userId": parent.UserID})
+	m.IsDelegatedChild = true
+	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
+		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
 	}
 	return nil
 }
@@ -1831,12 +1881,27 @@ func callerSessionID(ctx context.Context, fallback string) string {
 	return fallback
 }
 
+// requirePrincipalTenant is the pre-dispatch gate Register installs
+// outside dev mode. It refuses a tool call whose context carries no
+// authenticated principal with a tenant, with the §15.1 UNAUTHORIZED
+// code the REST surface returns for a request without credentials.
+// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED). F-10.2.21.
+func requirePrincipalTenant(ctx context.Context) *mcp.ToolError {
+	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+		return nil
+	}
+	return mcp.NewToolError("UNAUTHORIZED", "tool call requires an authenticated principal",
+		map[string]any{"reason": "auth_required"})
+}
+
 // callerTenantID resolves the per-request tenant id from the
 // authenticated principal, falling back to the binary's configured
 // default. The §15.2 / §10.2 production posture mounts the MCP
 // adapter under the auth middleware so every authenticated request
-// carries the caller's tenant on the request context. Tests and the
-// dev-headers transport do not carry a principal; the fallback (the
+// carries the caller's tenant on the request context, and outside dev
+// mode the requirePrincipalTenant gate refuses a call without one
+// before the tool runs. Tests and the dev-headers transport do not
+// carry a principal; under Deps.DevTenantFallback the fallback (the
 // Register-time Deps.TenantID, which defaults to "default") keeps the
 // tool surface usable in those minimal deployments. A bare "default"
 // is the absolute floor — never an empty tenant id, which would
@@ -1883,10 +1948,9 @@ func toTaskResult(s sessionstore.Session, maxRetries int) sessionrecord.Result {
 // RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
 // spec: §8.8; §15.2.1. F-8.8.4.
 func taskErrorForRow(s sessionstore.Session, maxRetries int) *sessionrecord.Error {
-	code := s.FailureReason
-	if code == "" {
-		code = "CHILD_" + strings.ToUpper(string(s.State))
-	}
+	// spec: §8.8 — the stored reason maps to its catalog code, such as
+	// deadlock_timeout to DEADLOCK_TIMEOUT. F-8.8.6.
+	code := session.TaskErrorCode(s.FailureReason, s.State)
 	cat, _ := errorclassify.Classify(code)
 	return &sessionrecord.Error{
 		Code:             code,
@@ -2181,6 +2245,14 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 	return false
 }
 
+// Terminal is the terminal-writer seam the cancel tools consume:
+// *sessionserver.Server satisfies it. spec: §7.2 (Interactive Session Model).
+type Terminal interface {
+	BeginTerminal(sessionID string) (end func())
+	AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
+		signals func(context.Context, sessionstore.Session)) sessionstore.Session
+}
+
 // cancelSubtree cancels the subtree rooted at child, honouring each
 // non-terminal descendant's §8.10 `cascadeOnFailure` policy. The root
 // (the explicit `cancel_child` target) is always cancelled per the
@@ -2191,13 +2263,24 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 // running because the spec models that mode as "let children outlive
 // the terminated parent".
 //
-// Already-terminal sessions are left untouched and their own subtree
-// is not re-traversed because their own cascade already ran when they
-// settled. The returned slice is the ids actually transitioned, sorted
-// for a deterministic result. spec: §8.5 (cancel_child cascades per
-// policy); §8.10 (cascadeOnFailure modes). F-8.5.19.
+// Each cancel is a hook-path terminal write: it opens the session's terminal
+// claim before its Update, writes cancelled only over a non-terminal locked
+// row, records the Terminated fact in the write, and runs the post-terminal
+// hook (with fromState from the locked row) and ends the claim on a goroutine
+// on a detached context, so one session's seal window does not delay the
+// next. signals is the hook's signal tail for each cancelled node, and nil
+// runs none. A node another writer already ended, on the listing or on the
+// locked row, is skipped with none of its children queued and is left out of
+// the returned IDs. A store error returns the IDs cancelled so far with the
+// error, and the remaining nodes are not cancelled. With a nil terminal the
+// write records the Terminated fact alone. The returned slice is the IDs
+// actually transitioned, sorted for a deterministic result.
+//
+// spec: §8.5 (cancel_child cascades per policy); §8.10 (cascadeOnFailure
+// modes); §7.2 (Interactive Session Model). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, all []sessionstore.Session,
+	child sessionstore.Session, all []sessionstore.Session, terminal Terminal,
+	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) ([]string, error) {
 	byParent := map[string][]sessionstore.Session{}
 	for _, s := range all {
@@ -2207,11 +2290,6 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 	}
 	var cancelled []string
 	seen := map[string]bool{child.ID: true}
-	// rootCancelled tracks whether the explicit target has been
-	// transitioned. The root's own cascade policy decides whether to
-	// queue its children — the root itself is always cancelled because
-	// the §8.5 contract is `lenny/cancel_child(child_id)`.
-	rootCancelled := false
 	queue := []sessionstore.Session{child}
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -2219,20 +2297,18 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 		if session.IsTerminal(cur.State) {
 			continue
 		}
-		updated, err := store.Update(ctx, tenant, cur.ID, func(row *sessionstore.Session) error {
-			row.State = session.StateCancelled
-			return nil
-		})
+		applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
 		if err != nil {
+			sort.Strings(cancelled)
 			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
 		}
+		if !applied {
+			continue
+		}
 		cancelled = append(cancelled, cur.ID)
-		// §8.10: queue this node's children only when its cascade
-		// policy is `cancel_all`. `await_completion` and `detach` leave
-		// descendants running per the spec semantics. The root's policy
-		// applies to *its* descendants the same way every other node's
-		// does.
-		_ = updated
+		// §8.10: queue this node's children only when its cascade policy
+		// is `cancel_all`. `await_completion` and `detach` leave
+		// descendants running per the spec semantics.
 		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
 			for _, c := range byParent[cur.ID] {
 				if seen[c.ID] {
@@ -2242,17 +2318,51 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 				queue = append(queue, c)
 			}
 		}
-		if cur.ID == child.ID {
-			rootCancelled = true
-		}
 	}
-	// Defensive: the root was queued first, so an empty cancelled slice
-	// implies the root was already terminal. The §8.5 handler checks
-	// for that case before calling us, but assert here so a future
-	// refactor cannot silently regress.
-	_ = rootCancelled
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// cancelNode makes one hook-path cancel write and reports whether it
+// applied. A locked row that is already terminal is not applied. On a write
+// that applied, the post-terminal hook and the claim's end run on a
+// goroutine on a detached context.
+func cancelNode(ctx context.Context, store sessionstore.Store, tenant, id string, terminal Terminal,
+	signals func(context.Context, sessionstore.Session), now func() time.Time,
+) (bool, error) {
+	end := func() {}
+	if terminal != nil {
+		end = terminal.BeginTerminal(id)
+	}
+	var from session.State
+	stamp := now()
+	updated, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+		if session.IsTerminal(row.State) {
+			return sessionstore.ErrSuperseded
+		}
+		from = row.State
+		row.State = session.StateCancelled
+		sessionstore.MarkTerminated(row, from, stamp)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		end()
+		return false, nil
+	}
+	if err != nil {
+		end()
+		return false, err
+	}
+	if terminal == nil {
+		end()
+		return true, nil
+	}
+	hctx := context.WithoutCancel(ctx)
+	go func() {
+		defer end()
+		terminal.AfterTerminalWrite(hctx, from, updated, signals)
+	}()
+	return true, nil
 }
 
 // treeRoot returns the id of the §8 delegation tree's root by walking
@@ -2276,49 +2386,45 @@ func treeRoot(start sessionstore.Session, all []sessionstore.Session) string {
 	return cur.ID
 }
 
-// archiveCancelled records each cancelled subtree node in the §8.10
-// session_tree_archive, keyed by the delegation tree's root. Archiving
-// is best-effort: an archive error does not undo the cancellation, so
-// the error is dropped.
-func archiveCancelled(ctx context.Context, archive treearchive.Store,
-	tenant, rootSessionID string, cancelled []string, all []sessionstore.Session, now time.Time,
+// archiveCancelled records one cancelled subtree node in the §8.10
+// session_tree_archive, keyed by the delegation tree's root, with the state of
+// the row the post-terminal hook passed it, so a seal relabel archives
+// `failed`. The error code is CHILD_ plus the upper-cased state, as a child's
+// code is built elsewhere. Archiving is best-effort: an archive error does not
+// undo the cancellation, so the error is dropped. spec: §8.10; §8.8.
+func archiveCancelled(ctx context.Context, archive treearchive.Store, rootSessionID string,
+	row sessionstore.Session, now time.Time,
 ) {
-	parentOf := make(map[string]string, len(all))
-	for _, s := range all {
-		parentOf[s.ID] = s.ParentSessionID
-	}
-	// spec: §15.2.1 — the cancel code's category is stable across nodes,
-	// so classify once before the loop. F-8.8.4.
-	cancelCat, _ := errorclassify.Classify("CHILD_CANCELLED")
-	for _, id := range cancelled {
-		result, _ := json.Marshal(sessionrecord.Result{
-			SchemaVersion: sessionrecord.SchemaVersion,
-			TaskID:        id,
-			// spec: §8.8 — the result body's state uses the MCP
-			// protocol spelling (`canceled`), matching the settle-path
-			// archive body so a resumed parent replaying either archive
-			// route sees the same value. F-8.8.7.
-			State: mcpStateForSession(session.StateCancelled),
-			// spec: §8.8 — a cancel-cascade node carries the
-			// error block; category routes through the §15.2.1 classifier.
-			// retriesExhausted stays false: a parent-cancelled child did not
-			// consume its automatic-recovery budget. F-8.8.4.
-			Error: &sessionrecord.Error{
-				Code:     "CHILD_CANCELLED",
-				Category: string(cancelCat),
-				Message:  "child session ended in state cancelled",
-			},
-		})
-		_ = archive.Archive(ctx, treearchive.ArchivedNode{
-			TenantID:        tenant,
-			RootSessionID:   rootSessionID,
-			NodeSessionID:   id,
-			ParentSessionID: parentOf[id],
-			State:           string(session.StateCancelled),
-			Result:          string(result),
-			SettledAt:       now,
-		})
-	}
+	code := "CHILD_" + strings.ToUpper(string(row.State))
+	// spec: §15.2.1 — the error category routes through the classifier.
+	// F-8.8.4.
+	cat, _ := errorclassify.Classify(code)
+	result, _ := json.Marshal(sessionrecord.Result{
+		SchemaVersion: sessionrecord.SchemaVersion,
+		TaskID:        row.ID,
+		// spec: §8.8 — the result body's state uses the MCP protocol
+		// spelling, matching the settle-path archive body so a resumed
+		// parent replaying either archive route sees the same value.
+		// F-8.8.7.
+		State: mcpStateForSession(row.State),
+		// spec: §8.8 — a cancel-cascade node carries the error block;
+		// retriesExhausted stays false: a parent-cancelled child did not
+		// consume its automatic-recovery budget. F-8.8.4.
+		Error: &sessionrecord.Error{
+			Code:     code,
+			Category: string(cat),
+			Message:  "child session ended in state " + string(row.State),
+		},
+	})
+	_ = archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID:        row.TenantID,
+		RootSessionID:   rootSessionID,
+		NodeSessionID:   row.ID,
+		ParentSessionID: row.ParentSessionID,
+		State:           string(row.State),
+		Result:          string(result),
+		SettledAt:       now,
+	})
 }
 
 func textResult(s string) mcp.ToolResult {

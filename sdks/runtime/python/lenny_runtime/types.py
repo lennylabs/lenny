@@ -15,7 +15,7 @@ the pod-scoped manifest, and the stdin framing before invoking
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 # SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
 # revision (§28.5.3). Producers stamp it on every emitted MessagePart.
@@ -481,6 +481,29 @@ class CreateRequest:
     llm: LLMConfig | None = None
     # manifest_snapshot is the parsed pod-scoped adapter manifest.
     manifest_snapshot: AdapterManifest | None = None
+    # _hold takes a busy hold on the session the request opens. The SDK
+    # sets it before it invokes on_create.
+    _hold: Callable[[], Any] | None = field(default=None, repr=False, compare=False)
+
+    def hold_busy(self) -> Any:
+        """Report work the runtime starts when the session opens, before
+        any message, that outlives :meth:`Handler.on_create`.
+
+        It takes one busy hold at once and returns it as a context manager
+        whose exit releases it; ``release()`` releases it explicitly, and a
+        second release does nothing. While the hold is unreleased the SDK
+        answers each heartbeat naming the session with ``busy: true``. Work
+        after a handler returns is reported only through a hold, and a
+        release of the session's pod can end work that no hold reports.
+
+        spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3
+        (CH-MSGSOCK).
+        """
+        if self._hold is None:
+            from .session import no_hold
+
+            return no_hold()
+        return self._hold()
 
 
 @dataclass

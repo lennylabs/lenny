@@ -59,6 +59,8 @@ Common causes:
 - **Postgres constraint** — referential integrity blocking a delete; erasure needs a specific cascade order.
 - **Resource limit** — OOM or timeout on a large scope.
 - **Permission denied** — ServiceAccount RBAC drift.
+- **Session drain incomplete** — before it deletes any data, the job force-terminates the user's sessions. When a session cannot be terminated, or a session of the user is still active after the drain, the job fails with failure phase `store_delete` and the user's processing restriction stays set. The job's `error` field in `GET /v1/admin/erasure-jobs/{jobId}` describes the drain failure. Retry the job once the cause is resolved (Remediation Step 1).
+- **Legal hold found by the job's re-check** — after the drain and before it deletes any data, the job checks the user's sessions and artifacts for legal holds again, because a hold can be set after the erase request was accepted. When it finds an active hold, the job fails with failure phase `store_delete`, deletes nothing, and leaves the processing restriction set. Remediation Step 3 describes the recovery.
 
 ### Step 3 — Regulatory deadline
 
@@ -91,13 +93,23 @@ kubectl create job --from=cronjob/lenny-erasure <new-job-name> -n lenny-system
 
 Follow [minio-failure](minio-failure.html). Erasure jobs need working object-store writes to delete artifacts.
 
-### Step 3 — Clear a legal-hold or restriction
+### Step 3 — Recover from a legal hold or clear the restriction
 
-If the job is blocked by a restriction (legal hold, active dispute), inspect the job state and, with a recorded justification, clear the restriction so the controller can retry:
+A job that failed on a legal hold is recovered in one of two ways:
+
+- Release the hold with `POST /v1/admin/legal-hold` (with `hold: false`), then retry the job. The retry runs the legal-hold preflight again and sets the processing restriction again.
+- When the decision has been made to erase despite the hold, submit a new erase request with `{"acknowledgeHoldOverride": true, "justification": "<text>"}`. The override requires `platform-admin` and is recorded in the audit trail.
 
 <!-- access: lenny-ctl -->
 ```bash
 lenny-ctl admin erasure-jobs get <job-id>
+lenny-ctl admin erasure-jobs retry <job-id>
+```
+
+Clearing the processing restriction retries nothing. The clear only reopens the user to new sessions while the job stays failed, and it is accepted only for a failed job whose erasure set the user's current restriction. A later retry of the job sets the restriction again. Clear the restriction, with a recorded justification, only when the user must create sessions before the erasure can be completed:
+
+<!-- access: lenny-ctl -->
+```bash
 lenny-ctl admin erasure-jobs clear-restriction <job-id> --justification "<text>"
 ```
 

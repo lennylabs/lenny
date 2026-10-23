@@ -5,6 +5,7 @@ package sessioninbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -86,53 +87,83 @@ func NewCoordinator(cfg Config) *Coordinator {
 	}
 }
 
-// MigrateInboxToDLQ performs the §7.2 atomic inbox drain
-// on a `resume_pending` transition.
+// MigrateInboxToDLQ performs the §7.2 atomic inbox drain on a
+// `resume_pending` transition and on a suspension release, which leaves the
+// session `suspended` with no pod. sessionState is the state the session
+// entered, the `session_state` label of a drain failure.
 //
 // In the default (in-memory) mode it reads every inbox message in FIFO
-// order and writes each to the DLQ with the resume-window TTL, then
-// returns the count preserved. A DLQ write failure increments
+// order and writes each to the DLQ with the default TTL, keeping each
+// message's original EnqueuedAt so the DLQ's score order stays acceptance
+// order, then returns the count preserved. A DLQ write failure increments
 // `lenny_inbox_drain_failure_total` and returns the error; the caller
 // still commits the `resume_pending` transition (pod failure is
 // non-negotiable) but logs the loss.
 //
 // In durable mode the inbox is already persisted in Redis and survives
-// coordinator crashes, so this applies an EXPIRE to the inbox key
-// (recovery-window cleanup) instead of draining, and returns 0.
+// coordinator crashes, so it is left in place with no TTL and the call
+// returns 0. A durable inbox entry stays until the delivery of held
+// messages delivers it, the maxInboxSize overflow drops it, or the
+// terminal drain removes it.
 //
-// spec: §7.2.
-func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID, pool string) (preserved int, err error) {
-	if c == nil {
-		return 0, nil
-	}
-	if c.durable {
-		// Durable inbox: leave messages in Redis for the new coordinator
-		// to recover; bound staleness with an EXPIRE on the inbox key.
-		if e, ok := c.inbox.(interface {
-			Expire(context.Context, string, string, time.Duration) error
-		}); ok {
-			if eerr := e.Expire(ctx, tenantID, sessionID, DefaultDLQTTL); eerr != nil {
-				c.recordDrainFailure(pool)
-				return 0, eerr
-			}
-		}
+// spec: §7.2 (Interactive Session Model).
+func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID, pool, sessionState string) (preserved int, err error) {
+	if c == nil || c.durable {
 		return 0, nil
 	}
 	msgs, derr := c.inbox.Drain(ctx, tenantID, sessionID)
 	if derr != nil {
-		c.recordDrainFailure(pool)
+		c.recordDrainFailure(pool, sessionState)
 		return 0, derr
 	}
 	for _, m := range msgs {
 		if _, eerr := c.dlq.Enqueue(ctx, tenantID, sessionID, m, DefaultDLQTTL); eerr != nil {
 			// Partial drain: the messages already written survive; the
 			// remainder is the documented loss window.
-			c.recordDrainFailure(pool)
+			c.recordDrainFailure(pool, sessionState)
 			return preserved, eerr
 		}
 		preserved++
 	}
 	return preserved, nil
+}
+
+// Peek returns the session inbox's oldest entry and its handle without
+// removing it. A nil Coordinator returns an empty result and nil.
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Peek(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	if c == nil {
+		return Message{}, "", false, nil
+	}
+	return c.inbox.Peek(ctx, tenantID, sessionID)
+}
+
+// Ack removes the inbox entry handle names. A nil Coordinator returns false
+// and nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Ack(ctx context.Context, tenantID, sessionID, handle string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	return c.inbox.Ack(ctx, tenantID, sessionID, handle)
+}
+
+// PeekOldest returns the session DLQ's lowest-scored entry and its raw
+// member without removing it. A nil Coordinator returns an empty result and
+// nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) PeekOldest(ctx context.Context, tenantID, sessionID string) (Message, string, bool, error) {
+	if c == nil {
+		return Message{}, "", false, nil
+	}
+	return c.dlq.PeekOldest(ctx, tenantID, sessionID)
+}
+
+// Remove removes the DLQ entry member names. A nil Coordinator returns false
+// and nil. spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) Remove(ctx context.Context, tenantID, sessionID, member string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	return c.dlq.Remove(ctx, tenantID, sessionID, member)
 }
 
 // EnqueueInbox buffers an incoming message in the session's inbox per
@@ -172,6 +203,60 @@ func (c *Coordinator) EnqueueDLQ(ctx context.Context, tenantID, sessionID string
 		msg.EnqueuedAt = c.now()
 	}
 	return c.dlq.Enqueue(ctx, tenantID, sessionID, msg, ttl)
+}
+
+// HeldLen counts a session's held messages for the backlog check of
+// §7.2 delivery path 6. With a zero acceptedAfter it counts every DLQ
+// entry; otherwise it counts the DLQ entries accepted after acceptedAfter.
+// When withInbox is true it adds the inbox length. A nil Coordinator
+// returns 0.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6).
+func (c *Coordinator) HeldLen(ctx context.Context, tenantID, sessionID string, withInbox bool, acceptedAfter time.Time) (int, error) {
+	if c == nil {
+		return 0, nil
+	}
+	var (
+		n   int
+		err error
+	)
+	if acceptedAfter.IsZero() {
+		n, err = c.dlq.Len(ctx, tenantID, sessionID)
+	} else {
+		n, err = c.dlq.CountAcceptedAfter(ctx, tenantID, sessionID, acceptedAfter)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count held DLQ entries of session %s: %w", sessionID, err)
+	}
+	if !withInbox {
+		return n, nil
+	}
+	in, err := c.inbox.Len(ctx, tenantID, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("count inbox entries of session %s: %w", sessionID, err)
+	}
+	return n + in, nil
+}
+
+// EraseSession deletes the session's DLQ and inbox for the §12.8 user
+// erasure and returns how many entries the two held. It emits no
+// message_expired, because the erasure removes the sender's data rather
+// than ending the session. A nil Coordinator erases nothing.
+//
+// spec: §12.8 (Compliance Interfaces).
+func (c *Coordinator) EraseSession(ctx context.Context, tenantID, sessionID string) (int, error) {
+	if c == nil {
+		return 0, nil
+	}
+	dlqN, err := c.dlq.Delete(ctx, tenantID, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("erase DLQ of session %s: %w", sessionID, err)
+	}
+	inN, err := c.inbox.Delete(ctx, tenantID, sessionID)
+	if err != nil {
+		return dlqN, fmt.Errorf("erase inbox of session %s: %w", sessionID, err)
+	}
+	return dlqN + inN, nil
 }
 
 // InboxLen returns the current depth of the session inbox, backing the
@@ -281,8 +366,8 @@ func (c *Coordinator) emitExpired(tenantID, targetSessionID string, msgs []Messa
 	}
 }
 
-func (c *Coordinator) recordDrainFailure(pool string) {
+func (c *Coordinator) recordDrainFailure(pool, sessionState string) {
 	if c.failures != nil {
-		c.failures.RecordInboxDrainFailure(pool, "resume_pending")
+		c.failures.RecordInboxDrainFailure(pool, sessionState)
 	}
 }

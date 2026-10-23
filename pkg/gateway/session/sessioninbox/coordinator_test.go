@@ -42,7 +42,7 @@ func TestCoordinator_MigrateInboxToDLQ_InMemory_spec_7_2_305(t *testing.T) {
 	ctx := context.Background()
 	_, _ = c.inbox.Enqueue(ctx, "acme", "s", msg("m1", "snd"))
 	_, _ = c.inbox.Enqueue(ctx, "acme", "s", msg("m2", "snd"))
-	preserved, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "pool-a")
+	preserved, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "pool-a", "resume_pending")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,8 +57,10 @@ func TestCoordinator_MigrateInboxToDLQ_InMemory_spec_7_2_305(t *testing.T) {
 	}
 }
 
-// spec: §7.2 — in durable mode the Redis inbox is left in place
-// with an EXPIRE rather than drained to the DLQ.
+// spec: §7.2 (Interactive Session Model) — in durable mode the Redis
+// inbox is left in place with no TTL rather than drained to the DLQ, so an
+// entry stays until it is delivered, dropped on overflow, or drained at the
+// terminal transition.
 func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	rc := newRedisT(t)
 	c := NewCoordinator(Config{
@@ -67,7 +69,7 @@ func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	})
 	ctx := context.Background()
 	_, _ = c.inbox.Enqueue(ctx, "acme", "s", msg("m1", "snd"))
-	preserved, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "pool-a")
+	preserved, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "pool-a", "resume_pending")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +82,12 @@ func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	if n, _ := c.dlq.Len(ctx, "acme", "s"); n != 0 {
 		t.Fatalf("dlq len = %d, want 0 (no drain in durable mode)", n)
 	}
-	if ttl, _ := rc.TTL(ctx, inboxKey("acme", "s")).Result(); ttl <= 0 {
-		t.Fatalf("durable inbox key TTL = %v, want > 0 (EXPIRE applied)", ttl)
+	ttl, err := rc.TTL(ctx, InboxKey("acme", "s")).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl != -1 {
+		t.Fatalf("durable inbox key TTL = %v, want -1 (no TTL on the durable inbox)", ttl)
 	}
 }
 
@@ -237,7 +243,7 @@ func TestCoordinator_ClearInboxOnAcquire_NilEmitter_spec_7_2_284(t *testing.T) {
 func TestCoordinator_Nil_NoOp(t *testing.T) {
 	var c *Coordinator
 	ctx := context.Background()
-	if p, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "p"); p != 0 || err != nil {
+	if p, err := c.MigrateInboxToDLQ(ctx, "acme", "s", "p", "resume_pending"); p != 0 || err != nil {
 		t.Fatalf("MigrateInboxToDLQ on nil = %d,%v", p, err)
 	}
 	if d, err := c.DrainOnTerminal(ctx, "acme", "s"); d != 0 || err != nil {

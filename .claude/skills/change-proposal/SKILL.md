@@ -162,6 +162,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `introspectMode` | forward | `advisory` | `advisory`: `healthy` continues and any other verdict stops the run for the caller to correct. `acting`: panels on every verdict, redesign and prune executed in the loop |
 | `introspectModel`, `introspectEffort` | launch | `opus`, `high` | what the pass and its judges run at |
 | `haltWindow`, `haltRepeatTitle` | forward | 4, 3 | the informational hard signals a stop carries: rounds over which confirmed findings did not fall, and confirmations of one title |
+| `selfInflictedShare`, `selfInflictedWindow` | forward | 0.5, 2 | the self-inflicted hard signal: when the share of a round's confirmed findings that reviewers marked `introducedBy: this-run` exceeds the share in this many consecutive rounds of one loop, the next introspection pass is forced, bypassing `introspectEvery` and the warrant gate, and its brief states the signal so the pass weighs `redesign` or `reframe`. A round whose findings do not record `introducedBy` has no share and cannot fire it |
 | `directives` | anchored | none | strings carried into every lens, fix-design, and fixer prompt from round 1; how a relaunch carries what the stopped run learned |
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts, in the `acting` mode |
 | `judgesHealthy` | forward | 2 | panel size for `healthy`, in the `acting` mode |
@@ -189,6 +190,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `decisionsFirst` | launch | false | fire the open-decisions phase before the spec review as well as after it |
 | `impactWindow` | forward | 15 | how far, in proposal numbers, the impacts sweep reaches from this proposal |
 | `firstCompactionAtLines` | forward | 400 | the ledger length at which the first compaction pass runs, before the standing context can trigger one |
+| `maxConsecutiveDeadAgents` | forward | 8 | consecutive agent attempts that return nothing, counted across the whole run and the decisions subworkflow, before the run stops with `stopped-dead-agents`. Any live answer resets the count |
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. The introspection pass itself takes no injected text. To add text to every review lens, use `lensPrompt`. Injected text is framed as added context that lowers no bar.
 
@@ -205,6 +207,8 @@ A lens can be served its own earlier answer instead of reviewing again. It is **
 ### Starting partway through
 
 `startPhase` names the first phase to run and skips everything before it. Nothing checks that the skipped phases were done, and the run logs that it assumed so. It is refused in `new` mode for anything but the default. `resumeFromRunId` is finer-grained: it replays a run's cached agent calls and continues at the exact interruption point, so prefer it when the interrupted run is still addressable. It caches only successful calls, so after an account-level outage most of the run re-runs live.
+
+A resume replays a call only while every call before it was invoked with the same prompt and options in the same order, because the runtime keys each call on a hash chained over the calls before it. The first call that differs runs live, and so does every call after it. The workflows are written so that a relaunch with identical arguments replays every call that completed before the stop. The rule they follow is in [DESIGN.md](DESIGN.md#resume-replay-why-agent-order-is-fixed), and `.claude/tests/resume-replay.test.mjs` checks it.
 
 ### The base tier
 
@@ -270,6 +274,7 @@ Agents do NOT inherit the session's model or effort: the tier is `baseModel` and
    - `spec-not-converged` and `recheck-budget-exhausted` are the stops the remedy section covers.
    - `stopped-redesign`, `stopped-prune`, `stopped-reframe`, and `stopped-halt` are introspection stops: report the run as stopped with its findings open.
    - `migration-failed`, `not-viable`, `no-change-needed`, and `interrupted` end a run before it reviews anything; report the reason the result carries.
+   - `stopped-dead-agents` means `maxConsecutiveDeadAgents` agent attempts in a row returned nothing. The usual cause is an account usage limit. The run stopped without committing, saving state, or certifying any loop, and `resume` names the run tag and the last completed loop and round. Re-login or wait for the limit to reset, then relaunch with `resumeFromRunId` (or with `resumeState: true` and the same `runTag` when the run is no longer addressable); do not raise a budget.
 5. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
 6. Do not apply any staged edit. This workflow does commit: it commits the proposal directory before each firing of the open-decisions-and-impact-review phase, because that phase reads the tree to tell what it changed, and a migration commits its own changes at startup. Commit nothing else unless asked.
 

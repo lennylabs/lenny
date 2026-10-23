@@ -72,9 +72,10 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    memstore.New(),
-		Executor: executor.NewEchoExecutor(),
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		Executor:          executor.NewEchoExecutor(),
+		TenantID:          "acme",
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -129,7 +130,7 @@ func buildGoHelper(t *testing.T) string {
 // t.Cleanup closes it.
 func newGateway(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -237,7 +238,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// stream the SDK consumes.
 	bus := sessionevents.NewBus(64)
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 
 	// disconnector wraps the gateway handler. The first time the SDK
 	// opens the events stream it serves the gateway handler with a
@@ -521,7 +522,7 @@ func TestGoClientIdempotencyKeyHandling(t *testing.T) {
 	// The gateway is wrapped in the §11.5 idempotency middleware so a
 	// replayed key returns the cached create response.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
 	t.Cleanup(ts.Close)
 	h := spawnHelper(t, ts.URL)

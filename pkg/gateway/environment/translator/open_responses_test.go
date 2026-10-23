@@ -27,8 +27,9 @@ func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessio
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, executor.NewEchoExecutor(), translator.OpenResponsesOptions{
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc: func() string { return "resp_1" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "resp_1" },
 	})
 	return h, store
 }
@@ -153,21 +154,30 @@ func TestOpenResponsesGetMissing(t *testing.T) {
 	}
 }
 
+// TestOpenResponsesDelete pins that the adapter serves no delete operation: a
+// DELETE on /v1/responses/{id} answers 405 with an Allow header naming GET, and
+// the implicit per-request session record behind the response survives it.
+// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
 func TestOpenResponsesDelete(t *testing.T) {
 	h, store := newResponsesHandler(t)
-	_ = store.Create(context.Background(), sessionstore.Session{
+	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "resp_1", TenantID: "acme",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodDelete, "/v1/responses/resp_1", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("delete: %d", rr.Code)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("DELETE /v1/responses/{id}: status %d, want 405", rr.Code)
 	}
-	if _, err := store.Get(context.Background(), "acme", "resp_1"); err == nil {
-		t.Error("response should be deleted")
+	if allow := rr.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Errorf("Allow header %q does not name GET", allow)
+	}
+	if _, err := store.Get(context.Background(), "acme", "resp_1"); err != nil {
+		t.Errorf("session record behind the response must survive a DELETE: %v", err)
 	}
 }
 
@@ -241,9 +251,10 @@ func newContinuityHandler(t *testing.T, exec executor.Executor, ts transcriptsto
 	store := memstore.New()
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: ts,
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     ts,
 	})
 	return h, store
 }
@@ -440,9 +451,10 @@ func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
 	failStore := memstore.New()
 	var n int
 	failH := translator.NewOpenResponsesHandler(failStore, failExec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: appendFailTranscripts{Store: transcriptstore.NewMemory()},
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     appendFailTranscripts{Store: transcriptstore.NewMemory()},
 	})
 	rr := respPostTenant(t, failH.Handler(), "acme", map[string]any{
 		"model": "echo", "input": "one",
@@ -485,9 +497,10 @@ func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 	store := getFailStore{Store: memstore.New(), err: errors.New("session store unavailable")}
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { n++; return fmt.Sprintf("resp_%d", n) },
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
 		"model": "echo", "input": "hi", "previous_response_id": "resp_prev",

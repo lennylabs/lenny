@@ -424,11 +424,12 @@ var mainMuxRoutes = []string{
 func registeredRouteTemplates(t *testing.T) []string {
 	t.Helper()
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	users := userstore.NewMemory()
 
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: clock}).
 		WithRuntimes(runtimestore.NewMemory()).
 		WithPools(poolstore.NewMemory()).
-		WithUsers(userstore.NewMemory()).
+		WithUsers(users).
 		WithConnectors(connectorstore.NewMemory()).
 		WithEnvironments(environmentstore.NewMemory()).
 		WithExperiments(experimentstore.NewMemory()).
@@ -443,7 +444,7 @@ func registeredRouteTemplates(t *testing.T) []string {
 		WithRuntimeCapabilityOverrides(runtimecapoverride.NewMemory()).
 		WithDeploymentConfig(deploymentconfigstore.NewMemory()).
 		WithErasureSaltRotation(saltRotatorStub{}).
-		WithErasure(erasureRunnerStub{}, erasurejob.NewMemory()).
+		WithErasure(erasureRunnerStub{}, erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))).
 		WithImpersonation(impersonationStub{}).
 		WithBillingCorrections(billingstore.NewMemory(), correctionstore.NewMemory(), 0).
 		WithMigrationManager(migrationStub{}).
@@ -474,7 +475,7 @@ func registeredRouteTemplates(t *testing.T) []string {
 	// an otherwise-zero Options registers the full session route table. This
 	// enumerates the non-admin session routes live the same way the admin and
 	// credential muxes are walked, rather than from a hand-maintained list.
-	sess := sessionserver.New(memstore.New(), sessionserver.Options{Clock: clock})
+	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Clock: clock})
 
 	var out []string
 	out = append(out, walkServeMux(t, router.Handler())...)

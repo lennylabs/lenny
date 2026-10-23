@@ -186,6 +186,7 @@ func newFunnelFixture(t *testing.T, o funnelOpts) *funnelFixture {
 		leases:      newFakeLeaseStore(),
 	}
 	opts := Options{
+		DevTenantHeader:        true,
 		CoordinationLeaseStore: f.leases,
 		ReplicaID:              "rep-1",
 		AgentNamespace:         funnelNS,
@@ -256,6 +257,10 @@ func (f *funnelFixture) binder(t *testing.T, withPool bool) *podsession.Binder {
 			f.clientCalls.add("create")
 			return cl.Create(ctx, obj, opts...)
 		},
+		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			f.clientCalls.add("delete:" + obj.GetName())
+			return cl.Delete(ctx, obj, opts...)
+		},
 	}).Build()
 	return &podsession.Binder{
 		Client:    c,
@@ -289,8 +294,10 @@ func funnelPools(t *testing.T) poolstore.Store {
 
 // seed inserts a session row in st with retries already spent, gives rep-1
 // its lease, and, when slot is true, binds it to a slot on pod-a (or to the
-// whole of pod-x otherwise). It returns the snapshot the store holds and the
-// published binding.
+// whole of pod-x otherwise). The binding carries the row's committed
+// coordination_generation, as every production publish site stamps it, so
+// the post-terminal hook's stale-binding step leaves it to the release step.
+// It returns the snapshot the store holds and the published binding.
 func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries int64, slot bool) (sessionstore.Session, *podsession.BindResult) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
@@ -299,16 +306,19 @@ func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries 
 		t.Fatalf("seed %s: %v", id, err)
 	}
 	f.leases.holders[leaseK("acme", id)] = "rep-1"
-	bind := &podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-x"}
-	if slot {
-		bind = &podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-a", SlotID: id}
-	}
-	if f.registry != nil {
-		f.registry.Put(bind)
-	}
 	row, err := f.store.Get(context.Background(), "acme", id)
 	if err != nil {
 		t.Fatalf("get %s: %v", id, err)
+	}
+	bind := &podsession.BindResult{
+		SessionID: id, TenantID: "acme", SandboxName: "pod-x",
+		CoordinationGeneration: row.CoordinationGeneration,
+	}
+	if slot {
+		bind.SandboxName, bind.SlotID = "pod-a", id
+	}
+	if f.registry != nil {
+		f.registry.Put(bind)
 	}
 	return row, bind
 }
@@ -495,22 +505,28 @@ func TestFailureFunnelDrainsBeforeSlotRelease_spec_5_2(t *testing.T) {
 
 // spec: §5.2 (Pool Configuration and Execution Modes), §7.3 (Retry and
 // Resume), §10.1.1 (Stateless Replicas and Per-Session Coordination)
-// diagnosis: on every committed edge the funnel releases the per-session
-// slot-accounting lock once the slot accounting returns, before it releases
-// the binding, so the lock covers the accounting alone. On the failed edge
-// that is before the terminal pipeline (seal, executor release, cascade,
-// billing, and audit) runs. A failure means the lock is held across the
-// release or the terminal pipeline's I/O, and a waiter on the session's lock
-// blocks behind work the lock does not protect.
-func TestFailureFunnelUnlocksSlotAccountingBeforeRelease_spec_5_2(t *testing.T) {
+// diagnosis: on the resume_pending and awaiting_client_action edges the funnel
+// holds the per-session slot-accounting lock from before the edge through the
+// binding release, on both pool kinds, so a resume driver's
+// releaseEarlierBinding, which waits for the lock, never runs between the
+// funnel's accounting and its release. On the failed edge the funnel releases
+// the lock before the terminal pipeline (seal, executor release, cascade,
+// billing, and audit) runs, and the post-terminal hook's release step then
+// takes the lock itself, so the release runs with one reference, the hook's;
+// a funnel that still held the lock would leave the hook waiting. A failure
+// means a resume can claim a replacement pod while the funnel's release of
+// the old binding is still pending, or the hook's release ran outside the
+// lock or behind a funnel that never unlocked.
+func TestFailureFunnelSlotAccountingLockScope_spec_5_2(t *testing.T) {
 	for _, tc := range []struct {
 		name, reason string
 		retries      int64
 		want         session.State
+		heldRefs     int
 	}{
-		{"failed edge", "workspace_validation_failed", 0, session.StateFailed},
-		{"resume_pending edge", "runtime_crash", 0, session.StateResumePending},
-		{"awaiting_client_action edge", "runtime_crash", 2, session.StateAwaitingClientAction},
+		{"failed edge", "workspace_validation_failed", 0, session.StateFailed, 1},
+		{"resume_pending edge", "runtime_crash", 0, session.StateResumePending, 1},
+		{"awaiting_client_action edge", "runtime_crash", 2, session.StateAwaitingClientAction, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFunnelFixture(t, funnelOpts{})
@@ -536,9 +552,12 @@ func TestFailureFunnelUnlocksSlotAccountingBeforeRelease_spec_5_2(t *testing.T) 
 				t.Fatalf("no executor release observed; events = %v", f.log.list())
 			}
 			for i, n := range refs {
-				if n != 0 {
-					t.Errorf("release %d ran with %d lock refs on the session, want 0", i, n)
+				if n != tc.heldRefs {
+					t.Errorf("release %d ran with %d lock refs on the session, want %d", i, n, tc.heldRefs)
 				}
+			}
+			if n := f.srv.slotAccountLocks.refCount("sess-span"); n != 0 {
+				t.Errorf("lock refs after the report = %d, want 0", n)
 			}
 			if n := f.log.count("release:"); n != 1 {
 				t.Errorf("releases = %d, want 1; events = %v", n, f.log.list())
@@ -728,7 +747,7 @@ func TestSlotAccountLockContextCancel_spec_5_2(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, rerr := f.srv.releaseThenResumeOnPod(ctx, snap)
+		_, rerr := f.srv.releaseThenResumeOnPod(ctx, snap, resumeBind{})
 		done <- rerr
 	}()
 	waitForRefs(t, &f.srv.slotAccountLocks, "sess-ctx", 2)

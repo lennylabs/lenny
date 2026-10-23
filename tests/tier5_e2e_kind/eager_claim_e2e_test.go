@@ -13,8 +13,8 @@
 //     retryable 503 before the client uploads.
 //   - /finalize is the preparation barrier: it claims-then-materializes the
 //     workspace and reaches ready against a real warm pod.
-//   - Pod AND lease release on created-expiry and on /terminate of a
-//     finalizing/ready session: the per-pod SandboxClaim is deleted (the pod
+//   - Pod AND lease release on the watchdog's CREATED_TIMEOUT write and on
+//     /terminate of a finalizing/ready session: the per-pod SandboxClaim is deleted (the pod
 //     returns to the pool) AND the credential lease's active-session counter
 //     is decremented (the lease row leaves the §4.9 lease store), so the
 //     reclaim does not leak the lease.
@@ -123,6 +123,60 @@ func sessionState(t *testing.T, c *kind.Cluster, probe, gatewayIP, id string, ro
 	}
 	t5DecodeJSON(t, res.body, &body)
 	return body.State
+}
+
+// waitCreatedTimeoutFailure polls an abandoned created session until it
+// reaches `failed` and then asserts, through the §24.11 admin investigation
+// view, that the failure reason is CREATED_TIMEOUT. The watchdog's guarded
+// created -> failed write is the only writer of the created-state deadline
+// (§6.2, §15.1), so the row survives as failed. A 404 (the row was deleted) or
+// an `expired` state fails the test at once, because each is reachable only
+// through a second writer for the same deadline.
+func waitCreatedTimeoutFailure(t *testing.T, c *kind.Cluster, probe, gatewayIP, id string, role t5Role) {
+	t.Helper()
+	deadline := time.Now().Add(6 * time.Minute)
+	for {
+		res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "GET", "/v1/sessions/"+id, role, "")
+		if res.statusCode == 404 {
+			t.Fatalf("created session %s was deleted (GET 404); the CREATED_TIMEOUT write keeps the row as failed", id)
+		}
+		var body struct {
+			State string `json:"state"`
+		}
+		if res.statusCode == 200 {
+			t5DecodeJSON(t, res.body, &body)
+		}
+		switch body.State {
+		case "failed":
+			assertFailureReason(t, c, probe, gatewayIP, id, "CREATED_TIMEOUT")
+			return
+		case "expired":
+			t.Fatalf("created session %s reached expired; the only created-state deadline outcome is failed with CREATED_TIMEOUT", id)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("created session %s stayed pre-terminal past the watchdog window (last status %d, state %q)", id, res.statusCode, body.State)
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// assertFailureReason reads the session's failure reason from the §24.11
+// admin investigation view, the surface that projects the row's
+// FailureReason, and fails the test when it differs from want.
+func assertFailureReason(t *testing.T, c *kind.Cluster, probe, gatewayIP, id, want string) {
+	t.Helper()
+	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "GET", "/v1/admin/sessions/"+id, t5PlatformAdmin(), "")
+	if res.statusCode != 200 {
+		t.Fatalf("admin get session %s: status %d, want 200; body=%s", id, res.statusCode, res.body)
+	}
+	var body struct {
+		State         string `json:"state"`
+		FailureReason string `json:"failureReason"`
+	}
+	t5DecodeJSON(t, res.body, &body)
+	if body.State != "failed" || body.FailureReason != want {
+		t.Fatalf("session %s: state %q reason %q, want failed with %s", id, body.State, body.FailureReason, want)
+	}
 }
 
 // createdSession creates a session against the echo runtime and returns its
@@ -287,12 +341,17 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 }
 
 // spec: 15.1 (created TTL-expiry releases the pod claim and revokes the lease),
-// 7.1 (lease release on teardown)
+// 7.2 (pre-running reclaim through the post-terminal hook), 6.2 (pre-running
+// state-lifetime watchdog), 7.1 (lease release on teardown)
 // diagnosis: a failure means an abandoned created session that never finalized
-// strands its claimed warm pod. Proposal 0007 claims the pod at /create, so the
-// created-expiry sweep must delete the per-pod SandboxClaim to return the pod
-// to the pool. If the claim survives the sweep window the pool leaks a pod for
-// every abandoned create.
+// either did not end as the watchdog's single created -> failed write with
+// CREATED_TIMEOUT, or ended that way and still stranded its claimed warm pod.
+// The create claims a pod, the watchdog is the one writer of the created-state
+// deadline, and the post-terminal hook's pre-running reclaim deletes the
+// per-pod SandboxClaim to return the pod to the pool. A deleted row (404) or an
+// `expired` row means a second writer for the same deadline is back. A claim
+// that survives the reclaim window means the pool leaks a pod for every
+// abandoned create.
 func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 	c := kind.InstallLenny(t)
 	_ = kind.RequireAgentWorkload(t, c)
@@ -312,38 +371,24 @@ func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 		t.Fatalf("per-pod claim count = %d after create, want > %d (create claims a pod)", got, before)
 	}
 
-	// Abandon the session: never finalize. The created-expiry sweep retires the
-	// row past maxCreatedStateTimeoutSeconds and releases the claimed pod.
+	// Abandon the session: never finalize. Past maxCreatedStateTimeoutSeconds
+	// the pre-running state-lifetime watchdog writes created -> failed with
+	// CREATED_TIMEOUT, and the post-terminal hook runs the pre-running reclaim
+	// that releases the claimed pod.
 	t.Cleanup(func() {
 		_ = t5GatewayRequest(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/terminate", role, "")
 	})
-	// The row leaves `created` on whichever §11.3 sweep reaches it first. The
-	// pre-running state-lifetime watchdog forces it to `failed` with
-	// CREATED_TIMEOUT, and the created-expiry sweep expires it and deletes the
-	// row (a GET then 404s and sessionState reports ""). Both run at the same
-	// `maxCreatedStateTimeoutSeconds` deadline and both run the same claimless
-	// reclaim, so the subject here is the pod claim rather than which of the
-	// two terminal outcomes the row settled in.
-	deadline := time.Now().Add(6 * time.Minute)
-	for {
-		st := sessionState(t, c, probe, gatewayIP, id, role)
-		if st == "expired" || st == "failed" || st == "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("created session %s stayed pre-terminal past the sweep window (last state %q)", id, st)
-		}
-		time.Sleep(10 * time.Second)
-	}
+	waitCreatedTimeoutFailure(t, c, probe, gatewayIP, id, role)
 
-	// The reserved pod's per-pod claim is released back to the pool.
+	// The reserved pod's per-pod claim is released, and the release deletes
+	// the claim because it ends the pod's occupancy without reuse.
 	releaseDeadline := time.Now().Add(2 * time.Minute)
 	for {
 		if got := claimCount(t, c); got <= before {
 			break
 		}
 		if time.Now().After(releaseDeadline) {
-			t.Fatalf("per-pod claim count = %d after created-expiry, want <= %d (the sweep must release the claimed pod)", claimCount(t, c), before)
+			t.Fatalf("per-pod claim count = %d after the CREATED_TIMEOUT write, want <= %d (the post-terminal hook's reclaim must release the claimed pod)", claimCount(t, c), before)
 		}
 		time.Sleep(5 * time.Second)
 	}

@@ -34,8 +34,8 @@ func sendTestMessage(s *Server, sessionID string) error {
 func TestMessageAdmissionFollowsTheSessionStartWrite_spec_28_5_3(t *testing.T) {
 	t.Run("no entry", func(t *testing.T) {
 		s := New("written-test")
-		if err := s.checkSessionStartWritten("sess-none"); !errors.Is(err, errSessionNotOpened) {
-			t.Fatalf("checkSessionStartWritten = %v, want errSessionNotOpened", err)
+		if _, err := s.admitSessionWrite("sess-none", true); !errors.Is(err, errSessionNotOpened) {
+			t.Fatalf("admitSessionWrite = %v, want errSessionNotOpened", err)
 		}
 	})
 	t.Run("claimed before the open sequence", func(t *testing.T) {

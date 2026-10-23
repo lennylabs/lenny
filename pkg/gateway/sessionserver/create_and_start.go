@@ -4,6 +4,7 @@ package sessionserver
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 
@@ -99,7 +100,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 
 // createAndStartGates runs the §15.1 admission gates on the combined
 // create-and-start path over the decoded request: the active-user gate, the
-// §12.8 tenant-state gate, the §12.9 tenant data-classification gate, the §11
+// §12.8 creation gate over the tenant and the owner, the §12.9 tenant data-classification gate, the §11
 // session-quota gate, the §11.1 concurrency and admission-rate gates, the §4.8
 // PostAuth policy chain, and the §10.6 environment-admission gate. The §11.1
 // concurrency and admission-rate gates run before the policy chain and the
@@ -118,10 +119,10 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
-	// spec: §12.8 — a tenant that has left the `active`
-	// TenantState (disabling/deleting/deleted) rejects new session
-	// creation before any other admission work.
-	if !s.requireTenantState(w, r, tenantID) {
+	// spec: §12.8 (Lifecycle fence and drain) — the early creation gate
+	// over the tenant row and the new row's owner (the body's userId)
+	// rejects a fenced create before any other admission work.
+	if !s.requireCreationAllowed(w, r, tenantID, req.UserID) {
 		return false
 	}
 	// spec: §12.9 — the gateway policy engine validates tenant
@@ -457,7 +458,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 			row.PoolRef = createClaim.Pool
 			startCtx.PodClaim = createClaim.PodClaim
 		}
-		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx)
+		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx, resumeBind{})
 		if err != nil {
 			// spec: §7.1 — a create-step failure rolls back without
 			// persisting the row, releasing the create-time claim. The
@@ -509,6 +510,14 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 			s.releaseCoordinationLease(r.Context(), row.TenantID, row.ID)
 		}
 		s.rollbackBinding(r.Context(), bound)
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal in
+		// the insert transaction answers 403 with its code rather than
+		// the retryable 503.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			s.writeCreationRefusal(w, ref)
+			return level, "", false
+		}
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return level, "", false
 	}

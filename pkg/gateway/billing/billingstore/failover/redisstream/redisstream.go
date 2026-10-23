@@ -35,9 +35,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover"
@@ -80,7 +84,7 @@ func StreamMaxLenForTier(tier string) int64 {
 
 // streamKey returns the §11.2.1 per-tenant stream key.
 func streamKey(tenantID string) string {
-	return "t:" + tenantID + ":billing:stream"
+	return rediskeys.TenantPrefix(tenantID) + "billing:stream"
 }
 
 // Inserter commits a billing event reclaimed from the stream into the
@@ -131,6 +135,10 @@ type Tier struct {
 	reclaimEvery time.Duration
 	reclaimIdle  time.Duration
 
+	// knownMu guards known. Publish, Pending, and every per-tenant flusher
+	// goroutine the FlusherManager starts read or write the map
+	// concurrently.
+	knownMu sync.Mutex
 	// known tracks the tenant streams this replica has created the
 	// consumer group on, so a group is created at most once per tenant.
 	known map[string]bool
@@ -206,7 +214,7 @@ func (t *Tier) Publish(ctx context.Context, e billingstore.Event) error {
 // best-effort across tenants — it is not consulted in the write path.
 func (t *Tier) Pending(ctx context.Context) (int, error) {
 	total := 0
-	for tenant := range t.known {
+	for _, tenant := range t.knownTenants() {
 		n, err := t.client.XLen(ctx, streamKey(tenant)).Result()
 		if err != nil {
 			return total, err
@@ -221,16 +229,38 @@ func (t *Tier) Pending(ctx context.Context) (int, error) {
 // also creates the stream itself, so a Publish to a brand-new tenant
 // works. A BUSYGROUP reply means another replica already created the
 // group; that is treated as success.
+//
+// The Redis call runs outside knownMu, so two goroutines that see the same
+// new tenant may both issue it; the second receives BUSYGROUP, which is
+// success, and the map write is idempotent.
 func (t *Tier) ensureGroup(ctx context.Context, tenantID string) error {
-	if t.known[tenantID] {
+	t.knownMu.Lock()
+	seen := t.known[tenantID]
+	t.knownMu.Unlock()
+	if seen {
 		return nil
 	}
 	err := t.client.XGroupCreateMkStream(ctx, streamKey(tenantID), consumerGroup, "0").Err()
 	if err != nil && !isBusyGroup(err) {
 		return err
 	}
+	t.knownMu.Lock()
 	t.known[tenantID] = true
+	t.knownMu.Unlock()
 	return nil
+}
+
+// knownTenants returns a snapshot of the tenants whose consumer group this
+// replica has created, so a caller iterates without holding knownMu across
+// Redis calls.
+func (t *Tier) knownTenants() []string {
+	t.knownMu.Lock()
+	defer t.knownMu.Unlock()
+	out := make([]string, 0, len(t.known))
+	for tenant := range t.known {
+		out = append(out, tenant)
+	}
+	return out
 }
 
 // isBusyGroup reports whether err is the Redis BUSYGROUP reply, which
@@ -388,6 +418,49 @@ func (t *Tier) PurgeUser(ctx context.Context, tenantID, userID string) (int, err
 		purged++
 	}
 	return purged, nil
+}
+
+// PurgeTenant implements failover.StreamTier. It is the tenant-deletion
+// Phase 4 erasure of the Redis-stream half of the billing write-ahead
+// buffer: it reads the stream length, destroys the billing-flusher
+// consumer group with XGROUP DESTROY, and DELs the stream key. Each
+// command names the one tenant-prefixed key, so it routes to the master
+// that owns the tenant's hash slot on a Redis Cluster. A missing stream
+// or a missing group counts as success, so a repeated purge, or a purge
+// of a tenant that never staged an event, returns 0 and a nil error.
+// Returns the number of staged entries the stream held.
+//
+// The purge leaves t.known[tenantID] set. ensureGroup skips a tenant it
+// already knows, so this replica's flusher for the tenant (Flush and
+// Reclaim) does not recreate the stream through XGROUP CREATE MKSTREAM
+// after the purge; its XREADGROUP fails on the missing key instead and
+// leaves no key behind.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (t *Tier) PurgeTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, fmt.Errorf("redisstream: PurgeTenant requires a non-empty tenant_id")
+	}
+	key := streamKey(tenantID)
+	n, err := t.client.XLen(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstream: purge tenant %s xlen: %w", tenantID, err)
+	}
+	if err := t.client.XGroupDestroy(ctx, key, consumerGroup).Err(); err != nil && !isMissingStream(err) {
+		return 0, fmt.Errorf("redisstream: purge tenant %s xgroup destroy: %w", tenantID, err)
+	}
+	if err := t.client.Del(ctx, key).Err(); err != nil {
+		return 0, fmt.Errorf("redisstream: purge tenant %s del: %w", tenantID, err)
+	}
+	return int(n), nil
+}
+
+// isMissingStream reports whether err is the Redis reply to an XGROUP
+// subcommand on a key that does not exist. XGROUP DESTROY of a missing
+// group on an existing stream replies 0 rather than an error, so this is
+// the only "nothing to destroy" error PurgeTenant sees.
+func isMissingStream(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "requires the key to exist")
 }
 
 // ackAndDel XACKs then XDELs a flushed stream entry.

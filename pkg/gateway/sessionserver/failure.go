@@ -38,10 +38,22 @@ type FailureReport struct {
 	Reason string
 
 	// PodAssignment carries the failed pod's sandbox name when the
-	// reporter knows it. Stamped onto the session row's PodAssignment
-	// so a follow-on /resume can correlate the new pod's claim. An empty
-	// value leaves the existing assignment in place.
+	// reporter knows it. transitionToFailed is its only reader: the failed
+	// edge stamps it onto the terminal row, which no slot-holder reader
+	// counts. The resume_pending and awaiting_client_action edges clear the
+	// row's pod_assignment instead, because the funnel releases the slot
+	// and a resume claims a fresh pod. An empty value leaves the existing
+	// assignment in place on the failed edge.
 	PodAssignment string
+
+	// ExpectedCoordinationGeneration is the resuming incarnation the report
+	// belongs to: the resume driver sets it to its entry generation G. A
+	// report on a resuming row writes only when the locked row is still at
+	// this generation, so a report from an incarnation a terminal write, the
+	// resuming watchdog, or a later attempt already ended writes nothing. A
+	// zero value never matches a resuming row. spec: §7.3 (Resume driver),
+	// §6.2 (Pod State Machine).
+	ExpectedCoordinationGeneration int64
 }
 
 // FailureDisposition captures the post-classification edge that
@@ -128,7 +140,10 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 		return FailureDisposition{}, fmt.Errorf("%w: tenant=%q session=%q reason=%q",
 			ErrFailureReportInvalid, rep.TenantID, rep.SessionID, rep.Reason)
 	}
-	row, err := s.store.Get(ctx, rep.TenantID, rep.SessionID)
+	// spec: §12.3 (Postgres HA Requirements) — the edge is decided on the
+	// primary row, so a lagging read-pool row that still shows an earlier
+	// state does not drop a report the primary row admits.
+	row, err := s.readPrimary(ctx, rep.TenantID, rep.SessionID)
 	if err != nil {
 		return FailureDisposition{}, err
 	}
@@ -136,6 +151,12 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 	if session.IsTerminal(row.State) {
 		// Terminal sessions are not re-classified — the §7.3 surface
 		// reports failures observed while the row was non-terminal.
+		return disp, nil
+	}
+	if rep.ExpectedCoordinationGeneration != 0 && row.State != session.StateResuming {
+		// spec: §7.3 (Resume driver) — a report from a resume attempt
+		// belongs to its resuming incarnation; once the row left resuming,
+		// the incarnation ended and the report writes nothing.
 		return disp, nil
 	}
 	if row.State == session.StateAwaitingClientAction || row.State == session.StateResumePending {
@@ -152,9 +173,13 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 
 	switch row.State {
 	case session.StateRunning, session.StateInputRequired, session.StateSuspended:
-		return s.applyFailureFromActive(ctx, row, rep, classification, maxRetries)
+		disp, err := s.applyFailureFromActive(ctx, row, rep, classification, maxRetries)
+		s.afterRecoveryEdge(ctx, row, disp, err)
+		return disp, err
 	case session.StateResuming:
-		return s.applyFailureFromResuming(ctx, row, rep, classification, maxRetries)
+		disp, err := s.applyFailureFromResuming(ctx, row, rep, classification, maxRetries)
+		s.afterRecoveryEdge(ctx, row, disp, err)
+		return disp, err
 	case session.StateCreated, session.StateFinalizing, session.StateReady,
 		session.StateStarting:
 		// Pre-running states are bounded by the watchdog's
@@ -169,6 +194,28 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 	}
 }
 
+// afterRecoveryEdge runs the effects of a committed failure edge into
+// resume_pending or awaiting_client_action: the session left its pod, so the
+// elicitations it raised expire, and an edge out of `suspended` re-arms the
+// tree's delegation budget keys. A failed disposition expires through the
+// post-terminal hook its write runs, and a no-op or conflict disposition, or
+// an error, runs neither.
+//
+// spec: §9.2 (Elicitation Chain), §7.3 (Retry and Resume), §8.3 (Delegation
+// Policy and Lease)
+func (s *Server) afterRecoveryEdge(ctx context.Context, row sessionstore.Session, disp FailureDisposition, err error) {
+	if err != nil || disp.To == disp.From {
+		return
+	}
+	if disp.To != session.StateResumePending && disp.To != session.StateAwaitingClientAction {
+		return
+	}
+	s.expireRaisedElicitations(ctx, row)
+	if disp.From == session.StateSuspended {
+		s.rearmBudgetKeys(ctx, row)
+	}
+}
+
 // applyFailureFromActive drives the §7.3 edge from a running,
 // input_required, or suspended source state. Retryable causes with retry
 // budget remaining write resume_pending and bump the retry counter;
@@ -178,45 +225,41 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 // carry the cause.
 //
 // It is the one place a failure report releases the session's pod binding,
-// so every reporter gets the release. Before the edge it snapshots the
-// binding. On a committed edge it first counts a slot binding toward the
-// pod's §5.2 whole-pod replacement trigger, which can request the drain,
-// and then releases with the failed disposition, so a drain is stamped
-// before ReleaseSlot can reach the occupancy-zero recycle edge. The failed
-// edge releases through recordSessionCompleted. The resume_pending and
-// awaiting_client_action edges release here, and write no coordination
-// lease: the coordinating replica keeps REG-COORDLEASE, which its Sweeper
-// renews in those states. A conflict or no-op runs neither step.
+// so every reporter gets the release. It takes the session's
+// slot-accounting lock on both pool kinds before the edge and holds it
+// through the release, so on this replica the funnel's identity check and
+// release of the reported binding are one step against a resume attempt's
+// releaseEarlierBinding, claim, and commit, and the funnel never tears down
+// a replacement binding. Under the lock it snapshots the binding. On a
+// committed edge it first counts a slot binding toward the pod's §5.2
+// whole-pod replacement trigger, which can request the drain, and then
+// releases with the failed disposition, so a drain is stamped before
+// ReleaseSlot can reach the occupancy-zero recycle edge. The failed edge
+// releases through the post-terminal hook after the lock is released. The
+// resume_pending and awaiting_client_action edges release here, and write no
+// coordination lease: the coordinating replica keeps REG-COORDLEASE, which
+// its Sweeper renews in those states. A conflict or no-op runs neither step.
 //
-// For a slot binding the per-session slot-accounting lock is held from
-// before the edge until the accounting returns, so a same-replica resume
-// that releases the session's earlier binding waits for the accounting.
-//
-// spec: §7.3 (resume flow after pod failure); §6.2 (pod crash during an
-// active session); §5.2 (Failure isolation, whole-pod replacement trigger);
-// §10.1.1 (one coordinating replica per session); §28.5.1 (CH-ATTACH
-// Degradation).
+// spec: §7.3 (resume flow after pod failure; Credential leases on the
+// replacement pod); §6.2 (pod crash during an active session); §5.2 (Failure
+// isolation, whole-pod replacement trigger); §10.1.1 (one coordinating
+// replica per session); §28.5.1 (CH-ATTACH Degradation).
 func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int,
 ) (FailureDisposition, error) {
 	from := row.State
-	bind := s.snapshotBinding(row.ID)
-	slot := slotBinding(bind)
-	unlock := func() {}
-	if slot != nil {
-		u, err := s.slotAccountLocks.Lock(ctx, row.ID)
-		if err != nil {
-			return FailureDisposition{}, fmt.Errorf("sessionserver: wait for slot accounting of session %s: %w", row.ID, err)
-		}
-		unlock = u
+	unlock, err := s.slotAccountLocks.Lock(ctx, row.ID)
+	if err != nil {
+		return FailureDisposition{}, fmt.Errorf("sessionserver: wait for slot accounting of session %s: %w", row.ID, err)
 	}
 	defer unlock()
+	bind := s.snapshotBinding(row.ID)
+	slot := slotBinding(bind)
 
 	retryable := classification == session.FailureRetryable
 	budgetLeft := row.RetryCount < int64(maxRetries)
 
 	var disp FailureDisposition
-	var err error
 	switch {
 	case retryable && budgetLeft:
 		disp, err = s.transitionToResumePending(ctx, row, rep, classification, maxRetries)
@@ -226,7 +269,7 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 		// NonRetryable / Unknown / Unclassified from active state →
 		// failed per §6.2. The §7.3 default-platform list calls
 		// these out as the "policy rejection" / "workspace validation"
-		// terminal causes. recordSessionCompleted releases the binding.
+		// terminal causes. The post-terminal hook releases the binding.
 		return s.transitionToFailed(ctx, row, rep, classification, maxRetries, from, slot, unlock)
 	}
 	// No snapshot state equals a target state, so the edge committed
@@ -235,9 +278,29 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 		return disp, err
 	}
 	s.accountFailedSlot(ctx, row, slot, rep.Reason, classification)
-	unlock()
-	s.releaseReportedBinding(ctx, row.ID, bind)
+	s.releaseReportedBinding(ctx, row.ID, bind, executor.DispositionFailed)
 	return disp, nil
+}
+
+// reportGuard is the failure funnel's locked-row guard. The row must still be
+// in the report's source state. A suspended source must still name the
+// reported pod and hold it, so a report on a suspended session whose pod a
+// suspension released is a no-op. A resuming source must still be at the
+// report's expected generation, so a report from an ended incarnation is a
+// no-op. spec: §6.2 (Pod failure while suspended-without-pod is impossible);
+// §7.3 (Resume driver).
+func (s *Server) reportGuard(r sessionstore.Session, row sessionstore.Session, rep FailureReport) bool {
+	if r.State != row.State {
+		return false
+	}
+	switch row.State {
+	case session.StateSuspended:
+		return r.PodAssignment == row.PodAssignment && s.holdsPod(r)
+	case session.StateResuming:
+		return rep.ExpectedCoordinationGeneration != 0 && r.CoordinationGeneration == rep.ExpectedCoordinationGeneration
+	default:
+		return true
+	}
 }
 
 // snapshotBinding reads the session's pod binding before the failure edge,
@@ -262,29 +325,43 @@ func slotBinding(bind *podsession.BindResult) *podsession.BindResult {
 	return bind
 }
 
-// releaseReportedBinding releases the binding the failure funnel
-// snapshotted, with the failed disposition, after a committed edge to
-// resume_pending or awaiting_client_action. With a pod registry it releases
-// only when the registry still returns the snapshotted *BindResult, so a
+// releaseReportedBinding releases the binding bind, with disposition. With a
+// pod registry it releases only when the registry still returns bind, so a
 // binding a later bind of the session published, or a binding another path
 // already removed, is left alone. Without a registry the executor owns the
-// whole binding and is released unconditionally. A release error is logged:
-// the row has already committed and the release is best-effort.
+// whole binding and is released unconditionally. It reports true only when it
+// called the executor's release and that call returned nil. A release error
+// is logged: the row has already committed and the release is best-effort.
+// Its callers are the failure funnel (failed disposition) and the suspension
+// release; the terminal binding release calls releaseCurrentBinding, which
+// returns the error to its caller.
 //
 // spec: §7.3 (resume flow after pod failure); §5.2 (Failure isolation);
 // §28.5.1 (CH-ATTACH Degradation).
-func (s *Server) releaseReportedBinding(ctx context.Context, sessionID string, bind *podsession.BindResult) {
+func (s *Server) releaseReportedBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) bool {
+	released, err := s.releaseCurrentBinding(ctx, sessionID, bind, disposition)
+	if err != nil {
+		log.Printf("sessionserver: release session %s binding: %v", sessionID, err)
+	}
+	return released
+}
+
+// releaseCurrentBinding is releaseReportedBinding's body, which returns the
+// executor release error rather than logging it. It releases nothing and
+// returns (false, nil) when the registry no longer holds exactly bind.
+func (s *Server) releaseCurrentBinding(ctx context.Context, sessionID string, bind *podsession.BindResult, disposition executor.Disposition) (bool, error) {
 	if s.podRegistry != nil {
 		if bind == nil {
-			return
+			return false, nil
 		}
 		if cur, ok := s.podRegistry.Get(sessionID); !ok || cur != bind {
-			return
+			return false, nil
 		}
 	}
-	if err := releaseExecutor(ctx, s.executor, sessionID, executor.DispositionFailed); err != nil {
-		log.Printf("sessionserver: release failed session %s binding: %v", sessionID, err)
+	if err := releaseExecutor(ctx, s.executor, sessionID, disposition); err != nil {
+		return false, err
 	}
+	return true, nil
 }
 
 // applyFailureFromResuming drives the §6.2 mid-resume failure
@@ -294,11 +371,10 @@ func (s *Server) releaseReportedBinding(ctx context.Context, sessionID string, b
 // awaiting_client_action. The resuming watchdog has the same disposition
 // on timeout, but a direct failure report shortcuts the timeout wait.
 //
-// spec: §7.2 (a) — every exit from `resuming` that aborts the
-// in-flight resume bumps coordination_generation so any stale
-// coordinator's subsequent RPC fails the §4.2 CoordinatorFence check.
-// Both branches (re-enter resume_pending, write awaiting_client_action)
-// abort the in-flight resume's restoration RPCs, so both bump. F-7.1.14.
+// Each exit takes effect only on the resuming incarnation the report names
+// (FailureReport.ExpectedCoordinationGeneration) and writes no
+// coordination_generation: the entry write of the next incarnation advances
+// it. spec: §7.3 (Resume driver); §6.2 (resuming failure transitions).
 func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int,
 ) (FailureDisposition, error) {
@@ -315,28 +391,29 @@ func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.
 		// to awaiting_client_action per §6.2.
 		disp, err = s.transitionToAwaitingClientAction(ctx, row, rep, classification, maxRetries, from)
 	}
-	if err == nil && disp.From == session.StateResuming && disp.To != session.StateResuming {
-		s.bumpCoordinationGenerationOnSnapshotClose(ctx, row.TenantID, row.ID)
-	}
 	return disp, err
 }
 
 // transitionToResumePending writes from → resume_pending, bumps
-// RetryCount, stamps the failure reason on the row, and fires the
+// RetryCount, stamps the failure reason on the row, clears its
+// pod_assignment, and fires the
 // §16.1 retry counter + §11.7 audit row via recordSessionRetry.
 func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int,
 ) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
-		if r.State != row.State {
+		if !s.reportGuard(*r, row, rep) {
 			return errReportConflict
 		}
 		r.State = session.StateResumePending
 		r.RetryCount++
 		r.FailureReason = rep.Reason
-		if rep.PodAssignment != "" {
-			r.PodAssignment = rep.PodAssignment
-		}
+		// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume
+		// flow after pod failure) — the funnel releases this session's slot
+		// after the edge write, so the row stops naming the pod here; a
+		// row that kept naming it would be added back to the pod's slot set
+		// by a rehydration and counted by the fallback gate and the GC.
+		r.PodAssignment = ""
 		return nil
 	})
 	if err != nil {
@@ -364,21 +441,22 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 	}, nil
 }
 
-// transitionToAwaitingClientAction writes from → awaiting_client_action
-// and fires the §7.3 webhook + §16.6 op event + §11.7 audit
+// transitionToAwaitingClientAction writes from → awaiting_client_action,
+// clears the row's pod_assignment, and fires the §7.3 webhook + §16.6 op event + §11.7 audit
 // row via emitAwaitingClientActionEntered.
 func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
 ) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
-		if r.State != row.State {
+		if !s.reportGuard(*r, row, rep) {
 			return errReportConflict
 		}
 		r.State = session.StateAwaitingClientAction
 		r.FailureReason = rep.Reason
-		if rep.PodAssignment != "" {
-			r.PodAssignment = rep.PodAssignment
-		}
+		// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume
+		// flow after pod failure) — as on the resume_pending edge, the row
+		// stops naming the pod whose slot the funnel releases.
+		r.PodAssignment = ""
 		return nil
 	})
 	if err != nil {
@@ -398,24 +476,31 @@ func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessi
 }
 
 // transitionToFailed writes from → failed for a non-retryable cause from
-// an active (non-resuming) state per §6.2. The terminal hook
-// pipeline runs via recordSessionCompleted, which releases the binding
-// with the failed disposition. bind is the failure funnel's snapshot of a
-// slot binding, or nil; a slot is counted toward the pod's §5.2 whole-pod
+// an active (non-resuming) state per §6.2. It is a funnel terminal writer:
+// it opens its terminal claim under the funnel's slot-accounting lock before
+// its Update, its mutator applies the funnel's guard to the locked row and
+// records the Terminated fact, and on a committed write the post-terminal
+// hook runs through recordSessionCompleted, which releases the binding with
+// the failed disposition. bind is the failure funnel's snapshot of a slot
+// binding, or nil; a slot is counted toward the pod's §5.2 whole-pod
 // replacement trigger after the commit and before that release.
 //
 // unlock releases the funnel's per-session slot-accounting lock. It runs
-// once the accounting returns and before the terminal pipeline, so the
-// lock covers the accounting alone rather than the seal, release, cascade,
-// billing, and audit work recordSessionCompleted performs. unlock is
-// idempotent; the funnel's deferred call covers the conflict and error
-// returns.
+// once the accounting returns and before the post-terminal hook, so the hook
+// never waits while holding that lock. unlock is idempotent; the funnel's
+// deferred call covers the conflict and error returns. The claim ends on
+// every path after the Update returns.
+//
+// spec: §6.2 (Pod State Machine); §7.2 (Interactive Session Model).
 func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
 	bind *podsession.BindResult, unlock func(),
 ) (FailureDisposition, error) {
+	end := s.BeginTerminal(row.ID)
+	defer end()
+	now := s.clock()
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
-		if r.State != row.State {
+		if !s.reportGuard(*r, row, rep) {
 			return errReportConflict
 		}
 		r.State = session.StateFailed
@@ -424,6 +509,7 @@ func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Sessio
 		if rep.PodAssignment != "" {
 			r.PodAssignment = rep.PodAssignment
 		}
+		sessionstore.MarkTerminated(r, from, now)
 		return nil
 	})
 	if err != nil {
@@ -447,6 +533,50 @@ func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Sessio
 		Classification: classification, From: from, To: updated.State,
 		RetryCount: updated.RetryCount, MaxRetries: maxRetries,
 	}, nil
+}
+
+// enterResumePending writes a recovering or podless suspended session into
+// resume_pending with one Update guarded on the expected source state,
+// row.State, and for suspended also on the locked row holding no pod. It
+// leaves RetryCount unchanged: no retry is spent on a client resume or a
+// message. It then migrates the session's inbox to the DLQ and emits the
+// status change. A guard miss returns the §15.1 precondition error for the
+// resume endpoint, with the locked row's state.
+//
+// From suspended, the write is a resume and runs the resume admission check
+// on row first: a *CapRefusal or a lookup or count error is returned
+// unchanged and nothing is written. From awaiting_client_action the session
+// already counts toward the caps, so no check runs. The check and the
+// guarded write are not atomic.
+//
+// spec: §7.3 (Retry and Resume; "Retry accounting."), §7.2 (Interactive
+// Session Model), §11.1 (Resume admission)
+func (s *Server) enterResumePending(ctx context.Context, row sessionstore.Session) (sessionstore.Session, error) {
+	if row.State == session.StateSuspended {
+		if err := s.admitResume(ctx, row); err != nil {
+			return sessionstore.Session{}, err
+		}
+	}
+	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
+		if r.State != row.State || (r.State == session.StateSuspended && s.holdsPod(*r)) {
+			return &session.PreconditionError{
+				Endpoint:      session.EndpointResume,
+				CurrentState:  r.State,
+				AllowedStates: session.AllowedStates(session.EndpointResume, nil),
+			}
+		}
+		r.State = session.StateResumePending
+		return nil
+	})
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	s.migrateInboxOnResumePending(ctx, updated)
+	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	// spec: §8.3 (Delegation Policy and Lease) — every committed
+	// enterResumePending re-arms the tree's delegation budget keys.
+	s.rearmBudgetKeys(ctx, updated)
+	return updated, nil
 }
 
 // errReportConflict is returned by the store-update closures when the

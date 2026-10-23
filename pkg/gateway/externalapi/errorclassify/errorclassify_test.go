@@ -164,8 +164,8 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 // TestClassifySessionLifecycleFallbackCodes asserts the W2 / F-CS6
 // session-lifecycle codes resolve to their authoritative §15.1 catalog
 // (category, retryable) pair instead of a per-call-site hardcoded value
-// or the unknown-code (TRANSIENT, true) fallback. The four generic
-// fallbacks and the signer-unavailable code are TRANSIENT and retryable;
+// or the unknown-code (TRANSIENT, true) fallback. The generic fallbacks
+// and the signer-unavailable code are TRANSIENT and retryable;
 // the confirmation-flag and deterministic setup-command codes are
 // PERMANENT and not retryable. Because REST writeError and MCP
 // handleToolCall both classify through this one table, a correct entry
@@ -181,7 +181,6 @@ func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
 	}{
 		{"SESSION_CREATION_FAILED", CategoryTransient, true}, // spec: 15:1101
 		{"STARTING_FAILED", CategoryTransient, true},         // spec: 15:1102
-		{"RESUME_FAILED", CategoryTransient, true},           // spec: 15:1103
 		{"KMS_SIGNING_UNAVAILABLE", CategoryTransient, true}, // spec: 15:1104
 		{"CONFIRMATION_REQUIRED", CategoryPermanent, false},  // spec: 15:1105
 		{"SETUP_COMMAND_FAILED", CategoryPermanent, false},   // spec: 15:1106
@@ -204,6 +203,23 @@ func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
 				t.Errorf("%s fell through to the (TRANSIENT, true) fallback", c.code)
 			}
 		})
+	}
+}
+
+// TestResumeFailedIsNotAClassifiedCode asserts that RESUME_FAILED has left the
+// §15.1 catalog: POST /resume is a store write that claims no pod, so no
+// producer of the code remains, and the classifier treats the string as an
+// unknown code rather than a catalog entry.
+//
+// spec: §15.1 (REST API), §7.3 (Retry and Resume).
+func TestResumeFailedIsNotAClassifiedCode(t *testing.T) {
+	if Known("RESUME_FAILED") {
+		t.Fatal("RESUME_FAILED is still a known catalog code; the resume fallback was removed")
+	}
+	cat, retr := Classify("RESUME_FAILED")
+	ucat, uretr := Classify("UNDEFINED_FUTURE_CODE")
+	if cat != ucat || retr != uretr {
+		t.Errorf("Classify(RESUME_FAILED) = (%q, %v), want the unknown-code fallback (%q, %v)", cat, retr, ucat, uretr)
 	}
 }
 
@@ -282,5 +298,19 @@ func TestClassifyStatusKnownCodeWinsOverStatus(t *testing.T) {
 	cat, retr := ClassifyStatus("INTERNAL_ERROR", http.StatusBadRequest)
 	if cat != CategoryTransient || !retr {
 		t.Errorf("INTERNAL_ERROR@400 = (%q, %v), want (TRANSIENT, true)", cat, retr)
+	}
+}
+
+// TestCreationFenceCodesArePolicyNonRetryable pins the classifier rows of
+// the creation-fence codes: TENANT_NOT_ACTIVE and USER_INVALIDATED are
+// POLICY and not retryable, so the MCP surface no longer classifies them
+// as transient and retryable while REST does not.
+// spec: 15.1 (REST API: Error code catalog), 15.2.1 (REST/MCP Consistency Contract)
+func TestCreationFenceCodesArePolicyNonRetryable(t *testing.T) {
+	for _, code := range []string{"TENANT_NOT_ACTIVE", "USER_INVALIDATED"} {
+		cat, retryable := Classify(code)
+		if cat != CategoryPolicy || retryable {
+			t.Errorf("%s = (%s, %v), want (POLICY, false)", code, cat, retryable)
+		}
 	}
 }

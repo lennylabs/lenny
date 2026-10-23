@@ -44,10 +44,10 @@ Every minted token carries the `origin: playground` claim. The gateway uses that
 
 The playground binds two limits on every session it starts, identified by the `origin: playground` claim.
 
-- The duration cap is `min(sandboxTemplate.maxSessionMinutes, playground.maxSessionMinutes)`.
-- The idle timeout is `min(maxClientIdleSeconds, playground.maxIdleTimeSeconds)`, where `maxClientIdleSeconds` is the pool's effective `sessionPolicy.maxClientIdleSeconds`. The playground value is a hard override that only tightens a looser platform limit.
+- The duration cap is `min(sandboxTemplate.maxSessionMinutes, playground.maxSessionMinutes)`. The cap counts active time, as `maxSessionAgeSeconds` does: it pauses while the session is `suspended`, with or without its pod, and resumes when the session returns to `running`.
+- The idle timeout is `min(maxClientIdleSeconds, playground.maxIdleTimeSeconds)`, where `maxClientIdleSeconds` is the pool's effective `sessionPolicy.maxClientIdleSeconds`. The playground value is a hard override that only tightens a looser platform limit. When the timeout elapses, the gateway idle-suspends the session and releases its pod, or expires a session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool). A session whose runtime adapter observed activity within the window, whose suspension attempt the adapter refuses or does not answer, or whose attempt fails because the workspace checkpoint fails or the session changed before the suspend write, stays `running`.
 
-A browser that navigates away sends a best-effort `session.cancel`; a dropped connection that cannot send it falls back to the idle timeout.
+A browser that navigates away sends a best-effort `session.cancel`; a dropped connection that cannot send it falls back to the idle timeout, which fires within the 5-minute playground default rather than after the platform `maxClientIdleSeconds` default of 15 minutes.
 
 ## Security posture
 

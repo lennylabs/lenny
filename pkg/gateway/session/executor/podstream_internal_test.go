@@ -924,7 +924,7 @@ func TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1(t *testing.T) {
 				result := make(chan turnResult, 1)
 				result <- turnResult{parts: []MessagePart{{Type: "text", Text: "answered"}}}
 				close(c.done)
-				res, err := c.awaitReply(tc.ctx, result)
+				res, err := c.awaitReply(tc.ctx, 0, result)
 				if err != nil {
 					t.Fatalf("iteration %d: awaitReply = %v, want the completed reply", i, err)
 				}
@@ -942,13 +942,13 @@ func TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1(t *testing.T) {
 func TestAwaitReplyWithoutAReplyReturnsTheCause_spec_28_5_1(t *testing.T) {
 	c := &attachConn{sessionID: "sess-1", done: make(chan struct{})}
 	close(c.done)
-	if _, err := c.awaitReply(context.Background(), make(chan turnResult, 1)); !errors.Is(err, errStreamEnded) {
+	if _, err := c.awaitReply(context.Background(), 0, make(chan turnResult, 1)); !errors.Is(err, errStreamEnded) {
 		t.Fatalf("awaitReply on an ended stream = %v, want a wrapped stream-ended error", err)
 	}
 	open := &attachConn{sessionID: "sess-1", done: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := open.awaitReply(ctx, make(chan turnResult, 1)); !errors.Is(err, context.Canceled) {
+	if _, err := open.awaitReply(ctx, 0, make(chan turnResult, 1)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("awaitReply on an ended context = %v, want a wrapped context.Canceled", err)
 	}
 }
@@ -999,13 +999,17 @@ func (a *releaseProbeAdapter) Shutdown(context.Context, *adapterv1.ShutdownReque
 }
 
 // releaseProbeBinder returns a binder whose ReleaseSlot completes without a
-// cluster: the slot counter for sandbox starts high enough that every release
-// leaves sibling slots on the pod, so ReleaseSlot never reaches the claim.
+// cluster: the slot set for sandbox is seeded with a sibling member and its
+// rehydrated flag, so every release leaves a sibling on the pod and
+// ReleaseSlot never reaches the claim.
 func releaseProbeBinder(t *testing.T, sandbox string) *podsession.Binder {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	if err := mr.Set("lenny:pod:"+sandbox+":active_slots", "1000000"); err != nil {
-		t.Fatalf("seed slot counter: %v", err)
+	if _, err := mr.SAdd("lenny:pod:{"+sandbox+"}:active_slots", "sibling"); err != nil {
+		t.Fatalf("seed slot set: %v", err)
+	}
+	if err := mr.Set("lenny:pod:{"+sandbox+"}:rehydrated", "1"); err != nil {
+		t.Fatalf("seed rehydrated flag: %v", err)
 	}
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })

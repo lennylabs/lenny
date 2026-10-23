@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -39,6 +40,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 	tokenServiceCert := f.tokenServiceCert
 	tokenServiceKey := f.tokenServiceKey
 	tokenServiceTenant := f.tokenServiceTenant
+	tenancyMode := f.tenancyMode
 
 	// pgPool and the §4 KMS provider (recorded by buildTokenSigningStores)
 	// are read back from the accumulator.
@@ -134,7 +136,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 			Stub:      tokensv1.NewTokenServiceClient(conn),
 			Leases:    llmLeases,
 			Creds:     credCache,
-			TenantID:  *tokenServiceTenant,
+			TenantID:  resolveTokenServiceTenant(*tokenServiceTenant, *tenancyMode),
 			Subsystem: tokenServiceSubsystem,
 		})
 		// §4.9: the admin credential-pool handlers probe Token
@@ -158,6 +160,31 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 	w.tokenServiceConn = tokenServiceConn
 	w.secretProber = secretProber
 	w.tokenServiceSubsystem = tokenServiceSubsystem
+}
+
+// resolveTokenServiceTenant returns the replica-wide tenant the §4.3
+// Token Service client falls back to when a request carries no tenant of
+// its own. An explicit --token-service-tenant wins. Otherwise a
+// single-tenant deployment uses the built-in default tenant, because §4.2
+// assigns every request in single-tenant mode to the `default` tenant, so
+// a lease minted there records that tenant and its revocation must carry
+// it. A multi-tenant deployment has no single replica-wide tenant: the
+// client carries each lease's own tenant, so the fallback stays empty.
+//
+// Without this resolution a chart deployment rendered no tenant, every
+// RevokeCredentials call was rejected with InvalidArgument, and no
+// terminal release freed a Token Service pool slot.
+//
+// spec: §4.2 (Session Manager, tenant_id claim extraction), §4.3 (Token
+// Service), §7.1 (Normal Flow, step 23).
+func resolveTokenServiceTenant(flagValue, tenancyMode string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if tenancyMode == "multi" {
+		return ""
+	}
+	return auth.DefaultTenantID
 }
 
 // dialTokenService dials lenny-token-service for the §4.3 credential

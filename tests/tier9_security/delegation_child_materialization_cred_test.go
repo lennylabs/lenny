@@ -105,7 +105,7 @@ type materializeLeaseCounter struct {
 	failPool string
 }
 
-func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID string) (*adapterv1.CredentialLease, error) {
+func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if pool == a.failPool {
@@ -118,11 +118,15 @@ func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID strin
 	}, nil
 }
 
-func (a *materializeLeaseCounter) ReleaseSession(string) {}
+func (a *materializeLeaseCounter) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (a *materializeLeaseCounter) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*materializeLeaseCounter) Release(string) {}
+func (*materializeLeaseCounter) Release(string) error { return nil }
 
 func (a *materializeLeaseCounter) count() int {
 	a.mu.Lock()
@@ -221,6 +225,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	}
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -241,6 +246,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	// every admitted child.
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
 		Runtimes:          runtimes,

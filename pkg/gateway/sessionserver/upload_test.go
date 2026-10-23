@@ -43,6 +43,7 @@ func newUploadServer(t *testing.T) (*sessionserver.Server, *uploadtoken.Issuer, 
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
@@ -228,7 +229,8 @@ func TestUploadDisabledWhenBlobsUnavailable(t *testing.T) {
 	store := memstore.New()
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc: func() string { return "sess_upload" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_upload" },
 	})
 	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", "ignored", []byte("data"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {

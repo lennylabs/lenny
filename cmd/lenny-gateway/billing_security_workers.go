@@ -32,6 +32,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	billingRetentionDays := f.billingRetentionDays
 	checkpointInterval := f.checkpointInterval
 	idempotencyGCIntervalSeconds := f.idempotencyGCIntervalSeconds
+	issuedTokenGCIntervalSeconds := f.issuedTokenGCIntervalSeconds
 	credentialLeaseGCIntervalSeconds := f.credentialLeaseGCIntervalSeconds
 	postgresWriteIopsSampleSeconds := f.postgresWriteIopsSampleSeconds
 	// ----- §10.1 session-coordination lease sweeper -----
@@ -100,9 +101,12 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// billing.retentionDays window across every registered tenant. The
 	// DELETE is idempotent, so running it on every replica is safe (a
 	// replica that loses the race prunes zero rows). Best-effort: a
-	// per-tenant failure is logged and the sweep continues.
-	// spec: §11.2.1. F-11.2.15.
-	billingPruner := billingretention.New(w.billing, tenantsLister{w.tenants}, billingretention.Options{
+	// per-tenant failure is logged and the sweep continues. It lists
+	// tombstoned tenants too, so a tenant whose billingErasurePolicy is
+	// exempt keeps its billing events through tenant deletion until this
+	// pruner ages them out.
+	// spec: §11.2.1, §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
+	billingPruner := billingretention.New(w.billing, allTenantsLister{w.tenants}, billingretention.Options{
 		RetentionDays: *billingRetentionDays,
 		Clock:         clockinject.Now,
 	})
@@ -136,8 +140,8 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 		go w.revProp.Run(w.watchdogCtx)
 		go w.mtlsDenyProp.Run(w.watchdogCtx)
 		go w.credRenewalProp.Run(w.watchdogCtx)
-		// §11.4 step 2: apply a peer replica's full_revoke Terminate
-		// request to this replica's pods. Wired only with warm-pod
+		// §11.4 step 2: apply a peer replica's full_revoke binding-release
+		// request to the bindings this replica holds. Wired only with warm-pod
 		// placement (the propagator is nil otherwise). F-11.4.3.
 		if w.userPodTerminateProp != nil {
 			go w.userPodTerminateProp.Run(w.watchdogCtx)
@@ -189,10 +193,13 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 
 	// ----- §13.3 revocation-cache rehydration -----
 	// Loads revoked-token jtis from the issued-token index so a
-	// revocation survives a restart and propagates across replicas.
+	// revocation survives a restart and propagates across replicas. It
+	// lists tombstoned tenants too: every revoked row inside the trailing
+	// hour must be loaded, a deleted tenant's kept rows included.
+	// spec: §13.3 (Credential Flow: Authoritative durability for revocation).
 	if w.pgPool != nil {
 		issued := issuedtokenstore.New(w.pgPool)
-		lister := tenantsLister{w.tenants}
+		lister := allTenantsLister{w.tenants}
 		if err := w.revCache.Rehydrate(context.Background(), lister, issued); err != nil {
 			log.Printf("lenny-gateway: initial revocation rehydration failed: %v", err)
 		}
@@ -256,6 +263,18 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 		}()
 	}
 
+	// ----- §12.2 issued-token expired-row GC -----
+	// Deletes issued_tokens rows whose exp precedes the §13.3 trailing hour,
+	// for every tenant a deleted one included, since user erasure and
+	// tenant deletion keep the rows still inside that hour. The cadence is
+	// operator tunable via --issued-token-gc-interval-seconds (default
+	// 3600s).
+	// spec: §12.2, §13.3 (Credential Flow: Authoritative durability for
+	// revocation).
+	if w.pgPool != nil {
+		w.startIssuedTokenGC(issuedtokenstore.New(w.pgPool), time.Duration(*issuedTokenGCIntervalSeconds)*time.Second)
+	}
+
 	// ----- §4.9 credential-lease expires_at backfill -----
 	// One-time convergence pass for rows written before migration 0175, which
 	// carry a NULL expires_at that the sweep below cannot treat as expired and
@@ -312,6 +331,67 @@ func sweepIdempotencyKeys(ctx context.Context, gc *idempgstore.Store, lister ten
 	for _, tenant := range tenants {
 		if _, err := gc.DeleteExpired(ctx, tenant, cutoff); err != nil && ctx.Err() == nil {
 			log.Printf("lenny-gateway: idempotency GC: tenant %q sweep failed: %v", tenant, err)
+		}
+	}
+}
+
+// issuedTokenExpirer deletes one tenant's issued-token rows whose exp is at
+// or before cutoff. *issuedtokenstore.Store satisfies it.
+type issuedTokenExpirer interface {
+	DeleteExpired(ctx context.Context, tenantID string, cutoff time.Time) (int, error)
+}
+
+// tenantIDLister lists the tenant IDs a background sweep visits.
+type tenantIDLister interface {
+	ListTenants(ctx context.Context) ([]string, error)
+}
+
+// issuedTokenRetention is the §13.3 trailing hour: an issued_tokens row is
+// kept until its exp precedes it, so a token a buggy client can still present
+// keeps its revocation.
+const issuedTokenRetention = time.Hour
+
+// startIssuedTokenGC runs one issued-token GC pass now and then one every
+// interval on the watchdog context, visiting every tenant allTenantsLister
+// returns. A non-positive interval runs hourly.
+func (w *gatewayWiring) startIssuedTokenGC(gc issuedTokenExpirer, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	lister := allTenantsLister{w.tenants}
+	sweepIssuedTokens(context.Background(), gc, lister, clockinject.Now)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-w.watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				sweepIssuedTokens(w.watchdogCtx, gc, lister, clockinject.Now)
+			}
+		}
+	}()
+}
+
+// sweepIssuedTokens runs one §12.2 issued-token expired-row GC pass: for
+// each listed tenant it deletes the rows whose exp precedes the §13.3
+// trailing hour. A tenant's failure is logged and the pass continues. The
+// sweep is per tenant because the lenny_tenant_guard trigger fires for every
+// DELETE.
+//
+// spec: §12.2, §13.3 (Credential Flow: Authoritative durability for
+// revocation).
+func sweepIssuedTokens(ctx context.Context, gc issuedTokenExpirer, lister tenantIDLister, now func() time.Time) {
+	tenants, err := lister.ListTenants(ctx)
+	if err != nil {
+		log.Printf("lenny-gateway: issued-token GC: listing tenants failed: %v", err)
+		return
+	}
+	cutoff := now().Add(-issuedTokenRetention)
+	for _, tenant := range tenants {
+		if _, err := gc.DeleteExpired(ctx, tenant, cutoff); err != nil && ctx.Err() == nil {
+			log.Printf("lenny-gateway: issued-token GC: tenant %q sweep failed: %v", tenant, err)
 		}
 	}
 }

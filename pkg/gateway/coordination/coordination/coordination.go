@@ -4,8 +4,10 @@
 // leases. A gateway replica drives the sessions it owns; the Sweeper
 // periodically renews the lease for every session this replica binds or
 // already holds the lease for, stamping this replica as the holder, and
-// adopts a lapsed lease only for a still-running-pod session it holds no
-// binding for. When a replica crashes its leases lapse on their TTL, so
+// adopts a lapsed lease only for a session in an adopted state
+// (resume_pending, awaiting_client_action, or running, input_required, or
+// suspended with a pod) it holds no binding for. A podless suspended session
+// holds no lease. When a replica crashes its leases lapse on their TTL, so
 // another replica's sweeper can take the orphaned sessions over. The
 // lease is acquired at bind on the binding replica, so the sweep never
 // lands the lease on a replica that holds no binding for the session.
@@ -32,13 +34,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
-// errHandoffSessionTerminal signals that the session became terminal between
-// the sweep's List snapshot and the atomic handoff bump, so the handoff is
-// refused rather than resurrecting a session no longer coordinated by anyone.
-// A terminal session is no longer coordinated by any replica, so its
-// coordination_generation must not advance on a would-be takeover.
-// spec: §10.1 (a terminal session is no longer coordinated by anyone).
-var errHandoffSessionTerminal = errors.New("coordination: session went terminal before the handoff bump")
+// errHandoffRefused signals that the locked session row no longer matches the
+// row the sweep listed: its coordination_generation moved past the listed
+// value, or its state is no longer one a lapsed lease is adopted in (a
+// terminal state, resuming, or a podless suspended row). The handoff is the
+// §10.1.2 step 1 compare-and-swap, so a miss discards the lease claim rather
+// than bumping a generation another writer already owns.
+// spec: §10.1.2 (Coordinator Handoff Protocol).
+var errHandoffRefused = errors.New("coordination: session row changed before the handoff compare-and-swap")
 
 // TenantLister enumerates the tenants whose sessions are swept.
 type TenantLister interface {
@@ -68,11 +71,45 @@ type BindingRegistry interface {
 	// re-adoption without a stale cached stream that would shadow a
 	// same-replica re-adopt. A bound session that a peer replica has taken
 	// over (the lease is held elsewhere and the row's coordination_generation
-	// has advanced past the generation this replica last renewed at) is
+	// has advanced past the generation stamped on this replica's binding) is
 	// evicted without any lease write, because this replica no longer
 	// coordinates it. spec: §10.1, §10.1.1, §10.1.5, §4.7 (single content
 	// consumer per session).
 	EvictBinding(sessionID string)
+	// BindingGeneration returns the coordination_generation stamped on the
+	// session's current binding: the generation at which this replica
+	// published it (a start, a resume commit, or a takeover readopt). It
+	// returns 0 when the session is unbound. The peer-takeover check compares
+	// the row's generation with this stamp, so a session released and rebound
+	// on this replica is compared against its own new binding rather than an
+	// earlier one. spec: §10.1.1 (Stateless Replicas and Per-Session
+	// Coordination), §10.1.5 (Stale Replica Behavior).
+	BindingGeneration(sessionID string) int64
+}
+
+// HeldDeliverer delivers the messages a session held while it had no
+// coordinating replica, once a takeover has re-adopted the session's pod. The
+// session server implements it; the coordination package declares it here so
+// it does not import the session server. The Sweeper calls it once per
+// takeover that published a binding, after the publish, with the generation
+// the takeover's compare-and-swap wrote. Implementations return at once and do
+// the delivery asynchronously. spec: §10.1.2 (Coordinator Handoff Protocol),
+// §7.2 (Message delivery routing — seven paths, path 6).
+type HeldDeliverer interface {
+	DeliverHeldAfterTakeover(tenantID, sessionID string, generation int64)
+}
+
+// TerminalReleaser releases or evicts this replica's binding for a session
+// whose row is terminal. The terminal write can land on any replica, and a
+// binding can be published after it, so the post-terminal hook on the
+// writer's replica does not reach every binding. The Sweeper hands each
+// terminal row this replica binds to the releaser on every listing; the
+// releaser owns the generation check and the release, and defers while a
+// terminal writer on this replica is still running its post-terminal hook.
+// Implementations return at once. spec: §10.1.1 (Stateless Replicas and
+// Per-Session Coordination), §7.2 (Interactive Session Model).
+type TerminalReleaser interface {
+	ReleaseTerminalBinding(row sessionstore.Session)
 }
 
 // Readopter re-establishes coordination of a still-running pod on the
@@ -140,7 +177,7 @@ type Options struct {
 	// held gateway-to-pod channel has died, it evicts the binding and
 	// releases the lease instead of renewing it; when a peer replica holds
 	// the lease and the row's coordination_generation has advanced past the
-	// generation this replica last renewed at, it evicts the binding and
+	// generation stamped on the binding, it evicts the binding and
 	// writes no lease, mirror, or session row. Nil means this replica
 	// reports no local bindings, so the sweep renews only leases it already
 	// holds and adopts still-running-pod orphans. spec: §4.6.1 (coordinating
@@ -164,34 +201,43 @@ type Options struct {
 	// selects time.Now; a test injects a controllable clock to exercise the
 	// backoff deterministically.
 	Clock func() time.Time
+	// HeldDeliverer is called once after each takeover that published a
+	// binding, so the messages held while the session had no coordinator
+	// reach the re-adopted pod. Nil skips the call. spec: §10.1.2
+	// (Coordinator Handoff Protocol), §7.2 (Message delivery routing — seven
+	// paths, path 6).
+	HeldDeliverer HeldDeliverer
+	// TerminalReleaser is handed each terminal row this replica binds, so a
+	// binding whose session another replica (or a write after the publish)
+	// ended is released or evicted. Nil skips the call. spec: §10.1.1
+	// (Stateless Replicas and Per-Session Coordination), §7.2 (Interactive
+	// Session Model).
+	TerminalReleaser TerminalReleaser
 }
 
 // Sweeper renews the coordination leases for a gateway replica.
 type Sweeper struct {
-	tenants         TenantLister
-	sessions        sessionstore.Store
-	leases          leasestore.LeaseStore
-	mirror          coordlease.Store
-	bindings        BindingRegistry
-	readopter       Readopter
-	replicaID       string
-	ttl             time.Duration
-	interval        time.Duration
-	adoptionBackoff time.Duration
-	now             func() time.Time
+	tenants          TenantLister
+	sessions         sessionstore.Store
+	leases           leasestore.LeaseStore
+	mirror           coordlease.Store
+	bindings         BindingRegistry
+	readopter        Readopter
+	heldDeliverer    HeldDeliverer
+	terminalReleaser TerminalReleaser
+	replicaID        string
+	ttl              time.Duration
+	interval         time.Duration
+	adoptionBackoff  time.Duration
+	now              func() time.Time
 
 	// mu guards backoffUntil, the per-session adoption-backoff window a
 	// relinquished crash-takeover records so the fixed sweep interval does
-	// not re-adopt inside the §10.1 jittered backoff window, and
-	// renewedGeneration, the coordination_generation each session bound
-	// here was last renewed (or taken over) at. A session has an entry only
-	// while this replica binds it; the peer-takeover eviction compares the
-	// row's generation against the entry, so a generation advanced by
-	// another replica's takeover is distinguishable from a stale foreign
-	// lease that leasestore.Failover can report after a Redis outage.
-	mu                sync.Mutex
-	backoffUntil      map[string]time.Time
-	renewedGeneration map[string]int64
+	// not re-adopt inside the §10.1.2 jittered backoff window. The
+	// peer-takeover check keeps no per-replica record: it reads the
+	// generation stamped on the binding (BindingRegistry.BindingGeneration).
+	mu           sync.Mutex
+	backoffUntil map[string]time.Time
 }
 
 // NewSweeper returns a Sweeper. Interval defaults to 15s and TTL to
@@ -210,20 +256,20 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leases
 		now = time.Now
 	}
 	return &Sweeper{
-		tenants:         tenants,
-		sessions:        sessions,
-		leases:          leases,
-		mirror:          opts.Mirror,
-		bindings:        opts.Bindings,
-		readopter:       opts.Readopter,
-		replicaID:       opts.ReplicaID,
-		ttl:             ttl,
-		interval:        interval,
-		adoptionBackoff: opts.AdoptionBackoff,
-		now:             now,
-		backoffUntil:    map[string]time.Time{},
-
-		renewedGeneration: map[string]int64{},
+		tenants:          tenants,
+		sessions:         sessions,
+		leases:           leases,
+		mirror:           opts.Mirror,
+		bindings:         opts.Bindings,
+		readopter:        opts.Readopter,
+		heldDeliverer:    opts.HeldDeliverer,
+		terminalReleaser: opts.TerminalReleaser,
+		replicaID:        opts.ReplicaID,
+		ttl:              ttl,
+		interval:         interval,
+		adoptionBackoff:  opts.AdoptionBackoff,
+		now:              now,
+		backoffUntil:     map[string]time.Time{},
 	}
 }
 
@@ -242,303 +288,342 @@ func (s *Sweeper) connAlive(sessionID string) bool {
 }
 
 // evictBinding drops the session's binding from the podsession registry
-// and the executor's cached Attach stream, and forgets the generation the
-// session was last renewed at. The registry call is a no-op when no binding
-// registry is wired.
+// and the executor's cached Attach stream. The registry call is a no-op when
+// no binding registry is wired.
 func (s *Sweeper) evictBinding(sessionID string) {
-	s.forgetRenewedGeneration(sessionID)
 	if s.bindings != nil {
 		s.bindings.EvictBinding(sessionID)
 	}
 }
 
-// isRunningPod reports whether a session row is a still-running-pod
-// session eligible for crash-takeover adoption: it is running (or its
-// input_required sub-state) and carries a persisted pod assignment. The
-// Sweeper adopts a lapsed lease only for such a session, so a committed
-// but never-bound row (created, finalizing, ready, or suspended) is never
-// picked up by a peer sweep before its owning replica's at-bind Acquire
-// runs. spec: §10.1 (coordinator handoff re-adopts the still-running pod).
-func isRunningPod(row sessionstore.Session) bool {
-	return (row.State == session.StateRunning || row.State == session.StateInputRequired) && row.PodAssignment != ""
+// bindingGeneration returns the coordination_generation stamped on this
+// replica's binding for the session, or 0 when the session is unbound or no
+// binding registry is wired.
+func (s *Sweeper) bindingGeneration(sessionID string) int64 {
+	if s.bindings == nil {
+		return 0
+	}
+	return s.bindings.BindingGeneration(sessionID)
 }
 
-// Sweep runs one maintenance pass. For every non-terminal session it
-// renews the coordination lease when this replica binds the session or
-// already holds the lease, and adopts a lapsed lease only for a
-// still-running-pod session (running or input_required with a persisted
-// pod assignment) it holds no binding for; every other session is left
-// alone without an Acquire attempt, so the sweep never lands the lease on
-// a replica that holds no binding. A bound session whose held
-// gateway-to-pod channel has died is evicted and its lease released so a
-// subsequent sweep can re-adopt it. Sessions whose lease a different
-// replica holds are skipped on ErrHeld. Returns the number of leases this
-// replica holds after the pass. spec: §4.6.1, §10.1.
+// PodHeld reports whether the row's state keeps a pod bound to the session
+// and the row names that pod: running, input_required, or suspended with a
+// non-empty PodAssignment. A takeover of such a row re-adopts and re-fences
+// the pod. spec: §10.1.1 (Stateless Replicas and Per-Session Coordination),
+// §10.1.2 (Coordinator Handoff Protocol).
+func PodHeld(row sessionstore.Session) bool {
+	switch row.State {
+	case session.StateRunning, session.StateInputRequired, session.StateSuspended:
+		return row.PodAssignment != ""
+	default:
+		return false
+	}
+}
+
+// adoptedState reports whether a lapsed coordination lease on the row is
+// adopted by a peer replica: any resume_pending or awaiting_client_action row,
+// and a running, input_required, or suspended row whose PodAssignment names a
+// pod. A running, input_required, or suspended row with no pod is a session
+// that was never bound (or a suspended session whose pod was released), so no
+// peer lands the lease on a replica that holds no binding for it. A
+// resume_pending or awaiting_client_action row is adopted without its pod,
+// because that pod failed; the adopter's resume driver restores the session.
+// resuming is excluded because every replica's watchdog moves it on, and
+// created, finalizing, ready, and starting are excluded because the spec
+// states no adoption for them. spec: §10.1.1 (Stateless Replicas and
+// Per-Session Coordination).
+func adoptedState(row sessionstore.Session) bool {
+	switch row.State {
+	case session.StateResumePending, session.StateAwaitingClientAction:
+		return true
+	default:
+		return PodHeld(row)
+	}
+}
+
+// podlessSuspended reports whether the row is a suspended session whose pod
+// was released. Such a session holds no coordination lease and has no
+// coordinating replica until a write moves it to resume_pending.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination).
+func podlessSuspended(row sessionstore.Session) bool {
+	return row.State == session.StateSuspended && row.PodAssignment == ""
+}
+
+// peerTookOver reports whether the row's coordination_generation has advanced
+// past the generation stamped on this replica's binding. An unstamped binding
+// (bindGen 0) reports false, so ErrHeld alone never evicts it.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.5
+// (Stale Replica Behavior).
+func peerTookOver(row sessionstore.Session, bindGen int64) bool {
+	return bindGen > 0 && row.CoordinationGeneration > bindGen
+}
+
+// Sweep runs one maintenance pass over every tenant's sessions and returns the
+// number of leases this replica holds after the pass.
 //
-// When this replica acquires a lease that was previously held by a
-// different replica — the cross-replica coordinator-handoff case — the
-// sweeper increments the session row's `coordination_generation`
-// counter via the SessionStore Update path. The store enforces the §4.2
-// monotonicity floor so a handoff under racing writers still advances
-// the counter exactly once per observed handoff on this replica.
-// spec: §4.2 — "incremented on coordinator handoff across
-// gateway replicas".
+// For each non-terminal session it renews the coordination lease when this
+// replica binds the session or already holds the lease, and adopts a lapsed
+// lease for a session in an adopted state (adoptedState): resume_pending,
+// awaiting_client_action, and running, input_required, or suspended with a
+// pod. A takeover of a row that still holds a pod re-adopts and re-fences that
+// pod; a takeover of a recovering row bumps the generation and re-adopts
+// nothing. Every other session is left alone without an Acquire attempt, so
+// the sweep never lands the lease on a replica that holds no binding.
 //
-// A bound session is evicted on two triggers. A dead held channel evicts
-// the binding and releases the lease. A peer takeover evicts the binding
-// with no lease, mirror, or session-row write: Acquire returns ErrHeld, and
-// the row's coordination_generation exceeds the generation this replica
-// last renewed the session at, so another replica has taken the session
-// over and this replica no longer coordinates it. ErrHeld alone does not
-// evict, because leasestore.Failover can report a stale Redis holder after
-// a Redis outage while the generation is unchanged.
-// spec: §10.1.1, §10.1.5.
+// A podless suspended session is neither renewed nor adopted, so its lease
+// lapses on its TTL; while this replica is its prior holder the sweep releases
+// its §10.1.8 mirror row.
+//
+// A terminal session's mirror row is released, and when this replica binds
+// the session the row is handed to the TerminalReleaser, which releases or
+// evicts the binding. The terminal branch makes no lease write and no
+// EvictBinding call.
+//
+// A bound session is evicted on two triggers. A dead held channel evicts the
+// binding and releases the lease. A peer takeover evicts the binding with no
+// lease, mirror, or session-row write: Acquire returns ErrHeld and the row's
+// coordination_generation exceeds the generation stamped on the binding.
+// ErrHeld alone does not evict, because leasestore.Failover can report a stale
+// Redis holder after a Redis outage while the generation is unchanged.
+//
+// The adoption backoff of a terminal session is dropped when its row is
+// listed, and a pass that lists every tenant without error drops the backoff
+// of every session it did not list, so the map holds entries only for live
+// sessions.
+//
+// spec: §4.6.1, §10.1.1 (Stateless Replicas and Per-Session Coordination),
+// §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica Behavior),
+// §10.1.8 (Rolling Updates and the CheckpointBarrier Protocol), §7.2
+// (Interactive Session Model).
 func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 	tenants, err := s.tenants.ListTenants(ctx)
 	if err != nil {
 		return 0, err
 	}
 	held := 0
+	listed := map[string]struct{}{}
 	for _, tenantID := range tenants {
 		rows, err := s.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
 		if err != nil {
 			return held, err
 		}
 		for _, row := range rows {
-			if session.IsTerminal(row.State) {
-				// §10.1.8 — a terminal session is no longer
-				// coordinated by anyone; mark its mirror row released so the
-				// barrier-target query stops returning it. Best-effort.
-				s.forgetRenewedGeneration(row.ID)
-				s.releaseMirror(ctx, tenantID, row.ID)
-				continue
+			listed[row.ID] = struct{}{}
+			holds, err := s.sweepRow(ctx, tenantID, row)
+			if err != nil {
+				return held, err
 			}
-			// Inspect the current holder before Acquire so a successful
-			// Acquire that changed the holder can be detected as a
-			// handoff. ErrNotFound means the lease is unheld (fresh
-			// acquisition); any other error short-circuits the sweep
-			// the same way the prior code did.
-			var priorHolder string
-			existing, getErr := s.leases.Get(ctx, tenantID, row.ID)
-			if getErr == nil {
-				priorHolder = existing.Holder
-			} else if !errors.Is(getErr, leasestore.ErrNotFound) {
-				return held, getErr
+			if holds {
+				held++
 			}
-
-			bound := s.boundHere(row.ID)
-			if !bound {
-				// A binding released outside the Sweeper (the failure funnel,
-				// a terminal transition, or a resume) must not leave a stale
-				// renewed generation that a later rebind would be compared
-				// against.
-				s.forgetRenewedGeneration(row.ID)
-			}
-			leaseUnheld := errors.Is(getErr, leasestore.ErrNotFound)
-			// A session in its post-relinquish adoption backoff is not
-			// re-adopted until the §10.1.2 jittered window elapses, so
-			// the fixed sweep does not re-drive RecordHandoff and the fence on
-			// every sweep after a terminal fence failure released the lease.
-			adoptable := leaseUnheld && isRunningPod(row) && !s.inAdoptionBackoff(row.ID)
-
-			// A bound session whose held gateway-to-pod gRPC channel has
-			// died is evicted and its lease released rather than renewed, so
-			// the session reverts to a lapsed-lease still-running-pod orphan
-			// that a subsequent sweep (a peer, or this replica) re-adopts and
-			// re-fences before the pod's hold-state self-termination. Without
-			// this a dead-connection binding keeps boundHere true and would
-			// renew the lease forever, leaving no lapsed lease for any peer's
-			// adoption predicate to fire on. The eviction drops the
-			// executor's cached Attach stream too, so a same-replica re-adopt
-			// is not shadowed by the stale dead stream.
-			// spec: §10.1 (hold state on connection loss; TTL-lapse recovery).
-			if bound && !s.connAlive(row.ID) {
-				s.evictBinding(row.ID)
-				if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
-					log.Printf("coordination: release dead-connection lease for session %s: %v", row.ID, err)
-				}
-				continue
-			}
-
-			// Attempt Acquire only for a session this replica binds (renew),
-			// one it already holds the lease for after a takeover whose
-			// binding it has not yet published (priorHolder == s.replicaID,
-			// renew so the taken-over lease does not lapse on its TTL and
-			// re-orphan the session), or an unheld/lapsed lease of an
-			// adoptable still-running-pod session (crash-takeover adoption).
-			// Every other non-terminal session — created, finalizing, ready,
-			// suspended, or one whose lease a live foreign replica holds — is
-			// skipped without an Acquire attempt, so a peer sweep never lands
-			// the lease on a replica that holds no binding for the session.
-			// spec: §4.6.1 (coordinating replica holds the lease),
-			// §10.1 (per-session coordination lease).
-			eligible := bound || priorHolder == s.replicaID || adoptable
-			if !eligible {
-				continue
-			}
-
-			if _, err := s.leases.Acquire(ctx, tenantID, row.ID, s.replicaID, s.ttl); err != nil {
-				if !errors.Is(err, leasestore.ErrHeld) {
-					return held, err
-				}
-				if bound && s.peerTookOver(row) {
-					// spec: §10.1.1, §10.1.5 (a replica that is no longer the
-					// coordinator discards its cached streams). Another
-					// replica holds the lease and has advanced the generation
-					// past the one this replica last renewed at, so it has
-					// taken the session over. Drop the binding and the cached
-					// Attach stream. No lease, mirror, or session-row write
-					// follows, because this replica does not hold the lease
-					// and the mirror row belongs to the holder's sweep.
-					s.evictBinding(row.ID)
-					log.Printf("coordination: evict binding for session %s: generation advanced to %d by another replica", row.ID, row.CoordinationGeneration)
-					continue
-				}
-				// Another replica holds this session's lease and no takeover
-				// is evident; skip it.
-				continue
-			}
-			if bound {
-				s.recordRenewedGeneration(row.ID, row.CoordinationGeneration)
-			}
-			// The crash-takeover edge is a successful Acquire that changed the
-			// holder to this replica for an adoptable still-running-pod session
-			// this replica does not bind: the prior coordinator crashed, its
-			// Redis lease lapsed (priorHolder == "") or was observed departing
-			// in the narrow Get-then-Acquire race (priorHolder is a different
-			// replica), and this replica adopts the orphan. A self-renew
-			// (priorHolder == s.replicaID) and a renew of a session this replica
-			// binds are not takeovers. The edge does not depend on the pre-Acquire
-			// Get observing the departed holder, because a lapsed Redis lease
-			// leaves priorHolder empty and the adoption of an adoptable session
-			// is itself the handoff signal.
-			//
-			// On that edge the new coordinator bumps coordination_generation and
-			// re-adopts the still-running pod through the injected seam, which
-			// fences the pod as its first RPC and returns a publish callback the
-			// Sweeper invokes only after the fence acknowledges. Because the
-			// published binding (or, without a re-adopt seam, the self-held
-			// lease) makes the next sweep a renew (priorHolder == s.replicaID),
-			// the bump and the fence fire exactly once per handoff.
-			// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
-			// CoordinatorFence precondition; no operational RPC before the fence
-			// acknowledges), §4.2, §4.7
-			// (Attach content stream stays lazy).
-			if !bound && priorHolder != s.replicaID {
-				generation := s.RecordHandoff(ctx, tenantID, row.ID)
-				if generation == 0 {
-					// The generation bump did not land: either the store write
-					// errored transiently, or the session raced to terminal
-					// between the List snapshot and the atomic bump so the
-					// handoff was refused (RecordHandoff). §10.1 requires the new
-					// coordinator to fence the pod to the post-handoff
-					// generation, so a failed bump must restart the handoff from
-					// lease acquisition rather than drive CoordinatorFence at the
-					// baseline generation 0, which would record a generation
-					// below the pod's current fenced value and undermine the
-					// monotonic-generation split-brain guard. Release the
-					// just-acquired lease and skip the re-adopt so a terminal
-					// session is never resurrected, and a transient failure
-					// re-observes the unheld lapsed lease on the next sweep and
-					// re-runs the full bump-then-fence takeover once the store
-					// recovers. Not self-holding the lease across sweeps is what
-					// keeps the takeover predicate (!bound && priorHolder !=
-					// s.replicaID) able to fire again.
-					// spec: §10.1 (CoordinatorFence to the post-handoff
-					// generation; a failed or refused generation bump restarts
-					// the handoff from lease acquisition; a session that goes
-					// terminal during takeover is not resurrected).
-					if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
-						log.Printf("coordination: release lease after failed generation bump for session %s: %v", row.ID, err)
-					}
-					continue
-				}
-				publish, ferr := s.readoptAndFence(ctx, tenantID, row.ID, generation)
-				if ferr != nil {
-					// The re-adopt failed and relinquished the lease it could
-					// not turn into a serving binding: a terminal fence failure
-					// is relinquished by the coordfence driver, and every
-					// pre-fence or best-effort failure (session-row read, pod
-					// dial, or a fence fault the driver did not relinquish) is
-					// released by the re-adopt seam. Either way the lease is no
-					// longer held, so its lapse surfaces for a subsequent sweep.
-					// Record a per-session adoption backoff so the fixed sweep
-					// does not re-adopt inside the spec's jittered window and
-					// re-drive RecordHandoff and the fence every sweep. The
-					// generation increment stays in Postgres; the next
-					// coordinator to acquire the lease increments it again.
-					// spec: §10.1.
-					log.Printf("coordination: re-adopt fence for session %s relinquished: %v", row.ID, ferr)
-					s.recordAdoptionBackoff(row.ID)
-					continue
-				}
-				// The fence acknowledged: publish the re-established BindResult
-				// to the shared podRegistry and hold the connection open as the
-				// serving binding. Publishing only after the acknowledgement
-				// honors the §10.1 precondition that no operational RPC reaches
-				// the pod until the fence acknowledges.
-				// spec: §10.1 (no operational RPC before the fence acknowledges).
-				publish()
-				s.clearAdoptionBackoff(row.ID)
-				// Record the post-handoff generation rather than the
-				// pre-bump row value, so a later ErrHeld at this same
-				// generation is not mistaken for a peer takeover.
-				s.recordRenewedGeneration(row.ID, generation)
-			}
-			// §10.1.8 — mirror the held lease into Postgres so the
-			// preStop barrier-target query observes it. A cross-replica
-			// handoff overwrites coordinator_replica with this replica.
-			s.upsertMirror(ctx, tenantID, row.ID, row.CoordinationGeneration)
-			held++
 		}
 	}
+	s.pruneAdoptionBackoff(listed)
 	return held, nil
 }
 
-// RecordHandoff bumps the §4.2 coordination_generation counter on the
-// named session row. The SessionStore Update path enforces the §4.2
-// monotonicity floor; a transient store error is logged but does not
-// fail the sweep, because the next sweep cycle will reattempt the bump
-// from a fresh handoff observation.
+// sweepRow runs one row of a sweep and reports whether this replica holds the
+// row's lease afterwards. A returned error ends the sweep.
+func (s *Sweeper) sweepRow(ctx context.Context, tenantID string, row sessionstore.Session) (bool, error) {
+	if session.IsTerminal(row.State) {
+		// A terminal session is never adopted again, so its adoption
+		// backoff can never be consulted; drop it here rather than wait on
+		// a lazy expiry that never runs. spec: §10.1.1.
+		s.clearAdoptionBackoff(row.ID)
+		s.sweepTerminal(ctx, tenantID, row)
+		return false, nil
+	}
+	// Inspect the current holder before Acquire so a successful Acquire that
+	// changed the holder can be detected as a handoff. ErrNotFound means the
+	// lease is unheld; any other error ends the sweep.
+	var priorHolder string
+	existing, getErr := s.leases.Get(ctx, tenantID, row.ID)
+	if getErr == nil {
+		priorHolder = existing.Holder
+	} else if !errors.Is(getErr, leasestore.ErrNotFound) {
+		return false, getErr
+	}
+
+	// A podless suspended session holds no lease: no Acquire and no Release,
+	// whatever bound and priorHolder say, so the lease lapses on its TTL. While
+	// this replica is the prior holder, release the mirror row so the §10.1.8
+	// barrier-target set stops naming a session with no pod; repeating it each
+	// sweep until the lapse also undoes an upsert by a sweep that listed the
+	// row before the suspension release cleared its pod. A binding still
+	// present is the suspension release's to remove.
+	// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.8
+	// (Rolling Updates and the CheckpointBarrier Protocol).
+	if podlessSuspended(row) {
+		if priorHolder == s.replicaID {
+			s.releaseMirror(ctx, tenantID, row.ID)
+		}
+		return false, nil
+	}
+
+	bound := s.boundHere(row.ID)
+	// A bound session whose held gateway-to-pod channel has died is evicted
+	// and its lease released rather than renewed, so the session reverts to a
+	// lapsed lease that a subsequent sweep (a peer, or this replica) adopts and
+	// re-fences before the pod's hold-state self-termination. The eviction
+	// drops the executor's cached Attach stream too, so a same-replica
+	// re-adopt is not shadowed by the stale dead stream.
+	// spec: §10.1 (hold state on connection loss; TTL-lapse recovery).
+	if bound && !s.connAlive(row.ID) {
+		s.evictBinding(row.ID)
+		if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
+			log.Printf("coordination: release dead-connection lease for session %s: %v", row.ID, err)
+		}
+		return false, nil
+	}
+
+	// Attempt Acquire only for a session this replica binds (renew), one it
+	// already holds the lease for after a takeover whose binding it has not
+	// published (renew, so the taken-over lease does not lapse), or an unheld
+	// lease of a session in an adopted state that is outside its
+	// post-relinquish adoption backoff (takeover). Every other non-terminal
+	// session is skipped without an Acquire.
+	// spec: §4.6.1 (coordinating replica holds the lease), §10.1.1
+	// (Stateless Replicas and Per-Session Coordination), §10.1.2 (Coordinator
+	// Handoff Protocol).
+	leaseUnheld := errors.Is(getErr, leasestore.ErrNotFound)
+	adoptable := leaseUnheld && adoptedState(row) && !s.inAdoptionBackoff(row.ID)
+	if !bound && priorHolder != s.replicaID && !adoptable {
+		return false, nil
+	}
+
+	if _, err := s.leases.Acquire(ctx, tenantID, row.ID, s.replicaID, s.ttl); err != nil {
+		if !errors.Is(err, leasestore.ErrHeld) {
+			return false, err
+		}
+		if bound && peerTookOver(row, s.bindingGeneration(row.ID)) {
+			// Another replica holds the lease and has advanced the generation
+			// past this replica's binding stamp, so it has taken the session
+			// over. Drop the binding and the cached Attach stream. No lease,
+			// mirror, or session-row write follows.
+			// spec: §10.1.1, §10.1.5 (a replica that is no longer the
+			// coordinator discards its cached streams).
+			s.evictBinding(row.ID)
+			log.Printf("coordination: evict binding for session %s: generation advanced to %d by another replica", row.ID, row.CoordinationGeneration)
+		}
+		return false, nil
+	}
+
+	// A successful Acquire by a replica that neither binds the session nor
+	// held its lease is the crash-takeover edge: the prior coordinator's lease
+	// lapsed (priorHolder empty) or was observed departing in the
+	// Get-then-Acquire race. A renew of a bound or self-held session is not a
+	// takeover.
+	if !bound && priorHolder != s.replicaID {
+		return s.takeover(ctx, tenantID, row), nil
+	}
+	s.upsertMirror(ctx, tenantID, row.ID, row.CoordinationGeneration)
+	return true, nil
+}
+
+// sweepTerminal handles a terminal row: it releases the row's §10.1.8 mirror
+// row, then hands the row to the TerminalReleaser when this replica binds the
+// session. It writes no lease and evicts nothing itself; the releaser owns
+// the generation check and the release.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §7.2
+// (Interactive Session Model), §10.1.8 (Rolling Updates and the
+// CheckpointBarrier Protocol).
+func (s *Sweeper) sweepTerminal(ctx context.Context, tenantID string, row sessionstore.Session) {
+	s.releaseMirror(ctx, tenantID, row.ID)
+	if s.terminalReleaser != nil && s.boundHere(row.ID) {
+		s.terminalReleaser.ReleaseTerminalBinding(row)
+	}
+}
+
+// takeover runs the crash-takeover edge after a successful Acquire and reports
+// whether this replica holds the lease afterwards. It bumps the generation
+// through the §10.1.2 step 1 compare-and-swap at the listed generation. A miss
+// discards the lease claim. When the locked row still holds a pod, it
+// re-adopts and fences that pod at the new generation, publishes the binding
+// only after the fence acknowledges, and then calls the HeldDeliverer. A
+// recovering row (resume_pending or awaiting_client_action) is adopted with no
+// readopt, because its pod failed. Both branches clear the adoption backoff
+// and mirror the lease at the new generation.
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.1 (Stateless Replicas
+// and Per-Session Coordination), §4.2, §4.7 (Attach content stream stays
+// lazy), §7.2 (Message delivery routing — seven paths, path 6).
+func (s *Sweeper) takeover(ctx context.Context, tenantID string, row sessionstore.Session) bool {
+	generation, holdsPod := s.RecordHandoff(ctx, tenantID, row.ID, row.CoordinationGeneration)
+	if generation == 0 {
+		// The compare-and-swap missed or the store write failed. The new
+		// coordinator must fence to the post-handoff generation, so it never
+		// fences at the listed one: release the just-acquired lease so the
+		// next sweep re-observes the row and restarts the handoff, and a
+		// row that left the adopted states is never resurrected.
+		// spec: §10.1.2 (Coordinator Handoff Protocol).
+		if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
+			log.Printf("coordination: release lease after refused handoff for session %s: %v", row.ID, err)
+		}
+		return false
+	}
+	if holdsPod {
+		publish, err := s.readoptAndFence(ctx, tenantID, row.ID, generation)
+		if err != nil {
+			// The re-adopt relinquished the lease it could not turn into a
+			// serving binding. Record a per-session adoption backoff so the
+			// fixed sweep does not re-adopt inside the §10.1.2 jittered
+			// window. The generation increment stays in the store.
+			log.Printf("coordination: re-adopt fence for session %s relinquished: %v", row.ID, err)
+			s.recordAdoptionBackoff(row.ID)
+			return false
+		}
+		// Publish only after the fence acknowledged, so no operational RPC
+		// reaches the pod first. spec: §10.1.2.
+		publish()
+		s.deliverHeld(tenantID, row.ID, generation)
+	}
+	s.clearAdoptionBackoff(row.ID)
+	// Mirror the post-handoff generation, never the listed one.
+	s.upsertMirror(ctx, tenantID, row.ID, generation)
+	return true
+}
+
+// deliverHeld calls the HeldDeliverer once for a takeover that published a
+// binding. A nil hook is skipped.
+func (s *Sweeper) deliverHeld(tenantID, sessionID string, generation int64) {
+	if s.heldDeliverer != nil {
+		s.heldDeliverer.DeliverHeldAfterTakeover(tenantID, sessionID, generation)
+	}
+}
+
+// RecordHandoff is the §10.1.2 step 1 compare-and-swap of a coordinator
+// handoff. Under one store Update it bumps the session's
+// coordination_generation by one when the locked row's generation equals
+// expected (the generation the caller's listing read) and the locked row is
+// in an adopted state. It returns the new generation and whether the locked
+// row holds a pod (PodHeld), which decides whether the takeover re-adopts and
+// fences a pod.
 //
-// Exported so the sessionserver and component tests can verify the
-// bump-once-per-handoff contract directly without racing the sweeper's
-// internal Get→Acquire window. The sweeper invokes it internally on
-// every observed cross-replica handoff and passes the new generation to
-// the re-adopt fence so the pod is fenced to the post-handoff generation.
-// A transient store error returns 0, which signals a failed bump: the
-// crash-takeover caller then releases the just-acquired lease and skips the
-// re-adopt, so the next sweep re-observes the unheld lease and re-runs the
-// bump-then-fence takeover from a fresh handoff observation rather than
-// fencing the pod at the baseline generation 0.
+// It returns 0 and false when the compare-and-swap misses: the generation
+// moved (another writer, such as the failure funnel's move to resume_pending
+// or a peer's takeover, owns the change), or the row left the adopted states
+// (a terminal state, resuming, or a suspended row whose pod was released).
+// A store error also returns 0 and false and is logged. On either the caller
+// discards its lease claim and restarts the handoff on a later sweep.
 //
-// The bump is refused under the same atomic read when the session has become
-// terminal since the sweep's List snapshot observed it running. A terminal
-// session is no longer coordinated by any replica, so a takeover that raced a
-// concurrent terminal transition must not bump the generation or re-adopt the
-// pod; the refusal returns 0 so the crash-takeover caller releases the
-// just-acquired lease and skips the re-adopt exactly as it does for a transient
-// error, and the next sweep short-circuits the now-terminal row.
-// spec: §4.2, §10.1 (a terminal session is no longer coordinated by
-// anyone; a session that goes terminal during takeover is not resurrected).
-func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) int64 {
+// Exported so component tests can drive the compare-and-swap directly.
+// spec: §10.1.2 (Coordinator Handoff Protocol), §4.2.
+func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string, expected int64) (int64, bool) {
+	var holdsPod bool
 	updated, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-		if session.IsTerminal(row.State) {
-			return errHandoffSessionTerminal
+		if row.CoordinationGeneration != expected || !adoptedState(*row) {
+			return errHandoffRefused
 		}
 		row.CoordinationGeneration++
+		holdsPod = PodHeld(*row)
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, errHandoffSessionTerminal) {
-			// Not an error condition: the session raced to terminal, so the
-			// handoff is correctly abandoned without resurrecting it.
-			return 0
+		if !errors.Is(err, errHandoffRefused) {
+			log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
 		}
-		log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
-		return 0
+		return 0, false
 	}
-	return updated.CoordinationGeneration
+	return updated.CoordinationGeneration, holdsPod
 }
 
 // readoptAndFence drives the injected re-adopt seam on the crash-takeover
@@ -587,31 +672,22 @@ func (s *Sweeper) clearAdoptionBackoff(sessionID string) {
 	delete(s.backoffUntil, sessionID)
 }
 
-// recordRenewedGeneration remembers the coordination_generation a bound
-// session's lease was last renewed or taken over at. spec: §10.1.5.
-func (s *Sweeper) recordRenewedGeneration(sessionID string, generation int64) {
+// pruneAdoptionBackoff drops the adoption backoff of every session a complete
+// sweep did not list, which is a session whose row was hard-deleted (or whose
+// tenant is gone). Such a session is never listed again, so neither
+// inAdoptionBackoff's lazy expiry nor the terminal branch would ever remove
+// its entry. Sweep calls it only after every tenant was listed without error,
+// so a partial listing never drops a live session's window. Session IDs are
+// globally unique, so the set is keyed by ID alone, as backoffUntil is.
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination).
+func (s *Sweeper) pruneAdoptionBackoff(listed map[string]struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.renewedGeneration[sessionID] = generation
-}
-
-// forgetRenewedGeneration drops a session's renewed-generation entry once
-// this replica no longer binds it or the session is terminal.
-func (s *Sweeper) forgetRenewedGeneration(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.renewedGeneration, sessionID)
-}
-
-// peerTookOver reports whether the row's coordination_generation has
-// advanced past the generation this replica last renewed the session at.
-// A session with no entry reports false, so a binding this replica never
-// renewed is not evicted on ErrHeld. spec: §10.1.1, §10.1.5.
-func (s *Sweeper) peerTookOver(row sessionstore.Session) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	renewed, ok := s.renewedGeneration[row.ID]
-	return ok && row.CoordinationGeneration > renewed
+	for id := range s.backoffUntil {
+		if _, ok := listed[id]; !ok {
+			delete(s.backoffUntil, id)
+		}
+	}
 }
 
 // nextBackoff returns the §10.1.2 re-adoption delay. A positive

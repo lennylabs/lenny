@@ -13,8 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
-	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -26,16 +24,14 @@ import (
 // so the leader-elected runnables share the parsed list.
 //
 // The Postgres-backed stores (the agent_pod_state mirror, the orphan-claim
-// session lookup, the §5.1 Runtime CRD registry, and the §10.7 pool-scaling
-// pool/experiment registries) are constructed only under --postgres-dsn; when
-// the flag is empty they stay nil and the dependent controllers skip
-// registration in the steps that follow.
+// session lookup, and the §5.1 Runtime CRD registry) are constructed only under
+// --postgres-dsn; when the flag is empty they stay nil and the dependent
+// controllers skip registration in the steps that follow.
 //
 // spec: §4.6.1 — the agent_pod_state mirror, the orphan-claim GC session
 // lookup, and the bounded work-queue factory; §5.1 — the Runtime CRD registry;
-// §10.7 — the pool-scaling pool/experiment registries; §16.6 / §25.5 — the
-// operational-event emitter (Redis-backed under --redis-url, otherwise the
-// controller-local in-memory ring buffer).
+// §16.6 / §25.5 — the operational-event emitter (Redis-backed under
+// --redis-url, otherwise the controller-local in-memory ring buffer).
 func (w *controllerWiring) buildStores() {
 	f := w.f
 
@@ -46,11 +42,6 @@ func (w *controllerWiring) buildStores() {
 	// status that the gateway's fallback claim path reads. When the flag
 	// is empty the mirror store is left nil and the controller skips
 	// mirroring.
-	//
-	// §10.7 PoolScalingController inputs: the §5.2 pool registry is the
-	// source of truth for pool definitions, and the cross-tenant
-	// experiment registry drives the variant-pool lifecycle. Both require
-	// Postgres, so the controller is wired only under --postgres-dsn.
 	if f.postgresDSN != "" {
 		pgPool, err := pgxpool.New(context.Background(), f.postgresDSN)
 		if err != nil {
@@ -66,8 +57,6 @@ func (w *controllerWiring) buildStores() {
 		// registry the gateway reads at session creation. Requires the
 		// Postgres registry, so it is wired only under --postgres-dsn.
 		w.runtimeRegistry = runtimepg.New(pgPool)
-		w.poolScalingPools = poolstorepg.New(pgPool)
-		w.poolScalingExperiments = experimentstorepg.New(pgPool)
 	}
 
 	w.opsEmitter = w.buildOpsEmitter()

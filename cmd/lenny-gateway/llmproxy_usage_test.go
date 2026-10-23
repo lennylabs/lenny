@@ -821,13 +821,13 @@ func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 // TestRecordDirectUsageIdleClockGate_spec_6_2_253 proves the §6.2
 // direct-mode idle reconciliation under the gateway pull: a zero-token delta
 // leaves the idle clock untouched (a bare timer tick is not evidence of agent
-// work, so a hung pod still idle-terminates), while a non-zero delta resets it
+// work, so a hung pod is still idle-suspended), while a non-zero delta resets it
 // (direct evidence the agent issued LLM work). It would fail against a design
 // that reused the proxy recorder's unconditional per-chunk idle stamp.
 //
 // spec: §6.2, §11.2
 // (direct-mode usage).
-// diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens never idle-terminates and its pod, lease, and session leak (proposal 0024 S4 idle-gate broken).
+// diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens is never idle-suspended and its session holds the pod indefinitely (§6.2 maxClientIdleSeconds: only a non-zero direct-mode usage delta stamps the idle clock).
 func TestRecordDirectUsageIdleClockGate_spec_6_2_253(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

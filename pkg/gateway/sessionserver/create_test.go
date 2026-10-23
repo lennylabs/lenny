@@ -69,6 +69,7 @@ func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_svc" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -105,8 +106,9 @@ func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
 func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc: func() string { return "sess_svc" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "sess_svc" },
 	})
 
 	_, svcErr := srv.CreateSessionService(context.Background(), "acme", sessionserver.CreateSessionRequest{})
@@ -134,6 +136,7 @@ func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
 // running state, the pod-bound session the §15 single-shot adapter binder
 // dispatches over. spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func TestCreateAndStartServiceHappyPath(t *testing.T) {
+	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-cas-svc")
 
 	resp, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{
@@ -171,6 +174,7 @@ func TestCreateAndStartServiceHappyPath(t *testing.T) {
 // pre-field code.
 // spec: §7.1 create-and-start atomicity; §15.1.
 func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -184,6 +188,7 @@ func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-cas-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -213,6 +218,7 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_new" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -274,6 +280,7 @@ func TestCreateRecordsEnvironment(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_env" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -321,6 +328,7 @@ func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_noenv" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -340,6 +348,7 @@ func TestEnvironmentSessionsEndpointSetsEnvironment(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_envpath" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -373,6 +382,7 @@ func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_override" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -410,9 +420,10 @@ func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock:   clock,
-		IDFunc:  func() string { return "sess_dev" },
-		DevMode: true,
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return "sess_dev" },
+		DevMode:         true,
 	})
 
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
@@ -438,7 +449,7 @@ func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
 
 func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_iso" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_iso" }})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
@@ -461,7 +472,7 @@ func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 // is stable for the session's lifetime.
 func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_getiso" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_getiso" }})
 
 	if rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
@@ -519,7 +530,7 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 
 func TestCreateRejectsUnknownIsolationProfile(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.Profile("ferrous"),
@@ -531,7 +542,7 @@ func TestCreateRejectsUnknownIsolationProfile(t *testing.T) {
 
 func TestCreateValidatesWorkspacePlan(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_wp" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_wp" }})
 
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
@@ -554,7 +565,7 @@ func TestCreateValidatesWorkspacePlan(t *testing.T) {
 
 func TestGetReturnsStoredWorkspacePlan(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_wp_get" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_wp_get" }})
 	h := srv.Handler()
 
 	const plan = `{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`
@@ -589,7 +600,7 @@ func TestGetReturnsStoredWorkspacePlan(t *testing.T) {
 
 func TestGetOmitsWorkspacePlanWhenAbsent(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_noplan" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_noplan" }})
 	h := srv.Handler()
 
 	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "echo"}); rr.Code != http.StatusCreated {
@@ -610,7 +621,7 @@ func TestGetOmitsWorkspacePlanWhenAbsent(t *testing.T) {
 
 func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	// Setuid mode → WORKSPACE_PLAN_INVALID with setuid_setgid_prohibited.
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
@@ -646,7 +657,7 @@ func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 // details.encounteredVersion so a rollback can be diagnosed. F-14.1.1.
 func TestCreateRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:    "claude-code",
@@ -681,7 +692,7 @@ func TestCreateRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 // (singular) carries the offending plan path.
 func TestCreateMultiViolationReportsDetailsFields_spec_15_1_979(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	// Two bad sources — parser aggregates both into SubErrs and the
 	// gateway maps them to details.fields per the spec.
@@ -721,7 +732,7 @@ func TestCreateMultiViolationReportsDetailsFields_spec_15_1_979(t *testing.T) {
 
 func TestCreatePropagatesUnknownSourceWarning(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_warn" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_warn" }})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		WorkspacePlan: json.RawMessage(`{
@@ -743,7 +754,7 @@ func TestCreatePropagatesUnknownSourceWarning(t *testing.T) {
 
 func TestCreateAcceptsNullWorkspacePlan(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_null" }})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_null" }})
 	rr := createRequestRaw(t, srv.Handler(), []byte(`{"runtimeRef": "x", "workspacePlan": null}`))
 	if rr.Code != http.StatusCreated {
 		t.Errorf("status: got %d, want 201", rr.Code)
@@ -762,6 +773,7 @@ func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testin
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	store := &createRejectingStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_persist_fail" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -809,8 +821,9 @@ func (s stubDualStore) Unavailable() bool { return s.unavailable }
 func TestCreateReturnsPlatformDegradedWhenDualStoreDown_spec_10_1(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc:    func() string { return "sess_should_not_persist" },
-		DualStore: stubDualStore{unavailable: true},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_should_not_persist" },
+		DualStore:       stubDualStore{unavailable: true},
 	})
 
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
@@ -851,9 +864,10 @@ func TestCreateReturnsPlatformDegradedWhenDualStoreDown_spec_10_1(t *testing.T) 
 func TestCreateProceedsWhenDualStoreAvailable_spec_10_1(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Clock:     clock,
-		IDFunc:    func() string { return "sess_ok" },
-		DualStore: stubDualStore{unavailable: false},
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return "sess_ok" },
+		DualStore:       stubDualStore{unavailable: false},
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
@@ -870,6 +884,7 @@ func TestCreateProceedsWhenDualStoreAvailable_spec_10_1(t *testing.T) {
 func TestCreateReturnsSessionCreationFailedOnMintFailure_spec_7_1_4(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc: func() string {
 			// Return a sessionID containing a forbidden dot so
 			// uploadtoken.IssueDetailed rejects it; this is the canonical
@@ -936,6 +951,7 @@ func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefau
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return sessionID },
 		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
@@ -1072,6 +1088,7 @@ func seedExplicitEnvServer(t *testing.T, sessionID string, rt runtimestore.Runti
 		}
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return sessionID },
 		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
@@ -1240,6 +1257,7 @@ func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return "sess_unwired" },
 		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
@@ -1270,7 +1288,7 @@ func TestCreateRejectsSetupCommandsOverMaxCommands(t *testing.T) {
 			MaxCommands: 2,
 		},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1327,7 +1345,7 @@ func TestCreateAdmitsSetupCommandsWithinMaxCommands(t *testing.T) {
 			MaxCommands: 2,
 		},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1352,7 +1370,7 @@ func TestCreateAdmitsSetupCommandsWhenPolicyUnset(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "uncapped", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1385,7 +1403,7 @@ func TestCreateRejectsSetupCommandOutsideAllowlist(t *testing.T) {
 			Allowlist: []string{"npm", "make"},
 		},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1438,7 +1456,7 @@ func TestCreateRejectsSetupCommandOnBlocklist(t *testing.T) {
 			Blocklist: []string{"rm -rf"},
 		},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1481,7 +1499,7 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 			Allowlist: []string{"npm", "make"},
 		},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	plan := json.RawMessage(`{
 		"schemaVersion": 1,
@@ -1504,6 +1522,7 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 // the bound pod. A failure here means createSession skipped the §7.1 step-4
 // claim or did not stamp the §4.6 binding on the row.
 func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1516,6 +1535,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-claim" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -1575,6 +1595,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 // two-step /start path keeps WARM_POOL_EXHAUSTED (§5.2), so this asserts the
 // create-handler code, not the shared classifier's default.
 func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1588,6 +1609,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -1628,6 +1650,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 // claimless contract — every service-mode session would burn a warm pod.
 // A failure here means claimAtCreate did not take the service-mode branch.
 func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1640,6 +1663,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-svc" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -1677,6 +1701,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 // A failure here means createSession did not roll back the create-time
 // claim when store.Create failed.
 func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1689,6 +1714,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 	)
 	store := &createRejectingStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-rb" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -1719,6 +1745,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 // recordSessionCompleted does not run the §4.5 claimless reclaim for a
 // pre-running terminal session, so the pod stays bound forever.
 func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1731,6 +1758,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-term-created" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),

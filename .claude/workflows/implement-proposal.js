@@ -202,6 +202,7 @@ const ARG_CLASS = {
   maxPhaseOscillations: "forward",
   maxFinalGateFailures: "forward",
   expensiveTierSeconds: "forward",
+  fullFinalPassesBeforeScoping: "forward",
 };
 
 const PLAN = {
@@ -415,6 +416,7 @@ try {
       maxPhaseOscillations: input.maxPhaseOscillations,
       maxFinalGateFailures: input.maxFinalGateFailures,
       expensiveTierSeconds: input.expensiveTierSeconds,
+      fullFinalPassesBeforeScoping: input.fullFinalPassesBeforeScoping,
     },
   );
 } catch (e) {

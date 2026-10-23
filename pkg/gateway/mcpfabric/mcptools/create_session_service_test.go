@@ -47,12 +47,13 @@ func newMCPWithCreator(t *testing.T, creator mcptools.SessionCreator) *mcp.Serve
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:          memstore.New(),
-		SessionCreator: creator,
-		Executor:       executor.NewEchoExecutor(),
-		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:         func() string { return "sess_mcp" },
-		TenantID:       "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		SessionCreator:    creator,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv
 }

@@ -14,6 +14,8 @@
 package recovery
 
 import (
+	"context"
+	"errors"
 	"sort"
 	"time"
 )
@@ -137,77 +139,115 @@ func Levels(nodes []Node) [][]Node {
 	return levels
 }
 
-// Recover drives the §8.10 bottom-up traversal. It groups nodes by
-// depth and recovers each level deepest-first, calling recoverFn per
-// node; recoverFn returns nil on a successful reattach. A node is
-// marked failed when recoverFn returns an error, when its individual
-// `maxResumeWindowSeconds` has elapsed (Node.ResumeWindow), when its
-// level has exceeded LevelTimeout, or when the traversal has exceeded
-// TreeTimeout — once the tree deadline passes every remaining node is
-// failed without a recovery attempt. Per §8.10 the effective
-// recovery window for any node is
-// `min(maxResumeWindowSeconds, remaining maxTreeRecoverySeconds)`; this
-// implementation also clamps to the per-level budget. Returns one
-// NodeResult per node, in bottom-up traversal order. spec: §8.10.
-func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult {
+// Failure reasons Recover records for a node it could not recover within a
+// budget. A wait that a node's deadline ends is recorded with the reason of
+// the budget that set the deadline, so a caller's timeout counters count it.
+const (
+	ReasonTreeTimeout  = "tree recovery deadline exceeded"
+	ReasonLevelTimeout = "level recovery deadline exceeded"
+	ReasonResumeWindow = "node resume window exceeded"
+)
+
+// Recover drives the §8.10 bottom-up traversal. It groups nodes by depth and
+// recovers each level deepest-first. For each level it first calls start for
+// every node that passes its tree, level, and resume-window checks, so every
+// selected node of the level is driven before any of them is waited on,
+// because maxLevelRecoverySeconds bounds the wait for all nodes at one depth
+// together. It then calls recoverFn for those nodes in order; recoverFn
+// returns nil once the node's restore committed. Each recoverFn call
+// receives a context whose deadline is the node's deadline: the earliest of
+// the level deadline, the tree deadline, and the end of the node's
+// individual `maxResumeWindowSeconds` (Node.ResumeWindow). A recoverFn error
+// fails the node; when the node's deadline ended the wait, the node is
+// recorded with the reason of the budget that set the deadline. A node whose
+// budget has already elapsed is failed without a start, and once the tree
+// deadline passes every remaining node is failed. start may be nil. Returns
+// one NodeResult per node, in bottom-up traversal order. spec: §8.10.
+func Recover(ctx context.Context, nodes []Node, start func(Node), recoverFn func(context.Context, Node) error, cfg Config) []NodeResult {
 	cfg = cfg.withDefaults()
 	results := make([]NodeResult, 0, len(nodes))
 	traversalStart := cfg.Now()
 	treeDeadline := traversalStart.Add(cfg.TreeTimeout)
-	treeExpired := false
 
 	for _, level := range Levels(nodes) {
 		levelDeadline := cfg.Now().Add(cfg.LevelTimeout)
 		if levelDeadline.After(treeDeadline) {
 			levelDeadline = treeDeadline
 		}
+		type selected struct {
+			node     Node
+			deadline time.Time
+			reason   string
+		}
+		var driven []selected
 		for _, node := range level {
 			now := cfg.Now()
-			// spec: §8.10 — effective recovery window is
-			// min(node.ResumeWindow, remaining tree window). Composed with
-			// the per-level cap so a level still bounds a long-resume-window
-			// node when its level peers progress more slowly.
-			nodeDeadline := levelDeadline
-			if node.ResumeWindow > 0 {
-				ndl := traversalStart.Add(node.ResumeWindow)
-				if ndl.Before(nodeDeadline) {
-					nodeDeadline = ndl
-				}
+			if reason, failed := budgetElapsed(node, now, traversalStart, levelDeadline, treeDeadline); failed {
+				results = append(results, NodeResult{Node: node, Outcome: OutcomeFailed, Reason: reason})
+				continue
 			}
-			switch {
-			case treeExpired || !now.Before(treeDeadline):
-				treeExpired = true
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "tree recovery deadline exceeded",
-				})
-			case !now.Before(levelDeadline) && (node.ResumeWindow == 0 || now.Before(traversalStart.Add(node.ResumeWindow))):
-				// Level cap bit first while the node's individual window is
-				// still open — surface the level-cap reason so an operator
-				// can grow `maxLevelRecoverySeconds`.
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "level recovery deadline exceeded",
-				})
-			case node.ResumeWindow > 0 && !now.Before(traversalStart.Add(node.ResumeWindow)):
-				// Per-node `maxResumeWindowSeconds` elapsed before the
-				// level/tree budgets — the §7.3 per-session resume window
-				// is the binding deadline for this node. spec: §8.10.
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "node resume window exceeded",
-				})
-			default:
-				_ = nodeDeadline
-				if err := recoverFn(node); err != nil {
-					results = append(results, NodeResult{
-						Node: node, Outcome: OutcomeFailed, Reason: err.Error(),
-					})
-				} else {
-					results = append(results, NodeResult{Node: node, Outcome: OutcomeRecovered})
-				}
+			deadline, reason := nodeDeadline(node, traversalStart, levelDeadline, treeDeadline)
+			if start != nil {
+				start(node)
 			}
+			driven = append(driven, selected{node: node, deadline: deadline, reason: reason})
+		}
+		for _, d := range driven {
+			results = append(results, waitNode(ctx, d.node, d.deadline, d.reason, recoverFn, cfg.Now))
 		}
 	}
 	return results
+}
+
+// budgetElapsed reports whether a node's tree, level, or resume-window budget
+// has already elapsed at now, with the reason Recover records.
+func budgetElapsed(node Node, now, traversalStart, levelDeadline, treeDeadline time.Time) (string, bool) {
+	windowOpen := node.ResumeWindow == 0 || now.Before(traversalStart.Add(node.ResumeWindow))
+	switch {
+	case !now.Before(treeDeadline):
+		return ReasonTreeTimeout, true
+	case !now.Before(levelDeadline) && windowOpen:
+		// Level cap bit first while the node's individual window is still
+		// open — surface the level-cap reason so an operator can grow
+		// `maxLevelRecoverySeconds`.
+		return ReasonLevelTimeout, true
+	case !windowOpen:
+		// Per-node `maxResumeWindowSeconds` elapsed before the level/tree
+		// budgets. spec: §8.10.
+		return ReasonResumeWindow, true
+	default:
+		return "", false
+	}
+}
+
+// nodeDeadline returns the earliest of the node's budgets and the reason of
+// the budget that sets it.
+func nodeDeadline(node Node, traversalStart, levelDeadline, treeDeadline time.Time) (time.Time, string) {
+	deadline, reason := levelDeadline, ReasonLevelTimeout
+	if !treeDeadline.After(levelDeadline) {
+		reason = ReasonTreeTimeout
+	}
+	if node.ResumeWindow > 0 {
+		if ndl := traversalStart.Add(node.ResumeWindow); ndl.Before(deadline) {
+			deadline, reason = ndl, ReasonResumeWindow
+		}
+	}
+	return deadline, reason
+}
+
+// waitNode runs recoverFn for one driven node under a context bounded by the
+// node's deadline, measured on the traversal clock.
+func waitNode(ctx context.Context, node Node, deadline time.Time, reason string,
+	recoverFn func(context.Context, Node) error, now func() time.Time,
+) NodeResult {
+	nctx, cancel := context.WithTimeout(ctx, deadline.Sub(now()))
+	defer cancel()
+	err := recoverFn(nctx, node)
+	if err == nil {
+		return NodeResult{Node: node, Outcome: OutcomeRecovered}
+	}
+	if errors.Is(nctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		return NodeResult{Node: node, Outcome: OutcomeFailed, Reason: reason}
+	}
+	return NodeResult{Node: node, Outcome: OutcomeFailed, Reason: err.Error()}
 }

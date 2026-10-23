@@ -30,7 +30,7 @@ func (r *recordedExpiry) record(pool, reason string) {
 
 func TestOnSessionExpiredEmitsCounter_F_11_3_7(t *testing.T) {
 	counter := &recordedExpiry{}
-	srv := New(memstore.New(), Options{IncSessionExpiry: counter.record})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, IncSessionExpiry: counter.record})
 
 	srv.OnSessionExpired(context.Background(), sessionstore.Session{
 		ID: "sess_idle", TenantID: "acme", PoolRef: "pool-a",
@@ -58,7 +58,7 @@ func TestOnSessionExpiredEmitsCounter_F_11_3_7(t *testing.T) {
 // A nil IncSessionExpiry callback degrades to a no-op so the watchdog can wire
 // the terminal hook unconditionally.
 func TestOnSessionExpiredWithoutCounterIsNoOp_F_11_3_7(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.OnSessionExpired(context.Background(), sessionstore.Session{
 		ID: "sess", TenantID: "acme", State: session.StateExpired,
 	}, "max_idle_time")

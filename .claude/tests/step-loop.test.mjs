@@ -70,6 +70,82 @@ t.section("C4. a test failure returns through conformance before the tests re-ru
   t.check("a failing test round is followed by a conformance re-check", seq.filter((l) => l.startsWith("review")).length >= 2);
 }
 
+t.section("C6s. a final gate after the step's first one scopes to the commits since the last");
+// The first final gate of a step runs every tier. A later one re-runs the tiers
+// the previous gate failed and the tiers the commits since it can reach, and
+// carries the rest forward, because a full pass after a one-file fix re-proves
+// tiers nothing touched.
+{
+  const finalsFailing = (k) => {
+    let n = 0;
+    let f = 0;
+    let b = 0;
+    return base({
+      "build:*": ({ label }) =>
+        label === "build:S1:base"
+          ? { sha: "base0" }
+          : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => {
+        if (label.endsWith(":final")) {
+          return ++f <= k
+            ? { green: false, tiersRun: ["unit", "component"], failures: ["gate failure " + f] }
+            : { green: true, tiersRun: ["unit"], skipped: [{ tier: "component", why: "carried forward" }], failures: [] };
+        }
+        return { green: true, tiersRun: ["unit"], failures: [] };
+      },
+    });
+  };
+  const finals = (calls) => matching(calls, "verify:S1:final");
+  const isFull = (c) => /^Run the FULL test set/.test(c.prompt);
+  {
+    const { calls, logs, result } = await runWorkflow(WF, ARGS(), finalsFailing(2));
+    const g = finals(calls);
+    t.check("three final gates ran", g.length === 3, String(g.length));
+    t.check("the first final gate is full", g[0] && isFull(g[0]));
+    t.check("the second final gate is scoped", g[1] && !isFull(g[1]) && /Run ONLY what the fix warrants/.test(g[1].prompt));
+    const firstCommit = (/covered commit (c\d+)/.exec(g[1] ? g[1].prompt : "") || [])[1];
+    t.check("it scopes against the commit the first gate covered", !!firstCommit && g[1].prompt.includes("classify-diff.mjs " + firstCommit + "..HEAD"), firstCommit);
+    t.check("it carries the first gate's failures to re-run by name", g[1] && g[1].prompt.includes("gate failure 1"));
+    t.check("it checks the earlier commit is an ancestor of HEAD", g[1] && /merge-base --is-ancestor/.test(g[1].prompt));
+    t.check("the third gate scopes against the second gate's commit and failures", g[2] && !isFull(g[2]) && g[2].prompt.includes("gate failure 2") && !g[2].prompt.includes("gate failure 1"));
+    t.check("the step's tiers and tiers 0 and 1 are the reached set", g[1] && g[1].prompt.includes("(0, 1, unit, component)"));
+    t.check("a scoped gate is logged", logs.some((l) => /final gate scoped to the changes since c\d+/.test(l)));
+    t.check("a scoped green gate ticks the step", ordered(calls, "verify:S1:final", "tick:") && result.status !== "step-stuck", result.status);
+  }
+  {
+    const { calls } = await runWorkflow(WF, ARGS({ fullFinalPassesBeforeScoping: 2 }), finalsFailing(2));
+    const g = finals(calls);
+    t.check("fullFinalPassesBeforeScoping keeps the first N gates full", g.length === 3 && isFull(g[0]) && isFull(g[1]), String(g.length));
+    t.check("and scopes the gate after them", g[2] && !isFull(g[2]) && g[2].prompt.includes("gate failure 2"));
+  }
+  {
+    // The full prompt is byte-identical to the one issued before scoping
+    // existed, so a resumed run replays its cached gates.
+    const { calls } = await runWorkflow(WF, ARGS({ fullFinalPassesBeforeScoping: 99 }), finalsFailing(1));
+    const g = finals(calls);
+    t.check("a legacy full gate keeps its exact wording", g[1] && isFull(g[1]) &&
+      g[1].prompt.includes("Earlier rounds ran only the tiers each fix could affect, so no single run has covered the tree as it now stands.") &&
+      g[1].prompt.includes("Skip none of them except a tier that genuinely needs a cloud-only resource, which you name."));
+  }
+  {
+    // With no commit to anchor the earlier gate to, nothing is certified.
+    let n = 0;
+    let f = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) =>
+        label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "", filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) =>
+        label.endsWith(":final")
+          ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["x"] } : { green: true, tiersRun: ["unit"], failures: [] })
+          : { green: true, tiersRun: ["unit"], failures: [] },
+    }));
+    const g = finals(calls);
+    t.check("a gate with no recorded commit stays full", g.length === 2 && isFull(g[1]), String(g.length));
+  }
+}
+
 t.section("C6. the final gate runs over the finished tree, and its failures route back");
 // The gate exists because a step that took several rounds reached its final
 // state through SCOPED runs, so no single pass has covered the tree as it now

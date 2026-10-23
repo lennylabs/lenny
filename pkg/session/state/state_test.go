@@ -202,3 +202,93 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		})
 	}
 }
+
+// sessionStateMachineEdges is the edge list of the §7.2 "Session state
+// machine:" block. An edge listed there more than once (one per trigger)
+// appears here once.
+var sessionStateMachineEdges = []state.Transition{
+	{From: state.Created, To: state.Failed},
+	{From: state.Starting, To: state.Running},
+	{From: state.Starting, To: state.ResumePending},
+	{From: state.Starting, To: state.Failed},
+	{From: state.Running, To: state.Suspended},
+	{From: state.Running, To: state.InputRequired},
+	{From: state.Running, To: state.Completed},
+	{From: state.Running, To: state.ResumePending},
+	{From: state.Running, To: state.AwaitingClientAction},
+	{From: state.Running, To: state.Failed},
+	{From: state.Running, To: state.Cancelled},
+	{From: state.Running, To: state.Expired},
+	{From: state.InputRequired, To: state.Running},
+	{From: state.InputRequired, To: state.Cancelled},
+	{From: state.InputRequired, To: state.Expired},
+	{From: state.InputRequired, To: state.ResumePending},
+	{From: state.InputRequired, To: state.AwaitingClientAction},
+	{From: state.InputRequired, To: state.Failed},
+	{From: state.Suspended, To: state.Running},
+	{From: state.Suspended, To: state.ResumePending},
+	{From: state.Suspended, To: state.Completed},
+	{From: state.Suspended, To: state.Cancelled},
+	{From: state.Suspended, To: state.Expired},
+	{From: state.Suspended, To: state.Failed},
+	{From: state.Suspended, To: state.AwaitingClientAction},
+	{From: state.ResumePending, To: state.Resuming},
+	{From: state.ResumePending, To: state.AwaitingClientAction},
+	{From: state.ResumePending, To: state.Cancelled},
+	{From: state.ResumePending, To: state.Completed},
+	{From: state.Resuming, To: state.Running},
+	{From: state.Resuming, To: state.ResumePending},
+	{From: state.Resuming, To: state.AwaitingClientAction},
+	{From: state.Resuming, To: state.Cancelled},
+	{From: state.Resuming, To: state.Completed},
+	{From: state.AwaitingClientAction, To: state.ResumePending},
+	{From: state.AwaitingClientAction, To: state.Completed},
+	{From: state.AwaitingClientAction, To: state.Cancelled},
+	{From: state.AwaitingClientAction, To: state.Expired},
+}
+
+// TestValidTransitionsHoldEverySessionStateMachineEdge_spec_7_2 pins the
+// transition table to the §7.2 session state machine block: every edge
+// the block lists is in ValidTransitions() and IsValid admits it. The
+// retries-exhausted edges into awaiting_client_action, the retryable
+// input_required → resume_pending edge, and resuming → resume_pending
+// were absent from the table before it was aligned with the block, so
+// each of those cases fails against the earlier table.
+//
+// spec: 7.2 (Interactive Session Model), 6.2 (Pod State Machine)
+func TestValidTransitionsHoldEverySessionStateMachineEdge_spec_7_2(t *testing.T) {
+	t.Parallel()
+
+	listed := map[state.Transition]bool{}
+	for _, tr := range state.ValidTransitions() {
+		listed[tr] = true
+	}
+	for _, tr := range sessionStateMachineEdges {
+		tr := tr
+		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
+			t.Parallel()
+			if !listed[tr] {
+				t.Errorf("ValidTransitions() omits the §7.2 edge %q → %q", tr.From, tr.To)
+			}
+			if err := state.IsValid(tr.From, tr.To); err != nil {
+				t.Errorf("IsValid(%q, %q) = %v, want nil for a §7.2 edge", tr.From, tr.To, err)
+			}
+		})
+	}
+}
+
+// TestValidTransitionsHasNoDuplicateEdge_spec_7_2 guards the table against
+// an edge listed twice, which would hide a later removal of one copy.
+//
+// spec: 7.2 (Interactive Session Model)
+func TestValidTransitionsHasNoDuplicateEdge_spec_7_2(t *testing.T) {
+	t.Parallel()
+
+	seen := map[state.Transition]bool{}
+	for _, tr := range state.ValidTransitions() {
+		if seen[tr] {
+			t.Errorf("ValidTransitions() lists %q → %q twice", tr.From, tr.To)
+		}
+		seen[tr] = true
+	}
+}

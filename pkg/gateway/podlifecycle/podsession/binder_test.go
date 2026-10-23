@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -354,6 +355,9 @@ type fakeAssigner struct {
 	minted []string
 	// released records each sessionID passed to ReleaseSession.
 	released []string
+	// through records each ReleaseThrough call, the generation-scoped pod
+	// release, apart from the session-wide walk in released.
+	through []throughCall
 	// leaseReleases records each lease identifier passed to Release, the
 	// attempt-scoped release. It is kept apart from released, which records
 	// the session-wide walk alone.
@@ -362,10 +366,18 @@ type fakeAssigner struct {
 
 type assignerCall struct {
 	pool, session, spiffe, tenant string
+	generation                    int64
 }
 
-func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapterv1.CredentialLease, error) {
-	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe, tenant: tenant})
+// throughCall is one ReleaseThrough call: the session and the generation
+// the pod release scoped the return to.
+type throughCall struct {
+	session    string
+	generation int64
+}
+
+func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string, generation int64) (*adapterv1.CredentialLease, error) {
+	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe, tenant: tenant, generation: generation})
 	if a.err != nil {
 		return nil, a.err
 	}
@@ -385,12 +397,19 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapt
 	}, nil
 }
 
-func (a *fakeAssigner) ReleaseSession(sessionID string) {
+func (a *fakeAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
-func (a *fakeAssigner) Release(leaseID string) {
+func (a *fakeAssigner) ReleaseThrough(sessionID string, generation int64) error {
+	a.through = append(a.through, throughCall{session: sessionID, generation: generation})
+	return nil
+}
+
+func (a *fakeAssigner) Release(leaseID string) error {
 	a.leaseReleases = append(a.leaseReleases, leaseID)
+	return nil
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
@@ -773,9 +792,14 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 }
 
 // TestReleaseReturnsCredentialLeasesToPool_spec_7_1 asserts the §7.1
-// step 23 teardown: Release returns the session's §4.9 credential leases
-// to the pool. Without this the credential's active-session counter
-// leaks on every completed session.
+// step 23 teardown: Release returns the binding's §4.9 credential leases to
+// the pool, scoped to the binding. It returns the leases the binding's attempt
+// minted by identifier and the session's leases through the binding's stamp
+// (ReleaseThrough), and makes no session-wide release, so a lease a later
+// restore of the session minted survives.
+//
+// spec: §7.1 (Normal Flow, step 23), §7.3 (Credential leases on the
+// replacement pod).
 func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -794,11 +818,21 @@ func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
+	if got := res.MintedLeaseIDs; len(got) != 1 || got[0] != "cl-claude-prod" {
+		t.Fatalf("BindResult.MintedLeaseIDs = %v, want [cl-claude-prod]", got)
+	}
+	res.CoordinationGeneration = 3
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	if len(assigner.released) != 1 || assigner.released[0] != "sess-rel" {
-		t.Errorf("ReleaseSession calls = %v, want [sess-rel]", assigner.released)
+	if len(assigner.released) != 0 {
+		t.Errorf("ReleaseSession calls = %v, want none (a pod release is generation-scoped)", assigner.released)
+	}
+	if want := []throughCall{{session: "sess-rel", generation: 3}}; !reflect.DeepEqual(assigner.through, want) {
+		t.Errorf("ReleaseThrough calls = %v, want %v", assigner.through, want)
+	}
+	if want := []string{"cl-claude-prod"}; !reflect.DeepEqual(assigner.leaseReleases, want) {
+		t.Errorf("Release by identifier = %v, want %v", assigner.leaseReleases, want)
 	}
 }
 
@@ -2813,7 +2847,7 @@ func TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
 				a.errs["AssignCredentials"] = tc.assignErr(t)
 			}
 			assigner := &fakeAssigner{numbered: true}
-			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme")
+			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme", 0)
 			assigner.calls, assigner.minted = nil, nil
 			assigner.failFrom = tc.failFrom
 			b := newBinder(c, stageAdapterDialer(t, a))
@@ -2859,9 +2893,10 @@ func resumeFailureBinder(t *testing.T, a *stageAdapter) (*podsession.Binder, cli
 // releases the resume slot with the reclaim's disposition, releases no
 // gateway-side credential lease, and returns a *SlotBindError at stage
 // "resume" whose Leaked is that disposition. An unclean reclaim keeps the
-// slot counted; on an exclusive pool the error carries no slot identifier.
+// slot counted; on an exclusive pool the error carries no slot identifier
+// and the release deletes the per-pod claim.
 //
-// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// spec: §7.1 (normal flow); §7.3 (Retry and Resume); §5.2 (pool configuration and execution modes);
 // §6.2 (pod state machine)
 func TestResumeFailureCompensatesWithItsOwnToken_spec_7_1(t *testing.T) {
 	cases := []struct {
@@ -2874,7 +2909,9 @@ func TestResumeFailureCompensatesWithItsOwnToken_spec_7_1(t *testing.T) {
 	}{
 		{"concurrent_clean", 4, false, false, false, "sess-1"},
 		{"concurrent_unclean", 4, true, true, true, "sess-1"},
-		{"exclusive", 1, false, false, true, ""},
+		// spec: 7.3 (Retry and Resume) — a failed exclusive resume deletes
+		// its claim rather than leaving it to the orphan-claim GC.
+		{"exclusive", 1, false, false, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

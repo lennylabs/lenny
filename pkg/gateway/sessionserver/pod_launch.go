@@ -51,8 +51,9 @@ type startContext struct {
 //   - An exclusive pool with no live create-time claim runs the whole
 //     Claim → Prepare → Launch sequence through podBinder.Bind. This is
 //     the §7.3 snapshotless resume-rebuild path (resumeOnPod invokes
-//     startOnPod on a recovery-state row that still carries the dead pod's
-//     stale PodAssignment).
+//     startOnPod on a recovery-state row, whose PodAssignment the failure
+//     funnel cleared or, after MarkBudgetUnrecoverable, may still name the
+//     earlier pod until releaseEarlierBinding clears it).
 //   - A concurrent-workspace pool (maxConcurrentSessions>1) whose row
 //     carries a live §4.6 binding reconnects to the slot reserved at
 //     create through podBinder.BindReservedSlot (§5.2), the slot analog of
@@ -95,9 +96,16 @@ type startContext struct {
 // remaining callers consume them: the combined create-and-start path runs
 // the prepare barrier (which assigns the lease), and the resume-rebuild path
 // runs the whole Claim → Prepare → Launch sequence.
+//
+// rb carries the resume driver's post-claim hook and entry generation,
+// threaded into both the exclusive bind request and the concurrent slot
+// request, so a snapshotless resume rebuild runs the hook after its claim on
+// either pool and records the generation on every lease it mints. It is the
+// zero value on the create and start paths. spec: §7.3 (Resume driver;
+// Credential leases on the replacement pod).
 // spec: §4.1, §4.4, §5 (proposal); §4.2 — "Pod-to-session binding";
 // §7.1 — atomic-creation rollback.
-func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
+func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext, rb resumeBind) (*podsession.BindResult, error) {
 	// spec: §4.9 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
@@ -143,9 +151,12 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// touching the claim or slot acquisition paths, so no Sandbox is
 	// claimed and no pod is bound to the session. The session row persists
 	// with execution_mode=service; message routing reads that mode and
-	// dispatches to the stateless data plane rather than a bound pod.
+	// dispatches to the stateless data plane rather than a bound pod. On the
+	// resume path the driver's post-claim hook still runs here, before the
+	// restore returns, so the resuming entry write precedes the commit
+	// (spec: §7.3, Resume driver).
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return nil, nil
+		return nil, runClaimlessEntry(ctx, rb)
 	}
 	// spec: §4.9 — the session-start credential-delivery gate. Evaluate each
 	// resolved CredentialPool's effective deliveryMode against the bound
@@ -166,9 +177,13 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// uses the session-claim path.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+		slotReq.OnClaimed = rb.onClaimed
+		slotReq.CoordinationGeneration = rb.generation
 		return s.bindConcurrentSlot(ctx, row, match, slotReq)
 	}
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
+	bindReq.OnClaimed = rb.onClaimed
+	bindReq.CoordinationGeneration = rb.generation
 	// spec: §4.7, §7.1 steps 4-13 (proposal) — the combined one-call
 	// `POST /v1/sessions/start` path (claimed is non-nil) claimed the pod in
 	// the same call but never went through /finalize, so it reconnects to the
@@ -181,10 +196,11 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	//
 	// The reconnect is gated on a live create-time claim, signalled by a
 	// non-empty PodAssignment on a non-recovery row, rather than by a non-empty
-	// PodAssignment alone. A session that lost its pod and entered a recovery
-	// state (resume_pending / resuming / awaiting_client_action) retains the
-	// dead pod's name in PodAssignment (failure.go), and no resume or
-	// tree-recovery path clears it. The §7.3 snapshotless resume-rebuild path
+	// PodAssignment alone. The failure funnel clears PodAssignment on its
+	// resume_pending and awaiting_client_action edges (failure.go), but a root
+	// that MarkBudgetUnrecoverable moved to awaiting_client_action still names
+	// the pod it held until releaseEarlierBinding clears it, so the state, not
+	// the column, decides. The §7.3 snapshotless resume-rebuild path
 	// (resumeOnPod → startOnPod with a recovery-state row) must claim a fresh
 	// pod through the whole Claim → Prepare → Launch sequence below rather than
 	// reconnect to the dead binding; reconnecting would fail Prepare against the

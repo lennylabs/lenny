@@ -66,10 +66,11 @@ func newDelegateCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabili
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:            store,
-		Executor:         executor.NewEchoExecutor(),
-		Runtimes:         runtimes,
-		CredAvailability: checker,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		CredAvailability:  checker,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -210,12 +211,13 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:            store,
-		Executor:         executor.NewEchoExecutor(),
-		Runtimes:         runtimes,
-		Environments:     envs,
-		Tenants:          tenants,
-		CredAvailability: checker,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Environments:      envs,
+		Tenants:           tenants,
+		CredAvailability:  checker,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -439,10 +441,11 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 	wrapped := getErrStore{Store: base, errID: "sess_parent", err: errors.New("store unavailable")}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:            wrapped,
-		Executor:         executor.NewEchoExecutor(),
-		Runtimes:         runtimes,
-		CredAvailability: checker,
+		DevTenantFallback: true,
+		Store:             wrapped,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		CredAvailability:  checker,
 		Delegation: delegation.NewService(wrapped, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -488,10 +491,11 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 	wrapped := getErrStore{Store: base, errID: "sess_parent", err: errors.New("store unavailable")}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:            wrapped,
-		Executor:         executor.NewEchoExecutor(),
-		Runtimes:         runtimes,
-		CredAvailability: checker,
+		DevTenantFallback: true,
+		Store:             wrapped,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		CredAvailability:  checker,
 		Delegation: delegation.NewService(wrapped, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -538,10 +542,11 @@ func TestDelegateTaskNilStoreStillRunsCheck_spec_8_3(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:            nil,
-		Executor:         executor.NewEchoExecutor(),
-		Runtimes:         runtimes,
-		CredAvailability: checker,
+		DevTenantFallback: true,
+		Store:             nil,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		CredAvailability:  checker,
 		Delegation: delegation.NewService(memstore.New(), delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

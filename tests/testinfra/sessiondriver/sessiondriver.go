@@ -112,6 +112,12 @@ type Session struct {
 	// this session to (the SandboxClaim/Sandbox name). Empty on a
 	// service-mode session, which is claimless (§5.2).
 	PodAssignment string `json:"podAssignment,omitempty"`
+
+	// RetryCount and RecoveryGeneration are the §4.2 retry counter and
+	// pod-recovery counter, so a test observes a failure edge that spent a
+	// retry and a restore that committed after the row left the edge.
+	RetryCount         int64 `json:"retryCount"`
+	RecoveryGeneration int64 `json:"recoveryGeneration"`
 }
 
 // MessageResponse is the parsed §15.1 POST /v1/sessions/{id}/messages
@@ -358,6 +364,66 @@ func (d *Driver) AllowSessionsWithNoEnvironment(ctx context.Context, tenantID st
 	return nil
 }
 
+// SetPoolSessionPolicy sets one key of a pool's sessionPolicy through the
+// admin pools surface, preserving every other field, and returns the value
+// the key held before (nil when absent) so the caller can restore it. A nil
+// value removes the key. The pool's idle bound and other gateway-enforced
+// policy fields are read from the pool row on each use, so the change takes
+// effect without a pod restart.
+//
+// spec: §5.2 (Pool Configuration and Execution Modes), §15.1 (REST API)
+func (d *Driver) SetPoolSessionPolicy(ctx context.Context, pool, key string, value any) (any, error) {
+	path := "/v1/admin/pools/" + pool
+	getRes, err := d.doRequest(ctx, http.MethodGet, path, platformAdmin(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get pool %q: %w", pool, err)
+	}
+	defer getRes.Body.Close()
+	raw, _ := io.ReadAll(getRes.Body)
+	if getRes.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pool %q: status %d, body %s", pool, getRes.StatusCode, string(raw))
+	}
+	etag := getRes.Header.Get("ETag")
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("decode pool %q: %w; body %s", pool, err, string(raw))
+	}
+	policy, _ := payload["sessionPolicy"].(map[string]any)
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	prev := policy[key]
+	if value == nil {
+		delete(policy, key)
+	} else {
+		policy[key] = value
+	}
+	payload["sessionPolicy"] = policy
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode pool %q: %w", pool, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build pool put for %q: %w", pool, err)
+	}
+	addDevHeaders(req, platformAdmin())
+	req.Header.Set("Content-Type", "application/json")
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+	putRes, err := d.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("put pool %q: %w", pool, err)
+	}
+	defer putRes.Body.Close()
+	putRaw, _ := io.ReadAll(putRes.Body)
+	if putRes.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("put pool %q: status %d, body %s", pool, putRes.StatusCode, string(putRaw))
+	}
+	return prev, nil
+}
+
 // CreateSession issues POST /v1/sessions for the tenant with the
 // runtimeRef, returning the §15.1 session row. The session lands in
 // state running (the minimal gateway skips the ready intermediate).
@@ -445,6 +511,10 @@ type StartOptions struct {
 	// RetryPolicy is the §7.3 per-session retryPolicy, as raw JSON, for
 	// example `{"maxResumeWindowSeconds":5}`.
 	RetryPolicy json.RawMessage
+	// UserID is the body's userId, the user who owns the new session row.
+	// The §12.8 creation fence and a user erasure act on this owner, so a
+	// test that erases a user starts the user's session with it set.
+	UserID string
 }
 
 // sessionBody is the session-creation body the driver sends.
@@ -453,6 +523,7 @@ type sessionBody struct {
 	IsolationProfile string          `json:"isolationProfile"`
 	WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
 	RetryPolicy      json.RawMessage `json:"retryPolicy,omitempty"`
+	UserID           string          `json:"userId,omitempty"`
 }
 
 // startBody builds the creation body for runtimeRef under the standard
@@ -461,6 +532,7 @@ func startBody(runtimeRef string, opts StartOptions) sessionBody {
 	return sessionBody{
 		RuntimeRef: runtimeRef, IsolationProfile: "standard",
 		WorkspacePlan: opts.WorkspacePlan, RetryPolicy: opts.RetryPolicy,
+		UserID: opts.UserID,
 	}
 }
 
@@ -592,6 +664,12 @@ func retryAfterBackoff(header string) time.Duration {
 // start sequence, for example).
 func (d *Driver) Start(ctx context.Context, tenantID, sessionID string) (*Session, error) {
 	return d.sessionStep(ctx, tenantID, sessionID, "start")
+}
+
+// Interrupt issues POST /v1/sessions/{id}/interrupt, which suspends a
+// running session on its pod.
+func (d *Driver) Interrupt(ctx context.Context, tenantID, sessionID string) (*Session, error) {
+	return d.sessionStep(ctx, tenantID, sessionID, "interrupt")
 }
 
 // Finalize issues POST /v1/sessions/{id}/finalize, the §15.1 preparation

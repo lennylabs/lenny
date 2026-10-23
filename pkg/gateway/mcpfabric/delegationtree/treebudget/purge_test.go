@@ -14,11 +14,13 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func TestPurgeRoot_DeletesWholeTreeKeysOnly_spec_12_8_831(t *testing.T) {
 	r, mr := newReserver(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	ctx := context.Background()
 

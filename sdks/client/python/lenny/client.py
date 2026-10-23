@@ -307,7 +307,10 @@ class Client:
     ) -> Session:
         """Call ``POST /v1/sessions/{id}/resume``.
 
-        It transitions a session awaiting client action back to running.
+        It resumes a session in ``awaiting_client_action`` or ``suspended``.
+        A session awaiting client action, or a suspended session whose pod
+        was released, is returned in ``resume_pending``. A suspended session
+        whose pod is still held is returned in ``running``.
         """
         return self._transition("POST", session_id, "resume", options)
 

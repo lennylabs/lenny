@@ -84,6 +84,8 @@ func (e *funnelEvents) count(prefix string) int {
 // unbindExecutor unbinds the session from the registry on Release, as
 // PodExecutor.Release does, and records a "release:<session>" event only for
 // a binding it removed: that is the ReleaseSlot the pod executor would issue.
+// The disposition of that release follows as a "disposition:<session>:<d>"
+// event.
 type unbindExecutor struct {
 	registry *podsession.Registry
 	events   *funnelEvents
@@ -97,9 +99,10 @@ func (u *unbindExecutor) Close(ctx context.Context, sessionID string) error {
 	return u.Release(ctx, sessionID, "")
 }
 
-func (u *unbindExecutor) Release(_ context.Context, sessionID string, _ executor.Disposition) error {
+func (u *unbindExecutor) Release(_ context.Context, sessionID string, d executor.Disposition) error {
 	if _, ok := u.registry.Remove(sessionID); ok {
 		u.events.add("release:" + sessionID)
+		u.events.add("disposition:" + sessionID + ":" + string(d))
 	}
 	return nil
 }
@@ -156,6 +159,7 @@ func newFunnelRaceFixture(t *testing.T, n int) *funnelRaceFixture {
 		t.Fatalf("create pool: %v", err)
 	}
 	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader: true,
 		Executor:        &unbindExecutor{registry: f.registry, events: f.events},
 		PodRegistry:     f.registry,
 		PodBinder:       &podsession.Binder{Client: cl, Namespace: funnelRaceNS},

@@ -84,7 +84,10 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 	}
 	out := make(map[string]*tokensv1.CredentialLease, len(req.PoolIds))
 	for _, poolID := range req.PoolIds {
-		lease, lerr := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri, req.TenantId)
+		// spec: §7.3 (Credential leases on the replacement pod) — the Token
+		// Service mints at generation 0; the gateway client records the
+		// minting attempt's generation on its own copy.
+		lease, lerr := s.assign.Assign(poolID, req.SessionId, req.PodSpiffeUri, req.TenantId, 0)
 		if lerr != nil {
 			if errors.Is(lerr, credassign.ErrPoolNotFound) {
 				return nil, status.Errorf(codes.NotFound,
@@ -154,14 +157,18 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		return nil, status.Errorf(codes.InvalidArgument,
 			"user-backed lease rotation is gateway-local, not a Token Service path (lease source: %q)", old.Source)
 	}
-	s.assign.Release(req.LeaseId)
+	if err := s.assign.Release(req.LeaseId); err != nil {
+		return nil, status.Errorf(codes.Internal, "release lease %q before rotation: %v", req.LeaseId, err)
+	}
 	// §13.3: rotation revokes the previous lease's lease
 	// token. Emit token.revoked so SIEM has a revocation receipt; the
 	// §4.9 rotationTrigger is recorded as the revocation reason so the
 	// audit trail distinguishes a proactive renewal from a fault- or
 	// operator-driven rotation. F-13.3.10.
 	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, "rotation:"+string(trigger))
-	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI, old.TenantID)
+	// spec: §7.3 (Credential leases on the replacement pod) — the rotated
+	// lease keeps the replaced lease's coordination generation.
+	fresh, rerr := s.assign.Assign(old.PoolID, old.SessionID, old.SpiffeURI, old.TenantID, old.CoordinationGeneration)
 	if rerr != nil {
 		if errors.Is(rerr, credassign.ErrPoolNotFound) {
 			return nil, status.Errorf(codes.NotFound,
@@ -200,7 +207,9 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 	if _, ok := s.leases.GetByID(req.LeaseId); !ok {
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
 	}
-	s.assign.Release(req.LeaseId)
+	if err := s.assign.Release(req.LeaseId); err != nil {
+		return nil, status.Errorf(codes.Internal, "release lease %q: %v", req.LeaseId, err)
+	}
 	// §13.3: emit `token.revoked` for every successful
 	// revocation so SIEM has a revocation receipt and operators can
 	// reconstruct when a lease token was deactivated.

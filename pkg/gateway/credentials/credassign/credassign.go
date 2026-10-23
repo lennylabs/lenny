@@ -39,22 +39,38 @@ type Assigner interface {
 	// proxy-mode SPIFFE-binding; an empty value disables binding.
 	// tenantID is recorded on the lease so downstream code paths
 	// (proxy-mode usage accounting, audit) can attribute the lease to
-	// its owning tenant regardless of the lease source. spec: §4.9.
-	Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error)
+	// its owning tenant regardless of the lease source. generation is
+	// the session's coordination_generation the minting attempt holds;
+	// it is recorded on the lease so a pod release returns only the
+	// leases at or below its binding's stamp. spec: §4.9; §7.3
+	// (Credential leases on the replacement pod).
+	Assign(poolName, sessionID, spiffeURI, tenantID string, generation int64) (credential.Lease, error)
 	// AssignProto mints a lease and returns its adapter wire form for
-	// the §4.7 binder to push to a pod via AssignCredentials.
-	AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error)
+	// the §4.7 binder to push to a pod via AssignCredentials. A lease
+	// whose wire conversion fails is released before the error returns.
+	AssignProto(poolName, sessionID, spiffeURI, tenantID string, generation int64) (*adapterv1.CredentialLease, error)
 	// ProtoLeaseByID returns the adapter wire form of a recorded lease.
 	// The §4.9 renewal worker uses it to push a rotated lease to a pod
 	// without re-deriving the wire form from raw fields.
 	ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, error)
 	// Release frees the credential session slot a lease held and removes
-	// the lease record. It is a no-op for an unknown lease id.
-	Release(leaseID string)
+	// the lease record. It is a no-op for an unknown lease id. A non-nil
+	// error reports that the slot may still be held by the authoritative
+	// store; the local lease record is removed either way.
+	Release(leaseID string) error
 	// ReleaseSession releases every lease the session holds back to its
-	// pool. It is the §7.1 step 23 session-teardown release. A session
-	// with no leases is a no-op.
-	ReleaseSession(sessionID string)
+	// pool. Its callers release a pre-running claim binding (§7.1 step
+	// 23). A session with no leases is a no-op. Every lease is
+	// attempted, and the returned error joins each failed release. The
+	// session's leases are listed twice, so a lease recorded during the
+	// first release is released too.
+	ReleaseSession(sessionID string) error
+	// ReleaseThrough releases each of the session's leases whose
+	// recorded coordination generation is at or below generation, and
+	// keeps every later one. A pod release calls it with its binding's
+	// stamp. The leases are listed twice, as ReleaseSession lists them.
+	// spec: §7.3 (Credential leases on the replacement pod).
+	ReleaseThrough(sessionID string, generation int64) error
 	// OnAssigned registers an observer the assigner invokes after every
 	// successful Assign. The §4.9 Proactive Lease Renewal worker
 	// registers here so each minted lease is tracked for renewal.
@@ -251,7 +267,7 @@ func (s *Service) RevokeCredential(poolName, credentialID string) {
 // Assign returns ErrPoolNotFound for an unknown pool and
 // credential.ErrPoolExhausted when the pool has no assignable
 // credential.
-func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
+func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string, generation int64) (credential.Lease, error) {
 	// spec: §16.3 — the credential.assign span (Gateway credential
 	// service). The §4.9 assign surface carries no request context today, so
 	// the span roots at Background and projects tenant/session/pool from the
@@ -265,7 +281,7 @@ func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (crede
 	)
 	defer span.End()
 
-	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI, tenantID)
+	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI, tenantID, generation)
 	if err != nil {
 		tracing.RecordError(span, err)
 		return credential.Lease{}, err
@@ -282,7 +298,7 @@ func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (crede
 // assignLocked performs the §4.9 credential selection and lease mint
 // under s.mu and returns the minted lease together with the registered
 // renewal observer, which the caller invokes after releasing the lock.
-func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, func(LeaseAssignment), error) {
+func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string, generation int64) (credential.Lease, func(LeaseAssignment), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -333,6 +349,9 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 	if err != nil {
 		return credential.Lease{}, nil, err
 	}
+	// spec: §7.3 (Credential leases on the replacement pod) — record the
+	// minting attempt's generation before the lease is stored.
+	lease.CoordinationGeneration = generation
 
 	if err := s.leases.Put(lease); err != nil {
 		return credential.Lease{}, nil, err
@@ -376,36 +395,62 @@ func poolUtilizationLocked(ps *poolState) float64 {
 // the lease from the credential-lease store. The cached upstream
 // credential is left in place because other leases on the same pool
 // credential continue to need it. Release is a no-op for an unknown
-// lease ID.
-func (s *Service) Release(leaseID string) {
+// lease ID. The in-process store cannot fail, so the error is always
+// nil; it exists to satisfy Assigner.
+func (s *Service) Release(leaseID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.releaseLocked(leaseID)
+	return nil
 }
 
 // ReleaseSession releases every §4.9 credential lease the service holds
-// for the session back to its pool. It is the §7.1 step 23
-// "Release credential lease back to pool" teardown the gateway runs when
-// a session reaches a terminal state: each of the session's leases is
-// removed from the lease store and the backing credential's active-
-// session counter decremented, so a completed session's pool slots are
-// returned rather than leaking. Releasing a session with no leases (an
-// unknown session, or one that needed no upstream credentials) is a
-// no-op.
+// for the session back to its pool: each lease is removed from the lease
+// store and the backing credential's active-session counter decremented.
+// Its callers are the releasers of a pre-running claim binding
+// (Binder.ReclaimClaimed and the failed-phase reclaim) and the
+// finalize-lease revocation; a pod release calls ReleaseThrough instead.
+// Releasing a session with no leases is a no-op.
 //
-// spec: §7.1. Without this the credential's `active`
-// counter stays incremented after every session ends, so under sustained
-// load `select.go` eventually reports `ErrPoolExhausted` for credentials
-// that are in fact idle.
-func (s *Service) ReleaseSession(sessionID string) {
+// The leases are listed again after the first list is released, and
+// what the second list returns is released too, so a lease a concurrent
+// mint recorded during the release is not left behind.
+//
+// spec: §7.1 (Normal Flow, step 23); §4.9 (Proactive Lease Renewal).
+func (s *Service) ReleaseSession(sessionID string) error {
+	return s.releaseMatching(sessionID, func(credential.Lease) bool { return true })
+}
+
+// ReleaseThrough releases each of the session's leases whose recorded
+// coordination generation is at or below generation and keeps every
+// later one, listing the session's leases twice as ReleaseSession does.
+// A pod release calls it with its binding's stamp, so a lease a later
+// restore minted survives a stale replica's release.
+//
+// spec: §7.3 (Credential leases on the replacement pod), §10.1.5 (Stale
+// Replica Behavior).
+func (s *Service) ReleaseThrough(sessionID string, generation int64) error {
+	return s.releaseMatching(sessionID, func(l credential.Lease) bool {
+		return l.CoordinationGeneration <= generation
+	})
+}
+
+// releaseMatching releases the session's leases for which match reports true,
+// in two listings.
+func (s *Service) releaseMatching(sessionID string, match func(credential.Lease) bool) error {
 	if sessionID == "" {
-		return
+		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, lease := range s.leases.LeasesBySession([]string{sessionID}) {
-		s.releaseLocked(lease.LeaseID)
+	for pass := 0; pass < 2; pass++ {
+		s.mu.Lock()
+		for _, lease := range s.leases.LeasesBySession([]string{sessionID}) {
+			if match(lease) {
+				s.releaseLocked(lease.LeaseID)
+			}
+		}
+		s.mu.Unlock()
 	}
+	return nil
 }
 
 // releaseLocked frees the credential session slot a single lease held and

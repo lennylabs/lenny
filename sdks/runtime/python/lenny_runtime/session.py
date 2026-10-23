@@ -106,6 +106,44 @@ class SessionRecord:
         self.pending_acks: list[str] = []
         # ended is the stdout drop mark (see FrameWriter.write_for).
         self.ended = False
+        # _busy_lock guards the busy accounting a heartbeat_ack naming the
+        # session reports: the messages routed and not finished, the
+        # unreleased busy holds, and whether session_end zeroed them for
+        # good. spec: §28.5.3 (CH-MSGSOCK), §15.7 (Runtime Author SDKs).
+        self._busy_lock = threading.Lock()
+        self._pending = 0
+        self._holds = 0
+        self._busy_ended = False
+
+    def add_pending(self, delta: int) -> None:
+        """Change the count of messages routed and not finished."""
+        with self._busy_lock:
+            if not self._busy_ended:
+                self._pending = max(0, self._pending + delta)
+
+    def _add_hold(self, delta: int) -> None:
+        with self._busy_lock:
+            if not self._busy_ended:
+                self._holds = max(0, self._holds + delta)
+
+    def busy(self) -> bool:
+        """Report whether a routed message or a busy hold is
+        outstanding."""
+        with self._busy_lock:
+            return self._pending > 0 or self._holds > 0
+
+    def zero_busy(self) -> None:
+        """Clear both counts for good, at the session's ``session_end``."""
+        with self._busy_lock:
+            self._pending = 0
+            self._holds = 0
+            self._busy_ended = True
+
+    def hold_busy(self) -> "BusyHold":
+        """Take one busy hold on the session and return it."""
+        self._add_hold(1)
+        return BusyHold(lambda: self._add_hold(-1))
+
 
     def failed(self) -> bool:
         """Report whether the record's context creation failed."""
@@ -136,6 +174,45 @@ class SessionRecord:
             if self.close_reason is not None:
                 return self.close_reason
             return TerminationReason(reason="stdin_closed")
+
+
+class BusyHold:
+    """One busy hold on a session, taken when it is created.
+
+    It is a context manager whose exit releases the hold, and
+    :meth:`release` releases it explicitly; the second release does
+    nothing. While a hold is unreleased, the SDK answers each heartbeat
+    naming the session with ``busy: true``.
+
+    spec: §15.7 (Runtime Author SDKs, Busy reporting), §28.5.3
+    (CH-MSGSOCK).
+    """
+
+    def __init__(self, drop: Any) -> None:
+        self._drop = drop
+        self._lock = threading.Lock()
+        self._released = False
+
+    def release(self) -> None:
+        """Release the hold once."""
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+        if self._drop is not None:
+            self._drop()
+
+    def __enter__(self) -> "BusyHold":
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.release()
+
+
+def no_hold() -> BusyHold:
+    """Return a hold that tracks nothing, for a value naming no live
+    session."""
+    return BusyHold(None)
 
 
 class SessionTable:

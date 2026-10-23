@@ -51,15 +51,15 @@ type Binder struct {
 	VCSCreds vcscred.Resolver
 	// Fallback is the §4.6.1 Postgres-backed agent_pod_state mirror. When
 	// the Kubernetes-API claim returns podclaim.ErrNoIdlePod and Fallback
-	// is non-nil, connect attempts a fallback claim against the mirror
+	// is non-nil, claimPod attempts a fallback claim against the mirror
 	// before surfacing the no-idle-pod error. Nil when the deployment has
-	// no Postgres configured; connect then returns ErrNoIdlePod directly.
+	// no Postgres configured; claimPod then returns ErrNoIdlePod directly.
 	Fallback agentpodstate.Store
 	// FallbackMaxMirrorLagSeconds is the §4.6.1
 	// podClaimFallbackMaxMirrorLagSeconds freshness precondition: the
 	// fallback runs only when the target pool's mirror lag is at or below
 	// this many seconds. Above it the mirror may still show pods already
-	// claimed in etcd but not yet mirrored, so connect skips the fallback
+	// claimed in etcd but not yet mirrored, so claimPod skips the fallback
 	// and returns ErrNoIdlePod. A zero value selects the default of
 	// DefaultFallbackMaxMirrorLagSeconds.
 	FallbackMaxMirrorLagSeconds float64
@@ -82,8 +82,8 @@ type Binder struct {
 	// capacity gate for the maxConcurrentSessions > 1 slot path. Wired in
 	// production installs that expose --redis-url; the SlotClaimer
 	// constructed per BindSlot call carries it through so the Redis Lua
-	// GET-compare-INCR sequence enforces maxConcurrentSessions atomically
-	// across gateway replicas. It is required: a nil counter makes both
+	// slot-set scripts enforce maxConcurrentSessions atomically across
+	// gateway replicas. It is required: a nil counter makes both
 	// ClaimSlot and ReleaseSlot fail closed (each returns a configuration
 	// error rather than degrading to an SSA-only path, which no longer
 	// exists), so slot release cannot over-release a pod that still hosts
@@ -131,10 +131,13 @@ type Binder struct {
 	// (labeled by pod and pool). It is threaded into the per-BindSlot
 	// SlotClaimer. Nil is a no-op.
 	Rehydration func(podID, pool string)
+	// slotReleasePause waits between releaseSlotRetrying attempts. Nil
+	// sleeps on the wall clock; a tier-1 test injects a pause that does not.
+	slotReleasePause func(ctx context.Context, d time.Duration) error
 	// ClaimAccepted records the §6.3 / §16.1
 	// `lenny_warmpool_claims_total{pool,runtime_class}` counter
 	// increment on each idle→claimed transition the §6.1 warm pool
-	// observes. Bind and Resume both go through `connect()`, so the
+	// observes. Bind and Resume both go through `handshake`, so the
 	// counter rolls up session-mode + resume claims. Slot claims
 	// (BindSlot / concurrent mode) are accounted separately under
 	// §5.2; the deployer-facing demotion-rate ratio (§6.3)
@@ -219,7 +222,14 @@ type Binder struct {
 // Claim, Prepare, and Launch independently across /create, /finalize, and
 // /start; each reconnects to the claimed pod from the persisted binding
 // (§4.6) rather than holding one connection across the whole window.
+//
+// Bind runs one bind attempt, so its Prepare and Launch release on failure
+// only the §4.9 leases this attempt minted, never every lease the session
+// holds: a resume rebuild's session can hold a lease another attempt minted.
+// The request's post-claim hook runs once, inside Claim. spec: §7.3 (Retry
+// and Resume), §4.9 (Credential Leasing Service).
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
+	req.attemptScoped = true
 	claim, err := b.Claim(ctx, req)
 	if err != nil {
 		return nil, err
@@ -233,11 +243,13 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		return nil, err
 	}
 	req.Demoted = prep.Demoted
+	req.mintedLeaseIDs = prep.MintedLeaseIDs
 	res, err := b.Launch(ctx, req)
 	if err != nil {
-		// Launch already reclaimed the pod and any assigned lease on every
-		// failure path: a launch-step failure via its failPhase reclaim, and a
-		// reconnect failure before the first launch step via ReclaimClaimed.
+		// Launch already reclaimed the pod and this attempt's leases on every
+		// failure path: a launch-step failure through its reclaim closure, and
+		// a reconnect failure before the first launch step by deleting the
+		// claim.
 		// Surface the error so the caller retries on a fresh pod.
 		return nil, err
 	}
@@ -251,5 +263,12 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	res.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
 	res.SetupOutputs = prep.SetupOutputs
 	res.WorkspaceBase = prep.WorkspaceBase
+	// spec: §7.3 (Resume driver) — the token Prepare minted created the
+	// adapter's entry, so an uncommitted restore reclaims under it and
+	// returns exactly the leases this attempt minted.
+	res.BindAttempt = prep.BindAttempt
+	res.Pool = req.Pool
+	res.MaxConcurrentSessions = 1
+	res.MintedLeaseIDs = prep.MintedLeaseIDs
 	return res, nil
 }

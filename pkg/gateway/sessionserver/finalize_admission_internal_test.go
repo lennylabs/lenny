@@ -20,7 +20,7 @@ import (
 // pod binder) over a wrapped store.
 func finalizeTestServerWithStore(store sessionstore.Store) *Server {
 	clock := func() time.Time { return time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC) }
-	return New(store, Options{Clock: clock})
+	return New(store, Options{DevTenantHeader: true, Clock: clock})
 }
 
 // barrierGetStore holds every Get for one session id until `parties` Gets

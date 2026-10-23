@@ -6,8 +6,12 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
@@ -583,13 +587,46 @@ var prodMigrationSchema = []struct {
 	{migration: "0180", table: "checkpoint_manifest"},
 	// 0181 baselines the §4.2 coordination generation: it moves
 	// sessions.coordination_generation and its coordination_lease mirror onto
-	// DEFAULT 1 and backfills the rows still carrying 0, so the first
-	// coordinator handoff mints 2 strictly above the value a replica already
-	// holds for the session. It adds no column, so the entry names none; it is
+	// DEFAULT 1 and backfills the rows still carrying 0, so each
+	// coordinator handoff mints a value strictly above the one a replica
+	// already holds for the session. It adds no column, so the entry names none; it is
 	// here so TestProdMigrationsRollBackPerStep steps through its .down.sql,
 	// and the SQL surface is asserted directly in
 	// TestCoordinationGenerationBaselineMigration_spec_4_2. spec: §4.2, §10.1.
 	{migration: "0181", table: "sessions"},
+	// 0182 adds sessions.accumulated_session_age_seconds, the §6.2 active
+	// session age the session store accrues on every row write. Its CHECK
+	// and default are asserted directly in
+	// TestAccumulatedSessionAgeMigration_spec_6_2. spec: §6.2.
+	{migration: "0182", table: "sessions", columns: []string{"accumulated_session_age_seconds"}},
+	// 0183 adds the idx_sessions_podless_suspended partial index the
+	// gateway leader's §7.2 backlog re-check pages through. It adds no
+	// column; the index and its drop are asserted directly in
+	// TestPodlessSuspendedIndexMigration_spec_7_2. spec: §7.2.
+	{migration: "0183", table: "sessions"},
+	// 0184 adds the idx_interactions_pending_elicitation_origin partial index
+	// the §9.2 elicitation expiry deletes through. It adds no column; the
+	// index and its drop are asserted directly in
+	// TestPendingElicitationOriginIndexMigration_spec_9_2. spec: §9.2.
+	{migration: "0184", table: "interactions"},
+	// 0185 replaces idx_sessions_active_by_tenant with the
+	// idx_sessions_counted_by_tenant partial index whose predicate is the
+	// §11.1 concurrent-session count predicate. It adds no column; the
+	// index swap, its reversal, and the count plans are asserted directly
+	// in TestCountedSessionIndexMigration_spec_11_1. spec: §11.1.
+	{migration: "0185", table: "sessions"},
+	// 0186 adds erasure_jobs.detail, the §12.8 erasure-job fields no query
+	// filters on, and the idx_erasure_jobs_in_progress_per_user partial
+	// unique index that holds one in-progress erasure job per user. The
+	// index predicate, its uniqueness, and its drop are asserted directly
+	// in TestErasureJobInProgressIndexMigration_spec_12_8. spec: §12.8.
+	{migration: "0186", table: "erasure_jobs", columns: []string{"detail"}},
+	// 0187 creates the §12.8 session_reservations table, which records a
+	// session ID reserved for its owner before a creation path writes data
+	// keyed to it. Its isolation policy, tenant guard, primary key, owner
+	// index, and grant are asserted directly in
+	// TestSessionReservationsMigration_spec_12_8. spec: §12.8.
+	{migration: "0187", table: "session_reservations", create: true},
 }
 
 // spec: 12.2, 18.5
@@ -662,6 +699,389 @@ func TestCredentialSecretEnvelopeColumn(t *testing.T) {
 	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "text" {
 		t.Errorf("credentials.secret type after 0039 rollback: got %q, want text", got)
 	}
+}
+
+// accumulatedAgePriorVersion is the schema version immediately below the
+// accumulated active-age migration.
+const accumulatedAgePriorVersion = 181
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: migration 0182 did not add sessions.accumulated_session_age_seconds
+//
+//	as a double precision NOT NULL column defaulting to 0 with a CHECK that
+//	rejects a negative value, or its .down.sql did not drop it. Without the
+//	column the session store cannot persist the active age the maxSessionAge
+//	timer evaluates, so the watchdog has no active-time value to compare with
+//	the cap. Without the CHECK a corrupt write could carry a negative age and
+//	extend a session past its cap.
+func TestAccumulatedSessionAgeMigration_spec_6_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "double precision" {
+		t.Errorf("accumulated_session_age_seconds type = %q, want double precision", got)
+	}
+	if got := columnDefault(t, ctx, pg, "sessions", "accumulated_session_age_seconds"); got != "0" {
+		t.Errorf("accumulated_session_age_seconds default = %q, want \"0\"", got)
+	}
+
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const (
+		defaulted = "11111111-1111-4111-8111-111111111111"
+		negative  = "22222222-2222-4222-8222-222222222222"
+		positive  = "33333333-3333-4333-8333-333333333333"
+	)
+	// A row that does not name the column, as an older binary's insert does
+	// not, reads back at the 0 default.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
+			VALUES ($1, 'acme', 'running', 'echo', $1)`, defaulted); err != nil {
+		t.Fatalf("insert without the column: %v", err)
+	}
+	var age float64
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT accumulated_session_age_seconds FROM sessions WHERE id = $1::uuid`, defaulted).Scan(&age); err != nil {
+		t.Fatalf("read defaulted age: %v", err)
+	}
+	if age != 0 {
+		t.Errorf("defaulted accumulated_session_age_seconds = %v, want 0", age)
+	}
+
+	const insertAged = `INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id, accumulated_session_age_seconds)
+		VALUES ($1, 'acme', 'running', 'echo', $1, $2)`
+	err := execTenant(ctx, pg, "acme", insertAged, negative, -0.5)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("insert of a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+	if err := execTenant(ctx, pg, "acme", insertAged, positive, 12.25); err != nil {
+		t.Fatalf("insert of a positive fractional age: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE sessions SET accumulated_session_age_seconds = -1 WHERE id = $1::uuid`, positive); !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("update to a negative accumulated age: err = %v, want a check_violation (23514)", err)
+	}
+
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion)
+	mustNotHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+	pg.MigrateTo(t, dir, accumulatedAgePriorVersion+1)
+	mustHaveColumn(t, ctx, pg, "sessions", "accumulated_session_age_seconds")
+}
+
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
+// diagnosis: migration 0183 did not create idx_sessions_podless_suspended as
+//
+//	a (tenant_id, id) index restricted to podless suspended rows, or its
+//	.down.sql did not drop it. Without it the gateway leader's backlog
+//	re-check reads every session row of every tenant on each pass.
+func TestPodlessSuspendedIndexMigration_spec_7_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_sessions_podless_suspended")
+	for _, want := range []string{"(tenant_id, id)", "state = 'suspended'", "pod_assignment = ''"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_podless_suspended = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 182)
+	if got := indexDef(t, ctx, pg, "idx_sessions_podless_suspended"); got != "" {
+		t.Errorf("after rolling 0183 back the index still exists: %q", got)
+	}
+}
+
+// spec: 9.2 (Elicitation Chain)
+// diagnosis: migration 0184 did not create
+//
+//	idx_interactions_pending_elicitation_origin as a (tenant_id,
+//	detail->>'originPod') index restricted to pending elicitations, or its
+//	.down.sql did not drop it. Without it the elicitation expiry at a pod
+//	release scans every interaction the tenant keeps.
+func TestPendingElicitationOriginIndexMigration_spec_9_2(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+	def := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin")
+	for _, want := range []string{"tenant_id", "originPod", "kind = 'elicitation'", "phase = 'pending'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_interactions_pending_elicitation_origin = %q, want it to contain %q", def, want)
+		}
+	}
+	pg.MigrateTo(t, dir, 183)
+	if got := indexDef(t, ctx, pg, "idx_interactions_pending_elicitation_origin"); got != "" {
+		t.Errorf("after rolling 0184 back the index still exists: %q", got)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: migration 0185 did not replace idx_sessions_active_by_tenant
+//
+//	with idx_sessions_counted_by_tenant, a (tenant_id, user_id) index whose
+//	predicate excludes the terminal states and suspended, or its .down.sql
+//	did not restore the 0102 index, or the planner no longer reads the new
+//	index for the tenant and per-user counts. Without it every admission
+//	count reads a heap tuple for each suspended row of the tenant.
+func TestCountedSessionIndexMigration_spec_11_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	def := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant")
+	for _, want := range []string{"(tenant_id, user_id)", "'suspended'", "'completed'", "'failed'", "'cancelled'", "'expired'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_counted_by_tenant = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant"); got != "" {
+		t.Errorf("idx_sessions_active_by_tenant still exists after 0185: %q", got)
+	}
+
+	seedCountedSessionPopulation(t, ctx, pg)
+	for name, query := range map[string]string{
+		"tenant": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+		"user": `SELECT count(*) FROM sessions WHERE tenant_id = 'acme' AND user_id = 'alice'
+			AND state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`,
+	} {
+		if plan := explainPlan(t, ctx, pg, query); !strings.Contains(plan, "idx_sessions_counted_by_tenant") {
+			t.Errorf("%s count plan does not read idx_sessions_counted_by_tenant:\n%s", name, plan)
+		}
+	}
+
+	pg.MigrateTo(t, dir, 184)
+	if got := indexDef(t, ctx, pg, "idx_sessions_counted_by_tenant"); got != "" {
+		t.Errorf("after rolling 0185 back the index still exists: %q", got)
+	}
+	restored := indexDef(t, ctx, pg, "idx_sessions_active_by_tenant")
+	if !strings.Contains(restored, "(tenant_id)") || strings.Contains(restored, "'suspended'") {
+		t.Errorf("after rolling 0185 back idx_sessions_active_by_tenant = %q, want the 0102 definition", restored)
+	}
+}
+
+// erasureDetailPriorVersion is the schema version immediately below the
+// erasure-job detail and in-progress index migration.
+const erasureDetailPriorVersion = 185
+
+// spec: 12.8 (Compliance Interfaces)
+// diagnosis: migration 0186 did not add erasure_jobs.detail as a jsonb
+//
+//	NOT NULL column defaulting to an empty object, or did not create
+//	idx_erasure_jobs_in_progress_per_user as a unique (tenant_id, user_id)
+//	index over exactly the in-progress phases, or its .down.sql did not
+//	drop both. Without the index two replicas can each start an erasure
+//	job for the same user, and the erasure-job store's ON CONFLICT start
+//	has no arbiter. A predicate that covers a terminal phase blocks a
+//	retry or a new job beside a completed or failed one.
+func TestErasureJobInProgressIndexMigration_spec_12_8(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "erasure_jobs", "detail"); got != "jsonb" {
+		t.Errorf("erasure_jobs.detail type = %q, want jsonb", got)
+	}
+	def := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user")
+	for _, want := range []string{"UNIQUE", "(tenant_id, user_id)", "'initiated'", "'store_deleting'", "'pseudonymizing'", "'verifying'"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, want it to contain %q", def, want)
+		}
+	}
+	for _, terminal := range []string{"'completed'", "'failed'"} {
+		if strings.Contains(def, terminal) {
+			t.Errorf("idx_erasure_jobs_in_progress_per_user = %q, covers terminal phase %s", def, terminal)
+		}
+	}
+
+	seedErasureTenants(t, ctx, pg)
+	assertErasureDetailDefault(t, ctx, pg)
+	assertOneInProgressErasureJob(t, ctx, pg)
+
+	pg.MigrateTo(t, dir, erasureDetailPriorVersion)
+	if got := indexDef(t, ctx, pg, "idx_erasure_jobs_in_progress_per_user"); got != "" {
+		t.Errorf("after rolling 0186 back the index still exists: %q", got)
+	}
+	mustNotHaveColumn(t, ctx, pg, "erasure_jobs", "detail")
+	// With the index gone the schema admits a second in-progress row, so
+	// the refusal asserted above came from 0186.
+	if err := insertErasureJob(ctx, pg, "acme", "job-after-down", "alice", "verifying"); err != nil {
+		t.Errorf("second in-progress job after rolling 0186 back: %v, want it admitted", err)
+	}
+}
+
+// seedErasureTenants creates the tenants the erasure-job cases write under.
+func seedErasureTenants(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	for _, id := range []string{"acme", "globex"} {
+		if _, err := pg.Pool.Exec(ctx,
+			`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
+	}
+}
+
+// insertErasureJob writes one erasure_jobs row under the tenant context.
+func insertErasureJob(ctx context.Context, pg *containers.Postgres, tenant, id, user, status string) error {
+	return execTenant(ctx, pg, tenant,
+		`INSERT INTO erasure_jobs (id, tenant_id, user_id, status) VALUES ($1, $2, $3, $4)`,
+		id, tenant, user, status)
+}
+
+// assertErasureDetailDefault checks that a row inserted without naming
+// detail, as a binary predating the column does, reads back an empty object.
+func assertErasureDetailDefault(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-detail-default", "dave", "completed"); err != nil {
+		t.Fatalf("insert without detail: %v", err)
+	}
+	var detail string
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT detail::text FROM erasure_jobs WHERE id = 'job-detail-default'`).Scan(&detail); err != nil {
+		t.Fatalf("read defaulted detail: %v", err)
+	}
+	if detail != "{}" {
+		t.Errorf("defaulted erasure_jobs.detail = %q, want {}", detail)
+	}
+}
+
+// assertOneInProgressErasureJob drives the partial unique index: every
+// in-progress phase conflicts with an existing in-progress job for the
+// same (tenant_id, user_id), terminal jobs and other users or tenants
+// do not, a terminal job cannot be moved back into progress beside a
+// running one, and the index arbitrates the store's ON CONFLICT start.
+func assertOneInProgressErasureJob(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if err := insertErasureJob(ctx, pg, "acme", "job-running", "alice", "initiated"); err != nil {
+		t.Fatalf("insert first in-progress job: %v", err)
+	}
+	for _, phase := range []string{"initiated", "store_deleting", "pseudonymizing", "verifying"} {
+		err := insertErasureJob(ctx, pg, "acme", "job-second-"+phase, "alice", phase)
+		if !isUniqueViolation(err) {
+			t.Errorf("second in-progress job in phase %s: err = %v, want unique_violation (23505)", phase, err)
+		}
+	}
+	admitted := []struct{ tenant, id, user, status string }{
+		{"acme", "job-completed", "alice", "completed"},
+		{"acme", "job-failed", "alice", "failed"},
+		{"acme", "job-failed-2", "alice", "failed"},
+		{"acme", "job-bob", "bob", "store_deleting"},
+		{"globex", "job-globex-alice", "alice", "initiated"},
+	}
+	for _, j := range admitted {
+		if err := insertErasureJob(ctx, pg, j.tenant, j.id, j.user, j.status); err != nil {
+			t.Errorf("insert %s (%s/%s, %s): %v, want it admitted", j.id, j.tenant, j.user, j.status, err)
+		}
+	}
+	// A retry moves a failed job back to initiated; while another job for
+	// the user is in progress the move must fail.
+	err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'initiated' WHERE id = 'job-failed'`)
+	if !isUniqueViolation(err) {
+		t.Errorf("retry of a failed job beside an in-progress one: err = %v, want unique_violation (23505)", err)
+	}
+	assertErasureStartArbiter(t, ctx, pg)
+}
+
+// assertErasureStartArbiter checks that an INSERT ... ON CONFLICT naming
+// the index predicate resolves against the index: a duplicate start
+// inserts nothing, and the start succeeds once the running job completes.
+func assertErasureStartArbiter(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	const start = `INSERT INTO erasure_jobs (id, tenant_id, user_id, status)
+		VALUES ($1, 'acme', 'alice', 'initiated')
+		ON CONFLICT (tenant_id, user_id)
+		WHERE status IN ('initiated', 'store_deleting', 'pseudonymizing', 'verifying')
+		DO NOTHING`
+	if err := execTenant(ctx, pg, "acme", start, "job-dup-start"); err != nil {
+		t.Fatalf("ON CONFLICT start beside a running job: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-dup-start"); n != 0 {
+		t.Errorf("ON CONFLICT start beside a running job inserted %d rows, want 0", n)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE erasure_jobs SET status = 'completed' WHERE id = 'job-running'`); err != nil {
+		t.Fatalf("complete the running job: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme", start, "job-next-start"); err != nil {
+		t.Fatalf("ON CONFLICT start after completion: %v", err)
+	}
+	if n := erasureJobCount(t, ctx, pg, "job-next-start"); n != 1 {
+		t.Errorf("ON CONFLICT start after completion inserted %d rows, want 1", n)
+	}
+}
+
+// erasureJobCount returns how many erasure_jobs rows carry id.
+func erasureJobCount(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM erasure_jobs WHERE id = $1`, id).Scan(&n); err != nil {
+		t.Fatalf("count erasure job %s: %v", id, err)
+	}
+	return n
+}
+
+// isUniqueViolation reports whether err is a Postgres unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// seedCountedSessionPopulation fills tenant acme with many terminal and
+// suspended rows and a few counted ones, then analyzes the table, so the
+// planner's choice reflects a tenant with a long history.
+func seedCountedSessionPopulation(t *testing.T, ctx context.Context, pg *containers.Postgres) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	const seed = `INSERT INTO sessions (id, tenant_id, user_id, state, runtime_ref, root_session_id)
+		SELECT md5(g::text)::uuid, 'acme',
+		       CASE WHEN g % 2 = 0 THEN 'alice' ELSE 'bob' END,
+		       CASE WHEN g <= 20 THEN 'running'
+		            WHEN g % 3 = 0 THEN 'suspended'
+		            WHEN g % 3 = 1 THEN 'completed'
+		            ELSE 'expired' END,
+		       'echo', md5(g::text)::uuid
+		FROM generate_series(1, 6000) AS g`
+	if err := execTenant(ctx, pg, "acme", seed); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `ANALYZE sessions`); err != nil {
+		t.Fatalf("analyze sessions: %v", err)
+	}
+}
+
+// explainPlan returns the text plan Postgres chooses for query.
+func explainPlan(t *testing.T, ctx context.Context, pg *containers.Postgres, query string) string {
+	t.Helper()
+	rows, err := pg.Pool.Query(ctx, "EXPLAIN "+query)
+	if err != nil {
+		t.Fatalf("explain %q: %v", query, err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan line: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	return b.String()
 }
 
 // --- helpers -------------------------------------------------------------

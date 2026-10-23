@@ -168,6 +168,8 @@ type OpenResponsesHandler struct {
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
 	cont           *continuity
+	// devTenantHeader mirrors OpenResponsesOptions.DevTenantHeader.
+	devTenantHeader bool
 }
 
 // OpenResponsesOptions configures the handler.
@@ -195,6 +197,15 @@ type OpenResponsesOptions struct {
 	// rehydrate then returns empty prior history and record is a no-op.
 	// spec: §15 built-in adapter single-shot compute model.
 	Transcripts transcriptstore.Store
+
+	// DevTenantHeader, when true, lets a request with no authenticated
+	// principal name its tenant through the X-Lenny-Tenant-ID dev header
+	// and resolves a request with neither to `default`. The gateway sets
+	// it only under --dev-mode. When false, the default, the tenant comes
+	// only from the principal and a request without one is refused with
+	// 401 before any session is created or read (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantHeader bool
 }
 
 // NewOpenResponsesHandler returns a configured handler.
@@ -230,16 +241,22 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		// nil Transcripts store makes rehydrate a no-op returning empty prior
 		// history and record a no-op, preserving the in-memory and unit path.
 		// spec: §15 built-in adapter single-shot compute model.
-		cont: &continuity{sessions: store, transcripts: opts.Transcripts},
+		cont:            &continuity{sessions: store, transcripts: opts.Transcripts},
+		devTenantHeader: opts.DevTenantHeader,
 	}
 }
 
 // Handler returns the http.Handler routing /v1/responses.
+//
+// The adapter serves create and read only. Each response is backed by the
+// implicit per-request session record that audit and billing rely on, so no
+// route deletes it; a DELETE on /v1/responses/{id} reaches the ServeMux's
+// method mismatch and answers 405 with an Allow header naming GET.
+// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
 func (h *OpenResponsesHandler) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/responses", h.handleCreate)
 	mux.HandleFunc("GET /v1/responses/{id}", h.handleGet)
-	mux.HandleFunc("DELETE /v1/responses/{id}", h.handleDelete)
 	return mux
 }
 
@@ -263,7 +280,11 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 			"input is required")
 		return
 	}
-	tenantID := resolveTenant(r)
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
 	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
@@ -339,8 +360,14 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	}
 	out := sendResp.Parts
 
+	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
+	// own write. It runs no post-terminal hook: the handler's deferred
+	// single-shot release releases the executor.
+	completedAt := h.clock()
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+		from := s.State
 		s.State = session.StateCompleted
+		sessionstore.MarkTerminated(s, from, completedAt)
 		// Persist the continuation lineage only for a continuation; chain-root
 		// rows stay clean so GET echoes an empty previous_response_id.
 		// spec: §15 built-in adapter single-shot compute model.
@@ -428,7 +455,11 @@ func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.T
 }
 
 func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request) {
-	tenantID := resolveTenant(r)
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
 	id := r.PathValue("id")
 	row, err := h.store.Get(r.Context(), tenantID, id)
 	if err != nil {
@@ -461,20 +492,6 @@ func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (h *OpenResponsesHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
-	tenantID := resolveTenant(r)
-	id := r.PathValue("id")
-	if err := h.store.Delete(r.Context(), tenantID, id); err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			writeOpenAIError(w, http.StatusNotFound, "not_found_error", "response not found")
-			return
-		}
-		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // normalizeInput accepts either a string (single user message) or an

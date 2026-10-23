@@ -35,7 +35,7 @@ stateDiagram-v2
     finalizing --> ready: Workspace materialized
     ready --> starting: StartSession
     starting --> running: Agent runtime reaches ready
-    running --> suspended: Interrupt
+    running --> suspended: Interrupt or idle suspension
     running --> input_required: Agent calls request_input
     running --> completed: Agent finishes
     running --> failed: Non-retryable failure
@@ -49,10 +49,11 @@ stateDiagram-v2
     input_required --> resume_pending: Retryable failure (retries remain)
     input_required --> awaiting_client_action: Retryable failure (retries exhausted)
     input_required --> failed: Non-retryable failure
-    suspended --> running: Resume
+    suspended --> running: Message or resume (pod still held)
+    suspended --> resume_pending: Message or resume (pod released)
     suspended --> completed: Terminate
     suspended --> cancelled: Client cancels
-    suspended --> expired: Lease expiry
+    suspended --> expired: Suspended-session lifetime or lease expiry
     suspended --> resume_pending: Retryable failure, pod still held (retries remain)
     suspended --> awaiting_client_action: Retryable failure, pod still held (retries exhausted)
     suspended --> failed: Non-retryable failure or budget keys expired
@@ -73,15 +74,15 @@ stateDiagram-v2
 
 **running** -- The agent binary is active and processing messages. The client can send messages, and the agent produces streaming output. This is the main interactive state.
 
-**input_required** -- A sub-state of `running`. The agent has called `lenny/request_input` to request clarification or additional information from its parent or the client. The pod is live, the runtime process is active, but the agent is blocked waiting for a response. The `maxIdleTime` timer is paused during this state, replaced by a separate `maxRequestInputWaitSeconds` timeout. All failure transitions that apply to `running` also apply to `input_required`.
+**input_required** -- A sub-state of `running`. The agent has called `lenny/request_input` to request clarification or additional information from its parent or the client. The pod is live, the runtime process is active, but the agent is blocked waiting for a response. The `maxClientIdleSeconds` idle clock is not evaluated during this state, because the runtime is waiting for a response; the separate `maxRequestInputWaitSeconds` timeout bounds the wait. All failure transitions that apply to `running` also apply to `input_required`.
 
-**suspended** -- The session has been interrupted (by the client, by an interrupt signal, or by the agent itself). The pod is still held for a configurable duration (`maxSuspendedPodHoldSeconds`), allowing a fast resume without re-claiming a pod. If the hold duration elapses, the pod is released and a resume transitions through `resume_pending`.
+**suspended** -- The session has been interrupted (by the client, by an interrupt signal, or by the agent itself), or it has been idle-suspended. After an interrupt, the pod is still held for a configurable duration (`maxSuspendedPodHoldSeconds`), allowing a fast resume without re-claiming a pod; when the hold elapses, the gateway checkpoints the workspace and releases the pod. Idle suspension happens when a `running` session has no activity for `maxClientIdleSeconds` (default: 900s) and the runtime adapter also observed none in that window; the gateway checkpoints the workspace and releases the pod or slot as it suspends the session. A session that cannot be idle-suspended, because its runtime is `type: mcp` or its pool runs `executionMode: service`, expires with the `max_idle_time` reason when `maxClientIdleSeconds` elapses instead. Any message, `resume_session` call, or `POST /v1/sessions/{id}/resume` resumes a suspended session; a session whose pod was released transitions through `resume_pending`. A suspended session does not count toward the concurrent-session limits, and it expires after `gateway.maxSuspendedSessionSeconds` (default: 7 days) in this state.
 
-**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a retryable pod or runtime failure while retries remain, or after a suspended session's pod hold expires. The gateway attempts to claim a new warm pod and restore the session from the last checkpoint.
+**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a retryable pod or runtime failure while retries remain, or when a message or resume call reaches a suspended session whose pod was released. The gateway's resume driver claims a new warm pod and restores the session onto it. While the warm pool or the session's credential pool is exhausted, the session waits in this state.
 
 **resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process the new pod started with.
 
-**awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed without a pod becoming available. The session is waiting for the client to take action (retry, cancel, or wait longer).
+**awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
 **completed** -- The agent has finished its work normally. The workspace has been sealed (exported to durable storage). This is a terminal state.
 
@@ -96,12 +97,12 @@ stateDiagram-v2
 When a session is resumed (after pod failure or suspended pod release), the gateway:
 
 1. Claims a new warm pod from the pool.
-2. Materializes the workspace from the last successful checkpoint snapshot.
-3. Restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process the pod started with.
+2. Assigns the session new credential leases on the new pod.
+3. Materializes the workspace from the last successful checkpoint snapshot and restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process the pod started with. A session that has neither a checkpoint nor a minimal eviction state record is rebuilt instead: the gateway materializes its workspace from the session's workspace plan, runs the plan's setup commands, and starts the runtime with no carried conversation state.
 4. Emits a `session.resumed` event to the client with `resumeMode` (either `full` for a normal checkpoint restore, or `conversation_only` if only the minimal eviction state was preserved) and `workspaceLost` (boolean indicating whether workspace files were lost).
 5. Increments `recovery_generation` on the session record. Clients can observe this counter to track how many times a session has been recovered.
 
-The `recovery_generation` counter tracks pod recoveries. A separate `coordination_generation` counter tracks gateway replica handoffs (when a different gateway replica takes over as session coordinator). These are independent: a coordinator handoff does not increment `recovery_generation`, and a pod recovery does not reset `coordination_generation`.
+The `recovery_generation` counter tracks pod recoveries. A separate `coordination_generation` counter fences stale gateway replicas. It advances when a different gateway replica takes over as session coordinator and each time a restore onto a replacement pod begins. A coordinator handoff does not increment `recovery_generation`, and neither counter decreases.
 
 ---
 
@@ -134,7 +135,7 @@ The floor: enough to get a custom runtime working with a small Lenny-specific pr
 - **Input:** reads `{type: "message"}` objects from stdin.
 - **Sessions:** one long-lived process serves every session on the pod. A `{type: "session_start"}` frame opens each session and carries its own context, such as its credential file path, and a `{type: "session_end"}` frame releases it. A runtime that keeps no per-session context may ignore both.
 - **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
-- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds. A missed acknowledgment ends that session's stream, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy.
+- **Heartbeat:** must respond to each `{type: "heartbeat"}`, which the adapter sends for each session and which names that session in `sessionId`, with `{type: "heartbeat_ack"}` within 10 seconds. While the runtime does any work for the session, the acknowledgement carries the heartbeat's `sessionId` and `busy: true`, which keeps the session from idle suspension. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. If no acknowledgment is received, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy.
 - **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
 - **Connection handshake:** when the runtime dials the message channel as a socket rather than reading stdin, it waits for the adapter manifest and sends the manifest's `mcpNonce` as its first line, `{"_lennyNonce": "..."}`. It answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. See the [Adapter Contract](../reference/adapter-contract.md#connection-handshake).
 - **No MCP, no checkpointing, no lifecycle signals.**
@@ -174,7 +175,7 @@ Each runtime is configured with an **execution mode** that determines how pods a
 **`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a [slot](../reference/glossary#slot) on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
 - In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
-- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`. When `recycle.maxSessionsPerPod` is above 1 and `recycle.scrubProfile` is not `vm-restart`, `acknowledgeProcessLevelIsolation: true` is also required, because the pod keeps one runtime process across its sessions; pool admission refuses the pool without it.
+- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, and `/tmp` flush) runs when occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`. When `recycle.maxSessionsPerPod` is above 1 and `recycle.scrubProfile` is not `vm-restart`, `acknowledgeProcessLevelIsolation: true` is also required, because the pod keeps one runtime process across its sessions; pool admission refuses the pool without it.
 - With `maxConcurrentSessions > 1` the pod serves multiple sessions simultaneously. Those sessions share the pod's process namespace, `/tmp`, cgroup memory, and network stack, so isolation between them is process-level and filesystem-level only. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
 
 **`service`** -- The gateway routes each message to any ready replica rather than binding a session to a pod. Pods serve successive requests with no scrub and share process space, network stack, `/tmp`, and page cache across same-tenant concurrent requests. Service mode provides no cross-message conversation continuity: every message is self-contained. Service-mode pools are pinned to a single tenant by the tenant-affinity routing layer. Useful for high-throughput stateless workloads. See [Execution Modes and Pod Lifecycle](../reference/execution-modes.md) for the full settings matrix.
@@ -555,10 +556,11 @@ Both kinds of rotation deliver the new lease via the `RotateCredentials` RPC. Wh
 
 ### Pool exhaustion
 
-A pool can be exhausted in two distinct ways, each with a distinct error:
+A pool can be exhausted at session creation, mid-session, or at a restore:
 
 - **At session creation:** no eligible credential is available in the policy-selected pool (all at `maxConcurrentSessions`, all in cooldown, or none match the request's hints). The gateway returns `CREDENTIAL_POOL_EXHAUSTED`; clients retry after the pool drains.
 - **Mid-session:** every credential in the fallback chain has been tried, or the session has already consumed `maxRotationsPerSession`. The session terminates with `CREDENTIAL_FALLBACK_EXHAUSTED`.
+- **At restore:** a restore onto a replacement pod, after a pod failure or a resume of a suspended session whose pod was released, assigns the session new credential leases. While no eligible credential is available, the session waits in `resume_pending` until one frees or the resume window (`maxResumeWindowSeconds`) elapses.
 
 Operators diagnose exhaustion via pool-status counters (`availableCount`, `leasedCount`, `coolingDownCount`, `disabledCount`) and the `lenny_credential_provider_rate_limit_total` / `lenny_gateway_credential_fallback_exhausted_total` metrics. The [credential-pool-exhaustion runbook](../runbooks/credential-pool-exhaustion.md) covers remediation — adding credentials, raising per-key concurrency, extending cooldown, or reducing session pressure.
 
@@ -607,7 +609,7 @@ Each credential has a `maxConcurrentSessions` limit and a configurable `cooldown
 
 ### Credential routing
 
-The `CredentialRouter` interface is the pluggable extension point that the gateway calls at session creation and at every rotation. The default implementation applies the pool's `assignmentStrategy` to the candidate credentials; custom implementations can consume `hints` (model, cost_tier, region) to route cost-aware, latency-based, or intent-based — for example, small models to a cheaper pool and large models to a premium pool, or EU traffic to EU-region credentials.
+The `CredentialRouter` interface is the pluggable extension point that the gateway calls at session creation, when a session is restored onto a replacement pod, and at every rotation. The default implementation applies the pool's `assignmentStrategy` to the candidate credentials; custom implementations can consume `hints` (model, cost_tier, region) to route cost-aware, latency-based, or intent-based — for example, small models to a cheaper pool and large models to a premium pool, or EU traffic to EU-region credentials.
 
 ---
 

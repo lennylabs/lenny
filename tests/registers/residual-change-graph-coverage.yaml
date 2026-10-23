@@ -126,6 +126,12 @@ entries:
     reason: |-
       a node test over the proposal edit audit, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/resume-replay.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/round-boundary.test.sh
     class: change-graph-coverage
     disposition: excluded
@@ -241,6 +247,12 @@ entries:
       an agent workflow driver, which no test tier is selected from
   - member: |-
       .claude/workflows/implement-proposal.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/mechanism-table-converge.js
     class: change-graph-coverage
     disposition: excluded
     reason: |-
@@ -480,6 +492,12 @@ entries:
     reason: |-
       a runtime scaffold template the Go package that embeds it renders, whose own change selection the completeness check governs
   - member: |-
+      compose/redis-cluster/start.sh
+    class: change-graph-coverage
+    disposition: in-class
+    reason: |-
+      a script of the compose stack that no glob key covers; it leaves the class when the compose tree gains a key
+  - member: |-
       compose/smoke-test.sh
     class: change-graph-coverage
     disposition: in-class
@@ -587,24 +605,6 @@ entries:
     disposition: excluded
     reason: |-
       a packaging formula, which no test tier is selected from
-  - member: |-
-      pkg/gateway/mcpfabric/playground/ui/app.css
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
-  - member: |-
-      pkg/gateway/mcpfabric/playground/ui/app.js
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
-  - member: |-
-      pkg/gateway/mcpfabric/playground/ui/index.html
-    class: change-graph-coverage
-    disposition: in-class
-    reason: |-
-      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
   - member: |-
       pkg/loadctl/web/assets/style.css
     class: change-graph-coverage

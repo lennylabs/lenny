@@ -32,7 +32,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -262,11 +262,13 @@ func TestFinalizeRejectsFromReady(t *testing.T) {
 	assertInvalidStateTransition(t, body, "ready", []string{"created"})
 }
 
-// spec: 15.1 (resume requires state=awaiting_client_action)
-// diagnosis: Resume from running returned non-409. The transition
+// spec: 15.1 (resume admits awaiting_client_action and suspended), 7.3
+// (Retry and Resume)
+// diagnosis: Resume from running returned non-409, or the refusal's
 //
-//	table is wrong, or the resume endpoint is dispatching
-//	without checking state.
+//	allowedStates does not name both admitted states. The transition
+//	table is wrong, or the resume endpoint is dispatching without
+//	checking state.
 func TestResumeRejectsFromRunning(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -276,7 +278,7 @@ func TestResumeRejectsFromRunning(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("resume-from-running: want 409, got %d", resp.StatusCode)
 	}
-	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action"})
+	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action", "suspended"})
 }
 
 // spec: 15.1 (terminate is admitted from every non-terminal state)

@@ -10,6 +10,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // spec: §27.3.1 / §27.6 — the idle-timeout sweep
@@ -74,7 +76,7 @@ func TestMemoryIdleSessionsSelectsIdleRecords_spec_27_6_201(t *testing.T) {
 // user-index keys that share the t: prefix space.
 func TestRedisIdleSessionsScansRecords_spec_27_6_201(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()

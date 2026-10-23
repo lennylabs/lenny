@@ -29,9 +29,8 @@ sessionPolicy:                    # session mode only
     allowCrossTenantReuse: false  # microvm-gated; never permitted when maxConcurrentSessions > 1
   cleanupCommands: []
   cleanupTimeoutSeconds: 60
-  maxSessionRetries: 1            # crash re-dispatch budget; 2 total attempts; 0 disables
-  maxSessionAgeSeconds: 7200
-  maxClientIdleSeconds: 7200      # defaults to the effective maxSessionAgeSeconds
+  maxSessionAgeSeconds: 7200      # active-time session age cap
+  maxClientIdleSeconds: 900       # inactivity bound before idle suspension or expiry (default 900)
   slotRetries: 1
   onPoolExhausted: reject         # reject | queue
   maxQueueWaitSeconds: 30
@@ -47,7 +46,7 @@ sessionPolicy:                    # session mode only
 |:--|:--|:--|:--|
 | One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
 | Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. The pod keeps one runtime process across its sessions, so a pool with `maxSessionsPerPod` above 1 and a `scrubProfile` other than `vm-restart` requires `acknowledgeProcessLevelIsolation: true`. |
-| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero, unless the last release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
 | Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
 
 The acknowledgments, tenant pinning, `residualStateWarning`, and the scaling factors derive from `sessionPolicy` properties: `acknowledgeBestEffortScrub` is required when recycling is enabled, `acknowledgeProcessLevelIsolation` is required when concurrency exceeds one and on a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, `acknowledgeMicrovmResidualState` is required for `scrubProfile: in-place`, and tenant pinning is required when `maxConcurrentSessions > 1` or `recycle.enabled: true`.
@@ -67,7 +66,7 @@ The `sessionIsolationLevel` object in the `POST /v1/sessions` response reports t
 | Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | `platform` | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
 | Service | None | `none` | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
 
-The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting. The whole-pod scrub runs at occupancy zero on a recycling pod. What is distinctive to the `Concurrent` row is the co-tenancy its `Residual state across sessions` column names.
+The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting. The whole-pod scrub runs at occupancy zero on a recycling pod, unless the release ends the occupancy without reuse ([Recycle lifecycle](#recycle-lifecycle)). What is distinctive to the `Concurrent` row is the co-tenancy its `Residual state across sessions` column names.
 
 A client that requires strict isolation should reject a session whose response carries `residualStateWarning: true`.
 
@@ -75,7 +74,7 @@ A client that requires strict isolation should reject a session whose response c
 
 ## Recycle lifecycle
 
-When occupancy reaches zero on a recycling pod, the gateway patches the pod's `SandboxClaim` to `recycling`, the adapter runs the whole-pod scrub, and the recycle disposition decides whether to hold the pod or retire it. On a preConnect pool the SDK re-warm runs after a successful scrub before the claim enters `reserved`.
+When occupancy reaches zero on a recycling pod, the gateway patches the pod's `SandboxClaim` to `recycling`, the adapter runs the whole-pod scrub, and the recycle disposition decides whether to hold the pod or retire it, unless the release ends the occupancy without reuse. A release ends the occupancy without reuse when the pool does not recycle, when the gateway releases the session before it published the session's binding to the pod, which is the case for a session that never started on the pod, or, on a pool with `maxConcurrentSessions: 1`, when the session failed or crashed. The gateway publishes a session's binding after the pod accepts the session's start or resume, and from then on it delivers the session's messages and its release to that pod. A release that ends the occupancy without reuse deletes the claim instead of patching it, and no whole-pod scrub runs. On a preConnect pool the SDK re-warm runs after a successful scrub before the claim enters `reserved`.
 
 ![Recycle lifecycle: claimed, recycling whole-pod scrub, sdk_connecting SDK re-warm, reserved tenant hold, then claimed again on a same-tenant rebind or idle on hold expiry.](../assets/diagrams/recycle-lifecycle.svg)
 

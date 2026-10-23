@@ -109,6 +109,7 @@ func midSessionFixtureAudited(t *testing.T, capability, policyEnabled, withBindi
 	}
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		PodRegistry:             reg,
 		Runtimes:                runtimes,
 		MidSessionUploadEnabled: policyEnabled,
@@ -233,7 +234,7 @@ func TestRuntimeDiscoveryExposesMidSessionUpload_spec_7_4_433(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name: "rt-no", Type: runtimestore.TypeAgent,
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

@@ -47,7 +47,7 @@ func TestIdleSweepExpiresIdleRunningSession_spec_11_3_199(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, "sess", "acme", session.StateRunning, born)
-	// A 600s platform idle cap (the spec default is now the age cap; this
+	// A 600s platform idle cap (the spec default is 900s; this
 	// test pins the sweep behaviour against an explicit cap).
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, idleCfg(600), nil)
 
@@ -73,33 +73,35 @@ func TestIdleSweepExpiresIdleRunningSession_spec_11_3_199(t *testing.T) {
 	}
 }
 
-// spec: 6.2 (maxClientIdleSeconds clock default) — the platform default idle
-// cap is the maxSessionAge default (7200s), not 600s. A running session idle
-// for under 7200s with no resolver is not reaped, but one past 7200s is.
-// F-11.3.7.
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states) — the
+// platform default idle cap is 900s. A running session idle for 900s with no
+// resolver survives, and one idle one second longer is reaped.
 //
-// diagnosis: a failure means the platform idle default reverted to the old
-// 600s, which would idle-reclaim long-but-active sessions before the spec's
-// age-cap default.
-func TestIdleSweepDefaultIsAgeCap_spec_6_2(t *testing.T) {
+// diagnosis: a failure means the platform idle default is not the 900s the
+// spec fixes, so an idle session holds its pod longer or shorter than the
+// spec states.
+func TestIdleSweepDefaultIs900Seconds_spec_6_2(t *testing.T) {
+	if got := watchdog.DefaultMaxIdleSeconds; got != 900 {
+		t.Fatalf("DefaultMaxIdleSeconds = %d, want 900", got)
+	}
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedRow(t, store, "sess", "acme", session.StateRunning, born)
-	// A bare Config: MaxIdleSeconds falls through to DefaultMaxIdleSeconds
-	// (the 7200s age default). maxSessionAge is the same 7200s default, so to
-	// isolate the idle path the test stays under the age cap.
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
-
-	// 1 hour in: well under the 7200s idle default. No idle expiry.
-	res, err := w.Tick(context.Background(), born.Add(time.Hour))
+	cfg := idleCfg(0)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, cfg, nil)
+	res, err := w.Tick(context.Background(), born.Add(900*time.Second))
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 	if res.IdleExpirations != 0 {
-		t.Errorf("under the 7200s default the session must survive: IdleExpirations=%d", res.IdleExpirations)
+		t.Fatalf("at 900s the session must survive: IdleExpirations=%d", res.IdleExpirations)
 	}
-	if got := watchdog.DefaultMaxIdleSeconds; got != watchdog.DefaultMaxSessionAgeSeconds {
-		t.Errorf("DefaultMaxIdleSeconds = %d, want DefaultMaxSessionAgeSeconds %d", got, watchdog.DefaultMaxSessionAgeSeconds)
+	res, err = w.Tick(context.Background(), born.Add(901*time.Second))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.IdleExpirations != 1 {
+		t.Fatalf("past 900s the session must be reaped: IdleExpirations=%d", res.IdleExpirations)
 	}
 }
 
@@ -174,18 +176,17 @@ func TestIdleSweepHonorsResolverCap_spec_11_3_199(t *testing.T) {
 	}
 }
 
-// spec: 6.2 (maxClientIdleSeconds clock pause table), 9.2
-// (elicitation-wait idle clock) — the clock runs in `running`,
-// `input_required`, and `awaiting_client_action`, so an abandoned session in
-// any of those states is idle-reclaimed. An elicitation wait keeps the
-// session in `running`, so it is covered by the `running` entry. F-11.3.7 /
-// F-9.2.15.
+// spec: 6.2 (maxClientIdleSeconds clock behavior across states), 9.2
+// (elicitation-wait idle clock) — the clock is evaluated in `running` alone:
+// it is not evaluated in `input_required`, where the runtime waits on the
+// client, and is paused in `awaiting_client_action`. An elicitation wait
+// keeps the session in `running`, so it is covered by the `running` entry.
 //
-// diagnosis: a failure means the idle clock no longer runs while a session
-// waits on an absent client (input_required, awaiting_client_action, or an
-// elicitation), so an abandoned wait would never be reclaimed by the idle
-// bound — the exact condition the bound exists to reclaim.
-func TestIdleSweepRunsInRunningStates_spec_6_2(t *testing.T) {
+// diagnosis: a failure means the idle sweep reclaimed a session waiting on
+// its client in input_required or awaiting_client_action, which the spec
+// leaves to their own deadlines, or stopped reclaiming an idle running
+// session.
+func TestIdleSweepRunsInRunningOnly_spec_6_2(t *testing.T) {
 	store := memstore.New()
 	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, st := range []session.State{
@@ -197,25 +198,22 @@ func TestIdleSweepRunsInRunningStates_spec_6_2(t *testing.T) {
 	}
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, idleCfg(600), nil)
 
-	// 10 minutes idle, past the 600s cap. Every clock-running state expires.
 	res, err := w.Tick(context.Background(), born.Add(10*time.Minute+time.Second))
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if res.IdleExpirations != 3 {
-		t.Fatalf("IdleExpirations: got %d, want 3 (running, input_required, awaiting_client_action)", res.IdleExpirations)
+	if res.IdleExpirations != 1 {
+		t.Fatalf("IdleExpirations: got %d, want 1 (running only)", res.IdleExpirations)
 	}
-	for _, st := range []session.State{
-		session.StateRunning,
-		session.StateInputRequired,
-		session.StateAwaitingClientAction,
-	} {
+	want := map[session.State]session.State{
+		session.StateRunning:              session.StateExpired,
+		session.StateInputRequired:        session.StateInputRequired,
+		session.StateAwaitingClientAction: session.StateAwaitingClientAction,
+	}
+	for st, wantState := range want {
 		row, _ := store.Get(context.Background(), "acme", "sess_"+string(st))
-		if row.State != session.StateExpired {
-			t.Errorf("%s session: got %q, want expired (idle clock runs there)", st, row.State)
-		}
-		if row.FailureReason != string(session.FailureExpiredIdle) {
-			t.Errorf("%s session FailureReason: got %q, want %q", st, row.FailureReason, session.FailureExpiredIdle)
+		if row.State != wantState {
+			t.Errorf("%s session: got %q, want %q", st, row.State, wantState)
 		}
 	}
 }

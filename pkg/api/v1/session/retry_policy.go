@@ -19,7 +19,7 @@ import (
 //	  "mode": "auto_then_client",
 //	  "maxRetries": 2,
 //	  "retryableFailures": ["pod_evicted", "node_lost", "runtime_crash"],
-//	  "nonRetryableFailures": ["workspace_validation_failed", "setup_command_failed"],
+//	  "nonRetryableFailures": ["workspace_validation_failed", "setup_command_failed", "credential_rejected"],
 //	  "maxSessionAgeSeconds": 7200,
 //	  "maxResumeWindowSeconds": 900
 //	}
@@ -51,8 +51,10 @@ type RetryPolicy struct {
 	// An empty slice selects the §7.3 platform default.
 	NonRetryableFailures []string `json:"nonRetryableFailures,omitempty"`
 
-	// MaxSessionAgeSeconds is the §7.3 per-session total-lifetime cap.
-	// The gateway clamps the value against the deployer's matching cap
+	// MaxSessionAgeSeconds is the §7.3 per-session active-time session
+	// age cap: time counts while the session is starting, running, or
+	// input_required and is paused in suspended and the recovery states
+	// (§6.2 maxSessionAge timer behavior across states). The gateway clamps the value against the deployer's matching cap
 	// (typically the watchdog's MaxSessionAgeSeconds) so the platform
 	// bound is the upper limit. Zero selects the deployer default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
@@ -236,12 +238,20 @@ const (
 	// FailureSetupCommandFailed is the §7.3 default-non-
 	// retryable label for a non-zero exit from a §7.5 setup command.
 	FailureSetupCommandFailed FailureReason = "setup_command_failed"
+	// FailureCredentialRejected is the §7.3 default-non-retryable label
+	// for a restore whose credential assignment on the replacement pod the
+	// credential service refused for a reason that recurs on every attempt
+	// (a missing pool or user credential, an unconfigured LLM proxy, or an
+	// invalid, unauthorized, or failed-precondition answer). A rejection
+	// that recurs spends no retry under the default policy. spec: §7.3
+	// (Resume driver; Credential leases on the replacement pod).
+	FailureCredentialRejected FailureReason = "credential_rejected"
 
 	// FailureExpiredDeadline marks a session driven to `expired` by a
 	// §11.3 / §7.3 deadline sweep — the platform-wide `maxSessionAge`
-	// cap, the `awaiting_client_action` inactivity deadline, the orphan
-	// cleanup window, and any other watchdog edge whose proximate cause
-	// is wall-clock elapsed time. The §8.8 MCP adapter surfaces this as
+	// cap on active session age (§6.2), the `awaiting_client_action`
+	// inactivity deadline, the orphan cleanup window, and any other
+	// watchdog edge whose proximate cause is elapsed time. The §8.8 MCP adapter surfaces this as
 	// `failed` with error code `expired:deadline` so external clients
 	// can distinguish time-driven expiry from budget/lease expiry.
 	// spec: §8.8.
@@ -264,8 +274,8 @@ const (
 	// its effective `maxIdleTimeSeconds`. The §8.8 MCP adapter surfaces
 	// this as `failed` with error code `expired:idle` (the open-ended
 	// `expired:*` prefix per §8.8) so external clients can
-	// distinguish idle reclamation from the wall-clock `maxSessionAge`
-	// deadline (`expired:deadline`). spec: §6.2; §11.3; §8.8.
+	// distinguish idle reclamation from the active-time `maxSessionAge`
+	// cap (`expired:deadline`). spec: §6.2; §11.3; §8.8.
 	FailureExpiredIdle FailureReason = "expired:idle"
 
 	// FailureOrphanPodTerminated marks a non-terminal session whose
@@ -307,6 +317,7 @@ func DefaultNonRetryableFailures() []string {
 	return []string{
 		string(FailureWorkspaceValidationFailed),
 		string(FailureSetupCommandFailed),
+		string(FailureCredentialRejected),
 	}
 }
 

@@ -43,12 +43,13 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Events:       sessionevents.NewBus(0),
-		InputWaits:   inputwait.NewRegistry(),
-		Interactions: interactionstore.NewMemory(),
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Events:            sessionevents.NewBus(0),
+		InputWaits:        inputwait.NewRegistry(),
+		Interactions:      interactionstore.NewMemory(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -67,6 +68,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 	reg := inputwait.NewRegistry()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		InputWaits:          reg,
@@ -90,6 +92,7 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		Runtimes:            runtimes,
@@ -106,18 +109,29 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 // newMCPForArchive builds the MCP server with a §8.10 tree archive and
 // returns the archive so the cancel_child archiving test can read it.
 func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store) {
+	srv, store, archive, _ := newMCPForArchiveHook(t)
+	return srv, store, archive
+}
+
+// newMCPForArchiveHook builds the archive server with a post-terminal hook
+// fake wired and returns the fake, whose waitSettled waits for the hooks a
+// cancel runs on goroutines.
+func newMCPForArchiveHook(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store, *hookTerminal) {
 	t.Helper()
 	store := memstore.New()
 	archive := treearchive.NewMemory()
+	hook := newHookTerminal(nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:       store,
-		TreeArchive: archive,
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { return "sess_mcp" },
-		TenantID:    "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		TreeArchive:       archive,
+		Terminal:          hook,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
-	return srv, store, archive
+	return srv, store, archive, hook
 }
 
 // newMCPForElicitation builds the MCP server with a §9.2 interaction
@@ -128,6 +142,7 @@ func newMCPForElicitation(t *testing.T, timeout time.Duration) (*mcp.Server, ses
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
 		ElicitationTimeout: timeout,
@@ -172,12 +187,13 @@ func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioneve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Events:   bus,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Events:            bus,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store, bus
 }
@@ -282,13 +298,14 @@ func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
 	devStore := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    devStore,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimestore.NewMemory(),
-		DevMode:  true,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_dev" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             devStore,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimestore.NewMemory(),
+		DevMode:           true,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_dev" },
+		TenantID:          "acme",
 	})
 	_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
 	row, err := devStore.Get(context.Background(), "acme", "sess_dev")
@@ -332,12 +349,13 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Interceptors: chain,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Interceptors:      chain,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store
 }
@@ -1004,6 +1022,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -1371,6 +1390,7 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		InputWaits:          reg,

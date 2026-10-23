@@ -28,8 +28,14 @@ func (f *fakeLister) ListByRoot(_ context.Context, _, rootID string) ([]sessions
 }
 
 type reattachRecorder struct {
-	order  []string
-	failOn map[string]error
+	started []string
+	order   []string
+	failOn  map[string]error
+}
+
+// StartNode records the node the traversal drove.
+func (r *reattachRecorder) StartNode(_ context.Context, node sessionstore.Session) {
+	r.started = append(r.started, node.ID)
 }
 
 func (r *reattachRecorder) ReattachNode(_ context.Context, node sessionstore.Session) error {

@@ -355,6 +355,7 @@ tests:
       playground.devTenantId: alice
       playground.acknowledgeApiKeyMode: true
       tenancy.mode: multi
+      auth.multiTenant: true
       global.devMode: false
     documentSelector:
       path: kind

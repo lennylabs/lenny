@@ -253,6 +253,9 @@ func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 	s.Usage = meter
 	if lc != nil {
 		lc.SetUsageSink(NewSessionTokenSink(meter, s.checkSessionBound))
+		// spec: §4.7.1 (Session seal) — each llm_request_completed naming a
+		// session is that session's adapter activity.
+		lc.SetActivityObserver(s.observeRuntimeOpsSession)
 	}
 	return meter
 }

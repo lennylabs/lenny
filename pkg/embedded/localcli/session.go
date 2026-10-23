@@ -472,7 +472,7 @@ func cmdSessionInterrupt(ctx context.Context, args []string, stdout, stderr io.W
 		fmt.Fprintf(stderr, "lenny session interrupt: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s %s\n", res.SessionID, res.State)
+	fmt.Fprintf(stdout, "%s %s\n", res.ID, res.State)
 	return 0
 }
 

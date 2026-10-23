@@ -136,9 +136,9 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 |:--|:--|:--|:--|:--|:--|:--|
 | `REG-COORDLEASE` | Redis | `t:<tenant>:lease:session:<session>` | Gateway replicas | Gateway replicas | One holder per tenant and session, on a compare-and-set with a 60 second expiry | C14 |
 | `REG-COORDMIRROR` | Postgres | `coordination_lease` | Gateway sweeper | Gateway replicas | A single-valued row per tenant and session, and a projection rather than an exclusion primitive | C15 |
-| `REG-SLOTCOUNT` | Redis | `lenny:pod:<pod>:active_slots` | Gateway replicas | Gateway replicas | An atomic per-pod counter that ceilings concurrent slots | C18 |
+| `REG-SLOTCOUNT` | Redis | `lenny:pod:<pod>:active_slots` | Gateway replicas | Gateway replicas | An atomic per-pod set of the sessions holding slots and of the leaked slots, whose cardinality ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) | C18 |
 | `REG-PODSTATE` | Postgres | `agent_pod_state` | WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas for `sessions_served` and `scrub_failure_count` | Gateway replicas | One row per pod. A read-optimized mirror carrying the pod phase the orphan-session reconciler reads, together with the gateway-written reuse counters the recycle disposition evaluates ([§12.6](12_storage-architecture.md#126-interface-design), [§4.7](04_system-components.md#47-runtime-adapter)) | C21 |
-| `REG-CLAIM` | Kubernetes API | `SandboxClaim` named `claim-<podName>` | Gateway replicas for the create, the status-subresource binding-state writes, and the deletes at hold expiry and when an acquisition ends the hold, and the WarmPoolController leader for the deletes at pod termination and orphan garbage collection | Gateway replicas and controllers | Cluster-wide per-pod acquisition on first claim. The object carries no owner reference, so the controller's delete is the reclamation path for a claim its holder did not remove ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) | C17 |
+| `REG-CLAIM` | Kubernetes API | `SandboxClaim` named `claim-<podName>` | Gateway replicas for the create, the status-subresource binding-state writes, and the deletes at hold expiry, when an acquisition ends the hold, and when a release ends the occupancy without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), and the WarmPoolController leader for the deletes at pod termination and orphan garbage collection | Gateway replicas and controllers | Cluster-wide per-pod acquisition on first claim. The object carries no owner reference, so the controller's delete is the reclamation path for a claim its holder did not remove ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) | C17 |
 
 #### Naming table
 
@@ -233,12 +233,15 @@ connection.
   ([§4.7](04_system-components.md#47-runtime-adapter)). Its streaming messages are bidirectional and are
   declared in the published protobuf service definition
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not state
-  the individual message names of the stream in prose.
+  the individual message names of the stream in prose. The unary `SealSession` and `UnsealSession` RPCs
+  seal a session against `message` delivery on this channel and lift the seal, as
+  [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) **Session seal.** states.
 - **Preconditions.** The pod validates the `coordination_generation` stamp on every gateway-to-pod RPC and
-  rejects a stale one, and a replica that has just acquired coordination must receive a successful
-  `CoordinatorFence` acknowledgement before it sends any operational RPC
-  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
-- **Timing.** The specification states no deadline for `Attach`. The gateway holds one `Attach` stream for a
+  rejects a stale one, and a replica that has just acquired coordination completes the
+  [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it sends any
+  operational RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+- **Timing.** The specification states no deadline for `Attach`. `SealSession` and `UnsealSession` each have a
+  5s deadline ([§4.7](04_system-components.md#47-runtime-adapter)). The gateway holds one `Attach` stream for a
   session from its first message delivery until it releases the session's binding. The end of the client
   request that delivered a message does not end the stream. The connection carrying it uses gRPC
   keepalive probes at a 10s interval with a 5s timeout
@@ -258,15 +261,15 @@ connection.
   (§28.5.3 `CH-MSGSOCK` **Timing.**). The coordinating replica reports a stream failure with the failure reason
   `runtime_crash` whether or not a message is outstanding. The
   [§7.3](07_session-lifecycle.md#73-retry-and-resume) classifier selects the session's next state, and on that
-  transition the replica releases the session's binding. A pod serving one session is released with the
-  `failed` disposition ([§6.2](06_warm-pod-model.md#62-pod-state-machine) "Pod crash during an active
+  transition the replica releases the session's binding. A pod serving one session is released
+  ([§6.2](06_warm-pod-model.md#62-pod-state-machine) "Pod crash during an active
   session"), and on a pod serving concurrent sessions only the session's slot is released, which counts toward
   the whole-pod replacement trigger as the
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Failure isolation:**
-  bullet states. A session the classifier moves to `resume_pending` is re-attached on a replacement pod
-  from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, and reaches
-  `awaiting_client_action` when that window elapses
-  ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+  bullet states. A session the classifier moves to `resume_pending` is restored onto a replacement pod by
+  the resume driver, or reaches `awaiting_client_action` when its `maxResumeWindowSeconds` cap elapses
+  ([§6.2](06_warm-pod-model.md#62-pod-state-machine) **`resume_pending` wall-clock cap:**,
+  [§7.2](07_session-lifecycle.md#72-interactive-session-model),
   [§7.3](07_session-lifecycle.md#73-retry-and-resume)). A stream that ends with `UNAVAILABLE`
   produces no stream-failure report, and the replica discards the cached stream. The specification does not
   state how the gateway distinguishes a lost pod from a partitioned one on this channel, so a single stream's
@@ -292,8 +295,9 @@ connection.
   ([§4.7](04_system-components.md#47-runtime-adapter)). An upload retry that outlives its grant's expiry
   requests a fresh grant for the same chunk index on the open stream, and the adapter reports a
   retry-exhausted failure on the stream ([§4.4](04_system-components.md#44-event--checkpoint-store)).
-- **Preconditions.** The generation stamp and the fence acknowledgement that govern every gateway-to-pod
-  RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The adapter's pod-level operation lock
+- **Preconditions.** The generation stamp the pod validates on every gateway-to-pod RPC
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) and the
+  [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol. The adapter's pod-level operation lock
   must be free or must promote this checkpoint from its queue
   ([§4.7](04_system-components.md#47-runtime-adapter)). On the eviction path the agent pod cannot open the
   stream itself: it signals its coordinating replica on `CH-ADAPTEREVENTS`, and that replica drives the
@@ -338,18 +342,15 @@ connection.
   fence for one session does not change the generation the pod holds for another
   ([§4.7](04_system-components.md#47-runtime-adapter),
   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
-- **Preconditions.** The acquiring replica reads the session row, then increments
-  `coordination_generation` with a compare-and-swap that returns the replica's local generation stamp,
-  before it sends the fence. The fence is itself the hard precondition for every other operational RPC to
-  the pod ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
-  [§4.7](04_system-components.md#47-runtime-adapter)).
+- **Preconditions.** [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) steps 0 to 2
+  state when the fence is sent and the RPCs it gates ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Timing.** A 5-second deadline, hard-coded and not configurable
   ([§4.7](04_system-components.md#47-runtime-adapter),
   [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). On failure or timeout the new
   coordinator retries the same generation value up to 3 attempts with 1-second backoff; when the retries
   are exhausted it relinquishes the lease and backs off with jittered delay from 2s to a 16s maximum before
   reconsidering coordination ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
-- **Exclusivity.** One coordinating replica per session, established by this channel. The guard is the
+- **Exclusivity.** One coordinating replica per session, announced to a bound pod by this channel. The guard is the
   session-coordination lease `REG-COORDLEASE` with its Postgres fallback, and the acknowledgement of this
   fence is what closes the window in which RPCs carrying the prior generation are still accepted
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
@@ -375,8 +376,9 @@ connection.
   the held pod. The acknowledgement is not carried on this channel: the adapter replies with
   `CheckpointBarrierAck`, carrying `barrier_id` and the gateway-minted `checkpoint_ref`, on
   `CH-ADAPTEREVENTS`, whose card is in §28.5.2 ([§4.7](04_system-components.md#47-runtime-adapter)).
-- **Preconditions.** The generation stamp and the fence acknowledgement that govern every gateway-to-pod
-  RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The barrier is dispatched during the
+- **Preconditions.** The generation stamp the pod validates on every gateway-to-pod RPC
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) and the
+  [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol. The barrier is dispatched during the
   gateway replica's graceful drain ([§4.7](04_system-components.md#47-runtime-adapter),
   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 - **Timing.** A single wall-clock deadline across all the pods a draining replica coordinates,
@@ -575,7 +577,7 @@ the connection it runs on. The runtime is the dialling participant on every chan
   messages and tool-call instructions and receives responses, and the agent cannot initiate an arbitrary
   request to the adapter ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Timing.** The adapter sends a periodic `heartbeat`, and a runtime that does not answer with
-  `heartbeat_ack` within 10 seconds is treated as hung: the adapter ends that session's stream, and the runtime process receives no signal ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")
+  `heartbeat_ack` within 10 seconds is treated as hung for the session the heartbeat names: the adapter ends the session's `Attach` stream when one is open and refuses each later `Attach` for the session until its registry entry is removed, and the runtime process receives no signal ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not
   state the heartbeat interval. A runtime that keeps per-session context or has opened `CH-RUNTIMEOPS` answers `session_start` with `session_started` (**Outbound: `session_started`** rule 1), and the adapter's wait for that answer is bounded as **Outbound: `session_started`** states. `session_end` is not acknowledged and carries no deadline. `session_start` and `session_end` each travel in order ahead of or behind the session's other frames on the same connection or loop. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
   is sent SIGTERM and then SIGKILL 10 seconds later
@@ -606,7 +608,7 @@ envelope those messages carry. Both are stated below.
 
 **Message schemas**
 
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbeat`, and `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Runtimes ignore a frame whose type they do not recognize. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod.
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbeat`, and `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Runtimes ignore a frame whose type they do not recognize. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod, other than `heartbeat_ack`, whose `sessionId` **Outbound: `heartbeat_ack`** governs.
 
 **Inbound: `message`**
 
@@ -627,10 +629,10 @@ Basic-level: read `type`, `id`, `input`, and `sessionId`. Ignore all other field
 **Inbound: `heartbeat`**
 
 ```json
-{ "type": "heartbeat", "ts": 1717430400 }
+{ "type": "heartbeat", "ts": 1717430400, "sessionId": "sess_abc123" }
 ```
 
-Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and escalates as the `CH-MSGSOCK` **Timing.** bullet states.
+The adapter writes one `heartbeat` per interval for each session, from the write of the session's `session_start` until the adapter writes the session's `session_end` or its registry entry is removed ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), whether or not an `Attach` stream for the session is open, and names that session in `sessionId`. Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and escalates as the `CH-MSGSOCK` **Timing.** bullet states.
 
 **Inbound: `session_start`**
 
@@ -868,8 +870,16 @@ All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined t
 **Outbound: `heartbeat_ack`**
 
 ```json
-{ "type": "heartbeat_ack" }
+{ "type": "heartbeat_ack", "sessionId": "sess_abc123", "busy": true }
 ```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"heartbeat_ack"`. |
+| `sessionId` | `string` | When `busy` is true | The `sessionId` of the `heartbeat` the frame answers. |
+| `busy` | `boolean` | No | True while the runtime does work for the named session, as the rule below states. False or absent otherwise. |
+
+A runtime MUST report `busy: true` for a session while it does any work for that session: while it handles a `message` for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. The adapter attributes and counts a `busy: true` acknowledgement as [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) **Session seal.** states. A `heartbeat_ack` that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod.
 
 **Outbound: `session_started`**
 
@@ -943,8 +953,9 @@ The frame is available at all integration levels.
 
 **Addressing.** The adapter resolves the frame against the Attach stream that delivered it. This rule
 governs the session-scoped frame types alone, `message`, `tool_result`, `response`, `tool_call`,
-`set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which carry no
-per-session identifier. It does not reach `session_start`, `session_end`, or `session_started`, which the
+`set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which are
+protocol-level frames outside this rule; their `sessionId` attributes a `busy` report as
+**Outbound: `heartbeat_ack`** states. It does not reach `session_start`, `session_end`, or `session_started`, which the
 adapter writes or consumes itself and no Attach stream delivers. A stream is bound to a session and to
 that session's slot, on every pod. The adapter handles a session-scoped frame if and only if both of the
 following hold.
@@ -1011,7 +1022,7 @@ Any non-zero exit during an active session causes the gateway to report a sessio
    {"type": "response", "sessionId": "sess_abc123", "output": [{"type": "text", "inline": "Echo: Hello"}]}
 6. Adapter reads line from stdout, delivers response to gateway.
 7. [Heartbeat interval] Adapter writes:
-   {"type": "heartbeat", "ts": 1717430410}
+   {"type": "heartbeat", "ts": 1717430410, "sessionId": "sess_abc123"}
 8. Agent writes:
    {"type": "heartbeat_ack"}
 9. The session ends. Adapter writes:
@@ -1207,7 +1218,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   | `checkpoint_complete`       | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                        | Confirms snapshot upload result; the named session's work may resume.       |
   | `interrupt_request`         | Adapter → Runtime  | `type`, `sessionId` (string), `interruptId` (string), `deadlineMs` (integer)                                                                                       | Requests the named session's work reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
   | `credentials_rotated`       | Adapter → Runtime  | `type`, `sessionId` (string), `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/slots/{sessionId}/credentials.json`), `leaseId` (string) | New credentials written for the named session; runtime must rebind that session and reply with `credentials_acknowledged`. |
-  | `deadline_approaching`      | Adapter → Runtime  | `type`, `sessionId` (string), `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)        | Advance warning before the named session's forced termination. Runtime should wrap up that session's work. A runtime writes no `response` for the session in reply to this frame when no `message` for the session is in flight. |
+  | `deadline_approaching`      | Adapter → Runtime  | `type`, `sessionId` (string), `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"`)        | Advance warning before the named session's forced termination. Runtime should wrap up that session's work. A runtime writes no `response` for the session in reply to this frame when no `message` for the session is in flight. |
   | `files_updated`             | Adapter → Runtime  | `type`, `sessionId` (string)                                                                                                                                       | A mid-session upload has promoted new files into the named session's workspace ([§7.4](07_session-lifecycle.md#74-upload-safety)). Sent after the atomic overlay completes; one-way, with no acknowledgement. |
   | `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
   | `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
@@ -1408,14 +1419,10 @@ the address that connection is reached at (§28.3).
 ```
 
 The conversation the connection carries is the internal gRPC `ForwardMessage` RPC used for cross-replica
-message routing. A message carrying `delivery: immediate` that lands on a replica that is not the
-session's coordinator is forwarded to that session's coordinator, which is identified through the
-coordination lease. The coordinator executes the atomic resume-and-deliver sequence when the session
-still holds its pod, and the `suspended` to `resume_pending` transition with the message held in the
-session inbox when the pod has been released. When the coordinator is
-unreachable the forwarding replica falls back to inbox buffering with a `queued` delivery receipt status
-rather than dropping the message ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
-[§10.1](10_gateway-internals.md#101-horizontal-scaling)). §28.3 records that this cross-replica message
+message routing. A replica that is not the session's coordinator forwards a message to the coordinator, which it
+identifies through the coordination lease, over this connection in the cases the off-holder matrix of
+[§29.3](29_communication-scenarios.md#293-interactive-message-send) states, with the fallback each row
+states when the coordinator is unreachable. §28.3 records that this cross-replica message
 routing is not implemented and that the status is carried as an `ABSENT` claim-register row per §28.4.
 This subsection gains a card at the point the §28.3 channel register places a channel on this boundary.
 
@@ -1803,7 +1810,8 @@ the position here as well.
 session-coordination lease `REG-COORDLEASE`, which admits one holder per tenant and session (§28.3),
 together with the `coordination_generation` stamp the pod validates on every gateway-to-pod RPC
 ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). `CH-FENCE` establishes the constraint: a replica
-that has just acquired coordination must receive a successful fence acknowledgement before it sends any
+that has just acquired coordination completes the
+[§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it sends any
 operational RPC, and from the fence onward the pod rejects every RPC carrying a generation older than the
 one it holds for that session ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
 [§4.7](04_system-components.md#47-runtime-adapter)).
@@ -1879,7 +1887,7 @@ holds a connection to the pod (§28.5.2, §28.3).
 
 **Units carried outside the channel register.** The exclusion primitives themselves are register entries and
 link lifetimes rather than channels. `REG-COORDLEASE` admits one holder per tenant and session,
-`REG-SLOTCOUNT` is an atomic per-pod counter that ceilings concurrent slots, and `REG-CLAIM` is a
+`REG-SLOTCOUNT` ceilings a pod's concurrent slots, and `REG-CLAIM` is a
 cluster-wide per-pod acquisition on first claim, while `REG-COORDMIRROR` is a projection rather than an
 exclusion primitive (§28.3). At the link level, `LNK-POD-GRPC` carries one connection per gateway replica
 per pod and `LNK-GWCONTROL` one connection per pod process to one replica, so the per-replica unit is a
@@ -1938,9 +1946,9 @@ it admits is named in that column as a scoping constraint (§28.6).
 
 | Channel | Peer absent | Transport fails mid-stream | Holder of the exclusivity constraint changes | Operator observable |
 |:--|:--|:--|:--|:--|
-| `CH-ATTACH` | Loss of the coordinating replica is detected by the pod's gRPC transport within 15 seconds, after which the adapter enters hold state and rejects every inbound RPC other than `CoordinatorFence` with `UNAVAILABLE` and a `coordinator_hold` error detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1). A stream that ends with `UNAVAILABLE` is discarded without a stream-failure report, and the specification does not state how the gateway distinguishes a lost pod from a partitioned one on this channel (§28.5.1). On a pod serving concurrent sessions, the gateway's reaction to a lost connection is the one that [§10.1.4](10_gateway-internals.md#1014-coordinator-loss-detection-and-hold-state) **Whole-pod connection loss when `maxConcurrentSessions > 1`.** states, and that reaction is not a stream-failure report. The gateway does not redial `Attach` after a stream failure, and a later message delivery opens a new stream only while the replica still holds the session's binding (§28.5.1) | A stream the gateway did not end that ends with `DEADLINE_EXCEEDED`, which the adapter uses when the runtime misses its heartbeat ack, or with `INTERNAL` is a stream failure (§28.5.1). The coordinating replica reports it with the failure reason `runtime_crash` whether or not a message is outstanding. The session's next state follows the [§7.3](07_session-lifecycle.md#73-retry-and-resume) resume flow. The replica releases the session's binding (§28.5.1). A stream that closes when the runtime's output ends, or that ends with any other status, is discarded without a report (§28.5.1) | The constraint is one coordinating replica per session, guarded by `REG-COORDLEASE` and the `coordination_generation` stamp (§28.5.1, §28.3). A replica that receives a generation-stale rejection cancels all in-flight RPCs for the session without retrying and discards its cached in-memory streams, and the acquiring replica may not send this RPC until its `CH-FENCE` acknowledgement returns ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | The session state transitions `resume_pending`, `awaiting_client_action`, and `failed` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), [§7.3](07_session-lifecycle.md#73-retry-and-resume)), `lenny_slot_failure_total` for a failed slot on a pod serving concurrent sessions ([§16.1](16_observability.md#161-metrics)), and the `coordinator_hold` error detail on a rejected RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification names no metric or alert scoped to this channel, and names no retirement-counter reason for a `failed`-disposition retirement of a pod serving one session |
-| `CH-CHECKPOINT` | While the adapter is in hold state the RPC is rejected with `UNAVAILABLE` and a `coordinator_hold` error detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). On the eviction path the agent pod cannot open the stream itself and signals its coordinating replica on `CH-ADAPTEREVENTS`; when that replica is unreachable no replica drives the eviction checkpoint until the coordination lease lapses and a new holder has fenced the pod through the [§10.1](10_gateway-internals.md#101-horizontal-scaling) TTL-driven coordinator handoff, at which point the new holder drives it under its held lease ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.1) | An attempt that ends before every declared byte is confirmed leaves a manifest row flagged `partial = true`, which is not a valid checkpoint. A deadline fire on a drain, preStop, or barrier path retains its chunks as a recovery aid the resume path reassembles, while a stream truncation, an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the gateway sweeps the chunk prefix. When all upload retries fail on a non-eviction checkpoint the adapter resumes the agent immediately and the attempt is discarded ([§4.4](04_system-components.md#44-event--checkpoint-store)) | The constraint is one coordinating replica per session, guarded by `REG-COORDLEASE` and the generation stamp, above a pod-level operation lock that serializes `Checkpoint` and `Interrupt` across the pod's slots (§28.5.1, [§4.7](04_system-components.md#47-runtime-adapter), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). A stream carrying a generation other than the one the pod holds for the session the stream names is rejected on the stamp, a session for which the pod holds no fenced generation has no recorded value to match, and the new holder must complete its fence before it opens one ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | The manifest row flagged `partial = true`, and the `lenny_checkpoint_storage_failure_total` counter the gateway increments when all upload retries fail ([§4.4](04_system-components.md#44-event--checkpoint-store)) |
-| `CH-FENCE` | On failure or timeout the new coordinator retries the same generation value up to 3 attempts with 1-second backoff, and when the retries are exhausted it relinquishes the lease and backs off with jittered delay from 2s to a 16s maximum before reconsidering coordination. When no successful fence arrives at the adapter within `coordinatorHoldTimeoutSeconds`, default 120s, the adapter begins graceful session termination with reason `coordinator_lost` ([§10.1](10_gateway-internals.md#101-horizontal-scaling), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)) | The RPC carries a 5-second deadline that is hard-coded and not configurable, and a failure or a timeout takes the retry and relinquish path above ([§4.7](04_system-components.md#47-runtime-adapter), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification states no separate mid-stream recovery policy for this announcement beyond that deadline and its retries | This channel is what changes the holder. The acknowledgement closes the window in which RPCs carrying the prior generation are still accepted, and it is the one channel the adapter still accepts in hold state and the only exit from it. When the announced generation exceeds that session's last fenced generation by more than one, the adapter cancels and discards the in-flight RPCs received for that session after that session's last fenced generation, resets the transient state that session accumulated since it, logs a `coordinator_generation_gap` event, and acknowledges the fence normally ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1) | The `coordinator_generation_gap` event, and the graceful session termination carrying reason `coordinator_lost` at the hold-timeout expiry ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) |
+| `CH-ATTACH` | Loss of the coordinating replica is detected by the pod's gRPC transport within 15 seconds, after which the adapter enters hold state and rejects every inbound RPC other than `CoordinatorFence` with `UNAVAILABLE` and a `coordinator_hold` error detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1). A stream that ends with `UNAVAILABLE` is discarded without a stream-failure report, and the specification does not state how the gateway distinguishes a lost pod from a partitioned one on this channel (§28.5.1). On a pod serving concurrent sessions, the gateway's reaction to a lost connection is the one that [§10.1.4](10_gateway-internals.md#1014-coordinator-loss-detection-and-hold-state) **Whole-pod connection loss when `maxConcurrentSessions > 1`.** states, and that reaction is not a stream-failure report. The gateway does not redial `Attach` after a stream failure, and a later message delivery opens a new stream only while the replica still holds the session's binding (§28.5.1) | A stream the gateway did not end that ends with `DEADLINE_EXCEEDED`, which the adapter uses when the runtime misses its heartbeat ack, or with `INTERNAL` is a stream failure (§28.5.1). The coordinating replica reports it with the failure reason `runtime_crash` whether or not a message is outstanding. The session's next state follows the [§7.3](07_session-lifecycle.md#73-retry-and-resume) resume flow. The replica releases the session's binding (§28.5.1). A stream that closes when the runtime's output ends, or that ends with any other status, is discarded without a report (§28.5.1) | The constraint is one coordinating replica per session, guarded by `REG-COORDLEASE` and the `coordination_generation` stamp (§28.5.1, §28.3). A replica that receives a generation-stale rejection cancels all in-flight RPCs for the session without retrying and discards its cached in-memory streams, and the acquiring replica completes the [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it sends this RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | The session state transitions `resume_pending`, `awaiting_client_action`, and `failed` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), [§7.3](07_session-lifecycle.md#73-retry-and-resume)), `lenny_slot_failure_total` for a failed slot on a pod serving concurrent sessions ([§16.1](16_observability.md#161-metrics)), and the `coordinator_hold` error detail on a rejected RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification names no metric or alert scoped to this channel, and names no retirement-counter reason for the retirement of a pod serving one session whose session failed or crashed |
+| `CH-CHECKPOINT` | While the adapter is in hold state the RPC is rejected with `UNAVAILABLE` and a `coordinator_hold` error detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). On the eviction path the agent pod cannot open the stream itself and signals its coordinating replica on `CH-ADAPTEREVENTS`; when that replica is unreachable no replica drives the eviction checkpoint until the coordination lease lapses and a new holder has fenced the pod through the [§10.1](10_gateway-internals.md#101-horizontal-scaling) TTL-driven coordinator handoff, at which point the new holder drives it under its held lease ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.1) | An attempt that ends before every declared byte is confirmed leaves a manifest row flagged `partial = true`, which is not a valid checkpoint. A deadline fire on a drain, preStop, or barrier path retains its chunks as a recovery aid the resume path reassembles, while a stream truncation, an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the gateway sweeps the chunk prefix. When all upload retries fail on a non-eviction checkpoint the adapter resumes the agent immediately and the attempt is discarded ([§4.4](04_system-components.md#44-event--checkpoint-store)) | The constraint is one coordinating replica per session, guarded by `REG-COORDLEASE` and the generation stamp, above a pod-level operation lock that serializes `Checkpoint` and `Interrupt` across the pod's slots (§28.5.1, [§4.7](04_system-components.md#47-runtime-adapter), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). A stream carrying a generation other than the one the pod holds for the session the stream names is rejected on the stamp, a session for which the pod holds no fenced generation has no recorded value to match, and the new holder completes the [§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) handoff protocol before it opens one | The manifest row flagged `partial = true`, and the `lenny_checkpoint_storage_failure_total` counter the gateway increments when all upload retries fail ([§4.4](04_system-components.md#44-event--checkpoint-store)) |
+| `CH-FENCE` | On failure or timeout the new coordinator retries the same generation value up to 3 attempts with 1-second backoff, and when the retries are exhausted it relinquishes the lease and backs off with jittered delay from 2s to a 16s maximum before reconsidering coordination. When no successful fence arrives at the adapter within `coordinatorHoldTimeoutSeconds`, default 120s, the adapter begins graceful session termination with reason `coordinator_lost` ([§10.1](10_gateway-internals.md#101-horizontal-scaling), [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)) | The RPC carries a 5-second deadline that is hard-coded and not configurable, and a failure or a timeout takes the retry and relinquish path above ([§4.7](04_system-components.md#47-runtime-adapter), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification states no separate mid-stream recovery policy for this announcement beyond that deadline and its retries | This channel announces the holder change to a bound pod ([§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) step 2). The acknowledgement closes the window in which RPCs carrying the prior generation are still accepted, and it is the one channel the adapter still accepts in hold state and the only exit from it. When the announced generation exceeds that session's last fenced generation by more than one, the adapter cancels and discards the in-flight RPCs received for that session after that session's last fenced generation, resets the transient state that session accumulated since it, logs a `coordinator_generation_gap` event, and acknowledges the fence normally ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1) | The `coordinator_generation_gap` event, and the graceful session termination carrying reason `coordinator_lost` at the hold-timeout expiry ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) |
 | `CH-BARRIER` | While the adapter is in hold state the RPC is rejected with `UNAVAILABLE` and a `coordinator_hold` error detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The acknowledgement travels on `CH-ADAPTEREVENTS` rather than on this channel, so an adapter that never answers is bounded by the gateway-side `checkpointBarrierAckTimeoutSeconds` deadline, default 90s, taken as one wall-clock deadline across all the pods a draining replica coordinates ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.2) | When the deadline fires before every declared byte of the barrier-driven checkpoint is confirmed and chunks were already committed for the session, the gateway finalises the partial manifest with `manifest_reason = "timeout"` and retains that row and its chunks as a recovery aid. When no chunks were committed, no intent row exists, or the read of that row fails, the gateway soft-deletes any such row and falls back to the session's last successful periodic checkpoint ([§4.4](04_system-components.md#44-event--checkpoint-store), [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state what the adapter does with a held quiescence whose barrier is never followed by a `Checkpoint` stream (§28.5.1) | The constraint is one coordinating replica per session on the same `REG-COORDLEASE` lease and generation stamp as the other gateway-to-pod channels, and the barrier carries that generation in its own message, so for a session bound to the pod the pod rejects the barrier when it holds a generation for the session the barrier names that the barrier does not carry, and otherwise accepts it ([§4.7](04_system-components.md#47-runtime-adapter), [§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1). The specification states no separate pod-level barrier lock beyond the operation lock (§28.5.1) | The partial checkpoint manifest carrying `manifest_reason = "timeout"` ([§4.4](04_system-components.md#44-event--checkpoint-store)), the `lenny_checkpoint_barrier_ack_total` counter and its `timeout` and `partial_captured` outcomes, the `lenny_checkpoint_barrier_ack_duration_seconds` histogram, and the `lenny_prestop_barrier_target_source_total` counter emitted once per preStop `CheckpointBarrier` fan-out ([§16.1](16_observability.md#161-metrics), [§10.1](10_gateway-internals.md#101-horizontal-scaling)) |
 | `CH-PODHEALTH` | A pod whose health check has not passed is not marked `idle` and so is not offered to a session ([§4.7](04_system-components.md#47-runtime-adapter)) | Loss of the underlying connection is detected by the gRPC transport within 15 seconds and puts the adapter into hold state ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state what the gateway does with a pod whose health check fails after the pod has been marked `idle` (§28.5.1) | The specification states no exclusivity constraint on this channel and names no enforcing guard, so it states nothing about a change of holder (§28.5.1, §28.6) | The pod's `idle` marking withheld, so the pod is not offered to a session ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no probe interval, deadline, failure threshold, metric, or alert for this channel (§28.5.1) |
 | `CH-ADAPTEREVENTS` | When the coordinating replica has itself crashed the adapter logs the delivery failure and writes the post-mortem to local disk, and the orphan session reconciler detects the terminated pod within one 60-second reconcile interval and forcibly transitions the session to `failed` with reason `orphan_pod_terminated`, a worst-case 60-second detection delay against a delivered `AdapterTerminating` ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | A stream close is a terminal signal in its own right on the delegation path: the gateway waits for `FINAL_USAGE_REPORT` or for the stream to close, whichever comes first, and when neither occurs within the usage quiescence timeout it proceeds with the last known usage counter and emits a `delegation.budget_return_usage_lag` warning event ([§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)). Loss of the underlying connection is detected within 15 seconds and puts the adapter into hold state ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry or buffering policy for an event other than `AdapterTerminating` whose delivery fails (§28.5.2) | The specification states no exclusivity constraint on the channel and names no guard that enforces one (§28.5.2, §28.6). The events are addressed to the session's coordinating replica, which is the holder of `REG-COORDLEASE`, and while the adapter is in hold state it originates no new operational messages until either a new coordinator fences it or `coordinatorHoldTimeoutSeconds` expires and it sends the final `AdapterTerminating` ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The `LNK-POD-GRPC` row states one connection per gateway replica per pod, so the specification does not state which replica's connection carries an event when more than one replica holds a connection to the pod (§28.3, §28.5.2) | The session forced to `failed` with reason `orphan_pod_terminated` ([§10.1](10_gateway-internals.md#101-horizontal-scaling)), and the `delegation.budget_return_usage_lag` warning event on the delegation path ([§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)) |

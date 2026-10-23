@@ -85,7 +85,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 	f := w.f
 	addr := f.addr
 	multiTenant := f.multiTenant
-	tenantIDClaim := f.tenantIDClaim
 	adminSATokenAudience := f.adminSATokenAudience
 	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
@@ -188,9 +187,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		healthAgg.Register(backends.Postgres(w.pgPool, "postgres"))
 		readinessDeps = append(readinessDeps, "postgres")
 	}
-	if w.redisClient != nil {
-		healthAgg.Register(backends.Redis(w.redisClient, "redis"))
-	}
+	// §12.4: the base client plus each distinct dedicated concern
+	// client, so a split concern's outage is visible. F-12.4.30.
+	registerRedisHealth(healthAgg, w.redisClient, w.concernRedis)
 	if w.breakerCache != nil {
 		healthAgg.Register(backends.CircuitBreakerCache(w.breakerCache, "circuit-breaker-cache"))
 	}
@@ -424,7 +423,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			redisSessions := playground.NewRedisSessionStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub)).WithMetrics(pgMetrics)
 			pgSessions = redisSessions
 			// §27.3.1 / §27.6 pub/sub: a single PSUBSCRIBE on
-			// t:*:pg:revocations subscribes this replica to every tenant's
+			// t:{*}:pg:revocations subscribes this replica to every tenant's
 			// revocation channel — including tenants provisioned after
 			// gateway start — so the auth hot path can short-circuit the
 			// Redis GET on a cache hit and the §27.8 propagation histogram
@@ -454,7 +453,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
-		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
+		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
 		// bounded by min(runtime, playground) on both axes, and record the
@@ -685,8 +684,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	var handler http.Handler = mux
 
 	// The §11.2 per-tenant concurrent-session quota is enforced inside
-	// the session-creation handlers (sessionserver.requireSessionQuota)
-	// against each tenant's configured MaxConcurrentSessions.
+	// the session-creation handlers (sessionserver.requireSessionQuota),
+	// and on every resume of a suspended session, against each tenant's
+	// configured MaxConcurrentSessions. The quota counts non-terminal
+	// sessions other than suspended ones.
 
 	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).
@@ -842,10 +843,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 	})
 
-	// Auth next-to-outermost. AllowDevRoles is only honoured when the
-	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
-	// deployments leave it off so X-Lenny-Roles cannot self-grant
-	// platform-admin.
+	// Auth next-to-outermost. The dev-header transport (AllowDevHeaders,
+	// AllowDevRoles) is honoured only when the dev flag is set
+	// (LENNY_DEV_MODE=true or --dev-mode). Outside dev mode the middleware
+	// requires a verified bearer on every route except the spec's public
+	// routes and deletes any client-sent X-Lenny-* identity header, so a
+	// client can neither self-grant platform-admin through X-Lenny-Roles
+	// nor name a tenant through X-Lenny-Tenant-ID. See
+	// applyAuthPostureOptions. F-10.2.21.
 	//
 	// The §10.2 Bearer path is verified with the bearer verifier built
 	// above: the in-process Token Service signer, so a token minted by
@@ -854,14 +859,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
 	// verifier.
 	authOpts := authmw.Options{
-		MultiTenant: *multiTenant,
-		// spec: §10.2 — operator-configurable OIDC tenant claim
-		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
-		TenantClaimName: *tenantIDClaim,
-		AllowDevHeaders: true,
-		AllowDevRoles:   *devMode,
-		Verifier:        w.bearerVerifier,
-		Revocations:     revProp,
+		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
+		// IdP-key members read the configured `auth.tenantIdClaim`
+		// (embeddedHMACVerifier) and the Token Service member keeps
+		// `tenant_id`. F-10.2.9.
+		Verifier:    w.bearerVerifier,
+		Revocations: revProp,
 		// §27.6 / §27.3.1 — authoritative per-request
 		// revocation check for origin=playground bearers; nil (and thus a
 		// no-op) when the playground is disabled. F-27.6.3 / F-27.3.1.
@@ -908,20 +911,15 @@ func (w *gatewayWiring) buildHTTPSurface(
 	if w.pgPool != nil {
 		authOpts.RevocationFreshness = revCache
 	}
-	if !*multiTenant {
-		// Even in single-tenant mode, dev-header callers carry the
-		// tenant header. Flip to multi-tenant with a permissive
-		// registry so the header round-trips.
-		authOpts.MultiTenant = true
-		authOpts.Registry = permissiveRegistry{}
-	} else {
-		// spec: §10.2 — in multi-tenant mode, an
-		// unregistered `tenant_id` claim is a hard 403 TENANT_NOT_FOUND.
-		// The bearer chain consults the real tenantstore so unprovisioned
-		// callers cannot ride a signature-valid token into the platform.
-		// F-10.2.1.
-		authOpts.Registry = bearerTenantRegistry{store: w.tenants}
-	}
+	// spec: §10.2 — a single-tenant gateway ignores the tenant claim and
+	// serves `default`; a multi-tenant gateway refuses an unregistered
+	// tenant with 403 TENANT_NOT_FOUND. See applyTenantAuthOptions for the
+	// dev-mode dev-header exception. F-10.2.1, T-10.2.11.
+	applyTenantAuthOptions(&authOpts, *multiTenant, *devMode, w.tenants)
+	// spec: §10.2 — outside dev mode every non-public route requires a
+	// verified bearer and the X-Lenny-* identity headers are ignored.
+	// F-10.2.21.
+	applyAuthPostureOptions(&authOpts, *devMode)
 	handler = authmw.Wrap(handler, authOpts)
 
 	// §16.1 request metrics, wrapped before recovery so panics still

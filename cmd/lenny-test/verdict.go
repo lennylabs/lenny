@@ -152,7 +152,7 @@ func currentChangedPaths(since string) []string {
 	}
 	collect("status", "--porcelain")
 	if since != "" {
-		collect("diff", "--name-only", since+"...HEAD")
+		collect("diff", "--name-only", diffRange(since))
 	}
 	if len(seen) == 0 {
 		return nil

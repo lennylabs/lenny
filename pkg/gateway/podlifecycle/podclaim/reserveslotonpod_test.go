@@ -5,6 +5,9 @@ package podclaim_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,18 +22,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
-// activeSlots reads the pod's §5.2 Redis occupancy counter directly, so a
-// case can assert the counter's value without perturbing it.
+// activeSlots reads the cardinality of the pod's §5.2 slot set directly, so
+// a case can assert the occupancy without perturbing it.
 func activeSlots(t *testing.T, mr *miniredis.Miniredis, sandboxName string) string {
 	t.Helper()
-	key := "lenny:pod:" + sandboxName + ":active_slots"
+	return strconv.Itoa(len(slotMembers(t, mr, sandboxName)))
+}
+
+// slotMembers returns the sorted members of the pod's §5.2 slot set.
+func slotMembers(t *testing.T, mr *miniredis.Miniredis, sandboxName string) []string {
+	t.Helper()
+	key := "lenny:pod:{" + sandboxName + "}:active_slots"
 	if !mr.Exists(key) {
-		return "0"
+		return nil
 	}
-	v, err := mr.Get(key)
+	v, err := mr.Members(key)
 	if err != nil {
 		t.Fatalf("read %s: %v", key, err)
 	}
+	sort.Strings(v)
 	return v
 }
 
@@ -116,58 +126,53 @@ func TestReserveSlotOnPodReservesOnTheNamedPod_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: 5.2 (a reservation that fails retains no increment)
-// diagnosis: the tenant-label patch failed after Counter.Reserve had already
-// incremented the pod's occupancy and the increment was not undone. The
-// resume passes freshPod false, so a release guarded by `if freshPod` leaves
-// phantom occupancy that caps the pod's real capacity until a Redis restart.
-func TestReserveSlotOnPodReleasesTheCounterWhenTheTenantStampFails_spec_5_2(t *testing.T) {
-	claimer, c, mr := reserveOnPodFixture(t, func(body string) error {
-		if strings.Contains(body, "tenant-id") {
-			return errors.New("apiserver unreachable")
+// spec: 4.6.3 (SandboxClaim: a release that ends the occupancy without reuse), 5.2 (Slot assignment atomicity)
+// diagnosis: a reservation whose tenant or uptime stamp failed did not roll
+// its member back through the keyed release, or the rollback's disposition
+// was wrong. The rollback runs on a detached context after the attempt's
+// context is cancelled, removes the session's member, deletes the per-pod
+// claim only when that removal empties the set, and keeps the claim when a
+// sibling's member remains.
+func TestReserveSlotOnPodRollbackDisposesAtZeroOnly_spec_4_6_3(t *testing.T) {
+	for _, stamp := range []string{"tenant-id", "max-pod-uptime-seconds"} {
+		for _, sibling := range []bool{false, true} {
+			name := stamp + "/alone"
+			if sibling {
+				name = stamp + "/with sibling"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				claimer, c, mr := reserveOnPodFixture(t, func(body string) error {
+					if strings.Contains(body, stamp) {
+						cancel()
+						return errors.New("apiserver unreachable")
+					}
+					return nil
+				})
+				seedPerPodClaim(t, c, "sbx-1", "acme")
+				if sibling {
+					if _, _, err := claimer.Counter.Reserve(context.Background(), "sbx-1", "sib", 4); err != nil {
+						t.Fatalf("seed sibling: %v", err)
+					}
+				}
+				req := slotReq("sess-1", "acme", 4)
+				req.MaxPodUptimeSeconds = 3600
+				if _, err := claimer.ReserveSlotOnPod(ctx, "sbx-1", req); err == nil {
+					t.Fatal("ReserveSlotOnPod err = nil, want the stamp failure surfaced")
+				}
+				want := "[]"
+				if sibling {
+					want = "[sib]"
+				}
+				if got := fmt.Sprint(slotMembers(t, mr, "sbx-1")); got != want {
+					t.Errorf("slot members = %s, want %s (the rollback removes only the session's member)", got, want)
+				}
+				if exists := podClaimExists(t, c, "sbx-1"); exists != sibling {
+					t.Errorf("per-pod claim exists = %v, want %v: delete only when the rollback empties the set", exists, sibling)
+				}
+			})
 		}
-		return nil
-	})
-	seedPerPodClaim(t, c, "sbx-1", "acme")
-
-	req := slotReq("sess-1", "acme", 4)
-	req.MaxPodUptimeSeconds = 3600
-	if _, err := claimer.ReserveSlotOnPod(context.Background(), "sbx-1", req); err == nil {
-		t.Fatal("ReserveSlotOnPod err = nil, want the tenant-stamp failure surfaced")
-	}
-	if got := activeSlots(t, mr, "sbx-1"); got != "0" {
-		t.Errorf("active_slots = %s, want 0 (the increment must be released)", got)
-	}
-	if !podClaimExists(t, c, "sbx-1") {
-		t.Error("the per-pod claim was deleted; a non-fresh reservation did not create it and must not delete it")
-	}
-}
-
-// spec: 5.2 (a reservation that fails retains no increment)
-// diagnosis: the max-pod-uptime annotation patch failed after
-// Counter.Reserve had already incremented the pod's occupancy and the
-// increment was not undone. This branch runs after the tenant stamp, so an
-// implementation that drops the fresh-only guard on one branch only still
-// leaks here.
-func TestReserveSlotOnPodReleasesTheCounterWhenTheUptimeStampFails_spec_5_2(t *testing.T) {
-	claimer, c, mr := reserveOnPodFixture(t, func(body string) error {
-		if strings.Contains(body, "max-pod-uptime-seconds") {
-			return errors.New("apiserver unreachable")
-		}
-		return nil
-	})
-	seedPerPodClaim(t, c, "sbx-1", "acme")
-
-	req := slotReq("sess-1", "acme", 4)
-	req.MaxPodUptimeSeconds = 3600
-	if _, err := claimer.ReserveSlotOnPod(context.Background(), "sbx-1", req); err == nil {
-		t.Fatal("ReserveSlotOnPod err = nil, want the uptime-stamp failure surfaced")
-	}
-	if got := activeSlots(t, mr, "sbx-1"); got != "0" {
-		t.Errorf("active_slots = %s, want 0 (the increment must be released)", got)
-	}
-	if !podClaimExists(t, c, "sbx-1") {
-		t.Error("the per-pod claim was deleted; a non-fresh reservation did not create it and must not delete it")
 	}
 }
 
@@ -182,7 +187,7 @@ func TestReserveSlotOnPodReturnsErrNoConcurrentSlotAtTheBound_spec_5_2(t *testin
 	seedPerPodClaim(t, c, "sbx-1", "acme")
 	// Fill the pod to its bound of 2 with co-tenant occupancy.
 	for i := 0; i < 2; i++ {
-		if _, _, err := claimer.Counter.Reserve(context.Background(), "sbx-1", 2); err != nil {
+		if _, _, err := claimer.Counter.Reserve(context.Background(), "sbx-1", fmt.Sprintf("co-%d", i), 2); err != nil {
 			t.Fatalf("seed occupancy %d: %v", i, err)
 		}
 	}

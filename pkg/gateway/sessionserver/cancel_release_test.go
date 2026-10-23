@@ -55,6 +55,19 @@ func (e *cancelTrackingExecutor) dispositionOf(id string) (executor.Disposition,
 	return d, ok
 }
 
+// awaitDisposition waits for the session's release, which a cascade's
+// post-terminal hook runs on a goroutine, and returns what it recorded.
+func (e *cancelTrackingExecutor) awaitDisposition(id string) (executor.Disposition, bool) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d, ok := e.dispositionOf(id)
+		if ok || time.Now().After(deadline) {
+			return d, ok
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string) {
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -75,7 +88,7 @@ func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string)
 func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	store := memstore.New()
 	exec := newCancelTrackingExecutor()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 
 	// parent → child → grandchild, all running, default cancel_all cascade.
 	seedRunning(t, store, "p")
@@ -94,7 +107,7 @@ func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	// cancelled disposition (the parent via recordSessionCompleted, the
 	// descendants via the cascade).
 	for _, id := range []string{"p", "c1", "c2"} {
-		d, ok := exec.dispositionOf(id)
+		d, ok := exec.awaitDisposition(id)
 		if !ok || d != executor.DispositionCancelled {
 			t.Errorf("F-11.3.9: session %s released disposition = %q (present=%v), want cancelled", id, d, ok)
 		}
@@ -129,7 +142,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 	} {
 		store := memstore.New()
 		exec := newCancelTrackingExecutor()
-		srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
 		if err := store.Create(ctx, sess); err != nil {
@@ -149,78 +162,75 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 	}
 }
 
-// TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2 asserts the
-// single terminal funnel (recordSessionCompleted, reached via OnSessionTerminal)
-// records the §7.2 / §8.8 Terminated session-condition fact (TerminatedAt +
-// TerminatedReason) on the Postgres session row. The gateway writes no
-// Sandbox.status field for the terminal disposition — the WarmPoolController is
-// the sole writer of Sandbox.status (§4.6.3) — so the fact lives on the session
-// row and is read through the session API (§7.2). F-6.2.12.
+// TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2 asserts that a
+// terminal writer records the §7.2 / §8.8 Terminated session-condition fact
+// (TerminatedAt + TerminatedReason) on the session row in the same write that
+// sets the terminal state, for DELETE (cancelled) and POST /terminate
+// (completed). The gateway writes no Sandbox.status field for the terminal
+// disposition (§4.6.3), so the fact lives on the session row and is read
+// through the session API (§7.2). The post-terminal funnel stamps nothing
+// itself. F-6.2.12.
 func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
-		state      session.State
-		wantReason string
+		method, path string
+		state        session.State
+		wantReason   string
 	}{
-		{session.StateCompleted, "Completed"},
-		{session.StateFailed, "Failed"},
-		{session.StateCancelled, "Cancelled"},
-		{session.StateExpired, "Expired"},
+		{http.MethodDelete, "/v1/sessions/tc", session.StateCancelled, "Cancelled"},
+		{http.MethodPost, "/v1/sessions/tc/terminate", session.StateCompleted, "Completed"},
 	} {
 		store := memstore.New()
-		srv := sessionserver.New(store, sessionserver.Options{})
-		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		sess := sessionstore.Session{ID: "tc", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
-		if err := store.Create(ctx, sess); err != nil {
-			t.Fatalf("seed %s: %v", tc.state, err)
+		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+		seedRunning(t, store, "tc")
+
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body %s", tc.method, tc.path, rr.Code, rr.Body.String())
 		}
-
-		srv.OnSessionTerminal(ctx, session.StateRunning, sess)
-
 		row, err := store.Get(ctx, "acme", "tc")
 		if err != nil {
-			t.Fatalf("get %s: %v", tc.state, err)
+			t.Fatalf("get: %v", err)
 		}
-		if row.TerminatedAt.IsZero() {
-			t.Errorf("F-6.2.12: terminal %s did not stamp TerminatedAt on the row", tc.state)
-		}
-		if row.TerminatedReason != tc.wantReason {
-			t.Errorf("F-6.2.12: terminal %s TerminatedReason = %q, want %q", tc.state, row.TerminatedReason, tc.wantReason)
+		if row.State != tc.state || row.TerminatedAt.IsZero() || row.TerminatedReason != tc.wantReason {
+			t.Errorf("F-6.2.12: row after %s = %q at %v reason %q, want %q stamped with %q",
+				tc.path, row.State, row.TerminatedAt, row.TerminatedReason, tc.state, tc.wantReason)
 		}
 	}
 }
 
-// TestTerminalConditionStampIsIdempotent_spec_7_2 asserts a re-entrant terminal
-// funnel (a watchdog firing after a REST terminate already stamped the fact)
-// leaves the original TerminatedAt unchanged: the fact is stamped once and not
-// churned by a second pass. spec: §7.2 / §8.8.
+// TestTerminalConditionStampIsIdempotent_spec_7_2 asserts that the stamp is
+// written once: a second terminal pass through the funnel (a watchdog firing
+// after a REST terminate) leaves TerminatedAt and TerminatedReason unchanged,
+// because only the terminal write stamps them. spec: §7.2 / §8.8.
 func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	sess := sessionstore.Session{ID: "idem", TenantID: "acme", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now}
-	if err := store.Create(ctx, sess); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	seedRunning(t, store, "idem")
 
-	srv.OnSessionTerminal(ctx, session.StateRunning, sess)
+	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/idem", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
 	first, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after first: %v", err)
 	}
 	if first.TerminatedAt.IsZero() {
-		t.Fatalf("first terminal pass did not stamp TerminatedAt")
+		t.Fatalf("the DELETE did not stamp TerminatedAt")
 	}
 
-	// A second terminal pass (re-entrant funnel) must not move the stamp.
 	srv.OnSessionTerminal(ctx, session.StateRunning, first)
 	second, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after second: %v", err)
 	}
-	if !second.TerminatedAt.Equal(first.TerminatedAt) {
-		t.Errorf("re-entrant terminal funnel churned TerminatedAt: first=%v second=%v", first.TerminatedAt, second.TerminatedAt)
+	if !second.TerminatedAt.Equal(first.TerminatedAt) || second.TerminatedReason != first.TerminatedReason {
+		t.Errorf("re-entrant terminal funnel churned the stamp: first=%v/%q second=%v/%q",
+			first.TerminatedAt, first.TerminatedReason, second.TerminatedAt, second.TerminatedReason)
 	}
 }
 
@@ -231,7 +241,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testing.T) {
 	store := memstore.New()
 	exec := newCancelTrackingExecutor()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 
 	seedRunning(t, store, "p")
 	// c1 detaches, so its child gc must stay running and undrained.
@@ -254,7 +264,7 @@ func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testin
 	}
 
 	// c1 is cancelled+drained; gc (under the detach node) is neither.
-	if d, ok := exec.dispositionOf("c1"); !ok || d != executor.DispositionCancelled {
+	if d, ok := exec.awaitDisposition("c1"); !ok || d != executor.DispositionCancelled {
 		t.Errorf("F-11.3.9: c1 released = %q (present=%v), want cancelled", d, ok)
 	}
 	if _, ok := exec.dispositionOf("gc"); ok {

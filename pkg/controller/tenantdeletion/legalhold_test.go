@@ -192,19 +192,26 @@ func TestPhase35NilEnumeratorAdvances_spec_12_8_878(t *testing.T) {
 	}
 }
 
-func TestLifecycleCompletesWithOnlyRequiredSeams_spec_12_8_865(t *testing.T) {
-	// The gateway-hosted posture wires only the required Eraser + Receipts
-	// (+ KMS); Disabler, Terminator, Revoker, Cleaner, and LegalHolds are
-	// nil. The lifecycle must still run to completion.
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain)
+func TestLifecycleCompletesWithOnlyRequiredSeamsTerminatorRevokerEraserReceipts_spec_12_8(t *testing.T) {
+	// The required seams are the Phase 2 Terminator, the Phase 3 Revoker,
+	// the Phase 4 Eraser, and the Phase 6 Receipts (plus KMS here);
+	// Disabler, Cleaner, and LegalHolds are nil. The lifecycle must still
+	// run to completion, and the Phase 2 drain and the Phase 3 revocation
+	// each run exactly once.
 	seed := bytes.Repeat([]byte{0x5a}, kms.DEKSize)
 	local, _ := kms.NewLocal(seed)
 	eraser := &fakeEraser{counts: map[string]int{"SessionStore": 3}}
 	receipts := &fakeReceipts{}
+	terminator := &fakeAction{}
+	revoker := &fakeAction{}
 	r := &tenantdeletion.Reconciler{
-		Jobs:     tenantdeletion.NewMemory(),
-		KMS:      tenantkms.New(tenantkms.NewLocalManager(local)),
-		Eraser:   eraser,
-		Receipts: receipts,
+		Jobs:       tenantdeletion.NewMemory(),
+		KMS:        tenantkms.New(tenantkms.NewLocalManager(local)),
+		Terminator: terminator,
+		Revoker:    revoker,
+		Eraser:     eraser,
+		Receipts:   receipts,
 	}
 	ctx := context.Background()
 	if err := r.Start(ctx, "acme", "T3"); err != nil {
@@ -216,6 +223,12 @@ func TestLifecycleCompletesWithOnlyRequiredSeams_spec_12_8_865(t *testing.T) {
 	}
 	if eraser.calls != 1 {
 		t.Errorf("DeleteByTenant calls = %d, want 1", eraser.calls)
+	}
+	if terminator.calls != 1 {
+		t.Errorf("TerminateTenantSessions calls = %d, want 1", terminator.calls)
+	}
+	if revoker.calls != 1 {
+		t.Errorf("RevokeTenantCredentials calls = %d, want 1", revoker.calls)
 	}
 	if len(receipts.written) != 1 {
 		t.Errorf("receipts written = %d, want 1", len(receipts.written))
@@ -230,9 +243,11 @@ func TestNilKMST4TenantCompletesWithoutDestroy_spec_12_5_301(t *testing.T) {
 	eraser := &fakeEraser{counts: map[string]int{}}
 	receipts := &fakeReceipts{}
 	r := &tenantdeletion.Reconciler{
-		Jobs:     tenantdeletion.NewMemory(),
-		Eraser:   eraser,
-		Receipts: receipts,
+		Jobs:       tenantdeletion.NewMemory(),
+		Terminator: &fakeAction{},
+		Revoker:    &fakeAction{},
+		Eraser:     eraser,
+		Receipts:   receipts,
 	}
 	ctx := context.Background()
 	if err := r.Start(ctx, "acme", tenantkms.WorkspaceTierT4); err != nil {

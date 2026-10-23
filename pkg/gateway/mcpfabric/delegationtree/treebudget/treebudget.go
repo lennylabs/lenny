@@ -33,14 +33,21 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
-// DefaultTTL is the GC safety expiry refreshed on every reserve. The
-// counters are reconstructed from the Postgres checkpoint on Redis
-// recovery (§12.4), so the TTL only reclaims keys for trees
-// that vanished without a terminal offload. A long window keeps a
-// long-lived tree's counters alive between delegation hops.
-const DefaultTTL = 24 * time.Hour
+// DefaultTTL is the GC safety expiry of the delegation budget keys: 8 days,
+// one day longer than the default suspended-session lifetime
+// (gateway.maxSuspendedSessionSeconds, 604800 s), so a suspended tree's keys
+// outlive the tree. The reserve script arms the TTL only on a key that has
+// none, and the session server re-arms it with RearmTree on each transition
+// into or out of suspended. The counters are reconstructed from the Postgres
+// checkpoint on Redis recovery (§12.4), so the TTL only reclaims keys for
+// trees that vanished without a terminal offload. The value is the default
+// of the operator-tunable --delegation-budget-key-ttl-seconds.
+//
+// spec: §8.3 (Delegation Policy and Lease)
+const DefaultTTL = 8 * 24 * time.Hour
 
 // DefaultMaxTreeMemoryBytes is the §8.2 default cap on a delegation
 // tree's aggregate gateway memory footprint (2 MB). Every lease carries
@@ -459,6 +466,41 @@ func (s *Reserver) GrantTokenBudget(ctx context.Context, rootSessionID string, d
 	return nil
 }
 
+// RearmTree sets the Reserver's TTL on the delegation budget keys of the
+// tree rooted at rootSessionID: the tree-wide counters (tree_size,
+// tree_memory, tokens), the high-watermark and token-grant keys, and the
+// parallel_children and children_total keys of each parent in parentIDs. It
+// issues no SCAN. EXPIRE creates no absent key, and every key carries the
+// {rootSessionID} hash tag, so the pipeline runs on one cluster slot. The
+// session server calls it on each committed transition into or out of
+// suspended, so a suspended session's budget keys outlive its suspended
+// lifetime.
+//
+// spec: §8.3 (Delegation Policy and Lease)
+func (s *Reserver) RearmTree(ctx context.Context, rootSessionID string, parentIDs []string) error {
+	if rootSessionID == "" {
+		return fmt.Errorf("treebudget: empty root session id")
+	}
+	root := "{" + rootSessionID + "}:dlg:"
+	keys := []string{
+		root + "tree_size", root + "tree_memory", root + "tokens",
+		hwmKey(rootSessionID), tokenGrantKey(rootSessionID),
+	}
+	for _, p := range parentIDs {
+		keys = append(keys, root+"parallel_children:"+p, root+"children_total:"+p)
+	}
+	_, err := s.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, k := range keys {
+			p.Expire(ctx, k, s.ttl)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("treebudget: re-arm tree %s: %w", rootSessionID, err)
+	}
+	return nil
+}
+
 // PurgeRoot deletes every delegation tree-budget key for rootSessionID:
 // the tree-wide counters (`tokens`, `tree_size`, `tree_memory`), the
 // per-parent reservation keys (`parallel_children:*`,
@@ -466,37 +508,21 @@ func (s *Reserver) GrantTokenBudget(ctx context.Context, rootSessionID string, d
 // the §12.8 step-16 erasure primitive: the GDPR erasure orchestrator
 // calls it for each root session the erased user owns, before
 // SessionStore deletion makes the root session ids irrecoverable. All
-// keys share the `{root_session_id}` hash tag, so a single slot-local
-// SCAN covers the whole tree. Returns the number of keys removed; a
+// keys share the `{root_session_id}` hash tag, so a SCAN on the node that
+// owns that slot covers the whole tree. Returns the number of keys removed; a
 // non-root session id matches no keys and returns 0.
 //
-// spec: §12.8.
+// spec: §12.8; §8.3 (Delegation Policy and Lease).
 func (s *Reserver) PurgeRoot(ctx context.Context, rootSessionID string) (int, error) {
 	if rootSessionID == "" {
 		return 0, fmt.Errorf("treebudget: empty root session id")
 	}
-	pattern := "{" + rootSessionID + "}:dlg:*"
-	const delBatch = 256
-	var (
-		cursor  uint64
-		deleted int
-	)
-	for {
-		keys, next, err := s.client.Scan(ctx, cursor, pattern, delBatch).Result()
-		if err != nil {
-			return deleted, fmt.Errorf("treebudget: purge scan: %w", err)
-		}
-		if len(keys) > 0 {
-			n, err := s.client.Del(ctx, keys...).Result()
-			if err != nil {
-				return deleted, fmt.Errorf("treebudget: purge del: %w", err)
-			}
-			deleted += int(n)
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+	// The tree's keys share the {rootSessionID} hash tag, so on a Redis
+	// Cluster the SCAN runs on the master that owns that slot
+	// (redisconn.ScanDelete routes it by the high-watermark key).
+	deleted, err := redisconn.ScanDelete(ctx, s.client, hwmKey(rootSessionID), "{"+rootSessionID+"}:dlg:*")
+	if err != nil {
+		return deleted, fmt.Errorf("treebudget: purge: %w", err)
 	}
 	return deleted, nil
 }

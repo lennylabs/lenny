@@ -251,6 +251,10 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // the whole-pod scrub included.
 //
 // Rules 11 through 15 are the comparison shutdownReclaimOutcome decides.
+// An answer that removed nothing reports the exit nonRemovingExitCleanLocked
+// computes in the same critical section: absent reports an unclean exit
+// while another Shutdown's teardown of the session is in flight, or after
+// the last removing Shutdown reported one (rule 11).
 // Its arms map onto the rules in the cascade's order: no entry is rule 11
 // and answers ABSENT; the unconditional form is rule 12 and answers
 // RECLAIMED; an entry carrying no token and an entry carrying another
@@ -302,9 +306,10 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	s.mu.Lock()
 	cur, ok := s.slotStateLocked(sessionID)
 	outcome, remove, untokened := shutdownReclaimOutcome(cur, ok, unconditional, attempt)
+	clean := s.nonRemovingExitCleanLocked(sessionID, outcome)
 	s.mu.Unlock()
 	if !remove {
-		return s.answerShutdown(req, outcome, true, untokened)
+		return s.answerShutdown(req, outcome, clean, untokened)
 	}
 
 	// The removing arm takes the guard through the raw form, which no
@@ -331,10 +336,19 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	cur, ok = s.slotStateLocked(sessionID)
 	outcome, remove, untokened = shutdownReclaimOutcome(cur, ok, unconditional, attempt)
 	if !remove {
+		clean = s.nonRemovingExitCleanLocked(sessionID, outcome)
 		s.mu.Unlock()
-		return s.answerShutdown(req, outcome, true, untokened)
+		return s.answerShutdown(req, outcome, clean, untokened)
 	}
 	st, _, release := s.reclaimSlotLocked(sessionID)
+	// spec: §4.7.1 (role and gateway RPC contract), rule 11. The in-flight
+	// record opens in the deregistration's critical section, so an absent
+	// answer never observes the removal without it. The deferred end runs
+	// with exitedCleanly still false on a panic, which keeps the session's
+	// unclean record.
+	s.beginShutdownTeardownLocked(sessionID)
+	exitedCleanly := false
+	defer func() { s.endShutdownTeardown(sessionID, exitedCleanly) }()
 	r := reclaimedSlot{
 		st: st,
 		// st.started is set inside claimSessionSlotUnderLock before
@@ -360,7 +374,8 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	}()
 	s.mu.Unlock()
 
-	exitedCleanly, done := s.tearDownReclaimedSlot(ctx, req, r)
+	var done bool
+	exitedCleanly, done = s.tearDownReclaimedSlot(ctx, req, r)
 	completed = done
 	return s.answerShutdown(req, outcome, exitedCleanly, false)
 }
@@ -449,7 +464,7 @@ func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.Shutd
 		// section, and the write precedes the release of the reclaim hold
 		// that section opened.
 		if r.live {
-			s.writeSessionEnd(sessionID)
+			s.writeSessionEnd(sessionID, r.st)
 		}
 		// §4.7: flush a final usage report onto the gateway control stream
 		// so the gateway can run budget_return.lua (§8.3) with the

@@ -245,7 +245,7 @@ func assertOvertaken(t *testing.T, code int, body []byte, want session.State) {
 func TestFinalizeReadyWriteLostKeepsTerminalState_spec_15_1(t *testing.T) {
 	for _, st := range []session.State{session.StateCancelled, session.StateCompleted, session.StateFailed} {
 		t.Run(string(st), func(t *testing.T) {
-			f := newExitFixture(t, Options{})
+			f := newExitFixture(t, Options{DevTenantHeader: true})
 			f.seed(t, "s1", "", "", nil)
 			f.hooks.hooks = []*exitHook{{state: session.StateReady, mode: hookBeforeDelegate, before: f.commitTerminal(t, "s1", st)}}
 
@@ -282,7 +282,7 @@ func TestFinalizeReadyWriteLostKeepsTerminalState_spec_15_1(t *testing.T) {
 // by name, because the terminal writer's reclaim owns it.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizePlanParseFailureOvertakenSkipsReclaim_spec_15_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", exitPod, "{not a plan", nil)
 	f.hooks.hooks = []*exitHook{{
 		state: session.StateFailed, mode: hookBeforeDelegate, before: f.commitTerminal(t, "s1", session.StateCancelled),
@@ -309,7 +309,7 @@ func TestFinalizePlanParseFailureOvertakenSkipsReclaim_spec_15_1(t *testing.T) {
 // pod after the write, and emits one terminal lifecycle.
 // spec: 7.1 (steps 11-13), 7.2 (terminal states)
 func TestFinalizePlanParseFailureCommittedReclaims_spec_7_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", exitPod, "{not a plan", nil)
 
 	rr := postFinalize(t, f.srv, "s1", "")
@@ -333,7 +333,7 @@ func TestFinalizePlanParseFailureCommittedReclaims_spec_7_1(t *testing.T) {
 // watchdog.
 // spec: 7.1 (steps 11-13), 6.2 (finalize timeout)
 func TestFinalizePlanParseFailureStoreErrorReclaims_spec_7_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", exitPod, "{not a plan", nil)
 	f.hooks.hooks = []*exitHook{{state: session.StateFailed, mode: hookFailNoCommit}}
 
@@ -352,11 +352,12 @@ func TestFinalizePlanParseFailureStoreErrorReclaims_spec_7_1(t *testing.T) {
 
 // A prepare failure whose failure write loses to a terminal writer answers 409
 // with the terminal state instead of the prepare-phase error, and revokes the
-// session's lease. The pool-resolution failure here is a pre-Prepare exit, so
-// prepareAtFinalize's own reclaim released the lease once before the revoke.
+// session's lease. The pool-resolution failure here is a pre-Prepare exit,
+// which releases nothing itself, so the handler's revoke is the only lease
+// release and the claim stays with the terminal writer.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizePrepareFailureOvertakenAnswers409_spec_15_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", exitPod, "", nil)
 	f.hooks.hooks = []*exitHook{{
 		state: session.StateFailed, mode: hookBeforeDelegate, before: f.commitTerminal(t, "s1", session.StateCancelled),
@@ -368,9 +369,11 @@ func TestFinalizePrepareFailureOvertakenAnswers409_spec_15_1(t *testing.T) {
 	if got := f.state(t, "s1"); got != session.StateCancelled {
 		t.Errorf("state = %q, want cancelled kept", got)
 	}
-	if !reflect.DeepEqual(f.assigner.released, []string{"s1", "s1"}) {
-		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (pre-Prepare reclaim, then the handler's revoke)",
-			f.assigner.released)
+	if !reflect.DeepEqual(f.assigner.released, []string{"s1"}) {
+		t.Errorf("ReleaseSession calls = %v, want [s1] (the handler's revoke only)", f.assigner.released)
+	}
+	if !f.claimPresent(t) {
+		t.Errorf("claim-%s deleted by an overtaken call, want it left to the terminal writer", exitPod)
 	}
 	if n := f.auditCount(auditSessionFailed); n != 0 {
 		t.Errorf("session.failed rows = %d, want 0", n)
@@ -381,7 +384,7 @@ func TestFinalizePrepareFailureOvertakenAnswers409_spec_15_1(t *testing.T) {
 // session's lease, and answers the prepare-phase envelope.
 // spec: 7.1 (steps 11-13, step 23), 6.2
 func TestFinalizePrepareFailureCommittedRevokes_spec_7_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", exitPod, "", nil)
 
 	rr := postFinalize(t, f.srv, "s1", "")
@@ -393,7 +396,7 @@ func TestFinalizePrepareFailureCommittedRevokes_spec_7_1(t *testing.T) {
 		t.Errorf("state = %q, want failed", got)
 	}
 	if !reflect.DeepEqual(f.assigner.released, []string{"s1", "s1"}) {
-		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (pre-Prepare reclaim, then the handler's revoke)",
+		t.Errorf("ReleaseSession calls = %v, want [s1 s1] (the failure write's hook reclaim, then the handler's revoke)",
 			f.assigner.released)
 	}
 	if n := f.auditCount(auditSessionFailed); n != 1 {
@@ -406,7 +409,7 @@ func TestFinalizePrepareFailureCommittedRevokes_spec_7_1(t *testing.T) {
 // terminal state, revokes the lease, and reclaims nothing.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizeReadyStoreErrorThenTerminalAnswers409_spec_15_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", "", "", nil)
 	f.hooks.hooks = []*exitHook{
 		{state: session.StateReady, mode: hookFailNoCommit},
@@ -429,7 +432,7 @@ func TestFinalizeReadyStoreErrorThenTerminalAnswers409_spec_15_1(t *testing.T) {
 // ready-write error, releases nothing, and emits no terminal lifecycle.
 // spec: 15.1 (finalize row), 7.2 (terminal states)
 func TestFinalizeAmbiguousReadyCommitKeepsReady_spec_15_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", "", "", nil)
 	f.hooks.hooks = []*exitHook{{state: session.StateReady, mode: hookFailAfterCommit}}
 
@@ -453,7 +456,7 @@ func TestFinalizeAmbiguousReadyCommitKeepsReady_spec_15_1(t *testing.T) {
 // committed failure write, fails the row and answers 500.
 // spec: 7.1 (steps 11-13), 7.2 (terminal states)
 func TestFinalizeReadyStoreErrorFailsRow_spec_7_1(t *testing.T) {
-	f := newExitFixture(t, Options{})
+	f := newExitFixture(t, Options{DevTenantHeader: true})
 	f.seed(t, "s1", "", "", nil)
 	f.hooks.hooks = []*exitHook{{state: session.StateReady, mode: hookFailNoCommit}}
 
@@ -493,7 +496,7 @@ func (*consumedTracker) IsConsumed(string) bool { return true }
 // spec: 7.1 (single-use uploadToken invalidation), 15.1 (finalize row)
 func TestFinalizeConsumeFailureKeepsReady_spec_7_1(t *testing.T) {
 	tracker := &consumedTracker{id: "s1"}
-	f := newExitFixture(t, Options{UploadTokenVerifier: uploadtoken.NewVerifier(nil, tracker, nil)})
+	f := newExitFixture(t, Options{DevTenantHeader: true, UploadTokenVerifier: uploadtoken.NewVerifier(nil, tracker, nil)})
 	tracker.store = f.inner
 	f.seed(t, "s1", "", "", func(row *sessionstore.Session) {
 		row.UploadTokenDigest = "digest-1"

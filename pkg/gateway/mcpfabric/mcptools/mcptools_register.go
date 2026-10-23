@@ -28,15 +28,12 @@ import (
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/messagerouting"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
@@ -62,9 +59,10 @@ type registerEnv struct {
 
 // registerSessionLifecycleTools installs the §15.2 session-lifecycle
 // tools: attach_session (when the session store is wired), and the
-// create_session, send_message, interrupt_session, and cancel_session
-// surfaces. spec: §15.2; §15.2.1
-// (create_session); §7.2/§8.5 (send_message); §8.5 (interrupt/cancel).
+// create_session, send_message, and cancel_session surfaces.
+// lenny/interrupt_session dispatches to the REST route as a client-facing
+// tool. spec: §15.2; §15.2.1 (create_session); §7.2/§8.5 (send_message);
+// §8.5 (cancel).
 // F-15.2.2, F-15.2.7, F-7.2.6, F-8.5.16.
 func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	clock := env.clock
@@ -212,6 +210,12 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			UpdatedAt:        now,
 		}
 		if err := deps.Store.Create(ctx, row); err != nil {
+			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
+			// store refuses with its code and details.
+			var ref *sessionstore.CreationRefusal
+			if errors.As(err, &ref) {
+				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
+			}
 			return mcp.ToolResult{}, err
 		}
 		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, row.ID, row.State)), nil
@@ -341,224 +345,27 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				return mcp.ToolResult{}, err
 			}
 		}
-		// spec: §7.2 paths 3/5/6/7 — an inter-session
-		// message to a target that is not reading from stdin is buffered,
-		// not delivered. Path 1 (inReplyTo) resolved above; terminal
-		// returned TARGET_TERMINAL above. Classify the remaining message
-		// by the target state: input_required / suspended → inbox;
-		// recovering (resume_pending / awaiting_client_action) and
-		// pre-running parent→child → DLQ. Only a `running` target falls
-		// through to the executor (path 2). The pod-adapter readiness
-		// signal and cross-replica forwarding are gated as in the REST
-		// path. F-7.2.5.
-		inputRequired := row.State == session.StateInputRequired ||
-			(deps.InputWaits != nil && len(deps.InputWaits.PendingForSession(row.ID)) > 0)
-		decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
-		if decision.Action == messagerouting.ActionBufferInbox || decision.Action == messagerouting.ActionBufferDLQ {
-			// spec: §15.4 (MessageEnvelope.input) — buffer the §15.4 union
-			// content in its wire form (a bare string stays a JSON string, a
-			// part array stays an array) so the deferred redelivery path
-			// re-delivers the original multipart envelope rather than a
-			// text-flattened copy. F-MS5.
-			payload, mErr := json.Marshal(in.Message)
-			if mErr != nil {
-				return mcp.ToolResult{}, fmt.Errorf("marshal buffered message content: %w", mErr)
-			}
-			buffered := sessioninbox.Message{
-				MessageID:       messageID,
-				SenderSessionID: senderID,
-				Payload:         payload,
-				EnqueuedAt:      clock(),
-			}
-			var evicted *sessioninbox.Message
-			var berr error
-			overflowReason := session.DeliveryReasonInboxOverflow
-			if decision.Action == messagerouting.ActionBufferInbox {
-				evicted, berr = deps.Messaging.EnqueueInbox(ctx, tenant, row.ID, buffered)
-			} else {
-				evicted, berr = deps.Messaging.EnqueueDLQ(ctx, tenant, row.ID, buffered, 0)
-				overflowReason = session.DeliveryReasonDLQOverflow
-			}
-			if berr != nil {
-				// No inbox/DLQ wired (no Redis): surface inbox_unavailable
-				// rather than delivering to a non-running runtime.
-				return textResult(buildSendMessageReceiptStatusReason(messageID,
-					session.DeliveryStatusError, session.DeliveryReasonInboxUnavailable, clock())), nil
-			}
-			status := session.DeliveryStatusQueued
-			reason := session.DeliveryReason("")
-			if evicted != nil {
-				status = session.DeliveryStatusDropped
-				reason = overflowReason
-			}
-			return textResult(buildSendMessageReceiptStatusReason(messageID, status, reason, clock())), nil
+		// §4.8 PreMessageDelivery runs before the classification on every
+		// branch: a refusal holds nothing, and a held or inbox entry carries
+		// the MODIFY result. spec: §4.8, §7.2 (Message delivery routing —
+		// seven paths, path 6).
+		content, modified, toolErr := runPreMessageDelivery(ctx, deps, tenant, row.ID, in.Message)
+		if toolErr != nil {
+			return mcp.ToolResult{}, toolErr
 		}
-		if deps.Executor == nil {
-			return mcp.ToolResult{}, errors.New("no executor configured")
+		sm := &mcpSend{
+			deps: deps, tenant: tenant, messageID: messageID, senderID: senderID,
+			content: content, modified: modified, clock: clock,
 		}
-		// §4 PreMessageDelivery: run the interceptor chain over the
-		// message body before delivery. A REJECT blocks the message; a
-		// MODIFY rewrites what the target session receives. The §15.4 union
-		// content is projected to its text form for the interceptor scan and
-		// the maxInputSize bound; the full multipart envelope lands when the
-		// executor carries MessagePart[] end to end. spec: §15.4
-		// (MessageEnvelope.input).
-		messageText := in.Message.Text()
-		messageBody := messageText
-		if deps.Interceptors != nil {
-			req := interceptor.Request{
-				Phase:     interceptor.PhasePreMessageDelivery,
-				SessionID: row.ID,
-				TenantID:  tenant,
-				Content:   []byte(messageText),
-			}
-			// spec: §4.8 / §13.5 mitigation 3 — apply the same
-			// content policy the delegation path applies: the target
-			// session's effective contentPolicy.maxInputSize bounds the
-			// message body, and contentPolicy.interceptorRef selects the
-			// single external scanner that runs at PreMessageDelivery. A
-			// policy with interceptorRef: null runs no external scan.
-			// F-13.5.2.
-			var res interceptor.Result
-			if deps.ContentPolicies != nil {
-				ref := ""
-				if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, row.ID); ok {
-					ref = r
-					// spec: §4.8 / §8.3 (SEC-013, F-4.8.17) — reject the delivery when the target
-					// session's effective interceptorRef names an
-					// interceptor inside the `fail-closed → fail-open`
-					// weakening cooldown, mirroring the delegate_task gate
-					// so a stolen admin credential cannot use a brief
-					// fail-open window to push messages past a now-disabled
-					// content scanner.
-					if deps.CooldownChecker != nil && ref != "" {
-						if cdErr := deps.CooldownChecker.InterceptorFailPolicyCooldown(ctx, ref); cdErr != nil {
-							var wc *delegation.InterceptorWeakeningCooldownError
-							if errors.As(cdErr, &wc) {
-								return mcp.ToolResult{}, cooldownToolError(wc)
-							}
-						}
-					}
-					if maxSize > 0 && len(messageText) > maxSize {
-						return mcp.ToolResult{}, mcp.NewToolError(policy.CodeInputTooLarge,
-							fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(messageText), maxSize),
-							map[string]any{"phase": string(interceptor.PhasePreMessageDelivery)})
-					}
-				}
-				res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
-			} else {
-				res = deps.Interceptors.Run(ctx, req)
-			}
-			if res.Action == interceptor.ActionReject {
-				recordChainRejection(ctx, deps, tenant, row.ID, interceptor.PhasePreMessageDelivery, res)
-				// spec: §15.2.1 rule 3 — a deliberate PreMessageDelivery
-				// REJECT is a policy decision; emit INTERCEPTOR_REJECTED so
-				// the envelope is POLICY / not-retryable, matching the
-				// PostAgentOutput path below. A built-in code on the Result
-				// (e.g. INTERCEPTOR_TIMEOUT when the policy-named scanner is
-				// unreachable, §4.8) is surfaced verbatim so the
-				// (category, retryable) pair is correct. F-15.2.12 /
-				// F-13.5.2.
-				code := "INTERCEPTOR_REJECTED"
-				if res.Code != "" {
-					code = res.Code
-				}
-				return mcp.ToolResult{}, mcp.NewToolError(code,
-					fmt.Sprintf("message delivery rejected by policy: %s", res.Reason), nil)
-			}
-			if res.Action == interceptor.ActionModify {
-				messageBody = string(res.ModifiedContent)
-			}
-		}
-		// spec: §15.4 / §13.5 mitigation 6 — the gateway
-		// stamps the delivered envelope's `from` from the authenticated
-		// sending session so the target can attribute the message and the
-		// runtime cannot forge an origin. An unattributed send (no principal
-		// session binding and no fromSessionId) defers to the executor's
-		// default gateway-client identity. F-13.5.11.
-		resp, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
-			{Role: "user", Content: messageBody, From: senderFrom(senderID)},
-		})
-		if err != nil {
-			return mcp.ToolResult{}, err
-		}
-		out := resp.Parts
-		// §4.8 PostAgentOutput: run the chain over the agent's output
-		// parts before delivering the response to the calling agent. A
-		// REJECT blocks delivery; a MODIFY rewrites the parts.
-		out, rej := applyPostAgentOutput(ctx, deps, tenant, row.ID, out)
-		if rej != nil {
-			code := rej.Code
-			if code == "" {
-				code = "INTERCEPTOR_REJECTED"
-			}
-			return mcp.ToolResult{}, mcp.NewToolError(code, rej.Reason, nil)
-		}
-		// spec: §15.4 — emit the `delivery_receipt`
-		// as the first text block so a strict client can parse it
-		// before reading the runtime's text output. The executor
-		// output follows as additional text blocks so existing
-		// callers parsing `content[*].text` still see the runtime's
-		// response.
-		content := make([]mcp.ToolContent, 0, 1+len(out))
-		content = append(content, mcp.ToolContent{
-			Type: "text",
-			Text: buildSendMessageReceipt(messageID, "", out, clock()),
-		})
-		for _, p := range out {
-			if p.Type == "text" {
-				content = append(content, mcp.ToolContent{Type: "text", Text: p.Text})
-			}
-		}
-		return mcp.ToolResult{Content: content}, nil
+		return sm.deliver(ctx, row)
 	})
 
-	// spec: §15.2 — interrupt_session and cancel_session
-	// are client-facing MCP tools on the public surface. §27.5 binds the
-	// playground to "a client of the public MCP surface", so the chat
-	// pane's Interrupt and Cancel buttons (and the §27.6 best-effort
-	// cancel hint on browser close) MUST resolve to registered tools.
-	// Both reuse the §15.1 precondition table so the MCP transition is
-	// identical to the REST POST /v1/sessions/{id}/interrupt and
-	// DELETE /v1/sessions/{id} edges. F-27.5.3.
-	srv.RegisterTool(mcp.Tool{
-		Name:        "lenny/interrupt_session",
-		Description: "Interrupt the running agent in a session (§15.2). REST equivalent: POST /v1/sessions/{id}/interrupt.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"Target session id."}}}`),
-	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		tenant := callerTenantID(ctx, tenant)
-		var in struct {
-			SessionID string `json:"sessionId"`
-		}
-		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, errInvalidArgs(err)
-		}
-		if in.SessionID == "" {
-			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", map[string]any{"field": "sessionId"})
-		}
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
-		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
-		}
-		// spec: §15.1 — /interrupt is valid only from running /
-		// input_required; any other state is INVALID_STATE_TRANSITION.
-		if perr := session.Validate(session.PreconditionRequest{
-			Endpoint:     session.EndpointInterrupt,
-			CurrentState: row.State,
-		}); perr != nil {
-			return mcp.ToolResult{}, errPrecondition(perr)
-		}
-		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
-			// spec: §15.1 — interrupt transitions running → suspended.
-			row.State = session.StateSuspended
-			return nil
-		})
-		if err != nil {
-			return mcp.ToolResult{}, err
-		}
-		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, updated.ID, updated.State)), nil
-	})
-
+	// spec: §15.2 — cancel_session is a client-facing MCP tool on the
+	// public surface. §27.5 binds the playground to "a client of the public
+	// MCP surface", so the chat pane's Cancel button (and the §27.6
+	// best-effort cancel hint on browser close) MUST resolve to a registered
+	// tool. It reuses the §15.1 precondition table so the MCP transition is
+	// identical to the REST DELETE /v1/sessions/{id} edge. F-27.5.3.
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/cancel_session",
 		// spec: §27.6 — the optional `reason` carries the
@@ -604,12 +411,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			}
 			return mcp.ToolResult{}, errPrecondition(perr)
 		}
-		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
-			// spec: §15.1 — cancel marks the session cancelled.
-			row.State = session.StateCancelled
-			return nil
-		})
+		updated, err := cancelSession(ctx, deps, tenant, in.SessionID, clock)
 		if err != nil {
+			var pe *session.PreconditionError
+			if errors.As(err, &pe) {
+				if bestEffort {
+					return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"state":%q,"reason":%q}`, in.SessionID, pe.CurrentState, in.Reason)), nil
+				}
+				return mcp.ToolResult{}, errPrecondition(err)
+			}
 			return mcp.ToolResult{}, err
 		}
 		if in.Reason != "" {
@@ -617,6 +427,50 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		}
 		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, updated.ID, updated.State)), nil
 	})
+}
+
+// cancelSession is the lenny/cancel_session terminal write, a hook-path
+// writer: it opens the session's terminal claim, writes cancelled only over a
+// non-terminal locked row with the Terminated fact recorded in the write, and
+// on a write that applied runs the post-terminal hook with a nil signal tail
+// on a detached context, so the hook completes after the request context is
+// cancelled. It returns the row the hook returned, so a seal relabel is
+// answered failed. A locked row already terminal answers the §15.1
+// precondition error with the locked state, as a pre-read refusal does.
+//
+// spec: §7.2 (Interactive Session Model), §15.1 (REST API)
+func cancelSession(ctx context.Context, deps Deps, tenant, sessionID string, clock func() time.Time) (sessionstore.Session, error) {
+	end := func() {}
+	if deps.Terminal != nil {
+		end = deps.Terminal.BeginTerminal(sessionID)
+	}
+	defer end()
+	var from session.State
+	now := clock()
+	updated, err := deps.Store.Update(ctx, tenant, sessionID, func(row *sessionstore.Session) error {
+		from = row.State
+		if session.IsTerminal(row.State) {
+			return sessionstore.ErrSuperseded
+		}
+		// spec: §15.1 — cancel marks the session cancelled.
+		row.State = session.StateCancelled
+		sessionstore.MarkTerminated(row, from, now)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		return sessionstore.Session{}, &session.PreconditionError{
+			Endpoint:      session.EndpointDelete,
+			CurrentState:  from,
+			AllowedStates: session.AllowedStates(session.EndpointDelete, nil),
+		}
+	}
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	if deps.Terminal == nil {
+		return updated, nil
+	}
+	return deps.Terminal.AfterTerminalWrite(context.WithoutCancel(ctx), from, updated, nil), nil
 }
 
 // registerTaskTreeTools installs the §8.5/§8.9 delegation-tree tools:
@@ -760,29 +614,21 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
 				fmt.Sprintf("child session %s is already terminal (%s)", in.ChildSessionID, child.State), nil)
 		}
-		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all)
-		if err != nil {
-			return mcp.ToolResult{}, err
-		}
-		// spec: §11.3 / §11.4 — a cancel must drain each
-		// cancelled runtime's pod, not merely flip its row. Without this the
-		// child agents keep running, holding tokens, executing tool calls, and
-		// charging their credential leases until the watchdog's maxSessionAge
-		// clock fires hours later. ReleaseSession records the §6.2 cancelled
-		// disposition and triggers the adapter's graceful shutdown; it no-ops
-		// on a nil executor (the in-memory dev posture). Best-effort per id.
+		// spec: §11.3 / §11.4; §8.10 — each cancel runs the post-terminal
+		// hook, which drains the cancelled runtime's pod with the cancelled
+		// disposition, and its signal tail archives the node to the
+		// session_tree_archive so a resumed parent can replay its result.
 		// F-11.3.1.
-		if deps.Executor != nil {
-			for _, id := range cancelled {
-				_ = executor.ReleaseSession(ctx, deps.Executor, id, executor.DispositionCancelled)
+		var signals func(context.Context, sessionstore.Session)
+		if deps.TreeArchive != nil {
+			root := treeRoot(child, all)
+			signals = func(sctx context.Context, row sessionstore.Session) {
+				archiveCancelled(sctx, deps.TreeArchive, root, row, clock())
 			}
 		}
-		// §8.10: a child reaching a terminal state is archived to the
-		// session_tree_archive so a resumed parent can replay its
-		// result. Archiving is best-effort observability — the
-		// cancellation itself has already committed.
-		if deps.TreeArchive != nil {
-			archiveCancelled(ctx, deps.TreeArchive, tenant, treeRoot(child, all), cancelled, all, clock())
+		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all, deps.Terminal, signals, clock)
+		if err != nil {
+			return mcp.ToolResult{}, err
 		}
 		body, _ := json.Marshal(struct {
 			Cancelled []string `json:"cancelled"`
@@ -1360,7 +1206,11 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"schema is required (§8.5)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §9.2 (Elicitation Chain) — the terminal-state check reads the
+		// primary, so a raise whose check runs after a terminal write commits
+		// is refused on any replica, and the post-terminal hook's expiry
+		// misses only a raise whose check passed before the write.
+		row, err := sessionstore.ReadPrimary(ctx, deps.Store, deps.PrimaryReadTimeout, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, errSessionLookup(err)
 		}
@@ -1516,10 +1366,10 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			"message": in.Message,
 			// §9.2 gateway-origin binding: the recorded digest lets a
 			// forward-hop re-emission be verified against the original.
-			"contentDigest":   originalDigest,
-			"originPod":       prov.OriginPod,
-			"initiatorType":   string(prov.InitiatorType),
-			"delegationDepth": prov.DelegationDepth,
+			"contentDigest":                  originalDigest,
+			interactionstore.DetailOriginPod: prov.OriginPod,
+			"initiatorType":                  string(prov.InitiatorType),
+			"delegationDepth":                prov.DelegationDepth,
 		}
 		if prov.OriginRuntime != "" {
 			detail["originRuntime"] = prov.OriginRuntime
@@ -1965,11 +1815,10 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		// spec: §11.4 — hard_disable "also block[s] new delegated
-		// tasks". The in-session delegation path (lenny/delegate_task)
-		// is otherwise ungated: the REST session-creation gate never
-		// runs here. Resolve the parent session's owning user and
-		// reject when it is no longer active. F-11.4.1.
+		// spec: §11.4, §12.8 (Lifecycle fence and drain) — the early
+		// creation gate of the delegated child over the parent's owning
+		// user and the tenant, before any delegation work. The REST
+		// session-creation gates never run on this path. F-11.4.1.
 		if err := requireActiveDelegator(ctx, deps, tenant, in.ParentSessionID); err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -2328,6 +2177,13 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			TreeVisibility: session.TreeVisibility(in.TreeVisibility),
 		})
 		if err != nil {
+			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
+			// child's reservation or insert refused; surface its code and
+			// details rather than the generic fallback.
+			var ref *sessionstore.CreationRefusal
+			if errors.As(err, &ref) {
+				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
+			}
 			// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
 			// is surfaced under the spec's ISOLATION_MONOTONICITY_VIOLATED
 			// reason so the caller can distinguish it, and the §10.6
@@ -2640,6 +2496,10 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					res.Child.ID, err)
 			}
 		}
+		// spec: §7.2 (Message delivery routing — seven paths, path 6); §8.2
+		// (Delegation Mechanism) — a delegated child's held messages follow
+		// its task input.
+		deliverChildHeld(ctx, deps, tenant, res.Child.ID)
 		handle := taskHandle{
 			ChildSessionID: res.Child.ID,
 			State:          string(childState),

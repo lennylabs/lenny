@@ -39,6 +39,15 @@ type PrepareResult struct {
 	// Timings carries the §6.3 workspace-materialization, setup-commands,
 	// and credential-assignment phase durations Prepare measured.
 	Timings BindTimings
+	// MintedLeaseIDs carries the identifiers of the §4.9 leases Prepare's
+	// credential assignment minted. Bind threads them into its Launch, so a
+	// Launch failure releases exactly these leases rather than every lease
+	// the session holds. spec: §7.3 (Retry and Resume), §4.9 (Credential
+	// Leasing Service).
+	MintedLeaseIDs []string
+	// BindAttempt is the §4.7.1 token Prepare minted and carried on every
+	// entry-touching RPC. Bind copies it onto its BindResult.
+	BindAttempt string
 }
 
 // Prepare runs the §4.3 finalize-time preparation barrier against the pod
@@ -61,7 +70,17 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		// failure reclaims the pod — holds for the Bind composition. No lease is
 		// assigned before Prepare runs, so the ReclaimClaimed lease revoke is a
 		// no-op here. spec: §4.6 (proposal), §6.2 (claimed → draining).
-		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID); rerr != nil {
+		//
+		// An attempt-scoped request deletes the claim alone: the session may
+		// hold leases another attempt minted, and ReclaimClaimed's
+		// session-wide revoke would strip them. spec: §7.3 (Retry and Resume).
+		if req.attemptScoped {
+			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
+			return nil, err
+		}
+		// Prepare runs only on an exclusive pool, so the reclaim deletes the
+		// claim by name rather than releasing a slot.
+		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID, false); rerr != nil {
 			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
 		}
 		return nil, err
@@ -164,7 +183,8 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	phaseStart = time.Now()
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
 	// projects the coarse `claimed` phase, before the runtime starts at Launch.
-	if minted, err := b.assignCredentials(ctx, cl, req, bindAttempt); err != nil {
+	minted, err := b.assignCredentials(ctx, cl, req, bindAttempt)
+	if err != nil {
 		// spec: §7.1 (normal flow); §4.9 (credential leasing service). The
 		// attempt releases, by identifier, exactly the leases it minted before
 		// the failure. failPhase's session-wide release is gated on
@@ -186,5 +206,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
 		Timings:               t,
+		MintedLeaseIDs:        minted,
+		BindAttempt:           bindAttempt,
 	}, nil
 }

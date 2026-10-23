@@ -411,13 +411,9 @@ func (s *Server) narrowRuntimesToEnvironment(r *http.Request, runtimes []runtime
 	if s.environments == nil || environmentName == "" {
 		return runtimes
 	}
-	tenantID := ""
-	if principal, ok := getPrincipal(r); ok {
-		tenantID = principal.TenantID
-	}
-	if tenantID == "" {
-		tenantID = r.Header.Get("X-Lenny-Tenant-ID")
-	}
+	// spec: §10.2 — the tenant comes from resolveTenant, which reads the
+	// dev header only under --dev-mode. F-10.2.21.
+	tenantID := s.resolveTenant(r)
 	if tenantID == "" {
 		return []runtimestore.Runtime{}
 	}

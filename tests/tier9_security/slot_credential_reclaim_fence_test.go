@@ -366,7 +366,7 @@ func TestFailedAttemptLeaseReleaseStripsNoSuccessorLease_spec_4_7_1(t *testing.T
 	f := newFenceFixture(t, credential.DeliveryProxy)
 	// A successor attempt for the same session already holds a lease, minted
 	// on another replica's attempt.
-	successor, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme")
+	successor, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("successor lease: %v", err)
 	}
@@ -387,5 +387,49 @@ func TestFailedAttemptLeaseReleaseStripsNoSuccessorLease_spec_4_7_1(t *testing.T
 	}
 	if _, ok := f.svc.UpstreamCredential(got); !ok {
 		t.Error("the successor's upstream credential is no longer reachable through its lease")
+	}
+}
+
+// spec: §7.3 (Retry and Resume); §4.9 (credential leasing service)
+// diagnosis: a failure means a failed whole-sequence Bind on an exclusive pool
+// revoked every lease its session holds rather than the leases its own Prepare
+// minted. A resume rebuild runs that Bind for a session that can hold a lease
+// another attempt minted; once the failed attempt strips it, that lease's
+// token no longer authenticates and the other attempt's LLM proxy traffic
+// fails. A lease of the failed attempt that still resolves keeps a
+// credential's active-session slot leaked.
+func TestFailedBindLeavesAnotherAttemptsLeaseLive_spec_7_3(t *testing.T) {
+	f := newFenceFixture(t, credential.DeliveryProxy)
+	other, err := f.svc.AssignProto("pool-a", "sess-bob", "", "acme", 0)
+	if err != nil {
+		t.Fatalf("other attempt's lease: %v", err)
+	}
+	stored, ok := f.leases.GetByID(other.GetLeaseId())
+	if !ok || stored.Proxy == nil || stored.Proxy.LeaseToken == "" {
+		t.Fatal("the other attempt's lease carries no proxy lease token")
+	}
+	token := stored.Proxy.LeaseToken
+
+	// The exclusive bind mints its own leases at Prepare, and its Launch
+	// fails when StartSession is lost.
+	f.faults.dropNext("StartSession")
+	_, err = f.binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: "echo-pool", SessionID: "sess-bob", TenantID: "acme", Runtime: "echo",
+		Plan:            &adapterv1.WorkspacePlan{},
+		CredentialPools: map[string]string{"anthropic": "pool-a", "anthropic_alt": "pool-b"},
+	})
+	if err == nil {
+		t.Fatal("Bind err = nil, want the lost StartSession")
+	}
+
+	if got := f.leases.Len(); got != 1 {
+		t.Errorf("lease store holds %d leases after the failed Bind, want the other attempt's alone", got)
+	}
+	got, ok := f.leases.GetByToken(token)
+	if !ok || got.LeaseID != other.GetLeaseId() {
+		t.Fatal("the other attempt's lease token no longer authenticates after the failed Bind")
+	}
+	if _, ok := f.svc.UpstreamCredential(got); !ok {
+		t.Error("the other attempt's upstream credential is no longer reachable through its lease")
 	}
 }

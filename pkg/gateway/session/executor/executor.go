@@ -20,6 +20,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"strconv"
 )
 
 // Sentinel errors.
@@ -28,7 +29,41 @@ var (
 	// support the given operation (e.g., a stateless executor asked
 	// to maintain conversation context).
 	ErrUnsupported = errors.New("executor: operation not supported")
+
+	// ErrSessionSealed reports that the session's runtime adapter refused a
+	// message because an idle suspension sealed the session (§4.7.1
+	// **Session seal.**). The message did not reach the runtime, and the
+	// stream end is not a stream failure, so the caller routes the message
+	// again by the session's state.
+	ErrSessionSealed = errors.New("executor: session sealed against message delivery")
+
+	// ErrNotBound reports that this replica holds no pod binding for the
+	// session, so nothing was sent and the message did not reach the
+	// runtime. A caller whose classification read found the session
+	// running routes the message again when a re-read finds it in another
+	// state, such as after an idle suspension released the pod.
+	ErrNotBound = errors.New("executor: session is not bound to a pod")
 )
+
+// SealedError is the error a Send returns when the adapter refused one of
+// the batch's messages as sealed. Delivered counts the batch's messages the
+// runtime received before the refusal, in order, and Response carries their
+// output; the refused message and every later one were not delivered.
+// errors.Is(err, ErrSessionSealed) holds for it.
+//
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+type SealedError struct {
+	Delivered int
+	Response  Response
+}
+
+// Error implements error.
+func (e *SealedError) Error() string {
+	return "executor: session sealed against message delivery after " + strconv.Itoa(e.Delivered) + " delivered message(s)"
+}
+
+// Unwrap returns ErrSessionSealed.
+func (e *SealedError) Unwrap() error { return ErrSessionSealed }
 
 // Message captures the §7.2 / §15.4 inbound message envelope.
 // Implementations of Executor receive a slice of Messages and emit
@@ -68,6 +103,22 @@ type Message struct {
 type MessageFrom struct {
 	Kind string
 	ID   string
+}
+
+// SenderFrom builds the §15.4 from-object for a message an inter-session
+// sender sent: an authenticated sender is attributed as kind `agent` with its
+// session id, and an unattributed send (no sender session) returns the zero
+// value so the executor stamps its default gateway-client identity. The
+// gateway always sets `from` — a caller cannot. The MCP send path and the
+// delivery of held messages both use it, so a held message keeps the sender
+// attribution it was accepted with.
+//
+// spec: §15.4 (Runtime Adapter Specification); §13.5 mitigation 6.
+func SenderFrom(senderID string) MessageFrom {
+	if senderID == "" {
+		return MessageFrom{}
+	}
+	return MessageFrom{Kind: "agent", ID: senderID}
 }
 
 // MessagePart is the §28.5.3 outbound response envelope.

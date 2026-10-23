@@ -34,6 +34,7 @@ func newUploadServerWithSubsystem(t *testing.T, sub *subsystem.Subsystem) (*sess
 	tracker := uploadtoken.NewMemoryTracker()
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_subsystem" },
 		UploadTokenIssuer:   issuer,

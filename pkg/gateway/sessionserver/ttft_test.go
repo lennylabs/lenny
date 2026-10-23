@@ -65,6 +65,7 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(800 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),
@@ -115,6 +116,7 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(500 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),
@@ -156,6 +158,7 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 	// only the inbound `message_delivered` echo and emits no `response`
 	// frame: the TTFT observation must stay zero.
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                noOutputExecutor{},
 		Transcripts:             transcriptstore.NewMemory(),
@@ -192,6 +195,7 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(200 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),

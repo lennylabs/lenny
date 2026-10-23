@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +39,11 @@ type Store struct {
 	// single primary serves reads and writes unchanged. Writes always use
 	// pool. spec: §12.3.
 	read *pgxpool.Pool
+	// copyTranscript copies a source session's transcript into a new
+	// session inside CreateWithTranscript's insert transaction. Nil makes
+	// CreateWithTranscript return ErrTranscriptCopierUnwired.
+	// spec: §12.8 (Lifecycle fence and drain).
+	copyTranscript TranscriptCopier
 }
 
 // Option configures a Store at construction time.
@@ -65,7 +71,10 @@ func New(pool *pgxpool.Pool, opts ...Option) *Store {
 	return s
 }
 
-var _ sessionstore.Store = (*Store)(nil)
+var (
+	_ sessionstore.Store         = (*Store)(nil)
+	_ sessionstore.PrimaryReader = (*Store)(nil)
+)
 
 // selectList is the column projection for reads. UUID columns are
 // rendered as text so they scan into the Session struct's string
@@ -129,7 +138,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	legal_hold_set_by, legal_hold_set_at, legal_hold_note,
 	last_agent_activity_at,
 	COALESCE(credential_origin_session_id::text, ''),
-	credential_deny`
+	credential_deny,
+	accumulated_session_age_seconds`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -137,7 +147,22 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 // the parent's RootSessionID onto every child so all rows in one tree
 // share the same root, which §8.9 and §12.5 read via the
 // idx_sessions_root index. F-8.9.8.
+//
+// The insert runs behind the creation fence (fenceInsert) and deletes the
+// reservation whose ID and owner match the row, in one transaction.
+// spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
+	return s.create(ctx, sess, nil)
+}
+
+// afterInsert runs in the insert transaction after the fence, the INSERT,
+// and the reservation DELETE. reservationDeleted reports whether that DELETE
+// removed a row. A non-nil error rolls the whole transaction back.
+type afterInsert func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, reservationDeleted bool) error
+
+// create is the shared insert of Create, CreateReserved, and
+// CreateWithTranscript.
+func (s *Store) create(ctx context.Context, sess sessionstore.Session, after afterInsert) error {
 	now := time.Now().UTC()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = now
@@ -194,7 +219,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		env, request_envelope,
 		last_agent_activity_at,
 		credential_origin_session_id,
-		credential_deny
+		credential_deny,
+		accumulated_session_age_seconds
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -237,7 +263,9 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		-- cannot express (an independent child and a deny child are both
 		-- self-origin). A plain BOOLEAN NOT NULL DEFAULT false; invariant
 		-- after creation, so it is absent from updateSQL.
-		$58
+		$58,
+		-- §6.2 accumulated_session_age_seconds; zero for a new row.
+		$59
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -246,16 +274,22 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		// spec: §4.2 — v1 sessions are written at schema_version=1.
 		schemaVersion = 1
 	}
-	// spec: §4.2 — a newly created session row carries
+	// spec: §4.2, §10.1.1 — a newly created session row carries
 	// coordination_generation = 1, so the value a replica holds for a
-	// session no coordinator has taken over is positive and §10.1.2
-	// step 1's first compare-and-swap mints 2 strictly above it. The
+	// session no takeover and no resume driver write has advanced is
+	// positive and each §10.1.2 step 1 compare-and-swap mints a value
+	// strictly above the one it fences. The
 	// insert names the column, so the column default baselines nothing
 	// and this floor is the enforcement on this path.
 	if sess.CoordinationGeneration == 0 {
 		sess.CoordinationGeneration = 1
 	}
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
+		// spec: §12.8 (Lifecycle fence and drain) — the fence reads the
+		// marker rows FOR SHARE before the INSERT, in this transaction.
+		if err := fenceInsert(ctx, tx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0); err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
@@ -339,8 +373,21 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// (identical to an independent child), so this bit is the
 			// only signal. Invariant after creation, so it is absent
 			// from updateSQL.
-			sess.CredentialDeny)
-		return err
+			sess.CredentialDeny,
+			// $59 — §6.2 accumulated_session_age_seconds, the active age
+			// Update accrues on every later write. Zero for a new row.
+			sess.AccumulatedSessionAgeSeconds)
+		if err != nil {
+			return err
+		}
+		deleted, err := deleteOwnReservation(ctx, tx, sess)
+		if err != nil {
+			return err
+		}
+		if after == nil {
+			return nil
+		}
+		return after(ctx, tx, sess, deleted)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -355,6 +402,30 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 	var out sessionstore.Session
 	// spec: §12.3 — session-status read routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx,
+			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			id, tenantID)
+		sess, err := scanSession(row)
+		if err != nil {
+			return err
+		}
+		out = sess
+		return nil
+	})
+	if err != nil {
+		return sessionstore.Session{}, normalizeMiss(err)
+	}
+	return out, nil
+}
+
+// GetPrimary returns the session row keyed by (tenantID, id) as the primary
+// holds it. It reads the write pool with a plain SELECT, which takes no row
+// lock, so it never blocks a concurrent Update. sessionstore.ReadPrimary uses
+// it for a one-shot decision that the lagging read pool must not decide.
+// spec: §12.3 (Postgres HA Requirements)
+func (s *Store) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	var out sessionstore.Session
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
 			id, tenantID)
@@ -453,7 +524,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		legal_hold_set_at = $47,
 		legal_hold_note = $48,
 		last_agent_activity_at = $49,
-		workspace_plan = $55::jsonb
+		workspace_plan = $55::jsonb,
+		accumulated_session_age_seconds = $56
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -466,6 +538,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			return err
 		}
 		prevUpdated := sess.UpdatedAt
+		prevState := sess.State
+		prevAge := sess.AccumulatedSessionAgeSeconds
 		prevRecoveryGen := sess.RecoveryGeneration
 		prevCoordGen := sess.CoordinationGeneration
 		prevRetryCount := sess.RetryCount
@@ -496,7 +570,15 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if sess.LastSeq < prevLastSeq {
 			sess.LastSeq = prevLastSeq
 		}
-		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
+		now := pgtenant.MonotonicNext(prevUpdated, time.Now())
+		// spec: §6.2 (maxSessionAge timer behavior across states) — the
+		// store is the only writer of the accumulated active age: discard
+		// any value the mutator set, then accrue the active age the locked
+		// row gained since its previous write, against the same instant
+		// the updated_at stamp records.
+		sess.AccumulatedSessionAgeSeconds = prevAge
+		sessionstore.AccrueSessionAge(prevState, prevUpdated, &sess, now)
+		sess.UpdatedAt = now
 		ref, src, at, hash := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 		schemaVersion := sess.SchemaVersion
@@ -560,6 +642,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// field alone rewrites the same document.
 			// spec: §7.1; §15.1 (finalize precondition).
 			jsonbArg(sess.WorkspacePlan),
+			// $56 — §6.2 accumulated_session_age_seconds, accrued above.
+			sess.AccumulatedSessionAgeSeconds,
 		); err != nil {
 			return err
 		}
@@ -616,7 +700,14 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 
 	var out []sessionstore.Session
 	// spec: §12.3 — session-status listing routes to the read replica.
-	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+	// A lifecycle drain sets Primary and reads the primary instead, so a
+	// row the creation fence admitted is never missed to replica lag.
+	// spec: §12.8 (Lifecycle fence and drain).
+	pool := s.read
+	if filter.Primary {
+		pool = s.pool
+	}
+	err := pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
 			return err
@@ -674,6 +765,52 @@ func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) 
 	return out, nil
 }
 
+// ListPodlessSuspended returns at most limit of the tenant's suspended
+// sessions that name no pod, with an id after afterID, in id order. It backs
+// the gateway leader's §7.2 backlog re-check, which pages through the podless
+// suspended population by id. The state and pod predicates are literals so
+// the planner matches the partial index idx_sessions_podless_suspended
+// (tenant_id, id), which returns the rows in id order with no sort; the id
+// bound is omitted when afterID is empty, because ” is not a valid uuid. It
+// reads the read pool: the listing selects work, and every write the
+// re-check makes is guarded on the locked row.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §12.5
+// (Artifact Store).
+func (s *Store) ListPodlessSuspended(ctx context.Context, tenantID, afterID string, limit int) ([]sessionstore.Session, error) {
+	q := `SELECT ` + selectList + ` FROM sessions WHERE tenant_id = $1
+		AND state = 'suspended' AND pod_assignment = ''`
+	args := []any{tenantID}
+	if afterID != "" {
+		args = append(args, afterID)
+		q += fmt.Sprintf(" AND id > $%d::uuid", len(args))
+	}
+	q += ` ORDER BY id`
+	if limit > 0 {
+		args = append(args, limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	var out []sessionstore.Session
+	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			sess, err := scanSession(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, sess)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list podless suspended sessions of tenant %s: %w", tenantID, err)
+	}
+	return out, nil
+}
+
 // Delete removes the session row. session_messages rows cascade.
 func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -702,7 +839,12 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 			return err
 		}
 		deleted = int(tag.RowsAffected())
-		return nil
+		// spec: §12.8 (Lifecycle fence and drain) — the erasure ends the
+		// user's reservations with the session rows, so a CreateReserved
+		// still in flight finds its reservation gone and refuses.
+		_, err = tx.Exec(ctx,
+			`DELETE FROM session_reservations WHERE tenant_id = $1 AND user_id = $2`, tenantID, userID)
+		return err
 	})
 	return deleted, err
 }
@@ -725,36 +867,122 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 			return err
 		}
 		deleted = int(tag.RowsAffected())
-		return nil
+		// spec: §12.8 (Lifecycle fence and drain) — tenant deletion ends
+		// every reservation of the tenant with its session rows.
+		_, err = tx.Exec(ctx,
+			`DELETE FROM session_reservations WHERE tenant_id = $1`, tenantID)
+		return err
 	})
 	return deleted, err
 }
 
-// GetActiveSlotsByPod implements Store — the §5.2 rehydration seed
-// source. It counts live (non-terminal) sessions bound to podID. The
-// read runs cross-tenant (InAllTenants) because the rehydration path
-// holds only the pod identity; §5.2 tenant pinning guarantees every
-// counted row belongs to one tenant. The partial index from migration
-// 0080 keeps the count under the 5ms target the spec assumes during a
-// post-restart rehydration burst. The non-terminal predicate matches
-// the index predicate and session.TerminalStates() verbatim.
-// spec: §5.2.
-func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
+// GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
+// It returns the identifiers of the non-terminal sessions whose
+// pod_assignment names podID (the slot-holder predicate). The read runs
+// cross-tenant (InAllTenants) because the rehydration path holds only the
+// pod identity; §5.2 tenant pinning guarantees every row belongs to one
+// tenant. The partial index from migration 0080 keeps the read under the 5ms
+// target the spec assumes during a post-restart rehydration burst. The
+// non-terminal predicate matches the index predicate and
+// session.TerminalStates() verbatim.
+// spec: §5.2 (Post-recovery rehydration atomicity).
+func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
 	if podID == "" {
-		return 0, nil
+		return nil, nil
 	}
-	var count int
+	var ids []string
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			`SELECT count(*) FROM sessions
+		var qErr error
+		ids, qErr = collectStrings(ctx, tx,
+			`SELECT id FROM sessions
 			   WHERE pod_assignment = $1
 			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
-			podID).Scan(&count)
+			podID)
+		return qErr
 	})
 	if err != nil {
-		return 0, fmt.Errorf("pgstore: count active slots for pod %s: %w", podID, err)
+		return nil, fmt.Errorf("pgstore: list active slots for pod %s: %w", podID, err)
 	}
-	return count, nil
+	return ids, nil
+}
+
+// ListPodsWithActiveSlots implements Store: the pods the slot counter's
+// recovery rebuild names. It returns the distinct pod_assignment values of
+// the non-terminal best-effort-per-slot session rows across tenants, with
+// the predicate of the migration 0080 partial index.
+// spec: §12.4 (Redis failure behavior).
+func (s *Store) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
+	var pods []string
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		var qErr error
+		pods, qErr = collectStrings(ctx, tx,
+			`SELECT DISTINCT pod_assignment FROM sessions
+			   WHERE pod_assignment <> ''
+			     AND scrub_policy = 'best-effort-per-slot'
+			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`)
+		return qErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: list pods with active slots: %w", err)
+	}
+	return pods, nil
+}
+
+// ListStaleTerminalSessions implements Store: the stale-slot reaper's
+// cross-tenant primary-key read. sessions.id is a UUID, so an identifier
+// that does not parse as one is dropped before the query rather than
+// failing the whole batch's cast; no session row can carry it.
+// spec: §5.2 (Slot assignment atomicity).
+func (s *Store) ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error) {
+	keys := uuidIdentifiers(ids)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	var stale []string
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		var qErr error
+		stale, qErr = collectStrings(ctx, tx,
+			`SELECT id::text FROM sessions
+			   WHERE id = ANY($1::uuid[])
+			     AND state IN ('completed', 'failed', 'cancelled', 'expired')
+			     AND terminated_at < $2`,
+			keys, terminatedBefore)
+		return qErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: list stale terminal sessions: %w", err)
+	}
+	return stale, nil
+}
+
+// uuidIdentifiers returns the members of ids that parse as UUIDs, in their
+// original spelling.
+func uuidIdentifiers(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// collectStrings runs a single-column text query and returns its values.
+func collectStrings(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage
@@ -845,15 +1073,23 @@ func (s *Store) PoolDrainStats(ctx context.Context, poolRef string) (int, time.T
 	return count, *oldest, nil
 }
 
+// countedStatePredicate is the SQL spelling of
+// session.CountsTowardConcurrencyCaps: every non-terminal state other
+// than suspended. It is the exact predicate text of the migration-0185
+// partial index idx_sessions_counted_by_tenant, so the planner can match
+// the index; change both together.
+// spec: §11.1 (Concurrent-session count)
+const countedStatePredicate = `state NOT IN ('completed', 'failed', 'cancelled', 'expired', 'suspended')`
+
 // CountActiveSessions implements Store — the §11.2 per-tenant
-// concurrent-session quota count. It counts the tenant's live
-// (non-terminal) sessions with a COUNT query so the gateway's quota
-// check does not materialize every historical row. The partial index
-// from migration 0102 (sessions(tenant_id) WHERE state NOT IN terminal)
-// keeps the count cheap on a tenant with a large session history. The
-// non-terminal predicate matches the index predicate and
-// session.TerminalStates() verbatim.
-// spec: §11.2 (per-tenant concurrent-session quota with hard rejection).
+// concurrent-session quota count. It counts the tenant's non-terminal
+// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+// with a COUNT query so the gateway's quota check does not materialize
+// every historical row. The partial index idx_sessions_counted_by_tenant
+// from migration 0185 (sessions(tenant_id, user_id) WHERE
+// countedStatePredicate) answers the count index-only on a tenant with
+// a large history of terminal and suspended rows.
+// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, nil
@@ -863,7 +1099,7 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 		return tx.QueryRow(ctx,
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID).Scan(&count)
 	})
 	if err != nil {
@@ -873,10 +1109,11 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 }
 
 // CountActiveSessionsByUser implements Store — the §11.1 per-user
-// concurrent-session admission count. It counts the user's live
-// (non-terminal) sessions with a COUNT query, scoped to the tenant via
-// RLS. The non-terminal predicate matches session.TerminalStates()
-// verbatim. spec: §11.1.
+// concurrent-session admission count. It counts the user's non-terminal
+// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+// with a COUNT query, scoped to the tenant via RLS, and reads
+// idx_sessions_counted_by_tenant index-only.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -887,7 +1124,7 @@ func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID 
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
 			     AND user_id = $2
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID, userID).Scan(&count)
 	})
 	if err != nil {
@@ -897,10 +1134,11 @@ func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID 
 }
 
 // CountActiveSessionsByRuntime implements Store — the §11.1 per-runtime
-// concurrent-session admission count. It counts live (non-terminal)
-// sessions targeting runtimeRef within the tenant. The non-terminal
-// predicate matches session.TerminalStates() verbatim.
-// spec: §11.1.
+// concurrent-session admission count. It counts non-terminal sessions
+// other than suspended ones (session.CountsTowardConcurrencyCaps)
+// targeting runtimeRef within the tenant, reading
+// idx_sessions_counted_by_tenant by its tenant prefix.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
 	if tenantID == "" || runtimeRef == "" {
 		return 0, nil
@@ -911,7 +1149,7 @@ func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runt
 			`SELECT count(*) FROM sessions
 			   WHERE tenant_id = $1
 			     AND runtime_ref = $2
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
+			     AND `+countedStatePredicate,
 			tenantID, runtimeRef).Scan(&count)
 	})
 	if err != nil {
@@ -921,17 +1159,18 @@ func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runt
 }
 
 // CountActiveSessionsGlobal implements Store — the §11.1 global
-// concurrent-session admission count. It counts every live
-// (non-terminal) session across all tenants (InAllTenants) so the
-// gateway-wide ceiling bounds total live sessions. The non-terminal
-// predicate matches session.TerminalStates() verbatim.
-// spec: §11.1.
+// concurrent-session admission count. It counts every non-terminal
+// session other than suspended ones (session.CountsTowardConcurrencyCaps)
+// across all tenants (InAllTenants), scanning
+// idx_sessions_counted_by_tenant. The §16.5 session-availability ratio
+// divides by this count, so its population is the same set.
+// spec: §11.1 (Concurrent-session count)
 func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	var count int
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT count(*) FROM sessions
-			   WHERE state NOT IN ('completed', 'failed', 'cancelled', 'expired')`).Scan(&count)
+			   WHERE `+countedStatePredicate).Scan(&count)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("pgstore: count active sessions global: %w", err)
@@ -1115,6 +1354,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// engine fails a deny child (and an inherit hop whose origin row
 		// is deny) closed at credential assignment.
 		&s.CredentialDeny,
+		// §6.2 — accumulated_session_age_seconds from migration 0182, the
+		// active age up to the row's last write.
+		&s.AccumulatedSessionAgeSeconds,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

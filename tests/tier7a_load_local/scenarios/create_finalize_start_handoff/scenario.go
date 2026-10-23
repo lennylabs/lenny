@@ -121,8 +121,9 @@ func (s *Scenario) claimOnReplicaA(pod, session string, finalize bool) (binding,
 }
 
 // reclaimOnReplicaB models replica B reconstructing the binding after a
-// coordinator handoff and retiring the session (a /terminate or created-expiry
-// sweep that owns no live connection): it revokes the lease from the binding
+// coordinator handoff and retiring the session (a /terminate, or the
+// watchdog's CREATED_TIMEOUT write reaching the reclaim through the
+// post-terminal hook, neither of which owns a live connection): it revokes the lease from the binding
 // (ReleaseSession) and deletes the per-pod claim (DeleteClaim), both keyed by
 // the persisted binding alone (§4.6). The lease revoke runs first so a delete
 // error cannot strand the lease (mirroring binder.ReclaimClaimed).
@@ -155,8 +156,9 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	pod := fmt.Sprintf("pod-%d", id)
 	session := fmt.Sprintf("sess-%d", id)
 	// Alternate finalized (lease assigned) and created-only (no lease)
-	// sessions so the handoff covers both the §4.5 created-expiry reclaim
-	// (pod only) and the /terminate-of-a-finalizing/ready reclaim (pod + lease).
+	// sessions so the handoff covers both the reclaim the watchdog's
+	// CREATED_TIMEOUT write reaches through the post-terminal hook (pod only)
+	// and the /terminate-of-a-finalizing/ready reclaim (pod + lease).
 	finalize := id%2 == 0
 
 	b, err := s.claimOnReplicaA(pod, session, finalize)

@@ -5,11 +5,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // coordinationBindings adapts the per-replica podsession registry and the pod
@@ -21,9 +25,10 @@ import (
 // releases the lease so a subsequent sweep re-adopts the still-running pod
 // before its §10.1 hold-state self-termination. On a bound session a peer
 // replica has taken over (the lease is held elsewhere and the row's
-// coordination_generation has advanced past the generation this replica last
-// renewed at) it evicts the binding and writes no lease, so this replica stops
-// coordinating a session it no longer owns.
+// coordination_generation has advanced past the generation stamped on this
+// replica's binding, which BindingGeneration reports) it evicts the binding and
+// writes no lease, so this replica stops coordinating a session it no longer
+// owns.
 //
 // The collaborators (the podsession registry and the executor) are constructed
 // in later composition-root build steps than the Sweeper, so this adapter reads
@@ -77,14 +82,44 @@ func (c coordinationBindings) ConnAlive(sessionID string) bool {
 // required because the executor consults its stream cache before the registry,
 // so a registry-only eviction would let a same-replica re-adopt keep serving
 // over the stale dead cached stream instead of Attaching over the freshly
-// published binding. spec: §4.7 (single content consumer per session), §10.1.
+// published binding. It then closes the removed binding's adapter connection:
+// on both Sweeper triggers (a dead held channel, and a peer takeover) nothing
+// on this replica reaches the pod over it again, and a dropped connection that
+// is never closed leaks its gRPC channel and background goroutines. Only the
+// binding Remove returned is closed, so a concurrent evictor that removed it
+// first is the one that closes it, and each connection is closed once.
+// spec: §4.7 (single content consumer per session), §10.1, §10.1.1 (Stateless
+// Replicas and Per-Session Coordination), §10.1.5 (Stale Replica Behavior).
 func (c coordinationBindings) EvictBinding(sessionID string) {
+	var removed *podsession.BindResult
 	if c.w.podRegistry != nil {
-		c.w.podRegistry.Remove(sessionID)
+		if b, ok := c.w.podRegistry.Remove(sessionID); ok {
+			removed = b
+		}
 	}
 	if se, ok := c.w.exec.(streamEvicter); ok {
 		se.EvictStream(sessionID)
 	}
+	if err := removed.CloseAdapter(); err != nil {
+		slog.Warn("lenny-gateway: close evicted adapter connection", "session_id", sessionID, "error", err)
+	}
+}
+
+// BindingGeneration returns the coordination_generation stamped on the
+// session's current binding, or 0 when this replica binds no pod for the
+// session. Every site that publishes a binding stamps it first, so the Sweeper
+// compares a peer's generation with the generation this binding was published
+// at. spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.5
+// (Stale Replica Behavior).
+func (c coordinationBindings) BindingGeneration(sessionID string) int64 {
+	if c.w.podRegistry == nil {
+		return 0
+	}
+	bind, ok := c.w.podRegistry.Get(sessionID)
+	if !ok {
+		return 0
+	}
+	return bind.CoordinationGeneration
 }
 
 // readoptDialer re-opens the §4.7 adapter connection to a still-running pod on
@@ -132,6 +167,31 @@ type sandboxNameReader interface {
 	Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error)
 }
 
+// readoptPoolResolver resolves the pool of the session a takeover re-adopts, so
+// the published binding carries the slot, recycle, and scrub fields every
+// release dispatches on. poolResolver satisfies it in production.
+type readoptPoolResolver interface {
+	ResolveReadoptPool(ctx context.Context, row sessionstore.Session) (podsession.PoolMatch, error)
+}
+
+// poolResolver resolves a re-adopted session's pool against the warm-pool
+// CRDs and the §5.2 sessionPolicy mirror, pinned to the pool the gateway
+// placed the session on (row.PoolRef). The client pin row.Pool is never used:
+// the session already runs on a resolved pool, and the binding must describe
+// that pool. spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2
+// (Coordinator Handoff Protocol).
+type poolResolver struct {
+	reader    client.Reader
+	policy    podsession.PoolPolicyReader
+	namespace string
+}
+
+// ResolveReadoptPool implements readoptPoolResolver.
+func (p poolResolver) ResolveReadoptPool(ctx context.Context, row sessionstore.Session) (podsession.PoolMatch, error) {
+	return podsession.ResolvePool(ctx, p.reader, p.policy, p.namespace,
+		row.RuntimeRef, string(row.IsolationProfile), row.PoolRef)
+}
+
 // coordinationReadopter adapts the podsession Binder's fence-first re-adopt
 // entry point, the reused §10.1 coordfence Fencer, and the podsession registry
 // to the coordination.Readopter the Sweeper drives on the crash-takeover edge.
@@ -161,10 +221,32 @@ type coordinationReadopter struct {
 // back and a peer replica that has the seams re-adopts the pod.
 // spec: §10.1.1, §10.1.5.
 func (r coordinationReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
-	if r.w.podBinder == nil || r.w.podRegistry == nil || r.w.coordFencer == nil || r.w.sessions == nil || r.w.coordLeaseStore == nil {
+	if r.w.f == nil || r.w.podBinder == nil || r.w.podBinder.Client == nil || r.w.podRegistry == nil || r.w.coordFencer == nil || r.w.sessions == nil || r.w.coordLeaseStore == nil {
 		return nil, fmt.Errorf("gateway: crash-takeover re-adopt seams not wired for session %s", sessionID)
 	}
-	return readoptAndFence(ctx, r.w.podBinder, r.w.coordFencer, r.w.podRegistry, r.w.sessions, r.w.coordLeaseStore, tenantID, sessionID, r.w.replica, generation)
+	pools := poolResolver{
+		reader:    r.w.podBinder.Client,
+		policy:    sessionserver.NewPoolPolicyReader(r.w.pools),
+		namespace: *r.w.f.agentNamespace,
+	}
+	return readoptAndFence(ctx, readoptSeams{
+		dialer:   r.w.podBinder,
+		fencer:   r.w.coordFencer,
+		registry: r.w.podRegistry,
+		sessions: r.w.sessions,
+		releaser: r.w.coordLeaseStore,
+		pools:    pools,
+	}, tenantID, sessionID, r.w.replica, generation)
+}
+
+// readoptSeams groups the collaborators readoptAndFence drives.
+type readoptSeams struct {
+	dialer   readoptDialer
+	fencer   readoptFencer
+	registry readoptPublisher
+	sessions sandboxNameReader
+	releaser leaseReleaser
+	pools    readoptPoolResolver
 }
 
 // releaseAfterReadoptFailure relinquishes the coordination lease the Sweeper
@@ -183,12 +265,13 @@ func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, ten
 	return cause
 }
 
-// readoptAndFence dials the still-running pod, fences it as the first RPC, and
-// returns a publish callback the Sweeper invokes only after the fence
-// acknowledges. Every failure closes any dialed connection, publishes no
-// binding, and returns the error, so the Sweeper records a per-session
-// adoption backoff. On every failure that leaves the coordination lease held —
-// the session-row read fault and the pod dial fault (both before the fence),
+// readoptAndFence resolves the session's pool, dials the still-running pod,
+// fences it as the first RPC, and returns a publish callback the Sweeper
+// invokes only after the fence acknowledges. Every failure closes any dialed
+// connection, publishes no binding, and returns the error, so the Sweeper
+// records a per-session adoption backoff. On every failure that leaves the
+// coordination lease held — the session-row read fault, the pool-resolve
+// fault, and the pod dial fault (all before the fence),
 // and a best-effort fence fault the Fencer did not relinquish — this releases
 // the lease itself. Only a terminal fence failure arrives with the lease
 // already relinquished (relinquish-and-backoff, relinquished=true), so on that
@@ -205,17 +288,9 @@ func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, ten
 // takeover's RecordHandoff wrote.
 // spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3,
 // §4.7, §10.1.5.
-func readoptAndFence(
-	ctx context.Context,
-	dialer readoptDialer,
-	fencer readoptFencer,
-	registry readoptPublisher,
-	sessions sandboxNameReader,
-	releaser leaseReleaser,
-	tenantID, sessionID, holder string,
-	generation int64,
-) (func(), error) {
-	row, err := sessions.Get(ctx, tenantID, sessionID)
+func readoptAndFence(ctx context.Context, seams readoptSeams, tenantID, sessionID, holder string, generation int64) (func(), error) {
+	releaser := seams.releaser
+	row, err := seams.sessions.Get(ctx, tenantID, sessionID)
 	if err != nil {
 		// A pre-fence failure leaves the lease the Sweeper acquired held by
 		// this replica; release it so its lapse surfaces for a subsequent
@@ -224,9 +299,19 @@ func readoptAndFence(
 		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
 			fmt.Errorf("gateway: read session %s for crash-takeover re-adopt: %w", sessionID, err))
 	}
+	// Resolve the pool before the dial, pinned to the pool the session was
+	// placed on, so the published binding carries the fields every release
+	// dispatches on. A resolve error publishes nothing and releases the lease.
+	// spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2
+	// (Coordinator Handoff Protocol).
+	match, err := seams.pools.ResolveReadoptPool(ctx, row)
+	if err != nil {
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: resolve pool %q for crash-takeover re-adopt of session %s: %w", row.PoolRef, sessionID, err))
+	}
 	// Dial the pod without the §15.5 version handshake so CoordinatorFence is
 	// the first RPC to the hold-state pod.
-	sb, adapter, err := dialer.ReadoptConnect(ctx, row.PodAssignment)
+	sb, adapter, err := seams.dialer.ReadoptConnect(ctx, row.PodAssignment)
 	if err != nil {
 		// The dial failed before the fence, so the Fencer never ran to
 		// relinquish the lease; release the still-held lease here for the same
@@ -241,7 +326,7 @@ func readoptAndFence(
 	// (a coordination_generation read error or a context cancellation) leaves
 	// the lease held, so release it here so its lapse surfaces for a subsequent
 	// re-adopt. spec: §10.1 (relinquish-and-backoff), §11.3.
-	relinquished, ferr := fencer.Fence(ctx, adapter, tenantID, sessionID)
+	relinquished, ferr := seams.fencer.Fence(ctx, adapter, tenantID, sessionID)
 	if ferr != nil {
 		_ = adapter.Close()
 		cause := fmt.Errorf("gateway: re-adopt fence for session %s: %w", sessionID, ferr)
@@ -250,14 +335,34 @@ func readoptAndFence(
 		}
 		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder, cause)
 	}
+	bind := readoptBinding(row, match, sb.Status.PodIP, adapter, generation)
+	return func() { seams.registry.Put(bind) }, nil
+}
+
+// readoptBinding builds the serving binding a takeover publishes for a
+// re-adopted pod. Every release (Binder.Release or Binder.ReleaseSlot)
+// dispatches on the binding alone, so it carries the slot and the §5.2
+// recycle and scrub fields the resume path copies onto its request
+// (checkpointResumeRequest): a concurrent-workspace pool's binding is a slot
+// keyed by the session ID, and an exclusive pool's binding has no slot. The
+// generation is the one the takeover's compare-and-swap wrote.
+// spec: §5.2 (Pool Configuration and Execution Modes), §10.1.2 (Coordinator
+// Handoff Protocol), §10.1.5 (Stale Replica Behavior).
+func readoptBinding(row sessionstore.Session, match podsession.PoolMatch, podIP string, adapter *adapterclient.Client, generation int64) *podsession.BindResult {
 	bind := &podsession.BindResult{
-		SessionID:   sessionID,
-		TenantID:    tenantID,
-		SandboxName: row.PodAssignment,
-		PodIP:       sb.Status.PodIP,
-		Adapter:     adapter,
+		SessionID:             row.ID,
+		TenantID:              row.TenantID,
+		SandboxName:           row.PodAssignment,
+		PodIP:                 podIP,
+		Adapter:               adapter,
+		Recycle:               match.Recycle,
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
 
 		CoordinationGeneration: generation,
 	}
-	return func() { registry.Put(bind) }, nil
+	if match.MaxConcurrentSessions > 1 {
+		bind.SlotID = row.ID
+	}
+	return bind
 }

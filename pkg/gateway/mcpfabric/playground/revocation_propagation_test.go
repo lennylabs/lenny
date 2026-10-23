@@ -10,6 +10,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // spec: §27.8 — the propagation pub/sub payload carries the
@@ -66,18 +69,23 @@ func TestParseRevocationMsgJTIKeepsTail(t *testing.T) {
 
 // spec: §27.6 / §10.2 tenant format — the pattern-subscription
 // consume loop extracts the tenant from a concrete channel name. Only a
-// well-formed t:{tenant}:pg:revocations channel yields a tenant.
-// F-27.6.7.
+// well-formed t:{tenant}:pg:revocations channel, with the hash-tag braces
+// written literally, yields a tenant; the unbraced form is rejected.
+// F-27.6.7. spec: §12.4 Redis HA and Failure Modes (Tenant key isolation).
 func TestTenantFromRevocationChannel_spec_27_6_204(t *testing.T) {
 	cases := []struct {
 		channel string
 		want    string
 		ok      bool
 	}{
-		{"t:acme:pg:revocations", "acme", true},
-		{"t:globex-1_2:pg:revocations", "globex-1_2", true},
+		{revocationChannel("acme"), "acme", true},
+		{revocationChannel("globex-1_2"), "globex-1_2", true},
+		{"t:{acme}:pg:revocations", "acme", true},
+		{"t:acme:pg:revocations", "", false},
+		{"t:{}:pg:revocations", "", false},
 		{"t::pg:revocations", "", false},
-		{"t:acme:evt:lifecycle", "", false},
+		{"t:{acme}:evt:lifecycle", "", false},
+		{"t:{acme}:pg:revocations:extra", "", false},
 		{"acme:pg:revocations", "", false},
 		{"garbage", "", false},
 		{"", "", false},
@@ -113,7 +121,7 @@ func TestHandleRevocationMessagePeerWarmsCacheAndSamples_spec_27_8_241(t *testin
 	}
 
 	publishNano := now.Add(-120 * time.Millisecond).UnixNano()
-	store.handleRevocationMessage("t:acme:pg:revocations",
+	store.handleRevocationMessage(revocationChannel("acme"),
 		encodeRevocationMsg("replica-peer", publishNano, "jti-peer"))
 
 	// Cache warmed: IsBearerRevoked short-circuits on the cache (nil
@@ -146,7 +154,7 @@ func TestHandleRevocationMessageSelfPublishNotSampled(t *testing.T) {
 	var sampled bool
 	store.propObserver = func(string, float64) { sampled = true }
 
-	store.handleRevocationMessage("t:acme:pg:revocations",
+	store.handleRevocationMessage(revocationChannel("acme"),
 		encodeRevocationMsg("replica-self", now.UnixNano(), "jti-own"))
 
 	revoked, _ := store.IsBearerRevoked(context.Background(), "acme", "jti-own")
@@ -169,7 +177,7 @@ func TestHandleRevocationMessageBadChannelIgnored(t *testing.T) {
 	var sampled bool
 	store.propObserver = func(string, float64) { sampled = true }
 
-	store.handleRevocationMessage("t:acme:evt:lifecycle",
+	store.handleRevocationMessage(rediskeys.TenantPrefix("acme")+"evt:lifecycle",
 		encodeRevocationMsg("replica-peer", time.Now().UnixNano(), "jti-x"))
 
 	if len(store.cache) != 0 {
@@ -194,7 +202,7 @@ func TestHandleRevocationMessageNegativeLatencyClamped(t *testing.T) {
 	store.propObserver = func(_ string, seconds float64) { got = seconds }
 
 	future := now.Add(50 * time.Millisecond).UnixNano()
-	store.handleRevocationMessage("t:acme:pg:revocations",
+	store.handleRevocationMessage(revocationChannel("acme"),
 		encodeRevocationMsg("replica-peer", future, "jti-skew"))
 
 	if got != 0 {
@@ -210,7 +218,7 @@ func TestHandleRevocationMessageNegativeLatencyClamped(t *testing.T) {
 // startup tenant list. F-27.6.6, F-27.6.7.
 func TestSubscribeAllRevocationsWarmsCacheForArbitraryTenant_spec_27_6_204(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 
 	// Two distinct stores model two replicas sharing one Redis: A

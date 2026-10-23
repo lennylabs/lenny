@@ -564,7 +564,7 @@ func TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3(t *testing.T) {
 		t.Fatalf("the setup failure left the unwrap chain: %v", out)
 	}
 
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	w := httptest.NewRecorder()
 	s.writePodClaimError(w, out, "SESSION_CREATION_FAILED", "could not place the session on a warm pod")
 	if w.Code != 422 {
@@ -881,14 +881,6 @@ func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 			wantHTTP: 503, wantRetry: true, setupStage: true,
 		},
 		{
-			name: "session-mode setup stage, snapshotless resume",
-			err: func(*testing.T) error {
-				return &podsession.SetupCommandFailure{Pod: "pod-b", Cause: startedRefusal()}
-			},
-			fallback: "RESUME_FAILED", wantCode: "RESUME_FAILED",
-			wantHTTP: 503, wantRetry: true, setupStage: true,
-		},
-		{
 			name:     "concurrent-slot setup stage",
 			err:      func(*testing.T) error { return concurrentSetup(startedRefusal()) },
 			fallback: "STARTING_FAILED", wantCode: "STARTING_FAILED",
@@ -939,7 +931,7 @@ func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(memstore.New(), Options{})
+			s := New(memstore.New(), Options{DevTenantHeader: true})
 			var sink captureSetupAudit
 			var warmupFailures []string
 			s.lifecycleAudit = &sink

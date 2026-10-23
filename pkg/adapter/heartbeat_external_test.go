@@ -18,17 +18,19 @@ import (
 // within the ack window is hung; the adapter calls the clean Interrupt,
 // which sends the sidecar runtime process no signal, and ends the Attach
 // stream with DeadlineExceeded.
-func TestAttachHeartbeatHungInterruptsAndEndsStream_spec_15_4_1_1826(t *testing.T) {
+func TestAttachHeartbeatHungInterruptsAndEndsStream_spec_28_5_3(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	// Unbuffered, never-closed output keeps the runtime "alive" with no
 	// frames, so only the heartbeat path drives the stream.
 	rt.output = make(chan []byte)
 	s.HeartbeatInterval = 15 * time.Millisecond
 	s.HeartbeatAckTimeout = 40 * time.Millisecond
+	// The gRPC server installs the activity tap, which the session's
+	// heartbeat monitor needs, so it is built before the session starts.
+	client, _ := adapterClient(t, s)
 	if _, err := s.StartSession(context.Background(), startReq("sess-hb")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	client, _ := adapterClient(t, s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -68,17 +70,17 @@ func TestAttachHeartbeatHungInterruptsAndEndsStream_spec_15_4_1_1826(t *testing.
 // spec: §28.5.3 — heartbeat_ack is protocol-level and is never
 // relayed to the gateway. A normal frame after it still reaches the
 // gateway.
-func TestAttachConsumesHeartbeatAck_spec_15_4_1_1453(t *testing.T) {
+func TestAttachConsumesHeartbeatAck_spec_28_5_3(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	rt.output = make(chan []byte, 4)
 	// A long interval keeps the monitor from sending its own heartbeat
-	// during the test while still activating the ack-interception path.
+	// during the test while still starting it.
 	s.HeartbeatInterval = 10 * time.Second
 	s.HeartbeatAckTimeout = 10 * time.Second
+	client, _ := adapterClient(t, s)
 	if _, err := s.StartSession(context.Background(), startReq("sess-ack")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	client, _ := adapterClient(t, s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

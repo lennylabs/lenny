@@ -5,9 +5,13 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -16,9 +20,11 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/createdsweeper"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
@@ -368,11 +374,11 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 
 // spec: §4.6, §7.1 step 23 — ReclaimClaimed
 // releases a pod held by a created/finalizing/ready session that has no live
-// BindResult (the created-expiry sweeper or a /terminate path) from the
-// persisted SandboxName + sessionID alone: it deletes the per-pod claim and
-// revokes the session's §4.9 lease.
-// diagnosis: a failure means the created-expiry / pre-running terminate path
-// leaks the claimed pod or the finalize-assigned credential lease, because the
+// BindResult (the post-terminal hook after a watchdog timeout, a DELETE, or a
+// /terminate) from the persisted SandboxName + sessionID alone: it deletes the
+// per-pod claim and revokes the session's §4.9 lease.
+// diagnosis: a failure means the pre-running terminal reclaim leaks the
+// claimed pod or the finalize-assigned credential lease, because the
 // claimless reclaim entry point does not return both to the pool.
 func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
@@ -392,11 +398,12 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 		CredentialPools: map[string]string{"anthropic": "claude-prod"},
 	})
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-ttl"); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-ttl", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
-	// The pod's per-pod claim is deleted (returned to the pool).
+	// The pod's per-pod claim is deleted, and the pod's phase then follows
+	// the §4.6.1 occupancy projection.
 	var sc lennyv1.SandboxClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
@@ -412,7 +419,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 // spec: §4.6 — ReclaimClaimed for a created session that never
 // finalized (so holds only a pod, no lease) deletes the per-pod claim and
 // makes the lease revoke a no-op rather than erroring.
-// diagnosis: a failure means the created-expiry sweep cannot release a pod
+// diagnosis: a failure means the pre-running reclaim cannot release a pod
 // claimed at create when the session never reached finalize, leaving the warm
 // pod stranded.
 func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
@@ -433,7 +440,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-created"); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-created", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
@@ -449,76 +456,167 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §15.1, §7.1, §4.6 — the created-expiry
-// sweep, wired to the binder's claimless reclaim, releases the pod a
-// `created`-state row claimed at /create back to the pool against a real
-// kube-apiserver before it deletes the abandoned row. This is the S5 end-to-end
-// path: an expired created row with a persisted pod binding is swept, its
-// SandboxClaim is deleted from the apiserver, and the row is gone.
-// diagnosis: a failure means an abandoned created session strands its claimed
-// warm pod for the whole pool, because the §7.1 created-state sweep retired the
-// row without returning the pod the create handler reserved.
-func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
+// createdTimeoutFixture runs the watchdog over a session store with the
+// session server's post-terminal hook wired to a binder against a real
+// kube-apiserver, the way the gateway wires them, so a test observes what a
+// `created` row past maxCreatedStateTimeoutSeconds leaves behind.
+type createdTimeoutFixture struct {
+	c        client.Client
+	binder   *podsession.Binder
+	assigner *fakeAssigner
+	redis    *miniredis.Miniredis
+	store    sessionstore.Store
+	now      time.Time
+}
+
+func newCreatedTimeoutFixture(t *testing.T) *createdTimeoutFixture {
+	t.Helper()
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder := newBinder(c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	binder.SlotCounter = slotcounter.New(rc, slotcounter.WithSlotSource(emptySlotSource{}))
+	return &createdTimeoutFixture{
+		c: c, binder: binder, assigner: assigner, redis: mr,
+		store: memstore.New(),
+		now:   time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC),
+	}
+}
 
-	// A created session that only claimed a pod at /create (no finalize, so no
-	// lease): the warm pod is reserved and the binding is the persisted
-	// SandboxName + pool the sweep reconstructs.
-	claim, err := binder.Claim(context.Background(), podsession.BindRequest{
-		Pool: testPool, SessionID: "sess-abandoned", TenantID: "acme", Runtime: "claude-code",
+// seedCreated writes an abandoned `created` row bound to pod, last updated
+// ten minutes before the fixture's clock.
+func (f *createdTimeoutFixture) seedCreated(t *testing.T, id, pod, scrubPolicy string) {
+	t.Helper()
+	stale := f.now.Add(-10 * time.Minute)
+	if err := f.store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateCreated,
+		CreatedAt: stale, UpdatedAt: stale,
+		PodAssignment: pod, PoolRef: testPool, ScrubPolicy: scrubPolicy,
+	}); err != nil {
+		t.Fatalf("seed created row %s: %v", id, err)
+	}
+}
+
+// tick runs one watchdog pass at the default created-state budget with the
+// session server as its terminal hook, and returns the forced failures.
+func (f *createdTimeoutFixture) tick(t *testing.T) watchdog.Result {
+	t.Helper()
+	hook := sessionserver.New(f.store, sessionserver.Options{DevTenantHeader: true, PodBinder: f.binder})
+	w := watchdog.New(f.store, watchdog.StaticTenants{"acme"}, watchdog.Config{
+		MaxCreatedSeconds: watchdog.DefaultMaxCreatedStateSeconds,
+	}, func() time.Time { return f.now }).WithTerminalHook(hook)
+	res, err := w.Tick(context.Background(), f.now)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	return res
+}
+
+// assertFailedCreatedTimeout checks that the row survives as a `failed` row
+// carrying CREATED_TIMEOUT: the watchdog's guarded write is the one writer of
+// the created-state deadline, and nothing deletes the row.
+func (f *createdTimeoutFixture) assertFailedCreatedTimeout(t *testing.T, id string) {
+	t.Helper()
+	row, err := f.store.Get(context.Background(), "acme", id)
+	if err != nil {
+		t.Fatalf("row %s after the created-state deadline: %v, want a failed row", id, err)
+	}
+	if row.State != session.StateFailed || row.FailureReason != watchdog.ReasonCreatedTimeout {
+		t.Errorf("row %s = %q/%q, want failed/%s", id, row.State, row.FailureReason, watchdog.ReasonCreatedTimeout)
+	}
+}
+
+func (f *createdTimeoutFixture) slotMembers(t *testing.T, pod string) []string {
+	t.Helper()
+	key := "lenny:pod:{" + pod + "}:active_slots"
+	if !f.redis.Exists(key) {
+		return nil
+	}
+	m, err := f.redis.Members(key)
+	if err != nil {
+		t.Fatalf("members of %s: %v", key, err)
+	}
+	sort.Strings(m)
+	return m
+}
+
+// spec: §15.1 (created-state expiry), §7.2 (terminal write), §6.2 (pre-running
+// release), §4.6.3 (SandboxClaim end-of-occupancy delete), §5.2 (slot release)
+// — an abandoned `created` session ends as the watchdog's CREATED_TIMEOUT
+// write, and the post-terminal hook's pre-running reclaim releases what the
+// create handler reserved: on an exclusive pool it deletes the per-pod claim,
+// and on a concurrent-workspace pool it releases the session's slot member,
+// deleting the shared claim only when no sibling remains. The row stays as a
+// `failed` row.
+// diagnosis: a failure means an abandoned created session either strands the
+// warm pod or slot it reserved at /create, ends a live sibling's pod by
+// deleting the shared claim, or is retired by a second writer that deletes
+// the row instead of the watchdog's guarded created → failed write.
+func TestCreatedTimeoutReleasesClaimedPod_spec_15_1(t *testing.T) {
+	f := newCreatedTimeoutFixture(t)
+	ctx := context.Background()
+
+	// Exclusive pool: the pod claimed at /create, with no finalize and so no
+	// lease.
+	claim, err := f.binder.Claim(ctx, podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-excl", TenantID: "acme", Runtime: "claude-code",
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
+	f.seedCreated(t, "sess-excl", claim.SandboxName, "")
 
-	// Seed the abandoned created row with the persisted pod binding the create
-	// handler writes, then run the sweep wired to the binder's claimless reclaim.
-	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
-	store := memstore.New()
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess-abandoned", TenantID: "acme",
-		State:         session.StateCreated,
-		CreatedAt:     now.Add(-10 * time.Minute),
-		PodAssignment: claim.SandboxName, PoolRef: testPool,
-	}); err != nil {
-		t.Fatalf("seed created row: %v", err)
+	// Concurrent-workspace pool, last occupant: the shared claim is deleted.
+	seedBoundPod(t, f.c, "sbx-alone")
+	if _, _, err := f.binder.SlotCounter.Reserve(ctx, "sbx-alone", "sess-alone", 4); err != nil {
+		t.Fatalf("reserve sess-alone: %v", err)
 	}
-	sw := createdsweeper.New(store, createdsweeper.StaticTenants{"acme"}, createdsweeper.Options{
-		Clock: func() time.Time { return now },
-		Reclaim: func(ctx context.Context, podName, _, sessionID string) error {
-			return binder.ReclaimClaimed(ctx, podName, sessionID)
-		},
-	})
-	dropped, err := sw.Tick(context.Background(), now)
-	if err != nil {
-		t.Fatalf("Tick: %v", err)
+	f.seedCreated(t, "sess-alone", "sbx-alone", sessionserver.ScrubPolicyPerSlot)
+
+	// Concurrent-workspace pool with a live sibling: the shared claim stays.
+	seedBoundPod(t, f.c, "sbx-shared")
+	for _, id := range []string{"sess-shared", "sess-sibling"} {
+		if _, _, err := f.binder.SlotCounter.Reserve(ctx, "sbx-shared", id, 4); err != nil {
+			t.Fatalf("reserve %s: %v", id, err)
+		}
 	}
-	if dropped != 1 {
-		t.Fatalf("dropped = %d, want 1 (the abandoned created row)", dropped)
+	f.seedCreated(t, "sess-shared", "sbx-shared", sessionserver.ScrubPolicyPerSlot)
+
+	res := f.tick(t)
+	if got := res.PerReason[watchdog.ReasonCreatedTimeout]; got != 3 {
+		t.Fatalf("CREATED_TIMEOUT writes = %d, want 3", got)
+	}
+	for _, id := range []string{"sess-excl", "sess-alone", "sess-shared"} {
+		f.assertFailedCreatedTimeout(t, id)
 	}
 
-	// The reserved pod's per-pod claim is deleted from the apiserver, returning
-	// it to the pool.
-	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
-	if !apierrors.IsNotFound(gerr) {
-		t.Errorf("per-pod claim get after sweep = %v, want NotFound (sweep released the claimed pod)", gerr)
+	if got := claimPhase(t, f.c, claim.SandboxName); got != "gone" {
+		t.Errorf("exclusive claim after the created-state deadline = %s, want gone (the claim delete drains the pod, §4.6.1)", got)
 	}
-	// The row itself is gone.
-	if _, err := store.Get(context.Background(), "acme", "sess-abandoned"); err == nil {
-		t.Errorf("abandoned created row survived the sweep")
+	if got := f.slotMembers(t, "sbx-alone"); len(got) != 0 {
+		t.Errorf("sbx-alone slot set = %v, want empty", got)
 	}
-	// A created session that never finalized holds no lease, so the revoke is a
-	// defensive no-op the same injected reclaim still runs.
-	if len(assigner.released) != 1 || assigner.released[0] != "sess-abandoned" {
-		t.Errorf("ReleaseSession calls = %v, want [sess-abandoned] (defensive no-op revoke)", assigner.released)
+	if got := claimPhase(t, f.c, "sbx-alone"); got != "gone" {
+		t.Errorf("sbx-alone claim = %s, want gone (the release emptied the set)", got)
+	}
+	if got := f.slotMembers(t, "sbx-shared"); len(got) != 1 || got[0] != "sess-sibling" {
+		t.Errorf("sbx-shared slot set = %v, want [sess-sibling]", got)
+	}
+	if got := claimPhase(t, f.c, "sbx-shared"); got == "gone" {
+		t.Errorf("sbx-shared claim deleted under a live sibling, want it kept")
+	}
+	// The reclaim revokes each session's leases first; a created session holds
+	// none, so each revoke is a keyed no-op.
+	released := append([]string(nil), f.assigner.released...)
+	sort.Strings(released)
+	if want := []string{"sess-alone", "sess-excl", "sess-shared"}; !slices.Equal(released, want) {
+		t.Errorf("ReleaseSession calls = %v, want %v", released, want)
 	}
 }
 

@@ -631,8 +631,10 @@ func (p *SetupPolicy) Clone() *SetupPolicy {
 // lenny/request_input wait timeout. A zero field declares no per-runtime
 // cap for that dimension; the gateway falls back to its platform default.
 type Limits struct {
-	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
-	// declares no per-runtime session-age cap.
+	// MaxSessionAgeSeconds caps a session's active-time age in seconds:
+	// time counts while the session is starting, running, or input_required
+	// and is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
 	// MaxUploadSizeBytes caps a single client upload in bytes. Zero
@@ -1046,16 +1048,18 @@ type SessionPolicy struct {
 	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// MaxSessionRetries is the §5.2 / §6.2 crash re-dispatch budget. A nil
-	// value takes the §6.2 default of 1; an explicit 0 disables retries.
-	MaxSessionRetries *int `json:"maxSessionRetries,omitempty"`
-
-	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero
-	// declares no per-runtime cap and falls back to the platform default.
+	// MaxSessionAgeSeconds is the §5.2 active-time session age cap: time
+	// counts while the session is starting, running, or input_required and
+	// is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap and
+	// falls back to the platform default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
-	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound.
-	// Zero defaults to the effective MaxSessionAgeSeconds.
+	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound on a
+	// `running` session: an idle session is suspended and its pod released,
+	// and a session that cannot be idle-suspended (service mode or an MCP
+	// runtime) expires. Zero selects the platform default of 900 seconds.
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
 	MaxClientIdleSeconds int `json:"maxClientIdleSeconds,omitempty"`
 
 	// SlotRetries is the §5.2 per-slot retry budget when
@@ -1141,10 +1145,6 @@ func (p *SessionPolicy) Clone() *SessionPolicy {
 	cp := *p
 	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
 	cp.Recycle = p.Recycle.Clone()
-	if p.MaxSessionRetries != nil {
-		n := *p.MaxSessionRetries
-		cp.MaxSessionRetries = &n
-	}
 	if p.SlotRetries != nil {
 		n := *p.SlotRetries
 		cp.SlotRetries = &n

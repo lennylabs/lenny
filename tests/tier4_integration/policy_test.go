@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
@@ -74,12 +75,12 @@ func (c policyClient) do(method, path, tenant, user, roles string, body any) (in
 }
 
 // quotaWindowKey returns the §12.4 Redis key for the (tenant, user)
-// hourly token-usage window containing now. It mirrors the key
-// construction in pkg/gateway/quotastore so a test can seed the
+// hourly token-usage window containing now. It extends the quotastore
+// user prefix with the hourly window label so a test can seed the
 // counter the QuotaEvaluator reads.
 func quotaWindowKey(tenant, user string, now time.Time) string {
 	label := "hourly-" + now.UTC().Format("2006010215")
-	return "t:" + tenant + ":quota:tokens:" + user + ":" + label
+	return quotastore.UserKeyPrefix(tenant, user) + label
 }
 
 // tenantRollupUser is the reserved per-tenant rollup slot the

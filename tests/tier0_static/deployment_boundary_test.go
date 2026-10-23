@@ -876,6 +876,16 @@ func TestDeploymentBoundaryGateReportsAnUndeclaredRenderedFlag(t *testing.T) {
 		"(echo-embedded): flag provided but not defined: -runtime-uid",
 		"(preconnect-echo): flag provided but not defined: -runtime-uid")
 
+	// The embedded runtime's preStop is parsed against each embedded runtime
+	// binary's prestop set, since that binary is what the hook execs there.
+	embeddedPreStop := perturbedCases(t, m, "embedded-maximal", func(pod *corev1.Pod) {
+		h := boundaryContainer(t, pod, "runtime").Lifecycle.PreStop.Exec
+		h.Command = append(h.Command, "--probe-undeclared=x")
+	})
+	assertDefects(t, "(g2) undeclared preStop flag on the embedded runtime", argvDefects(embeddedPreStop),
+		"(echo-embedded): flag provided but not defined: -probe-undeclared",
+		"(preconnect-echo): flag provided but not defined: -probe-undeclared")
+
 	capture := perturbedCases(t, m, "sidecar-maximal", func(pod *corev1.Pod) {
 		ctr := boundaryContainer(t, pod, podspec.EgressCaptureContainerName)
 		ctr.Args = append(ctr.Args, "--runtime-uid=1")

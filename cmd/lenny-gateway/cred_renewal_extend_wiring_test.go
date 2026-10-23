@@ -110,23 +110,35 @@ type fakeExtendAssigner struct {
 	lease     credential.Lease
 }
 
-func (f *fakeExtendAssigner) Assign(_, _, _, _ string) (credential.Lease, error) {
+func (f *fakeExtendAssigner) Assign(_, _, _, _ string, _ int64) (credential.Lease, error) {
 	if f.assignErr != nil {
 		return credential.Lease{}, f.assignErr
 	}
 	return f.lease, nil
 }
 
-func (f *fakeExtendAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (f *fakeExtendAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
 
 func (f *fakeExtendAssigner) ProtoLeaseByID(string) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
-func (f *fakeExtendAssigner) Release(string)                              {}
-func (f *fakeExtendAssigner) ReleaseSession(string)                       {}
+func (f *fakeExtendAssigner) Release(string) error                        { return nil }
+func (f *fakeExtendAssigner) ReleaseSession(string) error                 { return nil }
+func (f *fakeExtendAssigner) ReleaseThrough(string, int64) error          { return nil }
 func (f *fakeExtendAssigner) OnAssigned(func(credassign.LeaseAssignment)) {}
+
+// renewStore returns a lease store holding a proxy-mode record of leaseID,
+// so a Renew of that lease finds it recorded and mints a replacement.
+func renewStore(t *testing.T, leaseID, sessionID string) *credleasestore.Store {
+	t.Helper()
+	store := credleasestore.New()
+	if err := store.Put(extendProxyLease(leaseID, sessionID, time.Now().Add(-time.Minute), time.Now().Add(time.Hour))); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	return store
+}
 
 // directLease builds a valid direct-mode pool-backed lease record for the
 // lease store.
@@ -169,10 +181,10 @@ func extendProxyLease(leaseID, sessionID string, issuedAt, expiresAt time.Time) 
 
 // TestOnExtendDirectModeDispatchesToAdapter proves a direct-mode lease
 // under the §4.9 Token Service unavailability guard re-arms the adapter
-// expiry timer over ExtendCredentialLease with the new deadline, and does
-// not advance the lease-store record (the enforcement point for a
-// direct-mode lease is the adapter timer, not the store). A regression
-// that routed a direct-mode extension to the lease store would leave the
+// expiry timer over ExtendCredentialLease with the new deadline, and also
+// advances the lease-store record, so the store row carries the worker's
+// ExpiresAt and the expired-lease sweep does not delete a lease the renewal
+// keeps alive. A regression that skipped the adapter RPC would leave the
 // adapter timer firing at the old deadline and delete the credential file.
 func TestOnExtendDirectModeDispatchesToAdapter_spec_4_9(t *testing.T) {
 	issuedAt := time.Now().Add(-30 * time.Minute)
@@ -217,14 +229,42 @@ func TestOnExtendDirectModeDispatchesToAdapter_spec_4_9(t *testing.T) {
 		t.Errorf("ExtendCredentialLease expiresAt = %d, want %d", got.GetExpiresAtUnixMs(), newExpiresAt.UnixMilli())
 	}
 
-	// The lease store must be untouched: a direct-mode extension does not
-	// advance the stored record's deadline.
+	// spec: §4.9 (Proactive Lease Renewal) — the store row carries the
+	// worker's ExpiresAt on both delivery modes.
 	after, ok := store.GetByID("cl-direct")
 	if !ok {
 		t.Fatal("direct lease vanished from the store")
 	}
-	if !after.ExpiresAt.Equal(expiresAt) {
-		t.Errorf("direct-mode extension advanced the lease-store ExpiresAt to %v, want it untouched at %v", after.ExpiresAt, expiresAt)
+	if !after.ExpiresAt.Equal(newExpiresAt) {
+		t.Errorf("lease-store ExpiresAt = %v, want the extension's %v", after.ExpiresAt, newExpiresAt)
+	}
+}
+
+// TestOnExtendOfAReleasedLeaseStopsRenewal_spec_4_9 proves that an extension
+// of a lease the store no longer holds, on either delivery mode, writes
+// nothing, sends no ExtendCredentialLease, and returns
+// credrenewal.ErrLeaseReleased, so the worker forgets the lease.
+func TestOnExtendOfAReleasedLeaseStopsRenewal_spec_4_9(t *testing.T) {
+	for _, mode := range []string{"direct", "proxy"} {
+		t.Run(mode, func(t *testing.T) {
+			adapter := &extendRecorder{}
+			registry := podsession.NewRegistry()
+			registry.Put(&podsession.BindResult{SessionID: "run_r", Adapter: dialExtendRecorder(t, adapter)})
+			store := credleasestore.New()
+			wiring := newCredRenewalWiring(&fakeExtendAssigner{}, registry, nil, store, nil)
+			wiring.pools["cl-gone"] = renewalProvider{pool: "claude-prod", provider: "anthropic_direct"}
+			err := wiring.onExtend(credrenewal.Lease{LeaseID: "cl-gone", SessionID: "run_r", ExpiresAt: time.Now()},
+				time.Now().Add(time.Minute))
+			if !errors.Is(err, credrenewal.ErrLeaseReleased) {
+				t.Fatalf("onExtend = %v, want ErrLeaseReleased", err)
+			}
+			if adapter.last() != nil {
+				t.Error("an extension of a released lease reached the adapter")
+			}
+			if store.Len() != 0 {
+				t.Errorf("store holds %d leases, want none recreated", store.Len())
+			}
+		})
 	}
 }
 
@@ -362,7 +402,9 @@ func TestOnExtendProxyModePgStore_spec_4_9(t *testing.T) {
 // error raw would exhaust a still-valid lease into the Fallback Flow, the
 // restart loop §4.9 forbids.
 func TestRenewMapsBreakerOpenToSentinel_spec_4_9(t *testing.T) {
-	wiring := newCredRenewalWiring(&fakeExtendAssigner{assignErr: credassign.ErrTokenServiceUnavailable}, podsession.NewRegistry(), nil, nil, nil)
+	store := credleasestore.New()
+	_ = store.Put(extendProxyLease("cl-x", "run_d", time.Now().Add(-time.Minute), time.Now().Add(time.Hour)))
+	wiring := newCredRenewalWiring(&fakeExtendAssigner{assignErr: credassign.ErrTokenServiceUnavailable}, podsession.NewRegistry(), nil, store, nil)
 	wiring.pools["cl-x"] = renewalProvider{pool: "claude-prod"}
 
 	_, err := wiring.Renew(context.Background(), credrenewal.Lease{LeaseID: "cl-x", SessionID: "run_d"})
@@ -411,7 +453,7 @@ func TestStampsLeaseTTLOnTrackAndRenew_spec_4_9(t *testing.T) {
 		IssuedAt:     nextIssued,
 		ExpiresAt:    nextExpires,
 		RenewBefore:  nextExpires.Add(-5 * time.Minute),
-	}}, podsession.NewRegistry(), nil, nil, nil)
+	}}, podsession.NewRegistry(), nil, renewStore(t, "cl-old", "run_e"), nil)
 	wiring.pools["cl-old"] = renewalProvider{pool: "claude-prod"}
 
 	next, err := wiring.Renew(context.Background(), credrenewal.Lease{LeaseID: "cl-old", SessionID: "run_e"})

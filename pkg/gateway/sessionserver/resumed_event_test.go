@@ -65,10 +65,10 @@ func (f *fakePartialLookup) HasActivePartialManifest(_ context.Context, tenant, 
 func TestResumeEmitsSessionResumedFullByDefault(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_resumed_full")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_resumed_full/resume")
+	rr := resumeAndDrive(t, srv, "sess_resumed_full")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -94,12 +94,13 @@ func TestResumeEmitsConversationOnlyWhenEvictionStatePresent(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	lookup := &fakeEvictionLookup{has: map[string]bool{"acme|sess_evicted": true}}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Events:              bus,
 		EvictionStateLookup: lookup,
 	})
 	seedAwaitingParent(t, store, "sess_evicted")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_evicted/resume")
+	rr := resumeAndDrive(t, srv, "sess_evicted")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -121,12 +122,13 @@ func TestResumeEmitsPartialWorkspaceWhenPartialManifestPresent(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	partial := &fakePartialLookup{has: map[string]bool{"acme|sess_partial": true}}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:       true,
 		Events:                bus,
 		PartialManifestLookup: partial,
 	})
 	seedAwaitingParent(t, store, "sess_partial")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_partial/resume")
+	rr := resumeAndDrive(t, srv, "sess_partial")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -148,12 +150,13 @@ func TestResumeEmitsFullWhenLookupErrorsAreNonFatal(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Events:              bus,
 		EvictionStateLookup: &fakeEvictionLookup{err: errors.New("transient")},
 	})
 	seedAwaitingParent(t, store, "sess_lookup_err")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_lookup_err/resume")
+	rr := resumeAndDrive(t, srv, "sess_lookup_err")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -173,11 +176,11 @@ func TestResumeEmitsFullWhenLookupErrorsAreNonFatal(t *testing.T) {
 func TestResumeEmitsResumedBeforeChildrenReattached(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_parent_order")
 	seedTreeSession(t, store, "sess_child_order", "sess_parent_order")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent_order/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent_order")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -211,7 +214,7 @@ func TestResumeEmitsResumedBeforeChildrenReattached(t *testing.T) {
 func TestResumeEmitsResumedEvenWithoutSnapshot(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now().UTC()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID:               "sess_resumed_cold",
@@ -225,7 +228,7 @@ func TestResumeEmitsResumedEvenWithoutSnapshot(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_resumed_cold/resume")
+	rr := resumeAndDrive(t, srv, "sess_resumed_cold")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume status %d, body %s", rr.Code, rr.Body.String())
 	}

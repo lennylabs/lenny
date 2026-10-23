@@ -169,7 +169,10 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | `QUOTA_EXCEEDED` | Tenant session quota exceeded |
 | `CREDENTIAL_POOL_EXHAUSTED` | No credentials available |
 | `CIRCUIT_BREAKER_OPEN` | Operator circuit breaker active |
-| `ERASURE_IN_PROGRESS` | User has pending GDPR erasure |
+| `ERASURE_IN_PROGRESS` | The caller or the session's owner has a pending GDPR erasure job |
+| `USER_INVALIDATED` | The caller or the session's owner is invalidated |
+| `TENANT_SUSPENDED` | The tenant is suspended |
+| `TENANT_NOT_ACTIVE` | The tenant is not `active`, such as during tenant deletion |
 
 **Example:**
 
@@ -460,7 +463,7 @@ Progress notifications stream as MCP Task updates containing `MessagePart` array
 
 ### `send_message`
 
-Send a message to a running or suspended session. This is the unified message delivery endpoint -- it replaces the earlier `send_prompt` tool.
+Send a message to a running or suspended session. This is the unified message delivery endpoint -- it replaces the earlier `send_prompt` tool. A message to a `suspended` session resumes the session, whatever its `delivery` value, after the concurrent-session admission check that `resume_session` runs admits it.
 
 **Input schema:**
 
@@ -495,6 +498,7 @@ Possible `status` values: `delivered`, `queued`, `dropped`, `expired`, `rate_lim
 | `DUPLICATE_MESSAGE_ID` | Sender-supplied message ID already exists |
 | `INVALID_DELIVERY_VALUE` | Unknown `delivery` value |
 | `TARGET_NOT_READY` | Session is in a pre-running state with no inbox |
+| `QUOTA_EXCEEDED` | Session is `suspended` and a concurrent-session limit it counts toward is full; the message is neither held nor delivered |
 
 **Example:**
 
@@ -854,9 +858,16 @@ End a session. Valid in any non-terminal state. Ending a session ends the sessio
 
 ### `resume_session`
 
-Resume a suspended or paused session. Behavior depends on the session state:
-- `suspended`: Resumes the agent runtime.
-- `awaiting_client_action`: Triggers pod re-acquisition and session restoration.
+Resume a session in `awaiting_client_action` or a `suspended` session. The REST equivalent is `POST /v1/sessions/{id}/resume`.
+
+The gateway recovers a session automatically after a pod or stream failure: the session enters `resume_pending`, and the gateway's resume driver restores it onto a replacement pod. A session whose automatic retries are exhausted, or whose `maxResumeWindowSeconds` resume window elapses, moves to `awaiting_client_action`. This tool is the client override. A `send_message` call to a `suspended` session also resumes it, whatever its `delivery` value.
+
+The tool returns the session in its new state. Behavior depends on the session state:
+- `suspended`, with its pod still held: the session moves to `running` on the same pod.
+- `suspended`, with its pod released: the session moves to `resume_pending`, and the resume driver restores it onto a replacement pod. The restore's outcome arrives on the event stream as a `status_change` event.
+- `awaiting_client_action`: the session moves to `resume_pending`, and the resume driver restores it onto a replacement pod. The restore's outcome arrives on the event stream as a `status_change` event.
+
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. When a limit the session counts toward is full, the tool returns the `QUOTA_EXCEEDED` error with the details a refused session creation carries, and the session stays `suspended`.
 
 **Input schema:**
 
@@ -869,7 +880,7 @@ Resume a suspended or paused session. Behavior depends on the session state:
 ```json
 {
   "sessionId": "sess_01J5K9...",
-  "status": "running",
+  "status": "resume_pending",
   "resumedAt": "2026-04-09T10:25:00Z"
 }
 ```
@@ -880,6 +891,7 @@ Resume a suspended or paused session. Behavior depends on the session state:
 |:-----|:-----|
 | `RESOURCE_NOT_FOUND` | Session does not exist |
 | `INVALID_STATE_TRANSITION` | Session not in a resumable state |
+| `QUOTA_EXCEEDED` | Session is `suspended` and a concurrent-session limit it counts toward is full |
 
 ---
 

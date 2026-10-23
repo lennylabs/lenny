@@ -195,6 +195,13 @@ func (f *Fixture) bindAndStart(t *testing.T, id, token string) {
 	f.start(t, id)
 }
 
+// BindAndStart puts id in the running state under TokenA, for a case outside
+// this package that drives the adapter through another client.
+func (f *Fixture) BindAndStart(t *testing.T, id string) {
+	t.Helper()
+	f.bindAndStart(t, id, TokenA)
+}
+
 // shutdown sends req and fails the case unless it succeeds, because rule 15
 // answers every reclaim outcome on a successful call.
 func (f *Fixture) shutdown(t *testing.T, req *adapterv1.ShutdownRequest) *adapterv1.ShutdownResponse {

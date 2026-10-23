@@ -75,3 +75,23 @@ func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, session
 		log.Printf("sessionserver: release coordination lease for session %s: %v", sessionID, err)
 	}
 }
+
+// coordinatesSession is the design lease gate: the resume driver, the
+// held-pod resume, and the other coordinator-only actions act only when the
+// session's coordination lease names this replica. They act on every session
+// when no lease store or no pod binder is wired, or the replica has no
+// identity (the single-gateway dev posture). A lease read that fails, and a
+// lease that names no holder, count as "not the holder".
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §7.3
+// (Resume driver)
+func (s *Server) coordinatesSession(ctx context.Context, tenantID, sessionID string) bool {
+	if s.leaseStore == nil || s.podBinder == nil || s.replicaID == "" {
+		return true
+	}
+	lease, err := s.leaseStore.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return false
+	}
+	return lease.Holder == s.replicaID
+}

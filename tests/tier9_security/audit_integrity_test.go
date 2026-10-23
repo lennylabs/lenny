@@ -320,7 +320,11 @@ func requireTenantAuditSequenceProvisioned(
 			tenant, res.curlExit, res.statusCode, res.body)
 	}
 	seq := seqname.AuditSequenceName(tenant)
-	out := runPsqlQuery(t, c, pgIP, "t9-auditseq-probe",
+	// The psql pod takes its own name. runPsqlQuery deletes any pod
+	// carrying the name it is given before it starts, so passing the
+	// gateway probe's name would delete the probe the caller still
+	// drives requests through.
+	out := runPsqlQuery(t, c, pgIP, "t9-auditseq-seqcheck",
 		fmt.Sprintf("SELECT to_regclass('%s') IS NOT NULL;", seq))
 	if strings.TrimSpace(out) != "t" {
 		t.Skipf("blocked: the per-tenant audit sequence %s was not provisioned when tenant "+

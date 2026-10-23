@@ -58,6 +58,17 @@ type fakeRuntime struct {
 	subs    int
 	subCond *sync.Cond
 	fanOnce sync.Once
+	// tap is the adapter's activity tap, installed by NewGRPCServer through
+	// TapOutput and set on the hub when the first Output creates it.
+	tap func([]byte)
+}
+
+// TapOutput records the adapter's activity tap, as the production
+// transports do, so a server built over the fake reads its frames.
+func (f *fakeRuntime) TapOutput(fn func(line []byte)) {
+	f.mu.Lock()
+	f.tap = fn
+	f.mu.Unlock()
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -165,6 +176,9 @@ func (f *fakeRuntime) Output(ctx context.Context, _ string) (<-chan []byte, erro
 	f.mu.Lock()
 	if f.hub == nil {
 		f.hub = linefanout.New()
+		if f.tap != nil {
+			f.hub.Tap(f.tap)
+		}
 	}
 	hub := f.hub
 	f.mu.Unlock()
@@ -534,15 +548,17 @@ func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 // spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
 //
 // The teardown clause is conditional rather than guarded, so a request
-// naming a session the registry holds no bound entry for is a no-op that
-// reports a clean exit. Returning an error there would make every revoked
-// session hold its slot for the life of the pod, because the gateway's
-// slot release returns early on a leaked outcome without decrementing the
-// occupancy counter.
+// naming a session the registry holds no bound entry for is a no-op. It
+// reports a clean exit when no other Shutdown that removed the session's
+// entry is still tearing it down and the last such Shutdown did not report
+// an unclean exit, which holds here because the session never started.
+// Returning an error there would make every revoked session hold its slot
+// for the life of the pod, because the gateway's slot release records a
+// leaked outcome as a leaked:<sessionId> member of the pod's slot set.
 //
 // diagnosis: a failure means a second teardown for an already-released
-// session is refused again, which the §11.4 full revoke and the
-// occupancy-zero recycle edge both produce on every release.
+// session is refused again, which the occupancy-zero recycle edge produces
+// on every release.
 func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {

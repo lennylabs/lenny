@@ -946,12 +946,10 @@ func TestCreateRuntimeRejectsMalformedMinPlatformVersion(t *testing.T) {
 func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 	// §5.1: the admin runtime API round-trips the sessionPolicy block.
 	router, _, _ := newRuntimeAdmin(t)
-	retries := 2
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
 		Name:  "rt",
 		Image: "lenny/rt@sha256:abc",
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxSessionRetries: &retries,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -967,8 +965,7 @@ func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 	var created admin.RuntimePayload
 	_ = json.Unmarshal(rr.Body.Bytes(), &created)
 	if created.SessionPolicy == nil || created.SessionPolicy.Recycle == nil ||
-		created.SessionPolicy.Recycle.MaxSessionsPerPod != 50 ||
-		created.SessionPolicy.MaxSessionRetries == nil || *created.SessionPolicy.MaxSessionRetries != 2 {
+		created.SessionPolicy.Recycle.MaxSessionsPerPod != 50 {
 		t.Errorf("create response sessionPolicy: %+v", created.SessionPolicy)
 	}
 

@@ -412,7 +412,6 @@ func TestCreateAdmitsValidServicePool(t *testing.T) {
 // spec: §5.2 (sessionPolicy block, recycle lifecycle, cross-tenant
 // prohibition).
 func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
-	mt := 1
 	cases := []struct {
 		name    string
 		pool    poolstore.Pool
@@ -677,7 +676,6 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 					AcknowledgeProcessLevelIsolation: true,
 					CleanupCommands:                  []string{"rm -rf /tmp/x"},
 					CleanupTimeoutSeconds:            30,
-					MaxSessionRetries:                &mt,
 					OnPoolExhausted:                  runtimestore.PoolExhaustedQueue,
 					MaxQueueWaitSeconds:              30,
 					Recycle: &runtimestore.RecyclePolicy{

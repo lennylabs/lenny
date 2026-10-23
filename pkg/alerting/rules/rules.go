@@ -1132,8 +1132,14 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "ErasureJobOverdue",
-			Expr:        `lenny_erasure_job_age_seconds > scalar(lenny_erasure_job_deadline_seconds)`,
+			Name: "ErasureJobOverdue",
+			// spec: §12.8 (Erasure SLA enforcement). The leader's sampler
+			// publishes each in-progress job's age minus its own deadline,
+			// so a T4 job is measured against 1h and a T3 job against 72h.
+			// max by (tenant_id, job_id) collapses the per-instance copies
+			// that every replica publishes when no leader election runs, so
+			// the alert evaluates once per job whatever the replica count.
+			Expr:        `max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "A user-level erasure job is overdue",
 			Description: "A user-level erasure job has exceeded its tier-specific deadline (72h for T3, 1h for T4) without completing. Requires operator investigation.",
@@ -1382,7 +1388,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_inbox_drain_failure_total[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Inbox-to-DLQ drain failed",
-			Description: "The atomic inbox-to-DLQ drain failed during a resume_pending state transition and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
+			Description: "The atomic inbox-to-DLQ drain failed, typically because Redis was unavailable, and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
 			SpecRef:     "§16.5",
 		},
 		{

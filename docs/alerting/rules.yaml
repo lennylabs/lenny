@@ -818,7 +818,7 @@ groups:
             description: A user-level erasure job has failed. The user's processing_restricted flag remains set, blocking all new sessions for that user. The failure_phase label distinguishes failure modes.
             summary: A user-level erasure job has failed
         - alert: ErasureJobOverdue
-          expr: lenny_erasure_job_age_seconds > scalar(lenny_erasure_job_deadline_seconds)
+          expr: max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0
           labels:
             severity: warning
           annotations:
@@ -1022,7 +1022,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: The atomic inbox-to-DLQ drain failed during a resume_pending state transition and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.
+            description: The atomic inbox-to-DLQ drain failed, typically because Redis was unavailable, and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.
             summary: Inbox-to-DLQ drain failed
         - alert: DurableInboxRedisUnavailable
           expr: rate(lenny_inbox_redis_unavailable_total[5m]) > 0

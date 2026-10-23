@@ -53,18 +53,24 @@ func (e *sendErrorExecutor) Send(_ context.Context, _ string, _ []executor.Messa
 
 func (e *sendErrorExecutor) Close(context.Context, string) error { return nil }
 
-// updateFailStore wraps a real store and forces every Update to fail, modelling
-// a store fault (or a lost terminal-transition race) on the resumeHeldPod
-// suspended → running write. Get and the other reads delegate to the embedded
-// store, so loadMessageTarget still observes the seeded suspended row and the
-// router still selects ActionResumeAndDeliver; only the resume write fails.
-type updateFailStore struct {
+// resumeWriteFailStore fails only the write that would move a row to
+// running, the resumeHeldPod suspended → running write; reads and every other
+// write, including the primary read and the guarded resume_pending write,
+// reach the embedded store.
+type resumeWriteFailStore struct {
 	sessionstore.Store
 	err error
 }
 
-func (s *updateFailStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
-	return sessionstore.Session{}, s.err
+func (s *resumeWriteFailStore) Update(ctx context.Context, tenant, id string, fn func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	cur, err := s.Get(ctx, tenant, id)
+	if err == nil && cur.State != session.StateRunning {
+		probe := cur
+		if fn(&probe) == nil && probe.State == session.StateRunning {
+			return sessionstore.Session{}, s.err
+		}
+	}
+	return s.Store.Update(ctx, tenant, id, fn)
 }
 
 // inboxServer wires a gateway with the given executor and store plus a real
@@ -91,9 +97,10 @@ func inboxAndDLQServer(t *testing.T, store sessionstore.Store, exec executor.Exe
 		DLQ:   dlq,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    exec,
-		Transcripts: transcriptstore.NewMemory(),
-		Messaging:   coord,
+		DevTenantHeader: true,
+		Executor:        exec,
+		Transcripts:     transcriptstore.NewMemory(),
+		Messaging:       coord,
 	})
 	return srv, inbox, dlq
 }
@@ -161,45 +168,43 @@ func TestResumeAndDeliverPostResumeSendFailureBuffersQueuedSessionRunning(t *tes
 	}
 }
 
-// TestResumeAndDeliverResumeFailureBuffersQueuedRowUnchanged pins the §7.2
-// path-6 resume fail-closed path: when the resumeHeldPod suspended → running
-// write fails (a store fault or a lost terminal-transition race), the handler
-// leaves the row unchanged and buffers the message to the inbox with a `queued`
-// receipt rather than dropping it. The router selected ActionResumeAndDeliver
-// because the row read suspended; the write failure then routes to the fallback.
+// TestResumeAndDeliverResumeFailureHoldsQueuedRowUnchanged pins the §7.2
+// path-6 resume failure: when the resumeHeldPod suspended → running write
+// fails, the message is held in the DLQ with the inbox empty, the row stays
+// suspended, and the answer is `queued`.
 //
-// spec: 7.2 (Interactive Session Model; Message delivery routing — seven
-// paths, path 6: the message is not silently dropped)
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
 //
-// diagnosis: a failure means a resumeHeldPod write error did not fail closed —
-// the handler dropped the message, returned a 5xx, or transitioned the row
-// despite the failed resume instead of buffering to a `queued` inbox and leaving
-// the session suspended.
-func TestResumeAndDeliverResumeFailureBuffersQueuedRowUnchanged(t *testing.T) {
+// diagnosis: a failure means a resumeHeldPod write error dropped the message,
+// returned a 5xx, buffered it in the inbox (which a suspended session never
+// reads), or transitioned the row despite the failed resume.
+func TestResumeAndDeliverResumeFailureHoldsQueuedRowUnchanged(t *testing.T) {
 	inner := memstore.New()
 	seedSuspendedSession(t, inner, "s-resume-fail", "pod-2")
-	store := &updateFailStore{Store: inner, err: errors.New("store update failed")}
+	store := &resumeWriteFailStore{Store: inner, err: errors.New("store update failed")}
 	// The echo executor must never be reached: the resume failed before delivery.
-	srv, inbox := inboxServer(t, store, executor.NewEchoExecutor())
+	srv, inbox, dlq := inboxAndDLQServer(t, store, executor.NewEchoExecutor())
 
 	rr := sendMessageRequest(t, srv.Handler(), "s-resume-fail", immediateMessage("wake up"))
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status %d, body=%s (a resume failure must fail closed to a 200 queued receipt, not a 5xx)", rr.Code, rr.Body.String())
+		t.Fatalf("status %d, body=%s (a resume failure must answer a 200 queued receipt, not a 5xx)", rr.Code, rr.Body.String())
 	}
 	var resp sessionserver.MessageResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.DeliveryReceipt.Status != session.DeliveryStatusQueued {
-		t.Errorf("status = %q, want queued (a failed resume fails closed to the inbox)", resp.DeliveryReceipt.Status)
+		t.Errorf("status = %q, want queued", resp.DeliveryReceipt.Status)
 	}
-	// The resume write failed, so the row is untouched: still suspended.
 	row, _ := inner.Get(context.Background(), "acme", "s-resume-fail")
 	if row.State != session.StateSuspended {
 		t.Errorf("state = %q, want suspended unchanged (the resume write failed, so no transition)", row.State)
 	}
-	if n, _ := inbox.Len(context.Background(), "acme", "s-resume-fail"); n != 1 {
-		t.Errorf("inbox depth = %d, want 1 (the message must be buffered, not dropped)", n)
+	if n, _ := inbox.Len(context.Background(), "acme", "s-resume-fail"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0 (a suspended session's message is held in the DLQ)", n)
+	}
+	if n, _ := dlq.Len(context.Background(), "acme", "s-resume-fail"); n != 1 {
+		t.Errorf("DLQ depth = %d, want 1 (the message must be held, not dropped)", n)
 	}
 }
 
@@ -225,7 +230,7 @@ func TestResumeAndDeliverResumeFailureRecordsTransientCategory(t *testing.T) {
 
 	inner := memstore.New()
 	seedSuspendedSession(t, inner, "s-resume-cat", "pod-4")
-	store := &updateFailStore{Store: inner, err: errors.New("store update failed")}
+	store := &resumeWriteFailStore{Store: inner, err: errors.New("store update failed")}
 	srv, _ := inboxServer(t, store, executor.NewEchoExecutor())
 
 	rr := sendMessageRequest(t, srv.Handler(), "s-resume-cat", immediateMessage("wake up"))

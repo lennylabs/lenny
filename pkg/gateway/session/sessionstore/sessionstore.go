@@ -59,12 +59,15 @@ type Session struct {
 	TerminatedAt     time.Time
 	TerminatedReason string
 
-	// SuspendedAt and SuspendedReason carry the §7.2 interrupt-suspension
-	// Suspended session-condition fact, relocated off
-	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
-	// is the wall-clock instant the session entered `suspended`; it is the
-	// zero time while the session is not suspended. SuspendedReason is the
-	// coded interrupt reason. spec: §7.2; §8.8.
+	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
+	// session-condition fact, relocated off Sandbox.status.conditions
+	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
+	// the session entered `suspended`; it is the zero time while the
+	// session is not suspended. SuspendedReason is the coded reason the
+	// session was suspended for: SuspendedReasonInterruptAcknowledged or
+	// SuspendedReasonInterruptTimeout for an interrupt, and
+	// SuspendedReasonIdle for an idle suspension, whose row names no pod.
+	// spec: §7.2; §8.8; §6.2 (Pod State Machine).
 	SuspendedAt     time.Time
 	SuspendedReason string
 
@@ -315,9 +318,11 @@ type Session struct {
 	// spec: §4.2.
 	RecoveryGeneration int64
 
-	// CoordinationGeneration is the §4.2 coordinator-handoff counter,
+	// CoordinationGeneration is the §4.2 coordination counter,
 	// incremented when a different gateway replica becomes the
-	// authoritative coordinator for this session. Internal-only —
+	// authoritative coordinator for this session and by the §7.3 resume
+	// driver's resume_pending → resuming write (§10.1.1 Generation
+	// counters). Internal-only —
 	// used for split-brain fencing. Monotonically non-decreasing.
 	// Bumped under a mid-resume terminal write per §7.2 to fence any
 	// stale coordinator still attempting resume.
@@ -370,6 +375,15 @@ type Session struct {
 	// internal state writes that are not agent activity.
 	// spec: §6.2; §11.3. F-11.3.7.
 	LastAgentActivityAt time.Time
+
+	// AccumulatedSessionAgeSeconds is the §6.2 accumulated_session_age_seconds
+	// column: the active time, in seconds, the session spent in a state whose
+	// maxSessionAge timer runs (starting, running, input_required) up to the
+	// row's last write. Both stores accrue it inside Update through
+	// AccrueSessionAge, so no caller writes it directly; ActiveAge adds the
+	// interval since the last write when the row is still in a counting state.
+	// spec: §6.2 (maxSessionAge timer behavior across states).
+	AccumulatedSessionAgeSeconds float64
 
 	// LastSuccessfulCheckpointAt is the wall-clock instant the
 	// gateway recorded its most recent successful checkpoint for
@@ -921,7 +935,56 @@ const (
 type Store interface {
 	// Create persists a fresh session row. Returns ErrAlreadyExists
 	// if a session with the same ID already exists.
+	//
+	// Create runs the creation fence: in the insert transaction it reads
+	// the tenant row and the owner's user row under a shared lock and
+	// returns *CreationRefusal, inserting nothing, when CreationMarkers.Refusal
+	// refuses the row. A marker read error fails the insert. In the same
+	// transaction it deletes the reservation whose ID and owner match the
+	// row. A missing tenant row reaches the fence only in the in-memory
+	// store; in Postgres the sessions.tenant_id foreign key rejects the
+	// insert first.
+	// spec: §12.8 (Lifecycle fence and drain).
 	Create(ctx context.Context, s Session) error
+
+	// Reserve runs the creation fence for a row that ownerUserID will own
+	// and records sessionID for that owner, in one transaction. It returns
+	// *CreationRefusal when the fence refuses, and records nothing. An
+	// empty ownerUserID reads only the tenant row and records nothing.
+	// delegatedChild is the CreationMarkers.IsDelegatedChild of the row the
+	// path will insert. A path that writes data keyed to the new session
+	// ID before its insert reserves the ID first, so the owner's erasure
+	// reaches that data through ReservedSessionIDs.
+	// spec: §12.8 (Lifecycle fence and drain).
+	Reserve(ctx context.Context, tenantID, ownerUserID, sessionID string, delegatedChild bool) error
+
+	// ReleaseReservation deletes the reservation of sessionID. It is
+	// idempotent. A path releases its reservation only after it deleted
+	// what it wrote under the ID.
+	// spec: §12.8 (Lifecycle fence and drain).
+	ReleaseReservation(ctx context.Context, tenantID, sessionID string) error
+
+	// ReservedSessionIDs lists the session IDs reserved for userID within
+	// tenantID, read from the primary. The erasure's session lister returns
+	// them with the user's session rows.
+	// spec: §12.8 (Lifecycle fence and drain).
+	ReservedSessionIDs(ctx context.Context, tenantID, userID string) ([]string, error)
+
+	// CreateReserved is Create for a row whose ID was reserved through
+	// Reserve. For a row with an owner it deletes the reservation in the
+	// insert transaction and, when no reservation is left to delete,
+	// returns ReservationEndedRefusal and inserts nothing. A row with no
+	// owner inserts as Create does.
+	// spec: §12.8 (Lifecycle fence and drain).
+	CreateReserved(ctx context.Context, s Session) error
+
+	// CreateWithTranscript is Create, plus a copy of the transcript of
+	// transcriptSourceID into s.ID, in Create's transaction. A fence
+	// refusal, a copy error, or any other insert error leaves neither the
+	// row nor a copied entry. A store built without a transcript copier
+	// returns ErrTranscriptCopierUnwired and inserts nothing.
+	// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+	CreateWithTranscript(ctx context.Context, s Session, transcriptSourceID string) error
 
 	// Get returns the session row whose ID equals id within tenantID.
 	// Returns ErrNotFound when no matching row exists (including
@@ -969,32 +1032,59 @@ type Store interface {
 	// DeleteByUser removes every session owned by userID within
 	// tenantID and returns the count deleted. It is the §12.8
 	// GDPR-erasure per-store adapter — erasing a user with no sessions
-	// is a no-op that returns (0, nil), never ErrNotFound.
+	// is a no-op that returns (0, nil), never ErrNotFound. In the same
+	// transaction it deletes the user's session-ID reservations, which
+	// the count does not include.
 	//
-	// spec: §12.1, §12.8 step 17.
+	// spec: §12.1, §12.8 step 17, §12.8 (Lifecycle fence and drain).
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant removes every session row belonging to tenantID
 	// and returns the count deleted. It is the §12.1 / §12.8 Phase 4
 	// tenant-deletion erasure adapter — a tenant with no sessions is
 	// a no-op that returns (0, nil), never ErrNotFound. Cross-tenant
-	// rows are never touched.
+	// rows are never touched. In the same transaction it deletes the
+	// tenant's session-ID reservations, which the count does not include.
 	//
-	// spec: §12.1, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4, §12.8 (Lifecycle fence and drain).
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
-	// GetActiveSlotsByPod returns the number of live (non-terminal)
-	// sessions bound to podID across every tenant. It is the §5.2
-	// "Post-recovery rehydration atomicity" seed source: after a Redis
-	// restart the gateway reads this count to rehydrate the pod's
-	// lenny:pod:{pod_id}:active_slots counter before allowing any new
-	// slot allocation on the pod. The query is pod-scoped rather than
-	// tenant-scoped because the rehydration path holds only the pod
-	// identity; §5.2 tenant pinning guarantees the rows it counts all
-	// belong to one tenant. A pod with no live sessions returns
-	// (0, nil).
-	// spec: §5.2.
-	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
+	// GetActiveSlotsByPod returns the identifiers of the pod's slot
+	// holders across every tenant: the sessions whose row is non-terminal
+	// and whose pod_assignment names podID (the slot-holder predicate). It
+	// is the §5.2 "Post-recovery rehydration atomicity" seed source: the
+	// gateway adds these identifiers to lenny:pod:{pod_id}:active_slots,
+	// keeping the members the set already holds. The failure funnel clears
+	// pod_assignment on its resume_pending and awaiting_client_action edges,
+	// so a session whose slot the funnel released is not returned. The query
+	// is pod-scoped rather than tenant-scoped because the rehydration path
+	// holds only the pod identity; §5.2 tenant pinning guarantees the rows
+	// all belong to one tenant. An empty podID or a pod with no slot holder
+	// returns (nil, nil).
+	// spec: §5.2 (Post-recovery rehydration atomicity).
+	GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error)
+
+	// ListPodsWithActiveSlots returns, once each, the pods that a
+	// non-terminal session row whose scrub_policy is best-effort-per-slot
+	// names in pod_assignment, across tenants. The slot counter's recovery
+	// rebuild deletes each listed pod's rehydrated flag when a Redis outage
+	// ends, so the pod's next reservation or release rehydrates its set. An
+	// empty pod_assignment is never returned.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery
+	// rehydration atomicity).
+	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)
+
+	// ListStaleTerminalSessions returns the identifiers in ids whose row is
+	// in a terminal state with a terminated_at earlier than
+	// terminatedBefore, across tenants. A missing row, a non-terminal row, a
+	// terminal row with no terminated_at, and an identifier that is not a
+	// session identifier are not returned. The stale-slot reaper resolves a
+	// pod's slot set members through it: MarkTerminated stamps
+	// terminated_at in the first terminal write and keeps it on a relabel,
+	// so an eligible member's session ended at least the reaper's terminal
+	// age ago.
+	// spec: §5.2 (Slot assignment atomicity).
+	ListStaleTerminalSessions(ctx context.Context, ids []string, terminatedBefore time.Time) ([]string, error)
 
 	// ReserveSlotUnderLock is the §12.4 Redis-outage capacity gate for the
 	// per-pod session-mode slot counter. It serializes the slot-admission
@@ -1024,38 +1114,42 @@ type Store interface {
 	// spec: §15.1.
 	PoolDrainStats(ctx context.Context, poolRef string) (active int, oldestCreatedAt time.Time, err error)
 
-	// CountActiveSessions returns the number of live (non-terminal)
-	// sessions belonging to tenantID. It backs the §11.2 per-tenant
-	// concurrent-session quota check on the session-creation path so the
-	// gateway counts active sessions without materializing every
-	// historical row. A tenant with no live sessions returns (0, nil).
-	// spec: §11.2 (per-tenant concurrent-session quota with hard
-	// rejection).
+	// CountActiveSessions returns the number of non-terminal sessions
+	// other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// belonging to tenantID. It backs the §11.2 per-tenant
+	// concurrent-session quota check on the session-creation path and on
+	// every resume of a suspended session, so the gateway counts without
+	// materializing every historical row. A tenant with no counted
+	// sessions returns (0, nil).
+	// spec: §11.1 (Concurrent-session count), §11.2 (Budgets and Quotas)
 	CountActiveSessions(ctx context.Context, tenantID string) (int, error)
 
-	// CountActiveSessionsByUser returns the number of live (non-terminal)
-	// sessions owned by userID within tenantID. It backs the §11.1
-	// per-user concurrent-session admission limit so a single user cannot
+	// CountActiveSessionsByUser returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// owned by userID within tenantID. It backs the §11.1 per-user
+	// concurrent-session admission limit so a single user cannot
 	// monopolize the tenant's concurrent-session capacity. An empty
-	// tenant or user, or a user with no live sessions, returns (0, nil).
-	// spec: §11.1.
+	// tenant or user, or a user with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error)
 
-	// CountActiveSessionsByRuntime returns the number of live
-	// (non-terminal) sessions targeting runtimeRef within tenantID. It
-	// backs the §11.1 per-runtime concurrent-session admission limit so a
-	// single runtime cannot be flooded with concurrent sessions. An empty
-	// tenant or runtime, or a runtime with no live sessions, returns
-	// (0, nil).
-	// spec: §11.1.
+	// CountActiveSessionsByRuntime returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// targeting runtimeRef within tenantID. It backs the §11.1 per-runtime
+	// concurrent-session admission limit so a single runtime cannot be
+	// flooded with concurrent sessions. An empty tenant or runtime, or a
+	// runtime with no counted sessions, returns (0, nil).
+	// spec: §11.1 (Concurrent-session count)
 	CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error)
 
-	// CountActiveSessionsGlobal returns the number of live (non-terminal)
-	// sessions across every tenant. It backs the §11.1 global
-	// concurrent-session admission limit (the gateway-wide ceiling). The
-	// count is cross-tenant by design; the global cap bounds total live
-	// sessions regardless of tenant attribution.
-	// spec: §11.1.
+	// CountActiveSessionsGlobal returns the number of non-terminal
+	// sessions other than suspended ones (session.CountsTowardConcurrencyCaps)
+	// across every tenant. It backs the §11.1 global concurrent-session
+	// admission limit (the gateway-wide ceiling) and is the denominator of
+	// the §16.5 session-availability ratio. The count is cross-tenant by
+	// design; the global cap bounds the counted sessions regardless of
+	// tenant attribution.
+	// spec: §11.1 (Concurrent-session count), §16.5 (Alerting Rules and SLOs)
 	CountActiveSessionsGlobal(ctx context.Context) (int, error)
 
 	// CountActiveSessionsInRecoveryGlobal returns the number of live
@@ -1063,8 +1157,11 @@ type Store interface {
 	// (resume_pending, resuming, awaiting_client_action). The gateway
 	// export loop divides it by CountActiveSessionsGlobal to publish the
 	// §16.5 lenny_session_unavailability_ratio SLI the
-	// SessionAvailabilityBurnRate alert reads.
-	// spec: §16.5. F-16.5.3.
+	// SessionAvailabilityBurnRate alert reads. Every recovery state is a
+	// counted state, so the numerator is a subset of the denominator, and
+	// a suspended session, which runs no turn and is in no recovery
+	// state, is in neither.
+	// spec: §16.5 (Alerting Rules and SLOs), §11.1 (Concurrent-session count). F-16.5.3.
 	CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error)
 
 	// CountActiveDelegatedChildrenByUser returns the number of live
@@ -1101,6 +1198,14 @@ type ListFilter struct {
 	// includes these audit rows by default; the `?includeDeriveFailures=false`
 	// query param sets this flag. spec: §15.1. F-15.1.14.
 	ExcludeDeriveFailures bool
+
+	// Primary reads from the Postgres primary rather than the §12.3 read
+	// pool. Lifecycle decisions set it: the drain of a lifecycle operation
+	// lists its scope from the primary, because a replica can omit a row
+	// the creation fence admitted before the marker committed. A store
+	// with a single backing (memstore) ignores it.
+	// spec: §12.8 (Lifecycle fence and drain), §12.3 (Read replicas).
+	Primary bool
 }
 
 // Sentinel errors. The sessionserver maps these to the §15.1 error
@@ -1108,4 +1213,74 @@ type ListFilter struct {
 var (
 	ErrNotFound      = errors.New("sessionstore: session not found")
 	ErrAlreadyExists = errors.New("sessionstore: session already exists")
+)
+
+// SessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.
+// The timer runs in starting (as a secondary bound behind the starting
+// watchdog), running, and input_required. It is paused in suspended and in
+// the recovery states (resume_pending, resuming, awaiting_client_action),
+// does not run in the pre-running states created, finalizing, and ready, and
+// is stopped in the terminal states.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func SessionAgeCounts(st session.State) bool {
+	switch st {
+	case session.StateStarting, session.StateRunning, session.StateInputRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+// AccrueSessionAge adds to row.AccumulatedSessionAgeSeconds the active time
+// between the previous write and now, when the row was in a counting state
+// (starting, running, or input_required) at the previous write. prev and
+// prevUpdatedAt are the state and UpdatedAt the row carried before the write;
+// now is the instant the write stamps as the new UpdatedAt. A now at or before
+// prevUpdatedAt accrues nothing.
+//
+// Both stores call it inside Update, after the mutator returns and before the
+// UpdatedAt stamp, with the same now the stamp uses. Because UpdatedAt
+// strictly advances on every write, the column then sums exactly the
+// intervals the row spent in a counting state. A write that leaves the row in
+// a counting state still accrues, because the row stayed in that state across
+// the interval; a write that moves the row out of a counting state accrues
+// the interval up to the transition and nothing after it.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func AccrueSessionAge(prev session.State, prevUpdatedAt time.Time, row *Session, now time.Time) {
+	if !SessionAgeCounts(prev) || !now.After(prevUpdatedAt) {
+		return
+	}
+	row.AccumulatedSessionAgeSeconds += now.Sub(prevUpdatedAt).Seconds()
+}
+
+// ActiveAge returns the §6.2 active session age of row at now: the
+// accumulated value plus, when the row is in a counting state, the time
+// elapsed since its last write. The elapsed part is clamped at zero, so a now
+// that precedes the row's UpdatedAt (a sweep instant taken before a
+// concurrent write) adds nothing. This is the value the maxSessionAge timer
+// compares with the effective cap, periodically and on entry to running.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func ActiveAge(row Session, now time.Time) time.Duration {
+	age := time.Duration(row.AccumulatedSessionAgeSeconds * float64(time.Second))
+	if SessionAgeCounts(row.State) && now.After(row.UpdatedAt) {
+		age += now.Sub(row.UpdatedAt)
+	}
+	return age
+}
+
+// Suspension reasons recorded in Session.SuspendedReason. An interrupt
+// suspension keeps its pod for the hold window (§6.2
+// maxSuspendedPodHoldSeconds); an idle suspension releases its pod in the
+// same sequence that writes it, so an Idle row names no pod.
+//
+// spec: §6.2 (Pod State Machine), §7.2 (Interactive Session Model).
+const (
+	// SuspendedReasonInterruptAcknowledged is an interrupt the runtime
+	// acknowledged before the deadline.
+	SuspendedReasonInterruptAcknowledged = "InterruptAcknowledged"
+	// SuspendedReasonInterruptTimeout is an interrupt whose deadline elapsed
+	// without an acknowledgement.
+	SuspendedReasonInterruptTimeout = "InterruptTimeout"
+	// SuspendedReasonIdle is an idle suspension (§6.2 Idle suspension.).
+	SuspendedReasonIdle = "Idle"
 )

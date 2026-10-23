@@ -37,12 +37,15 @@ type TreeLister interface {
 	ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error)
 }
 
-// NodeReattacher brings one orphaned non-terminal node back onto a
-// fresh pod — the §7.3 resume action the recovery traversal calls per
-// node, leaves-first. A nil error means the node was reattached; a
-// non-nil error fails the node, exactly as an elapsed recovery budget
-// does. spec: §8.10.
+// NodeReattacher drives and waits for the restore of one node of a
+// delegation tree. StartNode starts the node's restore and returns at once;
+// the traversal calls it for every selected node of a level before it waits
+// on any of them. ReattachNode waits until the node's restore has an
+// outcome: a nil error means the restore committed; a non-nil error fails
+// the node, exactly as an elapsed recovery budget does. The context passed
+// to ReattachNode carries the node's recovery deadline. spec: §8.10.
 type NodeReattacher interface {
+	StartNode(ctx context.Context, node sessionstore.Session)
 	ReattachNode(ctx context.Context, node sessionstore.Session) error
 }
 
@@ -72,8 +75,8 @@ const (
 // maps the two budget-exhaustion reasons onto the §16.1
 // timeout_type label.
 const (
-	reasonLevelTimeout = "level recovery deadline exceeded"
-	reasonTreeTimeout  = "tree recovery deadline exceeded"
+	reasonLevelTimeout = recovery.ReasonLevelTimeout
+	reasonTreeTimeout  = recovery.ReasonTreeTimeout
 )
 
 // Config builds an Orchestrator. Lister, Reattacher, and Terminal are
@@ -84,11 +87,10 @@ type Config struct {
 	Terminal   TerminalMarker
 	Metrics    Metrics
 	// Recoverable selects which non-terminal descendant nodes need
-	// §8.10 recovery. The caller scopes the recovery to genuinely
-	// orphaned nodes (no live pod binding) so a root that resumed for
-	// its own reasons does not tear down descendants still running on
-	// their pods. When nil, every non-terminal descendant is treated as
-	// recoverable.
+	// §8.10 recovery. The gateway selects a node by its row state, so a
+	// root that resumed for its own reasons does not drive descendants
+	// still running on their pods. When nil, every non-terminal
+	// descendant is treated as recoverable.
 	Recoverable func(sessionstore.Session) bool
 	// LevelTimeout and TreeTimeout are the §8.10
 	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets. A
@@ -194,8 +196,10 @@ func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string)
 	}
 
 	start := o.clock()
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
-		return o.reattacher.ReattachNode(ctx, byID[n.SessionID])
+	results := recovery.Recover(ctx, nodes, func(n recovery.Node) {
+		o.reattacher.StartNode(ctx, byID[n.SessionID])
+	}, func(nctx context.Context, n recovery.Node) error {
+		return o.reattacher.ReattachNode(nctx, byID[n.SessionID])
 	}, recovery.Config{
 		LevelTimeout: o.levelTimeout,
 		TreeTimeout:  o.treeTimeout,

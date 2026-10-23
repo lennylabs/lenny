@@ -5,6 +5,7 @@ package memstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -307,8 +308,8 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 
 // spec: §4.2, §10.1 — newly created sessions are written at
 // schema_version=1 by default. The recovery generation starts at zero and the
-// coordination generation is baselined at 1, so the first coordinator handoff
-// mints 2 strictly above the value a replica already holds for the session.
+// coordination generation is baselined at 1, so each coordinator handoff
+// mints a value strictly above the one a replica already holds for the session.
 // Cwd and PodAssignment are empty.
 func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	s := memstore.New()
@@ -515,61 +516,77 @@ func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
 	}
 }
 
-// spec: §5.2 — GetActiveSlotsByPod counts only the live
-// (non-terminal) sessions bound to a pod, across every tenant, and
-// excludes sessions on other pods.
+// TestGetActiveSlotsByPod_spec_5_2_521 pins the slot-holder predicate on
+// the rehydration seed: GetActiveSlotsByPod returns exactly the identifiers
+// of the non-terminal sessions whose row names the pod, and none for another
+// pod, a podless row, or an empty pod name.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestGetActiveSlotsByPod_spec_5_2_521(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
-	// Two live sessions on pod-a for tenant acme.
 	_ = s.Create(ctx, sessionstore.Session{ID: "a1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-a"})
 	_ = s.Create(ctx, sessionstore.Session{ID: "a2", TenantID: "acme", State: session.StateStarting, PodAssignment: "pod-a"})
-	// A terminal session on pod-a must not count.
 	_ = s.Create(ctx, sessionstore.Session{ID: "a3", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-a"})
-	// A live session on a different pod must not count toward pod-a.
 	_ = s.Create(ctx, sessionstore.Session{ID: "b1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-b"})
-	// A session with no pod binding must not count.
-	_ = s.Create(ctx, sessionstore.Session{ID: "u1", TenantID: "acme", State: session.StateRunning, PodAssignment: ""})
+	_ = s.Create(ctx, sessionstore.Session{ID: "u1", TenantID: "acme", State: session.StateResumePending, PodAssignment: ""})
 
 	got, err := s.GetActiveSlotsByPod(ctx, "pod-a")
-	if err != nil {
-		t.Fatalf("GetActiveSlotsByPod: %v", err)
+	if err != nil || fmt.Sprint(got) != "[a1 a2]" {
+		t.Fatalf("pod-a slot holders = (%v, %v), want [a1 a2]", got, err)
 	}
-	if got != 2 {
-		t.Errorf("pod-a active slots = %d, want 2 (live only, this pod only)", got)
+	if got, _ := s.GetActiveSlotsByPod(ctx, "pod-b"); fmt.Sprint(got) != "[b1]" {
+		t.Errorf("pod-b slot holders = %v, want [b1]", got)
 	}
-
-	// pod-b has one live slot.
-	if got, _ := s.GetActiveSlotsByPod(ctx, "pod-b"); got != 1 {
-		t.Errorf("pod-b active slots = %d, want 1", got)
+	if got, err := s.GetActiveSlotsByPod(ctx, "pod-none"); err != nil || len(got) != 0 {
+		t.Errorf("pod-none = (%v, %v), want none", got, err)
 	}
-	// A pod with no sessions returns zero, never an error.
-	if got, err := s.GetActiveSlotsByPod(ctx, "pod-none"); err != nil || got != 0 {
-		t.Errorf("pod-none = (%d, %v), want (0, nil)", got, err)
-	}
-	// An empty pod identity matches no slot.
-	if got, _ := s.GetActiveSlotsByPod(ctx, ""); got != 0 {
-		t.Errorf("empty pod = %d, want 0", got)
+	if got, _ := s.GetActiveSlotsByPod(ctx, ""); len(got) != 0 {
+		t.Errorf("empty pod = %v, want none", got)
 	}
 }
 
-// spec: §5.2 — the count aggregates across tenants because the
-// rehydration path holds only the pod identity (a pod is pinned to one
-// tenant by §5.2, but the query itself is pod-scoped).
+// TestGetActiveSlotsByPodCrossTenant_spec_5_2_521 pins that the seed reads
+// across tenants, because the rehydration path holds only the pod identity.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
-	// Two tenants both reference pod-shared (a pathological pre-pinning
-	// state the count must still tally rather than tenant-filter).
 	_ = s.Create(ctx, sessionstore.Session{ID: "x", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-shared"})
 	_ = s.Create(ctx, sessionstore.Session{ID: "y", TenantID: "globex", State: session.StateRunning, PodAssignment: "pod-shared"})
-
 	got, err := s.GetActiveSlotsByPod(ctx, "pod-shared")
-	if err != nil {
-		t.Fatalf("GetActiveSlotsByPod: %v", err)
+	if err != nil || fmt.Sprint(got) != "[x y]" {
+		t.Fatalf("cross-tenant slot holders = (%v, %v), want [x y]", got, err)
 	}
-	if got != 2 {
-		t.Errorf("cross-tenant active slots = %d, want 2", got)
+}
+
+// TestListPodsWithActiveSlots_spec_12_4 pins the recovery rebuild's listing:
+// each pod a non-terminal best-effort-per-slot row names is returned once,
+// across tenants, and no pod that only terminal rows, exclusive-pool rows, or
+// a podless recovery row names, and never the empty string.
+//
+// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery rehydration atomicity)
+func TestListPodsWithActiveSlots_spec_12_4(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	const perSlot = "best-effort-per-slot"
+	rows := []sessionstore.Session{
+		{ID: "a1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-a", ScrubPolicy: perSlot},
+		{ID: "a2", TenantID: "globex", State: session.StateReady, PodAssignment: "pod-a", ScrubPolicy: perSlot},
+		{ID: "b1", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-b", ScrubPolicy: perSlot},
+		{ID: "c1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-c", ScrubPolicy: "best-effort"},
+		{ID: "d1", TenantID: "acme", State: session.StateResumePending, PodAssignment: "", ScrubPolicy: perSlot},
+		{ID: "e1", TenantID: "globex", State: session.StateRunning, PodAssignment: "pod-e", ScrubPolicy: perSlot},
+	}
+	for _, r := range rows {
+		if err := s.Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ListPodsWithActiveSlots(ctx)
+	if err != nil || fmt.Sprint(got) != "[pod-a pod-e]" {
+		t.Fatalf("ListPodsWithActiveSlots = (%v, %v), want [pod-a pod-e]", got, err)
 	}
 }
 

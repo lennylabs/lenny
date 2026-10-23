@@ -20,6 +20,7 @@
 // Function-constructor route closed at the V8 level ("Code generation from
 // strings disallowed for this context").
 
+import { createHash } from "crypto";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
@@ -176,6 +177,191 @@ export async function runWorkflow(relPath, args, stubs, opts = {}) {
     error = e;
   }
   return { result, calls, logs, phases, error };
+}
+
+// ---- resume replay -------------------------------------------------------
+//
+// A model of the runtime's resume journal, for testing that a resumed run
+// replays every agent call the interrupted run completed.
+//
+// The runtime keys each agent() call on a hash chained over the calls invoked
+// before it: key = sha256(previous key, prompt, the options that reach the
+// model). That was read from the runtime and checked against a real journal,
+// where the sampled keys of a measured run recomputed from their predecessors'. A
+// resumed run returns a call's journaled result only while every call before
+// it hit the journal; the first miss runs live and so does everything after
+// it. A call whose agent returned nothing is journaled as failed and never
+// replays.
+//
+// So a resume replays the prefix only when the ORDER in which the script
+// invokes its agents is the same in both runs. Order is the part a plain stub
+// harness cannot see: its agents all return in the same microtask, so a script
+// whose invocation order depends on agent latency looks deterministic there.
+// This model gives live agents a latency and replayed ones none, as the
+// runtime does, and parallel() yields a macrotask before it invokes its
+// thunks, as the runtime's does. A newer runtime chains each parallel() slot
+// separately; a single chain is the stricter of the two, because an order that
+// is fixed globally is fixed within every slot.
+
+const KEYED_OPTS = ["schema", "model", "effort", "isolation", "agentType", "disallowedTools", "bashCommandClamp"];
+
+function canonical(v) {
+  if (typeof v === "function") return undefined;
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = canonical(v[k]);
+    return out;
+  }
+  return v;
+}
+
+/** The options that key an agent call, serialised as the runtime does. */
+export function keyedOpts(opts) {
+  const picked = {};
+  for (const k of KEYED_OPTS) {
+    if (opts && opts[k] !== undefined && typeof opts[k] !== "function") picked[k] = opts[k];
+  }
+  return JSON.stringify(canonical(picked));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Run a workflow body against a modelled resume journal.
+ *
+ * @param {string} relPath  workflow path relative to the repository root
+ * @param {object} args     the `args` global the script receives
+ * @param {object|Function} stubs  as for runWorkflow
+ * @param {object} [opts]
+ *   journal   the `journal` a previous run returned; omitted for a fresh run
+ *   latency   (call) => milliseconds a LIVE agent takes; replayed ones take none
+ *   stopAt    (call) => true at the first call the account limit refuses; that
+ *             call and every later live call return null, as a usage limit does
+ *   inline    run a workflow() child's real body with these same hooks, as the
+ *             runtime does, rather than returning a stubbed result
+ *   source    workflow source text, in place of reading relPath
+ * @returns {Promise<{result, calls, logs, error, journal, firstMiss, stopIndex}>}
+ *   Each call carries its key, its keyed options, and whether it replayed.
+ */
+export async function runJournaled(relPath, args, stubs, opts = {}) {
+  const journal = { results: new Map(opts.journal ? opts.journal.results : []) };
+  const latency = opts.latency || (() => 1);
+  const stopAt = opts.stopAt || (() => false);
+  const calls = [];
+  const logs = [];
+  let prev = "";
+  let missed = false;
+  let stopIndex = -1;
+  let firstMiss = -1;
+
+  const agent = async (prompt, agentOpts = {}) => {
+    const p = String(prompt);
+    const ko = keyedOpts(agentOpts);
+    const key = "v2:" + createHash("sha256").update(prev).update("\0").update(p).update("\0").update(ko).digest("hex");
+    prev = key;
+    const call = { label: agentOpts.label || "", prompt: p, opts: agentOpts, keyedOpts: ko, key, index: calls.length, replayed: false };
+    calls.push(call);
+    if (!missed && journal.results.has(key)) {
+      call.replayed = true;
+      await null;
+      return JSON.parse(journal.results.get(key));
+    }
+    if (!missed) {
+      missed = true;
+      firstMiss = call.index;
+    }
+    if (stopIndex === -1 && stopAt(call)) stopIndex = call.index;
+    // The stub is resolved when the call is invoked, as runWorkflow does, so a
+    // stub that counts its calls counts them in invocation order.
+    const out = stopIndex !== -1 ? null : resolveStub(stubs, call);
+    await sleep(latency(call));
+    if (out === null) return null;
+    const value = out === undefined ? {} : out;
+    // Journaled as the runtime journals it: serialised, and replayed as a copy.
+    const text = JSON.stringify(value);
+    journal.results.set(key, text);
+    return JSON.parse(text);
+  };
+
+  // The runtime's parallel() yields once, then invokes every thunk in slot
+  // order inside one synchronous pass; a thunk that throws resolves to null.
+  const parallel = async (thunks) => {
+    await sleep(0);
+    return Promise.all(
+      thunks.map((f) => {
+        try {
+          return Promise.resolve(f()).catch(() => null);
+        } catch {
+          return Promise.resolve(null);
+        }
+      }),
+    );
+  };
+  const pipeline = async (items, ...stages) => {
+    await sleep(0);
+    return Promise.all(
+      items.map(async (item, i) => {
+        let acc = item;
+        for (const stage of stages) {
+          if (acc === null) return null;
+          try {
+            acc = await stage(acc, item, i);
+          } catch {
+            return null;
+          }
+        }
+        return acc;
+      }),
+    );
+  };
+
+  const budget = { total: null, spent: () => 0, remaining: () => Infinity };
+  const body = (src) =>
+    new Function(
+      "args", "agent", "parallel", "pipeline", "phase", "log", "workflow", "budget",
+      "return (async () => {\n" + src + "\n})();",
+    );
+  const workflow = async (ref, subArgs) => {
+    const key = typeof ref === "string" ? ref : ref && ref.scriptPath;
+    if (opts.inline && typeof key === "string" && key.endsWith(".js")) {
+      const child = loadWorkflow(".claude/workflows/" + key.replace(/^.*\//, ""));
+      return body(child)(subArgs, agent, parallel, pipeline, () => {}, (m) => logs.push(String(m)), workflow, budget);
+    }
+    const table = opts.subworkflows || {};
+    for (const k of Object.keys(table)) {
+      if (String(key).includes(k)) return table[k];
+    }
+    return {};
+  };
+
+  const src = opts.source !== undefined ? opts.source : loadWorkflow(relPath);
+  let result = null;
+  let error = null;
+  try {
+    result = await body(src)(args, agent, parallel, pipeline, () => {}, (m) => logs.push(String(m)), workflow, budget);
+  } catch (e) {
+    error = e;
+  }
+  return { result, calls, logs, error, journal, firstMiss, stopIndex };
+}
+
+/**
+ * Compare an interrupted run with its resume. Every call the interrupted run
+ * invoked before its stop must replay, with the same prompt and options in the
+ * same position.
+ */
+export function replayDivergence(interrupted, resumed) {
+  const upTo = interrupted.stopIndex === -1 ? interrupted.calls.length : interrupted.stopIndex;
+  for (let i = 0; i < upTo; i++) {
+    const a = interrupted.calls[i];
+    const b = resumed.calls[i];
+    if (!b) return { index: i, label: a.label, why: "the resume made fewer calls" };
+    if (a.prompt !== b.prompt) return { index: i, label: a.label, other: b.label, why: "prompt differs" };
+    if (a.keyedOpts !== b.keyedOpts) return { index: i, label: a.label, other: b.label, why: "options differ" };
+    if (!b.replayed) return { index: i, label: a.label, why: "ran live" };
+  }
+  return null;
 }
 
 // ---- assertions ----------------------------------------------------------

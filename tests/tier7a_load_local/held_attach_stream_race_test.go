@@ -238,15 +238,20 @@ func heldBindOn(reg *podsession.Registry, cl *adapterclient.Client, sessionID st
 
 // heldExecutor returns a pod executor over reg whose binder releases the
 // named sessions' slots without a cluster. Each session's sandbox starts with
-// a slot count high enough that a release always leaves sibling slots on the
-// pod, so the release sends the adapter its teardown, decrements the counter,
-// closes the binding's client, and never reaches the per-pod claim.
+// a sibling member and its rehydrated flag, so a release always leaves a
+// sibling on the pod: the release sends the adapter its teardown, removes the
+// session's member, closes the binding's client, and never reaches the
+// per-pod claim.
 func heldExecutor(t *testing.T, reg *podsession.Registry, sessions ...string) *executor.PodExecutor {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	for _, id := range sessions {
-		if err := mr.Set("lenny:pod:sbx-"+id+":active_slots", "1000000"); err != nil {
-			t.Fatalf("seed slot counter for %s: %v", id, err)
+		pod := "sbx-" + id
+		if _, err := mr.SAdd("lenny:pod:{"+pod+"}:active_slots", id, "sibling"); err != nil {
+			t.Fatalf("seed slot set for %s: %v", id, err)
+		}
+		if err := mr.Set("lenny:pod:{"+pod+"}:rehydrated", "1"); err != nil {
+			t.Fatalf("seed rehydrated flag for %s: %v", id, err)
 		}
 	}
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})

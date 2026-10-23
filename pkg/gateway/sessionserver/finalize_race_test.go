@@ -266,6 +266,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 	bus := sessionevents.NewBus(256)
 	audit := &raceLifecycleSink{}
 	opts := sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return raceSessionID },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -489,6 +490,7 @@ var setupFailPlan = json.RawMessage(`{"schemaVersion": 1, "setupCommands": [{"cm
 // none of its WorkspacePlan, makes no pod RPC, and reclaims nothing.
 // spec: 15.1 (finalize precondition), 7.1 (steps 11-13)
 func TestFinalizeEntryRefusesOverlappingCall_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.hooks.arm(&storeHook{
@@ -521,6 +523,7 @@ func TestFinalizeEntryRefusesOverlappingCall_spec_15_1(t *testing.T) {
 // and the row unchanged.
 // spec: 15.1 (finalize precondition), 7.2 (terminal states)
 func TestFinalizeEntryRefusesAfterTerminalWrite_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	var committed sessionstore.Session
@@ -552,6 +555,7 @@ func TestFinalizeEntryRefusesAfterTerminalWrite_spec_15_1(t *testing.T) {
 // RESOURCE_NOT_FOUND.
 // spec: 15.1 (finalize precondition)
 func TestFinalizeEntryRowDeletedBeforeLock_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.hooks.arm(&storeHook{
@@ -579,6 +583,7 @@ func TestFinalizeEntryRowDeletedBeforeLock_spec_15_1(t *testing.T) {
 // deletes no claim, because the terminal writer's reclaim owns the pod.
 // spec: 15.1 (finalize row), 6.2 (finalize timeout), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizeReadyWriteLossKeepsTerminalState_spec_15_1(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state  session.State
 		reason string
@@ -589,6 +594,7 @@ func TestFinalizeReadyWriteLossKeepsTerminalState_spec_15_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.state), func(t *testing.T) {
+			t.Parallel()
 			f := newRaceFixture(t, raceOptions{})
 			f.create(t, nil)
 			f.hooks.arm(&storeHook{
@@ -628,6 +634,7 @@ func TestFinalizeReadyWriteLossKeepsTerminalState_spec_15_1(t *testing.T) {
 // failure once.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.5 (Setup Commands)
 func TestFinalizePrepareFailureAfterTerminalWrite_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, setupFailPlan)
 	f.hooks.arm(&storeHook{
@@ -655,6 +662,7 @@ func TestFinalizePrepareFailureAfterTerminalWrite_spec_15_1(t *testing.T) {
 // nothing on this path, so only the handler's revoke releases it.
 // spec: 15.1 (finalize row), 7.1 (step 23), 4.9
 func TestFinalizeCredentialFailureAfterTerminalWriteRevokes_spec_7_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{failAssignRPC: true})
 	f.create(t, nil)
 	f.hooks.arm(&storeHook{
@@ -673,9 +681,12 @@ func TestFinalizeCredentialFailureAfterTerminalWriteRevokes_spec_7_1(t *testing.
 
 // A partial credential assignment whose failure write commits fails the row,
 // reclaims the pod through the binder, answers the pod-claim error envelope,
-// and revokes the recorded lease the attempt-scoped release omits.
+// and revokes the recorded lease the attempt-scoped release omits. The lease is
+// released twice, by the failure write's post-terminal hook reclaim and by the
+// handler's revoke, and the second release finds nothing to return.
 // spec: 7.1 (steps 11-13, step 23), 4.9, 6.2
 func TestFinalizeCredentialFailureCommittedRevokes_spec_7_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{failAssignRPC: true})
 	f.create(t, nil)
 
@@ -698,13 +709,14 @@ func TestFinalizeCredentialFailureCommittedRevokes_spec_7_1(t *testing.T) {
 	if !reflect.DeepEqual(f.assigner.assigns, []string{raceSessionID}) {
 		t.Errorf("AssignProto calls = %v, want [%s]", f.assigner.assigns, raceSessionID)
 	}
-	f.assertReleased(t, []string{raceSessionID})
+	f.assertReleased(t, []string{raceSessionID, raceSessionID})
 }
 
 // A malformed stored plan whose failure write loses to a terminal writer
 // answers 409, revokes the lease, and does not reclaim the pod by name.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizeMalformedPlanAfterTerminalWrite_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.seedMalformedPlan(t)
@@ -726,6 +738,7 @@ func TestFinalizeMalformedPlanAfterTerminalWrite_spec_15_1(t *testing.T) {
 // the pod after the write, answers 500, and emits one terminal lifecycle.
 // spec: 7.1 (steps 11-13), 7.2 (terminal states)
 func TestFinalizeMalformedPlanCommittedReclaimsPod_spec_7_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.seedMalformedPlan(t)
@@ -751,6 +764,7 @@ func TestFinalizeMalformedPlanCommittedReclaimsPod_spec_7_1(t *testing.T) {
 // answers 200 with the session `ready`, keeping its pod and lease.
 // spec: 7.1 (single-use uploadToken invalidation), 15.1 (finalize row)
 func TestFinalizeConsumeAfterReadyWrite_spec_7_1(t *testing.T) {
+	t.Parallel()
 	tracker := &raceTracker{}
 	f := newRaceFixture(t, raceOptions{tracker: tracker})
 	f.create(t, nil)
@@ -784,6 +798,7 @@ func TestFinalizeConsumeAfterReadyWrite_spec_7_1(t *testing.T) {
 // terminal state, revokes the lease, and reclaims nothing.
 // spec: 15.1 (finalize row), 7.2 (terminal states), 7.1 (step 23)
 func TestFinalizeReadyStoreErrorFailureWriteLost_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.hooks.arm(
@@ -812,6 +827,7 @@ func TestFinalizeReadyStoreErrorFailureWriteLost_spec_15_1(t *testing.T) {
 // terminal lifecycle.
 // spec: 15.1 (finalize row), 7.2 (terminal states)
 func TestFinalizeReadyAmbiguousCommitKeepsReady_spec_15_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 	f.hooks.arm(&storeHook{state: session.StateReady, occurrence: 1, mode: hookCommitThenInject})
@@ -832,13 +848,17 @@ func TestFinalizeReadyAmbiguousCommitKeepsReady_spec_15_1(t *testing.T) {
 }
 
 // A failure write that returns a store error without committing leaves the
-// row `finalizing` for the §6.2 watchdog. The plan-parse and ready-write
-// branches still reclaim the pod, and the prepare-failure branch still
-// answers its own envelope and revokes the lease. A store error is not a
-// lost write.
+// row `finalizing` for the §6.2 watchdog. The plan-parse branch still
+// reclaims the pod, and the prepare-failure branch still answers its own
+// envelope and revokes the lease. The ready-write branch releases nothing,
+// because the ready write may have committed: the claim and the lease stay
+// for the finalizing watchdog's terminal write. A store error is not a lost
+// write.
 // spec: 7.1 (steps 11-13, step 23), 6.2 (finalize timeout)
 func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
+	t.Parallel()
 	t.Run("plan parse", func(t *testing.T) {
+		t.Parallel()
 		f := newRaceFixture(t, raceOptions{})
 		f.create(t, nil)
 		f.seedMalformedPlan(t)
@@ -857,6 +877,7 @@ func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 		}
 	})
 	t.Run("prepare failure", func(t *testing.T) {
+		t.Parallel()
 		f := newRaceFixture(t, raceOptions{})
 		f.create(t, setupFailPlan)
 		f.hooks.arm(&storeHook{state: session.StateFailed, occurrence: 1, mode: hookInjectNoCommit})
@@ -875,6 +896,7 @@ func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 		f.assertReleased(t, []string{raceSessionID})
 	})
 	t.Run("ready write store error", func(t *testing.T) {
+		t.Parallel()
 		f := newRaceFixture(t, raceOptions{})
 		f.create(t, nil)
 		f.hooks.arm(
@@ -890,9 +912,10 @@ func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 		if got := f.row(t).State; got != session.StateFinalizing {
 			t.Errorf("state = %q, want finalizing (the hook fired)", got)
 		}
-		if f.claimPresent(t) {
-			t.Errorf("claim-sbx-1 present, want reclaimed")
+		if !f.claimPresent(t) {
+			t.Errorf("claim-sbx-1 deleted, want it kept: the ready write may have committed")
 		}
+		f.assertReleased(t, nil)
 	})
 }
 
@@ -900,6 +923,7 @@ func TestFinalizeFailureWriteStoreError_spec_6_2(t *testing.T) {
 // session keeps its pod and lease.
 // spec: 15.1 (finalize precondition), 7.1 (steps 11-13)
 func TestFinalizeUnracedReachesReady_spec_7_1(t *testing.T) {
+	t.Parallel()
 	f := newRaceFixture(t, raceOptions{})
 	f.create(t, nil)
 

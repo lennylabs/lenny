@@ -226,16 +226,17 @@ func WriteRebindStatus(ctx context.Context, cl client.Client, namespace, claimNa
 }
 
 // WriteDispositionStatus records a terminal retirement disposition
-// (`released` on a limit-reached retirement, `failed` on a scrub-failure or
-// crashed-session retirement) on the claim. The WarmPoolController projects
-// the pod to `draining` then `terminated` from a terminal disposition,
-// retiring it rather than returning it to the pool (§4.6.3). The patch records
-// the binding-state transition time and is rejected when disposition is not a
-// terminal state, so the gateway fails closed rather than writing an
-// out-of-enum value the API server would reject.
+// (`released` on a limit-reached retirement, `failed` on a scrub-failure
+// retirement (`onScrubFailure: fail`)) on the claim. The WarmPoolController
+// projects the pod to `draining` then `terminated` from a terminal
+// disposition, retiring it rather than returning it to the pool (§4.6.3).
+// The patch records the binding-state transition time and is rejected when
+// disposition is not a terminal state, so the gateway fails closed rather
+// than writing an out-of-enum value the API server would reject.
 //
 // spec: §4.6.1 (terminal disposition), §4.6.3 (released/failed terminal
-// dispositions), §4.6.3 (draining/terminated projection).
+// dispositions), §4.6.3 (draining/terminated projection), §4.6.3
+// (SandboxClaim.status.phase enumeration).
 func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, claimName string, disposition claimstate.State, now func() time.Time) error {
 	if now == nil {
 		now = time.Now

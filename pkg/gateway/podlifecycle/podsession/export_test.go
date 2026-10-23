@@ -8,3 +8,7 @@ const (
 	SlotFailureWorkspacePrepForTest     = slotFailureWorkspacePrep
 	SlotFailureWorkspaceFinalizeForTest = slotFailureWorkspaceFinalize
 )
+
+// SlotCleanupFloorForTest is the §5.2 per-slot cleanup floor that bounds a
+// detached release context.
+const SlotCleanupFloorForTest = slotCleanupFloor

@@ -162,6 +162,9 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 // fakeTerminalHook captures terminal-pipeline invocations.
 type fakeTerminalHook struct{ calls []sessionstore.Session }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminalHook) BeginTerminal(string) func() { return func() {} }
+
 func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	f.calls = append(f.calls, sess)
 }

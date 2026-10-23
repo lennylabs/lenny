@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -62,6 +63,11 @@ type attachConn struct {
 	tenantID    string
 	sessionID   string
 	sandboxName string
+	// bind is the binding the stream was opened for, read under e.mu by
+	// streamFor. endConn marks it crashed on a reported stream failure, so a
+	// release whose unbind follows the end retires the pod. spec: §28.5.1
+	// (Gateway-to-pod).
+	bind *podsession.BindResult
 
 	// stream and openErr are written by the open goroutine before ready is
 	// closed and only read after it.
@@ -89,6 +95,55 @@ type attachConn struct {
 	// done is closed by the reader when it exits, or by the open goroutine
 	// when the open fails.
 	done chan struct{}
+	// endErr is the error the stream ended with. endConn writes it before
+	// it closes done, and it is read only after done closes.
+	endErr error
+}
+
+// sealedPrefix opens the status message of the adapter's refusal of a
+// message to a sealed session. spec: §28.5.1 (CH-ATTACH).
+const sealedPrefix = "session_sealed:"
+
+// endedSealed reports whether the stream ended because the adapter refused
+// a message to a sealed session: FailedPrecondition with a message
+// beginning session_sealed:. It is read only after done closes.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH)
+func (c *attachConn) endedSealed() bool {
+	st, ok := status.FromError(c.endErr)
+	return ok && st.Code() == codes.FailedPrecondition && strings.HasPrefix(st.Message(), sealedPrefix)
+}
+
+// endCause is the cause a Send waiting on the ended stream returns for a
+// turn whose envelope it wrote at seal epoch writeEpoch. It is
+// ErrSessionSealed when the adapter refused the message as sealed, or when
+// the turn's message was written after the binding was marked sealed, the
+// adapter granted that seal, and the same seal held until the stream ended,
+// because the adapter refuses every message that reaches it under a granted
+// seal and the stream's end, whatever caused it, then means the message did
+// not reach the runtime. A mark the adapter has not granted when the stream
+// ends, such as one placed before a seal call that is still running, says
+// nothing about the message: the adapter may have written it to the runtime
+// and counted it as activity, so the turn returns errStreamEnded. A message written
+// before the seal mark can have reached the runtime, since work the runtime
+// began before the seal without producing activity does not prevent the
+// seal and the release that follows ends it, so its turn returns
+// errStreamEnded, the outcome of a message delivered on a stream that then
+// ended. spec: §4.7.1 (Role and Gateway RPC Contract), §6.2
+// (maxClientIdleSeconds clock behavior across states)
+func (c *attachConn) endCause(writeEpoch int64) error {
+	if c.endedSealed() || (c.bind != nil && c.bind.SealHeldSince(writeEpoch)) {
+		return ErrSessionSealed
+	}
+	return errStreamEnded
+}
+
+// sealEpoch returns the binding's seal epoch, or zero, which is never a
+// sealed epoch, for a conn with no binding.
+func (c *attachConn) sealEpoch() int64 {
+	if c.bind == nil {
+		return 0
+	}
+	return c.bind.SealEpoch()
 }
 
 // newAttachConn builds an unopened conn for bind. Its context is derived
@@ -102,6 +157,7 @@ func newAttachConn(ctx context.Context, bind *podsession.BindResult) *attachConn
 		tenantID:    bind.TenantID,
 		sessionID:   bind.SessionID,
 		sandboxName: bind.SandboxName,
+		bind:        bind,
 		ready:       make(chan struct{}),
 		token:       make(chan struct{}, 1),
 		done:        make(chan struct{}),
@@ -202,11 +258,15 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 		return turnResult{}, err
 	}
 	result := c.registerTurn()
+	// The epoch is read before the write, so a seal marked while the write
+	// is in flight does not make a message the runtime may have received
+	// read as refused.
+	writeEpoch := c.sealEpoch()
 	if err := c.send(envelope); err != nil {
 		c.abortTurn(result)
-		return turnResult{}, c.awaitEndAfterWriteError(ctx, err)
+		return turnResult{}, c.awaitEndAfterWriteError(ctx, writeEpoch, err)
 	}
-	return c.awaitReply(ctx, result)
+	return c.awaitReply(ctx, writeEpoch, result)
 }
 
 // awaitEndAfterWriteError returns once the conn's end handling has finished
@@ -217,10 +277,10 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 // re-reads the session after the error sees the state the report recorded,
 // and a retried delivery cannot open a new stream over a binding the report
 // is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
-func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error) error {
+func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, writeEpoch int64, sendErr error) error {
 	select {
 	case <-c.done:
-		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, errStreamEnded, sendErr)
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, c.endCause(writeEpoch), sendErr)
 	case <-ctx.Done():
 		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, ctx.Err(), sendErr)
 	}
@@ -235,7 +295,7 @@ func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error)
 // once, and select picks among ready cases at random. A reply the runtime
 // produced wins: the caller must not see a delivery failure for a message
 // the runtime answered. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3.
-func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (turnResult, error) {
+func (c *attachConn) awaitReply(ctx context.Context, writeEpoch int64, result <-chan turnResult) (turnResult, error) {
 	var cause error
 	select {
 	case res := <-result:
@@ -243,7 +303,7 @@ func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (
 	case <-ctx.Done():
 		cause = ctx.Err()
 	case <-c.done:
-		cause = errStreamEnded
+		cause = c.endCause(writeEpoch)
 	}
 	select {
 	case res := <-result:
@@ -316,7 +376,10 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 	c.completeTurn(turnResult{parts: parts, ann: ann})
 }
 
-// endConn runs once when the conn's stream ends. A gateway-caused end
+// endConn runs once when the conn's stream ends. It records the end error,
+// which a Send waiting on the conn reads to tell the adapter's sealed
+// refusal (§28.5.1, a FailedPrecondition that is not a stream failure) from
+// any other end. A gateway-caused end
 // (EvictStream or Release) only closes done. Any other end removes the conn
 // from the cache when it is still the cached conn, hands an end that
 // isReportedStreamFailure classifies as a failure to the stream-failure
@@ -326,8 +389,19 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 // closedByGateway is read under e.mu because EvictStream sets it under e.mu:
 // an end that races an eviction is attributed to the eviction.
 //
-// spec: §28.5.1 (CH-ATTACH Timing. and Degradation.).
+// A reported stream failure marks the conn's binding crashed in the same hold
+// of e.mu, whether or not a handler is wired. Every release that can pass a
+// disposition other than failed unbinds under e.mu, so exactly one of the two
+// runs first: when endConn does, the release reads the mark and retires the
+// pod; when the unbind does, it evicts the conn and sets closedByGateway, so
+// endConn sets no mark, and the release, having ended the stream itself,
+// keeps its disposition. A gateway-caused end and an unreported status code
+// set nothing.
+//
+// spec: §28.5.1 (CH-ATTACH Timing. and Degradation.); §5.2 (Pool
+// Configuration and Execution Modes).
 func (e *PodExecutor) endConn(c *attachConn, err error) {
+	c.endErr = err
 	e.mu.Lock()
 	if c.closedByGateway.Load() {
 		e.mu.Unlock()
@@ -336,6 +410,9 @@ func (e *PodExecutor) endConn(c *attachConn, err error) {
 	}
 	if e.streams[c.sessionID] == c {
 		delete(e.streams, c.sessionID)
+	}
+	if c.bind != nil && isReportedStreamFailure(err) {
+		c.bind.MarkCrashed()
 	}
 	e.mu.Unlock()
 

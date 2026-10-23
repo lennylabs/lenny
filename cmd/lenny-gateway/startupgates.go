@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/deployment/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -157,6 +160,14 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
 	}
 
+	// spec: §10.2 / §4.9 / §10.3 — the auth.multiTenant switch and the
+	// tenancy.mode value must agree, or the auth chain and the
+	// credential-delivery rejections would enforce different tenancy
+	// postures. A contradictory pair is fatal. T-10.2.11.
+	if err := validateTenancyConfig(*f.tenancyMode, *f.multiTenant); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
 	// spec: §10.3 — gateway startup TLS probe. Before the replica
 	// is marked ready, verify a TLS handshake to Redis and PgBouncer
 	// succeeds and that a plaintext connection is refused, so a
@@ -177,6 +188,29 @@ func (w *gatewayWiring) buildStartupGates() {
 			log.Fatalf("lenny-gateway: §10.3 startup TLS probe failed: %v", err)
 		}
 		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
+	}
+
+	if err := validatePrimaryReadTimeout(*f.sessionPrimaryReadTimeout); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateErasureMaxConcurrentJobs(*f.erasureMaxConcurrentJobs); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateSlotReaperFlags(slotReaperSettings{
+		interval:             *f.slotReaperInterval,
+		rate:                 *f.slotReaperRate,
+		terminalAge:          *f.slotReaperTerminalAge,
+		maxFinalizingSeconds: *f.maxFinalizingTimeoutSeconds,
+		maxResumingSeconds:   *f.maxResumingSeconds,
+		sealSeconds:          *f.workspaceSealMaxDurationSeconds,
+	}); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
 	}
 
 	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
@@ -223,4 +257,95 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
 			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
 	}
+}
+
+// validatePrimaryReadTimeout rejects a non-positive
+// --session-primary-read-timeout: every primary session-row read carries a
+// deadline, so a non-positive bound is a configuration error rather than an
+// unbounded read. spec: §12.3 (Postgres HA Requirements).
+func validatePrimaryReadTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
+}
+
+// validateLifecycleTickBudget rejects a non-positive
+// --lifecycle-tick-budget, which would expire every lifecycle drain
+// before its first session and stall every tenant deletion at Phase 2.
+func validateLifecycleTickBudget(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--lifecycle-tick-budget must be positive, got %s (§12.8)", d)
+	}
+	return nil
+}
+
+// validateSuspensionFlags rejects a delegation budget key TTL that does not
+// exceed the suspended lifetime, so a suspended session's budget keys outlive
+// it, and a backlog re-check interval below the minimum. The TTL is compared
+// against the lifetime the watchdog enforces: a non-positive
+// --max-suspended-session-seconds resolves to the watchdog default before the
+// comparison, because the watchdog substitutes that default at runtime.
+// spec: §8.3 (Delegation Policy and Lease), §7.2 (Message delivery routing —
+// seven paths, path 6)
+func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, backlogRecheckSeconds int) error {
+	lifetime := watchdog.EffectiveMaxSuspendedSessionSeconds(maxSuspendedSessionSeconds)
+	if budgetKeyTTLSeconds <= lifetime {
+		return fmt.Errorf("--delegation-budget-key-ttl-seconds (%d) must exceed the effective --max-suspended-session-seconds (%d, configured %d) (§8.3)",
+			budgetKeyTTLSeconds, lifetime, maxSuspendedSessionSeconds)
+	}
+	if minimum := int(sessionserver.MinSuspendedBacklogRecheckInterval / time.Second); backlogRecheckSeconds < minimum {
+		return fmt.Errorf("--suspended-backlog-recheck-seconds must be at least %d, got %d (§7.2)", minimum, backlogRecheckSeconds)
+	}
+	return nil
+}
+
+// slotReaperSettings is the configuration the stale-slot reaper gate reads:
+// the reaper's own flags and the three post-terminal deadlines its terminal
+// age must exceed.
+type slotReaperSettings struct {
+	interval             time.Duration
+	rate                 int
+	terminalAge          time.Duration
+	maxFinalizingSeconds int
+	maxResumingSeconds   int
+	sealSeconds          int
+}
+
+// validateSlotReaperFlags rejects a non-positive reaper interval or rate,
+// and a --slot-reaper-terminal-age below the post-terminal slot activity
+// invariant: the terminal age (the gateway's copy of claimOrphanTimeout) must
+// be at least one second more than the largest of the launch bound
+// (--max-finalizing-state-timeout-seconds), the resuming deadline
+// (--max-resuming-seconds), and the seal window
+// (--workspace-seal-max-duration-seconds), each taken as the value in effect.
+// A value in effect is the flag's value, or its default when the flag is not
+// positive, as the watchdog and the session server resolve it. A shorter
+// terminal age lets the reaper free a slot that a launch, a resume restore,
+// or a seal still acts on.
+// spec: §5.2 (Slot assignment atomicity).
+func validateSlotReaperFlags(c slotReaperSettings) error {
+	if c.interval <= 0 {
+		return fmt.Errorf("--slot-reaper-interval must be positive, got %s (§5.2)", c.interval)
+	}
+	if c.rate <= 0 {
+		return fmt.Errorf("--slot-reaper-rate must be positive, got %d (§5.2)", c.rate)
+	}
+	finalizing := secondsInEffect(c.maxFinalizingSeconds, watchdog.DefaultMaxFinalizingStateSeconds)
+	resuming := secondsInEffect(c.maxResumingSeconds, watchdog.DefaultMaxResumingSeconds)
+	seal := secondsInEffect(c.sealSeconds, int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second))
+	floor := time.Duration(max(finalizing, resuming, seal))*time.Second + time.Second
+	if c.terminalAge < floor {
+		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and --workspace-seal-max-duration-seconds (%ds) (§5.2)",
+			c.terminalAge, floor, finalizing, resuming, seal)
+	}
+	return nil
+}
+
+// secondsInEffect is v when it is positive, and def otherwise.
+func secondsInEffect(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
 }

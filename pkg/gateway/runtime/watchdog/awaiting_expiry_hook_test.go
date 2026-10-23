@@ -23,6 +23,9 @@ type captureExpiryHook struct {
 	awaitingCalls []sessionstore.Session
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*captureExpiryHook) BeginTerminal(string) func() { return func() {} }
+
 func (c *captureExpiryHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminalCalls = append(c.terminalCalls, sess)
 }
@@ -93,6 +96,9 @@ func TestSweepMaxAgeDoesNotFireAwaitingHook_spec_7_3_25(t *testing.T) {
 type terminalOnly struct {
 	calls []sessionstore.Session
 }
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*terminalOnly) BeginTerminal(string) func() { return func() {} }
 
 func (t *terminalOnly) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	t.calls = append(t.calls, sess)

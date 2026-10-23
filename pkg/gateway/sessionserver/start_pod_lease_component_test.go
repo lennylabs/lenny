@@ -111,6 +111,7 @@ func podBindServerWithLease(t *testing.T, id, replicaID string, leases leasestor
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -148,6 +149,7 @@ func createFinalizeBody(t *testing.T) []byte {
 // bind, so once the session is running the leaseStore names this replica
 // as the holder and the binding is published on the same replica.
 func TestTwoStepStartAcquiresCoordinationLeaseAtBind(t *testing.T) {
+	t.Parallel()
 	leases := newComponentLeaseStore()
 	srv, registry := podBindServerWithLease(t, "sess-lease-ok", "replica-a", leases)
 	h := srv.Handler()
@@ -192,6 +194,7 @@ func TestTwoStepStartAcquiresCoordinationLeaseAtBind(t *testing.T) {
 // unconditionally) the /start would succeed and the registry would hold a
 // competing binding.
 func TestTwoStepStartFailsClosedOnForeignLeaseHolder(t *testing.T) {
+	t.Parallel()
 	leases := newComponentLeaseStore()
 	// A live foreign replica already coordinates this session.
 	if _, err := leases.Acquire(context.Background(), "acme", "sess-lease-held", "replica-b", time.Minute); err != nil {
@@ -241,6 +244,7 @@ func TestTwoStepStartFailsClosedOnForeignLeaseHolder(t *testing.T) {
 // logged the error best-effort, the row commits to running but the registry
 // stays empty. The fix publishes directly, so the binding is present.
 func TestSingleCallStartPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	t.Parallel()
 	leases := newComponentLeaseStore()
 	leases.failAcquireAfter = 1
 	srv, registry := podBindServerWithLease(t, "sess-renew-blip", "replica-a", leases)

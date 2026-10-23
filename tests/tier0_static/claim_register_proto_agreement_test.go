@@ -39,8 +39,15 @@ const generationFenceField = "coordination_generation"
 // fenceReadersExempt names the request messages whose generation fence a handler
 // already compares, so the fence is not an unread field the register tracks.
 // `CoordinatorFence` carries the acquiring coordinator's generation as the whole
-// point of the RPC and `pkg/adapter/coordination.go` compares it on arrival.
-var fenceReadersExempt = map[string]bool{"CoordinatorFenceRequest": true}
+// point of the RPC and `pkg/adapter/coordination.go` compares it on arrival. The
+// `SealSession` and `UnsealSession` handlers (`pkg/adapter/sessionseal.go`)
+// refuse a generation other than the one the adapter last fenced for the
+// session, as §4.7.1 **Session seal.** requires of every gateway-to-pod RPC.
+var fenceReadersExempt = map[string]bool{
+	"CoordinatorFenceRequest": true,
+	"SealSessionRequest":      true,
+	"UnsealSessionRequest":    true,
+}
 
 var (
 	// claimQualifiedField matches a row that names one message field in the

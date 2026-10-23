@@ -138,7 +138,7 @@ func (w *gatewayWiring) buildLLMProxy(
 		audit:      proxyFallbackAudit{sink: auditSink},
 		metrics:    w.gwMetrics,
 	}
-	return newLLMProxyServer(*llmProxyAddr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps)
+	return newLLMProxyServer(*llmProxyAddr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps, proxyActivityStamper(activityStamper))
 }
 
 // buildStores constructs the §4.2/§4.4/§4.5 persistence layer and the
@@ -166,3 +166,13 @@ func (w *gatewayWiring) buildLLMProxy(
 // and the §12.8 erasure semantic cache the proxy purges on DeleteByUser.
 //
 // spec: §4.1 gateway subsystem seams; §15.1 admin API.
+
+// proxyActivityStamper returns the stamper as the LLM proxy's
+// ActivityStamper, or an untyped nil for a nil stamper.
+// spec: §6.2 (maxClientIdleSeconds clock behavior across states)
+func proxyActivityStamper(s *sessionidle.Stamper) llmproxy.ActivityStamper {
+	if s == nil {
+		return nil
+	}
+	return s
+}

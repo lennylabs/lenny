@@ -24,7 +24,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // ErrEmptyScope — an erasure primitive was called with an empty tenant
@@ -115,7 +117,22 @@ func windowKey(tenantID, userID string, period quota.ResetPeriod, at time.Time) 
 	if err != nil {
 		return "", 0, err
 	}
-	return "t:" + tenantID + ":quota:tokens:" + userID + ":" + label, length, nil
+	return UserKeyPrefix(tenantID, userID) + label, length, nil
+}
+
+// TenantKeyPrefix returns the §12.4 prefix every token-usage key of
+// tenantID carries: `t:{tenant_id}:quota:tokens:`. The tenant segment is
+// the rediskeys.TenantPrefix hash tag, so all of a tenant's counters share
+// one Redis Cluster slot.
+func TenantKeyPrefix(tenantID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "quota:tokens:"
+}
+
+// UserKeyPrefix returns the §12.4 prefix every token-usage key of userID
+// under tenantID carries: `t:{tenant_id}:quota:tokens:{user_id}:`. The
+// fixed-window and sliding-window keys both extend it.
+func UserKeyPrefix(tenantID, userID string) string {
+	return TenantKeyPrefix(tenantID) + userID + ":"
 }
 
 // window maps a reset period and an instant to the window label and
@@ -333,8 +350,8 @@ func (c *Counter) SlidingUsageHierarchical(ctx context.Context, tenantID, userID
 // land on the same key.
 func slidingBucketKey(tenantID, userID string, resolution time.Duration, at time.Time) string {
 	bucket := at.UTC().Truncate(resolution).Unix()
-	return fmt.Sprintf("t:%s:quota:tokens:%s:sliding-%d-%d",
-		tenantID, userID, int64(resolution.Seconds()), bucket)
+	return fmt.Sprintf("%ssliding-%d-%d",
+		UserKeyPrefix(tenantID, userID), int64(resolution.Seconds()), bucket)
 }
 
 // DeleteByUser satisfies the §12.1 mandatory-erasure primitive. It
@@ -351,7 +368,7 @@ func (c *Counter) DeleteByUser(ctx context.Context, tenantID, userID string) (in
 	if tenantID == "" || userID == "" {
 		return 0, ErrEmptyScope
 	}
-	return scanDelete(ctx, c.client, "t:"+tenantID+":quota:tokens:"+userID+":*")
+	return redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), UserKeyPrefix(tenantID, userID)+"*")
 }
 
 // DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
@@ -366,45 +383,5 @@ func (c *Counter) DeleteByTenant(ctx context.Context, tenantID string) (int, err
 	if tenantID == "" {
 		return 0, ErrEmptyScope
 	}
-	return scanDelete(ctx, c.client, "t:"+tenantID+":quota:tokens:*")
-}
-
-// scanDelete SCANs the keyspace for pattern and deletes the matched
-// keys in batches, returning the count removed. SCAN is cursor-based
-// and non-blocking, so a large keyspace does not stall Redis. Keys
-// that expire between SCAN and DEL simply do not count.
-func scanDelete(ctx context.Context, client redis.UniversalClient, pattern string) (int, error) {
-	const delBatch = 256
-	var (
-		batch   []string
-		deleted int
-	)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		n, err := client.Del(ctx, batch...).Result()
-		if err != nil {
-			return err
-		}
-		deleted += int(n)
-		batch = batch[:0]
-		return nil
-	}
-	iter := client.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		batch = append(batch, iter.Val())
-		if len(batch) >= delBatch {
-			if err := flush(); err != nil {
-				return deleted, err
-			}
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return deleted, err
-	}
-	if err := flush(); err != nil {
-		return deleted, err
-	}
-	return deleted, nil
+	return redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), TenantKeyPrefix(tenantID)+"*")
 }

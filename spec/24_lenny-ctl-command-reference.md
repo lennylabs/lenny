@@ -134,14 +134,14 @@ Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kube
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
 | `lenny-ctl admin sessions get <id>` | Show session state, metadata, and assigned pod. Use to investigate stuck, orphaned, or unexpectedly terminated sessions. | `GET /v1/admin/sessions/{id}` | `platform-admin` |
-| `lenny-ctl admin sessions force-terminate <id>` | Force-terminate a session that is stuck or unresponsive. The session transitions immediately to `failed` and the assigned pod is released to the pool. | `POST /v1/admin/sessions/{id}/force-terminate` | `platform-admin` |
+| `lenny-ctl admin sessions force-terminate <id>` | Force-terminate a session that is stuck or unresponsive. The session transitions immediately to `failed` and the gateway releases the assigned pod ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)). | `POST /v1/admin/sessions/{id}/force-terminate` | `platform-admin` |
 
 ### 24.12 Erasure Job Management
 
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
 | `lenny-ctl admin erasure-jobs get <job-id>` | Show erasure job status: phase, completion percentage, elapsed time, and any errors. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). | `GET /v1/admin/erasure-jobs/{job_id}` | `platform-admin` |
-| `lenny-ctl admin erasure-jobs retry <job-id>` | Retry a failed erasure job. The job must be in `failed` state. Clears transient errors and resumes from the last persisted phase. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). | `POST /v1/admin/erasure-jobs/{job_id}/retry` | `platform-admin` |
+| `lenny-ctl admin erasure-jobs retry <job-id>` | Retry a failed erasure job. The job must be in `failed` state. The legal-hold preflight ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) runs before the job restarts. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). | `POST /v1/admin/erasure-jobs/{job_id}/retry` | `platform-admin` |
 | `lenny-ctl admin erasure-jobs clear-restriction <job-id> --justification <text>` | Manually clear the `processing_restricted` flag for a user after a failed erasure job. Operator identity and justification are recorded in the audit trail. Use only after confirming the failure is unrecoverable and retrying is not feasible. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). | `POST /v1/admin/erasure-jobs/{job_id}/clear-processing-restriction` | `platform-admin` |
 
 ### 24.13 Migration Management

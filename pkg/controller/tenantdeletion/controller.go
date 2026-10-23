@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/tenantkms"
@@ -27,23 +28,32 @@ type TenantEraser interface {
 	DeleteByTenant(ctx context.Context, tenantID string) (map[string]int, error)
 }
 
-// SessionTerminator is the §12.8 Phase 2 seam: it sends
-// graceful-shutdown signals to the tenant's active sessions and waits
-// for them to reach a terminal state, force-terminating any that miss
-// the timeout.
+// SessionTerminator is the §12.8 Phase 2 seam: it drains the tenant's
+// sessions through the lifecycle drain, which force-terminates every
+// non-terminal session in the tenant and verifies the result with a
+// second primary listing. A nil error means every session of the tenant
+// is terminal on the primary; it does not mean the pods of sessions
+// bound on another replica have been released.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
 type SessionTerminator interface {
-	// TerminateTenantSessions drains every active session for
-	// tenantID. It is idempotent: a tenant with no active sessions is
-	// a no-op.
+	// TerminateTenantSessions drains every non-terminal session for
+	// tenantID. It is idempotent: a tenant with no live sessions is a
+	// no-op. An error means the drain did not verify, and the controller
+	// keeps the job at Phase 2 so the next pass re-runs the drain.
 	TerminateTenantSessions(ctx context.Context, tenantID string) error
 }
 
-// CredentialRevoker is the §12.8 Phase 3 seam: it revokes the
-// tenant's OAuth tokens and refresh tokens and invalidates its
-// credential pool leases.
+// CredentialRevoker is the §12.8 Phase 3 seam: it commits the tenant's
+// deleting state, returns the credential leases the tenant's sessions
+// still hold, and deletes the tenant's TokenStore rows (connector refresh
+// tokens and registered credentials).
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3).
 type CredentialRevoker interface {
-	// RevokeTenantCredentials revokes every token and lease for
-	// tenantID. It is idempotent.
+	// RevokeTenantCredentials runs the Phase 3 actions for tenantID. It
+	// is idempotent. An error keeps the job at Phase 3, and the next pass
+	// re-runs it.
 	RevokeTenantCredentials(ctx context.Context, tenantID string) error
 }
 
@@ -175,15 +185,18 @@ type Reconciler struct {
 	// KMS API per §12.5. A non-T4 tenant never touches KMS.
 	KMS *tenantkms.Lifecycle
 
-	// Phase action seams. Eraser and Receipts are required; Disabler,
-	// Terminator, Revoker, Cleaner, and LegalHolds are optional. A nil
-	// optional seam makes the corresponding phase a no-op beyond the
-	// state transition: Phase 4 (Eraser) is the substantive erasure that
-	// every deployment must wire, while graceful-shutdown (Phase 2),
-	// credential revocation (Phase 3), and CRD cleanup (Phase 5) degrade
-	// to the Phase 4 DeleteByTenant teardown when the host has no live
-	// seam (e.g. a gateway-hosted reconciler with no Kubernetes client
-	// for CRD cleanup). A nil LegalHolds advances Phase 3.5 unconditionally.
+	// Phase action seams. Terminator, Revoker, Eraser, and Receipts are
+	// required: a nil one fails the job when it reaches that phase. Phase
+	// 2 (Terminator) drains the tenant's sessions, which the §12.8 erasers
+	// rely on, because a live session row deleted under a running session
+	// strands its pod and its terminal pipeline. Phase 3 (Revoker) returns
+	// the leases the drained sessions still hold, which Phase 4 cannot do,
+	// because deleting a lease row does not revoke the lease at its pool.
+	// Disabler, Cleaner, and LegalHolds are optional, and a nil optional
+	// seam makes the corresponding phase a no-op beyond the state
+	// transition: CRD cleanup (Phase 5) degrades to the Phase 2 drain and
+	// the warm-pool GC when the host has no Kubernetes client. A nil
+	// LegalHolds advances Phase 3.5 unconditionally.
 	Disabler   SoftDisabler
 	Terminator SessionTerminator
 	Revoker    CredentialRevoker
@@ -206,6 +219,29 @@ type Reconciler struct {
 
 	// Clock supplies the current time. Nil defaults to time.Now in UTC.
 	Clock func() time.Time
+	// Logger receives the warning a paused Phase 2, 3, or 4 writes. Nil
+	// defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// errSessionsNotDrained wraps a Phase 2 drain error so ReconcileTenant
+// pauses the job in phase rather than failing it.
+var errSessionsNotDrained = errors.New("tenantdeletion: tenant sessions not drained")
+
+// errPhaseRetryable wraps a Phase 3 or Phase 4 action error so
+// ReconcileTenant pauses the job in phase rather than failing it. A failed
+// job is terminal, and §12.8 requires a deletion to resume from the phase
+// it stopped in.
+//
+// spec: §12.8 (Compliance Interfaces: Idempotency and resumption).
+var errPhaseRetryable = errors.New("tenantdeletion: phase action failed")
+
+// logger returns the injected Logger, defaulting to slog.Default().
+func (r *Reconciler) logger() *slog.Logger {
+	if r.Logger != nil {
+		return r.Logger
+	}
+	return slog.Default()
 }
 
 // now returns the current time via the injected Clock, defaulting to
@@ -295,6 +331,13 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		if errors.Is(err, ErrEscrowRegionUnresolvable) {
 			return r.pauseEscrowUnresolvable(ctx, &job)
 		}
+		// §12.8 Phases 2, 3, and 4: a drain that did not verify, or a
+		// Phase 3 or Phase 4 action error, keeps the job in phase, and the
+		// next pass re-runs it. A failed job is terminal, so failing here
+		// would strand the tenant mid-deletion.
+		if errors.Is(err, errSessionsNotDrained) || errors.Is(err, errPhaseRetryable) {
+			return r.pausePhase(ctx, &job, err)
+		}
 		return r.fail(ctx, tenantID, job.Phase, err)
 	}
 
@@ -374,6 +417,31 @@ func (r *Reconciler) pauseEscrowUnresolvable(ctx context.Context, job *Job) erro
 	return err
 }
 
+// pausePhase records a §12.8 phase action that did not complete: a Phase 2
+// drain that did not verify, or a Phase 3 or Phase 4 action error. It
+// writes the error text to BlockedReason, logs a warning naming the tenant
+// and the phase, and returns nil so ReconcileAll continues with the other
+// tenants. It writes neither Phase nor State. At Phase 2, State must stay
+// disabling, because the gateway runner copies it onto the tenant row, and
+// a tenant row in deleting is resumed at Phase 3 after a restart, which
+// would skip the drain. The advance after a successful pass clears
+// BlockedReason.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain), §12.8 (Compliance Interfaces: Idempotency and resumption).
+func (r *Reconciler) pausePhase(ctx context.Context, job *Job, cause error) error {
+	reason := cause.Error()
+	if _, err := r.Jobs.Update(ctx, job.TenantID, func(j *Job) error {
+		j.BlockedReason = reason
+		j.UpdatedAt = r.now()
+		return nil
+	}); err != nil {
+		return err
+	}
+	r.logger().WarnContext(ctx, "tenant deletion paused in phase: the phase action did not complete",
+		"tenant_id", job.TenantID, "phase", string(job.Phase), "error", reason)
+	return nil
+}
+
 // runPhase executes the action for job.Phase, mutating the in-memory
 // job copy with the phase result. It does not advance the phase — the
 // caller does that atomically after runPhase returns nil.
@@ -388,19 +456,31 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		return nil
 
 	case PhaseTerminateSessions:
-		// §12.8 Phase 2: graceful-shutdown active sessions.
-		if r.Terminator != nil {
-			return r.Terminator.TerminateTenantSessions(ctx, job.TenantID)
+		// §12.8 Phase 2: drain the tenant's sessions. A missing
+		// terminator is a misconfiguration that fails the job; a drain
+		// error pauses the job in phase.
+		// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+		if r.Terminator == nil {
+			return fmt.Errorf("tenantdeletion: Phase 2 requires a SessionTerminator")
+		}
+		if err := r.Terminator.TerminateTenantSessions(ctx, job.TenantID); err != nil {
+			return fmt.Errorf("%w: %w", errSessionsNotDrained, err)
 		}
 		return nil
 
 	case PhaseRevokeCredentials:
-		// §12.8 Phase 3: revoke OAuth tokens and credential leases. When
-		// no revoker is wired, the tenant's token and credential-pool rows
-		// are removed by Phase 4's DeleteByTenant a pass later, which also
-		// invalidates them.
-		if r.Revoker != nil {
-			return r.Revoker.RevokeTenantCredentials(ctx, job.TenantID)
+		// §12.8 Phase 3: commit the deleting state, return the leases the
+		// tenant's sessions hold, and delete its TokenStore rows. A
+		// missing revoker is a misconfiguration that fails the job: Phase 4
+		// deletes lease rows without returning the leases to their pools,
+		// so it cannot stand in for Phase 3. An action error pauses the job
+		// in phase.
+		// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3), §12.8 (Compliance Interfaces: Idempotency and resumption).
+		if r.Revoker == nil {
+			return fmt.Errorf("tenantdeletion: Phase 3 requires a CredentialRevoker")
+		}
+		if err := r.Revoker.RevokeTenantCredentials(ctx, job.TenantID); err != nil {
+			return fmt.Errorf("%w: %w", errPhaseRetryable, err)
 		}
 		return nil
 
@@ -471,13 +551,15 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 
 	case PhaseDeleteData:
 		// §12.8 Phase 4: DeleteByTenant across every store, in
-		// dependency order.
+		// dependency order. A missing eraser fails the job; an eraser
+		// error pauses it in phase, and the next pass re-runs every entry.
+		// spec: §12.8 (Compliance Interfaces: Idempotency and resumption).
 		if r.Eraser == nil {
 			return fmt.Errorf("tenantdeletion: Phase 4 requires a TenantEraser")
 		}
 		counts, err := r.Eraser.DeleteByTenant(ctx, job.TenantID)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errPhaseRetryable, err)
 		}
 		if job.DeletedCounts == nil {
 			job.DeletedCounts = map[string]int{}
@@ -539,10 +621,14 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 	}
 }
 
-// fail records a phase failure on the job and returns the cause. The
-// controller retries a failed job from the recorded phase on a later
-// pass, so the phase is left unchanged — only the failed marker and
-// the reason are written.
+// fail records a phase failure on the job and returns the cause. It
+// moves the job to PhaseFailed, which is terminal for the controller:
+// ReconcileTenant leaves a failed job untouched, and no production code
+// path calls Retry. A phase whose failure is expected to clear on its
+// own therefore pauses in phase instead (block, pauseEscrowUnresolvable,
+// and pausePhase).
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
 func (r *Reconciler) fail(ctx context.Context, tenantID string, phase Phase, cause error) error {
 	wrapped := fmt.Errorf("tenantdeletion: tenant %q phase %q: %w", tenantID, phase, cause)
 	if _, err := r.Jobs.Update(ctx, tenantID, func(j *Job) error {

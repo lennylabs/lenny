@@ -577,9 +577,11 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 // spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
 //
 // The teardown is idempotent: a request naming a session the adapter holds
-// no bound entry for is a no-op reporting a clean exit, which is what
-// keeps the §11.4 revoke and the concurrent recycle edge from computing a
-// leaked outcome and holding the released slot for the life of the pod.
+// no bound entry for is a no-op. It reports a clean exit unless another
+// Shutdown that removed the session's entry is still tearing it down or the
+// last such Shutdown reported an unclean exit. The clean answer is what
+// keeps the concurrent recycle edge from computing a leaked outcome and
+// holding the released slot for the life of the pod.
 func TestShutdownIsANoOpForAnUnbboundSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceBase = t.TempDir()
@@ -612,6 +614,27 @@ type recordingAdapter struct {
 	gotSignalDeadline *adapterv1.SignalDeadlineRequest
 	signalDelivered   bool
 	signalErr         error
+	gotSeal           *adapterv1.SealSessionRequest
+	sealResp          *adapterv1.SealSessionResponse
+	sealErr           error
+	gotUnseal         *adapterv1.UnsealSessionRequest
+	unsealErr         error
+}
+
+func (r *recordingAdapter) SealSession(_ context.Context, req *adapterv1.SealSessionRequest) (*adapterv1.SealSessionResponse, error) {
+	r.gotSeal = req
+	if r.sealErr != nil {
+		return nil, r.sealErr
+	}
+	return r.sealResp, nil
+}
+
+func (r *recordingAdapter) UnsealSession(_ context.Context, req *adapterv1.UnsealSessionRequest) (*adapterv1.UnsealSessionResponse, error) {
+	r.gotUnseal = req
+	if r.unsealErr != nil {
+		return nil, r.unsealErr
+	}
+	return &adapterv1.UnsealSessionResponse{}, nil
 }
 
 func (r *recordingAdapter) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
@@ -724,7 +747,7 @@ func TestTerminateSendsReasonAndDeadline(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	clean, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(context.Background(), "sess-t", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -737,8 +760,8 @@ func TestTerminateSendsReasonAndDeadline(t *testing.T) {
 	if got := rec.gotShutdown.GetSessionId().GetValue(); got != "sess-t" {
 		t.Errorf("Shutdown session id = %q, want sess-t", got)
 	}
-	if got := rec.gotShutdown.GetReason(); got != "USER_REVOKED" {
-		t.Errorf("Shutdown reason = %q, want USER_REVOKED", got)
+	if got := rec.gotShutdown.GetReason(); got != "test_reason" {
+		t.Errorf("Shutdown reason = %q, want test_reason", got)
 	}
 	if got := rec.gotShutdown.GetDeadlineMs(); got != 10_000 {
 		t.Errorf("Shutdown deadline = %d ms, want 10000", got)
@@ -749,7 +772,7 @@ func TestTerminateZeroDeadlineSendsZero(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	if _, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 0); err != nil {
+	if _, err := cl.Shutdown(context.Background(), "sess-t", "test_reason", 0); err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
 	if rec.gotShutdown.GetDeadlineMs() != 0 {
@@ -769,7 +792,7 @@ func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	clean, err := cl.Shutdown(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(ctx, "sess-x", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -790,7 +813,7 @@ func TestShutdownWithAReasonIsANoOpForAnUnboundSession(t *testing.T) {
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	clean, err := cl.Shutdown(context.Background(), "sess-absent", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(context.Background(), "sess-absent", "test_reason", 10*time.Second)
 	if err != nil {
 		t.Errorf("Shutdown of a session the pod does not hold = %v, want a clean no-op", err)
 	}
@@ -2076,7 +2099,7 @@ func TestUnfencedShutdownFormsSetUnconditionalTeardown_spec_4_7_1(t *testing.T) 
 		call func(ctx context.Context, cl *adapterclient.Client) error
 	}{
 		{"Shutdown", func(ctx context.Context, cl *adapterclient.Client) error {
-			_, err := cl.Shutdown(ctx, "sess-1", "USER_REVOKED", 10*time.Second)
+			_, err := cl.Shutdown(ctx, "sess-1", "test_reason", 10*time.Second)
 			return err
 		}},
 		{"ShutdownRecycle", func(ctx context.Context, cl *adapterclient.Client) error {
@@ -2104,5 +2127,71 @@ func TestUnfencedShutdownFormsSetUnconditionalTeardown_spec_4_7_1(t *testing.T) 
 				t.Errorf("bind_attempt = %q, want empty on the unfenced form", req.GetBindAttempt())
 			}
 		})
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — SealSession carries the
+// session, the caller's coordination generation, and the idle window, and
+// returns the adapter's verdict with the idle age in seconds.
+func TestSealSessionCarriesTheWindowAndReturnsTheVerdict_spec_4_7_1(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		resp       *adapterv1.SealSessionResponse
+		wantSealed bool
+		wantAge    time.Duration
+	}{
+		{"sealed", &adapterv1.SealSessionResponse{Sealed: true}, true, 0},
+		{"not sealed reports the idle age", &adapterv1.SealSessionResponse{Sealed: false, IdleAgeSeconds: 42}, false, 42 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingAdapter{sealResp: tc.resp}
+			cl := dialRecordingAdapter(t, rec)
+
+			sealed, age, err := cl.SealSession(context.Background(), "sess-s", 7, 600)
+			if err != nil {
+				t.Fatalf("SealSession: %v", err)
+			}
+			if sealed != tc.wantSealed || age != tc.wantAge {
+				t.Errorf("SealSession = (%v, %s), want (%v, %s)", sealed, age, tc.wantSealed, tc.wantAge)
+			}
+			got := rec.gotSeal
+			if got.GetSessionId().GetValue() != "sess-s" || got.GetCoordinationGeneration() != 7 || got.GetIdleSeconds() != 600 {
+				t.Errorf("request = (%q, gen %d, idle %d), want (sess-s, gen 7, idle 600)",
+					got.GetSessionId().GetValue(), got.GetCoordinationGeneration(), got.GetIdleSeconds())
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — an adapter error, such as
+// the stale-generation refusal, reaches the caller as not sealed with the
+// status intact, so the idle suspension leaves the session running.
+func TestSealSessionSurfacesTheAdapterError_spec_4_7_1(t *testing.T) {
+	rec := &recordingAdapter{sealErr: status.Error(codes.FailedPrecondition, "activity_untapped: no tap")}
+	cl := dialRecordingAdapter(t, rec)
+
+	sealed, _, err := cl.SealSession(context.Background(), "sess-s", 7, 600)
+	if sealed || status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SealSession = (%v, %v), want not sealed with FailedPrecondition", sealed, err)
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract) — UnsealSession carries the
+// session and the caller's coordination generation, and surfaces an adapter
+// error.
+func TestUnsealSessionCarriesTheGeneration_spec_4_7_1(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	if err := cl.UnsealSession(context.Background(), "sess-u", 9); err != nil {
+		t.Fatalf("UnsealSession: %v", err)
+	}
+	if got := rec.gotUnseal; got.GetSessionId().GetValue() != "sess-u" || got.GetCoordinationGeneration() != 9 {
+		t.Errorf("request = (%q, gen %d), want (sess-u, gen 9)", got.GetSessionId().GetValue(), got.GetCoordinationGeneration())
+	}
+
+	rec.unsealErr = status.Error(codes.Unavailable, "adapter down")
+	if err := cl.UnsealSession(context.Background(), "sess-u", 9); status.Code(err) != codes.Unavailable {
+		t.Errorf("UnsealSession error = %v, want Unavailable", err)
 	}
 }

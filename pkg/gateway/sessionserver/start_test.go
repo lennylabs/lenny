@@ -22,8 +22,9 @@ import (
 func TestSessionStartCreatesRunningSession(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc: func() string { return "sess_start_1" },
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_start_1" },
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
@@ -59,8 +60,9 @@ func TestSessionStartCreatesRunningSession(t *testing.T) {
 func TestSessionStartRecordsEnvironment(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc: func() string { return "sess_start_env" },
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_start_env" },
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
@@ -106,7 +108,7 @@ func TestTwoStepStartLaunchesReadySession(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed ready session: %v", err)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_ready_1/start", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -142,7 +144,7 @@ func TestTwoStepStartRejectsNonReadyState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed created session: %v", err)
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_created_1/start", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -155,7 +157,7 @@ func TestTwoStepStartRejectsNonReadyState(t *testing.T) {
 
 func TestSessionStartRejectsMissingRuntime(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -169,7 +171,8 @@ func TestSessionStartRejectsMissingRuntime(t *testing.T) {
 func TestSessionStartValidatesWorkspacePlan(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc: func() string { return "sess_start_wp" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_start_wp" },
 	})
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
 		RuntimeRef: "echo",

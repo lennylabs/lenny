@@ -72,7 +72,9 @@ func (g *StaticPoolGenerator) GenerateCredential(ctx context.Context, req Creden
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	lease, err := g.assigner.Assign(req.PoolID, req.SessionID, req.SpiffeURI, req.TenantID)
+	// A generated credential belongs to no restore attempt, so it records
+	// generation 0. spec: §7.3 (Credential leases on the replacement pod).
+	lease, err := g.assigner.Assign(req.PoolID, req.SessionID, req.SpiffeURI, req.TenantID, 0)
 	if err != nil {
 		return nil, err
 	}

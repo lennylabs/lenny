@@ -130,14 +130,18 @@ func (r *materializeRespondingRuntime) Close(context.Context, string) error     
 // sentinel.
 type materializeRaceAssigner struct{}
 
-func (materializeRaceAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (materializeRaceAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (materializeRaceAssigner) ReleaseSession(string) {}
+func (materializeRaceAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (materializeRaceAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (materializeRaceAssigner) Release(string) {}
+func (materializeRaceAssigner) Release(string) error { return nil }
 
 // materializeCluster boots one envtest control plane and seeds the three warm
 // pools the sub-tests claim from: an assignable pool with an idle pod, an
@@ -322,6 +326,7 @@ func materializeServer(
 	store := memstore.New()
 	registry := podsession.NewRegistry()
 	sessionSrv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -337,6 +342,7 @@ func materializeServer(
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		Executor:          podExec,
 		Runtimes:          runtimes,

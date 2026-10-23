@@ -14,10 +14,10 @@ import (
 // spec: §15.1 — a suspended tenant rejects new session creation
 // and message injection with TENANT_SUSPENDED. F-15.1.3.
 
-// requireTenantState reports the suspension as TENANT_SUSPENDED, and it
+// requireCreationAllowed reports the suspension as TENANT_SUSPENDED, and it
 // takes precedence over the §12.8 deletion-lifecycle TENANT_NOT_ACTIVE
 // gate so an operator suspension is named distinctly.
-func TestRequireTenantStateRejectsSuspended_spec_15_1_818(t *testing.T) {
+func TestRequireCreationAllowedTenantRejectsSuspended_spec_15_1_818(t *testing.T) {
 	store := tenantstore.NewMemory()
 	_ = store.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", State: tenantstore.TenantStateActive, Suspended: true,
@@ -26,7 +26,7 @@ func TestRequireTenantStateRejectsSuspended_spec_15_1_818(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-	if ok := s.requireTenantState(rec, req, "acme"); ok {
+	if ok := s.requireCreationAllowed(rec, req, "acme", ""); ok {
 		t.Fatal("suspended tenant admitted a session create")
 	}
 	if rec.Code != http.StatusForbidden {
@@ -39,7 +39,7 @@ func TestRequireTenantStateRejectsSuspended_spec_15_1_818(t *testing.T) {
 
 // A suspended tenant that is also leaving the active lifecycle state is
 // reported as suspended, not as the deletion-lifecycle TENANT_NOT_ACTIVE.
-func TestRequireTenantStateSuspensionBeatsLifecycle_spec_15_1_818(t *testing.T) {
+func TestRequireCreationAllowedTenantSuspensionBeatsLifecycle_spec_15_1_818(t *testing.T) {
 	store := tenantstore.NewMemory()
 	_ = store.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", State: tenantstore.TenantStateDisabling, Suspended: true,
@@ -48,7 +48,7 @@ func TestRequireTenantStateSuspensionBeatsLifecycle_spec_15_1_818(t *testing.T) 
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-	if ok := s.requireTenantState(rec, req, "acme"); ok {
+	if ok := s.requireCreationAllowed(rec, req, "acme", ""); ok {
 		t.Fatal("suspended tenant admitted a session create")
 	}
 	if body := decodeEnvelope(t, rec); body.Code != "TENANT_SUSPENDED" {

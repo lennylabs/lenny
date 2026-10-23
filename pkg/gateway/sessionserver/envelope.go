@@ -13,6 +13,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
@@ -133,7 +134,18 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 				map[string]any{"field": "credentialPolicy.preferredSource"})
 			return nil, false
 		}
-		if ps != "" && s.overrideExpandsTenantPolicy(r.Context(), tenantID, ps) {
+		expands, err := s.overrideExpandsTenantPolicy(r.Context(), tenantID, ps)
+		if err != nil {
+			// spec: §7.1 (Atomicity of session creation), §4.9 — the tenant
+			// policy the override is checked against could not be read, so
+			// the restrict-only rule cannot be evaluated. Fail closed with
+			// the retryable atomic-unit answer rather than admit an override
+			// that may enable a credential source the tenant disallows.
+			s.writeSessionCreationFailed(w, "credential_lookup_unavailable",
+				"the tenant credentialPolicy could not be read to validate credentialPolicy.preferredSource")
+			return nil, false
+		}
+		if expands {
 			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				fmt.Sprintf("credentialPolicy.preferredSource %q expands the tenant credentialPolicy; a per-session override may only restrict it", ps),
 				map[string]any{"field": "credentialPolicy.preferredSource", "reason": "expands_tenant_policy"})
@@ -239,29 +251,22 @@ func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) in
 	return rt.Limits.MaxSessionAgeSeconds
 }
 
-// runtimeMaxClientIdle returns the resolved runtime's effective
+// runtimeMaxClientIdle returns the resolved runtime's
 // sessionPolicy.maxClientIdleSeconds in seconds, or 0 when no runtime is
-// registered (no per-runtime idle bound). The bound is
-// sessionPolicy.maxClientIdleSeconds when the runtime declares one; absent
-// that it defaults to the runtime's effective maxSessionAgeSeconds, the §6.2
-// idle-clock default that supersedes the removed limits.maxIdleTimeSeconds
-// knob. The §27.6 playground idle override is resolved min-wins against this
-// value at create time. spec: §5.2 (sessionPolicy.maxClientIdleSeconds); §6.2
-// (idle clock defaults to the effective maxSessionAgeSeconds); §27.6.
+// registered or the runtime declares no idle bound. The age cap is not an
+// idle default: with no declared bound the watchdog's 900s default applies.
+// The §27.6 playground idle override is resolved min-wins against this value
+// at create time. spec: §5.2 (sessionPolicy.maxClientIdleSeconds); §6.2
+// (maxClientIdleSeconds clock behavior across states); §27.6.
 func (s *Server) runtimeMaxClientIdle(ctx context.Context, runtimeRef string) int {
 	if s.runtimes == nil || runtimeRef == "" {
 		return 0
 	}
 	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
-	if err != nil {
+	if err != nil || rt.SessionPolicy == nil {
 		return 0
 	}
-	if rt.SessionPolicy != nil && rt.SessionPolicy.MaxClientIdleSeconds > 0 {
-		return rt.SessionPolicy.MaxClientIdleSeconds
-	}
-	// spec: §6.2 — maxClientIdleSeconds defaults to the pool's
-	// effective maxSessionAgeSeconds when no idle bound is declared.
-	return s.runtimeMaxSessionAge(ctx, runtimeRef)
+	return rt.SessionPolicy.MaxClientIdleSeconds
 }
 
 // runtimeSDKWarm returns the resolved runtime's §6.1 SDK-warm inputs: the
@@ -289,21 +294,29 @@ func (s *Server) runtimeSDKWarm(ctx context.Context, tenantID, runtimeRef string
 // override that resolves to user credentials when the tenant policy does
 // not use them (and does not enable them) is an expansion the §14
 // "restrict, not expand" rule forbids. A narrowing override (e.g. tenant
-// allows user-then-pool, session pins to pool) is permitted. spec: §14
-// credentialPolicy; §4.9. F-14.1.14.
-func (s *Server) overrideExpandsTenantPolicy(ctx context.Context, tenantID string, override credential.PreferredSource) bool {
-	if s.tenants == nil {
-		return false
+// allows user-then-pool, session pins to pool) is permitted, and needs no
+// tenant read.
+//
+// A tenant with no registry row has no credentialPolicy, and the §4.9
+// resolution assigns such a session nothing, so its override expands
+// nothing. Any other tenant read error is returned: the restrict-only rule
+// cannot be evaluated without the policy, and admitting the override would
+// let the session draw user credentials the tenant may forbid once a later
+// read of the policy succeeds. spec: §14 credentialPolicy; §4.9; §7.1
+// (Atomicity of session creation). F-14.1.14.
+func (s *Server) overrideExpandsTenantPolicy(ctx context.Context, tenantID string, override credential.PreferredSource) (bool, error) {
+	if s.tenants == nil || !override.UsesUserCredentials() {
+		return false, nil
 	}
 	tenant, err := s.tenants.Get(ctx, tenantID)
-	if err != nil {
-		return false
+	switch {
+	case errors.Is(err, tenantstore.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, &CredentialLookupError{Lookup: "tenant credentialPolicy", Err: err}
 	}
 	policy := tenant.CredentialPolicy
-	if override.UsesUserCredentials() {
-		return !policy.PreferredSource.UsesUserCredentials() && !policy.UserCredentialsEnabled
-	}
-	return false
+	return !policy.PreferredSource.UsesUserCredentials() && !policy.UserCredentialsEnabled, nil
 }
 
 // validateRuntimeOptions enforces the §14 runtimeOptions size

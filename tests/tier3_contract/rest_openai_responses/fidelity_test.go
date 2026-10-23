@@ -61,13 +61,14 @@ func newResponsesServers(t *testing.T, clock func() time.Time, id string) (*http
 	exec := executor.NewEchoExecutor()
 
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:  clock,
-		IDFunc: func() string { return id },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return id },
 	})
 	tsResp := httptest.NewServer(respHandler.Handler())
 	t.Cleanup(tsResp.Close)
 
-	restHandler := sessionserver.New(store, sessionserver.Options{})
+	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	tsREST := httptest.NewServer(restHandler.Handler())
 	t.Cleanup(tsREST.Close)
 

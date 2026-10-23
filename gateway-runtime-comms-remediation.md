@@ -863,6 +863,69 @@ today's `main.go` in wave 0, which is where the plan wants the answer.
 
 **Size.** S.
 
+**8.2 compatibility note.** The adapter reads three inputs that no rendered agent pod sets today:
+`--runtime-ops-socket` (spelled `--lifecycle-socket` before the R1b rename under rule N7),
+`--post-mortem-dir`, and the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. R17 renders
+`--runtime-ops-socket`, and R12 renders `--post-mortem-dir` and `OTEL_EXPORTER_OTLP_ENDPOINT`. A deployment
+that sets any of them outside this repository, through a mutating webhook, a Kustomize or Helm
+post-renderer overlay, or an operator fork, must remove its setter when the step that renders the input
+lands. Two conditions apply:
+
+- An out-of-tree setter of `--lifecycle-socket` already fails. The adapter binary no longer defines that
+  flag, so Go's flag package rejects it and the adapter container exits with status 2 at startup. The
+  setter must move to `--runtime-ops-socket` now, and must then be removed when R17 lands.
+- After R17 or R12 renders an input, an out-of-tree setter of the same input produces a duplicate. For a
+  repeated flag, the adapter takes the last occurrence, so the overlay's value silently replaces the
+  rendered one or is silently replaced by it, depending on argument order. For a repeated environment
+  variable, the container receives the later entry, so the result again depends on where the overlay
+  inserts its entry.
+
+The release notes of R12 and R17 must carry this note. The plan names no concrete register for an
+out-of-tree setter: the deployment-boundary exception register (`tests/registers/exceptions-deployment-boundary.yaml`,
+landed with R6) already holds one deferred row for each of the three inputs, with R17 or R12 as its
+blocker, and the step that renders an input deletes that row. No further row is added.
+
+**Outcome (landed 2026-10-16, branch `fix/r4-graceful-stop`).** Both investigations ran as timing tests,
+and the verdicts are as follows.
+
+- **8.3 is positive.** `TestAdapterExitsWithinGraceBudget` (tier 7a, `tests/tier7a_load_local/`) builds
+  and runs the real `cmd/lenny-adapter` and `cmd/runtimes/echo-concurrent` binaries, puts the server in
+  each pending-RPC state, sends SIGTERM, and times the exit. With no stream open, with an idle session,
+  and with an open `Attach` stream whose runtime is SIGTERMed at the same moment, the process exits in 2
+  to 5ms. With a `StartSession` in flight, the graceful stop waits for that RPC, which completes, and the
+  process exits about 509ms after SIGTERM. With one, or four concurrent, established `Attach` streams
+  held open while the runtime stays up, and with a stream whose handler is blocked mid-send, the process
+  does not exit: it was still running 15s after SIGTERM in every run, and still running 120s after
+  SIGTERM in a run with the budget raised to 115s, past the 120s default grace period. The cause is a
+  cycle. `GracefulStop` waits for the `Attach` handler, the handler waits for the runtime's output to
+  end, and the pod-scope teardown that ends that output is deferred in `main` until `srv.Serve` returns,
+  which in grpc-go v1.80.0 happens only after the stop completes. The cases that hang skip on BUILD-GAPS
+  F-4.6.31.
+- **The 8.3 fix is not landed, because the specification defines neither the budget nor the fallback.**
+  §4.6.1 fixes the pod's `terminationGracePeriodSeconds` (default 120s) as the outer bound, and nothing
+  states a bound on the adapter's own graceful stop or what the adapter does when it overruns. The fix
+  therefore goes through the proposal pipeline. F-4.6.31 records the two candidate designs: a bounded
+  `GracefulStop` with a `Stop()` fallback, and ending the runtime connection before the graceful stop.
+- **R16's design input.** R16 cannot assume that the adapter exits after its preStop checkpoint. Until
+  the fix lands, a pod whose runtime does not exit on its own SIGTERM holds the adapter until the
+  kubelet's SIGKILL, and none of the steps `main` defers past the server's stop run. R16 reorders this
+  call, so it takes the proposal and F-4.6.31, and its estimate grows by that proposal. R16's tier-5
+  terminate-and-checkpoint test must also assert that the adapter exits before the grace deadline, using
+  the same `TestAdapterExitsWithinGraceBudget` cases with `LENNY_TIER7A_ADAPTER_GRACE_RUN_BLOCKED=run`.
+- **8.5 is answered.** The elicitation waiter does not mirror the tool-approval await exactly: it has no
+  in-process registry and polls the shared interaction store alone, every 25 milliseconds
+  (`awaitPollInterval` in `pkg/gateway/mcpfabric/mcptools`), so every replica's resolution reaches it the
+  same way. `TestElicitationAnsweredOnAnotherReplicaWakesTheBlockedCall_spec_9_2` (tier 7a) runs two
+  independent registrations of the platform MCP tools that share only a Postgres interaction store,
+  raises 24 elicitations on replica A, and ends them on replica B in random order through B's
+  `respond_to_elicitation` and `dismiss_elicitation` tools and through the raising-session expiry that
+  proposal 0092 added. Every blocked call on A returned the outcome B recorded, and the expiry returns an
+  error other than the timeout. Over five race-enabled runs the wake latency from B's commit to A's return
+  had a median of 10 to 16ms and a maximum of 26ms, against a 2-second budget.
+- **R20's design input.** R20 can reuse the Postgres interaction store and its poll for the
+  request-input wait (6c.4), adding a request-input interaction kind, and does not need a second
+  cross-replica store. The 6c.4 gap itself stands: `inputwait` still has no shared store.
+
 ### R5. Session-server and composition-root carve-up
 
 **Closes:** no record. This is the decoupling investment that every wave-3 and wave-5 parallelism claim in
@@ -943,6 +1006,12 @@ as a fourth row, also naming R12. The gate is green on arrival and the debt is c
 
 **Dependencies.** R1a for the register's names, and R1b because rule N7 renames `--lifecycle-socket`.
 
+**8.2 compatibility requirement (added 2026-10-16 by R4).** This step is 8.2's verdict owner. The
+compatibility note is in the R4 section: an out-of-tree setter of `--lifecycle-socket` already stops the
+adapter at startup, and an out-of-tree setter of `--runtime-ops-socket`, `--post-mortem-dir`, or
+`OTEL_EXPORTER_OTLP_ENDPOINT` duplicates the input once R17 or R12 renders it. The three deferred rows of
+the deployment-boundary exception register are the register rows; no further row is owed.
+
 **Parallel with.** R5 (`pkg/gateway` and `cmd/lenny-gateway`), R2a, and R7 (`tests/testinfra` and
 `e2e-values.yaml`, which this step does not touch).
 
@@ -989,7 +1058,9 @@ lanes, and `e2e-values.yaml`.
 (`lenny-test stress`) is load-bearing rather than optional. Budget a stress run on the new lane before any
 step depends on it.
 
-**Size.** L.
+**Re-derived 2026-10-21.** The step text predates proposals 0091 to 0093, which built `tests/testinfra/lifecycleharness`: N in-process `sessionserver` replicas over one session store (in-memory or Postgres), shared miniredis, envtest, an in-process adapter with a recording runtime, a stepped clock, a trace-indexed fault injector, the `Checker` invariants, the `MaxConcurrentSessions` concurrent-slot dimension, and `Proxy` partitions. It already runs at tiers 1, 2, 4, 7a, and 8, and a non-holder case exists (`TestHeldPodSuspendedMessageWaitsInTheDLQ_spec_7_2`). R7 narrows to what that harness cannot do: a two-replica lane that boots real `cmd/lenny-gateway` subprocesses, so the composition root's wiring is exercised; a tier-5 lane that pins a request to a non-holder (the chart already runs `gateway.replicas: 2`); and the default-values parity gate with the nightly stock-defaults lane, which also covers `controller.replicas: 1` and the overlay's other `enabled: false` overrides. `tests/testinfra/kind/e2e-values.yaml` still disables mTLS and `tests/tier9_security/tls_test.go` still self-skips; the overlay's stated reason (F-10.3.10) is closed, and the remaining blocker is the per-pod serving certificate that R14 adds. R10, R19, R20, R21, and R22 use `lifecycleharness` as their primary substrate and state which of their cases need the subprocess lane. `resolveReplicaID` now lives in `cmd/lenny-gateway/coordination_identity.go`.
+
+**Size.** M (was L).
 
 ### R8. Reciprocal host-conformance battery
 
@@ -1017,6 +1088,8 @@ rendered podspec rather than a synthesized manifest.
 
 **Risk.** Booting a real container in tier 2 is slower than the tier's norm; it may need to be a tier-10
 lane instead. Decide on measurement rather than in advance.
+
+**Re-derived 2026-10-21.** Unblocked: R1b and R6 have landed, and nothing is built yet. The fake host in `cmd/lenny-compliance/full.go` now writes the `runtimeOps` manifest key. Proposal 0090 adds host-side assertions: the `session_start`, `session_started`, and `session_end` frames and their write table, the `session_started` gate before session-scoped `CH-RUNTIMEOPS` frames, the required `sessionId`, the deleted `terminate` frame, `DemoteSDK` failing closed, and the `_lennyNonce` handshake. The claim register defers two `ABSENT` rows here (the runtime-ops-events schema in `cmd/lenny-compliance/schemavalidate.go`, and third-party slot-bind conformance). `tests/testinfra/ackruntime` serves as the reference runtime.
 
 **Size.** L.
 
@@ -1106,6 +1179,8 @@ path for no correctness gain.
 **Risk.** False positives on reflection and interface dispatch. The register with per-entry reasons is the
 escape hatch, and each entry is countable rather than anonymous.
 
+**Re-derived 2026-10-21.** Not started; `opsDeadCodePackages` still covers four packages. A partial G2a exists as `adapterClientReachableRPCs` in `tests/tier0_static/claim_register_test.go`, applied to the credential rows only; generalize it. The 2026-07-27 revert `54292da1b` (the eviction-trigger proposal) removed `Options.InterReplicaAddress` and `coordlease.GetBySession`, so those stage-3 rows are void, and 0092 wired `maxSuspendedPodHoldSeconds`; stage 3 keeps the `Interrupt` literal and `PodSpiffeURI`. G2b has seven rows (`pkg/adapter/adapterevents.go`), and the `RATE_LIMITED` trap still holds. G2c has grown: 0090 and 0093 added adapter collectors, the catalog lists three `lenny_adapter_*` metrics, and the adapter still serves no metrics endpoint. New register candidates: `slotcounter.Counter.Reset` (F-10.1.38) and the `inbox_cleared` emitter (F-7.2.40, which R20 wires).
+
 **Size.** M.
 
 ### R10. Coordinator gate on the session REST surface, and the duplicate terminal
@@ -1163,7 +1238,9 @@ R10a/R10b split), and not parallel with R22, which rewrites the resume path this
 and a clear operator-facing message, and §29's matrix names R19 as the successor so the interim behavior
 is documented as interim.
 
-**Size.** L.
+**Re-derived 2026-10-21.** Routes are registered in `pkg/gateway/sessionserver/route_table.go`, and the count of twenty still holds; 0091 to 0093 added no route and 0094 removes `DELETE /v1/responses/{id}`. Proposal 0092 added `coordinatesSession`, which reads the `REG-COORDLEASE` holder and gates the held-pod `POST /resume` and the held-message drain; it is the gate primitive this step reuses. Three changes of scope follow. The `Adapter/Terminate` work item is dropped: `040323634` deleted the RPC, and a holder-side terminal write now reaches the pod through the post-terminal release and the adapter `Shutdown`. The duplicate-terminal half of 8.7 is closed by 0092 (F-10.1.34), and the reconciler's leader gating moves to P3. The off-holder terminate and delete forward is P2's (F-10.1.33), so R10 owns the typed fail-closed refusal on every other route. Two items are added: the MCP tool surface, which §29.3 maps onto the REST rows (`mcptools_register.go`), and a restatement of the §29.3 interaction-resolution rows as store-and-wake, which is how the four routes already work across replicas. Proposal 0094 adds Article 18 checks in `interactions.go`, so R10b sequences against it as well as R20.
+
+**Size.** M (was L).
 
 ### R11. LLM proxy dialects reach a route
 
@@ -1190,7 +1267,9 @@ presupposes R5.
 
 **Risk.** Minimal. The only judgement is which direction to take, and the card forces it to be recorded.
 
-**Size.** S.
+**Re-derived 2026-10-21.** The one route moved to `cmd/lenny-gateway/llmproxy_server.go`. Registering an `openai` route is not sufficient: `llmproxy.Handler` hardcodes `DialectAnthropic` for request and response translation, and the OpenAI-direct and Azure translators accept only `openai`, so a lease whose provider resolves to `openai_direct` or `azure_openai` already fails translation on the existing route. The step parameterizes the handler by dialect, adds the routes the §28.5.5 card lists (`/v1/chat/completions`, `/v1/embeddings`, and the streaming variant), and states the dialect-to-provider matrix. Every dependency has landed.
+
+**Size.** M (was S).
 
 ### R11a. One proxy-dialect enum, narrowed to the supported set, and the Responses naming split
 
@@ -1270,6 +1349,8 @@ catalog sections of `spec/26`, which no wave-3 step edits.
 **Risk.** Low. The removed values never reached a route, so no working path changes. The one judgement is
 whether a deployer has a stored pool on a retired dialect, which the startup check surfaces.
 
+**Re-derived 2026-10-21.** Not started; the plan's spec line citations are stale and the §28.5.5 card already lists only `openai` and `anthropic`. Added scope: `credential.UserProxyDialect` maps `ProviderVertexAI` to `google` and `ProviderCursorDirect` to `cursor` for the user-credential path (`usercreds.go`, `credential_preclaim.go`), so narrowing the enum remaps Vertex (its translator accepts only `anthropic`) and removes proxy delivery for `cursor_direct`. The startup check also reports stored user credentials on a retired dialect.
+
 **Size.** S.
 
 ### R12. The adapter-to-gateway control direction, with hold state
@@ -1336,6 +1417,8 @@ root, where all four append into per-concern files after R5.
 is why hold state is in scope. Secondary: the one-owner-per-pod rule must be correct or two replicas fight
 for the stream.
 
+**Re-derived 2026-10-21.** The stream handler and hold state live in `pkg/adapter/adapterevents.go` and `holdstate.go`. The concurrent-slot correction is stale: since `3997f502b` hold state arms on `hasStartedSession()`, but the hold is pod-scoped, so its timeout ends every started session and it blocks every sibling session's coordinator. R12 replaces "per-slot hold state" with a correct entry condition for that pod-scoped hold, and reconciles one-stream-per-pod ownership with per-session `REG-COORDLEASE` and 0091's Sweeper eviction. The consumers wire into what has landed since: `AdapterTerminating` feeds 0091's failure funnel so the session ends `resume_pending` and 0092's resume driver restores it, and `FINAL_USAGE_REPORT` feeds the budget return. R6 added the `--otlp-endpoint` and `--otlp-tls-disabled` exception-register rows. §28.5.2 lists a slot-failure event with no event type in the code; R12 adds it or records that the `CH-ATTACH` stream end replaces it. The claim register's "Runtime lifecycle channel (at deployment)" row belongs to R17, and its service-account-token row moves to R14. R7 remains a test dependency for the concurrent-slot row.
+
 **Size.** L.
 
 ### R13. Bind-time coordinator resolution
@@ -1366,7 +1449,9 @@ design note for the address format.
 
 **Risk.** Low, given the address-format edge is honored.
 
-**Size.** M.
+**Re-derived 2026-10-21.** The premise is gone. Revert `54292da1b` removed the spec statement that the session server seeds the mirror at bind, `coordlease.GetBySession`, the `coordinator_address` column, and `InterReplicaAddress`; §28.3 names the Sweeper as the only `REG-COORDMIRROR` writer. Routing identifies the coordinator by the `REG-COORDLEASE` holder, acquired at every bind. R13 narrows to refreshing the mirror at bind and at the resume commit, which closes F-10.1.35 (a barrier sent within one Sweeper interval of a resume commit carries a stale generation). The replica address moves to the inter-replica carrier proposal that precedes R18, because `resolveReplicaID` returns a hostname with a random suffix rather than a dialable address.
+
+**Size.** S (was M).
 
 ### R14. Agent-pod mTLS client identity
 
@@ -1415,6 +1500,8 @@ it).
 through the values file. The namespace defect must land in the same change, or one broken install mode is
 converted into another.
 
+**Re-derived 2026-10-21.** The facts hold, with the podspec now in `pkg/controller/sandbox/podspec/` (R6). R6 seeded three exception-register rows with `blocker: R14` (`--tls-cert-file`, `--tls-key-file`, `--tls-client-ca-file`), which this step deletes in the same change. The claim register defers the service-account-token row to R12; this step owns it, and the register row is re-pointed. More RPCs ride `LNK-GWCONTROL` since 0079 (`ReportPodScrub`, `ReportSessionScrub`).
+
 **Size.** L.
 
 ### R15. Runtime-frame schema conformance
@@ -1448,7 +1535,9 @@ window opens (serialization rule S-2).
 
 **Risk.** Low. Making an emitter match a schema is bounded work.
 
-**Size.** M.
+**Re-derived 2026-10-21.** Partly done. Proposal 0090 deleted the `terminate` frame, the 0092 series rejects an unknown deadline trigger (`tests/tier3_contract/runtimeops_emitted/deadline_trigger_test.go`), an emitted-bytes round trip exists (`emitted_frames_test.go`), and `files_updated` has a fixture. Remaining: the `omitempty` zero-value omissions in `runtimeops.go` (such as `remainingMs: 0`), the `deadlineMs` lower bound, inbound validation of `credentials_acknowledged` and `llm_request_*` fields, fixtures for `credentials_acknowledged` and `llm_request_started`, a schema-member bijection, and zero-value round-trip cases. The `ready_for_input` frame moves to R20, which decides it against 0092's `heartbeat_ack.busy`.
+
+**Size.** S (was M).
 
 ### R16. Eviction, the holder path
 
@@ -1482,7 +1571,15 @@ PDB and admission rows of 6a.4, which conform to the specification (see R6).
 **Risk.** This is where a wrong shutdown budget turns a best-effort checkpoint into a hang. R4 is the
 control.
 
-**Size.** L.
+**R4's 8.3 verdict (2026-10-16).** Positive: the adapter does not exit after SIGTERM while an `Attach`
+stream is open and the runtime is up, and only the kubelet's SIGKILL ends it (BUILD-GAPS F-4.6.31, owned
+here). The specification defines no adapter shutdown budget and no fallback, so this step's design commits
+only after a proposal settles them. The measured numbers and the two candidate designs are in the R4
+outcome.
+
+**Re-derived 2026-10-21.** Revert `54292da1b` removed `AdapterEvicting`, `setEvicting`, `isEvicting`, and the best-effort snapshot, and the specification states no eviction message name. R16 therefore re-creates the flag, the event, and both best-effort branches rather than wiring them, and it is preceded by the adapter shutdown and eviction proposal in §10.2 (F-4.6.31's budget, the eviction signal, and the best-effort snapshot), sequenced against 0087 part 1's pod-exit ordering. R16 also takes the items 0093 handed it: the pod-side `Shutdown` generation fence, the lease and mirror release at a terminal write, the §10.1.1 statement of when a pre-running start acquires the lease, and 0093 register row A18. F-4.6.37 (the preStop hook exec'd a binary the image lacks) was fixed directly on 2026-10-22. Its tier-5 test then exposed F-4.6.38: the `prestop` subcommand SIGTERMs PID 1 of its own container and is SIGKILLed with it, so every deletion records FailedPreStopHook; R16 replaces the hook body with the §4.6.1 eviction checkpoint trigger and lifts that test's `blocked:` skip. The claim register's eviction rows become `ABSENT`, and its PDB row is closed against R6.
+
+**Size.** L, plus the proposal.
 
 ### R17. Enabling `CH-RUNTIMEOPS` at the deployment boundary
 
@@ -1517,11 +1614,18 @@ zero. That is silent billing loss. `TestDirectModeUsagePullIsNonZero`, tier 4.
 R6 (the podspec must render the socket flag), and R8 (the host-conformance battery is the only mechanism
 that establishes 8.6).
 
+**8.2 compatibility note (added 2026-10-16 by R4).** Rendering `--runtime-ops-socket` makes any
+out-of-tree setter of that flag a duplicate, and a setter of the old `--lifecycle-socket` spelling already
+stops the adapter at startup. This step's release notes carry the note in the R4 section, and the step
+deletes the flag's row from the deployment-boundary exception register when it renders the flag.
+
 **Parallel with.** R19 and R21. Not parallel with R14 (both exercise the `GatewayControl` handshake), and
 not parallel with R16.
 
 **Risk.** This step changes what a rendered pod does at every checkpoint. The two gates above are the
 control, and the tier-8 eviction-edge matrix from R16 is the regression net.
+
+**Re-derived 2026-10-21.** The hazard and rule S-5 hold. The heartbeat-hung path no longer SIGTERMs the runtime (it escalates through `Runtime.Interrupt` and ends the stream), and `RuntimeConnected()` does not exist; the quiesce block is additionally gated by 0090's `session_started` checkpoint gate. The dead-runtime branch is restated for a runtime crash, a heartbeat-hung runtime, and the gap between runtime generations under 0087. R17 serializes with 0087 part 1's podspec edits under S-4, and 0087's stale-binary decision covers the socket render.
 
 **Size.** L.
 
@@ -1551,7 +1655,9 @@ subsystem be built alongside the largest existing-code chain.
 
 **Risk.** A new listening port on the gateway is a security surface. Tier 9 coverage is not optional here.
 
-**Size.** L.
+**Re-derived 2026-10-21.** Nothing exists yet. Scope widens from `ForwardMessage` to a general request-forwarding service: §29.3 names no carrier for the interrupt, terminate, delete, resume, interaction-resolution, and upload rows, and F-29.3.1 needs one. The step is preceded by the inter-replica carrier proposal in §10.2, which also defines the replica address and states why gRPC is chosen over the existing Redis pub/sub propagator (`podterminate/propagator`). The chart's policies are now `agent-`, `ops-`, `self-managed-backend-`, and `system-network-policies.yaml`.
+
+**Size.** L, plus the proposal.
 
 ### R19. Cross-replica message forwarding
 
@@ -1586,7 +1692,9 @@ and address), R20 (duplicate suppression), and R7.
 **Risk.** Forwarding introduces a second hop on the hottest path in the product. The latency budget and
 circuit-breaking belong in the §28 card.
 
-**Size.** M (the inbox degrade and the suspended-session routing moved to proposal 0092).
+**Re-derived 2026-10-21.** 0092's re-derivation holds. R19 owns F-7.2.38, F-29.3.2, and F-29.3.1 (the off-holder held-pod resume), and its first spec step still rewrites the §29.3 inbox fallback to the DLQ. Its R13 dependency becomes the carrier proposal's address. The claim register's `inputwait` row moves from R19 to R20.
+
+**Size.** M.
 
 ### R20. Message-plane durability and cross-replica input wait
 
@@ -1625,7 +1733,9 @@ the design commits, because a negative answer means a second cross-replica store
 **Risk.** Duplicate suppression must cover a message delivered once before a crash and again by the
 held-message delivery after a restore; the suppression set's lifetime has to survive that restore.
 
-**Size.** M (redelivery moved to proposal 0092).
+**Re-derived 2026-10-21.** The elicitation case of 8.5 landed in `79b5fc933`, so it leaves the step. R20 gains `ready_for_input` from R15 and F-7.2.40: 0092 removed the only caller of `ClearInboxOnAcquire`, so no code emits `inbox_cleared`, and R20 wires it at Sweeper adoption.
+
+**Size.** M.
 
 ### R21. The off-holder eviction leg
 
@@ -1648,6 +1758,8 @@ coordinator address), and R7 (the concurrent-slot dimension).
 **Risk.** This is the path where two replicas can drive one pod. The exclusivity guarantee in the §28.5.4
 card must be enforced rather than documented.
 
+**Re-derived 2026-10-21.** The plan's premise is obsolete: the `spec/04` requirement to dial the pod off-holder was removed by revert `54292da1b`, and §4.6.1 and §28 now state that only the lease-holding coordinator drives the eviction checkpoint. Proposal 0093 rejected the durable release record this step was to consume. Proposal 0094 points a claim-register row (the `admin.DrainSessions` terminal tail) at R21 as the step that releases a pod bound on another gateway replica. R21 is rewritten around that duty: a cross-replica release request carried over R18 or the existing Redis propagator, specified by the carrier proposal. The concurrent-slot eviction leg is dropped unless the carrier proposal re-justifies it against current §28.
+
 **Size.** M.
 
 ### R22. Concurrent-slot resume and restore
@@ -1667,7 +1779,9 @@ carved `start.go`).
 
 **Risk.** Restore correctness on a shared pod is the highest data-loss surface in the plan.
 
-**Size.** L.
+**Re-derived 2026-10-21.** Mostly done. `040323634` removed every `slot_id` and addresses each slot by session, so the handler layer of 6b.9 is closed and there are no gateway fields to populate. The adapter `Resume` claims its slot through `claimSessionSlot`, `Binder.Resume` reserves a counted slot (`7c34d7be7`), and 0093 keyed the slot set by session. What remains is a tier-4 restore onto a concurrent pod with a live co-tenant, built on `lifecycleharness`; the R1b dependency is dropped. F-5.2.51, F-5.2.54, and the D9 race stay with their owners.
+
+**Size.** S (was L).
 
 ### R23. Pre-connect and SDK-warm at the deployment boundary
 
@@ -1690,7 +1804,9 @@ safe compression, and both cannot be true. It is a leaf.
 
 **Risk.** Low.
 
-**Size.** M.
+**Re-derived 2026-10-21.** The sidecar half moved to 0087 part 1 (F-6.1.28), so the option of wiring `Server.PreConnect` into the sidecar is dropped. R23 keeps the gateway `DemoteSDK` fallback in `podsession/bindlaunch.go`, treating 0090's fail-closed `DeadlineExceeded` as "fail the pod and claim a replacement", the §28 card note, and the handler doc-comment fix, and it depends on 0087 part 1 for an end-to-end sidecar test. The claim register defers the pod `grpc.health.v1.Health` client row here, and marks the SDK-warm pod row `WIRED`, which R25 corrects to `UNWIRED`.
+
+**Size.** S (was M).
 
 ### R24. Disposition of the remaining unwired surfaces
 
@@ -1716,7 +1832,9 @@ file is not in flight, rather than as one change.
 
 **Risk.** Low individually, wide collectively.
 
-**Size.** M, spread thin.
+**Re-derived 2026-10-21.** `maxSuspendedPodHoldSeconds` is consumed by `watchdog.sweepSuspended` since 0092, so that row is dropped. The other rows are still open; `Checkpointer.Deadline` and `checkpoint.CheckpointTimeout` are now duplicated by a 60-second constant in `sessionserver/suspend_release.go`, which the disposition folds. `slotcounter.Counter.Reset` (F-10.1.38) is added unless P1 or 0087 claims it.
+
+**Size.** M.
 
 ### R25. Closure and reconciliation
 
@@ -1744,6 +1862,8 @@ or partial R2b cannot leave half-open; and running every tier, which is 8.1's ac
 **Parallel with.** Nothing. Terminal.
 
 **Risk.** If this step is dropped, the plan's closures are assertions.
+
+**Re-derived 2026-10-21.** The reconciliation test extends the existing claim-register test, which validates statuses and checks reachability for the credential rows only. Seeds are `AdapterEvents` and the hold-state arm in `adapterevents.go`. `TestEvictingFlag_spec_4_6_1` no longer exists; `TestControlEventDroppedWhenNoStream_spec_4_7` remains. The tier-11 conversion covers 23 source-reading files. `tests/registers/line-citations.yaml` is already empty, so the emptiness check is a one-line assertion. Added: reconcile `tests/claim-map.json` with this re-derivation (stale statuses, dead surfaces, and the owner moves recorded under R12, R14, R15, R16, R19, R20, and R23, and the kubelet-probe row still deferred to the landed R6).
 
 **Size.** M.
 
@@ -2017,10 +2137,10 @@ prevents recurrence.
 | 6c.10 | Tier-11: the two Responses senses named distinctly at every site | 11 | R11a |
 | 8.1 | Full-tier run plus the `UNVERIFIED` verdict state | all | R25, with R3 as prerequisite |
 | 8.2 | Compatibility note plus a register row | 0 | R6, with R17 |
-| 8.3 | `TestAdapterExitsWithinGraceBudget` | 7a | R4 |
+| 8.3 | `TestAdapterExitsWithinGraceBudget`. Answered 2026-10-16: positive, the open-stream cases skip on F-4.6.31 | 7a | R4 |
 | 8.4a | Tier-5 NetworkPolicy under a live CNI, existing policies | 5 | R14 |
 | 8.4b | Tier-5 NetworkPolicy under a live CNI, inter-replica policy | 5 | R18 |
-| 8.5 | Reading plus a tier-7a elicitation wake case | 7a | R4, feeding R20 |
+| 8.5 | Reading plus a tier-7a elicitation wake case (`TestElicitationAnsweredOnAnotherReplicaWakesTheBlockedCall_spec_9_2`). Answered 2026-10-16: the waiter wakes cross-replica | 7a | R4, feeding R20 |
 | 8.6 | Reciprocal host-conformance battery | 2 or 10 | R8, consumed by R17 |
 | 8.7 | Duplicate-terminal case on the two-replica harness | 4 | R10 |
 
@@ -2116,10 +2236,10 @@ the three composites with their 36 rows gives 71 tracked units, a strict superse
 | 6c.10 | Open Responses and the OpenAI Responses API conflated | R11a | R2a | Tier-11 naming check under N3 |
 | 8.1 | No test tier was run | R25 | R3 | Full-tier run, `UNVERIFIED` verdict |
 | 8.2 | Out-of-tree flag setters | R6 | R4, R17 | Compatibility note plus a register row |
-| 8.3 | `GracefulStop` past the grace deadline | R4 | R16 | Tier-7a grace-budget test |
+| 8.3 | `GracefulStop` past the grace deadline. Answered 2026-10-16: it hangs until SIGKILL, F-4.6.31 | R4 | R16 | Tier-7a grace-budget test |
 | 8.4a | NetworkPolicy under a live CNI, existing policies | R14 | R7 | Tier-5 CNI |
 | 8.4b | NetworkPolicy under a live CNI, inter-replica policy | R18 | R7 | Tier-5 CNI |
-| 8.5 | Elicitation waiter versus tool-approval poll | R4 | R20 | Reading plus a tier-7a case |
+| 8.5 | Elicitation waiter versus tool-approval poll. Answered 2026-10-16: it polls the shared store alone and wakes within 26ms | R4 | R20 | Reading plus a tier-7a case |
 | 8.6 | Runtime side of the `checkpoint_ready` contract | R8 | R17 | Reciprocal host-conformance battery |
 | 8.7 | Duplicate terminal from the orphan reconciler | R10 | R7 | Tier-4 duplicate-terminal case |
 
@@ -2258,39 +2378,54 @@ it, and name the commit or merge.
   (`tests/registers/line-citations.yaml`), the register contract (`tests/registers/README.md`), the
   `UNVERIFIED` verdict state in `cmd/lenny-test`, and the change-graph coverage registers (proposals 0065
   and 0066).
-- [ ] **R4.** Not started. `srv.GracefulStop()` in `cmd/lenny-adapter/main.go` still has no bound or
-  `Stop()` fallback, and `TestAdapterExitsWithinGraceBudget` does not exist. It is overdue against its wave
-  0 placement. Proposal 0078 landed `CloseListener` as a deferred call in `cmd/lenny-adapter/main.go`
-  (`closeRuntimeListener`), and proposal 0079 extended it to the pod-scope teardown, so R4 keeps that call
-  on both the graceful path and the fallback path.
+- [x] **R4.** Done 2026-10-16 on `fix/r4-graceful-stop` (see the R4 outcome). 8.3 is positive and 8.5 is
+  answered, each by a tier-7a timing test, and the 8.2 compatibility note is in the R4 section. The bounded
+  `GracefulStop` did not land, because the specification defines no adapter shutdown budget and no
+  fallback; BUILD-GAPS F-4.6.31 records the hang, R16 owns it, and the fix waits on a proposal. Whichever
+  design the proposal picks keeps the pod-scope teardown (`closeRuntimeListener`, from proposals 0078 and
+  0079) on every exit path.
 - [x] **R5.** Landed 2026-09-29, merge `6325283df`, with the scope extension recorded in the R5 section.
 - [x] **R6.** Landed 2026-10-03 on `r6/podspec-chart-decoupling`: `podspec.go` split into per-concern files
   move-only (`86f3c2b14`, render dump and test lists identical to base), chart test list assertions keyed by
   name (`f0abd58a2`), and the tier-0 deployment-boundary gate G3a with its registers (`efde9aceb`, 8 gap
   rows and 13 default rows). The PDB and drain-readiness rows were dropped as conforming (see the R6
   section).
-- [ ] **R7.** Not started.
-- [ ] **R8.** Not started. The claim register carries rows deferred to it.
+R7 to R25 were re-derived against the tree on 2026-10-21 (merge base `60af1898a`). Each step's section 5
+entry carries a **Re-derived 2026-10-21** paragraph and a revised size. The step text predates revert
+`54292da1b` (2026-07-27, the eviction-trigger proposal) and the August slot-addressing commits, and the
+2026-10-03 status pass did not re-derive these steps. Two spec proposals now precede code: the
+inter-replica carrier proposal (before R13's residue, R18, R19, and R21) and the adapter shutdown and
+eviction proposal (before R16), both listed in section 10.2.
+
+- [ ] **R7.** Not started. About half its harness exists as `lifecycleharness` from 0091 to 0093.
+- [ ] **R8.** Not started; unblocked. The claim register carries rows deferred to it.
 - [ ] **R9.** Not started.
 - [ ] **R10a.** Not started.
 - [ ] **R10b.** Not started.
-- [ ] **R11a.** Status not verified against the tree.
+- [ ] **R11a.** Not started (verified 2026-10-21).
 - [ ] **R11.** Not started. The claim register carries rows deferred to it.
 - [ ] **R12.** Not started. The claim register carries rows deferred to it. It also closes BUILD-GAPS
   F-10.1.20: the gateway consumes `AdapterTerminating` after a coordinator hold timeout.
-- [ ] **R13.** Not started. The claim register carries rows deferred to it.
+- [ ] **R13.** Not started. Narrowed to the mirror refresh that closes F-10.1.35; the address moves to
+  the carrier proposal. The claim register carries rows deferred to it.
 - [ ] **R14.** Not started. The claim register carries rows deferred to it.
-- [ ] **R15.** Not started. `ready_for_input` is absent from `schemas/runtime-ops-events.schema.json`.
+- [ ] **R15.** Partly done by 0090 and 0092. `ready_for_input` moves to R20.
 - [ ] **R16.** Not started. After proposal 0079, no `terminate` frame is sent at pod exit or at the
   coordinator hold timeout, and pod-exit drain coordination belongs to R16 and R17.
 - [ ] **R17.** Not started.
 - [ ] **R18.** Not started. The claim register carries rows deferred to it.
 - [ ] **R19.** Not started. The claim register carries rows deferred to it.
-- [ ] **R20.** Not started. The claim register carries rows deferred to it.
-- [ ] **R21.** Not started.
-- [ ] **R22.** Not started.
+- [ ] **R20.** Not started. The claim register carries rows deferred to it. It also closes two defects
+  from the terminal-transition table run (owner decision, 2026-10-12), each of which needs the shared
+  input-wait store R20 builds: BUILD-GAPS F-8.8.17 (TT-51, `DEADLOCK_TIMEOUT` never fires when the await
+  edge and the `request_input` wait sit on different replicas) and F-7.2.37 (TT-90, the input-wait forget
+  runs only on the writing replica while the `one_shot` `request_input` counter lives on the serving
+  replica). Its tests follow the expansive-test instruction in section 10.2.
+- [ ] **R21.** Not started. Rewritten as the cross-replica release step (owner decision, 2026-10-21, in
+  section 10.3).
+- [ ] **R22.** Mostly done (`040323634`, `7c34d7be7`, and 0093); a tier-4 restore test remains.
 - [ ] **R23.** Not started. The claim register carries rows deferred to it.
-- [ ] **R24.** Not started.
+- [ ] **R24.** Not started. The `maxSuspendedPodHoldSeconds` row is closed by 0092.
 - [ ] **R25.** Not started.
 
 ### 10.2 Proposal track
@@ -2398,7 +2533,8 @@ The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec
 other while their code proceeds in parallel.
 
 - [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out, scope
-  widened to every sidecar pod per section 10.3), approved, and implemented. It defines `CH-SUPERVISE` as
+  widened to every sidecar pod per section 10.3), approved, and implemented, after proposals P1 and P5 of
+  the terminal-transition follow-ups below (owner decision, 2026-10-12). It defines `CH-SUPERVISE` as
   JSON Lines and adds no proto field, requires `command` on every sidecar Runtime including through the
   admin registration API, designs supervision for `preConnect` and service-mode runtimes, and carries the
   gVisor implementation conditions and the conformance check recorded in section 10.3.
@@ -2498,13 +2634,20 @@ other while their code proceeds in parallel.
     filed: the per-frame `coordination_generation` check on `CH-ATTACH`, two retry budgets, the embedded
     `Interrupt`, the hung-runtime scrub residual (assigned to proposal 0087 part 1's `CH-SUPERVISE`
     liveness ping), and the undocumented `retryPolicy.mode: client_only`.
-- [ ] Session suspend-and-resume proposal (proposal 0092, in review), after proposal 0091 and before
+- [x] Session suspend-and-resume proposal (proposal 0092, implemented 2026-10-15), after proposal 0091 and before
   proposal 0087 part 1 (owner decision, 2026-10-06). It stays one proposal (owner decision, 2026-10-10).
   After it is implemented, the next steps are R4, then a BUILD-GAPS fix for the credential fail-open that
-  proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails),
-  then proposal 0087 part 1 (owner decision, 2026-10-11). It is a release prerequisite: without a resume driver, the failure
+  proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails)
+  (owner decision, 2026-10-11), then proposals P1 and P5 of the terminal-transition follow-ups below, then
+  proposal 0087 part 1 (owner decision, 2026-10-12). It is a release prerequisite: without a resume driver, the failure
   handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
   session holds its pod or slot for up to two hours before it ends for good.
+  - [x] **Credential fail-open fix (F-4.9.36).** Done 2026-10-16 on `fix/credential-fail-closed`
+    (`66be1a642`), not yet merged. `resolveCredentialPools` returns a retryable `*CredentialLookupError`
+    when the tenant, runtime, or credential-origin read fails with anything other than not-found, so a
+    start answers `SESSION_CREATION_FAILED` or `STARTING_FAILED` and a resume attempt is a pre-claim failure
+    the driver retries. The fix also closes the same fail-open read in the per-session `credentialPolicy`
+    override check. Two related misclassifications are filed as F-4.9.38 and F-8.3.7. P1 and P5 are next.
   - **Resume driver.** Nothing in the tree moves a session from `resume_pending` to `resuming`, claims a
     replacement pod, and restores the checkpoint (§7.3 **Resume flow after pod failure**, §29.6). This
     proposal builds that path, which both failure recovery and idle suspension use.
@@ -2549,6 +2692,398 @@ other while their code proceeds in parallel.
     copies the sealed workspace and can place the old transcript in it as a file. It does not carry the
     runtime's conversation state or connector tokens. Derive continues the work, and suspension
     preserves the conversation.
+  - **Terminal-transition table attempt (context, 2026-10-12).** The review of 0092's D6 (binding
+    reclamation) and D7 (the terminal claim and hook) stopped repeatedly on the paths that write or race a
+    terminal state, so the mechanism-table-converge workflow was run on them. It built a table of every
+    terminal path in the tree by the session-end effects and ran 14 review passes, which confirmed 626
+    findings. The run did not converge: from pass 3 onward at least half of each pass's findings were
+    defects in the table text and the review rules the fixer had added (`R1` to `R50`). 0092's own staging
+    converged early, at 20 distinct defects (`0092-A1` to `0092-A20`), and pre-existing tree defects kept
+    arriving because the scope had no fixed size; they merge into 104 distinct defects (`TT-1` to
+    `TT-104`). `scratchpad/terminal-transition/lessons.md` records the causes and the drafting rules that
+    follow from them, `distinct-defects.md` in the same directory lists every defect with its evidence, and
+    `grouping-and-timing.md` groups the tree defects into the follow-ups below.
+  - **Remaining work before approval (owner decision, 2026-10-12).** 0092 fixes its own 20 staging defects
+    (`0092-A1` to `0092-A20`, in the bucket A table of `distinct-defects.md`). It replaces the table's
+    lease-return rule R16 (terminal lease return by session ID, gated on `REG-COORDLEASE`) with one rule:
+    only the releaser of a binding returns its credential leases. It settles three 0092-adjacent tree
+    defects in the text it already edits, or records each as a departure with a named fallback: TT-29
+    (BUILD-GAPS F-10.1.33, off-holder terminate and delete write the terminal state locally; fallback
+    owner P2, with plan steps R10, R19, and R21), TT-38 (F-6.2.28, `sweepMaxAge` expires paused rows;
+    settling 0092-A10 settles the `suspended` case, and the `resume_pending` and `awaiting_client_action`
+    cases fall to P3), and TT-48 (F-8.10.18, tree recovery fails peer-bound nodes; fallback owner P4). The
+    next confirming sweep also re-checks the two unconfirmed 0092-adjacent defects that
+    `late-pass-classification.md` lists (a crash report dropped on a terminal row, and the
+    sibling-triggered full-tree recovery). Then 0092 takes a confirming review, approval, and
+    implementation.
+
+**Terminal-transition follow-ups (owner decision, 2026-10-12)**
+
+The 104 pre-existing tree defects of the terminal-transition table run are filed in BUILD-GAPS: TT-14
+merges into F-10.1.21, and each other defect has its own finding.
+`scratchpad/terminal-transition/tt-to-buildgaps.md` maps each `TT-n` to its finding, owner, and severity.
+The owner approved the grouping and order in `scratchpad/terminal-transition/grouping-and-timing.md`. Each
+group has one subsystem boundary and one owner per resource. The order is: the four direct fixes marked
+"now" in parallel with 0092's review; 0092 itself; R4 and the credential fail-open fix; P1 and P5 with the
+three post-0092 direct fixes; proposal 0087 part 1; P2 and P3; and P4. Two further defects go to the
+recycling follow-up proposal in Phase 3 and two to plan step R20 (section 10.1).
+
+**Test instruction for every step in this block (owner, 2026-10-12).** Tests are expansive rather than
+narrow, because the owner expects more unknown code bugs in this area. Each step covers every path and
+state in table-driven tests, runs randomized interleavings under `-race`, injects a fault at each step of
+each path, checks invariants for leaked pods, slots, credential leases, and queue entries, and includes
+multi-replica scenarios. The instruction also applies to 0092, the recycling follow-up's two additions, and
+R20's two additions.
+
+**Drafting rules for P1 to P5** (from `scratchpad/terminal-transition/lessons.md`):
+
+- Open the draft with its member defect list, derived from the code and re-confirmed against the tree at
+  drafting time with updated `file:line` evidence. A defect that is gone is dropped with the reason.
+- Keep the scope to one subsystem boundary. A pre-existing defect found outside it goes to BUILD-GAPS or to
+  the group that owns it, and the draft does not design its remedy.
+- Write a resource-to-owner table first: each pod, slot, claim, credential lease, Redis key, and per-state
+  deadline, with the one component that releases or enforces it.
+- Add no new per-replica state unless the spec requires it. Prefer state on the session row or in a store
+  with a TTL; an in-memory set must be safe to lose, and the draft names the durable backstop for its loss.
+- Record a residual gap as a departure with a fallback that bounds its impact (for example, the
+  claim-orphan GC, lease expiry, or a key TTL) and a claim-register row, rather than adding a rule.
+- State tests as intents with tiers, with the expansive coverage above.
+- Track the share of each review pass's findings that lie in the draft's own new text. When it exceeds
+  half for two consecutive passes, stop adding rules and reframe the decision that generates them.
+
+Direct BUILD-GAPS fixes, now, in parallel with 0092's review (none touches a function 0092 edits):
+
+- [x] F-4.9.30 (TT-69): render the Token Service tenant flag in the gateway chart, and fail startup when it
+  is empty while a Token Service is configured. Landed in merge 7a240ad61 on `proposal-b`, 2026-10-12. The
+  fix resolves an empty flag to the default tenant in single-tenant mode rather than failing startup, and a
+  release never sends an empty tenant.
+- [x] F-4.9.31 (TT-70): classify `ResourceExhausted` as a user-class error in `classifyTokenServiceError`.
+  Landed in merge 7a240ad61 on `proposal-b`, 2026-10-12.
+- [x] F-12.8.29 (TT-98): add a `session_tree_archive` tenant eraser ahead of the `sessions` eraser. Landed
+  in merge 7a240ad61 on `proposal-b`, 2026-10-12.
+- [x] F-8.8.20 (TT-89): map `deadlock_timeout` to the `DEADLOCK_TIMEOUT` code. Landed in merge 7a240ad61 on
+  `proposal-b`, 2026-10-12.
+
+Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 edits:
+
+- [x] F-15.1.43 (TT-35): check the row state before driving the adapter interrupt (0092's CODE-6 item 1
+  edits `handleInterrupt`). Landed 2026-10-16 on `fix/post-0092-direct`: the interrupt re-checks the
+  primary row before it drives the adapter.
+- [x] F-10.1.29 (TT-23): close the adapter client on every Sweeper and D6 eviction (D6 adds the evict
+  branch). Landed 2026-10-16 on `fix/post-0092-direct`: both eviction seams close the binding they
+  removed, once.
+- [x] F-10.1.31 (TT-25): clear `backoffUntil` for a terminal or absent row (0092's CODE-5 edits the
+  Sweeper). Landed 2026-10-16 on `fix/post-0092-direct`: terminal rows clear the entry and a complete
+  sweep prunes unlisted sessions.
+- [x] F-25.4.31: assign the `lenny-ops` clientset only when one was built, so a process with no
+  kubeconfig does not panic on a typed-nil clientset. Found by 0092's S15 full tier pass; it blocks tier 4's
+  ops tests. Landed 2026-10-16 on `fix/post-0092-direct`: the clientset is an interface left nil without a
+  cluster.
+- [x] F-4.6.30: render `--agent-namespaces` on the `lenny-controller` Deployment, so the §4.6.1
+  orphan-claim GC and the agent_pod_state mirror reconciler run in every install with Postgres. The chart
+  had never rendered the flag, so neither had run in a chart install. Landed 2026-10-16 on
+  `fix/controller-agent-namespaces` (commits 835127775 and eb8105d0f), with the in-process
+  PoolScalingController removed from `lenny-controller`, the mirror's full list no longer deep-copied, and
+  start-time sweeps on the tier-5 and tier-8 claim fixtures. On `lenny-e2e` the GC reclaimed the 48 leaked
+  claims, and tier-5 `TestPodLifecycle` and both tier-8 orphan-GC tests pass. P1's and 0092's departures
+  that name the GC as their fallback are now bounded: a claim that no replica releases is reclaimed within
+  `claimOrphanTimeout` plus one sweep interval. The leak source, F-10.1.21, stays with P1.
+
+Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
+
+- [x] **P1. Release ownership for pods, slots, and credential leases** (proposal 0093, implemented 2026-10-20).
+  - **Outcome.** Proposal 0093
+    (`proposals/0093_fix_release-ownership-for-pods-concurrent-workspace-slots-per-po/`) makes the per-pod
+    slot occupancy a Redis set keyed by session with an idempotent keyed release, makes the pre-running
+    reclaim slot-aware, deletes the created sweeper, adds the post-terminal hook's stale-binding step and
+    release lock, releases full_revoke's sessions through the existing releasers, and adds the leader-run
+    stale-slot reaper. It closes F-4.6.26, F-4.6.27, F-4.6.28, F-5.2.49, F-7.3.33, F-7.3.34, F-10.1.28,
+    F-11.4.11, F-11.4.15, and F-11.4.16 (a duplicate of F-11.4.15), and closes F-4.9.35 as resolved by
+    proposal 0092's post-terminal hook. F-4.6.29, F-10.1.21, F-10.1.33, and F-11.4.10 stay open with the
+    accepted departures recorded on them; F-11.4.10 keeps its deny-list granularity and session-set halves,
+    which P5b owns. The proposal adds no durable pending-release record; the releases no replica performs
+    are bounded by the claim-orphan GC, a counted slot, the stale-slot reaper, and lease expiry. It filed
+    F-4.6.33 to F-4.6.36, F-4.9.39, F-5.2.51 to F-5.2.56, F-7.2.43, F-8.8.21, F-10.1.38, F-10.1.39,
+    F-10.5.15, F-11.4.17, and F-12.4.28.
+  - **Members moved out, pending owner confirmation.** Proposal 0093 moved these members out of P1, each
+    with a proposed destination:
+    - F-4.9.34 and F-4.9.37, with the per-replica Token Service counts filed as F-4.9.39: a separate
+      credential-leasing accounting proposal that derives each credential's active-lease count from the
+      shared lease store. F-4.9.37 was not on this entry's member list.
+    - F-4.9.32: a direct BUILD-GAPS fix, because §4.9 already requires the session-liveness check.
+    - F-4.9.33: the terminal-writer half goes to P2, and the chain seeding and the persisted rotation count
+      go to a direct BUILD-GAPS fix.
+    - F-10.1.30 and F-10.1.32: the coordination fencing work, with F-10.1.22 or R16.
+    - F-5.2.50: the recycling or concurrent-pool health follow-up. It was not on this entry's member list.
+    - The deny-list and session-set halves of F-11.4.10: P5b.
+  - **Scope.** Every path that releases a pod, a concurrent-workspace slot, a per-pod claim, or a
+    credential lease at or after a terminal write. One rule: exactly one releaser owns each binding (the
+    binding replica's binder release, D6, or `ReleaseUncommitted`); a writer that does not hold the binding
+    records the release durably rather than returning nil; credential leases are returned only by the
+    binding's releaser or, for a session with no binding, by one named reclaimer. The pre-running,
+    finalize, and created-sweeper reclaims become owner-checked and slot-aware. §11.4 gains the revocation
+    set for pool credentials.
+  - **Members.** F-4.6.26 to F-4.6.29 (TT-18 to TT-21), F-4.9.32 to F-4.9.35 (TT-71 to TT-74), F-5.2.49
+    (TT-22), F-7.3.33 (TT-27), F-7.3.34 (TT-30), F-10.1.21 (TT-14), F-10.1.28 (TT-15), F-10.1.30 (TT-24),
+    F-10.1.32 (TT-26), F-11.4.10 (TT-75), F-11.4.11 (TT-76), and F-11.4.15 (TT-80). Eleven are High.
+    F-4.9.34 also holds the retry decision for a failed lease release, which the F-4.9.30 fix now logs and
+    returns but does not retry; the specification does not decide whether such a release is reconciled.
+  - **Dependencies.** After 0092, because it builds on D6, hook step H6, and `ReleaseUncommitted`. The
+    credential fail-open fix lands first, because it touches `resolveCredentialPools` next to TT-72.
+    F-10.1.22 (the generation on `CH-ATTACH` frames) is related through TT-15 and TT-26. P1's full_revoke
+    edits land before P5's, serialized on `cmd/lenny-gateway/user_revocation.go` and
+    `pkg/gateway/externalapi/admin/users.go`.
+  - **Overlapping plan steps.** R21 (the off-holder eviction leg consumes the release record P1 defines),
+    R12 (hold state on connection loss changes the dead-connection eviction behind TT-14), R22
+    (concurrent-slot resume and restore touches the slot release and the resume binder, TT-22 and TT-30),
+    and R13 (bind-time coordinator resolution, beside TT-15).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+- [x] **P5. Data lifecycle: user erasure, tenant deletion and suspension, full_revoke, and
+  `DELETE /v1/responses/{id}`** (proposal 0094, implemented 2026-10-21).
+  - **Outcome.** Proposal 0094
+    (`proposals/0094_fix_data-lifecycle-user-erasure-tenant-deletion-and-suspension-f/`) covers pieces A and
+    D: the creation fence inside the session insert transaction on every creation path, the session-ID
+    reservation, one shared drain that lists from the primary and verifies, used by tenant suspension,
+    tenant-deletion Phase 2, and user erasure, the durable Postgres erasure job run by the gateway leader's
+    sweep, and the removal of `DELETE /v1/responses/{id}`. It closes F-12.8.26, F-12.8.27, F-12.8.28,
+    F-12.8.31, F-12.8.32, F-12.8.33, F-12.8.36, F-15.1.48, F-15.1.50, and F-15.1.51, reopens and closes
+    F-12.8.20, and files and closes F-12.8.38, F-12.8.39, and F-12.8.40. The `tenant.suspended` half of
+    F-11.7.22 landed here, and its `session.force_terminated` half stays with P2. Its fence closes the
+    concurrent-insert half of F-11.4.14.
+  - **Moved to P5b.** Pieces B and C and the full_revoke fixes go to the follow-on proposal P5b, which lands
+    after P1 (0093): F-11.4.12, F-11.4.13, the F-11.4.14 listing remainder, F-12.8.25, F-12.8.30,
+    F-12.8.34, F-12.8.35, F-12.8.37, and the newly filed F-12.8.41 and F-12.8.42.
+  - **Scope.** Removal and fencing of a user's or tenant's data: the erasure gate and listing, quiescing
+    live sessions before the erasers run, the tenant-deletion phases, tenant suspension's drain and its
+    creation race, the full_revoke session loop and listing, and the responses `DELETE`. P5 decides when
+    and for which sessions a release runs, and P1 decides how. §12.8 gains the statement that erasure
+    terminates the user's sessions before the erasers run. A successful drain does not wait for a
+    session's terminal steps or its pod release: the pod of a drained session bound on another replica can
+    stay claimed after user erasure deletes its row, until the claim-orphan GC reclaims it. That residual
+    is F-12.8.43, owned by P2, which also asks P2 whether such a binding's credential leases are returned,
+    and the claim register carries it as an `ABSENT` row deferred to R21.
+  - **Filed unassigned.** F-12.3.25, F-12.8.44, F-12.8.45, F-12.8.46, F-12.8.47, F-12.8.48, and F-15.1.55.
+  - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
+    F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101),
+    F-15.1.51 (TT-102), and F-12.8.34 and F-12.8.35 (the Phase 4 stores and the in-memory checkpoint
+    metadata that the F-12.8.29 fix run left unerased). Ten are High.
+  - **Dependencies.** Its implementation lands after 0092's, because 0092 edits the erasure job (item 17)
+    and the full_revoke handler (item 2a). Its full_revoke edits follow P1's. Direct fix F-12.8.29 (TT-98)
+    lands before it.
+  - **Overlapping plan steps.** R21, which the terminal-tail claim row names as its deferral; no plan step
+    owns erasure, tenant deletion, or tenant suspension.
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+- [x] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
+  foreign key, and full_revoke** (proposal 0095, implemented 2026-10-23). Split from P5 on 2026-10-16
+  (proposal 0094 decision D20, confirmed by the owner).
+  - **Outcome.** Proposal 0095
+    (`proposals/0095_fix_data-lifecycle-second-half-the-remaining-tenant-deletion-and/`) gives both erasure
+    paths one rank table with per-path exemptions and a startup completeness check, and wires every §12.8
+    store on both paths or records it as exempt. It drops the `audit_redaction_receipts` foreign key, moves
+    Phase 3.5 escrow copies into the configured escrow bucket, and keeps issued-token rows until they leave
+    the §13.3 trailing hour, with an expired-row GC. Tenant-deletion Phase 3 commits `deleting`, returns the
+    tenant's credential leases, and deletes its `TokenStore` rows; a `deleting` or `deleted` tenant is not
+    registered, so a multi-tenant gateway refuses its bearers from Phase 3; and Phase 3 and Phase 4 errors
+    pause in phase. full_revoke lists from the primary, returns every lease without a deny-list entry,
+    continues past a failed cancel write, re-reads a write that committed and errored, and survives a client
+    disconnect. It closes F-11.4.12, F-11.4.13, the F-11.4.14 remainder, F-11.4.17, F-12.8.25, F-12.8.30,
+    F-12.8.34, F-12.8.37, F-12.8.41, and F-12.8.42. F-11.4.10 gets a resolution note for its deny-list and
+    session-set halves and stays open, because proposal 0093's accepted departure on it still holds.
+    F-12.8.35 stays open as an accepted departure bounded by process restart. F-12.8.44 is narrowed to the
+    Phase 1 issuance and sign-up refusal, and F-12.8.46 stays open and unassigned.
+  - **N-4.** The P5 dossier's N-4 has no BUILD-GAPS entry and closes here. Its step 1, the coordination-lease
+    item, closes by proposal 0094's decision D21, which keeps the user-path `leases` entry a no-op because
+    deleting a held coordination lease voids the holder's fence, and by the corrected lease-store
+    `DeleteByUser` comments. Its step 3, the access-token cache item, closes by the `redis_caches` exemption,
+    which the tier-0 guard holds to a store with no production writer, and by the registry refusal of a
+    deleting tenant's bearers.
+  - **Departures.** The accepted departures are recorded with their bounds in `BUILD-GAPS.md` and the
+    proposal's deviations file: a silent lease-store error (F-4.9.40), the unwired access-token cache flush
+    (F-12.8.30), F-12.8.35, a paused Phase 4 rerunning every entry and a billing stream after the tombstone
+    (F-12.8.34), and the deny entry a restart drops once user erasure deletes revoked registered credentials
+    (F-12.8.43). None carries a claim-register row.
+  - **Filed.** The tests filed F-10.2.22 (a Lenny-issued bearer verifies only on its signing replica) and
+    F-27.8.1 (a gateway with the playground enabled exits at startup). The proposal filed F-4.9.40, F-4.9.41,
+    F-10.2.23, F-10.2.24, F-12.8.49 to F-12.8.59, F-17.6.24, F-27.3.12, and F-27.3.13. F-12.8.56 is owned by
+    P2, F-12.8.57 by P4, and the rest by a direct fix or unassigned, as each finding states.
+  - **Scope.** The Phase 3 credential-lease revoker and token-cache flush, and the Phase 4 and user-erasure
+    erasers the store table lists and the tree omits, including the session message queues, the checkpoint
+    manifest, retention, and metadata rows, the coordination mirror rows, and the user registry row.
+    Also the `audit_redaction_receipts` foreign key that blocks an audit eraser, and the full_revoke session
+    loop, listing, and error handling.
+  - **Members.** F-11.4.12, F-11.4.13, the F-11.4.14 remainder (0094's fence closes its creation race),
+    F-12.8.25, F-12.8.30, F-12.8.34, F-12.8.35, F-12.8.37, F-12.8.41 (the P5 dossier's N-3), F-12.8.42
+    (the `coordination_lease` mirror rows), and the P5 dossier's N-4 (`scratchpad/p1-p5/p5-dossier.md`).
+  - **Dependencies.** After P1 (0093), because the Phase 3 revoker and full_revoke use P1's lease reclaimer
+    and release mechanism, and after P5 (0094), whose fence and drain it builds on.
+  - **Drafting.** Under the drafting rules and the test instruction above.
+  - **Status (2026-10-22).** Drafted as proposal 0095 (`draft/0095-p5b`). The review run halted on the
+    tenancy-mode mechanism, and the owner decided its open decisions: the single-tenant branch that admits
+    every tenant claim is fixed by the separate direct fix for T-10.2.11 below, which lands before 0095's
+    implementation, and 0095's bearer-refusal goal names a gateway in multi-tenant mode (OD-3); a
+    multi-tenant deployment may delete `default`, with a spec edge case and operator documentation for the
+    bootstrap admin token (OD-1); an admin router built without the tenancy setting fails closed as
+    single-tenant (OD-2).
+- [x] **Direct fix: T-10.2.11 (the chart never renders the gateway's multi-tenant switch).** Landed
+  2026-10-22 (merge `2177ac596`): chart value `auth.multiTenant` renders `--multi-tenant`, a mismatch with
+  `tenancy.mode` is refused at render and at gateway startup, and `permissiveRegistry` is deleted. It
+  exposed F-10.2.21 (an unauthenticated request takes its tenant from `X-Lenny-Tenant-ID`), fixed directly
+  on 2026-10-22: outside dev mode every non-public route requires a bearer and the tenant comes only from
+  the principal. Added
+  2026-10-22 by the owner's OD-3 decision on 0095. Every chart-deployed gateway runs the single-tenant
+  branch, which flips the auth middleware to multi-tenant with a registry that admits every tenant, so an
+  unregistered tenant claim is admitted instead of refused. The fix renders the switch from the chart, keeps
+  single-tenant mode on `default` with the claim ignored (§10.2), and uses the real tenant registry in
+  multi-tenant mode. It lands before 0095's implementation; a needed spec change stops it for the proposal
+  pipeline.
+
+Redis Cluster readiness (added 2026-10-21, after the analysis of F-12.4.28). Every gateway and `lenny-ops`
+Redis store runs on the cluster client when the chart's `redis.provider` is `cluster`, so each store has to
+be cluster-safe. The work lands after 0094 and before P5b, because P5b wires more erasers on the same
+`scanDelete` helpers.
+
+- [x] **Direct fix: F-12.4.28 (classes A and A′) and F-12.4.29.** Landed 2026-10-21 (merge `4114b2c95`,
+  branch `fix/redis-cluster-readiness`) with F-12.4.30. Outcome: tenant keys and EventBus channels are built
+  by `rediskeys.TenantPrefix`; every `SCAN` goes through `redisconn.ScanKeys` or `ScanDelete`; a test-only
+  cross-slot hook (`pkg/redisconn/slotguard`) runs in every Redis store's tests except
+  `ops/coordination/redisstore`, which waits on P6; a tier-0 gate enforces both; and a three-master compose
+  profile (`compose-redis-cluster`) backs a tier-4 smoke test. Tier-4 `TestGatewayRedisCoordinationE2E`
+  fails identically on the merge base `757a997b6` (the lease never appears in Redis) and is recorded as a
+  pre-existing condition rather than a defect of this fix. No spec change; the code is brought in
+  line with §12.4 and §17.8.2, which already state that the `t:{tenant_id}:` prefix keeps a tenant's keys in
+  one slot.
+  - Write every tenant key as `t:{<tenant>}:` through one helper (for example `rediskeys.TenantPrefix`), and
+    make the tenant-isolation guard `rediskeys.tenantOf` accept only the braced form. Rename the tenant event
+    channels with the keys. This fixes the semantic cache, quota, lease store, and experiment sticky cache
+    operations (class A, 7 operations in 4 families).
+  - Split the playground session record's transactions so the tenant-tagged keys commit together and the
+    untagged `pg:sess-tenant:` fan-in key is written in a separate step that fails closed (§27.3.1 requires
+    no atomicity across them), and replace the circuit breaker's `MGET` with a pipeline of `GET`s (class A′,
+    3 operations).
+  - Route every `SCAN` to the owning node (`MasterForKey` for a tenant prefix, `ForEachMaster` for a
+    cross-tenant pattern) (F-12.4.29, 8 call sites).
+  - Tests: a shared tier-1 go-redis hook that rejects any script, multi-key command, or `MULTI` block whose
+    keys span hash slots, installed in every Redis store's existing test constructors, with one negative
+    control; a tier-0 check that every package issuing scripts, transactions, multi-key commands, or `SCAN`
+    installs the hook and routes `SCAN` by node; switch tests that build keys by concatenation to the
+    exported builders. A three-master `redis-cluster` compose profile for a tier-4 smoke test is optional
+    and is the only check that also exercises `SCAN` on a real cluster.
+  - Size: about 15 production files and 20 test files; tiers 0, 1, 2, 4, and 9, plus 3 if the channels are
+    renamed.
+  - Also land F-12.4.30 (concern-specific probes and health checks ping the base client), about five files.
+- [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule** (not yet written). F-12.4.28
+  class B/C, 3 operations in 1 family.
+  - **Scope.** §25.4 describes one Lua script over `ops:lock:{scope}` that also reads `ops:lock-epoch:current`
+    atomically; if the braces are a hash tag, those keys sit in different slots. The code also uses an
+    `ops:lockidx:<id>` key that no section documents, and reads the epoch with a separate `GET` outside the
+    script. Name the lock key, the id-index key, and the epoch key under one shared hash tag (for example
+    `ops:{lock}:<scope>`, `ops:{lock}:idx:<id>`, `ops:{lock}:epoch`) in §25.4's Tier 2 Redis paragraph, its
+    Tier Transitions paragraph, and its Storage Routing table row, and confirm that acquire, release,
+    extend, and steal touch only those keys. Add a §12.4 rule stating which braces in a key pattern are a
+    literal hash tag (the first braced segment) and which are placeholders.
+  - **Topology relaxation (owner decision, 2026-10-21).** §17.8.2 places coordination on Sentinel and quota
+    on Redis Cluster at Tier 3. The 2026-10-21 analysis found the split rests on throughput and
+    latency-isolation reasons only (finding SCA-004, 2026-04-04), none of them a correctness need, and the
+    owner decided that P6 relaxes it. P6 rewrites §17.8.2 and §12.4 so one Redis Cluster may serve every
+    concern at Tier 3, under stated conditions: every store keeps each multi-key command inside one slot and
+    routes `SCAN` to every primary; coordination correctness never depends on Redis durability (the Postgres
+    `coordination_generation` fence and the ops-lock epoch hold it); every Redis failure path is bounded and
+    fails closed; and the lease TTL stays at least four renewal intervals. A per-concern endpoint remains an
+    optional operator lever, triggered by the existing ceiling signals, using the single-endpoint
+    per-concern URLs the code already has. P6 also deletes the unimplemented per-tenant
+    `redis.quotaStoreBackend` migration step from the §12.4 pre-plan and the sentence that the coordination
+    instance remains on Sentinel throughout. No per-concern Sentinel or Cluster wiring is added.
+  - **Drafting.** Under the drafting rules and the test instruction above; about 30 to 50 lines of spec
+    text with the topology relaxation.
+  - **Dependencies.** Independent of P1 to P5b; its code stays inside `pkg/ops/coordination/redisstore`, its
+    tests, and the tier-11 key registry check.
+
+Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 and does not block 0087 part 1.
+
+Proposals, second wave:
+
+- [ ] **P2. Terminal pipeline completeness** (not yet written), after P1.
+  - **Scope.** What happens between a terminal write and the end of its hook: the context the pipeline
+    runs on, the seal and its relabel, the held-message drain and the lifetime of DLQ and inbox keys, the
+    ordering of session-stream events after a terminal, the row returned to the caller, one terminal-signal
+    set for every writer, ambiguous terminal writes, and the single-shot translators, which become ordinary
+    terminal writers. The owner is the D7 hook and the funnel tail. The spec gains a statement that a
+    caller's disconnect or short deadline does not bound the seal or the release, the drain or expiry of a
+    terminal or deleted session's DLQ and inbox keys, the `expiryReason` for a budget expiry, and the
+    off-holder handling of TT-29 if 0092 records it as a departure.
+  - **Members.** F-7.1.21 to F-7.1.29 (TT-1, TT-3 to TT-5, TT-7 to TT-10, and TT-13), F-7.2.29 (TT-28),
+    F-7.2.30 (TT-34), F-7.2.32 to F-7.2.36 (TT-81 to TT-85), F-7.3.32 (TT-11), F-10.1.27 (TT-6), F-11.2.30
+    (TT-2), F-11.2.32 (TT-88), F-11.7.22 (TT-87), F-15.1.42 (TT-12), F-15.1.44 to F-15.1.47 (TT-36, TT-86,
+    TT-91, and TT-92), and F-15.1.49 (TT-94), plus F-10.1.33 (TT-29) if 0092 records it as a departure.
+    Ten are High, counting TT-29.
+  - **Split seam.** If the opening defect list exceeds what one proposal can converge on, split into P2a
+    (seal and writer context: TT-1 to TT-13, TT-28, TT-29, TT-34, TT-36, and TT-87) and P2b (held messages,
+    emission, and translators: TT-81 to TT-86, TT-88, TT-91, TT-92, and TT-94). P2b depends on P2a's
+    writer-context rule.
+  - **Dependencies.** After 0092's D7 hook lands and after P1, because TT-3, TT-5, and TT-6 need P1's
+    release owner. Draft P2b after proposal 0071 is re-derived, because 0071 touches the event path behind
+    TT-85.
+  - **Overlapping plan steps.** R10 (the REST terminate route, beside TT-1, TT-29, and TT-34), R19 (the DLQ
+    custody rule for an unreachable coordinator, beside TT-81), R20 (the durable-inbox trimmer and
+    `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
+    gateway shutdown of TT-6, which stays in P2).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+- [ ] **P3. Session timers and sweep ownership** (not yet written), beside P2.
+  - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
+    deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
+    sweep re-checks its listed row, how a sweep runs the hooks of the rows it ends, and which states each
+    writer may end. The owner is the watchdog, leader-gated. The spec gains a state-entry timestamp as the
+    anchor of every per-state deadline, the edges (or the refusal) for terminal writes from the paused and
+    recovering states, and where `perChildMaxAge` is stored.
+  - **Members.** F-7.2.31 (TT-46), F-8.3.1 (TT-43), F-10.1.34 (TT-40), and F-11.3.37 to F-11.3.43 (TT-33,
+    TT-37, TT-39, TT-41, TT-42, TT-44, and TT-45), plus the `resume_pending` and `awaiting_client_action`
+    cases of F-6.2.28 (TT-38) that 0092 does not settle. Three are High, counting TT-38.
+  - **Dependencies.** After 0092, because its CODE-1 (active-time age) and CODE-6 (idle suspension,
+    `sweepSuspended`) rewrite the sweeps behind TT-37 to TT-41; re-derive those against the landed 0092
+    first. TT-44 needs P2's bounded hook context. Run it in parallel with P2 when the watchdog files are not
+    in flight.
+  - **Overlapping plan steps.** R20 (the cross-replica input wait TT-39 needs).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposals, third wave:
+
+- [ ] **P4. Delegation tree and budget lifecycle** (not yet written), after P2.
+  - **Scope.** Tree membership and lifecycle: which sessions belong to a delegation tree, tree recovery
+    after a resume, the cancellation cascade and `cancelSubtree`, orphan cleanup, the deadlock detector's
+    local decisions, the delegated child's materializer, tree budget keys and their returns, the §8.6 lease
+    extension, and the per-session LLM budget enforcer. The owner is the delegation tree service and its
+    budget source. The spec gains a lineage field for derive and replay distinct from `parentSessionId`.
+  - **Members.** F-8.2.30 (TT-32), F-8.3.2 to F-8.3.5 (TT-50, TT-58, TT-59, and TT-65), F-8.6.24 to
+    F-8.6.27 (TT-52, TT-63, TT-64, and TT-67), F-8.8.18 (TT-62), F-8.8.19 (TT-66), F-8.9.13 (TT-47),
+    F-8.10.17 (TT-31), F-8.10.19 to F-8.10.26 (TT-49, TT-53 to TT-57, TT-60, and TT-61), and F-11.2.31
+    (TT-68). Four are High.
+  - **Split seam.** If the opening defect list exceeds the bound, split into P4a (tree membership,
+    recovery, cascade, cancel, orphan cleanup, deadlock, and the materializer) and P4b (tree budget keys,
+    the §8.6 lease extension, and the per-session enforcer: TT-50, TT-52, TT-57 to TT-59, TT-63 to TT-65,
+    TT-67, and TT-68).
+  - **Dependencies.** After 0092's item 11 for the tree-recovery members (TT-49, TT-53, and TT-54),
+    and after P2 for the cascade and budget-return members, which run in the terminal tail. TT-47 (High,
+    derive and replay lineage) is pulled forward as its own small proposal if P4 slips.
+  - **Overlapping plan steps.** R20 (cross-replica input wait, for TT-62; TT-51 itself is R20's).
+  - **Drafting.** Under the drafting rules and the test instruction above.
+
+Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
+
+- [ ] **Inter-replica carrier proposal** (not yet written). §29.3 names no inter-replica conversation for
+  the interrupt, terminate, delete, resume, interaction-resolution, upload, and message rows, and §28.5.4
+  states no replica address. The proposal adds the §28.3 channel row and the §28.5.4 card for a general
+  request-forwarding service, defines the replica address (`resolveReplicaID` returns a hostname with a
+  random suffix), states why gRPC is chosen over the existing Redis pub/sub propagator, rewrites the §29.3
+  inbox fallback to the DLQ (R19's first spec step), restates the §29.3 interaction-resolution rows as
+  store-and-wake (R10), and specifies the cross-replica release request that R21 carries. It precedes
+  R13's residue, R18, R19, and R21, and it settles F-29.3.1's carrier. P2's off-holder terminate and
+  delete forward rides the same carrier.
+- [ ] **Adapter shutdown and eviction proposal** (not yet written). It defines the adapter shutdown budget
+  and fallback that F-4.6.31 lacks, the eviction signal on `CH-ADAPTEREVENTS` (the specification states no
+  message name since revert `54292da1b`), and the best-effort eviction snapshot. It is sequenced against
+  0087 part 1, whose supervisor changes the pod-exit ordering, or written to cover the supervised case. It
+  precedes R16.
 
 **Phase 3: after proposal 0087 part 1**
 
@@ -2566,8 +3101,15 @@ other while their code proceeds in parallel.
   isolation), F-5.2.43 (a retire reason that names a recycling-disabled edit), F-4.6.23 (`Claimer.Claim`
   deletes its claim on a failed tenant stamp; the unused `ClaimPod` implementations read the pin or are
   deleted), F-4.6.24 (`WarmPoolOversized` corrected and evaluated), F-4.6.25 (the
-  `podClaimFallbackMaxMirrorLagSeconds` gateway flag), F-6.2.27 (the §6.2 `idle → draining` trigger list),
-  and F-15.1.41 (a failed resume claim leaves the row in `awaiting_client_action`). It can start right
+  `podClaimFallbackMaxMirrorLagSeconds` gateway flag), and F-6.2.27 (the §6.2 `idle → draining` trigger
+  list). Proposal 0092 closed F-15.1.41. It also closes two
+  whole-pod scrub defects from the terminal-transition table run (owner decision, 2026-10-12): F-5.2.47
+  (TT-16, a failed occupancy-zero recycle patch on a concurrent pool skips `ShutdownRecycle`, so the pod is
+  reused without the whole-pod scrub; the fix retires the pod when the patch fails) and F-5.2.48 (TT-17,
+  `ClaimSlot` places a new session on a pod whose per-pod claim is recycling). Both sit next to F-5.2.37 and
+  F-5.2.46, and their tests follow the expansive-test instruction above. It also takes the gap that an
+  `expired` session's pod is recycled on a recycling pool, which §29.4 implies and no section states, and
+  which proposal 0092 did not take. It can start right
   after proposal 0079. It edits §5.2, §4.6.1, and the warm-pool controller like the pinned-idle proposal,
   so the two are drafted together or one immediately after the other, with their spec steps serialized.
 - [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)
@@ -2590,6 +3132,30 @@ other while their code proceeds in parallel.
 property, which fails closed, so `restart` is offered on gVisor).** If the spike had failed on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
+
+**Queued direct fixes filed by 0095's implementation (2026-10-23).**
+
+- [ ] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
+  replica (and the Token Service) generates and seals its own signing key at process start, so a peer
+  replica rejects the token. It fails closed but breaks every multi-replica deployment. The fix loads one
+  shared sealed key (and its rotation set, §10.3) on every replica; if the spec does not already state the
+  shared key source, it goes through the proposal pipeline first. Next after 0087 converges, ahead of P2.
+- [ ] **F-27.8.1: the gateway exits at startup with the playground enabled.** §27.8 names the label
+  `authMode` and §16.1.1 requires snake_case label names, and the validator refuses it. A small spec
+  correction (rename to `auth_mode`) plus the code change; it unblocks 0095's skipped tier-4 playground
+  bearer case.
+
+**Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
+
+- [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
+  `type: mcp` runtime gets no supervisor and no `command` until a proposal defines its launch (Phase 12b,
+  §18). That proposal must bring `type: mcp` sidecars under the runtime supervisor, with the same startup
+  contract, END, sweep, and `CH-SUPERVISE` link as `type: agent` sidecars, and must add `command` for them.
+- [ ] **Remove the interim `restart` refusal when 0084 lands.** Until proposal 0084 adds the
+  per-generation intra-pod MCP nonce, pool admission refuses `recycle.runtimeProcess: restart` (owner
+  decision). The refusal is a code-only gate with explanatory comments and no spec text, because a
+  relaunched runtime process cannot use intra-pod MCP servers whose nonce was bound at the first start.
+  0084's implementation removes the gate and its test.
 
 **Not yet scheduled.** The later phases of the restart design: SDK warm-up for sidecar runtimes, an optional
 restart after a runtime crash, and starting the next runtime before its session arrives.
@@ -2685,6 +3251,14 @@ Answered on 2026-10-01 for the later phases:
   CRD-only. A controller-side refusal at pod build was rejected because it accepts the pool and fails later
   without a write-time error; mirroring the full `deploymentModel` was rejected because it reverses the
   decision to keep that field CRD-only.
+
+- R21 is rewritten as the step that releases a pod bound on another gateway replica, which proposal 0094
+  already names in its claim-register row for the `admin.DrainSessions` terminal tail. The release request
+  rides R18 or the existing Redis propagator, as the inter-replica carrier proposal decides. Closing R21
+  and re-pointing 0094's row at P2 was rejected because the off-holder release would then rest on the
+  Sweeper interval alone (2026-10-21, decided under the owner's standing delegation).
+- P6 relaxes §17.8.2 and §12.4 so one Redis Cluster may serve every concern at Tier 3 (2026-10-21; the
+  conditions are in P6's entry).
 
 ### 10.4 Related work outside this track
 

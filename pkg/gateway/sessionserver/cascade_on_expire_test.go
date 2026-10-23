@@ -37,7 +37,7 @@ func (s staticTenantLister) ListTenants(_ context.Context) ([]string, error) {
 // descendants and cancels them per the parent's CascadeOnFailure.
 func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	born := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	// Parent in awaiting_client_action with default cascade=cancel_all.
@@ -86,7 +86,7 @@ func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) 
 // parent leaves its children alive. F-7.3.11.
 func TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	born := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -104,7 +104,9 @@ func TestAwaitingExpiredDetachLeavesChildrenRunning_spec_7_3_11(t *testing.T) {
 		t.Fatalf("seed child: %v", err)
 	}
 
-	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{}, nil).
+	// The idle bound is raised past the tick so the child's own idle firing
+	// (900s by default) does not end it; the test isolates the cascade.
+	w := watchdog.New(store, staticTenantLister{"acme"}, watchdog.Config{MaxIdleSeconds: 7200}, nil).
 		WithTerminalHook(srv)
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)

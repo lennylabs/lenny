@@ -7,7 +7,7 @@
 // inventory predates the specification statement it summarizes:
 // `REG-PODSTATE`'s writer set, `REG-CLAIM`'s writer set, and
 // `LNK-INTERREPLICA`'s transport, dial direction, and lifetime. Each is
-// held here against the sentence in §12.6, §4.6.3, or §7.2 it was read
+// held here against the sentence in §12.6, §4.6.3, or §28.5.4 it was read
 // from, pinned as a byte-exact literal, so an edit to either side fails
 // the case. These tests are NOT under a build tag because they exercise
 // the repository state directly — no external infrastructure required.
@@ -15,7 +15,7 @@
 // §28.4's own statement of where the claim register lives is pinned the
 // same way, as a byte-exact sentence.
 //
-// spec: §28.3, §28.4, §12.6, §4.6.3, §7.2
+// spec: §28.3, §28.4, §12.6, §4.6.3, §28.5.4
 
 package tier11_docs_test
 
@@ -89,29 +89,40 @@ var unreferencedLinkEntries = map[string]string{
 		"is not implemented, which §28.3 records as a claim-register row rather than as an absent transport",
 }
 
-// The sentences of §12.6, §4.6.3, and §7.2 the three derived cells are
-// read from, byte-exact. A specification edit that rewords one of them
+// The sentences of §12.6, §4.6.3, and §28.5.4 the three derived cells
+// are read from, byte-exact. A specification edit that rewords one of them
 // fails the case that pins it, so the derivation is re-checked by hand
-// rather than silently outliving its source.
+// rather than silently outliving its source. The two §28.5.4 sentences wrap
+// across source lines, so they are compared with whitespace collapsed.
 //
-// spec: §12.6, §4.6.3, §7.2
+// spec: §12.6, §4.6.3, §28.5.4
 const (
 	podStateGatewayWrittenSentence = "The `sessions_served` and `scrub_failure_count` columns are the exception to " +
 		"the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented on each " +
 		"cleanup-outcome report (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
 
 	claimOwnershipRowSentence = "Created by the gateway at pod acquisition; binding state written via the status " +
-		"subresource; deleted by the gateway at hold expiry or when its acquisition path ends the hold on a pool " +
+		"subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool " +
 		"outside the runtime-process acknowledgment rule " +
-		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or by the " +
+		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a " +
+		"release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the " +
+		"occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to " +
+		"zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). " +
+		"A release ends the occupancy without reuse when the pool does not recycle, when no gateway replica published " +
+		"the session's binding to the pod, the gateway step that follows the pod's acceptance of the session's start " +
+		"or resume and from which the session's message delivery and its release reach the pod " +
+		"([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), or, on a pool with `maxConcurrentSessions: 1`, " +
+		"when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails " +
+		"([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the " +
 		"WarmPoolController at pod termination and orphan GC"
 
-	forwardMessageTransportSentence = "The coordinator forwarding mechanism reuses the same internal gRPC " +
-		"`ForwardMessage` RPC used for all cross-replica message routing"
+	forwardMessageTransportSentence = "The conversation the connection carries is the internal gRPC " +
+		"`ForwardMessage` RPC used for cross-replica message routing."
 
-	forwardingReplicaSentence = "When a `delivery: immediate` message lands on a non-coordinator replica, that " +
-		"replica forwards the message to the session's coordinator (identified via the coordination lease in " +
-		"Redis/Postgres)."
+	forwardingReplicaSentence = "A replica that is not the session's coordinator forwards a message to the " +
+		"coordinator, which it identifies through the coordination lease, over this connection in the cases " +
+		"the off-holder matrix of [§29.3](29_communication-scenarios.md#293-interactive-message-send) states, " +
+		"with the fallback each row states when the coordinator is unreachable."
 )
 
 // The two writer-set cells of §28.3, byte-exact and whole. Each writer is
@@ -123,7 +134,8 @@ const (
 // and `scrub_failure_count` are gateway-written), and §4.6.3 assigns the
 // create, the status-subresource writes, the hold-expiry delete, and the
 // delete when an acquisition ends the hold on a pool outside the
-// runtime-process acknowledgment rule to the gateway and only the
+// runtime-process acknowledgment rule, and the delete by a release that
+// ends the occupancy without reuse, to the gateway and only the
 // pod-termination and orphan-GC deletes to the
 // WarmPoolController leader; an unattributed name check cannot tell either
 // rule from its inverse.
@@ -134,8 +146,9 @@ const (
 		"for `sessions_served` and `scrub_failure_count`"
 
 	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
-		"deletes at hold expiry and when an acquisition ends the hold, and the WarmPoolController leader for the " +
-		"deletes at pod termination and orphan garbage collection"
+		"deletes at hold expiry, when an acquisition ends the hold, and when a release ends the occupancy without " +
+		"reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), and the " +
+		"WarmPoolController leader for the deletes at pod termination and orphan garbage collection"
 )
 
 // The heading of the claim-register subsection and the sentence it opens
@@ -349,7 +362,7 @@ func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable
 // describes a store nobody writes the way §12.6 and §4.6.3 state it is
 // written, and a
 // `LNK-INTERREPLICA` row that states another transport, dial direction,
-// or lifetime describes a connection §7.2 does not specify. A failure of
+// or lifetime describes a connection §28.5.4 does not specify. A failure of
 // the link-reference case means a channel row names a connection the
 // link register does not declare, which is a reference §28.3 states as
 // resolving and the declaration index reads as a declaration of its own
@@ -358,7 +371,7 @@ func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable
 // which §28.3 states must read `None` in the one row that refers to it,
 // or an entry listed as referred to by no channel row has gained one.
 //
-// spec: §28.3, §12.6, §4.6.3, §7.2
+// spec: §28.3, §12.6, §4.6.3, §28.5.4
 func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
 	links, channels, entries := readChannelsRegisters(t)
 
@@ -767,12 +780,15 @@ func assertClaimWriterSetMatchesOwnership(t *testing.T, entries registerTable) {
 
 // assertInterReplicaLinkMatchesSessionLifecycle holds
 // `LNK-INTERREPLICA`'s transport, dial direction, and lifetime cells to
-// the two §7.2 sentences they are read from: the one naming the internal
-// gRPC `ForwardMessage` RPC as the carrier of all cross-replica message
-// routing, and the one stating that the replica the message lands on
-// forwards it to the session's coordinator.
+// the two §28.5.4 sentences they are read from: the one naming the
+// internal gRPC `ForwardMessage` RPC as the conversation the connection
+// carries, and the one stating that a replica that is not the session's
+// coordinator forwards a message to the coordinator over that connection.
+// §28.5.4 is the inter-replica contract card and owns this statement. The
+// cases in which the forward happens are the §29.3 off-holder matrix rows
+// the second sentence links to, rather than a forwarding rule in §7.2.
 //
-// spec: §28.3, §7.2
+// spec: §28.3, §28.5.4, §29.3
 func assertInterReplicaLinkMatchesSessionLifecycle(t *testing.T, links registerTable) {
 	t.Helper()
 
@@ -780,8 +796,8 @@ func assertInterReplicaLinkMatchesSessionLifecycle(t *testing.T, links registerT
 	requireCellContains(t, links, interReplicaLink, "Dial direction", []string{"Forwarding replica"})
 	requireCellContains(t, links, interReplicaLink, "Lifetime", []string{"coordinating replica"})
 
-	sessions := specSection(t, filepath.Join(repoRoot(t), "spec", "07_session-lifecycle.md"), "### 7.2 ")
-	requireAllContain(t, "§7.2 cross-replica message routing", sessions, []string{
+	card := specSection(t, filepath.Join(repoRoot(t), "spec", "28_communication-channels.md"), "#### 28.5.4 ")
+	requireAllContain(t, "§28.5.4 inter-replica message routing", collapseWhitespace(card), []string{
 		forwardMessageTransportSentence,
 		forwardingReplicaSentence,
 	})

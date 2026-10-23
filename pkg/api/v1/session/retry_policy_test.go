@@ -287,7 +287,7 @@ func TestDefaultRetryableFailuresMatchSpec(t *testing.T) {
 	if !slicesEqual(gotR, wantR) {
 		t.Errorf("DefaultRetryableFailures = %v, want %v", gotR, wantR)
 	}
-	wantN := []string{"workspace_validation_failed", "setup_command_failed"}
+	wantN := []string{"workspace_validation_failed", "setup_command_failed", "credential_rejected"}
 	gotN := session.DefaultNonRetryableFailures()
 	if !slicesEqual(gotN, wantN) {
 		t.Errorf("DefaultNonRetryableFailures = %v, want %v", gotN, wantN)

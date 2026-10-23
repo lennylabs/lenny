@@ -120,6 +120,45 @@ func TestProjectOccupancyPhase(t *testing.T) {
 	}
 }
 
+// TestProjectOccupancyLeavesTerminalPhases sweeps every claim shape over
+// the terminal phases. failed leaves only through failed → draining, so a
+// claim that outlives the pod's failure (for example a recycling claim
+// whose SDK re-warm watchdog fired) must not pull the pod back into an
+// occupancy phase and fight the Sandbox-to-Pod reconciler's reclaim. The
+// one projection kept is a terminal claim disposition on a failed pod,
+// which is that failed → draining edge. terminated is never re-projected.
+//
+// spec: 6.2 (Pod State Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle)).
+func TestProjectOccupancyLeavesTerminalPhases(t *testing.T) {
+	bindings := []claimstate.State{
+		"", claimstate.Bound, claimstate.Recycling, claimstate.Reserved,
+		claimstate.Released, claimstate.Failed,
+	}
+	for _, current := range []state.State{state.Failed, state.Terminated} {
+		for _, hasClaim := range []bool{false, true} {
+			for _, b := range bindings {
+				for _, rewarm := range []bool{false, true} {
+					in := occupancy{Current: current, HasClaim: hasClaim, Binding: b, RewarmStarted: rewarm}
+					if !hasClaim {
+						in.Binding, in.RewarmStarted = "", false
+					}
+					got, ok := ProjectOccupancyPhase(in)
+					terminalDisposition := b == claimstate.Released || b == claimstate.Failed
+					if current == state.Failed && hasClaim && terminalDisposition {
+						if !ok || got != state.Draining {
+							t.Errorf("ProjectOccupancyPhase(%+v) = %q, %v; want draining, true", in, got, ok)
+						}
+						continue
+					}
+					if ok {
+						t.Errorf("ProjectOccupancyPhase(%+v) = %q, true; want the terminal phase left alone", in, got)
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestProjectedPhasesAreValidTransitions confirms every projected phase the
 // table produces is a legal §6.2 coarse transition from the input phase, so
 // the occupancy projection never writes an edge the state machine forbids.

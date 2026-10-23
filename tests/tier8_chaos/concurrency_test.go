@@ -42,6 +42,7 @@ const sandboxClaimGuardDeployment = "lenny-sandboxclaim-guard"
 // failure means the guard admitted a double claim, breaking ADR-007.
 func TestDoubleClaimVerification(t *testing.T) {
 	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
 
 	if !deploymentReady(t, c, sandboxClaimGuardDeployment) {
 		t.Skipf("precondition not met: %s Deployment is not fully Ready (%s) before the test",
@@ -117,6 +118,7 @@ func TestDoubleClaimVerification(t *testing.T) {
 // More than one winner is a genuine fencing weakness.
 func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
 
 	// One Sandbox; every racing writer attempts the idle → claimed CAS
 	// against it.
@@ -222,6 +224,7 @@ func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 // means a finalizer-guarded object was hard-deleted or never collected.
 func TestSandboxFinalizerHang(t *testing.T) {
 	c := kind.InstallLenny(t)
+	sweepClaimFixtureLeftovers(t, c)
 
 	// Creating a SandboxClaim runs the §4.6.1 guard webhook on CREATE;
 	// confirm the webhook backend is reachable first. The probe skips
@@ -367,6 +370,25 @@ spec:
 `, name, ns, finalizer, sandboxRef, sessionID)
 }
 
+// chaosClaimFixtureLabel labels every Sandbox and SandboxClaim the
+// sandboxManifest, sandboxClaimManifest, and sandboxClaimWithFinalizer
+// fixtures render.
+const chaosClaimFixtureLabel = "lenny.dev/test=chaos-concurrency"
+
+// sweepClaimFixtureLeftovers is the start-time sweep for the tier-8 fixtures
+// that create SandboxClaims and Sandboxes: the chaos-concurrency fixtures in
+// this file, the orphan-GC and reserved-hold fixtures, and the ADR-007
+// leader-kill fixture. A run killed before its t.Cleanup leaves those objects
+// on the long-lived cluster. The sweep runs once per process per label,
+// before the run's first fixture creates anything, deletes only objects
+// carrying the fixtures' own labels, and never fails the test.
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle)).
+func sweepClaimFixtureLeftovers(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	kind.SweepLabeledOnce(t, c, agentNamespace, chaosClaimFixtureLabel, "sandboxclaims", "sandboxes")
+	kind.SweepLabeledOnce(t, c, agentNamespace, leaderKillTestLabel, "sandboxclaims", "sandboxes")
+}
+
 // requireSandboxClaimGuardReachable probes the lenny-sandboxclaim-guard
 // webhook by creating and deleting a throwaway SandboxClaim, and skips
 // the test when the probe trips the webhook's admission timeout.
@@ -385,6 +407,7 @@ spec:
 // but rejects the trivial probe claim for an unexpected reason.
 func requireSandboxClaimGuardReachable(t *testing.T, c *kind.Cluster) {
 	t.Helper()
+	sweepClaimFixtureLeftovers(t, c)
 	const probeClaim = "chaos-guard-probe-claim"
 	manifest := sandboxClaimManifest(probeClaim, agentNamespace,
 		"chaos-guard-probe-sandbox", "sess-guard-probe")

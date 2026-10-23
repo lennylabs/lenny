@@ -186,6 +186,23 @@ service Adapter {
   // the gateway across all coordinated pods.
   rpc CheckpointBarrier(CheckpointBarrierRequest) returns (CheckpointBarrierResponse) {}
 
+  // SealSession seals the named session against `message` delivery when
+  // the adapter observed no activity for the session in the idle window
+  // the request names (§4.7.1 **Session seal.**). It refuses a session
+  // whose `session_start` the adapter has not written, and a session whose
+  // runtime output the adapter does not read. It answers not sealed, with
+  // the time since the session's last activity, when activity occurred
+  // within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+  // session is in flight, and leaves a seal it placed earlier in place.
+  // While the session is sealed the adapter writes no `message` frame for
+  // it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+  rpc SealSession(SealSessionRequest) returns (SealSessionResponse) {}
+
+  // UnsealSession lifts the named session's seal (§4.7.1 **Session
+  // seal.**). Removal of the session's registry entry also ends the seal.
+  // Deadline: 5 s. spec: §4.7.1, §28.5.1.
+  rpc UnsealSession(UnsealSessionRequest) returns (UnsealSessionResponse) {}
+
   // ExportPaths packages files from the named session's
   // /workspace/slots/{sessionId}/current for delegation, rebased per the
   // export spec (§8.7). The adapter resolves each export
@@ -1350,7 +1367,7 @@ message SignalDeadlineRequest {
   // (~300000 for the §11.3 five-minute pre-expiry warning).
   int32 remaining_ms = 2;
   // trigger names which deadline is approaching: "session_age" (the
-  // §11.3 maxSessionAge cap), "budget", or "idle".
+  // §11.3 maxSessionAge cap) or "budget".
   string trigger = 3;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
@@ -1548,6 +1565,44 @@ message CheckpointBarrierRequest {
   reserved "slot_id";
 }
 
+// SealSessionRequest asks the adapter to seal the named session when it
+// had no activity in the last idle_seconds (§4.7.1 **Session seal.**).
+message SealSessionRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 2;
+  // idle_seconds is the session's effective maxClientIdleSeconds, the
+  // window without activity the adapter requires before it seals the
+  // session. The adapter rejects a value at or below zero with
+  // InvalidArgument.
+  int64 idle_seconds = 3;
+}
+
+// SealSessionResponse reports whether the session is sealed. When it is
+// not, idle_age_seconds is the time since the session's last activity,
+// zero while a platform or connector call for the session is in flight.
+message SealSessionResponse {
+  bool sealed = 1;
+  int64 idle_age_seconds = 2;
+}
+
+// UnsealSessionRequest asks the adapter to lift the named session's seal.
+message UnsealSessionRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 2;
+}
+
+message UnsealSessionResponse {}
+
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the AdapterEvents control
 // stream (§4.7). barrier_id echoes the request. checkpoint_ref
@@ -1669,7 +1724,9 @@ message ShutdownRequest {
   // (§5.2): the adapter tears the named session down, keeps the pod
   // process alive, runs the §5.2 whole-pod scrub with the carried
   // parameters, and reports the binary outcome asynchronously via
-  // ReportPodScrub. Absent on the terminate path (the pod is replaced).
+  // ReportPodScrub. Absent on every other release, whose claim effect
+  // §4.6.3 assigns; the WarmPoolController projects the pod's phase from
+  // the claim (§4.6.1).
   // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
   RecycleScrub recycle = 5;
 

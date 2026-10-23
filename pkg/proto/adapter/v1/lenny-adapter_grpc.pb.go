@@ -52,6 +52,8 @@ const (
 	Adapter_Resume_FullMethodName                      = "/lenny.adapter.v1.Adapter/Resume"
 	Adapter_CoordinatorFence_FullMethodName            = "/lenny.adapter.v1.Adapter/CoordinatorFence"
 	Adapter_CheckpointBarrier_FullMethodName           = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
+	Adapter_SealSession_FullMethodName                 = "/lenny.adapter.v1.Adapter/SealSession"
+	Adapter_UnsealSession_FullMethodName               = "/lenny.adapter.v1.Adapter/UnsealSession"
 	Adapter_ExportPaths_FullMethodName                 = "/lenny.adapter.v1.Adapter/ExportPaths"
 	Adapter_ReportUsage_FullMethodName                 = "/lenny.adapter.v1.Adapter/ReportUsage"
 	Adapter_Shutdown_FullMethodName                    = "/lenny.adapter.v1.Adapter/Shutdown"
@@ -211,6 +213,21 @@ type AdapterClient interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error)
+	// SealSession seals the named session against `message` delivery when
+	// the adapter observed no activity for the session in the idle window
+	// the request names (§4.7.1 **Session seal.**). It refuses a session
+	// whose `session_start` the adapter has not written, and a session whose
+	// runtime output the adapter does not read. It answers not sealed, with
+	// the time since the session's last activity, when activity occurred
+	// within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+	// session is in flight, and leaves a seal it placed earlier in place.
+	// While the session is sealed the adapter writes no `message` frame for
+	// it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	SealSession(ctx context.Context, in *SealSessionRequest, opts ...grpc.CallOption) (*SealSessionResponse, error)
+	// UnsealSession lifts the named session's seal (§4.7.1 **Session
+	// seal.**). Removal of the session's registry entry also ends the seal.
+	// Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	UnsealSession(ctx context.Context, in *UnsealSessionRequest, opts ...grpc.CallOption) (*UnsealSessionResponse, error)
 	// ExportPaths packages files from the named session's
 	// /workspace/slots/{sessionId}/current for delegation, rebased per the
 	// export spec (§8.7). The adapter resolves each export
@@ -449,6 +466,26 @@ func (c *adapterClient) CheckpointBarrier(ctx context.Context, in *CheckpointBar
 	return out, nil
 }
 
+func (c *adapterClient) SealSession(ctx context.Context, in *SealSessionRequest, opts ...grpc.CallOption) (*SealSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SealSessionResponse)
+	err := c.cc.Invoke(ctx, Adapter_SealSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) UnsealSession(ctx context.Context, in *UnsealSessionRequest, opts ...grpc.CallOption) (*UnsealSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnsealSessionResponse)
+	err := c.cc.Invoke(ctx, Adapter_UnsealSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExportPathsResponse)
@@ -672,6 +709,21 @@ type AdapterServer interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error)
+	// SealSession seals the named session against `message` delivery when
+	// the adapter observed no activity for the session in the idle window
+	// the request names (§4.7.1 **Session seal.**). It refuses a session
+	// whose `session_start` the adapter has not written, and a session whose
+	// runtime output the adapter does not read. It answers not sealed, with
+	// the time since the session's last activity, when activity occurred
+	// within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+	// session is in flight, and leaves a seal it placed earlier in place.
+	// While the session is sealed the adapter writes no `message` frame for
+	// it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	SealSession(context.Context, *SealSessionRequest) (*SealSessionResponse, error)
+	// UnsealSession lifts the named session's seal (§4.7.1 **Session
+	// seal.**). Removal of the session's registry entry also ends the seal.
+	// Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	UnsealSession(context.Context, *UnsealSessionRequest) (*UnsealSessionResponse, error)
 	// ExportPaths packages files from the named session's
 	// /workspace/slots/{sessionId}/current for delegation, rebased per the
 	// export spec (§8.7). The adapter resolves each export
@@ -780,6 +832,12 @@ func (UnimplementedAdapterServer) CoordinatorFence(context.Context, *Coordinator
 }
 func (UnimplementedAdapterServer) CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckpointBarrier not implemented")
+}
+func (UnimplementedAdapterServer) SealSession(context.Context, *SealSessionRequest) (*SealSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SealSession not implemented")
+}
+func (UnimplementedAdapterServer) UnsealSession(context.Context, *UnsealSessionRequest) (*UnsealSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnsealSession not implemented")
 }
 func (UnimplementedAdapterServer) ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExportPaths not implemented")
@@ -1095,6 +1153,42 @@ func _Adapter_CheckpointBarrier_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_SealSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SealSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).SealSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_SealSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).SealSession(ctx, req.(*SealSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_UnsealSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnsealSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).UnsealSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_UnsealSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).UnsealSession(ctx, req.(*UnsealSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_ExportPaths_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExportPathsRequest)
 	if err := dec(in); err != nil {
@@ -1272,6 +1366,14 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckpointBarrier",
 			Handler:    _Adapter_CheckpointBarrier_Handler,
+		},
+		{
+			MethodName: "SealSession",
+			Handler:    _Adapter_SealSession_Handler,
+		},
+		{
+			MethodName: "UnsealSession",
+			Handler:    _Adapter_UnsealSession_Handler,
 		},
 		{
 			MethodName: "ExportPaths",

@@ -4,7 +4,9 @@ package translator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -110,6 +112,12 @@ func (b *noopSingleShotBinder) BindSingleShot(ctx context.Context, spec SingleSh
 		UpdatedAt:   now,
 	}
 	if err := b.store.Create(ctx, row); err != nil {
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal is the
+		// native 403 carrying the refusal's code, rather than a 500.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			return "", &SingleShotError{HTTPStatus: http.StatusForbidden, Code: ref.Code, Message: ref.Message}
+		}
 		return "", fmt.Errorf("single-shot session create %s: %w", sessionID, err)
 	}
 	return sessionID, nil

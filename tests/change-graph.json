@@ -11,6 +11,15 @@
       ],
       "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
     },
+    "pkg/gateway/storage/erasurejob/pgstore": {
+      "unit": ["pkg/gateway/storage/erasurejob/..."],
+      "component": ["tests/tier2_component/stores/erasurejobstore_test.go"]
+    },
+    "pkg/gateway/storage/erasurejob/saltlockpg": {
+      "unit": ["pkg/gateway/storage/erasurejob/saltlockpg/..."],
+      "component": ["tests/tier2_component/tenantsalt/saltlockpg_test.go"],
+      "integration": ["tests/tier4_integration/erasure_job_test.go"]
+    },
     "pkg/store/lease": {
       "unit": ["pkg/store/lease/..."],
       "component": ["tests/tier2_component/stores/lease_store_test.go"]
@@ -74,7 +83,9 @@
     },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
-      "contract": ["tests/tier3_contract/rest_auth/..."]
+      "contract": ["tests/tier3_contract/rest_auth/..."],
+      "integration": ["tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/middleware/idempotency": {
       "unit": ["pkg/gateway/middleware/idempotency/..."],
@@ -84,9 +95,20 @@
       "unit": ["pkg/gateway/middleware/circuitbreaker/..."],
       "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
     },
+    "pkg/controller/sandbox": {
+      "unit": ["pkg/controller/sandbox/..."],
+      "component": [
+        "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go",
+        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go"
+      ]
+    },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
-      "component": ["tests/tier2_component/controllers/warmpool_test.go"],
+      "component": [
+        "tests/tier2_component/controllers/warmpool_test.go",
+        "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go",
+        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go"
+      ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/warm_pool_test.go",
         "tests/tier5_e2e_kind/sandbox_claim_test.go"
@@ -225,8 +247,10 @@
       "contract": ["tests/tier3_contract/rest_sessions/..."]
     },
     "pkg/gateway/sessionserver": {
-      "unit": ["pkg/gateway/sessionserver/..."],
+      "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
       "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
     "pkg/gateway/core/subsystem": {
@@ -237,7 +261,8 @@
       "static": ["cmd/lenny-gateway/..."],
       "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
-      "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/operability/health": {
       "unit": ["pkg/gateway/operability/health/..."],
@@ -337,6 +362,15 @@
       "component": ["tests/tier2_component/runbooks/index_load_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/runbook_index_test.go"]
     },
+    "pkg/redisconn": {
+      "static": ["tests/tier0_static/redis_cluster_safety_test.go"],
+      "unit": ["pkg/redisconn/...", "pkg/gateway/storage/rediskeys/..."],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+    },
+    "pkg/gateway/storage/rediskeys": {
+      "unit": ["pkg/gateway/storage/rediskeys/..."],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
+    },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
       "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go"],
@@ -347,6 +381,45 @@
       "unit": ["pkg/alerting/rules/..."],
       "component": ["tests/tier2_component/alerting/..."],
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
+    },
+    "tests/testinfra/lifecyclefence": {
+      "unit": ["tests/testinfra/lifecyclefence/..."],
+      "load_local": ["tests/tier7a_load_local/lifecycle_fence_scenarios_test.go"],
+      "chaos": ["tests/tier8_chaos/lifecycle_drain_fault_test.go"],
+      "security": ["tests/tier9_security/tenant_deletion_isolation_test.go"]
+    },
+    "tests/testinfra/lifecycleharness": {
+      "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],
+      "component": ["tests/tier2_component/lifecycle/..."],
+      "integration": [
+        "tests/tier4_integration/session_resume_driver_integration_test.go",
+        "tests/tier4_integration/session_suspension_delivery_integration_test.go",
+        "tests/tier4_integration/session_held_pod_integration_test.go",
+        "tests/tier4_integration/stream_failure_recycle_retire_test.go",
+        "tests/tier4_integration/delegation_tree_resume_peer_child_test.go",
+        "tests/tier4_integration/concurrent_slot_release_test.go"
+      ],
+      "load_local": [
+        "tests/tier7a_load_local/suspension_interleaving_test.go",
+        "tests/tier7a_load_local/stream_failure_release_race_test.go",
+        "tests/tier7a_load_local/lifecycle_interleaving_test.go",
+        "tests/tier7a_load_local/slot_release_paths_race_test.go",
+        "tests/tier7a_load_local/full_revoke_sweep_terminal_race_test.go"
+      ],
+      "chaos": [
+        "tests/tier8_chaos/lifecycle_fault_injection_test.go",
+        "tests/tier8_chaos/session_suspend_resume_chaos_test.go",
+        "tests/tier8_chaos/terminal_release_crash_test.go"
+      ]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/always-busy": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/bare-ack-while-handling": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
+    },
+    "tests/testinfra/runtimes/conformance-fixtures/sdk-delayed-response": {
+      "conformance": ["tests/tier10_conformance/heartbeat_busy_conformance_test.go"]
     },
     "tests/testinfra/rotationgate": {
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
@@ -381,6 +454,20 @@
         "pkg/gateway/session/executor/..."
       ]
     },
+    "pkg/adapter/prestop": {
+      "static": [
+        "tests/tier0_static/prestop_image_path_test.go",
+        "tests/tier0_static/deployment_boundary_test.go"
+      ],
+      "unit": [
+        "pkg/adapter/prestop/...",
+        "pkg/controller/sandbox/podspec/...",
+        "cmd/lenny-adapter/...",
+        "cmd/runtimes/echo-embedded/...",
+        "cmd/runtimes/preconnect-echo/..."
+      ],
+      "e2e_kind": ["tests/tier5_e2e_kind/prestop_hook_exec_test.go"]
+    },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
       "component": ["tests/tier2_component/observability/..."]
@@ -413,7 +500,8 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "tests/testinfra/containers": {
-      "component": ["tests/testinfra/containers/postgres_test.go"]
+      "component": ["tests/testinfra/containers/postgres_test.go"],
+      "integration": ["tests/tier4_integration/redis_cluster_smoke_test.go"]
     },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
@@ -520,7 +608,8 @@
         "tests/tier0_static/helm_lint_test.go",
         "tests/tier0_static/airgap_registry_render_test.go",
         "tests/tier0_static/upgrade_channel_key_render_test.go",
-        "tests/tier0_static/ops_rbac_spec_sync_test.go"
+        "tests/tier0_static/ops_rbac_spec_sync_test.go",
+        "tests/tier0_static/gateway_multi_tenant_render_test.go"
       ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
@@ -606,7 +695,17 @@
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
-      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]
+      "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
+    },
+    "pkg/gateway/environment/tenantstore/tenantstoretest": {
+      "unit": ["pkg/gateway/environment/tenantstore/...", "cmd/lenny-gateway/..."],
+      "component": ["tests/tier2_component/stores/tenantstore_test.go"]
+    },
+    "pkg/legalholdescrow/blobescrow": {
+      "unit": ["pkg/legalholdescrow/blobescrow/..."],
+      "component": ["tests/tier2_component/legalholdescrow/blobescrow_minio_test.go"]
     },
     "tests/testdata/openai_chat": {
       "contract": ["tests/tier3_contract/rest_openai_chat/..."]
@@ -634,7 +733,14 @@
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
+      "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
+    },
+    "pkg/gateway/mcpfabric/playground": {
+      "unit": ["pkg/gateway/mcpfabric/playground/..."],
+      "contract": ["tests/tier3_contract/playground/..."],
+      "security": ["tests/tier9_security/tenant_deletion_isolation_test.go"]
     },
     "pkg/ops/auditrate": {
       "unit": ["pkg/ops/auditrate/..."],
@@ -756,6 +862,19 @@
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"]
+    },
+    "pkg/gateway/podlifecycle/slotreaper": {
+      "unit": ["pkg/gateway/podlifecycle/slotreaper/..."],
+      "integration": [
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go",
+        "tests/tier4_integration/slot_holder_pgstore_test.go"
+      ]
+    },
+    "pkg/gateway/credentials/leaserevoke": {
+      "unit": ["pkg/gateway/credentials/leaserevoke/...", "cmd/lenny-gateway/..."],
+      "integration": ["tests/tier4_integration/full_revoke_two_replica_test.go"],
+      "chaos": ["tests/tier8_chaos/full_revoke_denylist_drop_test.go"],
+      "security": ["tests/tier9_security/full_revoke_lease_return_test.go"]
     }
   }
 }

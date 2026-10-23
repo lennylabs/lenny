@@ -179,6 +179,21 @@ func (r fakeSandboxReader) Get(_ context.Context, _, _ string) (sessionstore.Ses
 	return r.row, r.err
 }
 
+// fakePoolResolver resolves every session to a fixed pool match, or fails with
+// err, and records the row it was asked to resolve.
+type fakePoolResolver struct {
+	match podsession.PoolMatch
+	err   error
+	got   *sessionstore.Session
+}
+
+func (f fakePoolResolver) ResolveReadoptPool(_ context.Context, row sessionstore.Session) (podsession.PoolMatch, error) {
+	if f.got != nil {
+		*f.got = row
+	}
+	return f.match, f.err
+}
+
 type recordingPublisher struct{ published []*podsession.BindResult }
 
 func (p *recordingPublisher) Put(b *podsession.BindResult) { p.published = append(p.published, b) }
@@ -214,7 +229,7 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err != nil {
 		t.Fatalf("readoptAndFence returned error on fence ack: %v", err)
 	}
@@ -253,7 +268,7 @@ func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a terminal fence failure")
 	}
@@ -294,7 +309,7 @@ func TestReadoptAndFenceReleasesLeaseOnNonRelinquishFenceFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a non-relinquish fence failure")
 	}
@@ -330,7 +345,7 @@ func TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence(t *testing.T)
 	rel := &recordingReleaser{err: errors.New("redis unavailable")}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error when the lease release failed")
 	}
@@ -361,7 +376,7 @@ func TestReadoptAndFenceReleasesLeaseOnDialFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a dial failure")
 	}
@@ -398,7 +413,7 @@ func TestReadoptAndFenceReleasesLeaseOnSessionReadFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{err: errors.New("session row read failed")}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a session-row read failure")
 	}
@@ -449,7 +464,7 @@ func TestReadoptPublishesHandoffGeneration_spec_10_1_5(t *testing.T) {
 	pub := &recordingPublisher{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1", CoordinationGeneration: 6}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, &fakeReadoptFencer{}, pub, sessions, &recordingReleaser{}, "acme", "s1", "replica-A", 7)
+	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: &fakeReadoptFencer{}, registry: pub, sessions: sessions, releaser: &recordingReleaser{}, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 7)
 	if err != nil {
 		t.Fatalf("readoptAndFence: %v", err)
 	}

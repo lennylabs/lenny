@@ -374,6 +374,9 @@ lenny-test --group <pr|nightly|pre-release|...>   # Named selection (see §8)
 # Change-aware selection
 lenny-test --changed                              # Inspects git diff
 lenny-test --changed --max-tier component         # Layered escalation
+lenny-test --since main                           # Diff from the merge base with main
+lenny-test --changed --rdeps-depth -1             # Unit scope takes every transitive importer
+lenny-test --changed --all                        # Unit tier runs every package
 lenny-test --spec 4.2,12.3                        # Spec sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
@@ -384,8 +387,8 @@ lenny-test validate-maps                          # CI gate: maps in sync
 lenny-test validate-diagnosis                     # CI gate: diagnosis coverage
 
 # Infrastructure lifecycle (see §10)
-lenny-test infra up   --profile compose|kind|all
-lenny-test infra down --profile compose|kind|all
+lenny-test infra up   --profile compose|compose-mtls|compose-redis-cluster|kind|all
+lenny-test infra down --profile compose|compose-mtls|compose-redis-cluster|kind|all
 lenny-test infra prune
 lenny-test infra status
 
@@ -435,9 +438,9 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--tier` → all tests with that build tag.
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
-   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph.
+   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. Tier 0 type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
    - `--spec` → resolves each section through the spec map.
-   - `--pkg` → resolves through the change graph.
+   - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
 2. Intersect with `--max-tier` if both selectors are present.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
 4. For each tier, ensure required infrastructure is up. If `lenny-test infra status` reports the dependency stack as not running, start it (subject to `--no-infra`).

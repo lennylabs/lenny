@@ -113,7 +113,7 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 			writeRPC(w, req.ID, toolResultMap("sessionId is required", true), nil)
 			return
 		}
-		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"`+args.SessionID+`","state":"suspended"}`, false), nil)
+		writeRPC(w, req.ID, toolResultMap(`{"id":"`+args.SessionID+`","tenantId":"acme","state":"suspended","createdAt":"2026-10-14T00:00:00Z","updatedAt":"2026-10-14T00:00:00Z"}`, false), nil)
 	case "lenny/cancel_session":
 		var args struct {
 			SessionID string `json:"sessionId"`
@@ -254,7 +254,7 @@ func TestMCPCallToolDrivesSession(t *testing.T) {
 
 // TestMCPInterruptSession_spec_24_17_216 confirms the §24.17 `lenny
 // session interrupt` MCP transport drives lenny/interrupt_session and
-// decodes the {sessionId, state} envelope. F-24.17.5.
+// decodes the REST session body the tool answers (§15.2.1). F-24.17.5.
 func TestMCPInterruptSession_spec_24_17_216(t *testing.T) {
 	ts := httptest.NewServer(mcpStub(t))
 	defer ts.Close()
@@ -264,8 +264,8 @@ func TestMCPInterruptSession_spec_24_17_216(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InterruptSession: %v", err)
 	}
-	if res.SessionID != "sess_x" || res.State != "suspended" {
-		t.Errorf("interrupt result: got %+v, want sessionId=sess_x state=suspended", res)
+	if res.ID != "sess_x" || res.State != "suspended" {
+		t.Errorf("interrupt result: got %+v, want id=sess_x state=suspended", res)
 	}
 }
 

@@ -146,7 +146,7 @@ func TestTokenServiceOutageDifferentiatedDegradation(t *testing.T) {
 	// A session mints a lease while the Token Service is healthy. The
 	// Client mirrors the materialized upstream credential into the local
 	// credcache so the LLM proxy resolves it without another round-trip.
-	leased, err := client.Assign("claude-prod", "s_leased", "", "")
+	leased, err := client.Assign("claude-prod", "s_leased", "", "", 0)
 	if err != nil {
 		t.Fatalf("initial Assign for the leased session: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTokenServiceOutageDifferentiatedDegradation(t *testing.T) {
 	// realized before the leased-session assertions.
 	stub.down.Store(true)
 	for i := 0; i < 3; i++ {
-		if _, err := client.Assign("claude-new", "s_new", "", ""); err == nil {
+		if _, err := client.Assign("claude-new", "s_new", "", "", 0); err == nil {
 			t.Fatalf("new-session Assign %d succeeded against a downed Token Service", i)
 		}
 	}
@@ -170,7 +170,7 @@ func TestTokenServiceOutageDifferentiatedDegradation(t *testing.T) {
 	// Class: a new session that requires a credential fails fast with the
 	// retryable sentinel and never reaches the wire (breaker short-circuit).
 	callsBeforeNew := stub.calls.Load()
-	_, err = client.Assign("claude-new", "s_new2", "", "")
+	_, err = client.Assign("claude-new", "s_new2", "", "", 0)
 	if !errors.Is(err, credassign.ErrTokenServiceUnavailable) {
 		t.Fatalf("new credentialed session during outage: got %v, want ErrTokenServiceUnavailable", err)
 	}

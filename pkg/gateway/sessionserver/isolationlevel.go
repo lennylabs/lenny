@@ -214,6 +214,15 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 	return level
 }
 
+// ScrubPolicyPerSlot is the scrubPolicy of a session on a concurrent-workspace
+// pool (maxConcurrentSessions above 1). It is frozen on the session row at
+// create under the same condition that selects the slot reservation, so the
+// pre-running reclaim reads it as the pool-kind discriminator rather than
+// resolving the pool, whose maxConcurrentSessions can change after create.
+//
+// spec: §5.2 (Slot assignment atomicity); §7.1 (sessionIsolationLevel).
+const ScrubPolicyPerSlot = "best-effort-per-slot"
+
 // scrubPolicyForPool returns the §7.1 scrubPolicy string for a
 // reuse pool. spec: §5.2 — a service-mode pod serves successive requests
 // with no scrub (`none`); a session-mode pod that recycles a pod across
@@ -228,7 +237,7 @@ func scrubPolicyForPool(match podsession.PoolMatch) string {
 	}
 	if match.MaxConcurrentSessions > 1 {
 		// Concurrent sessions scrub per slot on completion or failure.
-		return "best-effort-per-slot"
+		return ScrubPolicyPerSlot
 	}
 	if match.Recycle {
 		// Cross-tenant microvm sequential reuse selects a VM-level scrub

@@ -70,12 +70,13 @@ func schemaServer(t *testing.T) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        memstore.New(),
-		InputWaits:   inputwait.NewRegistry(),
-		Events:       sessionevents.NewBus(0),
-		Interactions: interactionstore.NewMemory(),
-		Memory:       memorystore.NewInMemory(0, nil),
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		InputWaits:        inputwait.NewRegistry(),
+		Events:            sessionevents.NewBus(0),
+		Interactions:      interactionstore.NewMemory(),
+		Memory:            memorystore.NewInMemory(0, nil),
+		TenantID:          "acme",
 	})
 	return srv
 }
@@ -308,6 +309,7 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,

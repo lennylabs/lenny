@@ -91,6 +91,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 	var idCounter atomic.Int64
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return fmt.Sprintf("sess-q-%d", idCounter.Add(1)) },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -176,6 +177,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 // the claim succeeded, breaking the §7.1 "session_id only on success"
 // atomicity contract.
 func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
+	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(30), 10*time.Millisecond, "sbx-1")
 	h := srv.Handler()
 	ctx := context.Background()
@@ -241,6 +243,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 // exhaustion is the §7.1 atomicity envelope; the raw §4.6.1 WARM_POOL_EXHAUSTED
 // code is the two-step /start claim's, not the eager create-time claim's.
 func TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool(t *testing.T) {
+	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(1), 10*time.Millisecond, "sbx-1")
 	h := srv.Handler()
 

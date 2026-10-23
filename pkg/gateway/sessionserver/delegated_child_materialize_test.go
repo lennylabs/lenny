@@ -126,31 +126,44 @@ func materializeFakeScheme(t *testing.T) *runtime.Scheme {
 // pool resolves) yet the lease mint fails in the assignment window.
 type failingAssigner struct{}
 
-func (failingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (failingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (failingAssigner) ReleaseSession(string) {}
+func (failingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (failingAssigner) ReleaseThrough(string, int64) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (failingAssigner) Release(string) {}
+func (failingAssigner) Release(string) error { return nil }
 
 // recordingAssigner assigns a real lease and records every ReleaseSession so a
 // test can assert the §7.1 step-23 lease revoke ran during a post-launch
 // rollback.
 type recordingAssigner struct{ released []string }
 
-func (a *recordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return &adapterv1.CredentialLease{}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.released = append(a.released, sessionID)
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*recordingAssigner) Release(string) {}
+func (*recordingAssigner) Release(string) error { return nil }
 
 // updateFaultStore fails store.Update while fail is set, leaving Get/Create
 // intact, so a test can inject the terminal transition-persist failure
@@ -158,6 +171,15 @@ func (*recordingAssigner) Release(string) {}
 type updateFaultStore struct {
 	sessionstore.Store
 	fail bool
+}
+
+// GetPrimary forwards the primary read, so the injected fault reaches only
+// the transition-persist Update and not the materialization's entry read.
+func (s *updateFaultStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if pr, ok := s.Store.(sessionstore.PrimaryReader); ok {
+		return pr.GetPrimary(ctx, tenantID, id)
+	}
+	return s.Get(ctx, tenantID, id)
 }
 
 func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {
@@ -176,6 +198,7 @@ func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut 
 // claimed a pod, never launched, or launched but stayed unregistered and
 // unreachable, so §8.2 steps 5-9 did not execute.
 func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-1", `{
 		"schemaVersion": 1,
@@ -185,6 +208,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, dial)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -239,6 +263,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 // keep renewing it. A failure here means the lease holder and the binding
 // holder diverged, the exact decoupling co-location removes.
 func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-lease-persist", "")
@@ -247,6 +272,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 	binder := podBindBinder(cluster, dial)
 	leases := newComponentLeaseStore()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -294,6 +320,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 // failure here means the publish was gated on the redundant self-renew acquire
 // instead of running unconditionally once the lease is held.
 func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-renew-blip", `{
 		"schemaVersion": 1,
@@ -307,6 +334,7 @@ func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testi
 	// faults transiently.
 	leases.failAcquireAfter = 1
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -372,6 +400,7 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
@@ -413,6 +442,7 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
@@ -448,6 +478,7 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 // failure here means a losing delegation leaked its warm pod, which §8.3
 // forbids, or the child was left partially materialized.
 func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-race", "")
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
@@ -458,6 +489,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 	// assignment window: the §8.3 post-pod-claim race.
 	binder.Credentials = failingAssigner{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -500,6 +532,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 // child pod and its lease leaked past a failed terminal persist, or a registry
 // entry survived the failed write.
 func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-persist", "")
@@ -513,6 +546,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	assigner := &recordingAssigner{}
 	binder.Credentials = assigner
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
