@@ -2256,6 +2256,10 @@ t.section("D-guard. every agent prompt begins with the relay guard");
       calls.every((c) => c.prompt.slice(RELAY_GUARD.length).startsWith("LOOKUP ROOT: this run's repository is /repo.") &&
         c.prompt.includes('"root": "/repo" in EVERY mcp__lookup__lookup call')),
       calls.map((c) => c.label).slice(0, 8).join(","));
+    t.check(name + ": every prompt says once to fall back to grep when the lookup is unavailable",
+      calls.every((c) => c.prompt.split("LOOKUP UNAVAILABLE: when lookup output carries the `JEV UNAVAILABLE` marker").length === 2 &&
+        c.prompt.includes("do not retry the lookup in this task")),
+      calls.map((c) => c.label).slice(0, 8).join(","));
   }
 }
 

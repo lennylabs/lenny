@@ -70,13 +70,17 @@
 // Meaning search, and narrowing by context, ask Jev (TypeSafe's System One model)
 // one yes/no question per passage. They need a TypeSafe key, read from
 // TYPESAFE_API_KEY or from ~/.config/typesafe/api_key (TYPESAFE_API_KEY set to the
-// empty string turns judging off). Without one, meaning search
-// returns its shortlist unjudged and says that it did.
+// empty string turns judging off). Without one, or when Jev fails or is marked
+// down (see "Jev availability" below), meaning and related searches return their
+// shortlists unjudged, and the line under the header starts with
+// "JEV UNAVAILABLE (<reason>)". Exact search, sections, and lines never ask Jev
+// and stay complete.
 //
 // Exit codes: 0 ran; 1 failed; 2 usage error.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { availableParallelism, homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -96,7 +100,7 @@ const CODE_EXT = /\.(go|proto|ya?ml|json|tpl|ts|py|sh|sql|md)$/;
 const SKIP_DIR = new Set(["node_modules", ".git", "vendor", "testdata", "dist", "bin"]);
 const MAX_FILE_BYTES = 6_000_000;
 const MAX_BUDGET = 26000;
-const JEV_URL = "https://api.typesafe.ai/v1/systemone";
+const JEV_URL = process.env.LOOKUP_JEV_URL || "https://api.typesafe.ai/v1/systemone";
 const JEV_MODEL = process.env.LOOKUP_JEV_MODEL || "jev-latest";
 const JEV_CONCURRENCY = Number(process.env.LOOKUP_JEV_CONCURRENCY) || 32;
 // A passage Jev rates at or above this is treated as relevant. Tune against real
@@ -438,37 +442,241 @@ function embedShortlist(blocks, queries, top) {
   return { model: out.model, embedded: out.embedded, note: out.note, lists: out.results.map((l) => l.map(([id, score]) => ({ block: blocks[id], score }))) };
 }
 
-async function jevAsk(key, state, questions) {
-  for (let attempt = 0; ; attempt++) {
-    let res;
-    try {
-      res = await fetch(JEV_URL, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ state, model: JEV_MODEL, questions }),
-      });
-    } catch (e) {
-      if (attempt >= 4) throw e;
-      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
-      continue;
-    }
-    if (res.ok) return (await res.json()).answers;
-    if ((res.status === 429 || res.status === 529 || res.status >= 500) && attempt < 5) {
-      const wait = Number(res.headers.get("retry-after")) * 1000 || 400 * 2 ** attempt;
-      await new Promise((r) => setTimeout(r, wait));
-      continue;
-    }
-    throw new Error(`Jev returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+// JEV AVAILABILITY. Jev can stop answering for reasons this tool cannot fix: the
+// network is down, the key is wrong or revoked (401, 403), the service is
+// overloaded (429, 5xx), a request hangs, or a response cannot be read. Before
+// this guard a lookup retried each of thousands of passages with backoff, so an
+// outage turned one call into minutes, and the output read like a judged
+// ranking with every passage missing. Two breakers bound that.
+//
+// Per call: every request has a timeout, a 429 or 5xx is retried at most
+// LOOKUP_JEV_RETRIES times with a short capped backoff, and once
+// LOOKUP_JEV_TRIP requests in a row fail (or one 401 or 403 arrives) the call
+// sends nothing more to Jev and reports its Jev-backed results as unjudged.
+//
+// Across calls: a trip is recorded in jev-state.json in the shared cache
+// directory, so every worktree and process on the machine sees it. Calls during
+// the cooldown skip Jev at once. After the cooldown one call claims the probe
+// (an exclusively created jev-probe file) and tries Jev; a success clears the
+// state and a failure records a new cooldown. An auth failure is keyed to a hash
+// of the key, so a changed key is tried at once rather than after the cooldown.
+//
+// Operator-tunable environment variables:
+//   LOOKUP_JEV_URL       Jev endpoint (default the TypeSafe API); tests point it at a stub.
+//   LOOKUP_JEV_TIMEOUT   seconds before one request is abandoned (default 20).
+//   LOOKUP_JEV_RETRIES   retries of a 429, 5xx, or network error per request (default 2).
+//   LOOKUP_JEV_TRIP      consecutive failed requests that trip the call's breaker (default 3).
+//   LOOKUP_JEV_COOLDOWN  seconds Jev is skipped after a trip (default 600).
+const JEV_TIMEOUT_MS = (Number(process.env.LOOKUP_JEV_TIMEOUT) || 20) * 1000;
+const JEV_RETRIES = Number.isInteger(Number(process.env.LOOKUP_JEV_RETRIES)) && process.env.LOOKUP_JEV_RETRIES !== "" ? Number(process.env.LOOKUP_JEV_RETRIES) : 2;
+const JEV_TRIP = Number(process.env.LOOKUP_JEV_TRIP) || 3;
+const JEV_COOLDOWN_MS = (Number(process.env.LOOKUP_JEV_COOLDOWN) || 600) * 1000;
+// A probe file older than this belongs to a lookup that died mid-probe.
+const JEV_PROBE_STALE_MS = Math.max(60_000, 3 * JEV_TIMEOUT_MS);
+
+// The text every caller and agent instruction keys on. Keep it stable.
+const JEV_MARKER = "JEV UNAVAILABLE";
+
+// A failure that ends a request and counts toward the breaker. `auth` trips at once.
+class JevError extends Error {
+  constructor(message, auth = false) {
+    super(message);
+    this.auth = auth;
   }
 }
+
+const keyHash = (key) => createHash("sha256").update(key).digest("hex").slice(0, 16);
+
+function readJevState(dir) {
+  try {
+    const s = JSON.parse(readFileSync(join(dir, "jev-state.json"), "utf8"));
+    return s && typeof s === "object" ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+// Writes go to a private temporary file and are renamed into place, so a reader
+// never sees a partial file and concurrent writers leave one whole state.
+function writeJevState(dir, state) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const tmp = join(dir, `jev-state.json.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+    writeFileSync(tmp, JSON.stringify(state) + "\n");
+    renameSync(tmp, join(dir, "jev-state.json"));
+  } catch {
+    /* the cross-call breaker is advisory; the per-call breaker still holds */
+  }
+}
+
+const isoTime = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
+
+// One Jev client per lookup call. `reason` is null while Jev may be used, and
+// the reason it may not be once that is known.
+class Jev {
+  constructor(key) {
+    this.key = key;
+    this.reason = key ? null : "no TypeSafe key is set";
+    this.checked = !key;
+    this.failStreak = 0;
+    this.successes = 0;
+    this.failures = 0;
+    this.probe = null;
+    this.startedAt = Date.now();
+    const c = key ? cacheDir() : {};
+    this.dir = c.dir || null;
+  }
+
+  // Whether Jev may be asked. The first call reads the shared state, so a lookup
+  // that never needs Jev never touches it.
+  usable() {
+    if (!this.checked) {
+      this.checked = true;
+      this.consultSharedState();
+    }
+    return this.reason === null;
+  }
+
+  consultSharedState() {
+    if (!this.dir) return;
+    const s = readJevState(this.dir);
+    if (!s || !s.down) return;
+    if (s.auth && s.keyHash !== keyHash(this.key)) return; // the key changed since the auth failure
+    const until = Number(s.until) || 0;
+    if (Date.now() < until) {
+      this.reason = `${s.reason || "Jev failed"}; recorded by an earlier lookup at ${isoTime(Number(s.since) || 0)}, skipped until ${isoTime(until)}`;
+      return;
+    }
+    // The cooldown has passed: one call probes, the rest keep skipping until it ends.
+    const probe = join(this.dir, "jev-probe");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        closeSync(openSync(probe, "wx"));
+        this.probe = probe;
+        return;
+      } catch (e) {
+        if (e.code !== "EEXIST") return; // cannot claim; probe anyway rather than stay down forever
+        try {
+          if (Date.now() - statSync(probe).mtimeMs > JEV_PROBE_STALE_MS) {
+            unlinkSync(probe);
+            continue;
+          }
+        } catch {
+          continue; // the prober finished between the open and the stat
+        }
+        this.reason = `${s.reason || "Jev failed"}; the cooldown has passed and another lookup is probing Jev now`;
+        return;
+      }
+    }
+  }
+
+  // Ends the call's use of Jev: releases a probe claim and, when this call
+  // reached Jev, clears a recorded outage older than the call.
+  finish() {
+    if (this.dir && this.successes && !this.reason) {
+      const s = readJevState(this.dir);
+      if (s && s.down && (Number(s.since) || 0) <= this.startedAt) {
+        try {
+          unlinkSync(join(this.dir, "jev-state.json"));
+        } catch {
+          /* already cleared */
+        }
+      }
+    }
+    if (this.probe)
+      try {
+        unlinkSync(this.probe);
+      } catch {
+        /* already released */
+      }
+    this.probe = null;
+  }
+
+  trip(why, auth) {
+    if (this.reason) return;
+    this.reason = why;
+    if (this.dir)
+      writeJevState(this.dir, { down: true, reason: why, auth: Boolean(auth), keyHash: keyHash(this.key), since: Date.now(), until: Date.now() + JEV_COOLDOWN_MS, pid: process.pid });
+  }
+
+  record(err) {
+    this.failures++;
+    this.failStreak++;
+    if (err instanceof JevError && err.auth) this.trip(err.message, true);
+    else if (this.failStreak >= JEV_TRIP) this.trip(`${this.failStreak} Jev requests in a row failed, the last with: ${err.message}`, false);
+  }
+
+  // One request. Throws when the breaker is open or the request failed.
+  async ask(state, questions) {
+    if (!this.usable()) throw new JevError(this.reason);
+    try {
+      const answers = await this.attempt(state, questions);
+      this.successes++;
+      this.failStreak = 0;
+      return answers;
+    } catch (e) {
+      if (!this.reason) this.record(e);
+      throw e;
+    }
+  }
+
+  async attempt(state, questions) {
+    for (let attempt = 0; ; attempt++) {
+      if (this.reason) throw new JevError(this.reason);
+      let res;
+      try {
+        res = await fetch(JEV_URL, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ state, model: JEV_MODEL, questions }),
+          signal: AbortSignal.timeout(JEV_TIMEOUT_MS),
+        });
+      } catch (e) {
+        // A timeout is not retried: a hanging service would hang the retry too.
+        if (e.name === "TimeoutError" || e.name === "AbortError") throw new JevError(`a Jev request timed out after ${JEV_TIMEOUT_MS / 1000}s`);
+        if (attempt >= JEV_RETRIES) throw new JevError(`Jev is unreachable (${e.cause?.code || e.message})`);
+        await sleep(300 * 2 ** attempt);
+        continue;
+      }
+      if (res.status === 401 || res.status === 403) {
+        await res.body?.cancel();
+        throw new JevError(`Jev rejected the TypeSafe key (HTTP ${res.status})`, true);
+      }
+      if (res.ok) {
+        let body;
+        try {
+          body = await res.json();
+        } catch (e) {
+          if (e.name === "TimeoutError" || e.name === "AbortError") throw new JevError(`a Jev response timed out after ${JEV_TIMEOUT_MS / 1000}s`);
+          throw new JevError("Jev returned a response that is not JSON");
+        }
+        const a = body && body.answers;
+        if (!a || typeof a !== "object" || Object.keys(questions).some((id) => !a[id] || typeof a[id].noul !== "number"))
+          throw new JevError("Jev returned a response without the expected answers");
+        return a;
+      }
+      const text = await res.text().catch(() => "");
+      if ((res.status === 429 || res.status >= 500) && attempt < JEV_RETRIES && !this.reason) {
+        // Honour Retry-After, but never so long that an outage stalls the call.
+        const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || 300 * 2 ** attempt, 3000);
+        await sleep(wait);
+        continue;
+      }
+      throw new JevError(`Jev returned HTTP ${res.status}${text ? ": " + text.replace(/\s+/g, " ").slice(0, 120) : ""}`);
+    }
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // One request per passage. Jev's accuracy falls as the state fills with text
 // unrelated to the question, so a passage is judged alone with its heading. Jev
 // answers every question in a request against the same state, so when several
 // queries shortlist one passage they travel together and the passage is sent once.
 // `items` is [{ block, questions: { id: question } }]; the result maps each id to
-// its probability, per item, or null where the request failed.
-async function judgeMany(key, items) {
+// its probability, per item, or null where the request failed or was not sent
+// because the breaker opened.
+async function judgeMany(jev, items) {
   const out = new Array(items.length).fill(null);
   let next = 0;
   let failed = 0;
@@ -476,9 +684,13 @@ async function judgeMany(key, items) {
     for (;;) {
       const i = next++;
       if (i >= items.length) return;
+      if (!jev.usable()) {
+        failed++;
+        continue;
+      }
       const b = items[i].block;
       try {
-        const a = await jevAsk(key, { section_heading: b.heading, passage: b.text.slice(0, 12000) }, items[i].questions);
+        const a = await jev.ask({ section_heading: b.heading, passage: b.text.slice(0, 12000) }, items[i].questions);
         out[i] = Object.fromEntries(Object.entries(a).map(([id, v]) => [id, v.noul]));
       } catch {
         failed++;
@@ -489,8 +701,8 @@ async function judgeMany(key, items) {
   return { answers: out, failed };
 }
 
-async function judge(key, blocks, question) {
-  const { answers, failed } = await judgeMany(key, blocks.map((block) => ({ block, questions: { q: question } })));
+async function judge(jev, blocks, question) {
+  const { answers, failed } = await judgeMany(jev, blocks.map((block) => ({ block, questions: { q: question } })));
   return { probs: answers.map((a) => (a ? a.q : null)), failed };
 }
 
@@ -619,7 +831,7 @@ function identifiers(text) {
 }
 
 async function relatedSearch(r, ctx) {
-  const { all, blocksOf, bySlug, key, root } = ctx;
+  const { all, blocksOf, bySlug, jev, root } = ctx;
   // Default sources, measured on 132 cases (197 targets): meaning, also, sentidx,
   // and chunks reach 86% of targets as candidates with a median of 281 per call;
   // the earlier default of links, terms, and meaning reached 76% with 292. Link-
@@ -780,18 +992,22 @@ async function relatedSearch(r, ctx) {
     list = list.filter((c) => keep.has(c.block));
   }
   let failed = 0;
-  if (key && list.length && r.judge !== false) {
+  const wantJudge = list.length > 0 && r.judge !== false;
+  if (wantJudge && jev.usable()) {
     // For tuning, "format": "json" also asks the question without the change.
     const questions = { q: relatedQuestion(passage, change, text) };
     if (ctx.tune && change) questions.q0 = relatedQuestion(passage, "", text);
-    const { answers, failed: f } = await judgeMany(key, list.map((c) => ({ block: c.block, questions })));
+    const { answers, failed: f } = await judgeMany(jev, list.map((c) => ({ block: c.block, questions })));
     failed = f;
     list.forEach((c, i) => {
       c.p = answers[i] ? answers[i].q : null;
       if (questions.q0) c.p0 = answers[i] ? answers[i].q0 : null;
     });
   }
-  return { home, list, notes, sources: [...via], failed, judged: Boolean(key) && r.judge !== false };
+  // A breaker that opened during this search leaves a partial ranking, so the
+  // whole list is reported unjudged rather than as a ranking with holes in it.
+  const judged = wantJudge && jev.usable();
+  return { home, list, notes, sources: [...via], failed, judged, unjudgedReason: wantJudge && !judged ? jev.reason : null };
 }
 
 // The wording was chosen by comparing three on 141 known targets and 279
@@ -834,6 +1050,12 @@ async function main() {
   if (!req.warm && !exact.length && !meaning.length && !sections.length && !related.length && !(Array.isArray(req.lines) && req.lines.length))
     usage("give at least one of exact, meaning, sections, lines, related");
   const key = typesafeKey();
+  // Constructed after the prune and warm paths, which never ask Jev. The exit
+  // hook releases a probe claim even when a usage error ends the call.
+  const jev = new Jev(key);
+  process.on("exit", () => jev.finish());
+  // Set when a part of this request that asks Jev went without it.
+  let jevMissed = false;
   const lineReqs = Array.isArray(req.lines) ? req.lines.map(String) : [];
   // The harness that runs this tool for an agent saves any output past roughly
   // 30,000 characters to a file, and the agent then spends turns reading the file
@@ -980,13 +1202,17 @@ async function main() {
     }
     let show = hits;
     let judged = null;
-    if (req.context && key && hits.length > 3) {
-      judged = await judge(key, hits, contextQuestion(typeof term === "string" ? term : term.pattern, req.context));
-      hits.forEach((h, i) => (h.p = judged.probs[i]));
-      show = hits.filter((h) => h.p === null || h.p >= NARROW);
-      emit(`Narrowed by context with Jev: ${show.length} of ${hits.length} passage(s) printed. Every passage is listed below either way.${judged.failed ? ` ${judged.failed} passage(s) could not be judged and are printed.` : ""}`);
-    } else if (req.context && !key) {
-      emit("Context given but no TypeSafe key is set, so nothing was narrowed.");
+    if (req.context && hits.length > 3 && jev.usable()) {
+      judged = await judge(jev, hits, contextQuestion(typeof term === "string" ? term : term.pattern, req.context));
+      if (jev.usable()) {
+        hits.forEach((h, i) => (h.p = judged.probs[i]));
+        show = hits.filter((h) => h.p === null || h.p >= NARROW);
+        emit(`Narrowed by context with Jev: ${show.length} of ${hits.length} passage(s) printed. Every passage is listed below either way.${judged.failed ? ` ${judged.failed} passage(s) could not be judged and are printed.` : ""}`);
+      }
+    }
+    if (req.context && hits.length > 3 && !jev.usable()) {
+      jevMissed = true;
+      emit(`Context given but Jev is unavailable (${jev.reason}), so nothing was narrowed; every passage is printed while the budget lasts.`);
     }
     const shown = new Set(show);
     const skipped = [];
@@ -1010,7 +1236,7 @@ async function main() {
     for (const m of meaning) if (!m || typeof m.query !== "string" || !m.query.trim()) usage("each meaning entry needs a query");
     // A small scope is judged whole; so is any scope when the caller asks. Without
     // a key there is no judge, so the shortlists are all there is to show.
-    const whole = key ? req.exhaustive === true || (req.exhaustive !== false && all.length <= JUDGE_ALL_BELOW) : false;
+    const whole = jev.usable() ? req.exhaustive === true || (req.exhaustive !== false && all.length <= JUDGE_ALL_BELOW) : false;
     // One embedding run serves every query in the call.
     const emb = whole || !all.length ? null : embedShortlist(all, meaning.map((m) => m.query), SHORTLIST);
     if (emb && emb.reason) emit(`\nEmbedding shortlist unavailable (${emb.reason}); meaning search used word overlap only.`);
@@ -1028,7 +1254,7 @@ async function main() {
     });
     // Judge every query's candidates in one pass, one request per distinct passage.
     let judgedFailed = 0;
-    if (key) {
+    if (jev.usable()) {
       const byBlock = new Map();
       meaning.forEach((m, mi) => {
         const q = meaningQuestion(m.query, m.ctx);
@@ -1038,7 +1264,7 @@ async function main() {
         }
       });
       const items = [...byBlock].map(([block, questions]) => ({ block, questions }));
-      const { answers, failed } = await judgeMany(key, items);
+      const { answers, failed } = await judgeMany(jev, items);
       judgedFailed = failed;
       const at = new Map(items.map((it, i) => [it.block, answers[i]]));
       meaning.forEach((m, mi) => (m.probs = m.cands.map((c) => at.get(c.block)?.["q" + mi] ?? null)));
@@ -1054,10 +1280,16 @@ async function main() {
       }
       const n = (v) => cands.filter((c) => c.via === v).length;
       const mix = whole ? "every passage in scope" : `${n("words")} by word overlap, ${n("embedding")} by embedding, ${n("both")} by both, of ${all.length} in scope`;
-      if (!key) {
-        emit(`No TypeSafe key is set, so these are shortlisted candidates (${mix}), unjudged and unranked.`);
+      // A breaker that opened during the pass leaves a partial ranking, so the
+      // query is shown as its unjudged shortlist instead.
+      if (!jev.usable()) {
+        jevMissed = true;
+        // A scope that was to be judged whole has no shortlist, so one is made here.
+        const shown = whole ? shortlist(all, m.query + " " + ctx, SHORTLIST).map((block) => ({ block, via: "words" })) : cands;
+        const from = whole ? `${shown.length} by word overlap, of ${all.length} in scope` : mix;
+        emit(`Jev is unavailable (${jev.reason}), so these are shortlisted candidates (${from}), unjudged and unranked. They are leads, not matches, and the shortlist is not complete: search with exact terms and read the passages yourself.`);
         // Without a judge there is no common score, so the two lists are interleaved.
-        const order = [...cands.filter((c) => c.via === "both"), ...cands.filter((c) => c.via === "embedding"), ...cands.filter((c) => c.via === "words")];
+        const order = [...shown.filter((c) => c.via === "both"), ...shown.filter((c) => c.via === "embedding"), ...shown.filter((c) => c.via === "words")];
         for (const { block: b, via } of order.slice(0, 16)) {
           const head = `\n### ${where(b)}  (shortlisted by ${via})`;
           if (fits(head + "\n" + render(b))) emit(head + "\n" + render(b));
@@ -1093,7 +1325,7 @@ async function main() {
     const all = [];
     for (const bl of blocksOf.values()) for (const b of bl) if (!b.isHeading && b.text.trim().length > 40) all.push(b);
     const bySlug = linkIndex(blocksOf);
-    const ctx = { all, blocksOf, bySlug, key, root, tune: req.format === "json" };
+    const ctx = { all, blocksOf, bySlug, jev, root, tune: req.format === "json" };
     for (const r of related) {
       const res = await relatedSearch(r, ctx);
       relatedRecords.push({
@@ -1107,7 +1339,10 @@ async function main() {
       if (res.home) emit(`Changed passage: ${where(res.home)}`);
       emit(`Candidate sources: ${res.sources.join(", ")}${res.notes.length ? ` (${res.notes.join("; ")})` : ""}.`);
       if (!res.judged) {
-        emit(`No TypeSafe key is set, so these ${res.list.length} candidates are unjudged.`);
+        if (res.unjudgedReason) {
+          jevMissed = true;
+          emit(`Jev is unavailable (${res.unjudgedReason}), so these ${res.list.length} candidates are unranked leads, unjudged and in no order of relevance. Read each one, and search by exact identifiers and paraphrases yourself; this list is not a sweep.`);
+        } else emit(`Judging was turned off ("judge": false), so these ${res.list.length} candidates are unjudged.`);
         for (const c of res.list.slice(0, 30)) emit(`- ${where(c.block)}  (via ${c.via.join("+")})`);
         done++;
         continue;
@@ -1131,7 +1366,11 @@ async function main() {
 
   // "format": "json" returns every judged candidate with its probability, matched
   // or not. It exists for measuring and tuning the search, not for reviewers.
-  if (req.format === "json") process.stdout.write(JSON.stringify({ meaning: records, related: relatedRecords }) + "\n");
+  // The marker goes right under the header line, so an agent reading only the
+  // top of the output sees that the Jev-backed parts are unjudged.
+  const marker = jevMissed ? `${JEV_MARKER} (${jev.reason}): meaning/related results are unjudged shortlists; use grep/exact search and read the passages yourself. Exact search, sections, and lines are unaffected and complete.` : null;
+  if (marker) out.splice(1, 0, marker);
+  if (req.format === "json") process.stdout.write(JSON.stringify({ jevUnavailable: marker, meaning: records, related: relatedRecords }) + "\n");
   else process.stdout.write(out.join("\n") + "\n");
 }
 

@@ -1,13 +1,15 @@
 // Tests for .claude/tools/lookup.mjs: the parts that need no network.
 //
 // Exact search, section fetch, and the output budget run against a small
-// repository built in a temporary directory. Meaning search is not exercised
-// here: it calls Jev and an embedding model, and a test that depends on either
-// would fail for reasons unrelated to the tool. The embedding helper's
+// repository built in a temporary directory. Meaning search never reaches the
+// real Jev or the embedding model here: the Jev checks point LOOKUP_JEV_URL at a
+// stub server in this process and keep the scope small enough to be judged
+// whole, so no embedding runs. The embedding helper's
 // concurrency paths that need no model (the bounded lock wait, request-file
 // cleanup, and cache pruning) run when uv is installed and are skipped otherwise.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,9 +110,184 @@ try {
   r = run({ exact: ["x"], scope: ["nope"] });
   check("an unknown scope is a usage error", r.status === 2 && r.stderr.includes("unknown scope"));
 
+  await jevChecks(root);
   await embeddingChecks(root);
 } finally {
   rmSync(root, { recursive: true, force: true });
+}
+
+// The Jev breakers, against a stub endpoint whose behavior each check sets.
+// spec/20_many.md holds enough passages that a breaker that failed to open would
+// send far more requests than the bounds below allow.
+async function jevChecks(root) {
+  const many = ["# 20. Many", ""];
+  for (let i = 0; i < 200; i++) many.push(`## 20.${i + 1} Item ${i}`, "", `Passage ${i} says a session with no client activity is suspended after the idle bound.`, "");
+  writeFileSync(join(root, "spec", "20_many.md"), many.join("\n"));
+
+  let mode = "ok";
+  let hits = 0;
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      hits++;
+      if (mode === "hang") return; // never answers
+      if (mode === "500") return res.writeHead(503).end("overloaded");
+      if (mode === "401") return res.writeHead(401).end("bad key");
+      if (mode === "garbage") return res.writeHead(200, { "Content-Type": "application/json" }).end("<html>not json</html>");
+      const qs = JSON.parse(body).questions || {};
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ answers: Object.fromEntries(Object.keys(qs).map((id) => [id, { noul: 0.9 }])) }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${server.address().port}/v1/systemone`;
+  let cacheN = 0;
+  const freshCache = () => {
+    const d = join(root, `jev-cache-${++cacheN}`);
+    mkdirSync(d, { recursive: true });
+    return d;
+  };
+  const envFor = (cache, extra = {}) => ({
+    ...process.env,
+    TYPESAFE_API_KEY: "test-key",
+    LOOKUP_JEV_URL: url,
+    LOOKUP_CACHE_DIR: cache,
+    LOOKUP_JEV_CONCURRENCY: "4",
+    LOOKUP_JEV_TIMEOUT: "2",
+    LOOKUP_JEV_COOLDOWN: "600",
+    ...extra,
+  });
+  const runJev = (req, env) =>
+    new Promise((res) => {
+      const t0 = Date.now();
+      const c = spawn("node", [TOOL, "--json", JSON.stringify(req)], { cwd: root, env });
+      let stdout = "";
+      let stderr = "";
+      c.stdout.on("data", (d) => (stdout += d));
+      c.stderr.on("data", (d) => (stderr += d));
+      c.on("close", (status) => res({ status, stdout, stderr, ms: Date.now() - t0 }));
+    });
+  const MEANING = { meaning: [{ query: "a session with no client activity is suspended after the idle bound" }], paths: ["spec/20_many.md"] };
+  const state = (cache) => {
+    try {
+      return JSON.parse(readFileSync(join(cache, "jev-state.json"), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const line2 = (out) => out.split("\n")[1] || "";
+
+  try {
+    // A healthy endpoint judges, prints no marker, and records nothing.
+    let cache = freshCache();
+    mode = "ok";
+    hits = 0;
+    let r = await runJev(MEANING, envFor(cache));
+    check("jev: a healthy endpoint judges the passages", r.status === 0 && r.stdout.includes("Jev judged 200 passage(s)") && hits === 200, `${hits} ${r.stdout.slice(0, 400)}${r.stderr}`);
+    check("jev: a healthy call prints no marker and records no state", !r.stdout.includes("JEV UNAVAILABLE") && !existsSync(join(cache, "jev-state.json")));
+
+    // A 5xx storm opens the per-call breaker after a few requests, well before
+    // the 200 passages, and the call ends in seconds rather than minutes.
+    cache = freshCache();
+    mode = "500";
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache));
+    check("jev 5xx: the call still exits 0", r.status === 0, r.stderr);
+    check("jev 5xx: the marker is the line under the header", line2(r.stdout).startsWith("JEV UNAVAILABLE (3 Jev requests in a row failed") && r.stdout.startsWith("# lookup in "), r.stdout.slice(0, 400));
+    // Each of the 4 workers may send one request with its retries, and the two
+    // workers whose failures come before the third may each start one more.
+    check("jev 5xx: the breaker stops sending after a bounded number of requests", hits <= (4 + 2) * 3, `${hits} requests`);
+    check("jev 5xx: the call takes seconds", r.ms < 10000, `${r.ms} ms`);
+    check("jev 5xx: the shortlist is printed unjudged", r.stdout.includes("unjudged and unranked") && r.stdout.includes("shortlisted by words"), r.stdout.slice(0, 800));
+    let s = state(cache);
+    check("jev 5xx: the outage is recorded with a cooldown", s && s.down === true && s.auth === false && s.until - s.since === 600000, JSON.stringify(s));
+
+    // A 401 trips on the first answer and is recorded as an auth failure.
+    cache = freshCache();
+    mode = "401";
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache));
+    check("jev 401: the marker names the rejected key", line2(r.stdout).startsWith("JEV UNAVAILABLE (Jev rejected the TypeSafe key (HTTP 401))"), line2(r.stdout));
+    check("jev 401: no request is sent after the first answers", hits <= 4, `${hits} requests`);
+    s = state(cache);
+    check("jev 401: the shared state records an auth failure keyed to the key", s && s.down && s.auth === true && /^[0-9a-f]{16}$/.test(s.keyHash), JSON.stringify(s));
+
+    // During the cooldown the next call skips Jev without sending anything.
+    mode = "ok";
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache));
+    check("jev cooldown: the next call sends no request", hits === 0, `${hits} requests`);
+    check("jev cooldown: it says it skipped and until when", line2(r.stdout).startsWith("JEV UNAVAILABLE (Jev rejected the TypeSafe key (HTTP 401); recorded by an earlier lookup at") && line2(r.stdout).includes("skipped until"), line2(r.stdout));
+
+    // Exact search, sections, and lines never ask Jev, so a down state adds no marker.
+    r = await runJev({ exact: ["maxIdle"], sections: ["7.2"] }, envFor(cache));
+    check("jev cooldown: an exact-only request is complete and carries no marker", !r.stdout.includes("JEV UNAVAILABLE") && /4 occurrence\(s\)/.test(r.stdout) && hits === 0, r.stdout.slice(0, 300));
+    r = await runJev({ exact: ["Passage"], context: "idle suspension", paths: ["spec/20_many.md"] }, envFor(cache));
+    check("jev cooldown: context narrowing reports nothing was narrowed under the marker", line2(r.stdout).startsWith("JEV UNAVAILABLE") && r.stdout.includes("so nothing was narrowed") && hits === 0, r.stdout.slice(0, 500));
+    r = await runJev({ related: [{ text: "Passage 3 says a session with no client activity is suspended after the idle bound.", change: "suspension becomes termination", via: ["terms", "sentidx"] }], paths: ["spec/20_many.md"] }, envFor(cache));
+    check("jev cooldown: related candidates are reported as unranked leads", line2(r.stdout).startsWith("JEV UNAVAILABLE") && r.stdout.includes("unranked leads") && hits === 0, r.stdout.slice(0, 600));
+
+    // A changed key is tried at once despite an auth failure on the old one.
+    r = await runJev(MEANING, envFor(cache, { TYPESAFE_API_KEY: "another-key" }));
+    check("jev auth: a changed key is tried without waiting for the cooldown", hits > 0 && !r.stdout.includes("JEV UNAVAILABLE"), `${hits} ${line2(r.stdout)}`);
+    check("jev auth: its success clears the recorded outage", state(cache) === null, JSON.stringify(state(cache)));
+
+    // After the cooldown, while another lookup holds the probe, a call keeps skipping.
+    cache = freshCache();
+    writeFileSync(join(cache, "jev-state.json"), JSON.stringify({ down: true, reason: "earlier outage", auth: false, since: Date.now() - 700000, until: Date.now() - 100000 }));
+    writeFileSync(join(cache, "jev-probe"), "");
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache));
+    check("jev probe: a call skips while another lookup is probing", hits === 0 && line2(r.stdout).includes("another lookup is probing Jev now"), line2(r.stdout));
+    // A probe claim left by a dead lookup goes stale and is taken over.
+    const old = new Date(Date.now() - 600000);
+    utimesSync(join(cache, "jev-probe"), old, old);
+    r = await runJev(MEANING, envFor(cache));
+    check("jev probe: a stale probe claim is taken over and the recovery clears the state", hits === 200 && !r.stdout.includes("JEV UNAVAILABLE") && state(cache) === null && !existsSync(join(cache, "jev-probe")), `${hits} ${line2(r.stdout)} ${JSON.stringify(state(cache))}`);
+
+    // A failed probe records a new cooldown and releases its claim.
+    writeFileSync(join(cache, "jev-state.json"), JSON.stringify({ down: true, reason: "earlier outage", auth: false, since: Date.now() - 700000, until: Date.now() - 100000 }));
+    mode = "500";
+    r = await runJev(MEANING, envFor(cache));
+    s = state(cache);
+    check("jev probe: a failed probe records a new cooldown and releases the claim", s && s.until > Date.now() && !existsSync(join(cache, "jev-probe")) && line2(r.stdout).startsWith("JEV UNAVAILABLE (3 Jev"), `${JSON.stringify(s)} ${line2(r.stdout)}`);
+
+    // A hanging endpoint is cut off by the request timeout.
+    cache = freshCache();
+    mode = "hang";
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache, { LOOKUP_JEV_TIMEOUT: "1" }));
+    check("jev hang: the request timeout opens the breaker", line2(r.stdout).includes("timed out after 1s") && r.status === 0, line2(r.stdout) + r.stderr);
+    check("jev hang: the call ends near the timeout", r.ms < 8000, `${r.ms} ms`);
+    check("jev hang: no more than one round of requests is sent", hits <= 4 + 2, `${hits} requests`);
+
+    // A 200 response that is not the expected JSON counts as a failure.
+    cache = freshCache();
+    mode = "garbage";
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache));
+    check("jev malformed: an unreadable response opens the breaker", line2(r.stdout).includes("not JSON") && hits <= 4 + 2, `${hits} ${line2(r.stdout)}`);
+
+    // Concurrent lookups that all trip write one whole state and leave no temporary files.
+    cache = freshCache();
+    mode = "500";
+    const rs = await Promise.all(Array.from({ length: 8 }, () => runJev(MEANING, envFor(cache))));
+    check("jev concurrent: every lookup exits 0 with the marker", rs.every((x) => x.status === 0 && line2(x.stdout).startsWith("JEV UNAVAILABLE")), rs.map((x) => x.status + line2(x.stdout).slice(0, 40)).join(" | "));
+    s = state(cache);
+    check("jev concurrent: the state file is whole JSON", s && s.down === true, readdirSync(cache).join(","));
+    check("jev concurrent: no temporary state file is left", readdirSync(cache).every((f) => !f.endsWith(".tmp")), readdirSync(cache).join(","));
+
+    // Without a key the shortlist is unjudged under the same marker.
+    cache = freshCache();
+    hits = 0;
+    r = await runJev(MEANING, envFor(cache, { TYPESAFE_API_KEY: "" }));
+    check("jev no key: the marker names the missing key and nothing is sent", line2(r.stdout).startsWith("JEV UNAVAILABLE (no TypeSafe key is set): meaning/related results are unjudged shortlists") && hits === 0, line2(r.stdout));
+    check("jev no key: no state is recorded", !existsSync(join(cache, "jev-state.json")));
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    rmSync(join(root, "spec", "20_many.md"), { force: true });
+  }
 }
 
 // The embedding helper's paths that need no model. Each runs against a cache
@@ -151,7 +328,7 @@ async function embeddingChecks(root) {
   const r = await runAsync(["--json", JSON.stringify({ meaning: [{ query: "a session ends when it has been idle too long" }] })]);
   const took = Date.now() - t0;
   holder.kill();
-  if (r.stdout.includes("No TypeSafe key") || r.stdout.includes("Jev judged")) {
+  if (r.stdout.includes("JEV UNAVAILABLE (no TypeSafe key is set)")) {
     check("a lookup behind a held embedding lock exits 0", r.status === 0, r.stdout);
     check("it reports the embedding as busy", r.stdout.includes("embedding busy"), r.stdout);
     check("it still serves the word-overlap shortlist", r.stdout.includes("shortlisted by words"), r.stdout);
