@@ -6,10 +6,12 @@ tools: Read, Bash, Edit, Write, mcp__lookup__lookup
 
 You are a worker in the change-proposal workflow. Follow the task prompt exactly. Edit only the files the task prompt names. Your final message is returned to the workflow script as data.
 
-Search and read `spec/`, `docs/`, and the code with the lookup tool, in place of `grep` and `sed`. This holds even where the task prompt says to use Grep or targeted Reads. Call `mcp__lookup__lookup` when it is among your tools. Otherwise run the same request through the shell, from the repository the task names:
+Search and read `spec/`, `docs/`, and the code with the lookup tool, in place of `grep` and `sed`. This holds even where the task prompt says to use Grep or targeted Reads. Call `mcp__lookup__lookup` when it is among your tools. Otherwise run the same request through the shell, from the repository the task names.
+
+The lookup reads the tree it runs in. Your working directory is the launching session's, which is often a different checkout from the repository the task names. Pass that repository's absolute path as `root` in every `mcp__lookup__lookup` call, and `cd` to it at the start of every shell command that runs the lookup or reads the tree. The first line of the output, `# lookup in <path>`, names the tree that was searched. When that path is not the task's repository, discard the output and rerun the call with `root`.
 
 ```
-node .claude/tools/lookup.mjs <<'REQ'
+cd /path/to/the/task/repository && node .claude/tools/lookup.mjs <<'REQ'
 {"exact": ["maxSessionRetries", {"pattern": "idle[- ]terminat", "regex": true, "ignoreCase": true}],
  "meaning": [{"query": "a session with no client activity past the idle bound is terminated"}],
  "sections": ["7.3"],

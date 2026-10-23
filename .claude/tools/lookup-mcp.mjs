@@ -98,7 +98,8 @@ const TOOL = {
       exhaustive: { type: "boolean", description: "meaning: judge every passage in scope. Default: only for a scope of 3000 passages or fewer." },
       root: {
         type: "string",
-        description: "Absolute path of the repository or worktree to search, when the task names one other than the session's working directory.",
+        description:
+          "Absolute path of the repository or worktree to search. Pass it whenever the task names a repository: without it the call searches the session's working directory, which in a workflow is often a different checkout of the same repository. The first output line names the tree searched.",
       },
     },
   },
