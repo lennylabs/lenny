@@ -70,10 +70,11 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 		ctx, cancel := context.WithTimeout(context.Background(), scrubDeadline(cfg.CleanupTimeout))
 		defer cancel()
 		rep, err := scrub.Run(ctx, s.ScrubOps, cfg)
-		// A slots container the adapter could not read fails the scrub's
-		// outcome even when every enumerated step succeeded: the steps ran
-		// over a set that may be missing every leaked session's residue.
-		// spec: §5.2 (whole-pod scrub outcome).
+		// A workspace slots container the adapter could not read fails the
+		// scrub's outcome even when every enumerated step succeeded: the
+		// steps ran over a set that may be missing every leaked session's
+		// residue. An unreadable credentials container already failed step
+		// 0 inside scrub.Run. spec: §5.2 (whole-pod scrub outcome).
 		outcome, detail := scrubOutcome(rep, errors.Join(err, enumErr))
 		// The liveness sample is taken below, after the scrub has run:
 		// step 4 clears the /tmp and /dev/shm mounts the runtime container
@@ -159,10 +160,13 @@ func (s *Server) SetScrubDoneHook(f func()) {
 // default because the pool configuration carries no cleanup shell field, so
 // cleanup commands run in the default argv mode.
 //
-// An enumeration failure is returned beside the config rather than folded
-// into an empty set, because an empty set is what the scrub reads as "this
-// pod held no slot" and a container the adapter cannot read may hold every
-// leaked session's workspace and credential lease. The caller runs the
+// An enumeration failure is never folded into an empty set, because an
+// empty set is what the scrub reads as "this pod held no slot" and a
+// container the adapter cannot read may hold every leaked session's
+// workspace and credential lease. A credential enumeration failure rides in
+// the config as a step-0 error, so scrub.Run skips cleanupCommands while a
+// credential file may still be on disk and fails the scrub. A workspace
+// enumeration failure is returned beside the config: the caller runs the
 // scrub with what was enumerated and fails its outcome on the error, so the
 // pod is retired rather than recycled with unverified residue.
 //
@@ -171,14 +175,15 @@ func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) (scrub.Config, error) {
 	creds, credErr := s.slotCredentialFiles()
 	trees, treeErr := s.slotWorkspaceTrees()
 	cfg := scrub.Config{
-		CredentialFiles: creds,
-		WorkspaceDirs:   trees,
-		CleanupDir:      s.WorkspaceBase,
-		CleanupCommands: rc.GetCleanupCommands(),
-		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
+		CredentialFiles:   creds,
+		CredentialEnumErr: credErr,
+		WorkspaceDirs:     trees,
+		CleanupDir:        s.WorkspaceBase,
+		CleanupCommands:   rc.GetCleanupCommands(),
+		CleanupTimeout:    time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
 	}
 	s.applySupervisedScrub(&cfg)
-	return cfg, errors.Join(credErr, treeErr)
+	return cfg, treeErr
 }
 
 // applySupervisedScrub adds the supervised steps on a pod that runs the

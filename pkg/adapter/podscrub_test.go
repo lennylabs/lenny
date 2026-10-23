@@ -783,3 +783,43 @@ func TestRecycleScrubWithUnreadableSlotsContainerReportsFailure_spec_5_2(t *test
 			reports[0].detail)
 	}
 }
+
+// TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated asserts that
+// on a pod without the runtime supervisor a credentials container the
+// adapter cannot read keeps the deployer's cleanupCommands from running and
+// fails the scrub: the adapter cannot confirm every credential file is gone.
+//
+// diagnosis: the credential enumeration failure is reaching the outcome only
+// after scrub.Run, so cleanupCommands run with a previous session's
+// credential file possibly still on disk.
+// spec: 5.2 (Supervised scrub sequence, Step 0)
+func TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated_spec_5_2(t *testing.T) {
+	s, reporter, _, done := recycleServer(t)
+	credBase := t.TempDir()
+	s.CredentialsDir = credBase
+	if err := os.WriteFile(filepath.Join(credBase, "slots"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write the slots path: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "cleanup-ran")
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId:                 "pod-unreadable-creds",
+			CleanupCommands:       []string{"/usr/bin/touch " + marker},
+			CleanupTimeoutSeconds: 5,
+		},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	waitScrubDone(t, done)
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("cleanupCommands ran although the credential files could not be enumerated")
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 || reports[0].outcome != gatewaycontrol.PodScrubFailed {
+		t.Fatalf("reports = %+v, want one PodScrubFailed", reports)
+	}
+}

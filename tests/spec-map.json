@@ -1663,7 +1663,10 @@
         "pkg/adapter/scrub/defaultops_noexec_test.go::TestScrubFileOperationsFollowNoSymlink_spec_5_2",
         "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSkipsCleanupAfterAStep0ErrorOnEveryPod_spec_5_2",
         "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSendsCleanupThroughTheRunnerAndKeepsTheOrder_spec_5_2",
-        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunNotLiveErrorsLeaveTheScrubOutcome_spec_5_2"
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunNotLiveErrorsLeaveTheScrubOutcome_spec_5_2",
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSkipsCleanupWhenCredentialEnumerationFails_spec_5_2",
+        "pkg/adapter/scrub/scrub_supervised_test.go::TestRunJoinsEnumerationAndRemovalErrorsInStep0_spec_5_2",
+        "pkg/adapter/podscrub_test.go::TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",

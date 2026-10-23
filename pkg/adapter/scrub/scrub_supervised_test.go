@@ -59,6 +59,73 @@ func TestRunSkipsCleanupAfterAStep0ErrorOnEveryPod_spec_5_2(t *testing.T) {
 	}
 }
 
+// TestRunSkipsCleanupWhenCredentialEnumerationFails asserts that a
+// credentials container the adapter could not enumerate is a step-0 error:
+// cleanupCommands do not run, through the adapter's own runner or through
+// the supervisor's, and the scrub fails, while steps 1 to 6 still run.
+//
+// diagnosis: an enumeration failure is being read as "no credential files"
+// again, so deployer cleanupCommands run while a previous session's
+// credential file may still be on disk.
+// spec: 5.2 (Supervised scrub sequence, Step 0)
+func TestRunSkipsCleanupWhenCredentialEnumerationFails_spec_5_2(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	enumErr := errors.New("read /run/lenny/slots: permission denied")
+	cfg := Config{
+		CredentialEnumErr: enumErr,
+		CleanupCommands:   []string{"/usr/bin/touch " + marker},
+		CleanupDir:        dir,
+	}
+	rep, err := Run(context.Background(), newFakeOps(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("cleanupCommands ran although the credential files could not be enumerated")
+	}
+	if rep.Result != Failed {
+		t.Fatalf("result = %v, want Failed", rep.Result)
+	}
+	st := stepRecord(rep, StepCredentialPurge)
+	if st == nil || st.Skipped || !errors.Is(st.Err, enumErr) {
+		t.Fatalf("credential purge step = %+v, want a recorded enumeration error", st)
+	}
+	if st := stepRecord(rep, StepCleanupCommands); st == nil || !st.Skipped {
+		t.Fatalf("cleanup step = %+v, want skipped", st)
+	}
+	if stepRecord(rep, StepVerify) == nil {
+		t.Fatal("steps 1 to 6 did not run")
+	}
+	runner := &recordingRunner{}
+	cfg.CleanupRunner = runner
+	if _, err := Run(context.Background(), newFakeOps(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if runner.n != 0 {
+		t.Fatal("the supervisor's cleanup ran although the credential files could not be enumerated")
+	}
+}
+
+// TestRunJoinsEnumerationAndRemovalErrorsInStep0 asserts that step 0
+// records both a credential enumeration failure and the removal failure of
+// the files that were enumerated. spec: 5.2 (Supervised scrub sequence,
+// Step 0)
+func TestRunJoinsEnumerationAndRemovalErrorsInStep0_spec_5_2(t *testing.T) {
+	ops := newFakeOps()
+	removeErr := errors.New("unremovable")
+	ops.removeErr = map[string]error{"/cred": removeErr}
+	enumErr := errors.New("enumeration failed")
+	rep, err := Run(context.Background(), ops, Config{CredentialFiles: []string{"/cred"}, CredentialEnumErr: enumErr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := stepRecord(rep, StepCredentialPurge)
+	if st == nil || !errors.Is(st.Err, enumErr) || !errors.Is(st.Err, removeErr) {
+		t.Fatalf("credential purge step = %+v, want both errors", st)
+	}
+}
+
 // spec: 5.2 (Supervised scrub sequence), 4.7.10 (Runtime supervisor, Cleanup)
 func TestRunSendsCleanupThroughTheRunnerAndKeepsTheOrder_spec_5_2(t *testing.T) {
 	var order []string

@@ -5,6 +5,8 @@ package adapter
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -29,7 +31,10 @@ type scrubCell struct {
 	// the order the requests of that type arrive.
 	reactions map[string][]fakeReaction
 	step0Err  bool
-	shortCtx  bool
+	// credEnumFails makes the per-slot credentials container unreadable,
+	// so step 0 cannot enumerate the credential files.
+	credEnumFails bool
+	shortCtx      bool
 	// rebindFails makes the listener rebind fail.
 	rebindFails bool
 	wantSent    []string
@@ -51,6 +56,9 @@ func TestSupervisedScrubSequenceCells_spec_5_2(t *testing.T) {
 		"all rows succeed": {wantSent: fullSequence, wantResult: scrub.Succeeded},
 		"step 0 error skips cleanupCommands": {
 			step0Err: true, wantSent: []string{superviseEnd, superviseSweep, superviseEnd, superviseSweep}, wantResult: scrub.Failed,
+		},
+		"step 0 enumeration failure skips cleanupCommands": {
+			credEnumFails: true, wantSent: []string{superviseEnd, superviseSweep, superviseEnd, superviseSweep}, wantResult: scrub.Failed,
 		},
 		"first end error":          {reactions: map[string][]fakeReaction{superviseEnd: {errEnd}}, wantSent: fullSequence, wantResult: scrub.Succeeded, wantCause: CauseReplyError},
 		"first end no reply":       {reactions: map[string][]fakeReaction{superviseEnd: {silent}}, shortCtx: true, wantSent: []string{superviseEnd}, wantResult: scrub.Succeeded, wantCause: CauseLinkFailure},
@@ -103,6 +111,9 @@ func runScrubCell(t *testing.T, c scrubCell, exitedDuring bool) {
 	e.s.ScrubOps = nopScrubOps{}
 	if c.step0Err {
 		e.s.ScrubOps = nopScrubOps{removeErr: errors.New("unremovable")}
+	}
+	if c.credEnumFails {
+		e.s.CredentialsDir = unreadableSlotsRoot(t)
 	}
 	cfg, _ := e.s.scrubConfig(&adapterv1.RecycleScrub{CleanupCommands: []string{"/bin/true"}, CleanupTimeoutSeconds: 1})
 	if c.step0Err {
@@ -171,4 +182,16 @@ func TestScrubDeadlineExceedsTheCleanupRequestBound_spec_28_5_3(t *testing.T) {
 			t.Errorf("scrubDeadline(%s) = %s, want more than the cleanup request bound %s", d, got, bound+superviseCleanupSlack)
 		}
 	}
+}
+
+// unreadableSlotsRoot returns a credentials root whose per-slot container is
+// a regular file, so enumerating it fails with ENOTDIR on every uid the
+// tests run as: a read failure rather than absence.
+func unreadableSlotsRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "slots"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write the slots path: %v", err)
+	}
+	return root
 }

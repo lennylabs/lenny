@@ -146,6 +146,13 @@ type Config struct {
 	// scrub if any member is left present. spec: §5.2; §6.1.
 	CredentialFiles []string
 
+	// CredentialEnumErr is the failure to enumerate CredentialFiles, when
+	// the adapter could not read the per-slot credentials container. It is
+	// a step-0 error: the adapter cannot confirm every credential file is
+	// purged, so the cleanupCommands row is skipped and the scrub fails, on
+	// every pod. spec: §5.2 (Supervised scrub sequence, Step 0).
+	CredentialEnumErr error
+
 	// PrevProvider and PrevLeaseID are the sanitized metadata for the task
 	// whose credentials were just purged. They seed the
 	// LENNY_PREV_CREDENTIAL_PROVIDER and LENNY_PREV_LEASE_ID cleanup-env
@@ -299,13 +306,8 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 
 	// Step 0 (pre-cleanup): purge the credential file before any deployer
 	// code runs.
-	step0Err := error(nil)
-	if len(cfg.CredentialFiles) > 0 {
-		step0Err = removeAll(ops, cfg.CredentialFiles)
-		rep.record(StepCredentialPurge, false, step0Err)
-	} else {
-		rep.record(StepCredentialPurge, true, nil)
-	}
+	step0Err := purgeCredentials(ops, cfg)
+	rep.record(StepCredentialPurge, len(cfg.CredentialFiles) == 0 && step0Err == nil, step0Err)
 
 	// spec: §5.2 (Supervised scrub sequence) — on a restart pod the first
 	// end and sweep run between step 0 and cleanupCommands.
@@ -354,6 +356,18 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 		rep.Result = Failed
 	}
 	return rep, nil
+}
+
+// purgeCredentials runs step 0 and returns its error: the enumeration
+// failure, if any, joined with the removal failure of the files that were
+// enumerated. A non-nil result gates the cleanupCommands row in Run.
+// spec: §5.2 (Supervised scrub sequence, Step 0).
+func purgeCredentials(ops Ops, cfg Config) error {
+	var removeErr error
+	if len(cfg.CredentialFiles) > 0 {
+		removeErr = removeAll(ops, cfg.CredentialFiles)
+	}
+	return errors.Join(cfg.CredentialEnumErr, removeErr)
 }
 
 // record appends a StepRecord. A nil err on a non-skipped step is success.
