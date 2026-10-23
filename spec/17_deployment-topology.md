@@ -338,6 +338,7 @@ spec:
   image: my-agent:dev
   integrationLevel: basic
   deploymentModel: sidecar
+  command: ["/usr/local/bin/my-agent"]
 EOF
 lenny runtime apply --file runtime-crds.yaml   # Applies the Runtime/SandboxTemplate/SandboxWarmPool
                                                # CRD set against the embedded kubeconfig

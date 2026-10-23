@@ -27,6 +27,8 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 
 All reference runtimes are **`type: agent`** ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). No reference runtime is `type: mcp` — MCP servers are deployed via the MCP connector mechanism ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)), not as reference runtimes.
 
+Each reference runtime is a sidecar runtime whose `command` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)) is `["/usr/local/bin/lenny-<name>-adapter"]`, where `<name>` is the runtime name.
+
 **Tenant access.** Reference runtimes are registered by `lenny-ctl install` (§17.6, §24.20) as platform-global records with no default tenant access grants. Operators grant access per tenant via `POST /v1/admin/runtimes/{name}/tenant-access` with body `{"tenantId": "<uuid>"}` ([§15.1](15_external-api-surface.md#151-rest-api)) after install. For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs and the credential-free `echo` runtime ([§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)) runs out of the box. The auto-grant supplies tenant access only: a session against a placeholder-pinned reference-runtime record requires a runnable image digest, an applied Runtime CRD instance, and a warm pool before it starts.
 
 ---
@@ -146,6 +148,7 @@ Anthropic's Claude Code CLI running inside a Lenny-managed sandbox.
 name: claude-code
 image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
 type: agent
+command: ["/usr/local/bin/lenny-claude-code-adapter"]
 integrationLevel: full
 capabilities:
   interaction: multi_turn
@@ -215,13 +218,11 @@ The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-
 **Bootstrap behavior.**
 
 1. Warm-pool controller pulls the image and starts the pod in INIT state.
-2. Adapter binary boots, registers with the gateway, and signals READY.
-3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; emits `session.created`.
+2. The platform adapter boots and signals READY.
+3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `command`, as [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** states; emits `session.created`.
 4. On first `message`: adapter invokes `claude --no-tty --print --session-id=<id>` and pipes the message to stdin. All subsequent messages for the session reuse the same `claude` process (multi-turn).
 5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§28.5.3](28_communication-channels.md#2853-intra-pod)); tool results are injected back via `tool_result`.
 6. On session termination: adapter sends SIGTERM to `claude`; waits up to 5s for graceful shutdown; force-kills on timeout. Any files written under `/workspace/output/` are sealed as session artifacts.
-
-**Setup-time image entrypoint:** `/usr/local/bin/lenny-claude-code-adapter` (the adapter binary; NOT the `claude` CLI directly). The adapter owns lifecycle and delegates message handling to `claude`.
 
 **Example session invocation.**
 

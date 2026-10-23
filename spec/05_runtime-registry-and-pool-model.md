@@ -65,6 +65,10 @@ capabilities:
 executionMode: session
 isolationProfile: sandboxed
 requireSoPeercred: true # optional; set false only for confirmed gVisor SO_PEERCRED divergence — sidecar model only; see §4.7
+command: ["/usr/local/bin/my-agent", "--serve"] # see command below
+env: # optional; see env below
+  - name: PYTHONUNBUFFERED
+    value: "1"
 allowedResourceClasses: [small, medium, large]
 delegationPolicyRef: orchestrator-policy
 allowSelfRecursion: false  # when true AND platform+DelegationPolicy agree, this runtime's (runtime_name, pool_name) identity may repeat in its own delegation lineage (self-decomposition pattern); see [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) cycle detection
@@ -113,6 +117,10 @@ labels:
 ```
 
 **`requireSoPeercred`** — gates the `SO_PEERCRED` adapter-agent boundary self-test ([§4.7](04_system-components.md#47-runtime-adapter)). Optional; defaults to `true`. Set `false` only for confirmed gVisor `SO_PEERCRED` divergence on a `deploymentModel: sidecar` runtime, which activates nonce-only mode. The field is settable only through `Runtime` CRD registration: the admin registration payload does not model it, so a runtime registered only through the admin API runs with the default of `true`.
+
+**`command`** — the argv of the runtime process. Required on a `type: agent` runtime whose `deploymentModel` is `sidecar`, and forbidden on every other runtime. Its first element is an absolute path in the runtime image. The runtime supervisor launches this argv as the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**). The API server rejects a `Runtime` that breaks either rule or whose first element is not absolute. The RuntimeReconciler mirrors into the gateway runtime registry only the derived flag `restartable`, which is true for a runtime that carries `command`, has `executionMode: session`, and does not declare `capabilities.preConnect: true` ([Section 5.2](#52-pool-configuration-and-execution-modes), `recycle.runtimeProcess`).
+
+**`env`** — optional variables for the runtime process, as a list of `name` and `value` pairs. Forbidden wherever `command` is. Each `name` is a non-empty POSIX variable name, no name appears twice, and no name begins with `LENNY_`, which the platform reserves for its own variables; the API server rejects a `Runtime` that breaks any of these rules. The runtime supervisor applies the pairs as [Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, states. The values are readable by the runtime and are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)). The admin registration payload models neither `command` nor `env`.
 
 #### Derived Runtime
 
@@ -173,7 +181,7 @@ minPlatformVersion: "1.4.0" # optional; gateway rejects registration if platform
 
 #### Inheritance Rules
 
-**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, `integrationLevel`, `requireSoPeercred`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
+**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, `integrationLevel`, `requireSoPeercred`, `command`, `env`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
 
 **Independently configurable on derived runtime:** Pool settings, `workspaceDefaults`, `setupCommands`, `setupPolicy.timeoutSeconds` (gateway takes maximum of base and derived), `agentInterface`, `delegationPolicyRef` (restrict only), `publishedMetadata`, `labels`, `sessionPolicy`.
 
@@ -195,6 +203,8 @@ When the gateway resolves a derived runtime, it applies the following per-field 
 | `capabilities.injection` | **Prohibited** — derived may not set | |
 | `integrationLevel` | **Inherited** — derived may not set | Level is a property of the runtime binary image, which is inherited; derived runtimes cannot re-declare a different level. Gateway rejects registration with `INVALID_DERIVED_RUNTIME: integrationLevel is prohibited on derived runtimes` if present. |
 | `requireSoPeercred` | **Inherited** — derived may not set | The authentication-boundary posture is a property of the base runtime's image and isolation environment, matching the `integrationLevel` classification. Enforcement is structural: the merge takes the value from the base, so a derived runtime resolved against a nonce-only base inherits the base posture and cannot independently flip the field. |
+| `command` | **Inherited** — derived may not set | The argv of the runtime process is a property of the base runtime's image. |
+| `env` | **Inherited** — derived may not set | The runtime process's environment is a property of the base runtime's image. |
 | `supportedProviders` | **Override** — derived value replaces base if set; otherwise base value applies | Derived may restrict but not expand beyond base |
 | `credentialCapabilities` | **Override** — derived value replaces base if set | |
 | `limits` | **Override** — derived value replaces base if set; otherwise base value applies | |
