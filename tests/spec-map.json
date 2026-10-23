@@ -998,6 +998,9 @@
       "title": "Deployment Model",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier0_static/supervisor_binary_test.go::TestRuntimeSupervisorBinaryIsFreestandingStatic_spec_4_7_11",
+        "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorCHarness_spec_4_7_10",
+        "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorBoundedFuzz_spec_28_5_3",
         "sdks/runtime/go/runtime/runtime_test.go",
         "pkg/controller/sandbox/podspec/podspec_test.go::TestBuildAddsPreStopDrainHook_spec_4_6_1",
         "tests/tier0_static/prestop_image_path_test.go",
@@ -1076,6 +1079,9 @@
       "title": "Adapter-Agent Security Boundary",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier0_static/supervisor_binary_test.go::TestRuntimeSupervisorBinaryIsFreestandingStatic_spec_4_7_11",
+        "tests/tier0_static/supervisor_binary_test.go::TestRuntimeSupervisorBinaryCheckRejectsDynamicAndNSSBinaries_spec_4_7_11",
+        "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorCHarness_spec_4_7_10",
         "cmd/lenny-compliance/full_test.go",
         "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
         "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsRefusesForeignUIDAndServesTheRuntimeNext_spec_4_7_11",
@@ -6811,6 +6817,8 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorCHarness_spec_4_7_10",
+        "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorBoundedFuzz_spec_28_5_3",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_busy_test.go::TestRuntimeSDKsReportBusyOnHeartbeatAck_spec_28_5_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",

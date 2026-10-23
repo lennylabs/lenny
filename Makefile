@@ -38,6 +38,9 @@ images: ## Build container images for the deployable platform binaries
 		echo "  image $$b"; \
 		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
 	done
+	@# §4.7.10 runtime supervisor: a freestanding C binary in a FROM scratch image.
+	@echo "  image lenny-supervisor"
+	@docker build -f Dockerfile.supervisor -t ghcr.io/lennylabs/lenny-supervisor:dev .
 
 .PHONY: runtime-images
 runtime-images: ## Build container images for the §4.7 reference runtimes
