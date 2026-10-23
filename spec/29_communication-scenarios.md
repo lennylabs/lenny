@@ -44,6 +44,7 @@ in the table, and this subsection introduces neither a participant nor a boundar
 | `agent pod` | The pod carrying the adapter container and the runtime container for a session, named when a step concerns the pod as a whole rather than one of its processes | [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) |
 | `adapter` | The runtime adapter process inside the agent pod | [§4.7](04_system-components.md#47-runtime-adapter) |
 | `runtime` | The runtime process inside the agent pod | [§4.7](04_system-components.md#47-runtime-adapter), [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) |
+| `runtime supervisor` | The platform process that launches and ends the runtime process | [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**, §28.3 |
 | `control plane` | The Kubernetes API server together with the pod lifecycle controllers and the drain-readiness admission webhook | [§4.6](04_system-components.md#46-pod-lifecycle-controllers), [§17.2](17_deployment-topology.md#172-namespace-layout), [§12.5](12_storage-architecture.md#125-artifact-store), §28.5.6 |
 | `postgres`, `redis`, `object store` | The three stores, each named by the backend the §12.2 storage roles are placed on | [§12.2](12_storage-architecture.md#122-storage-roles) |
 
@@ -285,7 +286,7 @@ state that the READY signal is one of them.
     path. On failure the gateway calls `DemoteSDK` with a 5s timeout and falls back to pod-warm
     materialization, and when `DemoteSDK` also fails the pod transitions to `failed` and a replacement is
     claimed ([§7.1](07_session-lifecycle.md#71-normal-flow),
-    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 31 are the pod-warm startup
+    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 32 are the pod-warm startup
     sequence for `type: agent` runtimes and are stated for that path
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
@@ -297,12 +298,19 @@ state that the READY signal is one of them.
     connector is authorized and is never absent (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-25. On the first session of a pod-warm pod whose `type: agent` runtime runs in the sidecar deployment
+25. On a session whose start launches the runtime process in the sidecar deployment model
+    ([§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**, **Launch.**):
+    `adapter` → `runtime supervisor`, `CH-SUPERVISE`, `intra-pod`. The adapter sends `launch`, and the
+    supervisor launches the runtime's `command` and answers `launched`
+    ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7, §28.5.3
+    `CH-SUPERVISE`).
+
+26. On the first session of the runtime process of a pod-warm pod whose `type: agent` runtime runs in the sidecar deployment
     model: `runtime` → `adapter`, `CH-MSGSOCK`, `intra-pod`. The runtime process dials the connection
     the adapter accepts ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes)
     step 7, [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 
-26a. On the first session of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime:
+27a. On the first session of the runtime process of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime:
     `runtime` → `adapter`,
     `CH-MCP-PLATFORM`, `intra-pod`. The runtime reads the manifest and connects to the platform MCP
     server, presenting the manifest's
@@ -318,14 +326,14 @@ state that the READY signal is one of them.
     to no MCP server and this step does not occur
     ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-26b. On the first session of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime
+27b. On the first session of the runtime process of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime
     and at least one
     authorized connector: `runtime` → `adapter`, `CH-MCP-CONNECTOR`, `intra-pod`. The runtime connects to
     each authorized connector's own MCP server, presenting the nonce on each connection separately
     (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-26c. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
+27c. On the first session of the runtime process of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
     `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime opens the channel on the abstract Unix socket `@lenny-runtime-ops` the
     manifest advertises, presenting the
@@ -334,33 +342,33 @@ state that the READY signal is one of them.
     not open the channel operates in fallback-only mode (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The specification states steps
-    26a, 26b, and 26c as one startup step and does not fix their relative order
+    27a, 27b, and 27c as one startup step and does not fix their relative order
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-27. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `adapter` →
+28. On the first session of the runtime process of a pod-warm pod with a Full-level `type: agent` runtime: `adapter` →
     `runtime`, `CH-RUNTIMEOPS`,
     `intra-pod`. The adapter sends `lifecycle_capabilities` as the first frame after the connection
     handshake ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1).
 
-28. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
+29. On the first session of the runtime process of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
     `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime replies with `lifecycle_support`, which is the handshake the gateway reads
     to select the credential-rotation
     strategy for the session ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-29. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. In the sidecar deployment
-    model the adapter serves this session on the pod's `CH-MSGSOCK` connection, which the runtime dialled
-    on the pod's first session (step 25), and in the embedded deployment model the adapter runs the
+30. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. In the sidecar deployment
+    model the adapter serves this session on the `CH-MSGSOCK` connection of the live runtime process, which that process dialled
+    on its first session (step 26), and in the embedded deployment model the adapter runs the
     runtime loop in its own process
     ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7).
 
-30. On a pod-warm pod with a `type: agent` runtime: `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The
+31. On a pod-warm pod with a `type: agent` runtime: `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The
     adapter writes the session's `session_start`, carrying its `sessionId`, credential path, and
     experiment, tracing, and LLM context. It does so on every session, including each later session on
     the pod (§28.5.3 `CH-MSGSOCK`,
     [§4.7.10](04_system-components.md#4710-deployment-model)).
 
-31. On a pod-warm pod whose `type: agent` runtime keeps per-session context or has opened
+32. On a pod-warm pod whose `type: agent` runtime keeps per-session context or has opened
     `CH-RUNTIMEOPS`: `runtime` → `adapter`, `CH-MSGSOCK`, `intra-pod`. The runtime answers the
     session's `session_start` with `session_started` once it has created the session's context. The
     adapter waits for this frame before it takes the session to `running` when §28.5.3 `CH-MSGSOCK`
@@ -368,26 +376,26 @@ state that the READY signal is one of them.
     session-scoped `CH-RUNTIMEOPS` frames as the §28.5.3 `CH-RUNTIMEOPS` card's **Messages.** bullet
     states.
 
-32. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+33. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
     `AttachSession` with the session identifier
     ([§7.1](07_session-lifecycle.md#71-normal-flow), [§15.1](15_external-api-surface.md#151-rest-api)).
     §7.1 places this call after session start and states no ordering between it and the adapter's own
-    startup sequence of steps 24 through 31.
+    startup sequence of steps 24 through 32.
 
-33. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
+34. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
     the running session over the `LNK-POD-GRPC` connection, and the gateway proxies the bidirectional
     stream between the client and the pod (§28.5.1 `CH-ATTACH`,
     [§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-34. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
+35. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
     the last step of the startup sequence and the point at which the agent is running and able to receive
     a message. The preconditions the §28.5.3 `CH-MSGSOCK` card states for that delivery are met at this
-    point on a pod-warm pod with a `type: agent` runtime: steps 24 through 31 have run. A Basic-level
+    point on a pod-warm pod with a `type: agent` runtime: steps 24 through 32 have run. A Basic-level
     runtime connects to no MCP server and a runtime below Full level opens no `CH-RUNTIMEOPS` channel. On
     an SDK-warm pod that startup sequence does not occur, because the session is already connected and
     the gateway has pointed it at the finalized `cwd`; the adapter writes the session's `session_start`,
-    and reads the runtime's `session_started` as step 31 states, while it handles that
+    and reads the runtime's `session_started` as step 32 states, while it handles that
     `ConfigureWorkspace` call (§28.5.3 `CH-MSGSOCK`, **Inbound: `session_start`** rule 1) (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
@@ -727,8 +735,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     which applies when occupancy reaches zero on a recycling pod unless the release ends the occupancy
     without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
     the request also carries the pod identity and the
-    whole-pod scrub parameters, and the adapter keeps its own process and the runtime process alive across
-    the recycle boundary and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    whole-pod scrub parameters, and the adapter runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
@@ -744,7 +751,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     by an expiry timer, for a session whose start the adapter admitted: `adapter` → `runtime`,
     `CH-MSGSOCK`, `intra-pod`. The adapter writes the session's `session_end` when the session reached
     `running` (§28.5.3 `CH-MSGSOCK`, **Session frame writes.**), writes no `CH-RUNTIMEOPS` frame, and
-    sends the runtime process no signal. The runtime process stays alive for the pod's life
+    sends the runtime process no signal
     ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
     [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 

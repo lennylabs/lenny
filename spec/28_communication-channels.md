@@ -687,7 +687,7 @@ The adapter writes one `heartbeat` per interval for each session, from the write
 
 `session_end` releases a session on the runtime. The following rules govern it:
 
-1. The adapter writes it on the paths **Session frame writes.** below states. A session's frames travel on the pod's one connection in the sidecar model and on the session's own runtime loop in the embedded model. When that connection or loop ends, every session it carries ends, and no `session_end` follows.
+1. The adapter writes it on the paths **Session frame writes.** below states. A session's frames travel on the connection of the runtime process serving it in the sidecar model and on the session's own runtime loop in the embedded model. When that connection or loop ends, every session it carries ends, and no `session_end` follows.
 2. A `session_end` ends the start of the latest `session_start` the runtime read for the session before it, other than one it ignored under **Inbound: `session_start`** rule 3. On `session_end` the runtime releases the context that start creates, identified by that `session_start`'s `startId`, and when it is still creating that context it releases the context once the creation ends. Any other creation of a context for the same session that is still in flight, which belongs to an earlier start that an earlier `session_end` ended, is released when that creation ends, and that context serves no frame of the session. After `session_end` the runtime writes no further frame addressed to the session other than the `session_started` that **Outbound: `session_started`** obliges for a `session_start` read before the `session_end`, and the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`, and it keeps serving the pod's other sessions.
 3. A runtime ignores a `session_end` for a session it does not hold.
 
@@ -1021,7 +1021,7 @@ Any non-zero exit during an active session causes the gateway to report a sessio
 **Annotated Protocol Trace — Basic-Level Session**
 
 ```
-1. The runtime's connection to the adapter is open; the runtime dialled it on the pod's first session.
+1. The runtime's connection to the adapter is open; the runtime process dialled it on its first session.
 2. Adapter writes to stdin (a runtime that keeps no per-session context ignores it, **Inbound: `session_start`** rule 2):
    {"type": "session_start", "sessionId": "sess_abc123", "startId": "st_1"}
 3. Adapter writes to stdin:
