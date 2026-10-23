@@ -688,6 +688,14 @@
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
+    "pkg/gateway/environment/tenantstore/tenantstoretest": {
+      "unit": ["pkg/gateway/environment/tenantstore/...", "cmd/lenny-gateway/..."],
+      "component": ["tests/tier2_component/stores/tenantstore_test.go"]
+    },
+    "pkg/legalholdescrow/blobescrow": {
+      "unit": ["pkg/legalholdescrow/blobescrow/..."],
+      "component": ["tests/tier2_component/legalholdescrow/blobescrow_minio_test.go"]
+    },
     "tests/testdata/openai_chat": {
       "contract": ["tests/tier3_contract/rest_openai_chat/..."]
     },

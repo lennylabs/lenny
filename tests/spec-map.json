@@ -3404,6 +3404,7 @@
         "pkg/gateway/credentials/leaserevoke/leaserevoke_test.go",
         "pkg/gateway/podlifecycle/podterminate/propagator/propagator_test.go",
         "tests/tier3_contract/fullrevoke_release/request_contract_test.go",
+        "tests/tier3_contract/admin_user_invalidate/full_revoke_response_test.go",
         "tests/tier9_security/full_revoke_lease_return_test.go",
         "tests/tier4_integration/full_revoke_two_replica_test.go",
         "tests/tier7a_load_local/full_revoke_sweep_terminal_race_test.go",
