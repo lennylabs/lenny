@@ -49,7 +49,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | The runtime writes a line on `CH-MSGSOCK` longer than the adapter's line limit | **Runtime exits.** table, `none` row | SPEC-2 **Runtime exits.** |
 | The adapter exits, for any cause, a fault or the end of the pod's termination included, while the runtime process holds a session; its close of `CH-MSGSOCK` selects no **Runtime exits.** row | §6.2 **Pod crash during an active session.**, and **Liveness.** | SPEC-2 **Runtime exits.**, **Liveness.** |
 | The supervisor ends, which terminates the runtime container, while the pod is `warming`, `sdk_connecting`, or `idle` | **Runtime exits.** table, `none` row, and **Liveness.** table, **Exit** channel | SPEC-2 **Runtime exits.**, **Liveness.** |
-| A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | **Runtime exits.** table and **Liveness.** table | SPEC-2 **Runtime exits.**, **Liveness.** |
+| The runtime process of a service-mode pod exits, or `CH-SUPERVISE` fails on a service-mode pod | **Runtime exits.** table and **Liveness.** table | SPEC-2 **Runtime exits.**, **Liveness.** |
 | A heartbeat escalation, on any pod, a concurrent `restart` pod included | **Liveness.** *hang* cause and table | SPEC-2 **Liveness.** |
 | A session starts on a pod whose not-live state is set, while a runtime process is live | **Liveness.** | SPEC-2 **Liveness.** |
 | A cause of the not-live state arises on an `idle` or `reserved` session-mode pod or on the recycle re-warm edge of `sdk_connecting` | **Liveness.** table | SPEC-2 **Liveness.** |
@@ -222,9 +222,9 @@ container and no supervisor.
   manifest the process reads exists, after every adapter listener the
   runtime dials is bound, and while the not-live state (**Liveness.**) is
   clear. A session that starts while a process is live, or while a launch is
-  in flight, uses that process, unless **Liveness.** refuses the start. A
-  service-mode runtime, and a `preConnect` runtime when
-  **SDK-warm.** says so, is launched at pod warm-up, and the adapter signals
+  in flight, uses that process, unless **Liveness.** refuses the start. On a
+  service-mode pod, and on a pod of a `preConnect` runtime when
+  **SDK-warm.** says so, the runtime process is launched at pod warm-up, and the adapter signals
   READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes) step 4) only
   after that process has connected on `CH-MSGSOCK`; a warm-up launch that
   fails, or whose process does not connect within the adapter's bounded wait,
@@ -321,12 +321,9 @@ container and no supervisor.
   (**Children.**), from an `ended` reply, or from the end of the process's
   `CH-MSGSOCK` connection. The adapter holds one end disposition for the
   current generation, and each row of the table is one value of it. Before
-  each act by which it ends a generation, the adapter sets the value of the
-  same name: `endDemote` before the `end` of a `DemoteSDK` (**SDK-warm.**),
-  `endScrub` before each `end` of a `restart` pod's whole-pod scrub,
-  `shutdown` before it writes `shutdown`, `holdTimeout` before it closes the
-  process's connection at the coordinator hold timeout, and `deleting` when
-  the pod's termination reaches it. Each launch sets the value to `none`.
+  each act by which it ends a generation, the adapter sets the value whose
+  row names that act in the *Set before* column. Each launch sets the value
+  to `none`.
   Precedence is the order of the rows: other than at a launch, a set to a
   value that comes after the current value leaves the current value in
   place. The adapter handles each generation's end once: the first of these
@@ -828,7 +825,7 @@ Insert after the **Container identity.** paragraph, which ends `and it identifie
 **Runtime supervisor volume.** On a pod that runs the runtime supervisor the init container `lenny-supervisor-stage` copies the runtime supervisor ([§4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**) into an `emptyDir` volume. It runs at a UID that is neither the agent nor the adapter UID, as the rule above requires. The `runtime` container mounts the volume read-only, and no container other than the init container `lenny-supervisor-stage` mounts it read-write. The `lenny-pod-security` webhook enforces the mount rule with the identity rule above.
 ```
 
-### SPEC-7 · spec/28_communication-channels.md § 28.3, § 28.5.3, § 28.6, and § 28.8, spec/04_system-components.md § 4.7.11, and spec/10_gateway-internals.md § 10.3
+### SPEC-7 · spec/28_communication-channels.md § 28.3, § 28.5.3, § 28.6, and § 28.8, spec/04_system-components.md § 4.7.11, spec/10_gateway-internals.md § 10.3, and spec/17_deployment-topology.md § 17.8.1 and § 17.8.2
 
 (a) In §28.3, the opening paragraph is hard-wrapped. Find:
 
@@ -977,6 +974,20 @@ The claim-register rows for this card are `WIRED` rows naming the surfaces CODE-
 
 (h) In `spec/04_system-components.md` §4.7.11 item 1 **Mandatory `SO_PEERCRED` startup self-test (adapter prerequisite).** step 4, replace `The pod enters `CrashLoopBackOff`, preventing session assignment.` with `The pod is never marked `idle`.` In `spec/10_gateway-internals.md` §10.3, in the **Pod (adapter) validates gateway identity on every outbound handshake** bullet, delete ` (the pod enters `CrashLoopBackOff`)`.
 
+(i) In the §28.5.3 **Session frame writes.** table, in the row for a `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline, replace `, and the SIGTERM path force-terminates the SDK process ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like), **Adapter SIGTERM behavior during `sdk_connecting`.**); either outcome ends the connection that carries the session` with `, and the connection that carries the session ends with the pod, as the Pod exit row states`, because the adapter's SIGTERM path demotes only a pod whose registry holds no entry and so never waits for the slot serialization. The row stays one physical line.
+
+(j) In `spec/17_deployment-topology.md` §17.8.1 Operational Defaults — Quick Reference, in the defaults table, insert after the row that begins `| T4 KMS continuous probe rate limit`, as one physical line:
+
+```
+| Runtime supervisor timing: ping interval (`controller.tuning.supervisePingInterval`), ping timeout (`controller.tuning.supervisePingTimeout`), supervisor wait timeout (`controller.tuning.superviseWaitTimeout`), and warm-up timeout (`controller.tuning.warmUpTimeout`) | The controller's default; the specification states no value | [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE` **Timing.**, [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** |
+```
+
+In §17.8.2, after the **Controller tuning:** table and before `**Postgres and connection pooling**`, insert:
+
+```
+The runtime supervisor timing settings in [Section 17.8.1](#1781-operational-defaults--quick-reference) are controller settings with no per-tier value. The WarmPoolController renders each, as an adapter flag, on every pod it creates that runs the runtime supervisor.
+```
+
 ### SPEC-8 · The `shutdown`, signal, and exit-code statements (F-4.7.27)
 
 (a) In §28.5.3 **Inbound: `shutdown`**, replace `No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.` with `No acknowledgment required. A process that has not exited by the deadline is ended as the `CH-MSGSOCK` card's **Timing.** bullet states.` In the `CH-MSGSOCK` card's **Timing.** bullet, which wraps across lines, find:
@@ -1097,7 +1108,7 @@ In the §24.2 command table, insert after the `lenny-ctl preflight --config <val
 - `spec/13_security-model.md` (SPEC-5, SPEC-6)
 - `spec/15_external-api-surface.md` (SPEC-8(d), SPEC-11)
 - `spec/16_observability.md` (SPEC-5)
-- `spec/17_deployment-topology.md` (SPEC-1, SPEC-5)
+- `spec/17_deployment-topology.md` (SPEC-1, SPEC-5, SPEC-7)
 - `spec/18_build-sequence.md` (SPEC-14)
 - `spec/24_lenny-ctl-command-reference.md` (SPEC-13)
 - `spec/26_reference-runtime-catalog.md` (SPEC-1)

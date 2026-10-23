@@ -22,7 +22,7 @@ This proposal is part 1 of that work. Part 2, cross-tenant reuse on `in-place` p
 
 All are recorded in `gateway-runtime-comms-remediation.md` §10.3, and the Phase 2 entry of §10.2 lists the items part 1 carries.
 
-- Every sidecar pod runs the supervisor, whatever its lifetime. Every sidecar Runtime declares `command`, including through the admin registration API. `preConnect` and service-mode runtimes get supervised designs rather than exclusions.
+- Every sidecar pod runs the supervisor, whatever its lifetime. Every sidecar Runtime declares `command`. Plan §10.3 also directed that the admin registration API carry `command`; the owner reversed that on 2026-10-22, and `command` is settable only on the Runtime CRD (summary D-COMMAND). `preConnect` and service-mode runtimes get supervised designs rather than exclusions.
 - The lifetime lives on the pool as `recycle.runtimeProcess: keep | restart`, required with no default on new recycling pools. `restart` does not require `acknowledgeProcessLevelIsolation`.
 - `restart` is refused for embedded, service-mode, and `preConnect` runtimes at gateway pool admission, through a flag the RuntimeReconciler mirrors into the runtime registry. `deploymentModel` stays CRD-only.
 - At the recycle boundary the supervisor ends the runtime before the deployer's `cleanupCommands` run.
