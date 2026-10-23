@@ -16,7 +16,7 @@ Each statement has one home in the specification. Every other site cites that ho
 | What the supervisor is, when it launches and ends a runtime process, how it runs `cleanupCommands`, its environment, liveness, and crash | SPEC-2, §4.7.10 **Runtime supervisor.** |
 | The supervisor's action for each signal source, pod termination included | SPEC-2, §4.7.10 **Runtime supervisor.** **Signals.** and its table |
 | What the supervisor reports when each kind of child exits, and how a status reaches the step that waits for it | SPEC-2, §4.7.10 **Runtime supervisor.** **Children.** and its table |
-| The outcome of each path that ends a runtime process or its `CH-MSGSOCK` connection: whether it is a crash, which sessions fail, whether it sets the not-live state, and the adapter's part, and which path applies when more than one does | SPEC-2, §4.7.10 **Runtime supervisor.** **Runtime exits.** and its table |
+| The outcome of a runtime process's end for each value of the adapter's end disposition: whether it is a crash, which sessions fail, whether it sets the not-live state, and whether the adapter exits; the precedence among the values; and which closes of the adapter's own select no row | SPEC-2, §4.7.10 **Runtime supervisor.** **Runtime exits.** and its table |
 | When the adapter's not-live state is set, what it refuses, that it never clears, how it is reported, and, for each `Sandbox` phase and kind of sidecar pod, the causes that can arise and the one channel through which the pod retires | SPEC-2, §4.7.10 **Runtime supervisor.** **Liveness.** and its table |
 | The SDK-warm lifecycle on a sidecar pod: the warm-up launch and the circuit breaker, `ConfigureWorkspace`, `DemoteSDK`, and the re-warm edge | SPEC-2, §4.7.10 **Runtime supervisor.** **SDK-warm.** |
 | What the runtime sweep removes | SPEC-2, §4.7.10 **Runtime supervisor.** **Sweep.** |
@@ -39,23 +39,23 @@ Each statement has one home in the specification. Every other site cites that ho
 | A `preConnect` pod is created while the pool's SDK-warm circuit breaker is open | **SDK-warm.** | SPEC-2 **SDK-warm.** |
 | The property self-test fails on a gating property | §4.7.11 item 8 **Property self-test.**, and the **Liveness.** *gating property* cause and table | SPEC-4, SPEC-2 **Liveness.** |
 | `launch` fails | **Liveness.** *reply error* cause and table | SPEC-2 **Liveness.**, SPEC-7 |
-| The runtime process exits, or its `CH-MSGSOCK` connection ends, while it holds a session | **Runtime exits.** table, `runtime-exit` row, **Crash.**, and **Liveness.** table | SPEC-2 **Runtime exits.**, **Crash.**, **Liveness.** |
-| The runtime process exits around the release of a session, the last session of a pod included | **Crash.** and **Runtime exits.** table, `runtime-exit` row | SPEC-2 **Runtime exits.**, **Crash.** |
-| The runtime process exits while it holds no session, on any pod, such as a `restart` pod between its last release and the boundary's `end` | **Runtime exits.** table, `runtime-exit` row, and **Liveness.** table | SPEC-2 **Runtime exits.**, **Liveness.** |
+| The runtime process exits, or its `CH-MSGSOCK` connection ends, while it holds a session | **Runtime exits.** table, `none` row, **Crash.**, and **Liveness.** table | SPEC-2 **Runtime exits.**, **Crash.**, **Liveness.** |
+| The runtime process exits around the release of a session, the last session of a pod included | **Crash.** and **Runtime exits.** table, `none` row | SPEC-2 **Runtime exits.**, **Crash.** |
+| The runtime process exits while it holds no session, on any pod, such as a `restart` pod between its last release and the boundary's `end` | **Runtime exits.** table, `none` row, and **Liveness.** table | SPEC-2 **Runtime exits.**, **Liveness.** |
 | The runtime process exits after the adapter wrote `shutdown` to it, by itself or at the deadline `end` | **Runtime exits.** table, `shutdown` row | SPEC-2 **Runtime exits.**, SPEC-8 |
-| The coordinator hold times out while the runtime process holds a session | **Runtime exits.** table, `hold-timeout` row | SPEC-2 **Runtime exits.**, **Liveness.** |
-| The runtime process exits while the pod is being deleted | **Runtime exits.** table, `deleting` row | SPEC-2 **Runtime exits.**, **Liveness.** |
-| The acts of more than one **Runtime exits.** row apply to one generation, such as a pod deleted after its coordinator hold timed out | **Runtime exits.** precedence | SPEC-2 **Runtime exits.** |
-| The runtime writes a line on `CH-MSGSOCK` longer than the adapter's line limit | **Runtime exits.** table, `protocol` row | SPEC-2 **Runtime exits.** |
-| The adapter exits while the runtime process holds a session | **Runtime exits.** table, `adapter-exit` row | SPEC-2 **Runtime exits.**, **Liveness.** |
-| The supervisor ends, which terminates the runtime container, while the pod is `warming`, `sdk_connecting`, or `idle` | **Runtime exits.** table, `supervisor-death` row, and **Liveness.** table, **Exit** channel | SPEC-2 **Runtime exits.**, **Liveness.** |
+| The coordinator hold times out while the runtime process holds a session | **Runtime exits.** table, `holdTimeout` row | SPEC-2 **Runtime exits.**, **Liveness.** |
+| The runtime process exits, or its connection ends, after the pod's termination reached the adapter and before the adapter exits | **Runtime exits.** table, `deleting` row | SPEC-2 **Runtime exits.**, **Liveness.** |
+| More than one end disposition is set for one generation, such as a pod deleted after its coordinator hold timed out | **Runtime exits.**, the precedence in row order | SPEC-2 **Runtime exits.** |
+| The runtime writes a line on `CH-MSGSOCK` longer than the adapter's line limit | **Runtime exits.** table, `none` row | SPEC-2 **Runtime exits.** |
+| The adapter exits, for any cause, a fault or the end of the pod's termination included, while the runtime process holds a session; its close of `CH-MSGSOCK` selects no **Runtime exits.** row | §6.2 **Pod crash during an active session.**, and **Liveness.** | SPEC-2 **Runtime exits.**, **Liveness.** |
+| The supervisor ends, which terminates the runtime container, while the pod is `warming`, `sdk_connecting`, or `idle` | **Runtime exits.** table, `none` row, and **Liveness.** table, **Exit** channel | SPEC-2 **Runtime exits.**, **Liveness.** |
 | A service-mode runtime process exits, or `CH-SUPERVISE` fails on a service-mode pod | **Runtime exits.** table and **Liveness.** table | SPEC-2 **Runtime exits.**, **Liveness.** |
 | A heartbeat escalation, on any pod, a concurrent `restart` pod included | **Liveness.** *hang* cause and table | SPEC-2 **Liveness.** |
 | A session starts on a pod whose not-live state is set, while a runtime process is live | **Liveness.** | SPEC-2 **Liveness.** |
 | A cause of the not-live state arises on an `idle` or `reserved` session-mode pod or on the recycle re-warm edge of `sdk_connecting` | **Liveness.** table | SPEC-2 **Liveness.** |
 | A pod is deleted while the not-live state is set or after its adapter exited, including SIGTERM during `sdk_connecting` | **Liveness.** table, **None** channel | SPEC-2 **Liveness.** |
 | On a `restart` pod's boundary, an `end` or `sweep` fails, the sweep's walk reaches its bound, a request gets no reply, or the listener rebind fails | **Supervised scrub sequence.** table, the step's row | SPEC-5 **Supervised scrub sequence.** |
-| A `restart` pod's newly launched process exits before it holds the session that launched it | **Runtime exits.** table, `runtime-exit` row, and **Liveness.** | SPEC-2 **Runtime exits.**, **Liveness.** |
+| A `restart` pod's newly launched process exits before it holds the session that launched it | **Runtime exits.** table, `none` row, and **Liveness.** | SPEC-2 **Runtime exits.**, **Liveness.** |
 | The supervisor misses a `pong` deadline, or is killed or frozen | **Signals.** table, SIGKILL and SIGSTOP rows, and **Liveness.** table | SPEC-2 **Signals.**, **Liveness.**, SPEC-7 |
 | A reply with an unknown key, a duplicate key, or an unmatched `gen` or `id` | §28.5.3 `CH-SUPERVISE` **Degradation.**, and the **Liveness.** *link failure* cause and table | SPEC-7, SPEC-2 **Liveness.** |
 | Pod termination, with the stop signal SIGTERM or a catchable image `STOPSIGNAL` | **Signals.** table, kubelet row | SPEC-2 **Signals.** |
@@ -316,25 +316,33 @@ container and no supervisor.
   start until the deregistration of the session's registry entry. The adapter
   handles the end as [§4.7.1](#471-role-and-gateway-rpc-contract)
   **The registry critical section.** states.
-- **Runtime exits.** The table below is the one statement of the outcome of
-  each path that ends a runtime process or its `CH-MSGSOCK` connection. Each
-  row is one path, named by its label. The adapter learns of an end from an
-  `exited` report (**Children.**), from an `ended` reply, from the end of the
-  process's `CH-MSGSOCK` connection, or from its own close of that
-  connection, and it handles each generation's end once: the first of these
-  events it handles for a generation decides the row, and a later event for
-  the same generation changes nothing. The act named in each of the rows
-  `end-demote`, `end-scrub`, `shutdown`, `hold-timeout`, and `deleting`
-  applies to the generation that is current when the adapter performs it.
-  When more than one of those acts applies to the generation whose end the
-  adapter handles, the row that comes first in that list applies. When none
-  applies, the end takes `runtime-exit`, `protocol`, or `supervisor-death`,
-  whose outcomes are the same, so the adapter need not tell them apart.
-  Neither `adapter-exit` nor `rebind` decides the row of an end the adapter
-  handles: the adapter's close of the connection as it exits for a cause is
-  part of `adapter-exit`, and `rebind` follows an end that its `end-demote` or
-  `end-scrub` row has decided. The adapter writes `shutdown` only in its
-  `DRAINING` state ([§15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine)),
+- **Runtime exits.** The table below states the outcome of the end of a
+  runtime process, which the adapter learns of from an `exited` report
+  (**Children.**), from an `ended` reply, or from the end of the process's
+  `CH-MSGSOCK` connection. The adapter holds one end disposition for the
+  current generation, and each row of the table is one value of it. Before
+  each act by which it ends a generation, the adapter sets the value of the
+  same name: `endDemote` before the `end` of a `DemoteSDK` (**SDK-warm.**),
+  `endScrub` before each `end` of a `restart` pod's whole-pod scrub,
+  `shutdown` before it writes `shutdown`, `holdTimeout` before it closes the
+  process's connection at the coordinator hold timeout, and `deleting` when
+  the pod's termination reaches it. Each launch sets the value to `none`.
+  Precedence is the order of the rows: other than at a launch, a set to a
+  value that comes after the current value leaves the current value in
+  place. The adapter handles each generation's end once: the first of these
+  events it handles for a generation selects the row by the value then held,
+  and a later event for the same generation changes nothing.
+
+  A close of the `CH-MSGSOCK` connection that the adapter makes as it exits,
+  for any cause, a fault or the end of the pod's termination included, and
+  its close of an ended generation's connection and listener for the rebind
+  (**End.**), are not ends of a runtime process and select no row. The
+  adapter's exit, and the end of the runtime container's processes that
+  follows when the supervisor sees `CH-SUPERVISE` close, are stated by
+  [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an
+  active session.** and by **Liveness.** The adapter writes `shutdown` only
+  in its `DRAINING` state
+  ([§15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine)),
   which leads only to `TERMINATED`, so no session starts on a pod after it. A
   heartbeat escalation, a launched process that does not connect within the
   deadline of the session start that launched it, a `CH-SUPERVISE` link
@@ -342,20 +350,17 @@ container and no supervisor.
   connection handshake refuses
   ([§4.7.11](#4711-adapter-agent-security-boundary) item 1) end neither a
   runtime process nor its accepted connection. The first three are causes
-  under **Liveness.**, which states their outcome.
+  under **Liveness.**, which states their outcome and how a pod on which the
+  not-live state is set retires.
 
-| Row | End path | Crash | Sessions the ended process holds | Not-live state | Adapter exits | Retirement |
-|:--|:--|:--|:--|:--|:--|:--|
-| `end-demote` | The adapter sends `end` for a `DemoteSDK` (**SDK-warm.**), and the process exits inside that `end` (**Children.**) | No | None fails; the `DemoteSDK` that sent the `end` decides its session (**SDK-warm.**) | Not set by the end; an `ended` that carries an error is the *reply error* cause | No | None for the end; a cause retires the pod as **Liveness.** states |
-| `end-scrub` | The adapter sends the first or the second `end` of a `restart` pod's whole-pod scrub ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Supervised scrub sequence.**) | No | None: the scrub runs after the release of the last session | Not set by the end; the §5.2 table states the outcome of each reply | No | As the §5.2 table states |
-| `shutdown` | The adapter writes `shutdown` to the process ([§28.5.3](28_communication-channels.md#2853-intra-pod), **Inbound: `shutdown`**), and the process exits by itself or is ended by the deadline `end` (`CH-MSGSOCK` **Timing.**) | No | None fails; the exit status has the meaning [§28.5.3](28_communication-channels.md#2853-intra-pod) **Exit Codes** states | Not set: the exit was requested | No; the adapter continues its drain, on a service-mode pod included | None needed: the pod serves no later session because the adapter is draining |
-| `hold-timeout` | The coordinator hold times out, and the adapter closes the process's `CH-MSGSOCK` connection ([§10.1](10_gateway-internals.md#101-horizontal-scaling), **Hold state timeout:**) | No | None fails with `runtime_crash`; [§10.1](10_gateway-internals.md#101-horizontal-scaling) **Hold state timeout:** terminates each with `coordinator_lost` | Set: the *no connection* cause | As **Liveness.** states for a cause | The **Liveness.** table's channel for the pod's phase |
-| `deleting` | The pod's termination reaches the adapter through its preStop hook or its stop signal ([§4.6.1](#461-warm-pool-controller-pod-lifecycle), **Disruption protection for agent pods**), and the process exits, or its connection ends, the adapter's close of the connection at its exit included | Yes | Each fails with `runtime_crash` (**Crash.**) | Not set | No; the adapter continues its termination | **None** (**Liveness.**) |
-| `runtime-exit` | The supervisor reports `exited` for the process, or the process's `CH-MSGSOCK` connection ends from the runtime's side | Yes | Each fails with `runtime_crash` (**Crash.**); a process that holds none fails none | Set: the *runtime exit* cause | As **Liveness.** states for a cause: before READY, and on a service-mode pod | The **Liveness.** table's channel for the pod's phase |
-| `protocol` | The runtime writes a line on `CH-MSGSOCK` that is longer than the adapter's line limit, and the adapter stops reading the connection | Yes | As `runtime-exit` | As `runtime-exit` | As `runtime-exit` | As `runtime-exit` |
-| `supervisor-death` | The supervisor ends (**Signals.**), which ends every process in the runtime container; the adapter observes a *link failure* and the end of the process's connection | Yes | As `runtime-exit` | Set: the *runtime exit* cause and the *link failure* cause | As `runtime-exit` | As `runtime-exit` |
-| `adapter-exit` | The adapter process exits, for a cause (**Liveness.**), at the end of its termination, or on a fault such as a fatal error, a panic, or an OOM kill; its exit closes `CH-MSGSOCK` and `CH-SUPERVISE`, and on the close of `CH-SUPERVISE` the supervisor exits and every process in the runtime container ends | No | The adapter, which has exited, fails none; each session the pod held follows [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an active session.** | Not applicable | Yes: this row is that exit | **Exit**; on a `reserved` or `claimed` pod, [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an active session.**; **None** when the pod is being deleted (**Liveness.**) |
-| `rebind` | After an attested end, the adapter closes the ended generation's `CH-MSGSOCK` connection and listener and rebinds them (**End.**) | No | None: the generation's `end-demote` or `end-scrub` row decided its end | Not set by the close; a failed rebind is the *reply error* cause | No | None for the close; a cause retires the pod as **Liveness.** states |
+| Disposition | Set before | Crash | Sessions the ended process holds | Not-live state | Adapter exits |
+|:--|:--|:--|:--|:--|:--|
+| `endDemote` | The `end` a `DemoteSDK` sends (**SDK-warm.**); the process exits inside that `end` (**Children.**) | No | None fails; the `DemoteSDK` that sent the `end` decides its session (**SDK-warm.**) | Not set by the end; an `ended` that carries an error is the *reply error* cause | No |
+| `endScrub` | The first or the second `end` of a `restart` pod's whole-pod scrub ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Supervised scrub sequence.**) | No | None: the scrub runs after the release of the last session | Not set by the end; the §5.2 table states the outcome of each reply | No |
+| `shutdown` | The adapter's `shutdown` write ([§28.5.3](28_communication-channels.md#2853-intra-pod), **Inbound: `shutdown`**); the process exits by itself or is ended by the deadline `end` (`CH-MSGSOCK` **Timing.**) | No | None fails; the exit status has the meaning [§28.5.3](28_communication-channels.md#2853-intra-pod) **Exit Codes** states | Not set: the exit was requested | No; the adapter continues its drain, on a service-mode pod included |
+| `holdTimeout` | The adapter's close of the process's `CH-MSGSOCK` connection at the coordinator hold timeout ([§10.1](10_gateway-internals.md#101-horizontal-scaling), **Hold state timeout:**) | No | None fails with `runtime_crash`; [§10.1](10_gateway-internals.md#101-horizontal-scaling) **Hold state timeout:** terminates each with `coordinator_lost` | Set: the *no connection* cause | As **Liveness.** states for a cause |
+| `deleting` | The arrival of the pod's termination at the adapter through its preStop hook or its stop signal ([§4.6.1](#461-warm-pool-controller-pod-lifecycle), **Disruption protection for agent pods**); the process then exits, or its connection ends, such as at the adapter's `end` during the drain | Yes | Each fails with `runtime_crash` (**Crash.**) | Not set | No; the adapter continues its termination |
+| `none` | No act: the supervisor reports `exited`; the process's connection ends from the runtime's side; the runtime writes a line longer than the adapter's line limit and the adapter stops reading the connection; or the supervisor ends (**Signals.**), which ends every process in the runtime container and is also a *link failure* | Yes | Each fails with `runtime_crash` (**Crash.**); a process that holds none fails none | Set: the *runtime exit* cause | As **Liveness.** states for a cause: before READY, and on a service-mode pod |
 
 - **Liveness.** The adapter holds one not-live state for the pod. It sets
   the state on each cause below, and nothing clears it, because the pod
@@ -523,7 +528,7 @@ From its launch by the runtime supervisor to its end (**Runtime process lifetime
 
 In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
 
-In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor and on the end of a runtime process's `CH-MSGSOCK` connection, the step is the choice of the row of the [Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that applies and the application of that row's outcome, which can set the not-live state and fail the sessions the process holds.` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
+In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor and on the end of a runtime process's `CH-MSGSOCK` connection, the step is the choice of the row of the [Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that the adapter's end disposition selects and the application of that row's outcome, which can set the not-live state and fail the sessions the process holds.` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
 
 In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:** step 3, delete `, which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")`.
 
@@ -718,7 +723,7 @@ lifetime" below) the runtime process is kept across the recycle boundary
 ([Section 4.7.10](04_system-components.md#4710-deployment-model)),
 ```
 
-The paragraph's sentence on a runtime that exits after its session, which retires the pod at the recycle boundary, stays as it is, because it holds on every pod ([Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Runtime exits.**, the `runtime-exit` row).
+The paragraph's sentence on a runtime that exits after its session, which retires the pod at the recycle boundary, stays as it is, because it holds on every pod ([Section 4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Runtime exits.**, the `none` row).
 
 (c) In **Lenny scrub procedure**, replace `The scrub has two phases: a **pre-cleanup credential purge** (step 0) executed by the adapter before `cleanupCommands`, and a **post-cleanup scrub sequence** (steps 1-6) executed after `cleanupCommands` finish.` with:
 
