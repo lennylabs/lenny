@@ -18,6 +18,7 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 - **Rotation step taken early.** Step 2 before step 1 has rolled out everywhere makes new tokens fail on processes that lack the new key. Step 3 before the `lenny-gateway` cap elapses rejects unexpired tokens the old key signed. SPEC-2 states the ordering and the wait.
 - **Bootstrap admin credential across rotation.** Its lifetime exceeds the step-3 wait, so SPEC-2 step 2 re-mints it. An operator who skips that step is locked out at step 3.
 - **Concurrent rotation of one subject.** The second transaction's step (1a) re-read sees the subject revoked by the first and rejects with `subject_token_revoked` (SPEC-7). A retried rotation of an already-rotated token fails the same way.
+- **Postgres outage seen by `lenny-ops`.** `lenny-ops` keeps accepting Lenny-issued tokens that are not in its revocation set, so the §25.15 degraded-mode loop keeps working for operability agents (SPEC-11 Edit 2, owner decision 4). A revocation committed in the seconds before the outage that had not reached the set is missed until the token's `exp`. A `lenny-ops` process that starts during the outage refuses Lenny-issued tokens until Postgres returns. Both are accepted residual risks.
 - **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out revoked is discarded and never returned (SPEC-7).
 
 ## Staged edits
@@ -86,7 +87,7 @@ Rotation is three configuration rollouts of the gateway, the Token Service, and 
 **Edit 1.** In §10.2 "**JWT claims:**", replace the bullet "`expiry` (short-lived, refreshed by gateway on each interaction)" with:
 
 ```markdown
-- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. `auth.capabilityTokenTtlSeconds` defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. `a2a_delegation` child tokens keep the [§13.3](13_security-model.md#133-credential-flow) child formula. Every other token, including the `session_capability` token minted on the session-creation path, keeps its per-dialect cap, and the bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
+- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. `auth.capabilityTokenTtlSeconds` is the default lifetime of every Lenny-issued token whose holder obtains a new token before `exp` by requesting one. It defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. A token issued on `POST /v1/oauth/token` from a request that carries no `expires_in` receives `requested_exp = now + auth.capabilityTokenTtlSeconds`, and the [§13.3](13_security-model.md#133-credential-flow) caps then apply; a request that carries `expires_in` receives the lifetime it asks for within those caps. Tokens whose holder has no refresh path do not take the default. An `a2a_delegation` child token minted through `actor_token` keeps the [§13.3](13_security-model.md#133-credential-flow) child formula, and an absent `expires_in` leaves `requested_exp` out of that formula. The `session_capability` token minted on the session-creation path keeps its per-dialect cap. The bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
 ```
 
 **Edit 2.** In §10.2 "**Playground mint invariants**", item 4 "**Origin and duration.**", replace "`exp = min(subject_token.exp, now + playground.bearerTtlSeconds)`" with:
@@ -98,7 +99,7 @@ Rotation is three configuration rollouts of the gateway, the Token Service, and 
 **Edit 3.** In §27.2, replace the Helm table row that begins "| `playground.bearerTtlSeconds` | `900` |" with this row, kept on one physical line:
 
 ```markdown
-| `auth.capabilityTokenTtlSeconds` | `900` | Lifetime of the MCP bearer tokens minted by `POST /v1/playground/token`. Defined in [§10.2](10_gateway-internals.md#102-authentication). See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
+| `auth.capabilityTokenTtlSeconds` | `900` | Default lifetime of the Lenny-issued tokens whose holder refreshes them, including the MCP bearer tokens minted by `POST /v1/playground/token`. Defined in [§10.2](10_gateway-internals.md#102-authentication). See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
 ```
 
 **Edit 4.** In §27.3.1, in the sentence that begins "Default `expiresInSeconds` is `900` (15 min); configurable via `playground.bearerTtlSeconds`", replace "configurable via `playground.bearerTtlSeconds` (bounded `60 ≤ ttl ≤ 3600`)" with "configurable via `auth.capabilityTokenTtlSeconds` ([§10.2](10_gateway-internals.md#102-authentication))", and replace "(KMS-backed in production, HMAC in dev)" with:
@@ -210,14 +211,14 @@ The gateway in-process mints that [§10.2](10_gateway-internals.md#102-authentic
 **Edit 1.** In the §17.8.1 table, insert immediately after the row that begins "| `/v1/oauth/token` per-tenant global rate limit (`oauth.rateLimit.tenantPerSecond`) |", each row on one physical line:
 
 ```markdown
-| Playground MCP bearer lifetime (`auth.capabilityTokenTtlSeconds`) | 900 s (15 min) | [§10.2](10_gateway-internals.md#102-authentication) |
+| Default lifetime of refreshable Lenny-issued tokens (`auth.capabilityTokenTtlSeconds`) | 900 s (15 min) | [§10.2](10_gateway-internals.md#102-authentication) |
 | KMS asymmetric Sign quota (`kms.signQuotaPerSecond`) | No default; required when `kms.provider` is not `local` | [§17.8.2](#1782-capacity-tier-reference) |
 ```
 
 **Edit 2.** In §17.8.2, insert immediately before the heading `### 17.8.3 Tier Promotion Guide`:
 
 ```markdown
-**KMS Sign rate.** Every Lenny-issued token costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication)). The sustained fleet sign rate is approximately `session creation rate + delegation mint rate + concurrent playground bearer holders ÷ (auth.capabilityTokenTtlSeconds − 60) + admin, impersonation, and rotation mints`, where 60 seconds is the holder refresh lead ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange)). The terms come from the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameters and the `capacityPlanning.*` workload values. At Tier 3 with the default lifetime (200 sessions/s, about 15 delegations/s, and at most 10,000 playground bearer holders, the Tier 3 session ceiling), the sustained sign rate is about 230/s, and about 690/s when the rate triples in a session storm. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the storm figure; a deployment whose quota is below the storm figure returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during storms. ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
+**KMS Sign rate.** Every Lenny-issued token costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication)). The sustained fleet sign rate is approximately `session creation rate + delegation mint rate + concurrent holders of refreshable tokens ÷ (auth.capabilityTokenTtlSeconds − refresh lead) + admin, impersonation, and rotation mints`. A refreshable token is one that takes the `auth.capabilityTokenTtlSeconds` default ([§10.2](10_gateway-internals.md#102-authentication) "JWT claims"): a playground bearer, whose refresh lead is 60 seconds ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange)), or a `POST /v1/oauth/token` token issued without `expires_in`, whose refresh lead is the holder's own, such as `security.oidc.tokenRefreshBeforeExpirySeconds` for the [§25.4](25_agent-operability.md#254-the-lenny-ops-service) GatewayClient. The terms come from the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameters and the `capacityPlanning.*` workload values. At Tier 3 with the default lifetime (200 sessions/s, about 15 delegations/s, and 10,000 concurrent holders of refreshable tokens with a 60-second lead), the sustained sign rate is about 230/s, and about 690/s when the rate triples in a session storm. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the storm figure; a deployment whose quota is below the storm figure returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during storms. ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
 ```
 
 ### SPEC-9 · spec/17_deployment-topology.md § 17.4 Local Development Mode: "Embedded Mode: `lenny up`" dependency table KMS row, "State and resets", and "Dev mode guard rails"
@@ -265,7 +266,7 @@ see [Section 25.4](25_agent-operability.md#254-the-lenny-ops-service) `lenny-ops
 Egress allows Postgres, Redis, MinIO, Prometheus, and the KMS endpoint when `kms.provider` is not `local`.
 ```
 
-### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.4 The `lenny-ops` Service: Startup and Readiness, Authentication, and `GET /v1/admin/me` Response "Degradation", and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
+### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.4 The `lenny-ops` Service: Startup and Readiness and Authentication, and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
 
 **Edit 1.** In §18.33, replace the bullet "- JWT signing-key rotation procedure per [§13.3](13_security-model.md#133-credential-flow): JWK Set publication endpoint, key-overlap window, rollover audit event emission (`platform.jwt_signing_key_rotated`), and the operator runbook." with:
 
@@ -276,25 +277,19 @@ Egress allows Postgres, Redis, MinIO, Prometheus, and the KMS endpoint when `kms
 **Edit 2.** In §25.4 "Authentication", replace "`lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint." with:
 
 ```markdown
-`lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway. It validates Lenny-issued tokens against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation" and applies to them the revocation check of [Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation" and "Authoritative durability for revocation", including the refusal to validate while Postgres is unreachable.
+`lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway. It validates Lenny-issued tokens against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation" and refuses a Lenny-issued token whose `jti` is in its in-memory revocation set with `401 token_revoked`. `lenny-ops` loads the revocation set from `issued_tokens` at startup and, while Postgres is reachable, keeps it current by the mechanisms the gateway's revocation cache uses ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation" and "Authoritative durability for revocation"). When Redis is unreachable and Postgres is reachable, the `issued_tokens` reads keep the set current without `token.revoked` events. `lenny-ops` does not apply the gateway's refusal to validate while Postgres is unreachable. During a Postgres outage it keeps accepting a Lenny-issued token that verifies against the key set and is not in the revocation set, because no revocation can commit while Postgres is down, and the set stays frozen at its last state until Postgres returns. A revocation that committed before the outage and had not reached the set is missed until the token's `exp`, and a token whose audience is `lenny-ops` lives at most the 1-hour `lenny-ops` per-dialect cap ([Section 13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling"). A `lenny-ops` process that has not loaded the revocation set since it started refuses every Lenny-issued token with `503 token_validation_unavailable` until a load succeeds. The revocation set does not apply to upstream IdP tokens.
 ```
 
 **Edit 3.** In §25.4 "Startup and Readiness", replace "`lenny-ops` starts its HTTP listener immediately." with:
 
 ```markdown
-`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation".
+`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set of "Authentication" below loads from Postgres when Postgres is reachable and gates neither the listener nor readiness.
 ```
 
 **Edit 4.** In the §25.15 table, append this sentence to the end of the Impact cell of the "**Postgres down**" row and of the "**Postgres + Redis both down**" row, keeping each row on one physical line:
 
 ```markdown
-`lenny-ops` refuses Lenny-issued tokens for the duration ([Section 25.4](#254-the-lenny-ops-service) "Authentication").
-```
-
-**Edit 5.** In §25.4 "`GET /v1/admin/me` Response", sub-heading "Degradation", replace "If Postgres is unreachable, `/v1/admin/me` still returns" with:
-
-```markdown
-If Postgres is unreachable, `/v1/admin/me` still returns for a caller authenticated by an upstream IdP token (a Lenny-issued token is refused, per "Authentication" above)
+Lenny-issued tokens remain accepted against the revocation set `lenny-ops` loaded before the outage, and a `lenny-ops` cold start during the outage refuses Lenny-issued tokens until Postgres recovers ([Section 25.4](#254-the-lenny-ops-service) "Authentication").
 ```
 
 ## Spec files touched

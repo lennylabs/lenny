@@ -70,15 +70,24 @@ Targets: `cmd/lenny-token-service/kms.go`, `cmd/lenny-token-service/server.go`, 
 2. `Options.Verifier` is the key set and verifies caller, subject, and actor tokens. Delete `NewServer`'s signer-as-verifier fallback, and make `NewServer` return an error when `Options.Verifier` is nil. A remote signer is not a verifier, so the fallback would leave the Token Service rejecting every token.
 3. `mintToken` calls `Sign(ctx, …)` with the request context.
 
-### CODE-6 · `lenny-ops` wiring: KMS flags, key set, and the dev trust hook
+### CODE-6 · `lenny-ops` wiring: KMS flags, key set, the dev trust hook, and the revocation set
 
-Targets: `cmd/lenny-ops/main.go` (`buildAuthConfig`), `cmd/lenny-ops/flags.go`, `charts/lenny/templates/ops-deployment.yaml` (item 5 only).
+Targets: `cmd/lenny-ops/main.go` (`buildAuthConfig`), `cmd/lenny-ops/flags.go`, a new `cmd/lenny-ops/revocation.go` (item 6), `pkg/gateway/middleware/auth` (item 6, only if the IMPLEMENTOR'S CHOICE below needs a new hook), `charts/lenny/templates/ops-deployment.yaml` (item 5 only).
 
 1. Register `providerflags.Bind` on the `lenny-ops` flag set.
 2. When `--production` is set, `lenny-ops` refuses a resolved `local` provider at startup, independent of `--environment`. `lenny-ops` has no `--dev-mode`, and `--production` is its only production signal, so the providerflags environment check alone would admit `local` under `--production` without `LENNY_ENV=prod`.
-3. With `--production`, a loaded key set is required and a load failure is fatal. Without `--production`, the key set is loaded when a KMS provider is configured.
+3. Every `lenny-ops` process loads the key set once at startup through `jwt.LoadKeySet`, with or without `--production`, and a load failure is fatal, as SPEC-2 states for every process. An unset `--kms-provider` resolves to the local provider (`providerflags.Resolve`), so a development `lenny-ops` derives its key set from `--kms-master-key-file` the same way the gateway and the Token Service do. `--production` adds only the refusal of `local` in item 2.
 4. `--bearer-trust-hmac-key-file` is fatal when `--production` is set. Outside production it stays as the dev embedded-OIDC trust hook, alongside the key set.
 5. In the same commit, `charts/lenny/templates/ops-deployment.yaml` stops rendering `--bearer-trust-hmac-key-file` and its key mount when `ops.production` is true. Without this, a production render passes a flag the binary now refuses, and `lenny-ops` crashloops.
+6. Revocation set (SPEC-11 Edit 2, owner decision 4). `lenny-ops` holds a `revocation.Cache` (`pkg/gateway/credentials/revocation`) for Lenny-issued tokens and builds it the way `cmd/lenny-gateway/revocation.go` builds the gateway's:
+   - At startup it rehydrates the cache from `issued_tokens` with the gateway's rehydration query. A failed startup load does not stop the process; it retries on the rehydration interval.
+   - While Redis is reachable it applies `token.revoked` events through the gateway's propagator (`pkg/gateway/credentials/revocation/propagator`).
+   - It repeats the rehydration on the gateway's interval, so the set stays current from Postgres when Redis is down.
+   - `buildAuthConfig` wires `authmw.Options.Revocations` to the cache for tokens the key set verified, and a revoked `jti` returns `401 token_revoked`.
+   - It does not wire the gateway's `RevocationFreshness` staleness gate (`Cache.Stale`), because that gate refuses every bearer once Postgres has been unreachable past the staleness bound, which is option A of owner decision 4. Instead, a token the key set verified is refused with `503 token_validation_unavailable` only until the first successful rehydration since process start. After that, a Postgres outage leaves the set frozen and key-set tokens not in it are accepted.
+   - Upstream IdP tokens and dev trust-hook tokens bypass the revocation set and the startup gate.
+
+   **IMPLEMENTOR'S CHOICE:** how `lenny-ops` reaches `issued_tokens` (the gateway's store type or a narrow reader) and how the startup gate and the key-set scoping are expressed in `authmw` (an existing hook or a new option). The bounds: the rehydration query is the gateway's, so one query defines what a replica loads; no key-set token is refused for staleness after the first successful load; every key-set token is refused before it; and no non-Lenny-issued token is affected by either check.
 
 ### CODE-7 · Outcome mapping: `Retry-After` and the sign metrics
 
@@ -89,20 +98,23 @@ Targets: the gateway mint-site error paths of CODE-4, `pkg/tokenservice/tokenser
 
 ### CODE-8 · Capability token lifetime knob
 
-Targets: `cmd/lenny-gateway/flags.go`, `pkg/gateway/mcpfabric/playground/playground.go`, `charts/lenny/templates/gateway-deployment.yaml` (the flag name only).
+Targets: `cmd/lenny-gateway/flags.go`, `pkg/gateway/mcpfabric/playground/playground.go`, `charts/lenny/templates/gateway-deployment.yaml` (the flag name only), `cmd/lenny-token-service/flags.go`, `cmd/lenny-token-service/server.go` (`buildServer`), `pkg/tokenservice/tokenservice.go` (`Options`, `buildExchangeRequest`, `durationFromExpiresIn`), `charts/lenny/templates/token-service-deployment.yaml` (the new flag line).
 
 1. Rename `--playground-bearer-ttl-seconds` to `--capability-token-ttl-seconds` (environment variable `LENNY_CAPABILITY_TOKEN_TTL_SECONDS`, default 900). Startup is fatal outside the SPEC-3 Edit 1 bound. No alias for the old flag is kept. In the same commit, `charts/lenny/templates/gateway-deployment.yaml` renders the new flag name from the existing `playground.bearerTtlSeconds` value, so the chart never passes a flag the binary no longer defines; CHART-1 then renames the value.
 2. The playground bearer `exp` rule is SPEC-3 Edit 1. Rename `BearerTTL` and its error text to name `auth.capabilityTokenTtlSeconds`.
-3. The Token Service applies no capability-lifetime clamp to `a2a_delegation` tokens (SPEC-3 Edit 1).
+3. Token Service default (SPEC-3 Edit 1, owner decision 5). `durationFromExpiresIn` in `pkg/tokenservice/tokenservice.go` returns a hard-coded 1 hour for an absent `expires_in` today. Replace it with `Options.CapabilityTokenTTL`, which `buildServer` sets from a new `lenny-token-service` flag `--capability-token-ttl-seconds` (environment variable `LENNY_CAPABILITY_TOKEN_TTL_SECONDS`, default 900, fatal outside the SPEC-3 Edit 1 bound). `NewServer` returns an error when the value is zero. A request that carries `expires_in` keeps it, and the per-dialect caps clamp it as today.
+4. For an exchange that carries an `actor_token` (`a2a_delegation`) with no `expires_in`, `buildExchangeRequest` leaves `RequestedExp` zero instead of setting `now + 1 hour` as it does today. `tokenexchange.Derive` already treats a zero `RequestedExp` as absent, so the child's `exp` is `min(subject_token.exp, actor_token.exp, per-dialect cap)` and the capability default never applies to it.
+5. In the same commit, `charts/lenny/templates/token-service-deployment.yaml` renders `--capability-token-ttl-seconds` from the same value the gateway template reads, so both binaries take one operator-set default.
 
 ### CODE-9 · In-transaction source-token revocation re-read
 
-Targets: `pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go` (`RecordWithAudit`, `RecordWithRotationAudit`), `pkg/tokenservice/tokenservice.go` (`persistIssuedToken` and its store interface), `pkg/tokenservice/rotation_test.go`.
+Targets: `pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go` (`RecordWithAudit`, `RecordWithRotationAudit`), `pkg/tokenservice/tokenservice.go` (`persistIssuedToken` and its store interface), `pkg/tokenservice/rotation_test.go`, `cmd/lenny-gateway/user_revocation.go` (the `adminIssuedTokenStore` interface and its `RecordWithAudit` call), and `cmd/lenny-gateway/user_revocation_test.go` (`fakeAdminIssuedTokenStore`).
 
 1. Both store methods take the list of source JTIs to recheck: the subject `jti` and, when present, the actor `jti`. After the advisory lock and before any insert, they run SPEC-7 step (1a) as one `SELECT jti, revoked_at FROM issued_tokens WHERE jti = ANY($1)`. A listed `jti` whose row has `revoked_at` set returns a typed error naming which source failed. No issuance statement runs.
 2. On that error, `persistIssuedToken` discards the signed token and writes the rejection `token.exchanged` audit row with `policy_result: "rejected:subject_token_revoked"` or `"rejected:actor_token_revoked"` under the lock-and-COMMIT discipline of §13.3, then returns `400 invalid_grant` with that reason. A failed rejection audit write returns `500 token_exchange_failed` with the reason in `detail`.
 3. A rotation of a token whose predecessor is already revoked, which is a retried or concurrent rotation, now fails with `subject_token_revoked` instead of committing a second mint. Update the `RecordWithRotationAudit` doc comment. Its `ErrNoRows` branch becomes reachable only for a subject with no row. Update `rotation_test.go`.
-4. The gateway's `childtoken.Minter` (`pkg/gateway/mcpfabric/delegation/childtoken/childtoken.go`) check is unchanged. Its doc comment states that it is a gateway-side pre-check and that SPEC-7 step (1a) is the normative re-read.
+4. `cmd/lenny-gateway/user_revocation.go` declares `RecordWithAudit` in `adminIssuedTokenStore` and calls it for the admin rotation. Update the interface, the call, which passes an empty recheck list because the admin rotation has no subject token to re-read, and the test fake in the same commit, so `cmd/lenny-gateway` compiles when the store signature changes.
+5. The gateway's `childtoken.Minter` (`pkg/gateway/mcpfabric/delegation/childtoken/childtoken.go`) check is unchanged. Its doc comment states that it is a gateway-side pre-check and that SPEC-7 step (1a) is the normative re-read.
 
 ### CODE-10 · Delete the published JWKS endpoint and the rotation audit observer
 
@@ -134,7 +146,7 @@ Targets: `pkg/auth/jwt/kmssigner.go`, `pkg/auth/jwt/rotating.go` (deleted), `pkg
 
 Targets: `charts/lenny/values.yaml`, `charts/lenny/values.schema.json`, `pkg/chart/values/values.go`, `charts/lenny/presets/dev.yaml`.
 
-1. Replace `playground.bearerTtlSeconds` with `auth.capabilityTokenTtlSeconds` (default and schema bounds from SPEC-3 Edit 1) in the values, the schema, `pkg/chart/values/values.go`, and the gateway template's `--capability-token-ttl-seconds` line. No alias for the old key is kept.
+1. Replace `playground.bearerTtlSeconds` with `auth.capabilityTokenTtlSeconds` (default and schema bounds from SPEC-3 Edit 1) in the values, the schema, `pkg/chart/values/values.go`, and the gateway and Token Service templates' `--capability-token-ttl-seconds` lines. The schema minimum moves from 60 to 120, and `pkg/chart/values/schema_test.go` (`TestRejectsBearerTTLOutOfRange`) moves to the new bounds. No alias for the old key is kept.
 2. Add `kms.signQuotaPerSecond` (integer, minimum 1, no default). Rendering fails with a message naming the value when `kms.provider` is not `local` and the value is unset.
 3. Correct the `kms` comments that say the Token Service wraps its signing key and that `--kms-provider` renders on two binaries, so they name the three binaries and signing through `platform:jwt-signing`. Replace the `platform:token-service-signing` alias example with `platform:jwt-signing=<immutable P-256 key ref>` and document `platform:jwt-verify`.
 4. Document `security.oidc.bearerTrustKeySecret` as dev-only. CODE-6 makes `lenny-ops` refuse it under `--production`.
@@ -168,9 +180,10 @@ Remove every `/.well-known/jwks.json` step, the `signing_keys` psql step, the `t
 
 Targets and edits:
 
-- `docs/reference/configuration.md`: correct the `kms.provider` row to `aws`, `gcp`, `azure`, and `local`, with `local` refused in production. Document the `platform:jwt-signing` and `platform:jwt-verify` alias entries, which must be immutable key-version references on cloud providers. Add `kms.signQuotaPerSecond`, required on cloud providers. Add `kms.endpointCIDR`, which must be narrower than `0.0.0.0/0` on cloud providers. Replace the `playground.bearerTtlSeconds` row with `auth.capabilityTokenTtlSeconds` (default and bounds from SPEC-3 Edit 1). Remove "dev HMAC JWT" from the `playground.devTenantId` row.
+- `docs/reference/configuration.md`: correct the `kms.provider` row to `aws`, `gcp`, `azure`, and `local`, with `local` refused in production. Document the `platform:jwt-signing` and `platform:jwt-verify` alias entries, which must be immutable key-version references on cloud providers. Add `kms.signQuotaPerSecond`, required on cloud providers. Add `kms.endpointCIDR`, which must be narrower than `0.0.0.0/0` on cloud providers. Replace the `playground.bearerTtlSeconds` row with `auth.capabilityTokenTtlSeconds` (default and bounds from SPEC-3 Edit 1), described as the default lifetime of playground bearers and of `POST /v1/oauth/token` tokens requested without `expires_in`. Remove "dev HMAC JWT" from the `playground.devTenantId` row.
 - `docs/operator-guide/web-playground.md`: rename the lifetime value in the YAML example.
 - `docs/operator-guide/security.md` "Supported KMS Providers": remove the HashiCorp Vault Transit row, list Azure Key Vault for JWT signing, and state that all three cloud providers sign with ES256.
+- `docs/operator-guide/agent-operability.md` failure table, "Postgres down" and "Postgres + Redis both down" rows: state that `lenny-ops` keeps accepting Lenny-issued tokens against the revocation set it loaded before the outage, and that a `lenny-ops` started during the outage refuses Lenny-issued tokens until Postgres recovers (SPEC-11 Edit 4).
 - `docs/reference/error-catalog.md`, `KMS_SIGNING_UNAVAILABLE` row: name the gateway or Token Service signer, an open breaker or KMS throttling, and state that the response carries `Retry-After`.
 
 ### REC-1 · Records
@@ -200,11 +213,18 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 
 - Tier 2 component, real gateway and Token Service against the testinfra KMS stub (`// spec: 10.2 (Authentication), 15.1 (REST API)`). With throttle injection, the impersonation mint and `POST /v1/oauth/token` return 503 `KMS_SIGNING_UNAVAILABLE` with `Retry-After` and the breaker stays closed. Four hard failures in 30s open the breaker, and the next mint returns `Retry-After` equal to the remaining cooldown. A token issued before the fault still verifies on both processes throughout.
 - Tier 1, Token Service: `NewServer` with a nil `Verifier` returns an error.
-- Tier 1, `lenny-ops`: `--production` with `kms.provider=local` is fatal, `--production` with `--bearer-trust-hmac-key-file` is fatal, and `--production` with an unloadable key set is fatal.
+- Tier 1, `lenny-ops`: `--production` with `kms.provider=local` is fatal, `--production` with `--bearer-trust-hmac-key-file` is fatal, and an unloadable key set is fatal with and without `--production`.
+- Tier 1, `cmd/lenny-ops` revocation set (`// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow)`), with a fake `issued_tokens` source, a fake clock, and a fake event bus:
+  - Before the first successful load, a key-set token returns `503 token_validation_unavailable` while a dev trust-hook token is admitted (the discriminating case for the key-set scoping).
+  - After a load, a revoked key-set token returns `401 token_revoked`, and a non-revoked one is admitted.
+  - After a load, with the source failing for longer than the gateway's staleness bound (Postgres down), a non-revoked key-set token is still admitted and a revoked one is still refused (the discriminating case against the gateway's fail-closed gate).
+  - With the event bus down and the source up, a revocation written to the source is enforced after the next rehydration interval.
+  - A `token.revoked` event applied while the source is failing is enforced.
 
 ### Tests that land with CODE-8
 
-- Tier 1, gateway flags: 119 and 3601 are fatal, and 120 and 3600 start. The playground mint gives `exp` per the SPEC-3 Edit 1 rule at both boundaries.
+- Tier 1, gateway and Token Service flags: 119 and 3601 are fatal, and 120 and 3600 start. The playground mint gives `exp` per the SPEC-3 Edit 1 rule at both boundaries.
+- Tier 1, `pkg/tokenservice` (`// spec: 10.2 (Authentication), 13.3 (Credential Flow)`): a rotation or scope-narrowing request with no `expires_in` receives `exp = now + CapabilityTokenTTL` when the subject outlives it and `subject_token.exp` when it does not; a request with `expires_in: 3000` and audience `lenny-ops` receives 3000 s; a request with `expires_in` above the per-dialect cap is clamped to the cap; an `actor_token` exchange with no `expires_in` receives `min(subject_token.exp, actor_token.exp, per-dialect cap)` and never the capability default; `NewServer` with a zero `CapabilityTokenTTL` returns an error.
 
 ### Tests that land with CODE-9
 
@@ -236,11 +256,13 @@ Targets: `tests/testinfra/gateway/gateway.go`, `tests/testinfra/tokenservice/tok
    - A `POST /v1/oauth/token` bearer verifies on every gateway replica.
    - Each Token Service replica accepts the other's subject token.
    - A token survives a restart of its signer.
-   - Rotation: under `local` with mapped references, run steps 1 to 3 of SPEC-2 as three restarts with new alias values. Assert that old tokens verify after step 2, that new tokens verify after step 2, that an old token is refused with `unknown_kid` after step 3, and that the re-minted admin credential keeps working after step 3.
+   - Rotation: under `local` with mapped references, run steps 1 to 3 of SPEC-2 as three restarts with new alias values. Assert that old tokens verify after step 2, that new tokens verify after step 2, that an old token is refused with `unknown_kid` after step 3, that the re-minted admin credential keeps working after step 3, and that the replaced admin credential is refused on `lenny-ops` after step 2.
+   - `lenny-ops` during a Postgres outage (`// spec: 25.4 (The lenny-ops Service), 25.15 (Failure Mode Analysis)`): mint two `lenny-ops`-audience tokens through `POST /v1/oauth/token`, revoke one, and wait until `lenny-ops` refuses it. Stop Postgres. The non-revoked token is accepted and the revoked one is refused with `401 token_revoked`. Restart `lenny-ops` with Postgres still down: both tokens are refused with `503 token_validation_unavailable`. Start Postgres: the non-revoked token is accepted again.
 3. Tier 4: rewrite `lennyIssuedProbes` so each Lenny-issued bearer, including Token Service-issued tokens, is probed on every gateway replica. Remove the per-replica narrowing comment. The 0095 proposal files are not edited.
 4. Tier 5, Kind: the full chart with `kms.provider=local` and two gateway replicas; a bearer minted through one replica's Service endpoint verifies through the other.
 5. Tier 9 (`// spec: 10.2 (Authentication)`): algorithm confusion (HS256 over the public key), `alg: none`, a forged `kid` that matches no key (assert no KMS call through the stub's counter), and a token signed by a P-256 key outside the set. All are refused on the gateway, the Token Service, and `lenny-ops`.
-6. `tests/spec-map.json`: remove the entries for `pkg/auth/jwt/rotating_test.go`, the `JWKSHandler` tests in `pkg/auth/jwt/jwks_test.go`, and `tests/tier4_integration/jwks_test.go`, and add every test this proposal introduces.
+6. Tier 9 (`// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow)`): revocation enforcement on `lenny-ops`. A Lenny-issued token revoked through rotation, through §11.4 user invalidation, and through tenant deletion is refused on `lenny-ops` with `401 token_revoked` within the propagation budget, both with Redis up and, through the rehydration interval, with Redis stopped.
+7. `tests/spec-map.json`: remove the entries for `pkg/auth/jwt/rotating_test.go`, the `JWKSHandler` tests in `pkg/auth/jwt/jwks_test.go`, and `tests/tier4_integration/jwks_test.go`, and add every test this proposal introduces.
 
 ## Edge cases and accepted failure modes
 
@@ -260,11 +282,12 @@ Targets: `tests/testinfra/gateway/gateway.go`, `tests/testinfra/tokenservice/tok
 - pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go and its tests
 - pkg/tokenservice/tokenservice.go, rotation_test.go
 - pkg/alerting/rules/rules.go
-- pkg/chart/values/values.go
-- cmd/lenny-gateway/token_signing.go, httpsurface.go, auth_seams.go, flags.go, config_parse.go, authposture.go, auditpipeline.go, wiring_fields.go, adminrouter.go
-- cmd/lenny-token-service/kms.go, server.go
-- cmd/lenny-ops/main.go, flags.go
+- pkg/chart/values/values.go, schema_test.go
+- cmd/lenny-gateway/token_signing.go, httpsurface.go, auth_seams.go, flags.go, config_parse.go, authposture.go, auditpipeline.go, wiring_fields.go, adminrouter.go, user_revocation.go, user_revocation_test.go
+- cmd/lenny-token-service/kms.go, server.go, flags.go
+- cmd/lenny-ops/main.go, flags.go, revocation.go (new)
+- pkg/gateway/middleware/auth (only if CODE-6 item 6 adds a hook)
 - charts/lenny/values.yaml, values.schema.json, presets/dev.yaml, templates/gateway-deployment.yaml, templates/token-service-deployment.yaml, templates/ops-deployment.yaml, templates/ops-network-policies.yaml, templates/system-network-policies.yaml, templates/prometheusrule.yaml, a new local KMS master key Secret template, files/alerting-rules.yaml (generated), tests/
-- docs/runbooks/jwt-key-rotation.md, docs/reference/configuration.md, docs/operator-guide/web-playground.md, docs/operator-guide/security.md, docs/reference/error-catalog.md, docs/alerting/rules.yaml (generated)
+- docs/runbooks/jwt-key-rotation.md, docs/reference/configuration.md, docs/operator-guide/web-playground.md, docs/operator-guide/security.md, docs/operator-guide/agent-operability.md, docs/reference/error-catalog.md, docs/alerting/rules.yaml (generated)
 - BUILD-GAPS.md, TEST-GAPS.md
 - tests/testinfra/stubs/kms/provider.go, tests/testinfra/gateway/gateway.go, tests/testinfra/tokenservice/tokenservice.go, tests/testinfra/opsprocess/opsprocess.go, tests/tier4_integration/tenant_deletion_phase4_test.go, tests/tier4_integration/jwks_test.go (deleted), a new tier-4 test, tests/tier5_e2e_kind, the tier-9 suite, tests/spec-map.json
