@@ -71,8 +71,8 @@ func erasedAlice(t *testing.T) *World {
 }
 
 // TestUserErasureErasesTokenStoreRowsAndSourceCheckpoint_spec_12_8 runs a
-// user erasure over the harness and asserts it follows the user path of the
-// §12.8 Store table: the erased user holds no TokenStore row and no seeded
+// user erasure over the harness and asserts it follows the §12.8 DeleteByUser
+// dependency-ordered deletion sequence: the erased user holds no TokenStore row and no seeded
 // source checkpoint, object, transcript, or session row, and a bystander
 // keeps every TokenStore row, lease, and seeded source it held.
 //

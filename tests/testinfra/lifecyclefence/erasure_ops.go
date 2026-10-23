@@ -164,8 +164,9 @@ func (e *Erasure) Runner() *erasurejob.Runner {
 		})
 }
 
-// orchestrator is the erasure over the World's stores, following the user
-// path of the §12.8 Store table for the stores a World holds: a lister over
+// orchestrator is the erasure over the World's stores, following the §12.8
+// DeleteByUser dependency-ordered deletion sequence for the stores a World
+// holds: a lister over
 // the user's session rows from the primary and the IDs reserved for the
 // user; the session-scoped artifacts, checkpoint_manifests, and transcripts
 // erasers in rank order; and the user-scoped sessions eraser, which also

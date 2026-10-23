@@ -627,9 +627,16 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 	// The embedded-OIDC bearer verifies on both replicas. A playground
 	// bearer, minted before Phase 3 because the mint runs no registry check,
 	// needs a gateway started with the playground enabled, which exits at
-	// startup today.
+	// startup today. A Lenny-issued bearer needs a token signed with the
+	// gateway's own Token Service verifier key, which each gateway process
+	// generates and seals at start and no tier-4 component can sign with.
+	// cmd/lenny-gateway's tier-1 test of the verifier chain pins the refusal
+	// of a Lenny-issued bearer for a deleting tenant until the gap closes.
 	t.Run("playground bearer", func(t *testing.T) {
 		t.Skip("blocked: F-27.8.1 — a gateway started with --playground-enabled exits at startup, so no playground bearer can be minted")
+	})
+	t.Run("Lenny-issued bearer", func(t *testing.T) {
+		t.Skip("blocked: F-10.2.22 — the gateway verifies Lenny-issued bearers against a signing key it generates and seals at process start, and neither the gateway nor a tier-4 Token Service can mint a token under that key, so no Lenny-issued bearer can be probed on either replica")
 	})
 	replicas := []string{gwA.BaseURL(), gwB.BaseURL()}
 	probes := []bearerProbe{{"embedded OIDC", mintTenancyBearer(t, "acme"), replicas}}

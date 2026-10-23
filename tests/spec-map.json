@@ -2963,6 +2963,7 @@
       "tests": [
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestBearerTenantClaimFollowsVerifyingKey_spec_10_2",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
         "pkg/auth/jwt/tenantclaim_test.go::TestTenantClaimVerifierResolvesConfiguredClaim",
         "pkg/gateway/environment/tenantstore/tenantstore_test.go::TestIsRegisteredImplementsAuthRegistry",
         "tests/tier2_component/stores/tenantstore_test.go::TestTenantStoreIsRegisteredMatchesRegisteredReading_spec_10_2",
@@ -3771,6 +3772,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "pkg/gateway/externalapi/admin/tenant_lifecycle_guards_test.go::TestDefaultTenantDeletionRefusedOutsideMultiTenantMode_spec_12_8",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
         "tests/tier2_component/stores/tenant_phase4_entries_test.go",
         "tests/tier2_component/stores/miniostore_test.go::TestMinIOStoreDeleteByTenant_spec_12_8",
         "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8",

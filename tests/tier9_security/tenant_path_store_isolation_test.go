@@ -5,7 +5,7 @@
 // Tier-9 cross-tenant isolation of the §12.8 tenant deletion Phase 4 entries
 // over the production Postgres stores. The test seeds acme and globex rows in
 // every tenant-path store a Phase 4 entry erases, plus audit rows on the
-// platform chain, runs acme's entries in the Store table's order through each
+// platform chain, runs acme's entries in the §12.8 Phase 4 order through each
 // store's production method (the entry's List-then-Revoke or List-then-Delete
 // sequence where the entry composes one), and asserts that every globex row
 // and every platform-chain row is byte-for-byte unchanged and that acme keeps
@@ -176,7 +176,8 @@ type tenantPathEntry struct {
 	erase func(ctx context.Context, tenant string) (int, error)
 }
 
-// entries returns the tenant-path entries in the Store table's order. The
+// entries returns the tenant-path entries in the §12.8 (Compliance
+// Interfaces: Tenant deletion lifecycle) Phase 4 order. The
 // audit entry is the store's DeleteByTenant, which the gateway skips for the
 // platform chain; the test runs it for acme and asserts the platform chain
 // is untouched.

@@ -299,3 +299,81 @@ func TestBearerTenantClaimFollowsVerifyingKey_spec_10_2(t *testing.T) {
 		})
 	}
 }
+
+// TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8 drives
+// both members of the gateway's Embedded Mode bearer verifier through the
+// multi-tenant auth chain the gateway wires (applyTenantAuthOptions over a
+// tenantstore) for every tenant registration state. A Lenny-issued bearer,
+// verified by the unwrapped Token Service member and resolved from its own
+// `tenant_id`, and an embedded OIDC bearer, verified by the trusted-key
+// member and resolved from the configured tenant claim, are each admitted
+// for a registered tenant and refused with 403 TENANT_NOT_FOUND for a tenant
+// in `deleting` or `deleted`. The tier-4 tenant deletion test cannot mint a
+// Lenny-issued bearer against the gateway binary, because the gateway's
+// Token Service verifier key is generated and sealed at process start, so
+// this test is the one that pins the Token Service member of the refusal.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 10.2 (Authentication: `tenant_id` extraction)
+func TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8(t *testing.T) {
+	ctx := context.Background()
+	primarySecret := []byte("token-service-secret-abcdefghijklmnop")
+	embeddedSecret := []byte("embedded-signing-secret-0123456789")
+	verifier := embeddedBearerVerifier(
+		jwt.NewHMACSigner("token-service-kid", primarySecret),
+		jwt.NewHMACSigner("embedded-kid", embeddedSecret),
+		"tenant_id",
+	)
+	store := tenantstore.NewMemory()
+	opts := authmw.Options{Verifier: verifier}
+	applyTenantAuthOptions(&opts, true, false, store)
+	h := authmw.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), opts)
+
+	exp := time.Now().Add(time.Hour).Unix()
+	members := []struct {
+		name string
+		mint func(tenant string) string
+	}{
+		{"Lenny-issued", func(tenant string) string {
+			return hs256(t, primarySecret, "token-service-kid", map[string]any{
+				"sub": "alice@" + tenant + ".com", "exp": exp, "typ": string(auth.TokenUserBearer), "tenant_id": tenant,
+			})
+		}},
+		{"embedded OIDC", func(tenant string) string {
+			return hs256(t, embeddedSecret, "embedded-kid", map[string]any{
+				"sub": "bob@" + tenant + ".com", "exp": exp, "typ": string(auth.TokenUserBearer),
+				"aud": []string{embeddedOIDCAudience}, "tenant_id": tenant,
+			})
+		}},
+	}
+	cases := tenantstoretest.RegistrationCases()
+	sawRefused := false
+	for _, c := range cases {
+		row, err := c.Seed(ctx, store, "acme-"+c.Name)
+		if err != nil {
+			t.Fatalf("seed %s: %v", c.Name, err)
+		}
+		sawRefused = sawRefused || !c.Registered
+		for _, m := range members {
+			t.Run(m.name+"/"+c.Name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, "/v1/admin/me", nil)
+				req.Header.Set("Authorization", "Bearer "+m.mint(row.ID))
+				rr := httptest.NewRecorder()
+				h.ServeHTTP(rr, req)
+				if c.Registered {
+					if rr.Code != http.StatusNoContent {
+						t.Fatalf("status = %d, want 204 for a registered tenant; body=%s", rr.Code, rr.Body.String())
+					}
+					return
+				}
+				if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "TENANT_NOT_FOUND") {
+					t.Fatalf("status = %d body=%s, want 403 TENANT_NOT_FOUND for a %s tenant", rr.Code, rr.Body.String(), c.Name)
+				}
+			})
+		}
+	}
+	if !sawRefused {
+		t.Fatal("registration fixtures carry no unregistered state; the refusal is not exercised")
+	}
+}
