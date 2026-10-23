@@ -1921,6 +1921,20 @@ t.section("B18. under a named scope every lens carries the cache instruction, ke
   t.check("NO cache-clear agent exists", never(calls, "cache-clear") && !calls.some((c) => /rm -rf .*cp-cache/.test(c.prompt)));
 }
 
+t.section("B29c. the decisions phase carries the single-source rule verbatim");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const rule = (f) => {
+    const src = readFileSync(resolve(R, ".claude/workflows/" + f), "utf8");
+    const i = src.indexOf("const SINGLE_SOURCE_RULE =");
+    return i < 0 ? null : src.slice(i, src.indexOf(";\n", i));
+  };
+  const main = rule("change-proposal.js");
+  t.check("change-proposal-decisions.js holds the same SINGLE_SOURCE_RULE", main && main === rule("change-proposal-decisions.js"));
+}
+
 t.section("B29b. every argument the script reads is classified");
 {
   const { readFileSync } = await import("fs");
@@ -2544,6 +2558,7 @@ t.section("PS2. the parallel designs are reconciled before any of them is applie
   t.check("after every design", firstIndex(calls, "r1:fix-design:") < firstIndex(calls, "r1:fix-design-reconcile"));
   t.check("and before any fixer", firstIndex(calls, "r1:fix-design-reconcile") < firstIndex(calls, "r1:fix:"));
   t.check("exactly one per round", matching(calls, "r1:fix-design-reconcile").length === 1);
+  t.check("it carries the single-source rule", /STATE EACH RULE ONCE/.test(rec.prompt));
   t.check("it is read-only", /read-only investigator/.test(rec.prompt));
   t.check("it is given every group's design", /"id": "G1"[\s\S]*"id": "G2"[\s\S]*"id": "G3"/.test(rec.prompt));
   t.check("same section is not a conflict; same statement is", /touch the same SECTION are not in conflict/.test(rec.prompt));
@@ -2679,7 +2694,7 @@ function sitesPayload(prompt) {
 const SITE_P = { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 10, quote: "q", why: "breaks", confidence: "high" };
 const SITE_T = { file: "spec/example.md", line: 20, quote: "tq", why: "breaks", confidence: "medium" };
 
-t.section("X1. expansion runs once per CONFIRMED finding, on opus at low effort, before grouping");
+t.section("X1. expansion runs once per CONFIRMED finding, on opus at medium effort, before grouping");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, {
     "*:expand:*": sites([SITE_P]),
@@ -2687,13 +2702,14 @@ t.section("X1. expansion runs once per CONFIRMED finding, on opus at low effort,
   }));
   const exp = matching(calls, "r1:expand:");
   t.check("one expansion per confirmed finding", exp.length === 3, String(exp.length));
-  t.check("each runs on opus at low effort", exp.every((c) => c.opts.model === "opus" && c.opts.effort === "low"));
+  t.check("each runs on opus at medium effort", exp.every((c) => c.opts.model === "opus" && c.opts.effort === "medium"));
   t.check("expansion precedes grouping", firstIndex(calls, "r1:expand:") < firstIndex(calls, "r1:fix-plan"));
   t.check("and precedes design", firstIndex(calls, "r1:expand:") < firstIndex(calls, "r1:fix-design:"));
   t.check("it is anchored to one finding", /site-expansion pass for ONE confirmed finding/.test(exp[0].prompt));
   t.check("the test is falsification", /WHICH OTHER SITES BECOME WRONG/.test(exp[0].prompt));
   t.check("consistent restatement is excluded", /Consistent\s+restatement is not a defect/.test(exp[0].prompt));
-  t.check("an empty result is blessed", /AN EMPTY RESULT IS A GOOD RESULT/.test(exp[0].prompt));
+  t.check("an empty result must be earned", /AN EMPTY RESULT MUST BE EARNED/.test(exp[0].prompt) && !/AN EMPTY RESULT IS A GOOD RESULT/.test(exp[0].prompt));
+  t.check("the related lookup runs first", /RELATED-PASSAGES LOOKUP/.test(exp[0].prompt) && exp[0].prompt.indexOf("RELATED-PASSAGES LOOKUP") < exp[0].prompt.indexOf("MECHANICAL"));
   t.check("both search methods are required", /MECHANICAL/.test(exp[0].prompt) && /BY FUNCTION/.test(exp[0].prompt));
   t.check("tree sites are named as missing edit sites", /THE PROPOSAL IS MISSING AN EDIT\s+SITE/.test(exp[0].prompt));
   t.check("it may not write a log shard", /including a log\s+shard/.test(exp[0].prompt));
@@ -6276,6 +6292,42 @@ t.section("B40. the draft stage keeps the design simple, and the writer writes o
   t.check("and keeps the never-cut list", writer && /NEVER CUT, however lean the text/.test(writer.prompt));
 }
 
+t.section("B41a. the fix phase reads the tree, and a redesign is stated whole and reviewed by every lens");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0], order: 1 }]),
+  }));
+  const design = matching(calls, "r1:fix-design:")[0];
+  const fix = matching(calls, "r1:fix:")[0];
+  const post = matching(calls, "r1:post-fix-review")[0];
+  t.check("fix design runs at high effort", design && design.opts.effort === "high");
+  t.check("the fixer runs at high effort", fix && fix.opts.effort === "high");
+  t.check("the fixer's sweep runs the related lookup", fix && /RELATED-PASSAGES LOOKUP/.test(fix.prompt));
+  t.check("the post-fix review runs the lookup on the diff and checks the fixer's sweep against it",
+    post && /RUN THE LOOKUP ON THE ACTUAL DIFF/.test(post.prompt) && /Do not trust the fixer's sweep/.test(post.prompt));
+
+  const ARGS = {
+    ...REVIEW_ARGS, mode: "redesign", focusAreas: ["teardown"], startLenses: ["mechanism"],
+    maxSpecReviewRounds: 1, maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true,
+  };
+  const RD = { "redesign*:review:*": { findings: [] }, "redesign*": "done" };
+  const run = await runWorkflow(WF, ARGS, loopStubs(RD));
+  const spec = matching(run.calls, "redesign1:spec:")[0];
+  const cons = matching(run.calls, "redesign1:consolidate")[0];
+  const apply = matching(run.calls, "redesign1:apply")[0];
+  t.check("a redesign spec agent runs at high effort", spec && spec.opts.effort === "high");
+  t.check("the consolidator runs at high effort", cons && cons.opts.effort === "high");
+  t.check("the apply step runs the related lookup", apply && /RELATED-PASSAGES LOOKUP/.test(apply.prompt));
+  const rfix = matching(run.calls, "redesign1:fix:")[0];
+  t.check("every redesign agent that writes text carries the single-source rule",
+    [spec, cons, apply].every((c) => c && /STATE EACH RULE ONCE/.test(c.prompt)) && (!rfix || /STATE EACH RULE ONCE/.test(rfix.prompt)));
+  t.check("every lens is reinstated after the redesign", run.logs.some((l) => /^Reinstating .* after the entry redesign/.test(l)));
+  t.check("and the later loop reinstates its own retired lenses, which never read the redesign",
+    run.logs.some((l) => /^Reinstating .* in the non-spec loop, whose lenses have not read the redesign/.test(l)));
+  const off = await runWorkflow(WF, { ...ARGS, redesignFullSweep: false }, loopStubs(RD));
+  t.check("and redesignFullSweep false keeps the retired set", !off.logs.some((l) => /^Reinstating/.test(l)));
+}
 
 t.section("B41. consecutive dead agents stop the run as stopped-dead-agents, uncommitted and resumable");
 {

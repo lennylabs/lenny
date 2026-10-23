@@ -285,6 +285,13 @@ const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+// The custom subagent type every agent runs as, from .claude/agents/. A custom
+// type carries only the tools its definition lists, so an agent opens without the
+// tool definitions and listings a review or fix agent never uses. Unset, every
+// agent runs as cp-writer. The value "workflow-subagent" selects the default
+// workflow subagent, for a session that started before cp-writer was defined.
+const agentType =
+  input.agentType === "workflow-subagent" ? null : input.agentType || "cp-writer";
 if (!MODELS.includes(baseModel)) {
   throw new Error('args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"');
 }
@@ -315,6 +322,7 @@ const ARG_CLASS = {
   lockSpecChanges: "forward",
   baseModel: "launch",
   baseEffort: "launch",
+  agentType: "launch",
   maxPeriodicFirings: "forward",
   impactWindow: "forward",
   humanReadings: "forward",
@@ -365,6 +373,7 @@ async function robustAgent(prompt, opts, attempts = 4) {
   const based = { ...(opts || {}) };
   if (!based.model) based.model = baseModel;
   if (!based.effort) based.effort = baseEffort;
+  if (agentType && !based.agentType) based.agentType = agentType;
   opts = based;
   const fallbackAt = 3;
   for (let i = 1; i <= attempts; i++) {
@@ -2814,6 +2823,13 @@ function withdrawalNote(item) {
   );
 }
 
+// Verbatim from change-proposal.js, where every agent that writes staged text
+// carries it; the Apply agent writes staged text too.
+const SINGLE_SOURCE_RULE =
+  "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the lock discipline, which test drives it.\n" +
+  "- STATE EACH REASON ONCE. The reasoning behind a decision has one home: its entry in the summary's decisions, or the deliverable that owns the decision when the summary does not list it. Another site gives the reason in one clause at most, or cites the home. Do not write a second full statement, in any vocabulary, however convenient for that section's reader. A test or conformance list is one case per rule asserting what the rule's home gives, never a re-description of the rule. The same holds against spec/ itself: staged spec text cites what another spec section already states rather than writing it out again. The one licensed restatement is a reader-facing docs page, where the documentation rules bar a spec citation.\n" +
+  "- A POINTER NAMES ITS TARGET AND NOTHING ELSE. A site that refers to another says where to look (`see CODE-6's **Disposition of an expired acquisition**`) and does not say what the target contains, how many parts it has, which cases it covers, or what its rows assert. A description of another site's content is a second statement of it that no edit to the target updates: when the target changes, the description goes stale without quoting a word of it. A checklist step is a pointer of this kind: it names its deliverables and the part it lands, and restates none of a deliverable's mechanism, conditions, counts, anchors or site lists.\n";
+
 // Stable text first: the hard constraint, the file map, the evidence rule, the
 // standing-context read and every rule that holds for any disposition are the
 // same bytes on every Apply in a run. The firing line, the log-splice rule
@@ -2832,6 +2848,7 @@ function applyPrompt(item, spec, earlier) {
     STANDING_CONTEXT + "\n\n" +
     IDENTIFIER_STAMP + "\n\n" +
     CHECKLIST_DEFERRAL + "\n\n" +
+    "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
     "YOU HOLD ONE ITEM. Make the smallest edit that lands it, re-verify every citation you write or " +
     "touch against the tree, and reconcile any statement elsewhere in the files you may edit that your " +
     "own edit falsifies. Adjudicate nothing else: another agent holds each of the other items, and an " +
