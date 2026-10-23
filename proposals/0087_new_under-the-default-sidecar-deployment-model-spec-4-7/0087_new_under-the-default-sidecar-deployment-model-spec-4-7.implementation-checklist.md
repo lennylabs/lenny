@@ -16,8 +16,6 @@ Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminate
       Tiers 0, 11. Depends on: S2
 - [ ] **S6 · spec** — SPEC-5. Lands `recycle.runtimeProcess` and its sites.
       Tiers 0, 11. Depends on: S2
-- [ ] **S6b · test** — TEST-2. Lands the updated tier-11 pin. Interleaved before the remaining spec steps because SPEC-5 rewrites the row this test pins byte-exact, so tier 11 of every later spec step fails until it lands.
-      Tiers 0, 11. Depends on: S6
 - [ ] **S7 · spec** — SPEC-6. Lands §13.1 **Runtime supervisor volume.**
       Tiers 0, 11. Depends on: S2
 - [ ] **S8 · spec** — SPEC-9. Lands the SDK-warm and pre-warming sites.
@@ -32,6 +30,8 @@ Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminate
       Tiers 0, 11. Depends on: S4
 - [ ] **S13 · spec** — SPEC-14. Lands the §18 build-sequence entries.
       Tiers 0, 11. Depends on: S6, S7, S9, S12
+- [ ] **S6b · test** — TEST-2. Lands the updated tier-11 pin.
+      Tiers 0, 11. Depends on: S6
 - [ ] **S14 · code** — CODE-1 with its tier-1, tier-2, and tier-3 tests.
       Tiers 0, 1, 2, 3. Depends on: S1, S8
 - [ ] **S15 · code** — CODE-2 with its C unit, fuzz, and binary-check tests.
