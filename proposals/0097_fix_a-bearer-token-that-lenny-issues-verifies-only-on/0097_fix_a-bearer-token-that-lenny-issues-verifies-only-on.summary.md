@@ -110,7 +110,7 @@ None yet. The review loops write this section.
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0095 (data lifecycle second half) | Implemented | Removes the tier-4 per-replica narrowing of `lennyIssuedProbes` that its deviations file records, because Lenny-issued bearers now verify on every replica. | Nothing. Its files are not edited, and this proposal records the removal in REC-1 and TEST-1. |
+| 0095 (data lifecycle second half) | Implemented (implemented-date 2026-10-23) | Removes the tier-4 per-replica narrowing of `lennyIssuedProbes` that its deviations file records, because Lenny-issued bearers now verify on every replica (TEST-1 item 3). This restores its X1 peer-replica refusal intent for Lenny-issued bearers. Its `embeddedBearerVerifier` keeps the dev-only embedded HMAC member, and the primary member becomes the key set (CODE-4 item 2). | Nothing. Its files are not edited, and this proposal records the removal in REC-1 and TEST-1. |
 | 0017 (embedded mode runs the production stack) | Applied (single-file record) | Keeps `--bearer-trust-hmac-key-file` as the gateway's dev embedded-OIDC trust hook and replaces the §17.4 "In-process random KEK" row with the master-key-backed local provider that also derives the signing key. | Nothing. Its files are not edited. |
 
 ## Deliverable index
