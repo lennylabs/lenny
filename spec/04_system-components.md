@@ -907,21 +907,17 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 1. Pod created by Kubernetes
 2. Adapter opens gRPC connection to gateway (mTLS)
 3. Adapter writes placeholder manifest (connector servers unknown yet)
-4. Adapter signals READY to gateway — pod enters warm pool
+4. Adapter signals READY to gateway — pod enters warm pool. In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE` and sent `ready`, after the property self-test gate of [§4.7.11](#4711-adapter-agent-security-boundary) item 8, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`. A stage that fails takes the failure branch stated in [Section 7.1](07_session-lifecycle.md#71-normal-flow).
 6. Adapter writes **final manifest** (connector servers now known from leases; all provider credentials available)
-7. The runtime process becomes live for the pod's first session. In the sidecar
-   deployment model ([§4.7.10](#4710-deployment-model)) the kubelet started the
-   runtime container when the pod started; the runtime dials the adapter on
-   `CH-MSGSOCK` ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and
-   the adapter accepts that connection here. The adapter does not spawn a
-   process in the runtime container: the two containers share no process namespace
-   ([§13.1](13_security-model.md#131-pod-security)) and the runtime binary exists
-   only in the runtime container's image. A later session on the same pod skips
-   this step and steps 8 and 9, uses the `CH-MSGSOCK` and `CH-RUNTIMEOPS`
-   connections the runtime opened on the pod's first session, and takes step 10.
-   In the embedded deployment model the adapter runs
-   the runtime loop in its own process for each session.
+7. The runtime process becomes live. In the sidecar deployment model
+   ([§4.7.10](#4710-deployment-model)) the adapter has the runtime supervisor
+   launch the runtime's `command` here, after step 6 wrote the final manifest,
+   when **Runtime supervisor.** **Launch.** permits a launch, and accepts that
+   process's `CH-MSGSOCK` connection. A session that uses an existing process under
+   **Runtime supervisor.** **Launch.** skips this step and steps 8 and 9 and takes step 10.
+   In the embedded deployment model the
+   adapter runs the runtime loop in its own process for each session.
 8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens CH-RUNTIMEOPS (Full)
 9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
 10. The adapter writes the session's `session_start` on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), and then waits for the runtime's `session_started` for the session before it treats the session as started when `CH-MSGSOCK` **Outbound: `session_started`** rule 3 requires the wait. This step runs for every session on the pod.
