@@ -2710,6 +2710,9 @@ t.section("X1. expansion runs once per CONFIRMED finding, on opus at medium effo
   t.check("consistent restatement is excluded", /Consistent\s+restatement is not a defect/.test(exp[0].prompt));
   t.check("an empty result must be earned", /AN EMPTY RESULT MUST BE EARNED/.test(exp[0].prompt) && !/AN EMPTY RESULT IS A GOOD RESULT/.test(exp[0].prompt));
   t.check("the related lookup runs first", /RELATED-PASSAGES LOOKUP/.test(exp[0].prompt) && exp[0].prompt.indexOf("RELATED-PASSAGES LOOKUP") < exp[0].prompt.indexOf("MECHANICAL"));
+  t.check("the related lookup points at the fallback rather than restating it",
+    exp[0].prompt.includes("(unranked when it carries the JEV UNAVAILABLE marker; LOOKUP UNAVAILABLE above says what to do then)") &&
+      exp[0].prompt.indexOf("LOOKUP UNAVAILABLE:") < exp[0].prompt.indexOf("RELATED-PASSAGES LOOKUP"));
   t.check("both search methods are required", /MECHANICAL/.test(exp[0].prompt) && /BY FUNCTION/.test(exp[0].prompt));
   t.check("tree sites are named as missing edit sites", /THE PROPOSAL IS MISSING AN EDIT\s+SITE/.test(exp[0].prompt));
   t.check("it may not write a log shard", /including a log\s+shard/.test(exp[0].prompt));
@@ -5817,6 +5820,12 @@ t.section("N15. every agent prompt begins with the relay guard");
     t.check(name + ": the lookup-root statement is the same bytes in every prompt", heads.size === 1, [...heads].join(" | ").slice(0, 300));
     t.check(name + ": it says to cd to the repository and to check the output header",
       calls.every((c) => c.prompt.includes("`cd " + NEW_ARGS.repoRoot + " && `") && c.prompt.includes("# lookup in <path>")));
+    // When Jev is down the lookup prints a JEV UNAVAILABLE marker; every agent is
+    // told, once, not to retry it and to search by hand instead.
+    t.check(name + ": every prompt says once to fall back to grep when the lookup is unavailable",
+      calls.every((c) => c.prompt.split("LOOKUP UNAVAILABLE: when lookup output carries the `JEV UNAVAILABLE` marker").length === 2 &&
+        c.prompt.includes("do not retry the lookup in this task. Do the search with grep, sed, and Read instead, and say so in your searched or evidence record.")),
+      calls.filter((c) => c.prompt.split("LOOKUP UNAVAILABLE: when").length !== 2).map((c) => c.label).slice(0, 8).join(","));
   }
   const elsewhere = await runWorkflow(WF, { ...NEW_ARGS, repoRoot: "/work/trees/other" }, newStubs());
   t.check("the lookup root follows repoRoot rather than a fixed path",
