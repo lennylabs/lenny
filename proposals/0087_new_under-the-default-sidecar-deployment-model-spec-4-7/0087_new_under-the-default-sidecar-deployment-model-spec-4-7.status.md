@@ -17,6 +17,6 @@ implemented-by:
 
 On 2026-10-23, an adversarial review run executed the non-specification loop against this proposal. The specification loop did not run, so the staged spec edits have no review record from this run.
 
-The non-specification loop ran 7 rounds, including 1 full-pool sweep. It did not converge. Findings the loop had not closed when it stopped remain open, and convergence of the non-specification changes is not established.
+The non-specification loop ran 8 rounds, including 1 full-pool sweep. It did not converge. Findings the loop had not closed when it stopped remain open, and convergence of the non-specification changes is not established.
 
 The run fixed 12 findings in the non-specification loop.
