@@ -78,6 +78,9 @@ func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
+	if r.refuseSingleTenantDefaultDeletion(w, id) {
+		return
+	}
 	// spec: §15.1 — honour If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return

@@ -2874,9 +2874,39 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     owns erasure, tenant deletion, or tenant suspension.
   - **Drafting.** Under the drafting rules and the test instruction above.
 
-- [ ] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
-  foreign key, and full_revoke** (not yet written). Split from P5 on 2026-10-16 (proposal 0094 decision D20,
-  confirmed by the owner).
+- [x] **P5b. Data lifecycle, second half: the remaining erasure and tenant-deletion stores, the audit-receipt
+  foreign key, and full_revoke** (proposal 0095, implemented 2026-10-23). Split from P5 on 2026-10-16
+  (proposal 0094 decision D20, confirmed by the owner).
+  - **Outcome.** Proposal 0095
+    (`proposals/0095_fix_data-lifecycle-second-half-the-remaining-tenant-deletion-and/`) gives both erasure
+    paths one rank table with per-path exemptions and a startup completeness check, and wires every §12.8
+    store on both paths or records it as exempt. It drops the `audit_redaction_receipts` foreign key, moves
+    Phase 3.5 escrow copies into the configured escrow bucket, and keeps issued-token rows until they leave
+    the §13.3 trailing hour, with an expired-row GC. Tenant-deletion Phase 3 commits `deleting`, returns the
+    tenant's credential leases, and deletes its `TokenStore` rows; a `deleting` or `deleted` tenant is not
+    registered, so a multi-tenant gateway refuses its bearers from Phase 3; and Phase 3 and Phase 4 errors
+    pause in phase. full_revoke lists from the primary, returns every lease without a deny-list entry,
+    continues past a failed cancel write, re-reads a write that committed and errored, and survives a client
+    disconnect. It closes F-11.4.12, F-11.4.13, the F-11.4.14 remainder, F-11.4.17, F-12.8.25, F-12.8.30,
+    F-12.8.34, F-12.8.37, F-12.8.41, and F-12.8.42. F-11.4.10 gets a resolution note for its deny-list and
+    session-set halves and stays open, because proposal 0093's accepted departure on it still holds.
+    F-12.8.35 stays open as an accepted departure bounded by process restart. F-12.8.44 is narrowed to the
+    Phase 1 issuance and sign-up refusal, and F-12.8.46 stays open and unassigned.
+  - **N-4.** The P5 dossier's N-4 has no BUILD-GAPS entry and closes here. Its step 1, the coordination-lease
+    item, closes by proposal 0094's decision D21, which keeps the user-path `leases` entry a no-op because
+    deleting a held coordination lease voids the holder's fence, and by the corrected lease-store
+    `DeleteByUser` comments. Its step 3, the access-token cache item, closes by the `redis_caches` exemption,
+    which the tier-0 guard holds to a store with no production writer, and by the registry refusal of a
+    deleting tenant's bearers.
+  - **Departures.** The accepted departures are recorded with their bounds in `BUILD-GAPS.md` and the
+    proposal's deviations file: a silent lease-store error (F-4.9.40), the unwired access-token cache flush
+    (F-12.8.30), F-12.8.35, a paused Phase 4 rerunning every entry and a billing stream after the tombstone
+    (F-12.8.34), and the deny entry a restart drops once user erasure deletes revoked registered credentials
+    (F-12.8.43). None carries a claim-register row.
+  - **Filed.** The tests filed F-10.2.22 (a Lenny-issued bearer verifies only on its signing replica) and
+    F-27.8.1 (a gateway with the playground enabled exits at startup). The proposal filed F-4.9.40, F-4.9.41,
+    F-10.2.23, F-10.2.24, F-12.8.49 to F-12.8.59, F-17.6.24, F-27.3.12, and F-27.3.13. F-12.8.56 is owned by
+    P2, F-12.8.57 by P4, and the rest by a direct fix or unassigned, as each finding states.
   - **Scope.** The Phase 3 credential-lease revoker and token-cache flush, and the Phase 4 and user-erasure
     erasers the store table lists and the tree omits, including the session message queues, the checkpoint
     manifest, retention, and metadata rows, the coordination mirror rows, and the user registry row.
@@ -3102,6 +3132,18 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
 property, which fails closed, so `restart` is offered on gVisor).** If the spike had failed on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
+
+**Queued direct fixes filed by 0095's implementation (2026-10-23).**
+
+- [ ] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
+  replica (and the Token Service) generates and seals its own signing key at process start, so a peer
+  replica rejects the token. It fails closed but breaks every multi-replica deployment. The fix loads one
+  shared sealed key (and its rotation set, §10.3) on every replica; if the spec does not already state the
+  shared key source, it goes through the proposal pipeline first. Next after 0087 converges, ahead of P2.
+- [ ] **F-27.8.1: the gateway exits at startup with the playground enabled.** §27.8 names the label
+  `authMode` and §16.1.1 requires snake_case label names, and the validator refuses it. A small spec
+  correction (rename to `auth_mode`) plus the code change; it unblocks 0095's skipped tier-4 playground
+  bearer case.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

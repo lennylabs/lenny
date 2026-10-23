@@ -480,6 +480,12 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 			out.add(i, p.ID, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §10.2, §17.6 — `platform` is reserved for the platform
+		// audit chain; the seed creates and changes no row under it.
+		if isReservedTenantID(p.ID) {
+			out.add(i, p.ID, actionError, seedValidationCode, reservedTenantIDMessage, nil)
+			continue
+		}
 		// spec: §12.9; §15.1 — the bootstrap seed path
 		// is held to the same closed workspaceTier enum (T3 default or T4)
 		// as the live admin POST/PUT path, so a typo or stale tier name in
@@ -532,6 +538,17 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 			out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
 			continue
 		}
+		// spec: §17.6, §12.8 (Tenant deletion lifecycle) — a tenant in
+		// deletion or tombstoned is refused with and without
+		// --force-update, and in a dry run: no KMS probe, no Update, and
+		// no sequence provisioning, so the seed never revives a tombstone
+		// or re-provisions a deleted tenant's sequences.
+		if !existing.Registered() {
+			out.add(i, p.ID, actionError, seedValidationCode,
+				"tenant "+p.ID+" is in state "+tenantLifecycleState(existing)+
+					" and cannot be seeded; tenant deletion is irreversible", nil)
+			continue
+		}
 		// spec: §12.9; §15.1 — workspaceTier is ratcheted
 		// stricter-only. A bootstrap re-run that names a looser tier on a
 		// currently-stricter tenant (e.g. T3 over a T4 tenant) is rejected
@@ -567,11 +584,6 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 				if p.WorkspaceTier != "" {
 					t.WorkspaceTier = p.WorkspaceTier
 				}
-				// §17.6 bootstrap re-runs: a previously-soft-deleted tenant
-				// resurfaces in the bootstrap payload as an active record.
-				// Clear the DeletedAt timestamp so the §11.2 QuotaEvaluator
-				// and the §4.2 RLS policy treat the tenant as live again.
-				t.DeletedAt = time.Time{}
 				return nil
 			})
 			if err != nil {

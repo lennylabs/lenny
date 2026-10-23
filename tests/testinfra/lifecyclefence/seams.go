@@ -27,6 +27,11 @@ type Faults struct {
 	// beforeTenantList is the hook of the next tenant-scope primary
 	// listing, which only a suspend's drain and a Phase 2 drain issue.
 	beforeTenantList func()
+	// stepFaults is the number of upcoming runs of each tenant-deletion
+	// step that fail, and afterStep the hook that runs after each one
+	// completes.
+	stepFaults map[DeletionStep]int
+	afterStep  func(DeletionStep)
 }
 
 // BeforeTenantDrainList runs fn once, before the next primary listing of

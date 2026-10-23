@@ -104,7 +104,7 @@ Semantics:
 | Code | Condition | HTTP | Redirect query param | Log attribution |
 | --- | --- | --- | --- | --- |
 | `TENANT_CLAIM_MISSING` | ID token lacks the configured `auth.tenantIdClaim` (default `tenant_id`) claim, or the claim is an empty string | 401 | `?error=tenant_claim_missing` | `tenant_id=__unset__` |
-| `TENANT_NOT_FOUND` | Extracted value is well-formed but does not match any provisioned `Tenant` CR | 403 | `?error=tenant_not_found` | `tenant_id=<extracted value>` (audit only; never bound to a session or used for authorization) |
+| `TENANT_NOT_FOUND` | Extracted value is well-formed but names no registered tenant ([§10.2](10_gateway-internals.md#102-authentication)) | 403 | `?error=tenant_not_found` | `tenant_id=<extracted value>` (audit only; never bound to a session or used for authorization) |
 | `TENANT_CLAIM_INVALID_FORMAT` | Extracted value fails `^[a-zA-Z0-9_-]{1,128}$` (enforced before the tenant-registered lookup per [§10.2](10_gateway-internals.md#102-authentication)) | 401 | `?error=tenant_claim_invalid_format` | `tenant_id=__unset__` |
 
 The redirect query-param namespace (`tenant_claim_missing`, `tenant_not_found`, `tenant_claim_invalid_format`) is reserved for this table and MUST NOT be reused by other `/playground/auth/error` failure modes. No `lenny_playground_session` cookie is set for any row; the state cookie is cleared as part of the error redirect to prevent dangling PKCE state. These rejections are surfaced before session-record creation and are distinct from the **Failure modes summary** table below (which covers post-session-record failures at `POST /v1/playground/token`).

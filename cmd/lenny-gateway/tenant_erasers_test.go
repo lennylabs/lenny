@@ -10,11 +10,23 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
+	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
@@ -28,6 +40,7 @@ import (
 // started without Postgres or Redis holds them.
 func inMemoryEraserWiring() *gatewayWiring {
 	w := &gatewayWiring{}
+	w.tenants = tenantstore.NewMemory()
 	w.sessions = memstore.New()
 	w.interactions = interactionstore.NewMemory()
 	w.evals = evalstore.NewMemory(0, time.Now)
@@ -36,21 +49,35 @@ func inMemoryEraserWiring() *gatewayWiring {
 	w.transcripts = transcriptstore.NewMemory()
 	w.partialManifests = partialmanifeststore.NewMemoryStore(nil)
 	w.checkpointRetention = checkpointretention.NewMemoryStore(nil)
+	w.blobs = blobstore.NewMemoryStore(nil)
+	w.billingStream = failover.NewMemStream()
+	w.billingPipeline = failover.New(failover.Options{Primary: billingstore.NewMemory(), Stream: w.billingStream})
+	w.connectorCreds = connectorcredstore.NewMemory(nil)
+	w.credentials = credentialstore.NewMemory(nil)
+	w.tenantAccess = tenantaccessstore.NewMemory()
+	w.users = userstore.NewMemory()
+	w.customRoles = customrolestore.NewMemory()
+	w.connectors = connectorstore.NewMemory()
+	w.environments = environmentstore.NewMemory()
+	w.experiments = experimentstore.NewMemory()
 	return w
 }
 
 // TestBuildTenantErasersOrder_spec_12_8 asserts the in-memory gateway's
-// Phase 4 sequence names session_tree_archive and every other
-// session-keyed store ahead of SessionStore, and that the sequence passes
-// the startup order check.
+// Phase 4 sequence lists every store the tenant path wires, in
+// rank order with every session-keyed store ahead of SessionStore, and
+// that the sequence passes the startup order and completeness check.
 //
-// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
 func TestBuildTenantErasersOrder_spec_12_8(t *testing.T) {
 	w := inMemoryEraserWiring()
-	names := tenantEraserNames(w.buildTenantErasers(nil, nil, credentialpoolstore.NewMemory()))
+	names := tenantEraserNames(w.buildTenantErasers(nil, nil, credentialpoolstore.NewMemory(), nil))
 	got := strings.Join(names, ",")
-	want := "checkpoint_manifests,checkpoint_retention,transcripts,interactions,memory," +
-		"session_tree_archive,eval_results,sessions,credential_pool"
+	want := "leases,coordination_mirror,semantic_cache,experiment_sticky,billing_buffer,quota,artifacts," +
+		"checkpoint_manifests,checkpoint_retention,checkpoint_meta,transcripts,interactions,memory," +
+		"session_message_queues,session_tree_archive,audit,billing,eval_results,delegation_budget," +
+		"sessions,tokens,issued_tokens,credential_pool,runtime_tenant_access,pool_tenant_access," +
+		"user_roles,custom_roles,tenant_definitions,tenant_config"
 	if got != want {
 		t.Fatalf("tenant erasers = %s, want %s", got, want)
 	}
@@ -70,6 +97,7 @@ func TestTenantEraserClearsArchivedTreesBeforeSessions_spec_12_8(t *testing.T) {
 	ctx := context.Background()
 	w := inMemoryEraserWiring()
 	now := time.Now()
+	seedTenants(t, w.tenants, "acme", "globex")
 	for _, s := range []sessionstore.Session{
 		{ID: "root-a", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now},
 		{ID: "child-a", TenantID: "acme", ParentSessionID: "root-a", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now},
@@ -88,7 +116,7 @@ func TestTenantEraserClearsArchivedTreesBeforeSessions_spec_12_8(t *testing.T) {
 		}
 	}
 
-	eraser := &tenantEraser{erasers: w.buildTenantErasers(nil, nil, credentialpoolstore.NewMemory())}
+	eraser := &tenantEraser{erasers: w.buildTenantErasers(nil, nil, credentialpoolstore.NewMemory(), nil)}
 	counts, err := eraser.DeleteByTenant(ctx, "acme")
 	if err != nil {
 		t.Fatalf("Phase 4 DeleteByTenant: %v", err)
@@ -154,5 +182,15 @@ func TestCountlessAdaptsErrorOnlyErasers_spec_12_8(t *testing.T) {
 	}
 	if _, err := countless(func(context.Context, string) error { return boom })(context.Background(), "acme"); !errors.Is(err, boom) {
 		t.Fatalf("countless error = %v, want boom", err)
+	}
+}
+
+// seedTenants creates an active tenant row for each id.
+func seedTenants(t *testing.T, tenants tenantstore.Store, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: id, DisplayName: id, CreatedAt: time.Now()}); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
 	}
 }

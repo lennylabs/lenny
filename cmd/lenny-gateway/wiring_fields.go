@@ -347,25 +347,29 @@ type gatewayWiringFields struct {
 	uploadTracker             *uploadtoken.MemoryTracker
 	wd                        *watchdog.Watchdog
 	billingTier               *redisstream.Tier
-	connectorStateStore       *connectoroauth.MemoryStateStore
-	deadlockManager           *deadlock.Manager
-	dsMonitor                 *dualstore.Monitor
-	pools                     poolstore.Store
-	treeArchive               treearchive.Store
-	userPodTerminateProp      *podterminateprop.Propagator
-	blobsCataloged            *cataloging.Store
-	quotaBudgetTracker        *quotabudget.Tracker
-	quotaCheckpointSvc        *quotacheckpoint.Service
-	quotaFailOpenAccum        *quotafailopen.Accumulator
-	sessionUsage              sessionusage.Store
-	treeBudgetConcrete        *treebudget.Reserver
-	artifactCatalog           artifactcatalog.Store
-	blobs                     blobstore.Store
-	credRenewalWorker         *credrenewal.Worker
-	credentialPools           credentialpoolstore.Store
-	evals                     evalstore.Store
-	immediateGCSweep          func(ctx context.Context, tenantID string)
-	partialManifests          partialmanifeststore.Store
+	// billingStream is the billing pipeline's Tier 1 stream (the Redis
+	// stream, or the in-process MemStream without Redis), which the §12.8
+	// tenant-deletion billing_buffer entry purges.
+	billingStream        failover.StreamTier
+	connectorStateStore  *connectoroauth.MemoryStateStore
+	deadlockManager      *deadlock.Manager
+	dsMonitor            *dualstore.Monitor
+	pools                poolstore.Store
+	treeArchive          treearchive.Store
+	userPodTerminateProp *podterminateprop.Propagator
+	blobsCataloged       *cataloging.Store
+	quotaBudgetTracker   *quotabudget.Tracker
+	quotaCheckpointSvc   *quotacheckpoint.Service
+	quotaFailOpenAccum   *quotafailopen.Accumulator
+	sessionUsage         sessionusage.Store
+	treeBudgetConcrete   *treebudget.Reserver
+	artifactCatalog      artifactcatalog.Store
+	blobs                blobstore.Store
+	credRenewalWorker    *credrenewal.Worker
+	credentialPools      credentialpoolstore.Store
+	evals                evalstore.Store
+	immediateGCSweep     func(ctx context.Context, tenantID string)
+	partialManifests     partialmanifeststore.Store
 	// checkpointRetention is the §12.5 checkpoint retention catalog
 	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
 	// erases the tenant's rows through it.

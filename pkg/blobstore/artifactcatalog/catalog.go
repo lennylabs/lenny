@@ -150,14 +150,17 @@ type Store interface {
 	// sum of artifact_size_bytes across active (non-deleted) artifacts.
 	SumLiveBytes(ctx context.Context, tenantID string) (int64, error)
 
-	// DeleteByTenant removes every catalog row scoped to tenantID that
-	// is not under a legal hold and returns the count removed. It is the
-	// §12.8 Phase 4 tenant-deletion adapter on the metadata side — a
-	// single prefix-scoped bulk delete mirroring the ArtifactStore's
-	// DeleteByTenant on the bucket side. Rows carrying legal_hold=true
-	// are preserved so a §12.8 hold survives tenant erasure. Idempotent.
+	// DeleteByTenant removes every catalog row scoped to tenantID and
+	// returns the count removed. It is the §12.8 Phase 4 tenant-deletion
+	// adapter on the metadata side, a single tenant-scoped bulk delete
+	// mirroring the ArtifactStore's prefix delete on the bucket side.
+	// Held rows are deleted too: Phase 3.5 is the hold gate, so by Phase 4
+	// every held artifact has been copied to the legal-hold escrow bucket,
+	// and the escrow copy with its ledger record is the retained evidence.
+	// Idempotent.
 	//
-	// spec: §12.5 ll. 295; §12.8 Phase 4.
+	// spec: §12.5; §12.8 (Compliance Interfaces: Tenant deletion
+	// lifecycle, Phase 3.5 and Phase 4).
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
@@ -434,19 +437,19 @@ func (s *PgStore) HardPruneURIs(ctx context.Context, uris []string) (int, error)
 	return int(tag.RowsAffected()), nil
 }
 
-// DeleteByTenant removes every non-held catalog row for the tenant in
-// a single statement and returns the count removed. The
-// `legal_hold = false` guard mirrors HardPruneExpired so a §12.8 hold
-// survives the sweep; tenant deletion is gated upstream by the §12.8
-// legal-hold preflight, and the cataloging decorator runs the bucket
-// DeleteByTenant first (which aborts on a hold) so a held tenant never
-// reaches this delete.
+// DeleteByTenant removes every catalog row for the tenant, held rows
+// included, in a single statement and returns the count removed. Phase 3.5
+// is the hold gate: it pauses the deletion while a hold is active, and on the
+// override path it copies every held artifact to the legal-hold escrow bucket
+// before Phase 4 runs, so the rows deleted here describe originals whose
+// evidence lives in the escrow copy and its ledger record.
 //
-// spec: §12.5 ll. 295; §12.8 Phase 4.
+// spec: §12.5; §12.8 (Compliance Interfaces: Tenant deletion lifecycle,
+// Phase 3.5 and Phase 4).
 func (s *PgStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM artifact_store
-		 WHERE tenant_id = $1 AND legal_hold = false`,
+		 WHERE tenant_id = $1`,
 		tenantID)
 	if err != nil {
 		return 0, err

@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -20,13 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
-
-// Compile-time assertion that the §4.9 credential-lease revocation
-// propagator satisfies leaserevoke.DenyList. A refactor that drops the
-// `IsCrossReplicaPropagator()` marker on *credrenewalprop.Propagator
-// fails to build, so the §11.4 step-1 wiring contract is enforced at
-// compile time rather than runtime. spec: §11.4 step 1.
-var _ leaserevoke.DenyList = (*credrenewalprop.Propagator)(nil)
 
 // Compile-time assertion that podTerminateFanOut is the cross-replica
 // §11.4 step-2 local releaser the binding-release propagator drives.

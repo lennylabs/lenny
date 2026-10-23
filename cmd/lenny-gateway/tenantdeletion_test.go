@@ -87,6 +87,7 @@ func newDeletionRunner(t *testing.T) (*tenantDeletionRunner, *tenantstore.Memory
 		Eraser:     &tenantEraser{erasers: []namedTenantEraser{{"sessions", eraser.erase}}},
 		Disabler:   tenantStateDisabler{tenants: tenants, clock: clock},
 		Terminator: &phaseRecorder{},
+		Revoker:    tenantCredentialRevoker{tenants: tenants, sessions: sessions, leases: &recordingLeaseRevoker{}, clock: clock},
 		Receipts:   auditReceiptSink{appender: appender, clock: clock},
 		Blocked:    tenantDeletionBlockedSink{appender: appender, clock: clock},
 		LegalHolds: tenantHoldEnumerator{sessions: sessions},

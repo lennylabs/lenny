@@ -25,6 +25,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
@@ -208,6 +210,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	} else {
 		decision = lifecycle.Decide(state.State(sb.Status.Phase), obs)
 	}
+	// §6.2 failed → draining: a failed Sandbox whose per-pod claim still
+	// exists retires through the claim's release path, so the reclaim is
+	// held while the claim is present. The read is scoped to the failed
+	// phase, and a read error fails the reconcile rather than reclaiming.
+	if state.State(sb.Status.Phase) == state.Failed {
+		present, err := r.claimPresent(ctx, &sb)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		decision = lifecycle.HoldFailedReclaim(state.Failed, present, decision)
+	}
 
 	switch decision.Action {
 	case lifecycle.ActionCreatePod:
@@ -247,27 +260,103 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return ctrl.Result{}, nil
 }
 
-// observePod reduces a Pod's phase to the lifecycle planner's view. A
-// failed Get (the §4.6.1 reconciler filters non-NotFound errors before
-// calling observePod) means the Pod is absent.
+// observePod reduces a Pod's phase and its agent container statuses to
+// the lifecycle planner's view. A failed Get (the §4.6.1 reconciler
+// filters non-NotFound errors before calling observePod) means the Pod
+// is absent.
+//
+// The pod phase alone misses an adapter that has exited: with
+// restartPolicy Never the kubelet keeps the pod Running while any other
+// container still runs, so a sidecar pod whose adapter exited (for
+// example because the runtime is not live, or before READY) would sit in
+// warming or idle indefinitely. A terminated adapter or runtime
+// container therefore reduces to PodFailed whatever the pod phase, so
+// the planner takes the §6.2 warm-fill failure edge (warming → failed,
+// sdk_connecting → failed) or retires an idle pod.
+//
+// A Pod carrying a deletion timestamp reduces to PodTerminating before
+// any other check. Kubernetes is tearing it down and the kubelet sends
+// SIGTERM to its containers, so an agent container that then exits, or a
+// pod phase that turns Failed, records the expected shutdown rather than
+// a warm-fill failure. The planner routes PodTerminating along the §6.2
+// SIGTERM edge (sdk_connecting → terminated) or the deleted-pod
+// retirement, never through failed.
+//
+// spec: §6.2 (warming → failed on warm-fill failure; adapter healthy is
+// a precondition of warming → idle; sdk_connecting → terminated on
+// SIGTERM), §4.7.10 (deployment models).
 func observePod(pod *corev1.Pod, getErr error) lifecycle.PodObservation {
 	if getErr != nil {
 		return lifecycle.PodAbsent
 	}
+	if !pod.DeletionTimestamp.IsZero() {
+		return lifecycle.PodTerminating
+	}
 	switch pod.Status.Phase {
-	case corev1.PodRunning:
-		if podReady(pod) {
-			return lifecycle.PodReady
-		}
-		return lifecycle.PodNotReady
 	case corev1.PodFailed:
 		return lifecycle.PodFailed
 	case corev1.PodSucceeded:
 		return lifecycle.PodSucceeded
-	default:
-		// Pending, Unknown, or empty: the pod is still coming up.
-		return lifecycle.PodPending
 	}
+	if agentContainerTerminated(pod) {
+		return lifecycle.PodFailed
+	}
+	if pod.Status.Phase == corev1.PodRunning {
+		if podReady(pod) {
+			return lifecycle.PodReady
+		}
+		return lifecycle.PodNotReady
+	}
+	// Pending, Unknown, or empty: the pod is still coming up.
+	return lifecycle.PodPending
+}
+
+// agentContainerTerminated reports whether the adapter container (sidecar
+// model) or the runtime container (both models; in the embedded model it
+// is also the adapter) has terminated. Any exit counts, including exit 0:
+// a warm agent container is not expected to exit, and with restartPolicy
+// Never it does not restart. Other containers, such as the test-only
+// egress-capture sidecar, are not consulted.
+func agentContainerTerminated(pod *corev1.Pod) bool {
+	for i := range pod.Status.ContainerStatuses {
+		cs := &pod.Status.ContainerStatuses[i]
+		if cs.Name != podspec.AdapterContainerName && cs.Name != podspec.RuntimeContainerName {
+			continue
+		}
+		if cs.State.Terminated != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// claimToSandbox maps a SandboxClaim event to a reconcile request for the
+// Sandbox its spec.sandboxRef names. spec: §4.6.1 (per-pod claim).
+func claimToSandbox(_ context.Context, obj client.Object) []reconcile.Request {
+	cl, ok := obj.(*lennyv1.SandboxClaim)
+	if !ok || cl.Spec.SandboxRef == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: client.ObjectKey{Namespace: cl.Namespace, Name: cl.Spec.SandboxRef},
+	}}
+}
+
+// claimPresent reports whether the per-pod SandboxClaim (claim-<podName>,
+// with the pod named after the Sandbox) exists. A NotFound is the
+// no-claim case; any other read error is returned so the caller fails
+// closed rather than reclaiming a pod that may still carry a claim.
+// spec: §4.6.1 (per-pod claim name), §6.2 (failed → draining).
+func (r *Reconciler) claimPresent(ctx context.Context, sb *lennyv1.Sandbox) (bool, error) {
+	var cl lennyv1.SandboxClaim
+	key := client.ObjectKey{Namespace: sb.Namespace, Name: sdkWarmClaimName(sb.Name)}
+	if err := r.Client.Get(ctx, key, &cl); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get sandbox claim for %s: %w", sb.Name, err)
+	}
+	return true, nil
 }
 
 // podReady reports whether the Pod's Ready condition is True.
@@ -723,10 +812,12 @@ func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string,
 // WarmPoolController asserts the pod is warm. v1 flips the gate as soon as
 // the containers report ready; the gate exists so claimability is a
 // Lenny-controlled signal rather than implied by container readiness
-// alone. The patch is skipped when the pod is absent, its containers are
-// not yet ready, or the gate is already True. spec: §6.1.
+// alone. The patch is skipped when the pod is absent or terminating, its
+// containers are not yet ready, or the gate is already True. spec: §6.1.
 func (r *Reconciler) syncReadinessGate(ctx context.Context, pod *corev1.Pod, obs lifecycle.PodObservation) error {
-	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
+	// A terminating pod is never made claimable, so the gate is not
+	// flipped on it even when its containers still report ready.
+	if obs == lifecycle.PodAbsent || obs == lifecycle.PodTerminating || pod == nil || pod.Name == "" {
 		return nil
 	}
 	if !podConditionTrue(pod, corev1.ContainersReady) {
@@ -967,6 +1058,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lennyv1.Sandbox{}).
 		Owns(&corev1.Pod{}).
+		// §6.2 failed → draining: the reclaim of a failed Sandbox is held
+		// while its per-pod claim exists, and a claim delete does not
+		// necessarily change the Sandbox, so the reconciler also wakes
+		// on claim events for the Sandbox the claim references.
+		Watches(&lennyv1.SandboxClaim{}, handler.EnqueueRequestsFromMapFunc(claimToSandbox)).
 		Named("sandbox").
 		WithOptions(opts).
 		Complete(r)

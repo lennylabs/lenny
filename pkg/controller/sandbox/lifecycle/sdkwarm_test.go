@@ -190,6 +190,7 @@ func TestDecideSDKWarmOnlyEmitsValidTransitions(t *testing.T) {
 		lifecycle.PodNotReady,
 		lifecycle.PodFailed,
 		lifecycle.PodSucceeded,
+		lifecycle.PodTerminating,
 	}
 	for _, phase := range state.All() {
 		for _, obs := range observations {

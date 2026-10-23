@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
@@ -46,12 +48,15 @@ func (c transitionCounter) Update(ctx context.Context, id string, mutate func(*t
 
 // adminHandler returns the World's admin router: the production suspend and
 // resume handlers over the counted tenant store, with the drain's listing
-// and forced termination behind the World's faults.
+// and forced termination behind the World's faults, and the production user
+// invalidation handler with the World's lease pool as its lease step.
 func (w *World) adminHandler() http.Handler {
 	w.adminOnce.Do(func() {
 		w.adminH = admin.NewRouter(transitionCounter{Store: w.S.Tenants, w: w}, admin.Options{Audit: w.Audit}).
 			WithSessions(w.Lister).
 			WithSessionAdmin(w.Terminator).
+			WithUsers(commitHookUsers{Store: w.S.Users, w: w}).
+			WithUserRevocation(nil, w.Leases, nil).
 			Handler()
 	})
 	return w.adminH
@@ -262,7 +267,13 @@ func (w *World) Resume(ctx context.Context) int {
 }
 
 func (w *World) serveAdmin(ctx context.Context, path string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, path, nil)
+	return w.serveAdminBody(ctx, path, nil)
+}
+
+// serveAdminBody issues a POST to the admin router as a platform admin, with
+// body as its request body when body is non-nil.
+func (w *World) serveAdminBody(ctx context.Context, path string, body io.Reader) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, body)
 	req = req.WithContext(authmw.WithPrincipal(ctx, authmw.Principal{
 		TenantID: "platform", Subject: "carol@acme.com",
 		Roles: []pkgauth.Role{pkgauth.RolePlatformAdmin},
@@ -281,26 +292,36 @@ func (w *World) SuspendTransitions() int {
 
 // Deletion is one replica's tenant-deletion reconciler for the World's
 // tenant, over its own in-memory job store as the gateway's tenant-deletion
-// runner keeps it. Its Phase 1 and Phase 2 seams match cmd/lenny-gateway's:
-// Phase 1 moves the tenant row to disabling, and Phase 2 runs the shared
-// drain over the whole tenant.
+// runner keeps it. Its seams follow cmd/lenny-gateway's, which package main
+// keeps out of reach: Phase 1 moves the tenant row to disabling, Phase 2 runs
+// the shared drain over the whole tenant, Phase 3 is the harness revoker that
+// follows tenantCredentialRevoker, Phase 3.5 enumerates the holds the test
+// sets with Hold, and Phase 4 is the harness eraser list that follows the
+// Phase 4 order of the stores the World holds.
 type Deletion struct {
 	w    *World
 	Jobs tenantdeletion.Store
 	rec  *tenantdeletion.Reconciler
+
+	mu   sync.Mutex
+	held bool
 }
 
 // NewDeletion builds a replica's reconciler.
 func (w *World) NewDeletion() *Deletion {
 	jobs := &watchedDeletionJobs{Store: tenantdeletion.NewMemory(), w: w}
-	return &Deletion{w: w, Jobs: jobs, rec: &tenantdeletion.Reconciler{
+	d := &Deletion{w: w, Jobs: jobs}
+	d.rec = &tenantdeletion.Reconciler{
 		Jobs:       jobs,
 		Disabler:   disabler{w.S.Tenants},
 		Terminator: phase2Drain{w},
-		Eraser:     noopEraser{},
+		Revoker:    phase3Revoker{w},
+		Eraser:     phase4Eraser{w},
 		Receipts:   noopReceipts{},
+		LegalHolds: holdEnumerator{d},
 		Logger:     w.Logger,
-	}}
+	}
+	return d
 }
 
 // Start records the deletion job at Phase 1, as the runner does for a
@@ -317,25 +338,19 @@ func (d *Deletion) Tick(ctx context.Context) (tenantdeletion.Phase, error) {
 	return j.Phase, err
 }
 
+// Job returns the replica's deletion job.
+func (d *Deletion) Job(ctx context.Context) (tenantdeletion.Job, error) {
+	return d.Jobs.Get(ctx, d.w.Tenant)
+}
+
 // ThroughPhase2 ticks until the job has left Phase 2, at most maxTicks
 // times, and returns the job's phase.
 func (d *Deletion) ThroughPhase2(ctx context.Context, maxTicks int) (tenantdeletion.Phase, error) {
-	var phase tenantdeletion.Phase
-	for i := 0; i < maxTicks; i++ {
-		p, err := d.Tick(ctx)
-		if err != nil {
-			return p, err
-		}
-		phase = p
-		if p != tenantdeletion.PhaseSoftDisable && p != tenantdeletion.PhaseTerminateSessions {
-			return p, nil
-		}
-	}
-	return phase, fmt.Errorf("deletion job still at %s after %d ticks", phase, maxTicks)
+	return d.until(ctx, maxTicks, tenantdeletion.PhaseRevokeCredentials)
 }
 
-// watchedDeletionJobs asserts, on every committed write that moves the job
-// out of Phase 2, that the tenant holds no non-terminal session.
+// watchedDeletionJobs runs the phase-exit invariants (onDeletionAdvance) on
+// every committed write that moves the job to its next phase.
 type watchedDeletionJobs struct {
 	tenantdeletion.Store
 	w *World
@@ -352,8 +367,8 @@ func (s *watchedDeletionJobs) Update(ctx context.Context, tenantID string, mutat
 		to = j.Phase
 		return nil
 	})
-	if err == nil && from == tenantdeletion.PhaseTerminateSessions && to != from {
-		s.w.assertScopeDrained(context.WithoutCancel(ctx), "", fmt.Sprintf("when the deletion job left Phase 2 for %s", to))
+	if err == nil && to != from && to != tenantdeletion.PhaseFailed {
+		s.w.onDeletionAdvance(context.WithoutCancel(ctx), from, to)
 	}
 	return j, err
 }
@@ -408,12 +423,6 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-type noopEraser struct{}
-
-func (noopEraser) DeleteByTenant(context.Context, string) (map[string]int, error) {
-	return map[string]int{}, nil
 }
 
 type noopReceipts struct{}

@@ -55,3 +55,31 @@ func TestFlushAndUserErasureCoverClusterMasters_spec_12_4(t *testing.T) {
 		t.Fatalf("remaining acme=%d globex=%d, want %d and %d", acme, globex, users-1, 2*users)
 	}
 }
+
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4);
+// 12.4 Redis HA and Failure Modes. On a multi-master cluster the tenant
+// sticky delete reaches the master that owns the tenant's slot and leaves
+// the other tenant's assignments in place.
+func TestDeleteByTenantCoversClusterMaster_spec_12_8(t *testing.T) {
+	cl := clustertest.New(t, 3)
+	c := NewRedis(cl.Client)
+	ctx := context.Background()
+	for _, tenant := range []string{"acme", "globex"} {
+		for i := 0; i < 10; i++ {
+			if err := c.Put(ctx, tenant, fmt.Sprintf("exp-%d", i%3), fmt.Sprintf("user-%d", i), "treatment"); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+	}
+	if n, err := c.DeleteByTenant(ctx, "acme"); err != nil || n != 10 {
+		t.Fatalf("DeleteByTenant = (%d, %v), want (10, nil)", n, err)
+	}
+	for _, k := range cl.Keys() {
+		if strings.HasPrefix(k, rediskeys.TenantPrefix("acme")) {
+			t.Fatalf("acme key %q survived tenant deletion", k)
+		}
+	}
+	if got := len(cl.Keys()); got != 10 {
+		t.Fatalf("remaining keys = %d, want 10 (globex's)", got)
+	}
+}

@@ -21,7 +21,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -36,26 +35,20 @@ import (
 
 // orderObservingAssigner is the handling replica's credential assigner as
 // the production lease step sees it. It records, for each Release, whether
-// the handling replica's deny list already held an entry and whether the
-// session's row was already terminal, so the test asserts the production
-// step's order: every lease record is removed before the first deny-list
-// write and before the cancel write.
+// the session's row was already terminal, so the test asserts that every
+// lease record is removed before the cancel write.
 type orderObservingAssigner struct {
 	svc      *credassign.Service
-	deny     *denylist.DenyList
 	sessions sessionstore.Store
 	id       string
 	releases int
-	// afterDeny and afterCancel count the Releases that ran after a
-	// deny-list write or after the session's cancel write.
-	afterDeny, afterCancel int
+	// afterCancel counts the Releases that ran after the session's cancel
+	// write.
+	afterCancel int
 }
 
 func (o *orderObservingAssigner) Release(leaseID string) error {
 	o.releases++
-	if o.deny.Len() != 0 {
-		o.afterDeny++
-	}
 	if row, err := o.sessions.Get(context.Background(), "acme", o.id); err == nil && session.IsTerminal(row.State) {
 		o.afterCancel++
 	}
@@ -85,14 +78,14 @@ func proxyCode(t *testing.T, url, token string) (int, string) {
 	return resp.StatusCode, env.Error.Code
 }
 
-// spec: 11.4 (User Invalidation), 4.9 (Credential Leasing Service)
+// spec: 11.4 (User Invalidation: Full revoke propagation mechanism), 4.9 (Credential Leasing Service)
 // diagnosis: a full_revoke handled on a replica that does not bind the
-// session depended on its deny-list publish reaching the binding replica: with
-// the publish dropped, the binding replica's LLM proxy still served the
-// revoked lease token, so the lease step did not return the lease to its pool
-// before the cancel; or the session's later release returned a lease the
-// revoke already returned, counting it twice.
-func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
+// session left the returned lease usable on the binding replica, whose deny
+// list no revocation reaches: the lease step did not remove the record of a
+// pool-backed or a user-backed lease before the cancel, so the peer's LLM
+// proxy still served its token; or the step wrote a deny-list entry; or the
+// session's later release returned a lease the revoke already returned.
+func TestFullRevokeRejectsReturnedLeasesOnAPeerWithNoDenyListEntry_spec_11_4(t *testing.T) {
 	ctx := context.Background()
 	upstream := llmprovider.New(t)
 	leases := credleasestore.New()
@@ -104,14 +97,26 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 		Credentials: []credassign.PoolCredential{{ID: "key-1", APIKey: "sk-ant-1", Healthy: true}},
 	})
 	const id = "s-revoked"
-	lease, err := svc.Assign("claude-prod", id, "", "acme", 1)
-	if err != nil || lease.Proxy == nil || lease.Proxy.LeaseToken == "" {
-		t.Fatalf("Assign = %+v, %v; want a proxy lease with a token", lease, err)
+	poolL, err := svc.Assign("claude-prod", id, "", "acme", 1)
+	if err != nil || poolL.Proxy == nil || poolL.Proxy.LeaseToken == "" {
+		t.Fatalf("Assign = %+v, %v; want a proxy lease with a token", poolL, err)
+	}
+	userL := credential.Lease{
+		LeaseID: "lease-user", SessionID: id, Provider: credential.ProviderAnthropicDirect,
+		Source: credential.SourceUser, TenantID: "acme", CredentialRef: "cred-alice",
+		DeliveryMode: credential.DeliveryProxy, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		Proxy: &credential.ProxyConfig{
+			ProxyURL: "https://gateway-internal:8443/llm-proxy", ProxyDialect: "anthropic", LeaseToken: "lt-user",
+		},
+	}
+	if err := leases.Put(userL); err != nil {
+		t.Fatalf("seed the user-backed lease: %v", err)
 	}
 	// The binding replica's proxy reads the shared lease store and its own
-	// deny list, which the dropped publish never reaches.
+	// deny list, which no revocation reaches.
+	bindingDeny := denylist.New()
 	bindingProxy := httptest.NewServer(&llmproxy.Handler{
-		Leases: leases, Credentials: cache, DenyList: denylist.New(),
+		Leases: leases, Credentials: cache, DenyList: bindingDeny,
 		Translators: llmproxy.NewTranslatorRegistry(&llmproxy.AnthropicDirectTranslator{
 			BaseURL: upstream.URL(), DefaultAnthropicVersion: "2023-06-01",
 		}),
@@ -119,7 +124,7 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 	})
 	t.Cleanup(bindingProxy.Close)
 	url := bindingProxy.URL + "/v1/messages"
-	if code, _ := proxyCode(t, url, lease.Proxy.LeaseToken); code != http.StatusOK {
+	if code, _ := proxyCode(t, url, poolL.Proxy.LeaseToken); code != http.StatusOK {
 		t.Fatalf("pre-revoke proxy request = %d, want 200", code)
 	}
 
@@ -131,12 +136,8 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 	if err := users.Create(ctx, userstore.User{Subject: "alice@acme.com", TenantID: "acme", Roles: []pkgauth.Role{pkgauth.RoleUser}}); err != nil {
 		t.Fatal(err)
 	}
-	// The handling replica's lease step is the production one over its own
-	// deny list; the propagator has no bus, so the deny-list publish that
-	// would reach the binding replica is dropped.
-	handlingDeny := denylist.New()
-	assigner := &orderObservingAssigner{svc: svc, deny: handlingDeny, sessions: sessions, id: id}
-	step := leaserevoke.New(leases, assigner, credrenewalprop.New(handlingDeny, nil, nil), nil)
+	assigner := &orderObservingAssigner{svc: svc, sessions: sessions, id: id}
+	step := leaserevoke.New(leases, assigner, nil)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: time.Now}).
 		WithUsers(users).WithSessions(sessions).
 		WithUserRevocation(nil, step, nil)
@@ -151,17 +152,24 @@ func TestFullRevokeWithADroppedDenyListPublish_spec_11_4(t *testing.T) {
 		t.Fatalf("full_revoke = %d %s", rr.Code, rr.Body.String())
 	}
 
-	if assigner.releases != 1 || assigner.afterDeny != 0 || assigner.afterCancel != 0 || handlingDeny.Len() != 1 {
-		t.Errorf("lease step: %d Releases (%d after a deny-list write, %d after the cancel write), %d handling-replica deny-list entries; want one Release before both and one entry",
-			assigner.releases, assigner.afterDeny, assigner.afterCancel, handlingDeny.Len())
+	if assigner.releases != 2 || assigner.afterCancel != 0 {
+		t.Errorf("lease step: %d Releases (%d after the cancel write); want two Releases before it",
+			assigner.releases, assigner.afterCancel)
+	}
+	// The rejection below comes from the removed record alone: the binding
+	// replica's deny list holds no entry for either credential.
+	if bindingDeny.Len() != 0 {
+		t.Fatalf("the binding replica's deny list holds %d entries, want none", bindingDeny.Len())
 	}
 	before := len(upstream.Requests())
-	code, errCode := proxyCode(t, url, lease.Proxy.LeaseToken)
-	if code == http.StatusOK || errCode != "LEASE_TOKEN_INVALID" {
-		t.Errorf("the binding replica's proxy answered %d %q for the revoked token, want 401 LEASE_TOKEN_INVALID", code, errCode)
+	for _, l := range []credential.Lease{poolL, userL} {
+		code, errCode := proxyCode(t, url, l.Proxy.LeaseToken)
+		if code != http.StatusUnauthorized || errCode != "LEASE_TOKEN_INVALID" {
+			t.Errorf("the binding replica's proxy answered %d %q for the returned %s lease's token, want 401 LEASE_TOKEN_INVALID", code, errCode, l.Source)
+		}
 	}
 	if got := len(upstream.Requests()); got != before {
-		t.Errorf("the revoked token reached the provider (%d requests, want %d)", got, before)
+		t.Errorf("a returned token reached the provider (%d requests, want %d)", got, before)
 	}
 	if left := leases.LeasesBySession([]string{id}); len(left) != 0 {
 		t.Fatalf("the session still holds %d leases, so its release would return a revoked lease", len(left))

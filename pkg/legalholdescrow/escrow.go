@@ -17,8 +17,11 @@
 //     KEK. An unresolvable region aborts fail-closed.
 //  3. Migrate the re-encrypted payloads to the region-scoped legal-hold
 //     escrow bucket with a retain-until-hold-release object lock.
-//  4. Record each migration in the legal-hold ledger and mark the source
-//     record so Phase 4's DeleteByTenant skips it.
+//  4. Record each migration in the legal-hold ledger and persist the
+//     durable escrow record. Phase 4's DeleteByTenant then deletes the
+//     originals; the escrow copy and its record are the retained
+//     evidence, and the record is the pointer the escrow-GC release reads
+//     to delete the escrow object once the hold clears.
 //
 // The escrow KEK is platform-managed, single, long-lived, and per-region
 // — it outlives every tenant KEK so held evidence stays readable after

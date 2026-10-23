@@ -226,7 +226,7 @@ func TestProductionPostureKeepsPublicRoutesPublic(t *testing.T) {
 // tenant header a handler reads is the middleware's echo of that tenant
 // rather than the value the client sent.
 //
-// spec: §10.2 (Authentication; tenant_id extraction from OIDC tokens).
+// spec: §10.2 (Authentication; `tenant_id` extraction).
 func TestProductionPostureBearerOverridesTenantHeader(t *testing.T) {
 	rec := &postureRecorder{}
 	h := postureMiddleware(t, false, rec)

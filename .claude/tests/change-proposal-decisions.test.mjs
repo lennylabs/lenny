@@ -2247,6 +2247,16 @@ t.section("D-guard. every agent prompt begins with the relay guard");
   // The one-shell-command agents are the ones the measured run lost.
   const commit = runs["an empty firing"].calls.find((c) => c.label === "f1:commit");
   t.check("the commit agent is guarded like the rest", !!commit && commit.prompt.startsWith(RELAY_GUARD));
+  // The agents run in the launching session's working directory, often a
+  // different checkout from repoRoot, so each prompt names repoRoot as the
+  // lookup root right after the guard.
+  for (const [name, run] of Object.entries(runs)) {
+    const calls = guarded(run.calls);
+    t.check(name + ": every prompt names repoRoot as the lookup root after the guard",
+      calls.every((c) => c.prompt.slice(RELAY_GUARD.length).startsWith("LOOKUP ROOT: this run's repository is /repo.") &&
+        c.prompt.includes('"root": "/repo" in EVERY mcp__lookup__lookup call')),
+      calls.map((c) => c.label).slice(0, 8).join(","));
+  }
 }
 
 // ==========================================================================

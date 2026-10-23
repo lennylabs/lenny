@@ -27,7 +27,7 @@ const (
 // unless --tenancy-mode is "single" or "multi" and --multi-tenant is true
 // exactly when --tenancy-mode is "multi".
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens); §4.9
+// spec: §10.2 (`tenant_id` extraction); §4.9
 // (tenancy.mode: multi credential-delivery rejections); §10.3 (gateway
 // startup configuration validation).
 func validateTenancyConfig(tenancyMode string, multiTenant bool) error {
@@ -67,7 +67,7 @@ func validateTenancyConfig(tenancyMode string, multiTenant bool) error {
 // select the tenant on every chart-deployed gateway, which §10.2 forbids
 // in both modes (T-10.2.11).
 //
-// spec: §10.2 (tenant_id extraction from OIDC tokens); §17.4 (dev mode).
+// spec: §10.2 (`tenant_id` extraction); §17.4 (dev mode).
 func applyTenantAuthOptions(opts *authmw.Options, multiTenant, devMode bool, tenants tenantstore.Store) {
 	opts.MultiTenant = multiTenant
 	opts.DevHeaderNamesTenant = devMode && !multiTenant

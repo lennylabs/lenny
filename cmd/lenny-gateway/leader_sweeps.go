@@ -202,9 +202,10 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// days for session logs, 7 days for stream cursors). Only wired when
 		// a durable Postgres pool exists; the in-memory dev gateway has no
 		// partitioned EventStore tables. audit_log stays on the DELETE-based
-		// pruner above (native partitioning of audit_log conflicts with the
-		// §12.8 audit_redaction_receipts FK onto audit_log.id; see
-		// BUILD-GAPS F-16.4.6).
+		// pruner above. audit_redaction_receipts carries no foreign key onto
+		// audit_log.id (§12.8 RedactionReceipt schema), so a receipt never
+		// blocks deleting or dropping the audit rows it names; native
+		// partitioning of audit_log is tracked in BUILD-GAPS F-16.4.6.
 		if w.pgPool != nil {
 			partMaint := partitionmaint.New(
 				partitionmaint.NewPGDriver(w.pgPool),

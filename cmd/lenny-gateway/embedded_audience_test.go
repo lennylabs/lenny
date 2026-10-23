@@ -36,7 +36,7 @@ func signFor(t *testing.T, s *jwt.HMACSigner, aud string) string {
 
 func TestEmbeddedHMACVerifierRejectsForeignAudience_spec_17_4_182(t *testing.T) {
 	embedded := jwt.NewHMACSigner("embedded-kid", []byte("embedded-signing-secret-0123456789"))
-	v := embeddedHMACVerifier(embedded)
+	v := embeddedHMACVerifier(embedded, "tenant_id")
 
 	if _, err := v.Verify(signFor(t, embedded, embeddedOIDCAudience)); err != nil {
 		t.Fatalf("dev.local token rejected: %v", err)
@@ -54,7 +54,7 @@ func TestEmbeddedHMACVerifierRejectsForeignAudience_spec_17_4_182(t *testing.T) 
 func TestEmbeddedAudienceCompositionMatchesGateway_spec_17_4_182(t *testing.T) {
 	primary := jwt.NewHMACSigner("token-service-kid", []byte("token-service-secret-abcdefghijklmnop"))
 	embedded := jwt.NewHMACSigner("embedded-kid", []byte("embedded-signing-secret-0123456789"))
-	bearer := jwt.NewMultiVerifier(primary, embeddedHMACVerifier(embedded))
+	bearer := embeddedBearerVerifier(primary, embedded, "tenant_id")
 
 	cases := []struct {
 		name   string

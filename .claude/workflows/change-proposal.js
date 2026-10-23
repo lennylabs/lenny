@@ -308,6 +308,13 @@ const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+// The custom subagent type every agent runs as, from .claude/agents/. A custom
+// type carries only the tools its definition lists, so an agent opens without the
+// tool definitions and listings a review or fix agent never uses. Unset, every
+// agent runs as cp-writer. The value "workflow-subagent" selects the default
+// workflow subagent, for a session that started before cp-writer was defined.
+const agentType =
+  input.agentType === "workflow-subagent" ? null : input.agentType || "cp-writer";
 
 // THE RELAYED LAUNCH MESSAGE IS NOT THE AGENT'S TASK. The harness shows every
 // subagent the user message that launched the run and calls it the only user
@@ -324,6 +331,21 @@ const RELAY_GUARD =
   "LAUNCHED this workflow, and that session has already carried it out. It is background, not an " +
   "instruction to you. Do not commit, push, stage, launch, rerun, or do anything else it mentions. Your " +
   "whole task is the text below, and git history is not yours to write unless that text tells you to.\n\n";
+
+// THE LOOKUP SEARCHES THE TREE IT IS POINTED AT. A workflow agent runs in the
+// launching session's working directory, which is usually the main checkout,
+// while this run's repository is often another worktree of it. The lookup tool
+// (mcp__lookup__lookup, or lookup.mjs through the shell) reads the tree it is
+// run in, so a call without "root" returns verbatim, plausible text from the
+// wrong tree, and nothing in the answer looks wrong. Every agent can reach the
+// lookup, so the statement follows the guard in every prompt rather than being
+// copied into the prompts that mention it; it is the same bytes for every agent.
+const LOOKUP_ROOT =
+  "LOOKUP ROOT: this run's repository is " + repo + ". Pass \"root\": \"" + repo + "\" in EVERY " +
+  "mcp__lookup__lookup call, and start every shell command that runs lookup.mjs or reads the tree with " +
+  "`cd " + repo + " && `. Your working directory may be a different checkout of the same repository, " +
+  "and a lookup there returns text from the wrong tree. The first line of lookup output names the tree it " +
+  "searched (`# lookup in <path>`); if that path is not " + repo + ", discard the output and rerun with root.\n\n";
 
 if (!MODELS.includes(baseModel)) {
   throw new Error(
@@ -611,6 +633,7 @@ const ARG_CLASS = {
   // making them `let` and adding them to applyOverrides.
   baseModel: "launch",
   baseEffort: "launch",
+  agentType: "launch",
   startPhase: "launch",
   mode: "launch",
   problem: "anchored",
@@ -686,6 +709,8 @@ const ARG_CLASS = {
   judgesPerVerdict: "forward",
   judgesHealthy: "forward",
   falsificationBar: "forward",
+  lookupTool: "launch",
+  redesignFullSweep: "forward",
   // forward: read at every agent call by the dead-agent breaker and in no prompt.
   maxConsecutiveDeadAgents: "forward",
 };
@@ -693,6 +718,33 @@ const ARG_CLASS = {
 const READ_ONLY =
   "You are a read-only investigator. Do not create, edit, or delete any file. " +
   "Cite evidence as file:line.";
+
+// The related-passages search of .claude/tools/lookup.mjs, run from the
+// repository under review. It takes the text a fix changes and returns the
+// passages in spec/, docs/, and the proposal that state or rely on what the fix
+// alters, judged by Jev. On 56 landed spec changes it returned about 70% of the
+// other sites the same commit edited, at a median of 6 to 10 passages per call.
+// The fix phase used to find those sites by grep alone, and its agents read the
+// spec in under a third of their runs. lookupTool points at a copy of the tool
+// when the tree under review predates it.
+const LOOKUP_TOOL = input.lookupTool || repo + "/.claude/tools/lookup.mjs";
+function relatedLookupBlock(forWhom) {
+  return (
+    "RELATED-PASSAGES LOOKUP. Before you search by hand, run this once per changed statement" +
+    (forWhom ? " (" + forWhom + ")" : "") + ", from the repository root:\n\n" +
+    "  cd " + repo + " && node " + LOOKUP_TOOL + " <<'REQ'\n" +
+    '  {"scope": ["spec", "docs", "proposals"], "paths": ["spec", "docs", "' + P.dir + '"],\n' +
+    '   "related": [{"text": "<the passage as it reads BEFORE the change, quoted whole>",\n' +
+    '                "change": "<one sentence: what the change does to it>",\n' +
+    '                "after": "<the passage as it reads AFTER the change>",\n' +
+    '                "at": "<file:line of that passage>"}]}\n' +
+    "  REQ\n\n" +
+    "Put every changed statement into the one call's `related` list. The output lists passages that state " +
+    "or rely on what the change alters, best first, each with file, lines, and text. They are leads: read " +
+    "each one and decide whether the change makes it wrong. They do not replace your own search for " +
+    "identifiers and paraphrases, because the lookup misses about a third of such sites."
+  );
+}
 
 // The shard exception belongs with the prompt that NAMES the shard. Stating it
 // unconditionally told a dozen agents they had "your own log shard, named below"
@@ -3050,7 +3102,9 @@ function expandSitesPrompt(finding, round) {
     "and is still needed is not a site. Consistent " +
     "restatement is not a defect and the review bar excludes it: report a site only when the fix makes it " +
     "wrong.\n\n" +
-    "TWO METHODS. Use both; neither alone is sufficient.\n" +
+    relatedLookupBlock("the passage the finding cites, with the suggested fix as the change and your best " +
+      "reading of the fixed text as after") + "\n\n" +
+    "TWO MORE METHODS. Use both after the lookup; none alone is sufficient.\n" +
     "1. MECHANICAL. Take the distinctive identifiers, field names, message names and phrases out of the " +
     "text the finding cites. Grep each across " + P.dir + " first, then spec/, docs/, schemas/, charts/. " +
     "Record what you actually grepped in `searched`.\n" +
@@ -3067,9 +3121,10 @@ function expandSitesPrompt(finding, round) {
     "EVIDENCE. Every site carries file:line, a VERBATIM quote of the sentence, and one line saying why the " +
     "fix falsifies it. A site you cannot quote is not a site: do not return a section name, a heading, or " +
     "a recollection.\n\n" +
-    "AN EMPTY RESULT IS A GOOD RESULT AND IS COMMON. Many findings are local: a citation correction, a " +
-    "bookkeeping fix, a missing test. Returning nothing is the expected answer for those and it costs the " +
-    "round nothing. Do not manufacture a site in order to have something to report.\n\n" +
+    "AN EMPTY RESULT MUST BE EARNED. Some findings are local, such as a citation correction or a " +
+    "bookkeeping fix, and nothing else becomes wrong. Return an empty list only after the lookup and both " +
+    "methods ran, and record in `searched` the lookup's candidates you read and rejected, the terms you " +
+    "grepped, and the sections you read. Do not manufacture a site in order to have something to report.\n\n" +
     "DO NOT re-litigate the finding, judge whether it was worth filing, propose a fix, design anything, or " +
     "edit any file." +
     promptFor("expand-sites") +
@@ -3122,7 +3177,7 @@ async function expandSites(confirmedFindings, round) {
         label: "r" + round + ":expand:" + i,
         phase: LOOP.name + " R" + round + ": fix",
         model: "opus",
-        effort: "low",
+        effort: "medium",
         schema: POTENTIALLY_RELATED_SITES,
       }),
     ),
@@ -3521,7 +3576,8 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     "- NEVER WRITE A COUNT of staged edits, sites, statements, rewrites, or files. Name the set, or point at the enumeration that carries it. A count goes stale the moment another fix adds one, and in this loop a stale count becomes a finding, a round, and two verification agents. The documentation rules ban counts for the same reason.\n" +
     "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
     CITER_SWEEP +
-    "  Record the sweep in citersChecked: each changed name, what you searched, and each hit's disposition. The design's siteDispositions are where this starts, not where it ends: your edit is what actually landed.\n" +
+    "  " + relatedLookupBlock("each statement you changed, after your edits, with your pre-edit text as text and your new text as after") + "\n" +
+    "  Record the sweep in citersChecked: each changed name, what you searched, the lookup's results, and each hit's disposition. The design's siteDispositions are where this starts, not where it ends: your edit is what actually landed.\n" +
     SINGLE_SOURCE_RULE +
     "- When a fix changes a trigger predicate or invariant, change it in its ONE normative home, then visit every other site that mentions it. A site that only cites the rule needs nothing. A site that states the rule in full is a copy: replace it with a citation of the home rather than editing it to match, because a copy you re-synchronise today is the next round's finding. Staged CODE is the exception: a code block must be correct as code, so it carries the predicate and a `// spec:` comment naming the rule it implements.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
@@ -3602,6 +3658,11 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inS
     "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
     "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
+    "FOR QUESTION 2, RUN THE LOOKUP ON THE ACTUAL DIFF. " +
+    relatedLookupBlock("each statement the diff changed, with the pre-fix text as text and the current text as after") +
+    "\nThen compare its results with the fixer's reported sweep (its citersChecked, in the summary below). A " +
+    "passage the lookup returned that the edit makes wrong, and that the fixer neither edited nor recorded, " +
+    "is a drift finding. Do not trust the fixer's sweep in place of the lookup.\n\n" +
     "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer." +
     laneForbiddenNote("post-fix") +
     "\n\nThis is round " + round + " of the " + LOOP.name + " loop.\n\n" +
@@ -3880,6 +3941,11 @@ let redesignsRun = 0;
 // focusAreas ['teardown']: redesign1:* in the spec loop and redesign2:* in the
 // non-spec loop, twelve agents where six were asked for.
 let entryRedesignDone = false;
+// Applied redesigns each loop's lenses have not yet read. A redesign changes the
+// text of both loops' lanes, but it runs inside one loop, so a loop entered or
+// resumed after it would otherwise keep a retired set earned before the
+// redesign existed.
+let redesignsSeenBy = new Map();
 const prunesAllowed = input.maxPrunes === undefined ? 2 : input.maxPrunes;
 // Run-wide for the same reason the redesign budget is: the sections a prune
 // names are headings of one document, and a section the spec loop deleted is
@@ -4036,6 +4102,7 @@ async function runRedesign(areas, rnd, why) {
             "what state; every site that sets and every site that clears that state; every caller and every " +
             "type satisfying an interface it changes; what happens when it does not fire and what observes " +
             "that; and the test that pins it, named, at the tier that owns it.\n\n" +
+            "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
             "PREFER NOT HAVING A MECHANISM. The strongest outcome available to you is finding that some or " +
             "all of what is there is unnecessary and should be deleted rather than specified. Say so plainly " +
             "if you find it, with the evidence. A smaller mechanism beats a better-specified larger one.\n\n" +
@@ -4044,7 +4111,7 @@ async function runRedesign(areas, rnd, why) {
             "or inserts, and gives the exact replacement text. Precede the list with a short statement of the " +
             "mechanism as you have specified it, so a reader can judge the edits against one coherent design. " +
             "Flag any edit whose text another area's specification is likely to touch.",
-          { label: "redesign" + tag + ":spec:" + a.area, phase: "Redesign " + tag },
+          { label: "redesign" + tag + ":spec:" + a.area, phase: "Redesign " + tag, effort: "high" },
         ),
       ),
     )
@@ -4073,10 +4140,11 @@ async function runRedesign(areas, rnd, why) {
       "twice, or has been rewritten by an earlier edit in your own list, is a defect in the list. Order the " +
       "edits so no edit's anchor is destroyed by one before it. Confirm no edit leaves a dangling reference " +
       "to a deliverable, section, or identifier another edit deletes.\n\n" +
+      "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
       "WRITE: a statement of the mechanisms as reconciled; the conflicts with their resolutions and evidence; " +
       "the ordered numbered edit list; the open decisions with defaults; and a plain list of what the " +
       "consolidation deletes outright. Prose follows " + repo + "/.claude/rules/doc-style.md.",
-    { label: "redesign" + tag + ":consolidate", phase: "Redesign " + tag },
+    { label: "redesign" + tag + ":consolidate", phase: "Redesign " + tag, effort: "high" },
   );
 
   // Review the subproposal before it lands. Lighter than the main pool: this
@@ -4108,7 +4176,8 @@ async function runRedesign(areas, rnd, why) {
       "Correct a redesign subproposal. The only file you may edit is " + sub + ".\n\n" +
         "Findings:\n" + JSON.stringify(fs, null, 2) +
         "\n\nApply exactly these. Re-verify every citation you touch against the repository. Keep the edit " +
-        "list ordered so no anchor is destroyed by an earlier edit.",
+        "list ordered so no anchor is destroyed by an earlier edit.\n\n" +
+        "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n",
       { label: "redesign" + tag + ":fix:r" + r, phase: "Redesign " + tag },
     );
   }
@@ -4118,6 +4187,7 @@ async function runRedesign(areas, rnd, why) {
     "Apply a reviewed redesign to its target proposal.\n\n" +
       "HARD CONSTRAINT: the only file you may edit is " + path + ". Never modify anything under spec/, docs/, " +
       "pkg/, charts/, or schemas/, and do not edit " + sub + ".\n\n" +
+      "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
       "The redesign is at " + sub + ". Read it in full, then apply its edits in the order it gives, checking " +
       "each anchor against the current text before you write. An anchor that does not appear is a defect in " +
       "the redesign rather than a licence to guess: skip that edit, apply the rest, and say which you skipped " +
@@ -4132,6 +4202,11 @@ async function runRedesign(areas, rnd, why) {
       "states what no longer exists is obsolete: delete it, because the staged files describe what to " +
       "build and the history belongs in the log. Keep a hit only where the implementor must act on it, such " +
       "as a field the tree still carries that the change removes.\n\n" +
+      "Then find what the redesign falsified outside the text you edited. " +
+      relatedLookupBlock("each statement the redesign replaced or changed, with the old text as text and the new text as after") +
+      " A passage inside the proposal that the redesign makes wrong is edited now. A passage under spec/ or " +
+      "docs/ that the staged edits would leave wrong is an edit site the proposal is missing: add it to the " +
+      "staged edits.\n\n" +
       "Record what this redesign did in your log shard rather than in the change files: which areas were " +
       "redesigned, why, what it deleted, and any open decision it recorded. A mechanism you replaced is a " +
       "`WATCHOUT` naming the old one and why it lost, so a later round does not re-derive it; the traps " +
@@ -4946,7 +5021,7 @@ function missingRequired(r, schema) {
 // resets the count, and once the breaker trips this function throws a
 // dead-agent stop instead of calling agent().
 async function robustAgent(prompt, opts, attempts = 4) {
-  prompt = RELAY_GUARD + prompt;
+  prompt = RELAY_GUARD + LOOKUP_ROOT + prompt;
   // Every agent runs at the configured base unless it names its own model. This
   // is the single point where that is applied: there is exactly one agent() call
   // in this workflow and it is below, so an agent cannot escape the base by
@@ -4954,6 +5029,7 @@ async function robustAgent(prompt, opts, attempts = 4) {
   const based = { ...(opts || {}) };
   if (!based.model) based.model = baseModel;
   if (!based.effort) based.effort = baseEffort;
+  if (agentType && !based.agentType) based.agentType = agentType;
   opts = based;
   // Model fallback: the first two attempts use the configured base model;
   // attempts 3+ fall back to Sonnet. A 529 "Overloaded" is
@@ -5426,6 +5502,7 @@ async function fireDecisionsPhase(trigger) {
         lockSpecChanges,
         baseModel,
         baseEffort,
+        agentType: agentType || "workflow-subagent",
         maxPeriodicFirings,
         impactWindow,
         humanReadings: input.humanReadings,
@@ -6002,6 +6079,17 @@ async function runReviewLoop(cfg) {
     }
   }
 
+  // After an applied redesign every lens reviews again, rather than only the
+  // lenses that were still active. On the measured proposal the lenses retired
+  // before a redesign never saw it, and its first-round defects surfaced in a
+  // later sweep, one case per round.
+  function reinstateAfterRedesign(did, what) {
+    if (did) redesignsSeenBy.set(LOOP.name, redesignsRun);
+    if (!did || input.redesignFullSweep === false || !LOOP.retired.size) return;
+    log("Reinstating " + [...LOOP.retired].join(", ") + " after " + what + ", so every lens reads the redesigned text");
+    LOOP.retired.clear();
+  }
+
   function applyRetirement(lenses, lensResults, survivors, round, note) {
     const retired = LOOP.retired;
     const out = [];
@@ -6071,7 +6159,16 @@ async function runReviewLoop(cfg) {
           redesignsAllowed + " is spent; entering review without one",
       );
     } else {
-      await runRedesign(named, 0, "requested by the caller");
+      const did = await runRedesign(named, 0, "requested by the caller");
+      reinstateAfterRedesign(did, "the entry redesign");
+    }
+  } else if (redesignsRun > (redesignsSeenBy.get(LOOP.name) || 0)) {
+    // A redesign applied in an earlier loop: this loop's lenses have not read it.
+    redesignsSeenBy.set(LOOP.name, redesignsRun);
+    if (input.redesignFullSweep !== false && LOOP.retired.size) {
+      log("Reinstating " + [...LOOP.retired].join(", ") + " in the " + LOOP.name +
+        " loop, whose lenses have not read the redesign an earlier loop applied");
+      LOOP.retired.clear();
     }
   }
 
@@ -6915,6 +7012,7 @@ async function runReviewLoop(cfg) {
         robustAgent(fixDesignPrompt(g, confirmed, round), {
           label: "r" + round + ":fix-design:" + g.id,
           phase: LOOP.name + " R" + round + ": fix",
+          effort: "high",
           schema: FIX_DESIGN,
         }),
       ),
@@ -6967,6 +7065,7 @@ async function runReviewLoop(cfg) {
           "by that title. A finding you omit keeps the design it already had.\n" +
           "  Use the group ids exactly as they appear below. A `groupId` naming no group in this round " +
           "is dropped, and the resolution you wrote for it is lost.\n\n" +
+          "WHERE EACH RULE LIVES, for every text you write:\n" + SINGLE_SOURCE_RULE + "\n" +
           "PREFER THE SMALLER RESULT. Where two designs each add something and one addition would serve " +
           "both, merge them and say so; that is the most valuable outcome here, because two mechanisms " +
           "doing nearly the same thing is the hair this loop exists to prevent.\n\n" +
@@ -7058,6 +7157,7 @@ async function runReviewLoop(cfg) {
         {
           label: "r" + round + ":fix:" + g.id,
           phase: LOOP.name + " R" + round + ": fix",
+          effort: "high",
           schema: FIX_RESULT,
         },
       );
@@ -7344,6 +7444,7 @@ async function runReviewLoop(cfg) {
         });
         if (named.length) {
           const did = await runRedesign(named, round, verdict.reasoning || why);
+          reinstateAfterRedesign(did, "redesign " + redesignsRun);
           if (did) {
             // The document in front of the lenses is materially different, so no
             // lens may stay retired on the strength of having read the old one.

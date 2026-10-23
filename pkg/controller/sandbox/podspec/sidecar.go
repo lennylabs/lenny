@@ -74,7 +74,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 	pod := basePod(in, runtimeClass)
 	pod.Spec.Containers = []corev1.Container{
 		{
-			Name:  "adapter",
+			Name:  AdapterContainerName,
 			Image: in.AdapterImage,
 			Args:  adapterArgs,
 			// spec: §4.7, §5.2 — the adapter reports the outcome of a cleanup a
@@ -95,7 +95,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			Lifecycle: preStopDrainHook(in),
 		},
 		{
-			Name:  "runtime",
+			Name:  RuntimeContainerName,
 			Image: in.RuntimeImage,
 			// §4.7 sidecar transport: the runtime discovers the adapter's
 			// abstract socket from this variable and dials it instead of

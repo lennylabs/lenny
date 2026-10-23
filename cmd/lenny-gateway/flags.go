@@ -291,6 +291,7 @@ type gatewayFlags struct {
 	credentialsExpiryWarningLeadSeconds           *int
 	workspaceSealMaxDurationSeconds               *int
 	idempotencyGCIntervalSeconds                  *int
+	issuedTokenGCIntervalSeconds                  *int
 	credentialLeaseGCIntervalSeconds              *int
 	idempotencyMaxBodyBytes                       *int64
 	checkpointJitterFraction                      *float64
@@ -1169,6 +1170,9 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.idempotencyGCIntervalSeconds = flag.Int("idempotency-gc-interval-seconds",
 		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
 		"§11.5 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
+	f.issuedTokenGCIntervalSeconds = flag.Int("issued-token-gc-interval-seconds",
+		envInt("LENNY_ISSUED_TOKEN_GC_INTERVAL_SECONDS", 3600),
+		"§12.2 issued_tokens expired-row garbage-collection cadence. Every interval the gateway deletes, for every tenant including a deleted one, the issued-token rows whose exp precedes the §13.3 trailing hour; user erasure and tenant deletion keep the rows still inside that hour. Default 3600s (one hour). Override via LENNY_ISSUED_TOKEN_GC_INTERVAL_SECONDS.")
 	f.credentialLeaseGCIntervalSeconds = flag.Int("credential-lease-gc-interval-seconds",
 		envInt("LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS", 3600),
 		"§4.9 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")

@@ -164,30 +164,57 @@ func (e *Erasure) Runner() *erasurejob.Runner {
 		})
 }
 
-// orchestrator is the erasure over the World's stores: a lister over the
-// user's session rows from the primary and the IDs reserved for the user,
-// the session-scoped objects and transcripts erasers, and the sessions
-// user-scoped eraser, which also deletes the user's reservations. Every
-// eraser is the StepErase step.
+// orchestrator is the erasure over the World's stores, following the §12.8
+// DeleteByUser dependency-ordered deletion sequence for the stores a World
+// holds: a lister over
+// the user's session rows from the primary and the IDs reserved for the
+// user; the session-scoped artifacts, checkpoint_manifests, and transcripts
+// erasers in rank order; and the user-scoped sessions eraser, which also
+// deletes the user's reservations and is the StepErase step, followed by
+// the tokens eraser over the TokenStore, which runs only while ctx is live.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
 func (e *Erasure) orchestrator() *erasure.Orchestrator {
 	w := e.w
-	scoped := []erasure.SessionEraser{{Name: "artifacts", DeleteBySession: e.sessionEraser(w.Objects.DeleteBySession)}}
+	scoped := []erasure.SessionEraser{
+		{Name: "artifacts", DeleteBySession: e.sessionEraser(w.Objects.DeleteBySession)},
+		{Name: "checkpoint_manifests", DeleteBySession: e.sessionEraser(w.Manifests.DeleteBySession)},
+	}
 	if w.S.TranscriptEraser != nil {
 		scoped = append(scoped, erasure.SessionEraser{Name: w.S.TranscriptEraser.Name, DeleteBySession: e.sessionEraser(w.S.TranscriptEraser.DeleteBySession)})
 	}
 	return erasure.New(erasure.Config{
 		Sessions:      w.userSessionIDs,
 		SessionScoped: scoped,
-		UserScoped: []erasure.Eraser{{Name: "sessions", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
-			var n int
-			err := e.step(ctx, StepErase, func() error {
-				var err error
-				n, err = w.S.Sessions.DeleteByUser(ctx, tenantID, userID)
-				return err
-			})
-			return n, err
-		}}},
+		UserScoped: []erasure.Eraser{
+			{Name: "sessions", DeleteByUser: e.userEraser(w.S.Sessions.DeleteByUser)},
+			{Name: "tokens", DeleteByUser: liveUserEraser(w.Tokens.DeleteByUser)},
+		},
 	})
+}
+
+// userEraser runs a user-scoped eraser as the StepErase step.
+func (e *Erasure) userEraser(fn erasure.DeleteByUserFunc) erasure.DeleteByUserFunc {
+	return func(ctx context.Context, tenantID, userID string) (int, error) {
+		var n int
+		err := e.step(ctx, StepErase, func() error {
+			var err error
+			n, err = fn(ctx, tenantID, userID)
+			return err
+		})
+		return n, err
+	}
+}
+
+// liveUserEraser runs a user-scoped eraser only while ctx is live, so a
+// stopped replica deletes nothing.
+func liveUserEraser(fn erasure.DeleteByUserFunc) erasure.DeleteByUserFunc {
+	return func(ctx context.Context, tenantID, userID string) (int, error) {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		return fn(ctx, tenantID, userID)
+	}
 }
 
 // sessionEraser runs a session-scoped eraser only while ctx is live, so a
@@ -235,6 +262,7 @@ func (b billingLedger) CountUser(ctx context.Context, _, _ string) (int, error) 
 // started. Exactly one Start must succeed; the other must answer the
 // store's *erasurejob.ErrActiveJob.
 func (e *Erasure) Start(ctx context.Context, user string) (erasurejob.Job, error) {
+	e.w.markTouched(user)
 	r := e.Runner()
 	var jobs [2]erasurejob.Job
 	var errs [2]error
