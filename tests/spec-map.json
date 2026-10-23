@@ -3907,8 +3907,7 @@
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedSuspendRecordsNoViolationForAFenceThatHolds_spec_12_8",
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedErasureFlagsCreateAdmittedAfterRestriction_spec_12_8",
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedErasureRecordsNoViolationForAFenceThatHolds_spec_12_8",
-        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerHoldsRefusedDeriveManifestInsideErasureReach_spec_12_8",
-        "tests/testinfra/lifecyclefence/checker_test.go::TestManifestOutsideErasureOnlyForRowsTheErasureMustDelete_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerHoldsDeriveManifestInsideErasureReach_spec_12_8",
         "tests/testinfra/lifecyclefence/start_fault_test.go::TestFaultedErasureStartFailsInsideTheStore_spec_12_8",
         "tests/testinfra/lifecyclefence/start_fault_test.go::TestStartFaultSurfacesAStartThatNeverReachedTheStore_spec_12_8",
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
@@ -3933,7 +3932,10 @@
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionCrashAndTakeoverAfterEachStep_spec_12_8",
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
-        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantRedisPurgesStayInsideTheTenantPrefix_spec_12_8"
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantRedisPurgesStayInsideTheTenantPrefix_spec_12_8",
+        "tests/tier9_security/tenant_path_store_isolation_test.go::TestTenantPathEntriesNeverTouchAnotherTenant_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestUserErasureErasesTokenStoreRowsAndSourceCheckpoint_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8"
       ],
       "packages": [
         "pkg/store",

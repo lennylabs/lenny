@@ -198,6 +198,26 @@ func (k *Tokens) DeleteByTenant(_ context.Context, tenantID string) (int, error)
 	return n, nil
 }
 
+// DeleteByUser deletes the user's TokenStore rows, as the user-path tokens
+// entry does over connectorcredstore and credentialstore.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func (k *Tokens) DeleteByUser(_ context.Context, tenantID, user string) (int, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	key := [2]string{tenantID, user}
+	n := k.rows[key]
+	delete(k.rows, key)
+	return n, nil
+}
+
+// CountUser returns the number of TokenStore rows the user holds.
+func (k *Tokens) CountUser(tenantID, user string) int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.rows[[2]string{tenantID, user}]
+}
+
 // Count returns the number of TokenStore rows the tenant holds.
 func (k *Tokens) Count(tenantID string) int {
 	k.mu.Lock()

@@ -426,15 +426,27 @@ func requireBearersRefused(t *testing.T, when string, probes []bearerProbe) {
 }
 
 // requireBearersAdmitted asserts no probe's bearer is refused as an
-// unregistered or unverifiable tenant before the deletion.
-func requireBearersAdmitted(t *testing.T, probes []bearerProbe) {
+// unregistered or unverifiable tenant at the moment named by when.
+func requireBearersAdmitted(t *testing.T, when string, probes []bearerProbe) {
 	t.Helper()
 	for _, p := range probes {
 		for _, base := range p.replicas {
 			code, body := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", p.bearer, nil, nil)
 			if code == http.StatusUnauthorized || tenancyErrorCode(body) == "TENANT_NOT_FOUND" {
-				t.Fatalf("before the deletion the %s bearer on %s answered %d %q", p.name, base, code, tenancyErrorCode(body))
+				t.Errorf("%s: the %s bearer on %s answered %d %q", when, p.name, base, code, tenancyErrorCode(body))
 			}
+		}
+	}
+}
+
+// requireNoGlobexRowLost asserts no tenant-scoped table holds fewer globex
+// rows than it did before acme's deletion. A gateway worker may add globex
+// rows while the test runs, so only a loss is a crossing.
+func requireNoGlobexRowLost(t *testing.T, before, after map[string]int) {
+	t.Helper()
+	for table, n := range before {
+		if after[table] < n {
+			t.Errorf("%s globex rows = %d after deleting acme, want at least %d", table, after[table], n)
 		}
 	}
 }
@@ -566,7 +578,10 @@ func nonGDPRAuditRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ten
 // Phase 3 or during the legal-hold pause, on either replica, means the
 // tenant registry still admits a deleting tenant; an acme Redis key left
 // means a Redis-backed eraser was wired nil at the gateway's call site; a
-// globex key gone means one crossed tenants; a non-gdpr acme audit row after
+// globex key gone means one crossed tenants; a globex bearer refused on
+// either replica, or a tenant-scoped table holding fewer globex rows, means
+// the registry refusal or a Phase 4 entry crossed tenants; a non-gdpr acme
+// audit row after
 // the deletion means a refused bearer's TENANT_NOT_FOUND row was written to
 // the deleted tenant's chain rather than the platform chain.
 //
@@ -616,10 +631,11 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 	t.Run("playground bearer", func(t *testing.T) {
 		t.Skip("blocked: F-27.8.1 — a gateway started with --playground-enabled exits at startup, so no playground bearer can be minted")
 	})
-	probes := []bearerProbe{
-		{"embedded OIDC", mintTenancyBearer(t, "acme"), []string{gwA.BaseURL(), gwB.BaseURL()}},
-	}
-	requireBearersAdmitted(t, probes)
+	replicas := []string{gwA.BaseURL(), gwB.BaseURL()}
+	probes := []bearerProbe{{"embedded OIDC", mintTenancyBearer(t, "acme"), replicas}}
+	globexProbes := []bearerProbe{{"globex embedded OIDC", mintTenancyBearer(t, "globex"), replicas}}
+	requireBearersAdmitted(t, "before the deletion", append(probes, globexProbes...))
+	globexTablesBefore := leftoverTenantTables(t, ctx, pg.Pool, "globex")
 
 	setLegalHold(t, ctx, pg.Pool, acmeTree.child, true)
 	deleteSent := time.Now()
@@ -632,12 +648,14 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 	awaitTenantState(t, ctx, pg.Pool, gwA, "deleting", 30*time.Second)
 	requirePausedAtHold(t, ctx, pg.Pool)
 	requireBearersRefused(t, "during the Phase 3.5 pause", probes)
+	requireBearersAdmitted(t, "during acme's Phase 3.5 pause", globexProbes)
 
 	setLegalHold(t, ctx, pg.Pool, acmeTree.child, false)
 	// The runner advances one phase per tick; the tombstone (`deleted`)
 	// is written only after Phase 4 and the Phase 6 receipt succeed.
 	awaitTenantState(t, ctx, pg.Pool, gwA, "deleted", 90*time.Second)
 	requireBearersRefused(t, "after the tombstone", probes)
+	requireBearersAdmitted(t, "after acme's tombstone", globexProbes)
 
 	for table, n := range tenantRowCounts(t, ctx, pg.Pool, "acme") {
 		if n != 0 {
@@ -656,6 +674,7 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 			t.Errorf("%s globex rows = %d after deleting acme, want %d", table, globexAfter[table], before)
 		}
 	}
+	requireNoGlobexRowLost(t, globexTablesBefore, leftoverTenantTables(t, ctx, pg.Pool, "globex"))
 	if left := leftoverTenantTables(t, ctx, pg.Pool, "acme"); len(left) > 0 {
 		t.Errorf("tenant-scoped tables still holding acme rows after the deletion: %v", left)
 	}

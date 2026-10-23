@@ -53,6 +53,7 @@ func (w *World) Check(t testing.TB) {
 		t.Error(err)
 	}
 	w.checkResidue(t, ctx)
+	w.checkUserResidue(t, ctx, erasedAt)
 }
 
 // reservations returns every reserved session ID of the World's users.
@@ -82,7 +83,7 @@ type residue struct {
 func (w *World) residueOf(ctx context.Context, id string, reserved map[string]bool) residue {
 	r := residue{
 		objects:   w.Objects.Count(w.Tenant, id),
-		manifests: w.Manifests.Count(w.Tenant, id),
+		manifests: w.Manifests.SessionTotal(w.Tenant, id),
 		reserved:  reserved[id],
 	}
 	_, err := w.S.Sessions.Get(ctx, w.Tenant, id)
@@ -126,19 +127,6 @@ func inErasureReach(o CreateOutcome, erasedAt map[string]int64) bool {
 // the reservation.
 func keptWithoutRow(o CreateOutcome) bool { return o.ReservationKept && o.Err != nil }
 
-// manifestOutsideErasure reports whether the outcome's manifest row is
-// exempt from the erasure-reach check. The checkpoint-manifest eraser is not
-// wired to user erasure, so a manifest row the erasure is the only thing
-// left to delete stays: that of an admitted derive, and that of a derive
-// whose undo failed and kept the reservation. A refused derive whose undo
-// released the reservation must have deleted its own manifest row, so its
-// row stays inside the check.
-//
-// spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain)
-func manifestOutsideErasure(o CreateOutcome) bool {
-	return o.Err == nil || keptWithoutRow(o)
-}
-
 // checkOutcome returns what is wrong with one create's residue, or "".
 func (w *World) checkOutcome(ctx context.Context, o CreateOutcome, erasedAt map[string]int64, reserved map[string]bool) string {
 	r := w.residueOf(ctx, o.ID, reserved)
@@ -147,9 +135,6 @@ func (w *World) checkOutcome(ctx context.Context, o CreateOutcome, erasedAt map[
 	}
 	switch {
 	case inErasureReach(o, erasedAt):
-		if manifestOutsideErasure(o) {
-			r.manifests = 0
-		}
 		if !r.empty() {
 			return fmt.Sprintf("outlived its owner's erasure: %+v", r)
 		}

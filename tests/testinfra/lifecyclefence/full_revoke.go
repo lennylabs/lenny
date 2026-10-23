@@ -73,6 +73,7 @@ type FullRevokeResult struct {
 //
 // spec: §11.4 (User Invalidation: Full revoke propagation mechanism)
 func (w *World) FullRevoke(ctx context.Context, user string, disconnect bool) FullRevokeResult {
+	w.markTouched(user)
 	start := w.next()
 	silentBefore := w.Leases.SilentFired()
 	reqCtx := ctx

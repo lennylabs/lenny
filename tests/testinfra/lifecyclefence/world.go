@@ -102,6 +102,11 @@ type World struct {
 	// userCommitHooks holds, per user, the hook to run right after that
 	// user's row next commits.
 	userCommitHooks map[string]func()
+	// userBaseline is each user's snapshot when the World was built, which
+	// Check compares a bystander against.
+	userBaseline map[string]userSnapshot
+	// touched lists the users an erasure or a full_revoke targeted.
+	touched map[string]bool
 }
 
 // tokensPerUser is the number of TokenStore rows each seeded user holds.
@@ -174,6 +179,7 @@ func newWorld(t testing.TB, s *Stores, liveSeeds int, sh shared) *World {
 			w.SeedLive(t, u)
 		}
 	}
+	w.snapshotUsers(ctx)
 	return w
 }
 

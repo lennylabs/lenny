@@ -7,9 +7,10 @@
 // It runs the real cmd/lenny-gateway binary with a trusted embedded HMAC
 // key and a non-default --tenant-id-claim, and checks that an IdP-signed
 // bearer cannot choose its tenant through `tenant_id`, that a bearer for
-// a tenant in `deleting` is refused with TENANT_NOT_FOUND, and that the
+// a tenant in `deleting` is refused with TENANT_NOT_FOUND, that the
 // refusal's auth_failure row lands on the platform audit chain rather
-// than on the refused tenant's chain.
+// than on the refused tenant's chain, and that a globex bearer stays
+// admitted while acme is deleting and after acme's tombstone.
 package tier9_security_test
 
 import (
@@ -83,7 +84,9 @@ func signRawHS256(t *testing.T, kid string, secret []byte, payload map[string]an
 // own `tenant_id` instead of the configured claim, a bearer for a tenant
 // in `deleting` was still admitted (the registry read DeletedAt only), or
 // the refusal was written to the refused tenant's audit chain instead of
-// the platform chain with a top-level target_tenant_id.
+// the platform chain with a top-level target_tenant_id. A globex bearer
+// refused while acme is deleting or after acme's tombstone means the
+// registry's refusal crossed tenants.
 func TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations")})
@@ -116,6 +119,13 @@ func TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain(t *testing.T) {
 		t.Fatalf("create tenant acme: status %d (%v)\n%s", code, body, gw.Logs())
 	}
 
+	if code, body := spoofCall(t, http.MethodPost, base+"/v1/admin/tenants", "", admin,
+		map[string]any{"id": "globex", "displayName": "Globex"}); code != http.StatusCreated {
+		t.Fatalf("create tenant globex: status %d (%v)\n%s", code, body, gw.Logs())
+	}
+	globex := lifecycleMint(t, map[string]any{lifecycleTenantClaim: "globex"})
+	requireAdmittedAs(t, me, globex, "globex", "before acme's deletion")
+
 	acme := lifecycleMint(t, map[string]any{lifecycleTenantClaim: "acme"})
 	if code, body := spoofCall(t, http.MethodGet, me, acme, nil, nil); code != http.StatusOK || body["tenantId"] != "acme" {
 		t.Fatalf("configured claim: status %d (%v), want 200 as acme\n%s", code, body, gw.Logs())
@@ -146,6 +156,7 @@ func TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain(t *testing.T) {
 		t.Fatalf("bearer for a deleting tenant: status %d code %q (%v), want 403 TENANT_NOT_FOUND\n%s",
 			code, spoofErrorCode(body), body, gw.Logs())
 	}
+	requireAdmittedAs(t, me, globex, "globex", "while acme is deleting")
 
 	var platformRows, acmeRows int
 	if err := pool.QueryRow(ctx, `
@@ -160,5 +171,24 @@ func TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain(t *testing.T) {
 	}
 	if acmeRows != 0 {
 		t.Errorf("TENANT_NOT_FOUND rows on acme's own chain = %d, want 0", acmeRows)
+	}
+
+	// §12.8 Phase 6 tombstone: the registry keeps refusing acme and keeps
+	// admitting globex.
+	if _, err := pool.Exec(ctx, `UPDATE tenants SET state = 'deleted', deleted_at = now() WHERE id = 'acme'`); err != nil {
+		t.Fatalf("tombstone acme: %v", err)
+	}
+	if code, body := spoofCall(t, http.MethodGet, me, acme, nil, nil); code != http.StatusForbidden ||
+		spoofErrorCode(body) != "TENANT_NOT_FOUND" {
+		t.Errorf("bearer for a tombstoned tenant: status %d code %q, want 403 TENANT_NOT_FOUND", code, spoofErrorCode(body))
+	}
+	requireAdmittedAs(t, me, globex, "globex", "after acme's tombstone")
+}
+
+// requireAdmittedAs asserts the bearer is admitted as tenant.
+func requireAdmittedAs(t *testing.T, url, bearer, tenant, when string) {
+	t.Helper()
+	if code, body := spoofCall(t, http.MethodGet, url, bearer, nil, nil); code != http.StatusOK || body["tenantId"] != tenant {
+		t.Fatalf("%s bearer %s: status %d (%v), want 200 as %s", tenant, when, code, body, tenant)
 	}
 }
