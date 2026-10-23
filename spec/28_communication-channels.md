@@ -811,7 +811,7 @@ Adapter-local tools are resolved entirely within the adapter process — no MCP 
 | `list_dir`    | List the entries of a directory in the workspace                  |
 | `delete_file` | Delete a file or empty directory from the workspace               |
 
-Discovery: agents discover adapter-local tools by inspecting the `adapterLocalTools` array in the adapter manifest (`/run/lenny/adapter-manifest.json`). Each entry contains the tool `name`, a human-readable `description`, and a JSON Schema `inputSchema` for its `arguments` object. Adapters MUST populate this array before spawning the runtime; the set is fixed for the lifetime of the pod.
+Discovery: agents discover adapter-local tools by inspecting the `adapterLocalTools` array in the adapter manifest (`/run/lenny/adapter-manifest.json`). Each entry contains the tool `name`, a human-readable `description`, and a JSON Schema `inputSchema` for its `arguments` object. Adapters MUST populate this array before the runtime process is launched; the set is fixed for the lifetime of the pod.
 
 Schemas for the four built-in tools:
 
@@ -865,7 +865,7 @@ Schemas for the four built-in tools:
 ]
 ```
 
-All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined to the pod's workspace volume (`/workspace`). The adapter rejects any path that resolves outside `/workspace` with a `tool_result` carrying `isError: true` and `content[0].inline` set to the string `"path_outside_workspace"`. Custom adapters MAY extend this list with additional adapter-local tools; they MUST declare all custom tools in `adapterLocalTools` before spawning the runtime.
+All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined to the pod's workspace volume (`/workspace`). The adapter rejects any path that resolves outside `/workspace` with a `tool_result` carrying `isError: true` and `content[0].inline` set to the string `"path_outside_workspace"`. Custom adapters MAY extend this list with additional adapter-local tools; they MUST declare all custom tools in `adapterLocalTools` before the runtime process is launched.
 
 **Outbound: `heartbeat_ack`**
 
@@ -1228,7 +1228,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 - **Preconditions.** The channel is optional and is opened by Full-level runtimes; a runtime that does
   not open it operates in fallback-only mode ([§4.7](04_system-components.md#47-runtime-adapter),
   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The runtime reads
-  `runtimeOps.socket` from the manifest the adapter writes before it spawns the runtime binary
+  `runtimeOps.socket` from the manifest the adapter writes before the runtime process is launched
   ([§4.7](04_system-components.md#47-runtime-adapter)). After the connection handshake
   ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1),
   `lifecycle_capabilities` is the first frame sent on the channel and the runtime replies with
@@ -1313,7 +1313,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
   [§4.7](04_system-components.md#47-runtime-adapter)).
 - **Preconditions.** The adapter writes the manifest carrying `platformMcpServer.socket` and `mcpNonce`
-  before it spawns the runtime binary, and a Standard-level or Full-level runtime reads both from it
+  before the runtime process is launched, and a Standard-level or Full-level runtime reads both from it
   ([§4.7](04_system-components.md#47-runtime-adapter)). The nonce is validated before any tool is
   dispatched ([§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level runtime has no platform
   MCP server and reaches none of these tools
@@ -1366,7 +1366,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   MCP client to the external tool, so the tokens the external tool requires never enter the pod
   ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)).
 - **Preconditions.** The manifest carries a `connectorServers` array, which is empty when no connector is
-  authorized and is never absent, and the adapter writes it before it spawns the runtime binary
+  authorized and is never absent, and the adapter writes it before the runtime process is launched
   ([§4.7](04_system-components.md#47-runtime-adapter)). The set of authorized connectors is fixed by the
   session's `DelegationPolicy`, and the gateway validates the `connector_id` of every external tool call
   against the calling pod's effective policy before proxying it
