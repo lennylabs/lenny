@@ -82,6 +82,21 @@ type occupancy struct {
 // spec: §4.6.1 (occupancy projection), §6.2 (coarse pod state machine,
 // recycle edges), §4.6.3 (SandboxClaim binding-state enumeration).
 func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
+	// failed and terminated are the Sandbox-to-Pod reconciler's terminals,
+	// and §6.2 leaves failed only through failed → draining. A claim that
+	// outlives the pod's failure (for example a recycling claim whose SDK
+	// re-warm watchdog fired) must not pull the pod back into an occupancy
+	// phase, which would undo the failure and fight the failed → draining
+	// reclaim. The one projection kept is a terminal claim disposition on a
+	// failed pod, which is that same failed → draining edge.
+	// spec: §6.2 (failed → draining; terminated has no outgoing edge).
+	if state.IsTerminal(o.Current) {
+		if o.Current == state.Failed && o.HasClaim &&
+			(o.Binding == claimstate.Released || o.Binding == claimstate.Failed) {
+			return state.Draining, true
+		}
+		return "", false
+	}
 	if o.HasClaim {
 		switch o.Binding {
 		case claimstate.Bound:
