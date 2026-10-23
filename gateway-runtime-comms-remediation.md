@@ -3133,6 +3133,18 @@ property, which fails closed, so `restart` is offered on gVisor).** If the spike
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
 
+**Queued direct fixes filed by 0095's implementation (2026-10-23).**
+
+- [ ] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
+  replica (and the Token Service) generates and seals its own signing key at process start, so a peer
+  replica rejects the token. It fails closed but breaks every multi-replica deployment. The fix loads one
+  shared sealed key (and its rotation set, §10.3) on every replica; if the spec does not already state the
+  shared key source, it goes through the proposal pipeline first. Next after 0087 converges, ahead of P2.
+- [ ] **F-27.8.1: the gateway exits at startup with the playground enabled.** §27.8 names the label
+  `authMode` and §16.1.1 requires snake_case label names, and the validator refuses it. A small spec
+  correction (rename to `auth_mode`) plus the code change; it unblocks 0095's skipped tier-4 playground
+  bearer case.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
