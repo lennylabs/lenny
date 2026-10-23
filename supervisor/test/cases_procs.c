@@ -588,6 +588,77 @@ SV_CASE(cleanup_failed_command_stops_the_worker)
 }
 
 /*
+ * A cleanup command whose program names no directory is looked up in the
+ * PATH of the launch environment, element by element: a missing or
+ * non-executable candidate moves the search on, a relative element is
+ * skipped, a name found on no element fails the command with the exec
+ * failure status, and an absolute program path is run without a search.
+ *
+ * spec: §4.7.10 (Runtime supervisor, Cleanup; Environment)
+ */
+SV_CASE(cleanup_bare_program_name_searches_launch_path)
+{
+	setup();
+	const char *d = scratch_dir("cl-path");
+	char root[4200], miss[4300], noexec[4300], bin[4300], rel[4300];
+	snprintf(root, sizeof(root), "%s", d);
+	snprintf(miss, sizeof(miss), "%s/missing", root);
+	snprintf(noexec, sizeof(noexec), "%s/noexec", root);
+	snprintf(bin, sizeof(bin), "%s/bin", root);
+	snprintf(rel, sizeof(rel), "%s/rel", root);
+	sv_mkdir_p(noexec);
+	sv_mkdir_p(bin);
+	sv_mkdir_p(rel);
+	sv_bin_path(probe_path, sizeof(probe_path), "probe");
+	char tgt[4400];
+	/* A same-named file without execute permission precedes the program. */
+	snprintf(tgt, sizeof(tgt), "%s/sv-path-probe", noexec);
+	sv_write_file(tgt, "#!/bin/false\n");
+	SV_EQ_INT(chmod(tgt, 0644), 0);
+	snprintf(tgt, sizeof(tgt), "%s/sv-path-probe", bin);
+	SV_EQ_INT(symlink(probe_path, tgt), 0);
+	snprintf(tgt, sizeof(tgt), "%s/sv-rel-probe", rel);
+	SV_EQ_INT(symlink(probe_path, tgt), 0);
+
+	char pathvar[16384];
+	snprintf(pathvar, sizeof(pathvar), "PATH=%s::rel:%s:%s", miss, noexec, bin);
+	char *env[] = {pathvar, NULL};
+	char marker[4400];
+	snprintf(marker, sizeof(marker), "%s/ran", root);
+
+	char *found[] = {"sv-path-probe", "touch", marker, NULL};
+	char **ok[] = {found};
+	SV_EQ_INT(sv_cleanup_worker(ok, 1, env, 10000), SV_WORKER_OK);
+	SV_CHECK(sv_path_exists(marker), "the bare name ran from the PATH element that holds it");
+	unlink(marker);
+
+	/* The program sits only under a relative element, resolved from the working directory. */
+	char cwd[4200];
+	SV_CHECK(getcwd(cwd, sizeof(cwd)) != NULL, "getcwd");
+	SV_EQ_INT(chdir(root), 0);
+	char *relonly[] = {"sv-rel-probe", "touch", marker, NULL};
+	char *absent[] = {"sv-absent-probe", "touch", marker, NULL};
+	char *absolute[] = {"/nonexistent-dir/sv-path-probe", "touch", marker, NULL};
+	char **const *bad[] = {(char **[]){relonly}, (char **[]){absent}, (char **[]){absolute}};
+	int rs[3];
+	for (int i = 0; i < 3; i++)
+		rs[i] = sv_cleanup_worker(bad[i], 1, env, 10000);
+	SV_EQ_INT(chdir(cwd), 0);
+	for (int i = 0; i < 3; i++) {
+		SV_EQ_INT(rs[i], SV_WORKER_FAILED);
+		SV_CHECK(!sv_path_exists(marker), "case %d: nothing ran", i);
+	}
+
+	/* An absolute program path keeps running without a search. */
+	char *abs_ok[] = {probe_path, "touch", marker, NULL};
+	char **absc[] = {abs_ok};
+	SV_EQ_INT(sv_cleanup_worker(absc, 1, env, 10000), SV_WORKER_OK);
+	SV_CHECK(sv_path_exists(marker), "the absolute program ran");
+	sv_rm_rf(d);
+	return 0;
+}
+
+/*
  * At the deadline the worker sends SIGKILL to the running command's
  * process group, collects the command, and exits with its deadline
  * status. A process in the command's group ends with it.

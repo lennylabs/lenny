@@ -254,12 +254,74 @@ int sv_wait_child(struct sv_waiter *w, enum sv_child_kind kind, sv_u64 backstop_
  * descriptor the supervisor holds carries close-on-exec, so the child
  * inherits only its standard streams. The close-on-exec pipe carries the
  * execve errno back, and closes with no bytes on a successful execve.
+ * The runtime command's first element is an absolute path (spec: §5.1),
+ * so only a cleanup command searches the PATH.
  */
 #ifdef SV_TEST
 sv_u64 sv_test_pre_setsid_delay_ms;
 #endif
 
-__attribute__((noreturn)) static void sv_exec_child(char *const argv[], char *const env[], int errfd)
+/* sv_env_lookup returns the value of name's entry in env, or SV_NULL. */
+static const char *sv_env_lookup(char *const env[], const char *name)
+{
+	sv_size n = sv_strlen(name);
+	for (; env && *env; env++)
+		if (sv_strneq(*env, name, n) && (*env)[n] == '=')
+			return *env + n + 1;
+	return SV_NULL;
+}
+
+static int sv_has_slash(const char *s)
+{
+	for (; *s; s++)
+		if (*s == '/')
+			return 1;
+	return 0;
+}
+
+/*
+ * sv_execve_path runs a cleanup command whose program names no directory
+ * the way the argv mode of workspace setup runs one: argv[0] is looked up
+ * in each element of the PATH in env, in order (spec: §4.7.10, Runtime
+ * supervisor, Cleanup; Environment). A candidate that is missing, sits
+ * under a non-directory, or is not executable moves the search on to the
+ * next element; any other execve failure ends it. An element that is not
+ * an absolute directory is skipped, because a relative element would
+ * resolve against the working directory, which the agent writes. It
+ * returns the negated errno of the last attempt, and returns only when
+ * every attempt failed.
+ */
+static int sv_execve_path(char *const argv[], char *const env[])
+{
+	const char *file = argv[0];
+	if (sv_has_slash(file))
+		return sv_execve(file, argv, env);
+	const char *path = sv_env_lookup(env, "PATH");
+	sv_size flen = sv_strlen(file);
+	if (!path || flen == 0 || flen >= SV_MAX_ARG_BYTES)
+		return -SV_ENOENT;
+	char cand[2 * SV_MAX_ARG_BYTES + 2];
+	int r = -SV_ENOENT;
+	while (*path) {
+		sv_size dlen = 0;
+		while (path[dlen] && path[dlen] != ':')
+			dlen++;
+		if (dlen > 0 && path[0] == '/' && dlen + 1 + flen < sizeof(cand)) {
+			sv_bytecopy(cand, path, dlen);
+			cand[dlen] = '/';
+			sv_bytecopy(cand + dlen + 1, file, flen + 1);
+			r = sv_execve(cand, argv, env);
+			if (r != -SV_ENOENT && r != -SV_ENOTDIR && r != -SV_EACCES)
+				return r;
+		}
+		path += dlen;
+		if (*path == ':')
+			path++;
+	}
+	return r;
+}
+
+__attribute__((noreturn)) static void sv_exec_child(char *const argv[], char *const env[], int errfd, int search_path)
 {
 	sv_child_reset_signals();
 #ifdef SV_TEST
@@ -269,7 +331,7 @@ __attribute__((noreturn)) static void sv_exec_child(char *const argv[], char *co
 	}
 #endif
 	sv_setsid();
-	int r = sv_execve(argv[0], argv, env);
+	int r = search_path ? sv_execve_path(argv, env) : sv_execve(argv[0], argv, env);
 	if (errfd >= 0) {
 		int e = -r;
 		sv_write(errfd, &e, sizeof(e));
@@ -287,7 +349,7 @@ int sv_launch_child(char *const argv[], char *const env[], int *exec_errno)
 	int pid = sv_fork();
 	if (pid == 0) {
 		sv_close(fds[0]);
-		sv_exec_child(argv, env, fds[1]);
+		sv_exec_child(argv, env, fds[1], 0);
 	}
 	sv_close(fds[1]);
 	if (pid < 0) {
@@ -371,7 +433,7 @@ static int sv_run_command(char *const argv[], char *const env[], sv_u64 deadline
 	if (pid < 0)
 		return SV_WORKER_FAILED;
 	if (pid == 0)
-		sv_exec_child(argv, env, -1);
+		sv_exec_child(argv, env, -1, 1);
 	for (;;) {
 		int st = 0;
 		/* The flag is cleared before the wait, so a later SIGCHLD wakes ppoll. */

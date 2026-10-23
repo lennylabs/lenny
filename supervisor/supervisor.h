@@ -430,12 +430,29 @@ int sv_selftest_nondumpable(void);
  * NULL kill_all fails the property without sending anything.
  */
 int sv_selftest_kill_reach(sv_kill_fn kill_all);
-/* sv_selftest_init_immune tests SIGSTOP and then SIGKILL immunity as namespace init. */
-void sv_selftest_init_immune(int *sigstop_immune, int *sigkill_immune);
+/* Results of a SIGKILL immunity probe. */
+#define SV_IMMUNITY_FAIL 0
+#define SV_IMMUNITY_PASS 1
+#define SV_IMMUNITY_UNTESTED (-1)
+typedef int (*sv_immunity_probe)(void);
+/*
+ * sv_probe_init_sigkill sends SIGKILL to a throwaway PID-namespace init
+ * from inside its namespace and reports whether it survived, or
+ * SV_IMMUNITY_UNTESTED when no such init could be made.
+ */
+int sv_probe_init_sigkill(void);
+/*
+ * sv_selftest_init_immune tests SIGSTOP immunity on the calling namespace
+ * init and SIGKILL immunity through sigkill_probe, inferring the SIGKILL
+ * result from the SIGSTOP result when the probe is untested.
+ */
+void sv_selftest_init_immune(sv_immunity_probe sigkill_probe, int *sigstop_immune, int *sigkill_immune);
 
 #ifdef SV_TEST
 /* Test-build hook: the kill-reach grandchild exits before the kill. */
 extern int sv_test_grandchild_exits_early;
+/* Test-build hook: no throwaway PID namespace can be made. */
+extern int sv_test_throwaway_pidns_unavailable;
 /* Test-build hook: a launched child or cleanup command waits this long before setsid. */
 extern sv_u64 sv_test_pre_setsid_delay_ms;
 /* Test-build hook: when set, sv_now_ms returns its value. */

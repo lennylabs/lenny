@@ -5,7 +5,8 @@
  * spec: §4.7.11 item 8 (Runtime supervisor, Property self-test). Before it
  * dials, the supervisor tests that its non-dumpable mark resists same-UID
  * inspection and that its kill reaches a double-forked descendant, and
- * whether it is immune as PID-namespace init to SIGKILL and SIGSTOP. No
+ * whether it is immune as PID-namespace init to SIGKILL and SIGSTOP. A
+ * failed immunity gates no pod, so no probe can end the supervisor. No
  * property tests a signal's sender, because no supervisor action reads
  * one.
  */
@@ -194,13 +195,11 @@ static char sv_proc_state(int pid)
 }
 
 /*
- * The immunity probe, run in a child of the namespace init: SIGSTOP is
- * sent first and the init's state read. Only when the init stayed
- * running is SIGKILL sent, because the kernel discards both signals for a
- * namespace init through the same rule, and an init that a SIGSTOP
- * stopped would end at the SIGKILL.
+ * The SIGSTOP probe, run in a child of the namespace init: SIGSTOP is
+ * sent to the init and the init's state read. A stopped init is resumed
+ * with SIGCONT. The child exits 0 when the init stayed running.
  */
-static int sv_probe_init_immunity(void)
+static int sv_probe_init_sigstop(void)
 {
 	sv_kill(1, SV_SIGSTOP);
 	sv_sleep_ms(SV_SELFTEST_SETTLE_MS);
@@ -209,12 +208,70 @@ static int sv_probe_init_immunity(void)
 		sv_kill(1, SV_SIGCONT);
 		return 1;
 	}
-	sv_kill(1, SV_SIGKILL);
+	return 0;
+}
+
+/*
+ * The body of a throwaway PID-namespace init: a child of its own sends it
+ * SIGKILL from inside its namespace, and the init exits 0 when it is
+ * still running once the settle time has passed.
+ */
+static int sv_throwaway_init(void)
+{
+	int pid = sv_fork();
+	if (pid < 0)
+		return 2;
+	if (pid == 0) {
+		sv_kill(1, SV_SIGKILL);
+		sv_exit(0);
+	}
+	sv_wait_exit_code(pid);
 	sv_sleep_ms(SV_SELFTEST_SETTLE_MS);
 	return 0;
 }
 
-void sv_selftest_init_immune(int *sigstop_immune, int *sigkill_immune)
+#ifdef SV_TEST
+int sv_test_throwaway_pidns_unavailable;
+#endif
+
+/* sv_clone_pidns starts a child as the init of a new PID namespace, inside a new user namespace when one can be made. */
+static int sv_clone_pidns(void)
+{
+#ifdef SV_TEST
+	if (sv_test_throwaway_pidns_unavailable)
+		return -SV_EPERM;
+#endif
+	int pid = sv_clone_flags(SV_CLONE_NEWUSER | SV_CLONE_NEWPID);
+	if (pid < 0)
+		pid = sv_clone_flags(SV_CLONE_NEWPID);
+	return pid;
+}
+
+int sv_probe_init_sigkill(void)
+{
+	int pid = sv_clone_pidns();
+	if (pid < 0)
+		return SV_IMMUNITY_UNTESTED;
+	if (pid == 0)
+		sv_exit(sv_throwaway_init());
+	int st = 0;
+	if (sv_wait4(pid, &st, 0) != pid)
+		return SV_IMMUNITY_UNTESTED;
+	if (SV_WIFSIGNALED(st))
+		return SV_WTERMSIG(st) == SV_SIGKILL ? SV_IMMUNITY_FAIL : SV_IMMUNITY_UNTESTED;
+	return SV_WEXITSTATUS(st) == 0 ? SV_IMMUNITY_PASS : SV_IMMUNITY_UNTESTED;
+}
+
+/*
+ * sv_selftest_init_immune never sends SIGKILL to the supervisor itself:
+ * SIGSTOP immunity is tested on the live init, which a SIGCONT recovers,
+ * and SIGKILL immunity on a throwaway namespace init, so a failed
+ * immunity leaves the supervisor running to report it in ready. When no
+ * throwaway namespace init can be made, the SIGKILL result is the SIGSTOP
+ * result, because Linux exempts a namespace init from both signals under
+ * the same rule.
+ */
+void sv_selftest_init_immune(sv_immunity_probe sigkill_probe, int *sigstop_immune, int *sigkill_immune)
 {
 	*sigstop_immune = 0;
 	*sigkill_immune = 0;
@@ -225,11 +282,10 @@ void sv_selftest_init_immune(int *sigstop_immune, int *sigkill_immune)
 	if (pid < 0)
 		return;
 	if (pid == 0)
-		sv_exit(sv_probe_init_immunity());
-	if (sv_wait_exit_code(pid) == 0) {
-		*sigstop_immune = 1;
-		*sigkill_immune = 1;
-	}
+		sv_exit(sv_probe_init_sigstop());
+	*sigstop_immune = sv_wait_exit_code(pid) == 0;
+	int k = sigkill_probe ? sigkill_probe() : SV_IMMUNITY_UNTESTED;
+	*sigkill_immune = k == SV_IMMUNITY_UNTESTED ? *sigstop_immune : k == SV_IMMUNITY_PASS;
 }
 
 void sv_selftest(struct sv_properties *out)
@@ -237,5 +293,5 @@ void sv_selftest(struct sv_properties *out)
 	out->nondumpable = sv_selftest_nondumpable();
 	/* kill(-1) is sent only as a namespace init, where it reaches the namespace alone. */
 	out->kill_reach = sv_selftest_kill_reach(sv_getpid() == 1 ? sv_kill_all_default : SV_NULL);
-	sv_selftest_init_immune(&out->init_sigstop_immune, &out->init_sigkill_immune);
+	sv_selftest_init_immune(sv_probe_init_sigkill, &out->init_sigstop_immune, &out->init_sigkill_immune);
 }

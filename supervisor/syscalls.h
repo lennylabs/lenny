@@ -413,6 +413,15 @@ static inline int sv_fork(void)
 	return (int)SV_RETRY(SV_NR_clone, sv_raw5(SV_NR_clone, SV_SIGCHLD, 0, 0, 0, 0));
 }
 
+#define SV_CLONE_NEWUSER 0x10000000
+#define SV_CLONE_NEWPID 0x20000000
+
+/* sv_clone_flags is fork(2) with the given namespace flags added. */
+static inline int sv_clone_flags(unsigned long flags)
+{
+	return (int)SV_RETRY(SV_NR_clone, sv_raw5(SV_NR_clone, flags | SV_SIGCHLD, 0, 0, 0, 0));
+}
+
 static inline int sv_execve(const char *path, char *const argv[], char *const envp[])
 {
 	return (int)sv_raw3(SV_NR_execve, path, argv, envp);

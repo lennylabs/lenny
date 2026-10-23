@@ -9,7 +9,9 @@
 #define _GNU_SOURCE
 #include "harness.h"
 
+#include <sched.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 
@@ -46,13 +48,121 @@ SV_CASE(selftest_kill_reach_negative_paths)
 	return 0;
 }
 
-/* Outside a PID namespace's init no immunity is reported and nothing is sent to PID 1. */
+static int probe_calls;
+
+static int probe_counting(void)
+{
+	probe_calls++;
+	return SV_IMMUNITY_PASS;
+}
+
+/* Outside a PID namespace's init no immunity is reported, nothing is sent to PID 1, and no probe runs. */
 SV_CASE(selftest_init_immunity_outside_namespace_init)
 {
 	int stop = -1, killed = -1;
-	sv_selftest_init_immune(&stop, &killed);
+	probe_calls = 0;
+	sv_selftest_init_immune(probe_counting, &stop, &killed);
 	SV_EQ_INT(stop, 0);
 	SV_EQ_INT(killed, 0);
+	SV_EQ_INT(probe_calls, 0);
+	return 0;
+}
+
+static int probe_sigkill_fails(void)
+{
+	return SV_IMMUNITY_FAIL;
+}
+
+static int probe_untested(void)
+{
+	return SV_IMMUNITY_UNTESTED;
+}
+
+static int probe_real(void)
+{
+	return sv_probe_init_sigkill();
+}
+
+/*
+ * as_ns_init runs the init-immunity self-test in-process as PID 1 of a
+ * scratch user and PID namespace and returns that init's wait status;
+ * the init exits with 0x40 | sigstop << 1 | sigkill.
+ */
+static int as_ns_init(sv_immunity_probe probe)
+{
+	int fds[2];
+	if (pipe(fds) < 0)
+		return -1;
+	pid_t a = fork();
+	if (a == 0) {
+		close(fds[0]);
+		int st = -1;
+		if (unshare(CLONE_NEWUSER | CLONE_NEWPID) == 0) {
+			pid_t b = fork();
+			if (b == 0) {
+				int stop = -1, killed = -1;
+				sv_install_signals();
+				sv_selftest_init_immune(probe, &stop, &killed);
+				_exit(0x40 | (stop << 1) | killed);
+			}
+			if (b > 0)
+				waitpid(b, &st, 0);
+		}
+		ssize_t w = write(fds[1], &st, sizeof(st));
+		_exit(w == (ssize_t)sizeof(st) ? 0 : 1);
+	}
+	close(fds[1]);
+	int st = -1;
+	if (read(fds[0], &st, sizeof(st)) != (ssize_t)sizeof(st))
+		st = -1;
+	close(fds[0]);
+	waitpid(a, NULL, 0);
+	return st;
+}
+
+/*
+ * SIGSTOP immunity holds and the SIGKILL probe fails: the init keeps
+ * running through the self-test, ends by its own exit, and reports
+ * initSigkillImmune as failed, because the SIGKILL probe never targets
+ * the init that runs it.
+ *
+ * spec: §4.7.11 item 8 (Property self-test: PID-namespace init immunity gates no pod)
+ */
+SV_CASE(selftest_sigkill_immunity_failure_leaves_init_running)
+{
+	if (!sv_ns_userns_available())
+		SV_SKIP("blocked: unprivileged user namespaces are unavailable on this host");
+	int st = as_ns_init(probe_sigkill_fails);
+	SV_CHECK(st != -1 && WIFEXITED(st), "the namespace init survived the self-test: status %d", st);
+	SV_EQ_INT(WEXITSTATUS(st), 0x40 | (1 << 1) | 0);
+	return 0;
+}
+
+/*
+ * The SIGKILL probe measures a throwaway namespace init: it passes on
+ * this kernel, from a process that is not itself a namespace init too.
+ * When no throwaway namespace can be made the probe is untested and the
+ * SIGKILL result follows the SIGSTOP result.
+ *
+ * spec: §4.7.11 item 8 (Property self-test)
+ */
+SV_CASE(selftest_sigkill_probe_uses_throwaway_namespace_init)
+{
+	if (!sv_ns_userns_available())
+		SV_SKIP("blocked: unprivileged user namespaces are unavailable on this host");
+	SV_EQ_INT(sv_install_signals(), 0);
+	SV_EQ_INT(sv_probe_init_sigkill(), SV_IMMUNITY_PASS);
+	int st = as_ns_init(probe_real);
+	SV_CHECK(st != -1 && WIFEXITED(st), "status %d", st);
+	SV_EQ_INT(WEXITSTATUS(st), 0x40 | (1 << 1) | 1);
+
+	sv_test_throwaway_pidns_unavailable = 1;
+	int untested = sv_probe_init_sigkill();
+	sv_test_throwaway_pidns_unavailable = 0;
+	SV_EQ_INT(untested, SV_IMMUNITY_UNTESTED);
+	st = as_ns_init(probe_untested);
+	SV_CHECK(st != -1 && WIFEXITED(st), "status %d", st);
+	SV_EQ_INT(WEXITSTATUS(st), 0x40 | (1 << 1) | 1);
 	return 0;
 }
 
