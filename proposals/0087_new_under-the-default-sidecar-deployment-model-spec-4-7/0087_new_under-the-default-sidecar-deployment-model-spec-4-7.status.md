@@ -2,13 +2,13 @@
 proposal: 0087_new_under-the-default-sidecar-deployment-model-spec-4-7
 title: Sidecar runtime processes have no platform supervisor
 kind: new
-status: Draft
+status: Approved
 drafted-date: 2026-10-01
 drafted-by: change-proposal
-reviewed-date: 
-reviewed-by: 
-approved-date: 
-approved-by: 
+reviewed-date: 2026-10-23
+reviewed-by: change-proposal
+approved-date: 2026-10-23
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
