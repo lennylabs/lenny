@@ -782,6 +782,7 @@ metadata:
 spec:
   type: agent
   image: %s
+  command: ["/usr/local/bin/lenny-claude-code-adapter"]
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed

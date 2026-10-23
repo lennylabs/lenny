@@ -440,6 +440,7 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/chaos-nonce-only@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: full
   deploymentModel: sidecar
   isolationProfile: standard

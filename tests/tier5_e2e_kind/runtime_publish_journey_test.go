@@ -179,6 +179,7 @@ metadata:
 spec:
   type: agent
   image: %s
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard

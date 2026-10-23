@@ -102,6 +102,22 @@
         "tests/tier2_component/controllers/warmpool_deleted_pod_test.go"
       ]
     },
+    "pkg/apis/lenny/": {
+      "unit": ["pkg/apis/lenny/..."],
+      "component": ["tests/tier2_component/controllers/runtime_command_env_validation_test.go"],
+      "contract": ["tests/tier3_contract/crd_schema/..."]
+    },
+    "pkg/controller/runtime": {
+      "unit": ["pkg/controller/runtime/..."],
+      "component": [
+        "tests/tier2_component/controllers/runtime_test.go",
+        "tests/tier2_component/controllers/runtime_command_env_validation_test.go"
+      ]
+    },
+    "pkg/gateway/runtime/runtimestore": {
+      "unit": ["pkg/gateway/runtime/runtimestore/..."],
+      "component": ["tests/tier2_component/stores/runtimestore_test.go"]
+    },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
       "component": [

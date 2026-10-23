@@ -70,6 +70,17 @@ type Runtime struct {
 	// spec: §4.7.
 	RequireSoPeercred *bool
 
+	// Restartable is the §5.1 derived flag the RuntimeReconciler mirrors
+	// from the Runtime CRD: true for a runtime that carries `command`, has
+	// executionMode session, and does not declare capabilities.preConnect.
+	// Gateway pool admission refuses recycle.runtimeProcess: restart on a
+	// runtime whose flag is false (§5.2). Only the reconciler writes it; the
+	// admin registration payload does not model `command`, so a runtime
+	// registered only through the admin API stays false, matching the
+	// migration column's NOT NULL DEFAULT false, and refuses restart. The
+	// §5.1 merge takes it from the base runtime. spec: §5.1 (command).
+	Restartable bool
+
 	// AllowedResourceClasses is the §5.1 set of resource classes the
 	// runtime permits (for example small, medium, large). The §5.1 merge
 	// table classifies it Prohibited on derived runtimes: a derived
@@ -374,9 +385,10 @@ type RuntimeCapabilities struct {
 	Injection InjectionCapability `json:"injection,omitempty"`
 
 	// PreConnect is the §5.1 capabilities.preConnect flag. When true the
-	// §6.1 warm-pool controller pre-connects the agent SDK process during
-	// the warm phase so every pod in the pool is SDK-warm, and the
-	// runtime's adapter must implement DemoteSDK. Default false. The
+	// pod's adapter starts the agent SDK process during warm-up, before the
+	// pod becomes idle (through the runtime supervisor in the sidecar
+	// model), so every pod in the pool is SDK-warm, and the runtime's
+	// adapter must implement DemoteSDK (§6.1). Default false. The
 	// companion runtime-level SDKWarmBlockingPaths governs the demotion
 	// decision (§5.1).
 	PreConnect bool `json:"preConnect,omitempty"`

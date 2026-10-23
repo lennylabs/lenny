@@ -32,6 +32,11 @@ func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *b
 	rt := runtimeCR()
 	rt.Spec.DeploymentModel = deploymentModel
 	rt.Spec.RequireSoPeercred = requireSoPeercred
+	// spec: §5.1 (command) — command is required on a sidecar agent runtime
+	// and forbidden on an embedded one.
+	if deploymentModel == "embedded" {
+		rt.Spec.Command = nil
+	}
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
 		Spec: lennyv1.SandboxTemplateSpec{

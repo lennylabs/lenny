@@ -65,6 +65,7 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 		Spec: lennyv1.RuntimeSpec{
 			Type:             "agent",
 			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "full",
 		},
 	})

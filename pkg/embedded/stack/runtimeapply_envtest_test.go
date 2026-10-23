@@ -59,6 +59,9 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 	rt.Spec.Image = runtimeApplyImage
 	rt.Spec.IntegrationLevel = "basic"
 	rt.Spec.DeploymentModel = "sidecar"
+	// spec: §5.1 (command) — the Runtime CRD requires command on a sidecar
+	// agent runtime, which runtimeCRFromFile defaults this one to.
+	rt.Spec.Command = []string{"/usr/local/bin/my-agent"}
 
 	if err := stack.ApplyRuntimeSetFromConfig(ctx, cfg, rt); err != nil {
 		t.Fatalf("ApplyRuntimeSetFromConfig: %v", err)
@@ -141,6 +144,7 @@ func TestApplyRuntimeSetFromConfigRejectsTagOnlyImage_spec_5_3(t *testing.T) {
 	rt := &lennyv1alpha1.Runtime{}
 	rt.Name = "tag-agent"
 	rt.Spec.Image = "ghcr.io/acme/my-agent:dev"
+	rt.Spec.Command = []string{"/usr/local/bin/my-agent"}
 
 	err := stack.ApplyRuntimeSetFromConfig(ctx, cfg, rt)
 	if err == nil {

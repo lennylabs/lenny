@@ -85,6 +85,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: runtimeName},
 		Spec: lennyv1.RuntimeSpec{
 			Image:            customRuntimeImage,
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "basic",
 			DeploymentModel:  "sidecar",
 		},

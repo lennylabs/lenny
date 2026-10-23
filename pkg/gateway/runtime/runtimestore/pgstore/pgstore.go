@@ -44,7 +44,8 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	session_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 	supported_providers, credential_capabilities, limits, setup_command_policy,
 	default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-	sdk_warm_blocking_paths, workspace_tier, require_so_peercred, version`
+	sdk_warm_blocking_paths, workspace_tier, require_so_peercred, restartable,
+	version`
 
 // stringSliceJSON marshals a §5.1 string-set field (allowedResourceClasses,
 // supportedProviders) to its jsonb text form. An empty slice is stored as
@@ -252,8 +253,9 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		session_policy, base_runtime, allow_self_recursion, allowed_resource_classes,
 		supported_providers, credential_capabilities, limits, setup_command_policy,
 		default_pool_config, workspace_defaults, runtime_options_schema, shared_assets,
-		sdk_warm_blocking_paths, workspace_tier, require_so_peercred, version
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)`,
+		sdk_warm_blocking_paths, workspace_tier, require_so_peercred, restartable,
+		version
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -268,7 +270,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
 		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier),
-		requireSoPeercredColumn(r.RequireSoPeercred), version)
+		requireSoPeercredColumn(r.RequireSoPeercred), r.Restartable, version)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -329,7 +331,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		default_pool_config = $26, workspace_defaults = $27,
 		runtime_options_schema = $28, shared_assets = $29,
 		sdk_warm_blocking_paths = $30, workspace_tier = $31,
-		require_so_peercred = $32, version = $33
+		require_so_peercred = $32, restartable = $33, version = $34
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -346,7 +348,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		defaultPoolConfigJSON(r.DefaultPoolConfig), workspaceDefaultsJSON(r.WorkspaceDefaults),
 		runtimeOptionsSchemaJSON(r.RuntimeOptionsSchema), sharedAssetsJSON(r.SharedAssets),
 		stringSliceJSON(r.SDKWarmBlockingPaths), string(r.WorkspaceTier),
-		requireSoPeercredColumn(r.RequireSoPeercred), r.Version); err != nil {
+		requireSoPeercredColumn(r.RequireSoPeercred), r.Restartable, r.Version); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -447,7 +449,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&supportedProvidersRaw, &credentialCapabilitiesRaw, &limitsRaw,
 		&setupCommandPolicyRaw, &defaultPoolConfigRaw, &workspaceDefaultsRaw,
 		&runtimeOptionsSchemaRaw, &sharedAssetsRaw, &sdkWarmBlockingPathsRaw,
-		&workspaceTier, &requireSoPeercred, &r.Version,
+		&workspaceTier, &requireSoPeercred, &r.Restartable, &r.Version,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}

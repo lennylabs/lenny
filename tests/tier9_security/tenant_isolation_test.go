@@ -336,6 +336,7 @@ spec:
   deploymentModel: sidecar
   executionMode: session
   image: %s
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   isolationProfile: standard
   type: agent

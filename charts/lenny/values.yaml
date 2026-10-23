@@ -2978,6 +2978,10 @@ referenceRuntimes:
     # F-26.3.3.
     - name: claude-code
       image: ghcr.io/lennylabs/runtime-claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-claude-code-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [anthropic_direct, aws_bedrock, gcp_vertex_anthropic]
@@ -3042,6 +3046,10 @@ referenceRuntimes:
     # coding-agent capabilities and declares proxyDialect: [google].
     - name: gemini-cli
       image: ghcr.io/lennylabs/runtime-gemini-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-gemini-cli-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [gcp_vertex_gemini, google_ai_studio]
@@ -3077,6 +3085,10 @@ referenceRuntimes:
     # coding-agent capabilities and declares proxyDialect: [openai].
     - name: codex
       image: ghcr.io/lennylabs/runtime-codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-codex-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [openai_direct, azure_openai]
@@ -3113,6 +3125,10 @@ referenceRuntimes:
     # the v1 runtimeOptionsSchema URL. F-26.6.1 / F-26.6.2.
     - name: cursor-cli
       image: ghcr.io/lennylabs/runtime-cursor-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-cursor-cli-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [cursor_direct]
@@ -3151,6 +3167,10 @@ referenceRuntimes:
     # battery the chat runtime implements. F-26.7.1 (supersedes F-26.1.1).
     - name: chat
       image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-chat-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
@@ -3171,6 +3191,10 @@ referenceRuntimes:
     # injection. F-26.9.2 pattern.
     - name: langgraph
       image: ghcr.io/lennylabs/runtime-langgraph@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-langgraph-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini, azure_openai]
       capabilities:
@@ -3187,6 +3211,10 @@ referenceRuntimes:
     # injection. F-26.9.2.
     - name: mastra
       image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-mastra-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
       capabilities:
@@ -3208,6 +3236,10 @@ referenceRuntimes:
     # runtimeOptionsSchema URL. F-26.10.2.
     - name: openai-assistants
       image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-openai-assistants-adapter"]
       integrationLevel: full
       supportedProviders: [openai_direct, azure_openai]
       capabilities:
@@ -3225,6 +3257,10 @@ referenceRuntimes:
     # to the crewai-default DelegationPolicy. F-26.11.2.
     - name: crewai
       image: ghcr.io/lennylabs/runtime-crewai@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-crewai-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct]
       capabilities:

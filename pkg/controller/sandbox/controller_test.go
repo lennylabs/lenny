@@ -180,6 +180,7 @@ func runtimeCR() *lennyv1.Runtime {
 			// envtest enforces the @sha256:<64-hex> Pattern, so the test
 			// helper uses a digest reference rather than a tag.
 			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "full",
 		},
 	}
@@ -364,6 +365,8 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 	s := newScheme(t)
 	rt := runtimeCR()
 	rt.Spec.DeploymentModel = "embedded"
+	// spec: §5.1 (command) — command is forbidden on an embedded runtime.
+	rt.Spec.Command = nil
 	c := newClient(t, s, sandboxCR(""), rt)
 
 	if err := reconcile(t, c, s); err != nil {

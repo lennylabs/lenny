@@ -236,7 +236,9 @@ func (r *Reconciler) runtimeFromCRD(rt *lennyv1.Runtime) runtimestore.Runtime {
 // the credential-capabilities block; the object's domain labels become
 // the runtime's §10.6 runtimeSelector label set. DeploymentModel is a
 // CRD-only field with no registry counterpart and is intentionally not
-// mirrored.
+// mirrored. Command and Env are CRD-only as well: the pod builder reads
+// them from the live CRD, so the registry carries only the derived
+// Restartable flag that gateway pool admission reads (§5.1 command).
 func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	dst.Name = rt.Name
 	dst.Type = runtimestore.RuntimeType(rt.Spec.Type)
@@ -260,6 +262,12 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// embedded + false combination is rejected before mirroring (mirror),
 	// so an embedded runtime never reaches this copy carrying false.
 	dst.RequireSoPeercred = requireSoPeercredFromCRD(rt.Spec.RequireSoPeercred)
+	// spec: §5.1 (command) — the registry mirrors only the derived
+	// restartable flag, computed by the same RuntimeSpec helper the pod
+	// builder reads, so pool admission and pod creation agree on whether a
+	// pool may select recycle.runtimeProcess: restart. The argv and env
+	// themselves stay on the CRD.
+	dst.Restartable = rt.Spec.Restartable()
 	// spec: §5.1 / §7.5 — setupCommandPolicy is mirrored from
 	// the CRD so the §7.5 gateway-side enforcement (F-7.5.1) reads the same
 	// policy the deployer declared on the Runtime resource. F-7.5.10.

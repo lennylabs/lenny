@@ -499,3 +499,72 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 }
+
+// TestRuntimeStoreRestartableRoundTrip_spec_5_1 round-trips the §5.1
+// derived restartable flag through the Postgres runtime registry, beside
+// the require_so_peercred column. A runtime created without the flag reads
+// back false (the migration's NOT NULL DEFAULT, so a row the reconciler has
+// not mirrored refuses recycle.runtimeProcess: restart), an explicit true
+// persists on create, and Update flips it both ways.
+//
+// spec: §5.1 (command), §5.2 (recycle.runtimeProcess).
+// diagnosis: the restartable column did not round-trip through
+// pkg/gateway/runtime/runtimestore/pgstore. Check the column in selectList,
+// the INSERT and UPDATE parameter lists, and scanRuntime, and that
+// migration 0189 applied.
+func TestRuntimeStoreRestartableRoundTrip_spec_5_1(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := runtimepg.New(pg.Pool)
+	ctx := context.Background()
+
+	def := sampleRuntime(runtimeName(t) + "-def")
+	if err := store.Create(ctx, def); err != nil {
+		t.Fatalf("Create default: %v", err)
+	}
+	gotDef, err := store.Get(ctx, def.Name)
+	if err != nil {
+		t.Fatalf("Get default: %v", err)
+	}
+	if gotDef.Restartable {
+		t.Error("a runtime created without restartable must read back false (fail closed)")
+	}
+
+	on := sampleRuntime(runtimeName(t) + "-on")
+	on.Restartable = true
+	if err := store.Create(ctx, on); err != nil {
+		t.Fatalf("Create restartable: %v", err)
+	}
+	gotOn, err := store.Get(ctx, on.Name)
+	if err != nil {
+		t.Fatalf("Get restartable: %v", err)
+	}
+	if !gotOn.Restartable {
+		t.Error("an explicit true restartable was lost through the create round-trip")
+	}
+
+	for _, want := range []bool{false, true} {
+		updated, err := store.Update(ctx, on.Name, func(rt *runtimestore.Runtime) error {
+			rt.Restartable = want
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update to %v: %v", want, err)
+		}
+		if updated.Restartable != want {
+			t.Errorf("Update returned restartable %v, want %v", updated.Restartable, want)
+		}
+		reread, err := store.Get(ctx, on.Name)
+		if err != nil {
+			t.Fatalf("Get after update: %v", err)
+		}
+		if reread.Restartable != want {
+			t.Errorf("updated restartable %v did not persist, read back %v", want, reread.Restartable)
+		}
+		// require_so_peercred sits beside restartable in the parameter
+		// lists; a shifted placeholder would corrupt it.
+		if !reread.RequiresSoPeercred() {
+			t.Error("require_so_peercred changed while restartable was updated")
+		}
+	}
+}

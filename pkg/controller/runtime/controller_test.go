@@ -90,7 +90,7 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 		AgentInterface:     &runtimestore.AgentInterface{Description: "admin-set"},
 		MinPlatformVersion: "1.4.0",
 	}
-	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + hex64, IntegrationLevel: "basic"}}
+	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + hex64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"}}
 	rt.Name = "scanner"
 
 	applyCRDFields(&dst, rt)
@@ -129,6 +129,7 @@ func TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9(t *testing.T) {
 			rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 				Type:             "agent",
 				Image:            "img@sha256:" + hex64,
+				Command:          []string{"/usr/local/bin/lenny"},
 				IntegrationLevel: "basic",
 				WorkspaceTier:    c.in,
 			}}
@@ -190,6 +191,7 @@ func TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5(t *testing.T) {
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 		Type:               "agent",
 		Image:              "img@sha256:" + hex64,
+		Command:            []string{"/usr/local/bin/lenny"},
 		IntegrationLevel:   "basic",
 		SetupCommandPolicy: src,
 	}}
@@ -221,6 +223,7 @@ func TestApplyCRDFields_MirrorsArchivePolicy_spec_7_4(t *testing.T) {
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 		Type:             "agent",
 		Image:            "img@sha256:" + hex64,
+		Command:          []string{"/usr/local/bin/lenny"},
 		IntegrationLevel: "basic",
 		ArchivePolicy:    src,
 	}}
@@ -363,6 +366,7 @@ func TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1(t *te
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 		Type:             "agent",
 		Image:            "img@sha256:" + hex64,
+		Command:          []string{"/usr/local/bin/lenny"},
 		IntegrationLevel: "full",
 		Capabilities: &lennyv1.RuntimeCapabilitiesCRD{
 			Interaction: "multi_turn",
@@ -487,6 +491,7 @@ func TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2(t *testing.T) {
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 		Type:              "agent",
 		Image:             "img@sha256:" + hex64,
+		Command:           []string{"/usr/local/bin/lenny"},
 		IntegrationLevel:  "full",
 		Limits:            &lennyv1.RuntimeLimits{MaxSessionAgeSeconds: 14400, MaxUploadSizeBytes: 524288000, MaxRequestInputWaitSeconds: 1800},
 		SetupPolicy:       &lennyv1.SetupPolicy{TimeoutSeconds: 600, OnTimeout: "fail"},
@@ -556,6 +561,7 @@ func TestApplyCRDFields_MirrorsRequireSoPeercred_spec_4_7(t *testing.T) {
 			rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
 				Type:              "agent",
 				Image:             "img@sha256:" + hex64,
+				Command:           []string{"/usr/local/bin/lenny"},
 				IntegrationLevel:  "basic",
 				DeploymentModel:   "sidecar",
 				RequireSoPeercred: c.in,
@@ -639,7 +645,7 @@ func TestMirror_RejectsEmbeddedNonceOnly_spec_4_7(t *testing.T) {
 		store := runtimestore.NewMemory()
 		r := &Reconciler{Store: store}
 		rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
-			Type: "agent", Image: img, IntegrationLevel: "basic",
+			Type: "agent", Image: img, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic",
 			DeploymentModel: "sidecar", RequireSoPeercred: &fls,
 		}}
 		rt.Name = "sidecar-nonce-only"
@@ -659,7 +665,7 @@ func TestMirror_RejectsEmbeddedNonceOnly_spec_4_7(t *testing.T) {
 		store := runtimestore.NewMemory()
 		r := &Reconciler{Store: store}
 		rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
-			Type: "agent", Image: img, IntegrationLevel: "basic",
+			Type: "agent", Image: img, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic",
 			RequireSoPeercred: &fls,
 		}}
 		rt.Name = "empty-model-nonce-only"

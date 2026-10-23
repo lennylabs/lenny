@@ -54,6 +54,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -123,6 +126,9 @@ metadata:
 spec:
   type: agent
   image: __CRED_SHELL_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -141,6 +147,9 @@ metadata:
 spec:
   type: agent
   image: __ELICITATION_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: standard
   executionMode: session
   isolationProfile: standard
@@ -164,6 +173,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: sandboxed
@@ -187,6 +199,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -211,6 +226,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -236,6 +254,9 @@ metadata:
 spec:
   type: agent
   image: __HEARTBEAT_SILENCE_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -257,6 +278,9 @@ metadata:
 spec:
   type: agent
   image: __HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
