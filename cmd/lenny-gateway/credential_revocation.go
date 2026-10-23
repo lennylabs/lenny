@@ -136,9 +136,9 @@ type directModeRevocationRotator struct {
 // revoked pool credential. It first marks the credential unselectable so
 // the replacement mint skips it, then re-mints from the lease's own pool
 // (the §4.9 path) under the
-// emergency_revocation trigger and pushes it to the pod. A user-backed
-// revocation (§11.4 full_revoke) carries no pool credential and is
-// ignored. When the pool has no other assignable credential the rotate
+// emergency_revocation trigger and pushes it to the pod. A revocation
+// that names no pool credential is ignored; §11.4 full_revoke writes no
+// deny-list entry and never reaches this hook. When the pool has no other assignable credential the rotate
 // mints nothing and the pod retains its now-revoked key until provider-
 // side rotation, the §4.9 direct-mode residual risk the spec documents.
 func (d *directModeRevocationRotator) onRevoke(key credential.CredentialKey) {

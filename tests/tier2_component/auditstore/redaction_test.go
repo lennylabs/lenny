@@ -203,8 +203,8 @@ func markDeadLettered(t *testing.T, ctx context.Context, pg *containers.Postgres
 
 // rowIDBySeq returns the audit_log.id of tenant's row at seq, read on the
 // container pool. Used to seed an audit_redaction_receipts row whose
-// audit_event_id FK (§12.8, migration 0160) references a real
-// audit_log row.
+// audit_event_id (§12.8) names a real audit_log row; the column carries
+// no foreign key, because the receipt outlives the row.
 func rowIDBySeq(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string, seq uint64) string {
 	t.Helper()
 	var id string

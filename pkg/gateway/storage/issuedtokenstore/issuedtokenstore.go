@@ -577,8 +577,9 @@ func (s *Store) ListRevoked(ctx context.Context, tenantID string) ([]IssuedToken
 
 // DeleteExpired removes the tenant's tokens whose exp is at or before
 // cutoff and returns the number of rows deleted. This is the §12.2
-// expired-row GC path; revoked rows past expiry are removed too,
-// since an expired token cannot be presented regardless.
+// expired-row GC path. Revoked rows are removed too, so the caller
+// passes a cutoff that precedes the §13.3 trailing hour: a row is kept,
+// revoked or not, while a buggy client can still present its token.
 func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
