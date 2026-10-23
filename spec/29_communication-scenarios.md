@@ -171,8 +171,8 @@ state that the READY signal is one of them.
    held for the same tenant under a `reserved` claim within its hold window, this step is a
    `reserved` → `bound` status patch and step 6 does not occur, because the pod is dispatched onto
    with no acquisition round trip
-   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). On a pool whose
-   configuration keeps no runtime process across sessions, the gateway ends that hold with the same
+   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). When an acquisition refuses the pod under the runtime-process
+   acknowledgment, the gateway ends that hold with the same
    precondition-guarded claim `DELETE` instead and acquires another pod through steps 6 and 7
    ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer
    acknowledgment (runtime process kept across sessions)").
