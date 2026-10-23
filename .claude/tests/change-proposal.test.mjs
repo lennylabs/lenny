@@ -5800,7 +5800,27 @@ t.section("N15. every agent prompt begins with the relay guard");
   const retried = await runWorkflow(WF, NEW_ARGS, newStubs({ init: () => (++tries < 2 ? null : "created") }));
   const inits = retried.calls.filter((c) => c.label === "init");
   t.check("a retry is dispatched with the guard, not with two", inits.length === 2 && unguarded(inits).length === 0, String(inits.length));
-  t.check("the task follows the guard directly", inits[0].prompt.slice(RELAY_GUARD.length, RELAY_GUARD.length + 1).trim().length === 1);
+  t.check("the lookup root follows the guard directly", inits[0].prompt.slice(RELAY_GUARD.length).startsWith("LOOKUP ROOT: "));
+
+  // A workflow agent runs in the launching session's working directory, which
+  // is usually the main checkout, while the run's repository is often another
+  // worktree. A lookup call without root then searches the wrong tree and
+  // returns plausible text. Every prompt names the repository as the root, once,
+  // in the same bytes, and tells the agent how to tell a wrong-tree answer.
+  const ROOT_LINE = "Pass \"root\": \"" + NEW_ARGS.repoRoot + "\" in EVERY mcp__lookup__lookup call";
+  for (const [name, run] of Object.entries(runs)) {
+    const calls = guarded(run.calls);
+    const heads = new Set(calls.map((c) => c.prompt.slice(RELAY_GUARD.length, c.prompt.indexOf("\n\n", RELAY_GUARD.length))));
+    t.check(name + ": every prompt names the run's repository as the lookup root, once",
+      calls.every((c) => c.prompt.split(ROOT_LINE).length === 2),
+      calls.filter((c) => c.prompt.split(ROOT_LINE).length !== 2).map((c) => c.label).slice(0, 8).join(","));
+    t.check(name + ": the lookup-root statement is the same bytes in every prompt", heads.size === 1, [...heads].join(" | ").slice(0, 300));
+    t.check(name + ": it says to cd to the repository and to check the output header",
+      calls.every((c) => c.prompt.includes("`cd " + NEW_ARGS.repoRoot + " && `") && c.prompt.includes("# lookup in <path>")));
+  }
+  const elsewhere = await runWorkflow(WF, { ...NEW_ARGS, repoRoot: "/work/trees/other" }, newStubs());
+  t.check("the lookup root follows repoRoot rather than a fixed path",
+    guarded(elsewhere.calls).length > 0 && guarded(elsewhere.calls).every((c) => c.prompt.includes('"root": "/work/trees/other"')));
 }
 
 t.section("N16. each prompt family has a byte-stable head, and its per-call text carries each datum once");

@@ -14,6 +14,7 @@
 // Usage:
 //   lookup.mjs --json '<request>'        or        lookup.mjs < request.json
 //   lookup.mjs --warm [scope ...]        embed every passage in the scopes (default: spec)
+//   lookup.mjs --prune-cache <days>      drop cached vectors no lookup has used for <days> days
 //
 // Request (every field optional except that one of exact, meaning, sections, lines, related is given):
 //   {
@@ -49,17 +50,35 @@
 // and the output says so. `lookup.mjs --warm spec docs` embeds a scope ahead of
 // time, which a workflow should do once before reviewers fan out.
 //
+// The embedding cache is shared by every worktree and every concurrent lookup on
+// the machine. Operator-tunable environment variables:
+//   LOOKUP_CACHE_DIR        cache directory (default: <git common dir>/lookup-cache).
+//                           Holds embeddings.sqlite, the model files under models/,
+//                           and in-flight request files under requests/.
+//   LOOKUP_EMBED_THREADS    onnxruntime threads per lookup (default 2, or 1 on a
+//                           one-core machine; --warm uses half the cores), so
+//                           concurrent lookups do not each take every core.
+//   LOOKUP_EMBED_LOCK_WAIT  seconds a lookup waits for another lookup's embedding
+//                           run or model download (default 300). Past it the
+//                           embedding shortlist covers only passages already
+//                           cached, the output says "embedding busy", and the
+//                           word-overlap shortlist still serves.
+//   LOOKUP_UV               path to uv when it is not on PATH or in ~/.local/bin.
+// Vectors are never invalidated, only superseded, so the cache grows as the text
+// changes; --prune-cache removes rows unused for the given number of days.
+//
 // Meaning search, and narrowing by context, ask Jev (TypeSafe's System One model)
 // one yes/no question per passage. They need a TypeSafe key, read from
-// TYPESAFE_API_KEY or from ~/.config/typesafe/api_key. Without one, meaning search
+// TYPESAFE_API_KEY or from ~/.config/typesafe/api_key (TYPESAFE_API_KEY set to the
+// empty string turns judging off). Without one, meaning search
 // returns its shortlist unjudged and says that it did.
 //
 // Exit codes: 0 ran; 1 failed; 2 usage error.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { availableParallelism, homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const SCOPES = {
@@ -102,6 +121,12 @@ function usage(msg) {
 }
 
 function readRequest() {
+  const pr = process.argv.indexOf("--prune-cache");
+  if (pr !== -1) {
+    const days = Number(process.argv[pr + 1]);
+    if (!Number.isInteger(days) || days < 1) usage("--prune-cache takes a whole number of days, at least 1");
+    return { prune: days };
+  }
   const w = process.argv.indexOf("--warm");
   if (w !== -1) {
     const scope = process.argv.slice(w + 1).filter((a) => !a.startsWith("-"));
@@ -123,11 +148,85 @@ function readRequest() {
 // that it reaches every session, worktree, and workflow agent without being
 // exported in each one.
 function typesafeKey() {
-  if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY.trim();
+  // Set but empty means no key: a test or an operator can turn judging off
+  // without moving the key file.
+  if (process.env.TYPESAFE_API_KEY !== undefined) return process.env.TYPESAFE_API_KEY.trim();
   try {
     return readFileSync(join(homedir(), ".config", "typesafe", "api_key"), "utf8").trim();
   } catch {
     return "";
+  }
+}
+
+// The cache directory every worktree of the repository shares, or a reason there
+// is none. LOOKUP_CACHE_DIR overrides it, such as for a test against a copy.
+function cacheDir() {
+  if (process.env.LOOKUP_CACHE_DIR) return { dir: resolve(process.env.LOOKUP_CACHE_DIR) };
+  try {
+    const common = resolve(execFileSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" }).trim());
+    return { dir: join(common, "lookup-cache") };
+  } catch {
+    return { reason: "not in a git repository, so there is nowhere to cache vectors" };
+  }
+}
+
+// uv's installer puts it in ~/.local/bin, which a non-login shell or a workflow
+// subagent often lacks on PATH. Spawning a bare "uv" there reports uv as missing
+// while it is installed.
+function uvCommand() {
+  if (process.env.LOOKUP_UV) return process.env.LOOKUP_UV;
+  for (const d of (process.env.PATH || "").split(":")) if (d && existsSync(join(d, "uv"))) return "uv";
+  for (const p of [join(homedir(), ".local", "bin", "uv"), join(homedir(), ".cargo", "bin", "uv")]) if (existsSync(p)) return p;
+  return "uv";
+}
+
+// A request file is removed when its lookup ends, but a lookup killed mid-run
+// leaves it behind, and a file can be tens of megabytes. Files older than this
+// belong to no live lookup: the spawn timeout is shorter.
+const STALE_REQUEST_MS = 3_600_000;
+function sweepStaleRequests(dir) {
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  for (const n of names) {
+    try {
+      const p = join(dir, n);
+      if (now - statSync(p).mtimeMs > STALE_REQUEST_MS) unlinkSync(p);
+    } catch {
+      /* another lookup removed it first */
+    }
+  }
+}
+
+// Runs lookup-embed.py on one request object and returns its parsed output, or
+// a reason it could not run.
+function runEmbed(request) {
+  const script = join(dirname(fileURLToPath(import.meta.url)), "lookup-embed.py");
+  const c = cacheDir();
+  if (c.reason) return { reason: c.reason };
+  const reqDir = join(c.dir, "requests");
+  mkdirSync(reqDir, { recursive: true });
+  sweepStaleRequests(reqDir);
+  // The request is passed as a file. Piped on stdin, a request of tens of
+  // megabytes twice left the helper blocked on a read that never completed.
+  const reqFile = join(reqDir, `request-${process.pid}-${Date.now()}.json`);
+  writeFileSync(reqFile, JSON.stringify({ cache: join(c.dir, "embeddings.sqlite"), models: join(c.dir, "models"), ...request }));
+  const r = spawnSync(uvCommand(), ["run", "--quiet", script, reqFile], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", maxBuffer: 1 << 28, timeout: 1_500_000 });
+  try {
+    unlinkSync(reqFile);
+  } catch {
+    /* already gone */
+  }
+  if (r.error) return { reason: r.error.code === "ENOENT" ? "uv is not installed" : r.error.message };
+  if (r.status !== 0) return { reason: `lookup-embed.py failed: ${(r.stderr || "").trim().split("\n").pop()}` };
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    return { reason: "lookup-embed.py returned unreadable output" };
   }
 }
 
@@ -328,40 +427,15 @@ function shortlist(blocks, text, k) {
 // words they use. lookup-embed.py computes it and caches vectors by passage text
 // under the git common directory, which every worktree of the repository shares.
 // Returns one list of blocks per query, or a reason it could not run.
+// The text embedded for a passage. Warming and searching must agree on it,
+// because the cache is keyed by this text.
+const passageText = (b) => (b.heading ? b.heading + "\n" : "") + b.text;
+
 function embedShortlist(blocks, queries, top) {
-  const script = join(dirname(fileURLToPath(import.meta.url)), "lookup-embed.py");
-  let common;
-  try {
-    common = resolve(execFileSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" }).trim());
-  } catch {
-    return { reason: "not in a git repository, so there is nowhere to cache vectors" };
-  }
-  const dir = join(common, "lookup-cache");
-  mkdirSync(dir, { recursive: true });
-  const input = JSON.stringify({
-    cache: join(dir, "embeddings.sqlite"),
-    top,
-    queries,
-    passages: blocks.map((b, id) => ({ id, text: (b.heading ? b.heading + "\n" : "") + b.text })),
-  });
-  // The request is passed as a file. Piped on stdin, a request of tens of
-  // megabytes twice left the helper blocked on a read that never completed.
-  const reqFile = join(dir, `request-${process.pid}-${Date.now()}.json`);
-  writeFileSync(reqFile, input);
-  const r = spawnSync("uv", ["run", "--quiet", script, reqFile], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", maxBuffer: 1 << 28, timeout: 1_500_000 });
-  try {
-    unlinkSync(reqFile);
-  } catch {
-    /* already gone */
-  }
-  if (r.error) return { reason: r.error.code === "ENOENT" ? "uv is not installed" : r.error.message };
-  if (r.status !== 0) return { reason: `lookup-embed.py failed: ${(r.stderr || "").trim().split("\n").pop()}` };
-  try {
-    const out = JSON.parse(r.stdout);
-    return { model: out.model, embedded: out.embedded, lists: out.results.map((l) => l.map(([id, score]) => ({ block: blocks[id], score }))) };
-  } catch {
-    return { reason: "lookup-embed.py returned unreadable output" };
-  }
+  const out = runEmbed({ top, queries, passages: blocks.map((b, id) => ({ id, text: passageText(b) })) });
+  if (out.reason) return out;
+  if (!Array.isArray(out.results)) return { reason: "lookup-embed.py returned unreadable output" };
+  return { model: out.model, embedded: out.embedded, note: out.note, lists: out.results.map((l) => l.map(([id, score]) => ({ block: blocks[id], score }))) };
 }
 
 async function jevAsk(key, state, questions) {
@@ -625,7 +699,8 @@ async function relatedSearch(r, ctx) {
     for (const b of words) add(b, "meaning");
     const emb = embedShortlist(all, [q], k);
     if (emb.reason) notes.push(`embedding shortlist unavailable (${emb.reason})`);
-    else for (const { block } of emb.lists[0]) add(block, "meaning");
+    else if (emb.note) notes.push(`embedding shortlist partial (${emb.note})`);
+    if (!emb.reason) for (const { block } of emb.lists[0]) add(block, "meaning");
     meaningTop.push(...words.slice(0, 20), ...(emb.lists ? emb.lists[0].slice(0, 20).map((x) => x.block) : []));
   }
 
@@ -691,7 +766,8 @@ async function relatedSearch(r, ctx) {
     if (alsoList.length > 1) qs.push(...alsoList);
     const emb = embedShortlist(chunks, qs, Number(r.chunkTop) > 0 ? Number(r.chunkTop) : 20);
     if (emb.reason) notes.push(`chunk embedding unavailable (${emb.reason})`);
-    else for (const l of emb.lists) for (const { block } of l) add(block.block, "chunks");
+    else if (emb.note) notes.push(`chunk embedding partial (${emb.note})`);
+    if (!emb.reason) for (const l of emb.lists) for (const { block } of l) add(block.block, "chunks");
   }
   if (via.has("neighbors")) for (const b of [home, ...meaningTop]) if (b) for (const n of [b.prev, b.next]) if (n) add(n, "neighbors");
   if (via.has("all")) for (const b of all) add(b, "all");
@@ -750,6 +826,11 @@ async function main() {
   const sections = Array.isArray(req.sections) ? req.sections.map(String) : [];
   const related = (Array.isArray(req.related) ? req.related : []).map((r) => (typeof r === "string" ? { text: r } : r));
   for (const r of related) if (!r || typeof r.text !== "string" || r.text.trim().length < 20) usage("each related entry needs a text of at least 20 characters");
+  if (req.prune) {
+    const r = runEmbed({ prune: req.prune });
+    process.stdout.write(r.reason ? `prune failed: ${r.reason}\n` : `prune: removed ${r.pruned} vector(s) unused for ${req.prune} day(s); ${r.kept} kept\n`);
+    process.exit(r.reason ? 1 : 0);
+  }
   if (!req.warm && !exact.length && !meaning.length && !sections.length && !related.length && !(Array.isArray(req.lines) && req.lines.length))
     usage("give at least one of exact, meaning, sections, lines, related");
   const key = typesafeKey();
@@ -780,9 +861,15 @@ async function main() {
   if (req.warm) {
     const all = [];
     for (const bl of blocksOf.values()) for (const b of bl) if (!b.isHeading && b.text.trim().length > 40) all.push(b);
-    const r = embedShortlist(all, [], SHORTLIST);
-    process.stdout.write(r.reason ? `warm failed: ${r.reason}\n` : `warm: ${all.length} passage(s) in scope, ${r.embedded} embedded this run (${r.model})\n`);
-    process.exit(r.reason ? 1 : 0);
+    // Warming is one process run ahead of a fan-out, so it takes half the cores
+    // where a concurrent lookup takes two. LOOKUP_EMBED_THREADS still wins.
+    const r = runEmbed({ top: 0, queries: [], threads: Math.max(2, Math.floor(availableParallelism() / 2)), passages: all.map((b, id) => ({ id, text: passageText(b) })) });
+    process.stdout.write(
+      r.reason
+        ? `warm failed: ${r.reason}\n`
+        : `warm: ${root}: ${all.length} passage(s) in scope, ${r.embedded} embedded this run (${r.model})${r.note ? `; ${r.note}` : ""}\n`,
+    );
+    process.exit(r.reason || r.note ? 1 : 0);
   }
 
   const out = [];
@@ -801,7 +888,10 @@ async function main() {
   let done = 0;
   let base = 0;
   const fits = (s) => used + s.length < base + ((budget - base) * (done + 1)) / lookups;
-  emit(`# lookup over ${files.length} file(s) under: ${(req.scope && req.scope.length ? req.scope : ["spec"]).join(", ")}${req.paths ? " (paths: " + req.paths.join(", ") + ")" : ""}`);
+  // The tree is named absolutely. A workflow agent runs in the session's working
+  // directory, which is often not the worktree its task is about, and a lookup
+  // without "root" then searches the wrong tree with nothing else to show it.
+  emit(`# lookup in ${root} over ${files.length} file(s) under: ${(req.scope && req.scope.length ? req.scope : ["spec"]).join(", ")}${req.paths ? " (paths: " + req.paths.join(", ") + ")" : ""}`);
 
   if (asked > MAX_BUDGET) emit(`Output is capped at ${MAX_BUDGET} characters (maxChars ${asked} asked). Passages that do not fit are listed by location; fetch them with "lines".`);
   // "lines" returns named line ranges verbatim: the follow-up for a passage that
@@ -924,6 +1014,8 @@ async function main() {
     // One embedding run serves every query in the call.
     const emb = whole || !all.length ? null : embedShortlist(all, meaning.map((m) => m.query), SHORTLIST);
     if (emb && emb.reason) emit(`\nEmbedding shortlist unavailable (${emb.reason}); meaning search used word overlap only.`);
+    if (emb && emb.note) emit(`\nEmbedding shortlist partial (${emb.note}); the word-overlap shortlist is complete.`);
+    else if (emb && emb.lists && emb.embedded) emit(`\nEmbedding shortlist: ${emb.embedded} of ${all.length} passage(s) embedded by this lookup, the rest read from the cache.`);
     meaning.forEach((m, mi) => {
       m.ctx = m.context || req.context || "";
       if (whole) m.cands = all.map((b) => ({ block: b, via: "all" }));
