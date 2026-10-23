@@ -431,9 +431,12 @@ func (l *SupervisorLink) requestLocked(ctx context.Context, req superviseRequest
 	}
 }
 
-// register assigns the request its id (and, for a launch, makes its
-// generation the current one, before any reply or exited for it can arrive)
-// and records it as outstanding.
+// register assigns the request its id and records it as outstanding. A
+// launch makes its generation the current one, before any reply or exited for
+// it can arrive. A ping is stamped with the current generation, the one the
+// latest launch sent on this link assigned, so a ping never names a
+// generation whose launch the supervisor has not been sent. The caller holds
+// reqMu. spec: §28.5.3 (CH-SUPERVISE, Messages; CH-SUPERVISE, Preconditions).
 func (l *SupervisorLink) register(req *superviseRequest) (*pendingRequest, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -442,8 +445,11 @@ func (l *SupervisorLink) register(req *superviseRequest) (*pendingRequest, error
 	}
 	l.nextID++
 	req.ID = l.nextID
-	if req.Type == superviseLaunch {
+	switch req.Type {
+	case superviseLaunch:
 		l.gen = req.Gen
+	case supervisePing:
+		req.Gen = l.gen
 	}
 	p := &pendingRequest{reply: superviseReplyType[req.Type], gen: req.Gen, id: req.ID, ch: make(chan superviseMessage, 1)}
 	l.pending = p
@@ -459,10 +465,11 @@ func (l *SupervisorLink) clearPending(p *pendingRequest) {
 }
 
 // RunPing sends ping every interval while no other request is outstanding and
-// fails the link when a pong misses timeout. It returns when ctx ends or the
-// link fails. spec: §28.5.3 (CH-SUPERVISE, Preconditions; CH-SUPERVISE,
+// fails the link when a pong misses timeout. Each ping carries the
+// generation of the latest launch sent on the link. It returns when ctx ends
+// or the link fails. spec: §28.5.3 (CH-SUPERVISE, Preconditions; CH-SUPERVISE,
 // Timing); §4.7.10 (Runtime supervisor, Liveness).
-func (l *SupervisorLink) RunPing(ctx context.Context, gen func() uint64, interval, timeout time.Duration) {
+func (l *SupervisorLink) RunPing(ctx context.Context, interval, timeout time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -476,7 +483,7 @@ func (l *SupervisorLink) RunPing(ctx context.Context, gen func() uint64, interva
 		if !l.reqMu.TryLock() {
 			continue
 		}
-		_, err := l.requestLocked(context.Background(), superviseRequest{Type: supervisePing, Gen: gen()}, timeout)
+		_, err := l.requestLocked(context.Background(), superviseRequest{Type: supervisePing}, timeout)
 		l.reqMu.Unlock()
 		if err != nil {
 			return

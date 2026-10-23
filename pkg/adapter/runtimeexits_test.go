@@ -484,3 +484,37 @@ func TestAttachEndsWithRuntimeCrashWhenTheHeldProcessCrashes_spec_4_7_10(t *test
 		})
 	}
 }
+
+// spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Signals)
+// diagnosis: the pod's termination set the deleting disposition before a
+// warm-up launch in flight reset it to none, so the adapter's own end during
+// termination took the none row and set the runtime_exit not-live cause.
+func TestServiceTerminationDuringAnInFlightWarmUpLaunchEndsUnderDeleting_spec_4_7_10(t *testing.T) {
+	f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
+	s := New("test")
+	s.UseSupervisedRuntime(f.rt)
+	// Holding sendMu parks the warm-up launch after its permit check and
+	// before it resets the disposition; the termination path then sets the
+	// deleting value and queues behind it in SettleLaunch.
+	f.rt.sendMu.Lock()
+	warmDone := make(chan error, 1)
+	go func() { warmDone <- f.rt.WarmUp(startCtx(t, 5*time.Second)) }()
+	time.Sleep(20 * time.Millisecond)
+	exitDone := make(chan struct{})
+	go func() { defer close(exitDone); s.ExitOnSignal(2*time.Second, nil) }()
+	waitFor(t, "the deleting disposition", func() bool { return f.rt.EndDisposition() == EndDeleting })
+	time.Sleep(20 * time.Millisecond)
+	f.rt.sendMu.Unlock()
+	<-exitDone
+	<-warmDone
+	if got := f.sup.sent(); len(got) < 2 || got[0] != superviseLaunch || got[len(got)-1] != superviseEnd {
+		t.Fatalf("requests = %v, want the warm-up launch first and the termination's end last", got)
+	}
+	if nl, cause := f.rt.NotLive(); nl && cause == CauseRuntimeExit {
+		t.Fatalf("not-live cause %s set by the termination's own end, want the deleting row", cause)
+	}
+	if d := f.rt.EndDisposition(); d != EndDeleting {
+		t.Fatalf("disposition = %s, want deleting", d)
+	}
+}

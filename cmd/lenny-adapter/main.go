@@ -569,7 +569,7 @@ func preReadyConfig(adapterSrv *adapter.Server, srv *grpc.Server, supIn supervis
 			return err
 		}
 		rt.AttachLink(link)
-		go link.RunPing(pingCtx, rt.RuntimeGeneration, supIn.PingInterval, supIn.PingTimeout)
+		go link.RunPing(pingCtx, supIn.PingInterval, supIn.PingTimeout)
 		return nil
 	}
 	switch supIn.Mode {

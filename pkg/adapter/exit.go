@@ -45,6 +45,10 @@ func (s *Server) ExitOnSignal(demoteTimeout time.Duration, srv GracefulStopper) 
 		// whether a process was launched, so the end it sends reaches the
 		// supervisor after that launch.
 		rt.SettleLaunch()
+		// That launch reset the disposition of the generation it started,
+		// so the deleting value is set again for the generation the end
+		// below targets.
+		rt.SetEndDisposition(EndDeleting)
 		if rt.Mode() == LaunchService {
 			s.endServiceProcess(rt, demoteTimeout)
 		}

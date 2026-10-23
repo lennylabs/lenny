@@ -116,7 +116,7 @@ func blockUntilCancel(ctx context.Context) error {
 // spec: 4.7.9 (step 4), 4.7.10 (Runtime supervisor, Launch; Runtime
 // supervisor, Liveness), 6.1 (Adapter SIGTERM behavior during sdk_connecting)
 func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
-	t.Run("P1/signal", func(t *testing.T) {
+	t.Run("before RunPreReady/signal", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.signals <- syscall.SIGTERM
 		h.cfg.AwaitSupervisor = blockUntilCancel
@@ -124,7 +124,7 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 		h.run()
 		h.expect(0, 1, false)
 	})
-	t.Run("P2/signal", func(t *testing.T) {
+	t.Run("supervisor gate/signal", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(ctx context.Context) error {
 			h.signals <- syscall.SIGTERM
@@ -138,20 +138,20 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 			t.Fatal("a warm-up launch ran after the signal")
 		}
 	})
-	t.Run("P2/failure", func(t *testing.T) {
+	t.Run("supervisor gate/failure", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(context.Context) error { return errors.New("gating property failed") }
 		h.run()
 		h.expect(1, 0, false)
 	})
-	t.Run("P2/timeout", func(t *testing.T) {
+	t.Run("supervisor gate/timeout", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(context.Context) error { return context.DeadlineExceeded }
 		h.run()
 		h.expect(1, 0, false)
 	})
 	for _, mode := range []string{"preconnect", "service"} {
-		t.Run("P3/signal/"+mode, func(t *testing.T) {
+		t.Run("warm-up launch sent/signal/"+mode, func(t *testing.T) {
 			h := newPreReadyHarness(t)
 			h.cfg.ServiceMode = mode == "service"
 			h.cfg.AwaitSupervisor = func(context.Context) error { return nil }
@@ -162,7 +162,7 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 			h.run()
 			h.expect(0, 1, false)
 		})
-		t.Run("P4/signal/"+mode, func(t *testing.T) {
+		t.Run("warm-up process connected/signal/"+mode, func(t *testing.T) {
 			h := newPreReadyHarness(t)
 			h.cfg.ServiceMode = mode == "service"
 			h.cfg.AwaitSupervisor = func(context.Context) error { return nil }
@@ -183,21 +183,21 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 			}
 		})
 	}
-	t.Run("P3/failure", func(t *testing.T) {
+	t.Run("warm-up launch sent/failure", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(context.Context) error { return nil }
 		h.cfg.WarmUp = func(context.Context) error { return errLaunchRefused }
 		h.run()
 		h.expect(1, 0, false)
 	})
-	t.Run("P3/timeout", func(t *testing.T) {
+	t.Run("warm-up launch sent/timeout", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(context.Context) error { return nil }
 		h.cfg.WarmUp = func(context.Context) error { return context.DeadlineExceeded }
 		h.run()
 		h.expect(1, 0, false)
 	})
-	t.Run("P4/failure", func(t *testing.T) {
+	t.Run("warm-up process connected/failure", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.AwaitSupervisor = func(context.Context) error { return nil }
 		h.cfg.WarmUp = func(context.Context) error { return nil }
@@ -209,7 +209,7 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 		h.run()
 		h.expect(1, 0, false)
 	})
-	t.Run("P5/signal/before Serve", func(t *testing.T) {
+	t.Run("listen and serve/signal/before Serve", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.Serve = func(net.Listener) error { return errors.New("server stopped") }
 		listen := h.cfg.Listen
@@ -222,7 +222,7 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 		h.run()
 		h.expect(0, 1, true)
 	})
-	t.Run("P5/signal/while serving", func(t *testing.T) {
+	t.Run("listen and serve/signal/while serving", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		serve := h.cfg.Serve
 		h.cfg.Serve = func(l net.Listener) error {
@@ -232,19 +232,19 @@ func TestRunPreReadyCells_spec_4_7_10(t *testing.T) {
 		h.run()
 		h.expect(0, 1, true)
 	})
-	t.Run("P5/failure/listen error", func(t *testing.T) {
+	t.Run("listen and serve/failure/listen error", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.Listen = func() (net.Listener, error) { return nil, errors.New("address in use") }
 		h.run()
 		h.expect(1, 0, false)
 	})
-	t.Run("P5/failure/serve error", func(t *testing.T) {
+	t.Run("listen and serve/failure/serve error", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		h.cfg.Serve = func(net.Listener) error { return errors.New("serve failed") }
 		h.run()
 		h.expect(1, 0, true)
 	})
-	t.Run("P5/failure/cause between bind and Serve", func(t *testing.T) {
+	t.Run("listen and serve/failure/cause between bind and Serve", func(t *testing.T) {
 		h := newPreReadyHarness(t)
 		listen := h.cfg.Listen
 		h.cfg.Listen = func() (net.Listener, error) {

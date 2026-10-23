@@ -241,7 +241,7 @@ func TestSupervisorLinkPingsWhileIdleAndFailsOnAMissedPong_spec_28_5_3(t *testin
 		sup.serve()
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
-		go func() { defer close(done); l.RunPing(ctx, func() uint64 { return 0 }, 5*time.Millisecond, time.Second) }()
+		go func() { defer close(done); l.RunPing(ctx, 5*time.Millisecond, time.Second) }()
 		waitFor(t, "three pings", func() bool { return sup.count(supervisePing) >= 3 })
 		cancel()
 		<-done
@@ -258,7 +258,7 @@ func TestSupervisorLinkPingsWhileIdleAndFailsOnAMissedPong_spec_28_5_3(t *testin
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			l.RunPing(context.Background(), func() uint64 { return 0 }, 5*time.Millisecond, 30*time.Millisecond)
+			l.RunPing(context.Background(), 5*time.Millisecond, 30*time.Millisecond)
 		}()
 		<-done
 		if !failed.Load() {
@@ -271,7 +271,7 @@ func TestSupervisorLinkPingsWhileIdleAndFailsOnAMissedPong_spec_28_5_3(t *testin
 		sup.serve()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go l.RunPing(ctx, func() uint64 { return 0 }, 2*time.Millisecond, time.Second)
+		go l.RunPing(ctx, 2*time.Millisecond, time.Second)
 		if _, err := l.request(context.Background(), superviseRequest{Type: superviseSweep}, time.Second); err != nil {
 			t.Fatal(err)
 		}
@@ -283,4 +283,45 @@ func TestSupervisorLinkPingsWhileIdleAndFailsOnAMissedPong_spec_28_5_3(t *testin
 			t.Fatal("the link failed: a ping was sent while the sweep was outstanding")
 		}
 	})
+}
+
+// spec: 28.5.3 (CH-SUPERVISE, Messages; CH-SUPERVISE, Preconditions)
+// diagnosis: the ping took its generation from the runtime, which a launch
+// raises before the launch request is sent, so a ping in that window named a
+// generation the supervisor had not been sent.
+func TestSupervisorLinkPingCarriesTheGenerationOfTheLatestSentLaunch_spec_28_5_3(t *testing.T) {
+	f := newSupervisedFixture(t, LifetimeKeep, LaunchSession, nil)
+	// The launch hook runs after the runtime raised its generation and before
+	// the launch request is sent; it holds that window open until a ping goes
+	// out inside it.
+	f.rt.setLaunchHook(func() {
+		before := f.sup.count(supervisePing)
+		waitFor(t, "a ping inside the launch window", func() bool { return f.sup.count(supervisePing) > before })
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); f.link.RunPing(ctx, 2*time.Millisecond, time.Second) }()
+	if err := f.rt.Start(startCtx(t, 5*time.Second), "a"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a ping after the launch", func() bool { return f.sup.count(supervisePing) >= 2 })
+	cancel()
+	<-done
+	f.sup.mu.Lock()
+	defer f.sup.mu.Unlock()
+	var sent uint64
+	for i, req := range f.sup.requests {
+		gen := uint64(req["gen"].(float64))
+		switch req["type"] {
+		case superviseLaunch:
+			sent = gen
+		case supervisePing:
+			if gen != sent {
+				t.Fatalf("request %d: ping carries generation %d, the latest sent launch assigned %d", i, gen, sent)
+			}
+		}
+	}
+	if l := f.link; l.Failed() {
+		t.Fatal("the link failed")
+	}
 }

@@ -94,7 +94,7 @@ func TestSupervisedEndAgainstPingRace_spec_28_5_3(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.link.RunPing(ctx, f.rt.RuntimeGeneration, 50*time.Microsecond, time.Second)
+		f.link.RunPing(ctx, 50*time.Microsecond, time.Second)
 	}()
 	for i := 0; i < 30; i++ {
 		jitter(r)
@@ -441,5 +441,52 @@ func runSignalAgainstWarmUpRound(t *testing.T, r *rand.Rand, mode LaunchMode, ro
 	}
 	if violation {
 		t.Fatalf("round %d: a launch was sent while an earlier generation was live", round)
+	}
+}
+
+// spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Signals)
+// diagnosis: a warm-up launch in flight at the pod's termination reset the
+// deleting disposition to none after the termination set it, so the
+// adapter's own end during termination took the none row and set the
+// runtime_exit not-live cause.
+func TestServiceTerminationAgainstWarmUpLaunchRace_spec_4_7_10(t *testing.T) {
+	checkNoGoroutineLeak(t)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for round := 0; round < 60; round++ {
+		func() {
+			f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
+			if round%2 == 0 {
+				f.sup.react(superviseLaunch, fakeReaction{delay: time.Millisecond})
+			}
+			s := New("test")
+			s.UseSupervisedRuntime(f.rt)
+			// The signal handler cancels the warm-up context before it runs
+			// ExitOnSignal, so only a launch already past its context check
+			// is in flight at the termination.
+			warmCtx, cancelWarm := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelWarm()
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				_ = f.rt.WarmUp(warmCtx)
+			}()
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				cancelWarm()
+				s.ExitOnSignal(2*time.Second, nil)
+			}()
+			wg.Wait()
+			if nl, cause := f.rt.NotLive(); nl && cause == CauseRuntimeExit {
+				t.Fatalf("round %d: not-live cause %s set by the termination's own end (requests %v)", round, cause, f.sup.sent())
+			}
+			if d := f.rt.EndDisposition(); d != EndDeleting {
+				t.Fatalf("round %d: disposition = %s, want deleting", round, d)
+			}
+			_ = f.link.Close()
+		}()
 	}
 }

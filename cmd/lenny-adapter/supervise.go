@@ -59,8 +59,9 @@ type superviseInputs struct {
 func (in superviseInputs) Supervised() bool { return in.Socket != "" }
 
 // validateSuperviseInputs applies the adapter inputs contract. set names the
-// flags given on the command line. A refusal is the P1 gate failure: main
-// exits 1 with nothing launched and nothing bound.
+// flags given on the command line. A refusal ends the adapter before the
+// supervisor gate: main exits 1 through log.Fatalf with nothing launched and
+// nothing bound. spec: §4.7.10 (Runtime supervisor).
 func validateSuperviseInputs(f *superviseFlags, set map[string]bool) (superviseInputs, error) {
 	if f.socket == "" {
 		for _, n := range superviseFlagNames {

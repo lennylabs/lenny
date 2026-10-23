@@ -263,7 +263,7 @@ func TestSupervisorAndAdapterClientAgreeOnEveryMessage_spec_28_5_3(t *testing.T)
 		t.Fatalf("second launch: %v", err)
 	}
 	pingCtx, stop := context.WithCancel(context.Background())
-	go pod.link.RunPing(pingCtx, pod.rt.RuntimeGeneration, 10*time.Millisecond, 2*time.Second)
+	go pod.link.RunPing(pingCtx, 10*time.Millisecond, 2*time.Second)
 	time.Sleep(100 * time.Millisecond)
 	stop()
 	if pod.link.Failed() {
