@@ -263,14 +263,24 @@ func (l *SupervisorLink) Close() error {
 	return nil
 }
 
-// readReady reads the first line, which must be ready, within ctx.
+// readReady reads the first line, which must be ready, within ctx. The read
+// ends at ctx's deadline and also when ctx is cancelled: RunPreReady's signal
+// path cancels the gate, and a gate still blocked in this read would hold the
+// adapter until the wait timeout rather than letting main return.
+// spec: §4.7.9 (step 4); §6.1 (Adapter SIGTERM behavior during
+// sdk_connecting).
 func (l *SupervisorLink) readReady(ctx context.Context) (map[string]bool, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		_ = l.conn.SetReadDeadline(dl)
 	}
+	stop := context.AfterFunc(ctx, func() { _ = l.conn.SetReadDeadline(time.Now()) })
 	line, err := readSuperviseLine(l.reader)
+	stop()
 	_ = l.conn.SetReadDeadline(time.Time{})
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("await supervisor: read ready: %w", ctxErr)
+		}
 		return nil, fmt.Errorf("await supervisor: read ready: %w", err)
 	}
 	m, err := decodeSuperviseMessage(line)

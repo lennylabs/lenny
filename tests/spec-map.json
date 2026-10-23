@@ -983,7 +983,8 @@
       "tests": [
         "pkg/adapter/socketruntime_test.go",
         "pkg/adapter/socketruntime_e2e_test.go",
-        "pkg/adapter/sdkwarm_test.go"
+        "pkg/adapter/sdkwarm_test.go",
+        "pkg/adapter/preready_cancel_test.go::TestAwaitSupervisorReadyReadEndsOnCancellation_spec_4_7_9"
       ],
       "packages": [
         "pkg/adapter"
@@ -1087,7 +1088,10 @@
         "pkg/adapter/supervise_race_load_test.go::TestSupervisedLaunchAfterScrubOrdering_spec_4_7_10",
         "cmd/lenny-adapter/supervise_test.go::TestAdapterInputsTable_spec_4_7_10",
         "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorReportsTheRuntimeExit_spec_4_7_10",
-        "pkg/adapter/supervisedruntime_test.go::TestSupervisedWarmUpLaunch_spec_4_7_10"
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedWarmUpLaunch_spec_4_7_10",
+        "pkg/adapter/preready_cancel_test.go::TestSupervisedRuntimeSendsNoLaunchUnderACancelledContext_spec_4_7_10",
+        "pkg/adapter/preready_cancel_test.go::TestSupervisedConnectionWaitIsBoundedByTheStartDeadline_spec_4_7_10",
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedEndIsOrderedAfterTheLaunchInFlight_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
@@ -1755,7 +1759,9 @@
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
         "pkg/adapter/runtimeexits_test.go::TestSupervisedShutdownDemoteSDK_spec_6_1",
-        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1"
+        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
+        "pkg/adapter/preready_cancel_test.go::TestRunPreReadySignalEndsTheWaitAndLaunchesNothing_spec_6_1",
+        "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstWarmUpLaunchRace_spec_6_1"
       ],
       "packages": [
         "pkg/controller/warmpool",

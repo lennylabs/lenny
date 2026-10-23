@@ -84,7 +84,7 @@ var (
 func supervisorBinary(t *testing.T) (bin, root string) {
 	t.Helper()
 	if _, err := exec.LookPath("unshare"); err != nil {
-		t.Skipf("unshare not on PATH: %v", err)
+		t.Skipf("blocked: unshare not on PATH: %v", err)
 	}
 	buildOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "supervise-contract-")
@@ -107,7 +107,7 @@ func supervisorBinary(t *testing.T) (bin, root string) {
 		buildBin = target
 	})
 	if errors.Is(buildErr, supervisorbuild.ErrToolchainMissing) {
-		t.Skipf("supervisor toolchain missing: %v", buildErr)
+		t.Skipf("blocked: supervisor toolchain missing: %v", buildErr)
 	}
 	if buildErr != nil {
 		t.Fatalf("build supervisor: %v", buildErr)

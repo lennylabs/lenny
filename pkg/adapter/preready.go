@@ -146,6 +146,16 @@ func (p *preReady) run(ctx context.Context) {
 			return
 		}
 	}
+	// A signal that claimed the exit while the gate was returning has
+	// already decided what ExitOnSignal ends, so the warm-up launch is not
+	// sent. spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting).
+	if p.owned.Load() {
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		p.fail("supervisor gate: " + err.Error())
+		return
+	}
 	if p.cfg.WarmUp != nil {
 		if err := p.cfg.WarmUp(ctx); err != nil {
 			p.fail("warm-up launch: " + err.Error())

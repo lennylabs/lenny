@@ -368,3 +368,78 @@ func TestSupervisedLaunchAfterScrubOrdering_spec_4_7_10(t *testing.T) {
 		}
 	}
 }
+
+// spec: 4.7.9 (step 4), 4.7.10 (Runtime supervisor, Launch; Runtime
+// supervisor, End), 6.1 (Adapter SIGTERM behavior during sdk_connecting)
+// diagnosis: a SIGTERM racing the return of the supervisor gate or the
+// warm-up launch left a launched process that no end reached: either the
+// warm-up launch was sent after ExitOnSignal decided nothing was launched,
+// or ExitOnSignal's end reached the supervisor before the launch it targets.
+func TestPreReadySignalAgainstWarmUpLaunchRace_spec_6_1(t *testing.T) {
+	checkNoGoroutineLeak(t)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for _, mode := range []LaunchMode{LaunchService, LaunchPreconnectSDKWarm} {
+		for round := 0; round < 60; round++ {
+			t.Run(string(mode), func(t *testing.T) {
+				runSignalAgainstWarmUpRound(t, r, mode, round)
+			})
+		}
+	}
+}
+
+// runSignalAgainstWarmUpRound runs one RunPreReady on a supervised runtime
+// with a jittered SIGTERM, and asserts that every launch the supervisor
+// received was followed by an end.
+func runSignalAgainstWarmUpRound(t *testing.T, r *rand.Rand, mode LaunchMode, round int) {
+	f := newSupervisedFixture(t, LifetimeKeep, mode, nil)
+	if round%2 == 0 {
+		// Widen the window between the generation increment and the
+		// launch's reply.
+		f.sup.react(superviseLaunch, fakeReaction{delay: 5 * time.Millisecond})
+	}
+	s := New("test")
+	s.ManifestDir = t.TempDir()
+	s.UseSupervisedRuntime(f.rt)
+	sig := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	stopFn := func() { stopOnce.Do(func() { close(stop) }) }
+	warm := f.rt.WarmUp
+	if mode == LaunchPreconnectSDKWarm {
+		warm = s.PreConnect
+	}
+	cfg := PreReadyConfig{
+		Signals:         sig,
+		ServiceMode:     mode == LaunchService,
+		AwaitSupervisor: func(context.Context) error { jitter(r); return nil },
+		WarmUp: func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return warm(ctx)
+		},
+		OnSignal: func() { s.ExitOnSignal(2*time.Second, nil); stopFn() },
+		Listen:   func() (net.Listener, error) { return &fakeListener{}, nil },
+		Serve:    func(net.Listener) error { <-stop; return nil },
+		Stop:     stopFn,
+		Exit:     func(int) {},
+		Liveness: f.rt.SetOnNotLive,
+		Logf:     func(string, ...any) {},
+	}
+	go func() { jitter(r); sig <- syscall.SIGTERM }()
+	done := make(chan struct{})
+	go func() { defer close(done); RunPreReady(context.Background(), cfg) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("round %d: RunPreReady did not return", round)
+	}
+	f.sup.mu.Lock()
+	live, violation := f.sup.liveGen, f.sup.launchViolation
+	f.sup.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("round %d: generation %d was launched and no end reached it (requests %v)", round, live, f.sup.sent())
+	}
+	if violation {
+		t.Fatalf("round %d: a launch was sent while an earlier generation was live", round)
+	}
+}

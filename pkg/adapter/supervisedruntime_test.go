@@ -403,3 +403,45 @@ func TestSupervisedWarmUpLaunch_spec_4_7_10(t *testing.T) {
 		requireNotLive(t, f.rt, CauseWarmUpFailure)
 	})
 }
+
+// spec: 4.7.10 (Runtime supervisor, End; Runtime supervisor, Launch), 6.1
+// (Adapter SIGTERM behavior during sdk_connecting)
+func TestSupervisedEndIsOrderedAfterTheLaunchInFlight_spec_4_7_10(t *testing.T) {
+	f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// The hook runs after the generation increment and before the launch
+	// request, which is the window an end must not overtake.
+	f.rt.setLaunchHook(func() { close(entered); <-release })
+	warmDone := make(chan error, 1)
+	go func() { warmDone <- f.rt.WarmUp(startCtx(t, 5*time.Second)) }()
+	<-entered
+	endDone := make(chan error, 1)
+	go func() {
+		if !f.rt.HasLaunched() {
+			endDone <- errors.New("HasLaunched reported no launch while one was in flight")
+			return
+		}
+		endDone <- f.rt.EndProcess(startCtx(t, 5*time.Second), 0)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if n := f.sup.count(superviseEnd); n != 0 {
+		t.Fatalf("an end reached the supervisor before the launch it targets (requests %v)", f.sup.sent())
+	}
+	close(release)
+	// The end may complete before the ended process's connection is
+	// accepted, so the warm-up's own outcome is not asserted here.
+	<-warmDone
+	if err := <-endDone; err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if got := f.sup.sent(); len(got) != 2 || got[0] != superviseLaunch || got[1] != superviseEnd {
+		t.Fatalf("requests = %v, want [launch end]", got)
+	}
+	f.sup.mu.Lock()
+	live := f.sup.liveGen
+	f.sup.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("generation %d is still live after the end", live)
+	}
+}

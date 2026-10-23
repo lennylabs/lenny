@@ -41,6 +41,10 @@ type GracefulStopper interface {
 func (s *Server) ExitOnSignal(demoteTimeout time.Duration, srv GracefulStopper) {
 	if rt := s.supervisedRuntime(); rt != nil {
 		rt.SetEndDisposition(EndDeleting)
+		// A launch in flight completes before the branch below decides
+		// whether a process was launched, so the end it sends reaches the
+		// supervisor after that launch.
+		rt.SettleLaunch()
 		if rt.Mode() == LaunchService {
 			s.endServiceProcess(rt, demoteTimeout)
 		}

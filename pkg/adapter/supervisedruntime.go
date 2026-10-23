@@ -109,6 +109,16 @@ type SupervisedRuntime struct {
 	// later ones join the process it launched. spec: §4.7.10 (Runtime
 	// supervisor, Launch).
 	launchMu sync.Mutex
+	// sendMu spans a launch from its context check and generation increment
+	// to the supervisor's reply. HasLaunched, EndProcess, and SettleLaunch
+	// take it, so an end is ordered after the launch it targets and never
+	// reaches the supervisor before that launch's request, and a launch the
+	// end did not see is refused by its cancelled context. It is narrower
+	// than launchMu, which also spans the composed transport's accept wait.
+	// Lock order: launchMu, then sendMu, then mu. spec: §4.7.10 (Runtime
+	// supervisor, Launch; Runtime supervisor, End); §6.1 (Adapter SIGTERM
+	// behavior during sdk_connecting).
+	sendMu sync.Mutex
 
 	// mu guards the fields below.
 	mu        sync.Mutex
@@ -375,7 +385,7 @@ func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	if err := t.Start(ctx, sessionID); err != nil {
+	if err := startComposed(ctx, t, sessionID); err != nil {
 		if launched {
 			r.MarkNotLive(CauseNoConnection)
 		}
@@ -384,8 +394,33 @@ func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// startComposed waits for the launched process's CH-MSGSOCK connection
+// through the composed transport, bounded by ctx alone. The transport's own
+// accept timeout is set to the time left before ctx's deadline, so the wait
+// ends at the deadline of the start that launched the process, or at the
+// --warm-up-timeout bound of the warm-up launch, rather than at the
+// transport's default. A ctx without a deadline keeps the transport's
+// default bound. The caller holds launchMu, which serializes every Start on
+// the transport. spec: §4.7.10 (Runtime supervisor, Launch; Runtime
+// supervisor, Liveness).
+func startComposed(ctx context.Context, t *SocketRuntimeProcess, sessionID string) error {
+	if dl, ok := ctx.Deadline(); ok {
+		left := time.Until(dl)
+		if left <= 0 {
+			left = time.Nanosecond
+		}
+		t.mu.Lock()
+		t.AcceptTimeout = left
+		t.mu.Unlock()
+	}
+	return t.Start(ctx, sessionID)
+}
+
 // ensureLaunched returns the transport of the live process, launching one
 // when the permit holds. launched reports that this call sent the launch.
+// A launch is not sent once ctx is done: on the pre-READY signal path the
+// handler cancels the warm-up context before ExitOnSignal decides whether a
+// process was launched, so a launch that decision did not see is never sent.
 // The caller holds launchMu.
 func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeProcess, bool, error) {
 	r.mu.Lock()
@@ -397,6 +432,17 @@ func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeP
 		t := r.transport
 		r.mu.Unlock()
 		return t, false, nil
+	}
+	r.mu.Unlock()
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, false, fmt.Errorf("launch: %w", err)
+	}
+	r.mu.Lock()
+	if r.notLive {
+		r.mu.Unlock()
+		return nil, false, errRuntimeNotLive
 	}
 	if !r.launchPermitted || r.link == nil || r.transport == nil {
 		r.mu.Unlock()
@@ -454,7 +500,7 @@ func (r *SupervisedRuntime) WarmUp(ctx context.Context) error {
 	defer r.launchMu.Unlock()
 	t, _, err := r.ensureLaunched(ctx)
 	if err == nil {
-		err = t.Start(ctx, "")
+		err = startComposed(ctx, t, "")
 	}
 	if err != nil {
 		r.MarkNotLive(CauseWarmUpFailure)
@@ -464,8 +510,12 @@ func (r *SupervisedRuntime) WarmUp(ctx context.Context) error {
 }
 
 // HasLaunched reports whether a launch was sent since the pod's creation or
-// the last attested end, which is when an end has a process to end.
+// the last attested end, which is when an end has a process to end. It waits
+// for a launch in flight to receive its reply, so a true answer is followed
+// by an end the supervisor receives after that launch.
 func (r *SupervisedRuntime) HasLaunched() bool {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.gen > 0 && !r.launchPermitted
@@ -479,6 +529,8 @@ func (r *SupervisedRuntime) HasLaunched() bool {
 // is the reply-error cause. The caller sets the disposition first.
 // spec: §4.7.10 (Runtime supervisor, End; Runtime supervisor, Runtime exits).
 func (r *SupervisedRuntime) EndProcess(ctx context.Context, grace time.Duration) error {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
 	r.mu.Lock()
 	gen, link := r.gen, r.link
 	r.mu.Unlock()
@@ -507,6 +559,17 @@ func (r *SupervisedRuntime) EndProcess(ctx context.Context, grace time.Duration)
 		_ = t.CloseListener()
 	}
 	return nil
+}
+
+// SettleLaunch returns once no launch is in flight. A launch that was in
+// flight has then received its reply and run the launch hook, and a later
+// launch under a context the caller cancelled first is refused, so the
+// caller's decision about what was launched covers every launch the
+// supervisor receives. ExitOnSignal calls it before that decision.
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting).
+func (r *SupervisedRuntime) SettleLaunch() {
+	r.sendMu.Lock()
+	r.sendMu.Unlock() //nolint:staticcheck // the empty critical section is the wait for an in-flight launch.
 }
 
 // Sweep sends sweep for the current generation. A swept that carries an
