@@ -4,9 +4,9 @@ Re-baselined 2026-10-22. The spec steps land after proposal 0090's (landed) and 
 
 Precondition: the precursor direct fix on branch `fix/warmpool-reclaim-terminated-adapter` (summary D-PREREQS) has landed before S1 starts. No step of this checklist changes `observePod`, `Decide`, or `DecideSDKWarm`.
 
-- [ ] **S1 · spec** — SPEC-1. Lands the `command` and `env` Runtime fields and their sites.
+- [x] **S1 · spec** — SPEC-1. Lands the `command` and `env` Runtime fields and their sites.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph and its citing sites.
+- [x] **S2 · spec** — SPEC-2. Lands the §4.7.10 **Runtime supervisor.** paragraph and its citing sites.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the §4.7.9 startup-sequence edits.
       Tiers 0, 11. Depends on: S2

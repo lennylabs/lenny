@@ -573,10 +573,10 @@ The `warming ──→ failed` edge (warm-fill failure), the `failed ──→ d
 
 ### SPEC-3 · spec/04_system-components.md § 4.7.9 Startup Sequence for `type: agent` Runtimes
 
-(a) Append to step 4, `4. Adapter signals READY to gateway — pod enters warm pool`, on the same list item:
+(a) Append to step 4, `4. Adapter signals READY to gateway — pod enters warm pool`, on the same list item, so that the step's existing text gains a terminating period:
 
 ```
- In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE` and sent `ready`, after the property self-test gate of [§4.7.11](#4711-adapter-agent-security-boundary) item 8, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
+. In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE` and sent `ready`, after the property self-test gate of [§4.7.11](#4711-adapter-agent-security-boundary) item 8, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 ```
 
 (b) Replace step 7, from `7. The runtime process becomes live for the pod's first session.` through `the runtime loop in its own process for each session.`, with:
