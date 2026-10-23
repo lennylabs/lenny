@@ -332,8 +332,7 @@ container and no supervisor.
   whose outcomes are the same, so the adapter need not tell them apart.
   Neither `adapter-exit` nor `rebind` decides the row of an end the adapter
   handles: the adapter's close of the connection as it exits for a cause is
-  part of `adapter-exit`, its close at the end of its termination takes
-  `deleting`, and `rebind` follows an end that its `end-demote` or
+  part of `adapter-exit`, and `rebind` follows an end that its `end-demote` or
   `end-scrub` row has decided. The adapter writes `shutdown` only in its
   `DRAINING` state ([§15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine)),
   which leads only to `TERMINATED`, so no session starts on a pod after it. A
@@ -355,7 +354,7 @@ container and no supervisor.
 | `runtime-exit` | The supervisor reports `exited` for the process, or the process's `CH-MSGSOCK` connection ends from the runtime's side | Yes | Each fails with `runtime_crash` (**Crash.**); a process that holds none fails none | Set: the *runtime exit* cause | As **Liveness.** states for a cause: before READY, and on a service-mode pod | The **Liveness.** table's channel for the pod's phase |
 | `protocol` | The runtime writes a line on `CH-MSGSOCK` that is longer than the adapter's line limit, and the adapter stops reading the connection | Yes | As `runtime-exit` | As `runtime-exit` | As `runtime-exit` | As `runtime-exit` |
 | `supervisor-death` | The supervisor ends (**Signals.**), which ends every process in the runtime container; the adapter observes a *link failure* and the end of the process's connection | Yes | As `runtime-exit` | Set: the *runtime exit* cause and the *link failure* cause | As `runtime-exit` | As `runtime-exit` |
-| `adapter-exit` | The adapter process exits, for a cause (**Liveness.**) or at the end of its termination; its exit closes `CH-MSGSOCK` and `CH-SUPERVISE`, and on the close of `CH-SUPERVISE` the supervisor exits and every process in the runtime container ends | No | The adapter, which has exited, fails none; each session the pod held follows [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an active session.** | Not applicable | Yes: this row is that exit | **Exit**, or **None** when the pod is being deleted (**Liveness.**) |
+| `adapter-exit` | The adapter process exits, for a cause (**Liveness.**), at the end of its termination, or on a fault such as a fatal error, a panic, or an OOM kill; its exit closes `CH-MSGSOCK` and `CH-SUPERVISE`, and on the close of `CH-SUPERVISE` the supervisor exits and every process in the runtime container ends | No | The adapter, which has exited, fails none; each session the pod held follows [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an active session.** | Not applicable | Yes: this row is that exit | **Exit**; on a `reserved` or `claimed` pod, [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an active session.**; **None** when the pod is being deleted (**Liveness.**) |
 | `rebind` | After an attested end, the adapter closes the ended generation's `CH-MSGSOCK` connection and listener and rebinds them (**End.**) | No | None: the generation's `end-demote` or `end-scrub` row decided its end | Not set by the close; a failed rebind is the *reply error* cause | No | None for the close; a cause retires the pod as **Liveness.** states |
 
 - **Liveness.** The adapter holds one not-live state for the pod. It sets
