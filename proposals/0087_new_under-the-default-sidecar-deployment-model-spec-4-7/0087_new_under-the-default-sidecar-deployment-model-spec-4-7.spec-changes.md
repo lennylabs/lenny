@@ -337,8 +337,7 @@ container and no supervisor.
   for any cause, a fault or the end of the pod's termination included, and
   its close of an ended generation's connection and listener for the rebind
   (**End.**), are not ends of a runtime process and select no row. The
-  adapter's exit, and the end of the runtime container's processes that
-  follows when the supervisor sees `CH-SUPERVISE` close, are stated by
+  adapter's exit is stated by
   [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an
   active session.** and by **Liveness.** The adapter writes `shutdown` only
   in its `DRAINING` state
@@ -437,15 +436,11 @@ container and no supervisor.
     the pod, and the uptime limit can retire it before a start reaches it.
   - **Claim**: the release that ends the pod's occupancy retires the pod
     when it ends the occupancy without reuse
-    ([§4.6.3](#463-crd-field-ownership-and-write-boundaries)), as the release
-    of a refused or failed start does, as the release of a failed or crashed session
-    does on a pod with `maxConcurrentSessions: 1`, and as every release does
-    on a pool that does not recycle. Otherwise the whole-pod scrub runs, and
-    **Report** retires the pod. On a pod with `maxConcurrentSessions` above 1
-    each failed or refused start also counts toward the whole-pod
-    replacement trigger
-    ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
-    **Slot retry policy**).
+    ([§4.6.3](#463-crd-field-ownership-and-write-boundaries)). Otherwise the
+    whole-pod scrub runs, and **Report** retires the pod. On a pod with
+    `maxConcurrentSessions` above 1 a refused start also counts as
+    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+    **Runtime not live:** states.
   - **Report**: at the end of the whole-pod scrub the adapter's
     `ReportPodScrub` reports the runtime as not able to serve, and the
     recycle disposition retires the pod under "Runtime not live" whatever
@@ -528,7 +523,7 @@ From its launch by the runtime supervisor to its end (**Runtime process lifetime
 
 In the same table's `ReportPodScrub` row, replace `whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats` with `whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model`. The row stays one physical line.
 
-In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report from the runtime supervisor and on the end of a runtime process's `CH-MSGSOCK` connection, the step is the choice of the row of the [Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that the adapter's end disposition selects and the application of that row's outcome, which can set the not-live state and fail the sessions the process holds.` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
+In §4.7.1 **The registry critical section.**, after the sentence that ends `slot-identifier reclaim hold.` and before `Performing the members of one step as separable steps`, insert `In the sidecar model, on an `exited` report or an `ended` reply from the runtime supervisor and on the end of a runtime process's `CH-MSGSOCK` connection, the step is the choice of the row of the [Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that the adapter's end disposition selects and the application of that row's outcome, which can set the not-live state and fail the sessions the process holds.` The paragraph keeps its closing sentence, `This paragraph is the only statement of that atomicity.`
 
 In `spec/11_policy-and-controls.md` §11.4 **Full revoke propagation mechanism:** step 3, delete `, which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")`.
 
