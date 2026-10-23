@@ -8,8 +8,12 @@
 // completion receipt; a cancelled suspend request; a crash between erasure
 // phases and a graceful stop of the leader inside one; a crash between a
 // derive's copy and its insert, and a refused derive whose undo deletion
-// fails; a tick-budget expiry in the Phase 2 drain; and a replica takeover
-// of the tenant-deletion tick while the former leader's drain still runs. Every case seeds live sessions in the scope. The
+// fails; a tick-budget expiry in the Phase 2 drain; a replica takeover
+// of the tenant-deletion tick while the former leader's drain still runs;
+// and a store error at each tenant-deletion Phase 3 step and Phase 4 entry,
+// a crash after each one followed by a takeover that rebuilds the job at
+// Phase 3, and a silent lease-store error in the Phase 3 lease step. Every
+// case seeds live sessions in the scope. The
 // lifecyclefence World asserts, at the moment an erasure job leaves
 // initiated or a deletion job leaves Phase 2, that a primary listing of the
 // scope returns no non-terminal session, and that a job's restriction stays
@@ -21,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -588,4 +593,176 @@ func TestDeriveUndoDeletionFaultKeepsReservationForErasure_spec_12_8(t *testing.
 			w.Check(t)
 		})
 	}
+}
+
+// deletionAt builds a World with a twin over s, starts its deletion, and
+// advances the job to phase.
+func deletionAt(t *testing.T, s *lifecyclefence.Stores, phase tenantdeletion.Phase) (*lifecyclefence.World, *lifecyclefence.Deletion) {
+	t.Helper()
+	ctx := context.Background()
+	w := lifecyclefence.NewWorld(t, s, 2)
+	w.NewTwin(t, 1)
+	d := w.NewDeletion()
+	if err := d.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		j, err := d.Job(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Phase == phase {
+			return w, d
+		}
+		if _, err := d.Tick(ctx); err != nil {
+			t.Fatalf("advance to %s: %v", phase, err)
+		}
+	}
+	t.Fatalf("the deletion job never reached %s", phase)
+	return nil, nil
+}
+
+// requirePausedIn asserts the job is still at phase, not failed, with a
+// blocked reason naming step.
+func requirePausedIn(t *testing.T, d *lifecyclefence.Deletion, phase tenantdeletion.Phase, step lifecyclefence.DeletionStep) {
+	t.Helper()
+	j, err := d.Job(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Phase != phase || !strings.Contains(j.BlockedReason, string(step)) {
+		t.Fatalf("after the %s fault the job is %s with blocked reason %q; want paused at %s naming the step", step, j.Phase, j.BlockedReason, phase)
+	}
+}
+
+// phaseOf returns the deletion phase whose action runs step.
+func phaseOf(step lifecyclefence.DeletionStep) tenantdeletion.Phase {
+	for _, s := range lifecyclefence.Phase3Steps {
+		if s == step {
+			return tenantdeletion.PhaseRevokeCredentials
+		}
+	}
+	return tenantdeletion.PhaseDeleteData
+}
+
+// TestDeletionPhase3And4FaultsPauseInPhase_spec_12_8 injects a store error
+// into each Phase 3 step and each Phase 4 entry over the production Postgres
+// stores. Each fault keeps the job in its phase with the error recorded as
+// the blocked reason, and the next pass completes the deletion with the
+// Phase 3 exit invariants, the residue invariant, and the twin tenant
+// holding.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Idempotency and resumption)
+// diagnosis: a failure means a Phase 3 or Phase 4 store error failed the job,
+// which is terminal and strands the tenant mid-deletion, or advanced it past
+// the failing step, or that the resumed pass left a lease, a TokenStore row,
+// or tenant data behind, or touched the twin tenant.
+func TestDeletionPhase3And4FaultsPauseInPhase_spec_12_8(t *testing.T) {
+	s := lifecycleFaultStores(t)
+	ctx := context.Background()
+	steps := append(append([]lifecyclefence.DeletionStep(nil), lifecyclefence.Phase3Steps...), lifecyclefence.Phase4Entries...)
+	for _, step := range steps {
+		t.Run(string(step), func(t *testing.T) {
+			phase := phaseOf(step)
+			w, d := deletionAt(t, s, phase)
+			w.Faults.FailDeletionStep(step, 1)
+			if p, err := d.Tick(ctx); err != nil || p != phase {
+				t.Fatalf("faulted tick = %s, %v", p, err)
+			}
+			requirePausedIn(t, d, phase, step)
+			if err := d.Complete(ctx, 10); err != nil {
+				t.Fatal(err)
+			}
+			w.Check(t)
+		})
+	}
+}
+
+// TestDeletionCrashAndTakeoverAfterEachStep_spec_12_8 stops the replica
+// right after each Phase 3 step and each Phase 4 entry, as a replica that
+// crashes there does, and hands the tick to a fresh replica, which rebuilds
+// the job at Phase 3 from the deleting tenant row and completes the
+// deletion. The rebuilt job re-runs Phase 3 and every Phase 4 entry, which
+// are idempotent.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Idempotency and resumption)
+// diagnosis: a failure means a crash between Phase 3 steps or Phase 4 entries
+// left the tenant row outside deleting, so the takeover restarted at Phase 1,
+// or a re-run of an entry over partly deleted data failed or left residue,
+// or the takeover touched the twin tenant.
+func TestDeletionCrashAndTakeoverAfterEachStep_spec_12_8(t *testing.T) {
+	s := lifecycleFaultStores(t)
+	ctx := context.Background()
+	steps := append([]lifecyclefence.DeletionStep{lifecyclefence.StepReturnLeases}, lifecyclefence.Phase3Steps...)
+	steps = append(steps, lifecyclefence.Phase4Entries...)
+	for _, step := range steps {
+		t.Run(string(step), func(t *testing.T) {
+			phase := phaseOf(step)
+			if step == lifecyclefence.StepReturnLeases {
+				phase = tenantdeletion.PhaseRevokeCredentials
+			}
+			w, d := deletionAt(t, s, phase)
+			crashCtx, crash := context.WithCancel(ctx)
+			defer crash()
+			w.Faults.AfterDeletionStep(func(got lifecyclefence.DeletionStep) {
+				if got == step {
+					crash()
+				}
+			})
+			// A crash after the phase's last step leaves nothing for the
+			// stopped replica to fail, so its job may already have advanced.
+			next, _ := tenantdeletion.NextPhase(phase)
+			if p, _ := d.Tick(crashCtx); p != phase && p != next {
+				t.Fatalf("the crashed tick left phase %s, want %s or %s", p, phase, next)
+			}
+			w.Faults.AfterDeletionStep(nil)
+			taker, err := w.TakeOverDeletion(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if j, _ := taker.Job(ctx); j.Phase != tenantdeletion.PhaseRevokeCredentials {
+				t.Fatalf("the takeover rebuilt the job at %s, want Phase 3", j.Phase)
+			}
+			if err := taker.Complete(ctx, 10); err != nil {
+				t.Fatal(err)
+			}
+			w.Check(t)
+		})
+	}
+}
+
+// TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8 swallows the
+// Phase 3 lease step, as a lease-store error the step cannot see does. The
+// job advances, because the step does not fail closed, and the leases stay
+// held; a takeover that rebuilds the job at Phase 3 returns them.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3), 11.4 (User Invalidation)
+// diagnosis: a failure means a silent lease-store error failed or paused
+// Phase 3, which the lease step's silent listing cannot do, or that a
+// re-run of Phase 3 does not return a lease an earlier pass left behind.
+func TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8(t *testing.T) {
+	s := lifecycleFaultStores(t)
+	ctx := context.Background()
+	w, d := deletionAt(t, s, tenantdeletion.PhaseRevokeCredentials)
+	w.Leases.FailSilently(1)
+	if p, err := d.Tick(ctx); err != nil || p != tenantdeletion.PhaseLegalHoldSegregation {
+		t.Fatalf("Phase 3 with a silent lease fault = %s, %v; want advanced to Phase 3.5", p, err)
+	}
+	if held := w.Leases.Held(w.Tenant, ""); len(held) == 0 {
+		t.Fatal("the swallowed lease step returned the leases")
+	}
+	next, err := w.TakeOverDeletion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := next.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if held := w.Leases.Held(w.Tenant, ""); len(held) != 0 {
+		t.Fatalf("the rebuilt Phase 3 left leases %v", held)
+	}
+	if err := next.Complete(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	w.Check(t)
 }

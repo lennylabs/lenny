@@ -216,14 +216,14 @@ func (f *fakeCatalog) SessionsWithLegalHoldAndCheckpoints(_ context.Context) ([]
 	return out, nil
 }
 
-// DeleteByTenant mirrors PgStore.DeleteByTenant: drop every non-held
-// row for the tenant and return the count removed.
+// DeleteByTenant mirrors PgStore.DeleteByTenant: drop every row for the
+// tenant, held rows included, and return the count removed.
 func (f *fakeCatalog) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	count := 0
 	for uri, r := range f.rows {
-		if r.TenantID == tenantID && !r.LegalHold {
+		if r.TenantID == tenantID {
 			delete(f.rows, uri)
 			count++
 		}
@@ -893,8 +893,8 @@ func TestSoftDeleteSessionTransitionsEveryLiveRow(t *testing.T) {
 }
 
 // erroringTenantDeleter wraps a MemoryStore but fails DeleteByTenant,
-// modeling the §12.8 legal-hold abort the production bucket store
-// raises before any catalog row is reconciled.
+// modeling an inner bucket-store failure raised before any catalog row
+// is reconciled.
 type erroringTenantDeleter struct {
 	*blobstore.MemoryStore
 	err error
@@ -909,7 +909,8 @@ func (e erroringTenantDeleter) DeleteByTenant(context.Context, string) (int, err
 // catalog rows while a different tenant's bucket object and catalog
 // row both survive.
 //
-// spec: §12.5 ll. 295; §12.8 Phase 4.
+// spec: §12.5 (Artifact Store); §12.8 (Compliance Interfaces: Tenant
+// deletion lifecycle, Phase 4).
 func TestDeleteByTenantForwarded(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()
@@ -945,12 +946,13 @@ func TestDeleteByTenantForwarded(t *testing.T) {
 	}
 }
 
-// TestDeleteByTenantPreservesLegalHeldCatalogRow asserts the catalog's
-// `legal_hold = false` guard keeps a §12.8-held row out of the Phase 4
-// bulk delete; the unheld row in the same tenant is removed.
+// TestDeleteByTenantDeletesLegalHeldCatalogRow asserts the Phase 4
+// tenant delete removes a held catalog row along with the unheld one:
+// Phase 3.5 is the hold gate and has escrowed the held original before
+// Phase 4 runs, so the catalog keeps no row for the tombstoned tenant.
 //
-// spec: §12.5 ll. 295; §12.8.
-func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
+// spec: §12.5; §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
+func TestDeleteByTenantDeletesLegalHeldCatalogRow(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()
 	store := New(inner, cat, Options{})
@@ -969,8 +971,8 @@ func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 	if _, err := store.DeleteByTenant(context.Background(), "acme"); err != nil {
 		t.Fatalf("DeleteByTenant: %v", err)
 	}
-	if _, err := cat.Get(context.Background(), held.String()); err != nil {
-		t.Errorf("legal-held catalog row removed by tenant delete: %v", err)
+	if _, err := cat.Get(context.Background(), held.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
+		t.Errorf("legal-held catalog row survived tenant delete: %v", err)
 	}
 	if _, err := cat.Get(context.Background(), free.String()); !errors.Is(err, artifactcatalog.ErrNotFound) {
 		t.Errorf("unheld catalog row survived tenant delete: %v", err)
@@ -978,11 +980,12 @@ func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 }
 
 // TestDeleteByTenantInnerAbortLeavesCatalog asserts that when the
-// bucket store aborts the bulk delete (the §12.8 legal-hold abort),
-// the error propagates and no catalog row is reconciled — a held
-// tenant survives intact.
+// bucket store fails the bulk prefix delete, the error propagates and
+// no catalog row is removed, so a retried Phase 4 still finds the rows
+// that describe the objects left in the bucket.
 //
-// spec: §12.5 ll. 295; §12.8.
+// spec: §12.5 (Artifact Store); §12.8 (Compliance Interfaces: Tenant
+// deletion lifecycle, Phase 4).
 func TestDeleteByTenantInnerAbortLeavesCatalog(t *testing.T) {
 	mem := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()

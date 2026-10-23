@@ -37,14 +37,19 @@ type DeleteBySessionFunc func(ctx context.Context, tenantID, sessionID string) (
 // themselves are deleted.
 type SessionLister func(ctx context.Context, tenantID, userID string) ([]string, error)
 
-// Eraser pairs a store name with its per-user erasure adapter.
+// Eraser pairs a store name with its per-user erasure adapter. A nil
+// DeleteByUser lists the store by name for a posture whose backend is absent:
+// the validators count the name as wired, and the Orchestrator skips it and
+// leaves it out of the per-store counts, so a receipt never reports a store
+// that did not run as having erased zero rows.
 type Eraser struct {
 	Name         string
 	DeleteByUser DeleteByUserFunc
 }
 
 // SessionEraser pairs a store name with its per-session erasure
-// adapter, for stores keyed by session rather than by user.
+// adapter, for stores keyed by session rather than by user. A nil
+// DeleteBySession is skipped as Eraser describes.
 type SessionEraser struct {
 	Name            string
 	DeleteBySession DeleteBySessionFunc
@@ -91,7 +96,11 @@ type Result struct {
 // session-scoped store for each of the user's sessions, then erases
 // the user-scoped stores. It is fail-fast: the first store error
 // aborts the job and is returned with the partial Result covering the
-// stores erased so far.
+// stores erased so far. An entry with a nil function is skipped and is
+// absent from Result.Deleted.
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
 func (o *Orchestrator) DeleteByUser(ctx context.Context, tenantID, userID string) (Result, error) {
 	res := Result{Deleted: map[string]int{}}
 
@@ -101,6 +110,9 @@ func (o *Orchestrator) DeleteByUser(ctx context.Context, tenantID, userID string
 			return res, fmt.Errorf("erasure: list sessions for user %q: %w", userID, err)
 		}
 		for _, se := range o.sessionScoped {
+			if se.DeleteBySession == nil {
+				continue
+			}
 			for _, sid := range sessionIDs {
 				n, err := se.DeleteBySession(ctx, tenantID, sid)
 				if err != nil {
@@ -113,6 +125,9 @@ func (o *Orchestrator) DeleteByUser(ctx context.Context, tenantID, userID string
 	}
 
 	for _, e := range o.userScoped {
+		if e.DeleteByUser == nil {
+			continue
+		}
 		n, err := e.DeleteByUser(ctx, tenantID, userID)
 		if err != nil {
 			return res, fmt.Errorf("erasure: store %q DeleteByUser: %w", e.Name, err)

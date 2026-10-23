@@ -49,7 +49,7 @@ func TestSlotSetRecoveryProbeRunsOnTheWatchdogContext_spec_12_4(t *testing.T) {
 // admin router's full_revoke fan-out wiring: each binding is released
 // through the session server's terminal binding release, and the lease
 // revoker returns each lease to its pool through the credential assigner
-// and propagates it over the renewal propagator. The fan-out and the
+// and writes no deny-list entry. The fan-out and the
 // revoker are unit-tested with injected fakes, so a production wiring that
 // drops the releaser or passes no assigner is caught only here.
 //
@@ -58,6 +58,51 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
 		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
-		{"adminrouter.go", "userLeases = leaserevoke.New(ls, w.credAssign, credRenewalProp, nil)", "the lease revoker's credential assigner"},
+		{"adminrouter.go", "leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)", "the lease revoker's credential assigner"},
+		{"adminrouter.go", "userLeases = leaseRevoker", "the lease revoker handed to the admin router"},
+	})
+}
+
+// TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8 pins the gateway's
+// legal-hold escrow wiring: one escrow store is built over the configured
+// escrow bucket from the artifact store's provider options, the Phase 3.5
+// migrator writes to it and reads the durable escrow records for its
+// re-entry skip, and the Releaser deletes from it. The migrator and the
+// Releaser are unit-tested over injected stores, so a production wiring
+// that hands either the artifact store, whose tenant prefix delete would
+// destroy the escrow copies, is caught only here.
+//
+// spec: 12.8 (Compliance Interfaces: --acknowledge-hold-override admin action (tenant scope)), 12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3.5)
+func TestLegalHoldEscrowRunsOverTheEscrowStore_spec_12_8(t *testing.T) {
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "escrowBlobs, err := blobescrow.NewStore(context.Background(), objectStorageOptions(f), *legalHoldEscrowBucket, *legalHoldEscrowEndpoint)", "the escrow store over the escrow bucket"},
+		{"adminrouter.go", "escrowBlobs: escrowBlobs, records: escrowRecords,", "the escrow store and escrow records in the tenantEscrowMigrator literal"},
+		{"adminrouter.go", "Deleter: blobescrow.Deleter{Blobs: escrowBlobs},", "the escrow store in the Releaser's deleter"},
+		{"legalholdescrow.go", "Source: blobescrow.Source{Blobs: m.blobs},", "the original reader over the artifact store"},
+		{"legalholdescrow.go", "Escrow: blobescrow.Writer{Blobs: m.escrowBlobs, TenantID: req.TenantID},", "the escrow writer over the escrow store"},
+		{"legalholdescrow.go", "Records: m.records,", "the escrow records on the Migrator"},
+	})
+}
+
+// TestErasureListsAndTenantListersAreWired_spec_12_8 pins the gateway
+// wiring the eraser and lister tests cannot observe: the semantic cache the
+// tenant-deletion Phase 4 list erases is the one the user erasure and the
+// LLM proxy share; the billing retention pruner, the revocation-cache
+// rehydration, and the issued-token GC list tombstoned tenants; and the
+// billing flusher and the idempotency-key GC keep listing live tenants
+// only. The semantic cache is in-process, so no integration test can tell
+// a nil argument from the shared instance.
+//
+// spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 13.3 (Credential Flow: Authoritative durability for revocation), 12.2 (Storage Roles)
+func TestErasureListsAndTenantListersAreWired_spec_12_8(t *testing.T) {
+	assertWired(t, []struct{ file, want, seam string }{
+		{"adminrouter.go", "tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)", "the shared semantic cache in the tenant Phase 4 list"},
+		{"adminrouter.go", "userScoped := w.buildUserErasers(quotaCounter, quotaFailOpenAccum, credentialPools, erasureSemanticCache)", "the shared semantic cache in the user erasure list"},
+		{"billing_security_workers.go", "billingretention.New(w.billing, allTenantsLister{w.tenants},", "the billing retention pruner over every tenant row"},
+		{"billing_security_workers.go", "w.billingTier.NewFlusherManager(tenantsLister{w.tenants},", "the billing flushers over live tenants"},
+		{"billing_security_workers.go", "lister := allTenantsLister{w.tenants} if err := w.revCache.Rehydrate(context.Background(), lister, issued)", "the revocation-cache rehydration over every tenant row"},
+		{"billing_security_workers.go", "idemGC := idempgstore.New(w.pgPool) lister := tenantsLister{w.tenants}", "the idempotency-key GC over live tenants"},
+		{"billing_security_workers.go", "w.startIssuedTokenGC(issuedtokenstore.New(w.pgPool), time.Duration(*issuedTokenGCIntervalSeconds)*time.Second)", "the issued-token GC start"},
+		{"billing_security_workers.go", "lister := allTenantsLister{w.tenants} sweepIssuedTokens(context.Background(), gc, lister, clockinject.Now)", "the issued-token GC over every tenant row"},
 	})
 }

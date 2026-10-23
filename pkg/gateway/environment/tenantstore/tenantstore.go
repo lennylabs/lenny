@@ -236,6 +236,17 @@ type Tenant struct {
 // IsActive reports whether the tenant has not been soft-deleted.
 func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
 
+// Registered reports whether the tenant is registered for §10.2
+// tenant_id extraction: it is not soft-deleted and its §12.8
+// TenantState is neither `deleting` nor `deleted`. A `disabling` tenant
+// stays registered because §12.8 Phase 1 lets its existing sessions
+// continue until Phase 2 drains them; from Phase 3 the tenant's bearers
+// are refused with TENANT_NOT_FOUND. IsActive is the separate listed
+// reading and is unchanged. spec: §10.2, §12.8.
+func (t Tenant) Registered() bool {
+	return t.IsActive() && t.State != TenantStateDeleting && t.State != TenantStateDeleted
+}
+
 // AcceptsNewWork reports whether the tenant's §12.8 TenantState permits
 // new session creation. Only `active` (and the empty pre-lifecycle
 // value, read as active) accepts work; `disabling`, `deleting`, and
@@ -657,9 +668,10 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	return nil
 }
 
-// IsRegistered implements auth.TenantRegistry. Returns false for
-// soft-deleted tenants so the §10.2 tenant-claim extractor rejects
-// requests against deleted tenants with TENANT_NOT_FOUND.
+// IsRegistered implements auth.TenantRegistry with the Registered
+// reading of the row: a missing, `deleting`, or `deleted` tenant reports
+// false so the §10.2 tenant-claim extractor rejects requests against it
+// with TENANT_NOT_FOUND. spec: §10.2, §12.8.
 func (m *Memory) IsRegistered(id string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -667,7 +679,7 @@ func (m *Memory) IsRegistered(id string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	return row.IsActive(), nil
+	return row.Registered(), nil
 }
 
 // Ensure Memory satisfies auth.TenantRegistry at compile time.

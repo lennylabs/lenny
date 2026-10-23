@@ -33,6 +33,7 @@ package failover
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -95,6 +96,16 @@ type StreamTier interface {
 	//
 	// spec: §12.8, step 5.
 	PurgeUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// PurgeTenant removes the tenant's whole staged stream, with its
+	// consumer group, and returns the count of staged events removed. A
+	// tenant with no stream or no group is purged successfully. It is the
+	// tenant-deletion Phase 4 erasure of the Tier 1 half of the billing
+	// write-ahead buffer: a staged event flushed after the tenant's durable
+	// billing rows were deleted would re-insert a deleted tenant's row.
+	//
+	// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+	PurgeTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Clock returns the current time. Production passes time.Now; tests
@@ -392,18 +403,29 @@ func (p *Pipeline) PurgeStagedByUser(ctx context.Context, tenantID, userID strin
 	return streamPurged + bufferPurged, nil
 }
 
-// DeleteByTenant implements billingstore.Store. It removes the tenant's
-// durable events through the primary store and drops any of the
-// tenant's events still held in the Tier 2 buffer so a tenant teardown
-// that races an outage does not later flush deleted-tenant rows. It
-// returns the total count removed across both.
+// DeleteByTenant implements billingstore.Store. It purges the tenant's
+// Tier 1 stream first, then removes the tenant's durable events through
+// the primary store, then drops any of the tenant's events still held in
+// the Tier 2 buffer, so a tenant teardown that races an outage does not
+// later flush deleted-tenant rows. The stream purge runs before the
+// durable delete because a stream flusher replaying a staged event after
+// the durable delete would re-insert the row the delete removed; a purge
+// error therefore returns before the primary delete runs, and the caller
+// retries the whole step. It returns the total count removed across the
+// stream, the primary store, and the buffer.
 //
-// spec: §12.1, §12.8 Phase 4.
+// spec: §12.1, §12.8 (Compliance Interfaces: Tenant deletion lifecycle,
+// Phase 4).
 func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	purged, err := p.purgeStreamTenant(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
 	n, err := p.primary.DeleteByTenant(ctx, tenantID)
 	if err != nil {
 		return 0, err
 	}
+	n += purged
 	p.mu.Lock()
 	kept := p.buffer[:0]
 	for _, e := range p.buffer {
@@ -416,6 +438,19 @@ func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, er
 	p.buffer = kept
 	delete(p.seq, tenantID)
 	p.mu.Unlock()
+	return n, nil
+}
+
+// purgeStreamTenant purges the tenant's Tier 1 stream. A pipeline built
+// without a stream (Tier 1 disabled) has nothing to purge.
+func (p *Pipeline) purgeStreamTenant(ctx context.Context, tenantID string) (int, error) {
+	if p.stream == nil {
+		return 0, nil
+	}
+	n, err := p.stream.PurgeTenant(ctx, tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("billingstore/failover: purge tenant %s billing stream: %w", tenantID, err)
+	}
 	return n, nil
 }
 

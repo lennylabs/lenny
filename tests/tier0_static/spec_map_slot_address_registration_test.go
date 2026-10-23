@@ -130,6 +130,9 @@ var documentConsistencyGates = map[string]string{
 	"tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go": "BUILD-GAPS.md, " +
 		"gateway-runtime-comms-remediation.md, and tests/claim-map.json, whose data-lifecycle closures, " +
 		"annotations, filings, plan item, and terminal-tail claim row cite the code and test files that back them",
+	"tests/tier11_docs/tenant_deletion_credentials_doc_currency_test.go": "docs/operator-guide/multi-tenancy.md, " +
+		"docs/operator-guide/security.md, and docs/api/admin.md, whose tenant-deletion credential-revocation row, " +
+		"TENANT_NOT_FOUND row, and tenant create and delete entries name the refusals the tree returns",
 	creditGateFile: "tests/spec-map.json, whose per-case registrations must name a section the " +
 		"registered case annotates and whose credit rules this file's cases compute",
 }
@@ -379,6 +382,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
 	"tests/tier11_docs/adapter_metric_catalog_test.go",
 	"tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+	"tests/tier11_docs/build_gaps_data_lifecycle_records_currency_test.go",
 	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
 	"tests/tier11_docs/checkpoint_scoping_key_test.go",
 	"tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go",

@@ -102,6 +102,13 @@ func userErasurePattern(tenantID, userID string) string {
 	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:" + userID
 }
 
+// tenantErasurePattern is the §12.8 tenant-deletion Phase 4 purge glob
+// `t:{tenant_id}:exp:*:sticky:*`: every sticky assignment of every
+// experiment the tenant ran.
+func tenantErasurePattern(tenantID string) string {
+	return rediskeys.TenantPrefix(tenantID) + "exp:*:sticky:*"
+}
+
 // nonEmpty rejects an empty key component. An empty tenant, experiment, or
 // user id would produce a malformed key or a flush glob that matches more
 // than the intended experiment; callers must never reach Redis with one.
@@ -178,4 +185,27 @@ func (c *RedisCache) DeleteByUser(ctx context.Context, tenantID, userID string) 
 		return 0, fmt.Errorf("experimentsticky: DeleteByUser requires a non-empty tenant_id and user_id")
 	}
 	return redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), userErasurePattern(tenantID, userID))
+}
+
+// DeleteByTenant removes every experiment sticky assignment the tenant
+// holds, across all of its experiments and users. It is the tenant-deletion
+// Phase 4 erasure of the experiment sticky cache: it DELs
+// `t:{tenant_id}:exp:*:sticky:*` with the same node-routed cursor sweep
+// Flush and DeleteByUser use, so on a Redis Cluster the sweep runs on the
+// master that owns the tenant's hash slot. It records no §16.1
+// invalidation observation, because the metric counts the §10.7
+// pause/conclude transitions of one experiment and a tenant teardown is
+// not one. Returns the number of keys removed; a tenant with no
+// assignments returns 0 and a nil error.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (c *RedisCache) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, fmt.Errorf("experimentsticky: DeleteByTenant requires a non-empty tenant_id")
+	}
+	n, err := redisconn.ScanDelete(ctx, c.client, rediskeys.TenantPrefix(tenantID), tenantErasurePattern(tenantID))
+	if err != nil {
+		return n, fmt.Errorf("experimentsticky: delete tenant %s sticky assignments: %w", tenantID, err)
+	}
+	return n, nil
 }

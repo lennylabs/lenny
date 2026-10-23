@@ -31,10 +31,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
@@ -126,6 +128,15 @@ type AuditEvent struct {
 	// remediation to the operator agent that issued it. Empty when the
 	// request carried no header. spec: §15.1. F-15.1.10.
 	AgentName string
+
+	// TargetTenantID names the tenant an event concerns when the event
+	// is written to a different tenant's chain, such as a platform-chain
+	// row about a refused tenant. ChainAuditSink writes it as the
+	// payload's top-level `target_tenant_id`, which the §11.7
+	// cross-tenant residency gate reads; a value under Detail is never
+	// read by that gate. Empty for events written to the target
+	// tenant's own chain. spec: §11.7.
+	TargetTenantID string
 
 	// Detail carries event-specific fields the auditor records
 	// verbatim in the hash-chain entry.
@@ -229,6 +240,9 @@ type Router struct {
 	// revoked receives each session the full_revoke step cancelled, right
 	// after its write. spec: §11.4 (User Invalidation).
 	revoked RevokeHook
+	// primaryReadTimeout bounds the full_revoke re-read of a cancel write
+	// that reported an error. Zero uses sessionstore.DefaultPrimaryReadTimeout.
+	primaryReadTimeout time.Duration
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
 	// them unregistered. spec: §24.11.
@@ -465,6 +479,13 @@ type Options struct {
 	// leaves the primary-instance audit-sequence provisioning inactive.
 	// spec: §12.3, §15.1. F-11.2.10.
 	PrimaryDDLPool *pgxpool.Pool
+
+	// PrimaryReadTimeout bounds each one-row read from the Postgres primary
+	// the Router issues, such as the full_revoke re-read of a cancel write
+	// that reported an error. It is sourced from the gateway
+	// --session-primary-read-timeout flag; zero uses
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3, §11.4.
+	PrimaryReadTimeout time.Duration
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -482,6 +503,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		tenancyMode:         opts.TenancyMode,
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
+		primaryReadTimeout:  opts.PrimaryReadTimeout,
 	}
 }
 
@@ -998,6 +1020,13 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		// spec: §10.2.
 		writeError(w, http.StatusBadRequest, "INVALID_TENANT_ID", err.Error(),
 			map[string]any{"field": "id"})
+		return
+	}
+	// spec: §10.2, §15.1 — `platform` names the platform audit chain's
+	// tenant and is never created as an ordinary tenant.
+	if isReservedTenantID(body.ID) {
+		writeError(w, http.StatusUnprocessableEntity, "RESERVED_IDENTIFIER", reservedTenantIDMessage,
+			map[string]any{"field": "id", "value": body.ID})
 		return
 	}
 	if body.MaxConcurrentSessions < 0 {
@@ -1690,6 +1719,9 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
+	if r.refuseSingleTenantDefaultDeletion(w, id) {
+		return
+	}
 	// spec: §15.1 — DELETE honours If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return
@@ -1725,6 +1757,50 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 		"id":    id,
 		"state": tenantStateOrActive(updated.State),
 	})
+}
+
+// reservedTenantIDMessage is the error message for a create or seed
+// request that names the reserved platform tenant ID.
+const reservedTenantIDMessage = "tenant ID " + jwtaudit.PlatformTenantID +
+	" is reserved for the platform audit chain"
+
+// isReservedTenantID reports whether id is the tenant ID §10.2 reserves
+// for the platform tenant, under which the §11.7 platform audit chain is
+// written. auth.ValidateTenantID does not refuse it, because claim
+// extraction also calls that validator. spec: §10.2, §11.7.
+func isReservedTenantID(id string) bool { return id == jwtaudit.PlatformTenantID }
+
+// tenantLifecycleState names the §12.8 TenantState of row for an error
+// message: `deleted` for a tombstone, whose DeletedAt is set, and the
+// stored state, empty read as `active`, otherwise.
+func tenantLifecycleState(row tenantstore.Tenant) string {
+	if !row.DeletedAt.IsZero() {
+		return tenantstore.TenantStateDeleted
+	}
+	return tenantStateOrActive(row.State)
+}
+
+// refuseSingleTenantDefaultDeletion writes 409 INVALID_STATE_TRANSITION
+// and reports true when id is the built-in `default` tenant and the
+// Router is not in multi-tenant mode. A single-tenant gateway serves
+// every request as `default`, so deleting it would refuse every caller,
+// including the bootstrap seed and the legal-hold remedies; the tenant
+// stays `active`. Any TenancyMode other than "multi", an empty one
+// included, reads as single-tenant, so a router built without the mode
+// fails closed. In multi-tenant mode `default` is an ordinary tenant.
+// The caller runs this before any state write. spec: §12.8 (Compliance
+// Interfaces: Tenant deletion lifecycle), §15.1.
+func (r *Router) refuseSingleTenantDefaultDeletion(w http.ResponseWriter, id string) bool {
+	if id != auth.DefaultTenantID || r.tenancyMode == direct_mode_isolation.TenancyMulti {
+		return false
+	}
+	writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+		"the built-in default tenant cannot be deleted in a single-tenant deployment",
+		map[string]any{
+			"tenantId":    id,
+			"tenancyMode": "single",
+		})
+	return true
 }
 
 // writeError writes the §15.1 / §25.2 canonical admin error envelope:

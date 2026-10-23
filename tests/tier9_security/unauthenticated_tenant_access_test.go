@@ -59,7 +59,7 @@ func unauthCall(t *testing.T, method, url string, headers map[string]string, bod
 	return resp.StatusCode, env.Error.Code, string(raw)
 }
 
-// spec: §10.2 (Authentication; tenant_id extraction from OIDC tokens),
+// spec: §10.2 (Authentication; `tenant_id` extraction),
 // §13 (Security Model), §15.1 (UNAUTHORIZED error code)
 // diagnosis: a failure on the production-posture gateway means an
 // unauthenticated request that names a registered tenant through

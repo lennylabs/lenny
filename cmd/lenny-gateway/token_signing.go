@@ -31,6 +31,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	bearerExpectedIssuer := f.bearerExpectedIssuer
 	bearerExpectedAudiences := f.bearerExpectedAudiences
 	bearerTrustHMACKeyFile := f.bearerTrustHMACKeyFile
+	tenantIDClaim := f.tenantIDClaim
 	// ----- §7.1 uploadToken KeyRing + rotator -----
 	// The §7.1 contract requires the gateway to rotate signing
 	// keys on a deployer-configurable schedule (default 24h) and keep
@@ -156,7 +157,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		// even one validly signed by the trusted key — is refused at the
 		// gateway. The Token Service path (rotatingVerifier) is unaffected.
 		// F-17.4.16.
-		bearerVerifier = jwt.NewMultiVerifier(rotatingVerifier, embeddedHMACVerifier(trusted))
+		bearerVerifier = embeddedBearerVerifier(rotatingVerifier, trusted, *tenantIDClaim)
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s); embedded tokens must carry aud=dev.local",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
@@ -252,14 +253,31 @@ func (o *kmsBreakerObserver) OnCircuitClosed() {
 // embedded dev-only provider. spec: §17.4.
 const embeddedOIDCAudience = "dev.local"
 
+// embeddedBearerVerifier composes the §17.4 Embedded Mode bearer
+// verifier: the Token Service member (primary) first, unwrapped, so a
+// gateway-issued token keeps its own `tenant_id`, then the embedded OIDC
+// member, which reads the configured tenant claim. The Token Service
+// member's rejection reason is surfaced when neither accepts a token.
+// spec: §10.2 (Authentication: `tenant_id` extraction), §17.4.
+func embeddedBearerVerifier(primary, trusted jwt.Verifier, tenantClaim string) jwt.Verifier {
+	return jwt.NewMultiVerifier(primary, embeddedHMACVerifier(trusted, tenantClaim))
+}
+
 // embeddedHMACVerifier wraps the trusted embedded OIDC HMAC verifier so
 // the gateway refuses any token whose aud claim is not the embedded
 // provider's audience, even when the signature is valid. §17.4
 // requires the gateway to reject foreign-audience tokens; the embedded
 // provider's own Verify enforces this, but the gateway trusts the key
 // directly and must apply the same check on its side. F-17.4.16.
-func embeddedHMACVerifier(trusted jwt.Verifier) jwt.Verifier {
-	return jwt.NewClaimChecker(trusted, jwt.ExpectedClaims{
+//
+// The embedded provider is an identity provider, so a token its key
+// verified takes its tenant from the configured tenant claim
+// (--tenant-id-claim) through jwt.TenantClaimVerifier. The Token
+// Service member of the bearer verifier is not wrapped: a gateway-issued
+// token resolves from its own `tenant_id`. spec: §10.2 (Authentication:
+// `tenant_id` extraction).
+func embeddedHMACVerifier(trusted jwt.Verifier, tenantClaim string) jwt.Verifier {
+	return jwt.NewTenantClaimVerifier(jwt.NewClaimChecker(trusted, jwt.ExpectedClaims{
 		Audiences: []string{embeddedOIDCAudience},
-	})
+	}), tenantClaim)
 }

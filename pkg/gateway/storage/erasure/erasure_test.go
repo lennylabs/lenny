@@ -205,3 +205,53 @@ func TestFromStoreAdaptsPluggableRole_spec_12_1(t *testing.T) {
 		t.Errorf("Deleted[memory] = %d, want 0 (pluggable role reports no count)", res.Deleted["memory"])
 	}
 }
+
+// TestNilFunctionEntriesAreSkippedAndUncounted_spec_12_8 asserts that a
+// session-scoped or user-scoped entry listed by name with a nil function, as
+// a builder lists a store whose backend is absent, does not run and does not
+// appear in the per-store counts, while the non-nil entries after it still
+// run. A count of zero for an unrun store would misreport the receipt.
+//
+// spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence)
+func TestNilFunctionEntriesAreSkippedAndUncounted_spec_12_8(t *testing.T) {
+	var ran []string
+	sessionStep := func(name string) erasure.DeleteBySessionFunc {
+		return func(_ context.Context, _, sid string) (int, error) {
+			ran = append(ran, name+":"+sid)
+			return 1, nil
+		}
+	}
+	userStep := func(name string) erasure.DeleteByUserFunc {
+		return func(context.Context, string, string) (int, error) {
+			ran = append(ran, name)
+			return 2, nil
+		}
+	}
+	o := erasure.New(erasure.Config{
+		Sessions: func(context.Context, string, string) ([]string, error) { return []string{"s1"}, nil },
+		SessionScoped: []erasure.SessionEraser{
+			{Name: "coordination_mirror"},
+			{Name: "transcripts", DeleteBySession: sessionStep("transcripts")},
+		},
+		UserScoped: []erasure.Eraser{
+			{Name: "leases"},
+			{Name: "sessions", DeleteByUser: userStep("sessions")},
+			{Name: "issued_tokens"},
+		},
+	})
+	res, err := o.DeleteByUser(context.Background(), "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if got := len(ran); got != 2 || ran[0] != "transcripts:s1" || ran[1] != "sessions" {
+		t.Fatalf("ran = %v, want transcripts:s1 then sessions", ran)
+	}
+	for _, skipped := range []string{"coordination_mirror", "leases", "issued_tokens"} {
+		if _, ok := res.Deleted[skipped]; ok {
+			t.Errorf("Deleted carries %q although it never ran: %v", skipped, res.Deleted)
+		}
+	}
+	if res.Deleted["transcripts"] != 1 || res.Deleted["sessions"] != 2 || res.Total != 3 {
+		t.Errorf("Deleted = %v Total = %d, want transcripts=1 sessions=2 total 3", res.Deleted, res.Total)
+	}
+}

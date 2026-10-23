@@ -350,6 +350,7 @@ The bootstrap mechanism seeds Day-1 configuration into an empty Postgres databas
 | Resource exists, identical | **No-op** | No-op |
 | Resource exists, differs | **Skip** (logged as WARN) | **Update** (PUT with overwrite) |
 | Security-critical field change | **Error** (blocked) | **Error** (blocked) |
+| Tenant entry whose `id` is the reserved `platform`, or that names an existing tenant in the `deleting` or `deleted` state | **Error** (no tenant is created or changed; exit code 2, or 1 when no entry succeeds) | **Error** (blocked) |
 
 ### Dry-Run Mode
 

@@ -359,11 +359,16 @@ func TestHardDisableSkipsFanOut(t *testing.T) {
 	}
 }
 
-func TestFullRevokeOnlyFansOutLiveSessions(t *testing.T) {
-	// A terminal session's pod is already gone and its leases already
-	// released; only the user's non-terminal sessions reach the fan-out.
+// TestFullRevokeReturnsTerminalSessionLeasesAndReleasesOnlyLiveBindings_spec_11_4
+// asserts that the lease step covers every listed session, terminal ones
+// included, because a terminal session can still hold a lease a failed
+// earlier release left behind, while the binding release covers only the
+// sessions the call cancelled.
+//
+// spec: §11.4 (User Invalidation: Full revoke propagation mechanism)
+func TestFullRevokeReturnsTerminalSessionLeasesAndReleasesOnlyLiveBindings_spec_11_4(t *testing.T) {
 	pods := &fakePodTerminator{}
-	leases := &fakeLeaseRevoker{}
+	leases := &fakeLeaseRevoker{revoked: 2}
 	router, users, sessions, _ := newFullRevokeAdmin(t, pods, leases, nil)
 	seedUser(t, users, "acme", "heidi@acme.com")
 	seedSession(t, sessions, sessionstore.Session{
@@ -381,14 +386,21 @@ func TestFullRevokeOnlyFansOutLiveSessions(t *testing.T) {
 	if len(pods.gotSessions) != 1 || pods.gotSessions[0] != "live" {
 		t.Errorf("pod terminator got sessions %v, want only [live]", pods.gotSessions)
 	}
-	if len(leases.gotSessions) != 1 || leases.gotSessions[0] != "live" {
-		t.Errorf("lease revoker got sessions %v, want only [live]", leases.gotSessions)
+	got := append([]string(nil), leases.gotSessions...)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "done" || got[1] != "live" {
+		t.Errorf("lease revoker got sessions %v, want every listed session [done live]", got)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["leasesRevoked"] != float64(2) || resp["sessionsTerminated"] != float64(1) {
+		t.Errorf("response = %v, want leasesRevoked 2 and sessionsTerminated 1", resp)
 	}
 }
 
 func TestFullRevokeWithNoLiveSessionsSkipsPodAndLeaseFanOut(t *testing.T) {
-	// With no non-terminal sessions there is nothing to terminate and no
-	// leases to revoke; the pod and lease steps are skipped entirely.
+	// With no listed session there is nothing to terminate and no lease
+	// to return; the pod and lease steps are skipped entirely.
 	pods := &fakePodTerminator{}
 	leases := &fakeLeaseRevoker{}
 	router, users, _, _ := newFullRevokeAdmin(t, pods, leases, nil)

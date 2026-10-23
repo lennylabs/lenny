@@ -419,20 +419,22 @@ func (s *Store) SoftDelete(ctx context.Context, id string, at time.Time) error {
 	return nil
 }
 
-// IsRegistered implements auth.TenantRegistry. A soft-deleted tenant
-// reports false so the §10.2 tenant-claim extractor rejects requests
-// against it with TENANT_NOT_FOUND.
+// IsRegistered implements auth.TenantRegistry with the same reading as
+// tenantstore.Tenant.Registered: a missing, soft-deleted, `deleting`, or
+// `deleted` tenant reports false so the §10.2 tenant-claim extractor
+// rejects requests against it with TENANT_NOT_FOUND. spec: §10.2, §12.8.
 func (s *Store) IsRegistered(tenantID string) (bool, error) {
-	var active bool
+	var registered bool
 	err := s.pool.QueryRow(context.Background(),
-		`SELECT deleted_at IS NULL FROM tenants WHERE id = $1`, tenantID).Scan(&active)
+		`SELECT deleted_at IS NULL AND state NOT IN ('deleting', 'deleted') FROM tenants WHERE id = $1`,
+		tenantID).Scan(&registered)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return active, nil
+	return registered, nil
 }
 
 // scanTenant reads one row in selectList order into a Tenant. The raw

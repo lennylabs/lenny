@@ -205,7 +205,6 @@ prefixes:
   - pkg/gateway/mcpfabric/mcpschemagen/
   - pkg/gateway/mcpfabric/mcptools/
   - pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas/
-  - pkg/gateway/mcpfabric/playground/
   - pkg/gateway/metrics/capacityplanning/
   - pkg/gateway/metrics/extractionthreshold/
   - pkg/gateway/metrics/gcpause/

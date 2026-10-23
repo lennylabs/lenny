@@ -82,14 +82,14 @@ auth:
 | Configuration | Behavior |
 |---|---|
 | Single-tenant mode (`auth.multiTenant: false`, the default) | `tenantIdClaim` is ignored; all requests use the `default` tenant |
-| Multi-tenant mode (`auth.multiTenant: true` with `tenancy.mode: multi`) | Gateway reads `tenantIdClaim` from the validated OIDC ID token |
+| Multi-tenant mode (`auth.multiTenant: true` with `tenancy.mode: multi`) | Gateway reads `tenantIdClaim` from a validated OIDC ID token and `tenant_id` from a gateway-issued token |
 
 **Rejection conditions:**
 
 | Condition | Response |
 |---|---|
 | Claim absent or empty string | `401 Unauthorized` with error code `TENANT_CLAIM_MISSING` |
-| Claim value doesn't match any tenant | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
+| Claim value names no registered tenant, or names a tenant in the `deleting` or `deleted` state | `403 Forbidden` with error code `TENANT_NOT_FOUND` |
 
 Both rejection reasons are logged (INFO level, with `user_id` and `jti`) and emitted as `auth_failure` audit events.
 

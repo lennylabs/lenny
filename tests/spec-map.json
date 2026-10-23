@@ -2983,6 +2983,15 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerTenantClaimFollowsVerifyingKey_spec_10_2",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
+        "pkg/auth/jwt/tenantclaim_test.go::TestTenantClaimVerifierResolvesConfiguredClaim",
+        "pkg/gateway/environment/tenantstore/tenantstore_test.go::TestIsRegisteredImplementsAuthRegistry",
+        "tests/tier2_component/stores/tenantstore_test.go::TestTenantStoreIsRegisteredMatchesRegisteredReading_spec_10_2",
+        "pkg/gateway/externalapi/admin/tenant_lifecycle_guards_test.go::TestCreateTenantRefusesReservedPlatformID_spec_10_2",
+        "pkg/gateway/externalapi/admin/bootstrap_tenant_lifecycle_internal_test.go::TestUpsertTenantsRefusesReservedPlatformID_spec_10_2",
+        "tests/tier9_security/deleting_tenant_bearer_refusal_test.go::TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain",
         "pkg/auth/auth_test.go::TestAllTokenTypesIsExhaustive",
         "pkg/auth/auth_test.go::TestAllRolesIsExhaustive",
         "pkg/auth/auth_test.go::TestRoleIsTenantScoped",
@@ -3045,7 +3054,12 @@
         "tests/tier4_integration/gateway_require_auth_test.go::TestProductionGatewayRefusesUnauthenticatedTenantHeader",
         "tests/tier4_integration/gateway_require_auth_test.go::TestProductionGatewayKeepsPublicRoutesPublic",
         "tests/tier4_integration/gateway_require_auth_test.go::TestDevGatewayHonoursTenantHeader",
-        "tests/tier9_security/unauthenticated_tenant_access_test.go::TestUnauthenticatedRequestCannotNameRegisteredTenant"
+        "tests/tier9_security/unauthenticated_tenant_access_test.go::TestUnauthenticatedRequestCannotNameRegisteredTenant",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/auth"
@@ -3413,6 +3427,7 @@
         "pkg/gateway/credentials/leaserevoke/leaserevoke_test.go",
         "pkg/gateway/podlifecycle/podterminate/propagator/propagator_test.go",
         "tests/tier3_contract/fullrevoke_release/request_contract_test.go",
+        "tests/tier3_contract/admin_user_invalidate/full_revoke_response_test.go",
         "tests/tier9_security/full_revoke_lease_return_test.go",
         "tests/tier4_integration/full_revoke_two_replica_test.go",
         "tests/tier7a_load_local/full_revoke_sweep_terminal_race_test.go",
@@ -3422,7 +3437,12 @@
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceClassifiesByDelegationDepth_spec_12_8",
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreCreateFenceRefusesEachMarker_spec_12_8",
         "tests/tier2_component/stores/sessionstore_creation_fence_test.go::TestSessionStoreCreationFenceRefusesInTransaction_spec_12_8",
-        "pkg/gateway/mcpfabric/delegation/reservation_test.go::TestDelegateSoftDisabledOwnerKeepsDelegating_spec_11_4"
+        "pkg/gateway/mcpfabric/delegation/reservation_test.go::TestDelegateSoftDisabledOwnerKeepsDelegating_spec_11_4",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeContinuesPastDisconnect_spec_11_4",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeCheckFlagsLiveSession_spec_11_4",
+        "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3500,6 +3520,8 @@
       "title": "Audit Logging",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "cmd/lenny-gateway/auth_seams_test.go::TestAuthFailureTenantNotFoundOnPlatformChain_spec_11_7",
+        "tests/tier9_security/deleting_tenant_bearer_refusal_test.go::TestDeletingTenantBearerRefusedAndAuditedOnPlatformChain",
         "pkg/audit/audit_test.go::TestAllChainIntegritiesIsExhaustive",
         "pkg/audit/audit_test.go::TestChainIntegrityIsAlarming",
         "pkg/audit/audit_test.go::TestAllComplianceProfilesIsExhaustive",
@@ -3530,7 +3552,9 @@
         "tests/tier9_security/write_before_issue_failclosed_test.go",
         "tests/tier9_security/audit_sequence_precondition_test.go",
         "tests/tier9_security/audit_integrity_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/audit",
@@ -3773,6 +3797,15 @@
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "pkg/gateway/externalapi/admin/tenant_lifecycle_guards_test.go::TestDefaultTenantDeletionRefusedOutsideMultiTenantMode_spec_12_8",
+        "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
+        "tests/tier2_component/stores/tenant_phase4_entries_test.go",
+        "tests/tier2_component/stores/miniostore_test.go::TestMinIOStoreDeleteByTenant_spec_12_8",
+        "tests/tier4_integration/erasure_job_test.go::TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8",
+        "tests/tier0_static/erasure_exemption_guard_test.go",
+        "tests/tier2_component/stores/tenant_purge_redis_cluster_test.go",
+        "pkg/gateway/billing/billingstore/failover/tenant_purge_test.go",
+        "pkg/gateway/billing/billingstore/failover/redisstream/tenant_purge_test.go",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerResumesFromPersistedPhase_spec_12_8",
         "pkg/gateway/storage/erasurejob/runner_resume_test.go::TestRunnerMissingHookFailsJob_spec_12_8",
@@ -3816,6 +3849,8 @@
         "tests/tier8_chaos/live_session_test.go",
         "tests/tier8_chaos/store_failure_test.go",
         "tests/tier2_component/legalholdescrow/pgstore_test.go",
+        "tests/tier2_component/legalholdescrow/blobescrow_minio_test.go::TestLegalHoldEscrowStoreOnMinIO_spec_12_8",
+        "pkg/legalholdescrow/...",
         "tests/tier2_component/stores/memorystore_preflight_test.go",
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go::TestErasureJobInProgressIndexMigration_spec_12_8",
@@ -3900,8 +3935,7 @@
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedSuspendRecordsNoViolationForAFenceThatHolds_spec_12_8",
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedErasureFlagsCreateAdmittedAfterRestriction_spec_12_8",
         "tests/testinfra/lifecyclefence/fence_breach_test.go::TestUnfaultedErasureRecordsNoViolationForAFenceThatHolds_spec_12_8",
-        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerHoldsRefusedDeriveManifestInsideErasureReach_spec_12_8",
-        "tests/testinfra/lifecyclefence/checker_test.go::TestManifestOutsideErasureOnlyForRowsTheErasureMustDelete_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerHoldsDeriveManifestInsideErasureReach_spec_12_8",
         "tests/testinfra/lifecyclefence/start_fault_test.go::TestFaultedErasureStartFailsInsideTheStore_spec_12_8",
         "tests/testinfra/lifecyclefence/start_fault_test.go::TestStartFaultSurfacesAStartThatNeverReachedTheStore_spec_12_8",
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
@@ -3916,13 +3950,32 @@
         "tests/testinfra/kind/deployflag_test.go::TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout",
         "tests/testinfra/sessiondriver/createandstart_internal_test.go::TestCreateAndStartSendsTheOwnerUserID",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
-        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionThroughPhase4ErasesTenantAndSparesTwin_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionPhaseExitInvariantsCatchPlantedResidue_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionPhase3And4ErrorsPauseInPhase_spec_12_8",
+        "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionPhase3And4FaultsPauseInPhase_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionCrashAndTakeoverAfterEachStep_spec_12_8",
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantRedisPurgesStayInsideTheTenantPrefix_spec_12_8",
+        "tests/tier9_security/tenant_path_store_isolation_test.go::TestTenantPathEntriesNeverTouchAnotherTenant_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestUserErasureErasesTokenStoreRowsAndSourceCheckpoint_spec_12_8",
+        "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8",
+        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8",
+        "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
       ],
       "packages": [
         "pkg/store",
         "pkg/compliance"
       ],
-      "blocked_until_phase": "13"
+      "blocked_until_phase": "13",
+      "migrations": [
+        "migrations/0188_audit_redaction_receipts_drop_fk.up.sql"
+      ]
     },
     "12.9": {
       "title": "Data Classification",
@@ -4239,6 +4292,7 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier2_component/stores/issuedtokenstore_retention_test.go",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantCaller",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantIssued",
@@ -5039,7 +5093,8 @@
         "pkg/observability/logging/logging_test.go::TestHandlerEmitsRequiredSlogKeys",
         "pkg/observability/logging/logging_test.go::TestHandlerProjectsCorrelationFieldsFromContext",
         "pkg/observability/logging/logging_test.go::TestHandlerSkipsEmptyCorrelationFields",
-        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether"
+        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether",
+        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8"
       ],
       "packages": [
         "pkg/observability/logging"
@@ -5293,9 +5348,11 @@
       "title": "Packaging and Installation",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "pkg/gateway/externalapi/admin/bootstrap_tenant_lifecycle_internal_test.go::TestUpsertTenantsRefusesDeletingAndDeletedTenants_spec_17_6",
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
-        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
       ],
       "packages": [
         "charts/lenny",
@@ -6557,7 +6614,9 @@
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1",
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
