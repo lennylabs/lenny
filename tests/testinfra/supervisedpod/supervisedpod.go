@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: MIT
+
+// Package supervisedpod holds the cluster helpers the runtime supervisor's
+// tier-5, tier-8, tier-9, and tier-10 tests share: the supervised probe
+// pools tests/testinfra/kind seeds, running a probe subcommand in a pod's
+// runtime container at the agent UID, sending probe commands through a
+// session, reading a container's host PID through the node's container
+// runtime, and watching a pod until it is gone.
+//
+// spec: §4.7.10 (Runtime supervisor); §4.7.11 item 8; §5.2 (Supervised scrub
+// sequence).
+package supervisedpod
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/kind"
+	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
+	"github.com/lennylabs/lenny/tests/testinfra/superviseprobe"
+)
+
+// Namespace is the agent namespace the Kind install warms the pools in.
+const Namespace = "lenny-agents"
+
+// The supervised probe pools and their runtimes, seeded by
+// tests/testinfra/kind/install.sh.
+const (
+	KeepPool          = "supervise-probe-keep-pool"
+	KeepRuntime       = "supervise-probe-keep"
+	PreconnectPool    = "supervise-probe-preconnect-pool"
+	PreconnectRuntime = "supervise-probe-preconnect"
+	PodWarmPool       = "supervise-probe-podwarm-pool"
+	PodWarmRuntime    = "supervise-probe-podwarm"
+	ServicePool       = "supervise-probe-service-pool"
+	ServiceRuntime    = "supervise-probe-service"
+	// IdlePool is a keep pool that warms one idle pod, so a test can make a
+	// used pod the pool's only idle pod (SoleIdleUsedPod).
+	IdlePool    = "supervise-probe-idle-pool"
+	IdleRuntime = "supervise-probe-idle"
+)
+
+// ProbeExe is the probe binary in the probe image, which is also the
+// Runtime's `command`.
+const ProbeExe = "/usr/local/bin/lenny"
+
+// DialDelay is the PROBE_DIAL_DELAY the preConnect and service probe
+// Runtimes set in tests/testinfra/kind/agent-workload.yaml.
+const DialDelay = 30 * time.Second
+
+// RestartGateReason is the skip reason of every case that needs an admitted
+// `restart` pool. Gateway pool admission refuses recycle.runtimeProcess:
+// restart until proposal 0084 rebinds the intra-pod MCP servers per runtime
+// generation, so no such pool exists for the case to run on. Proposal 0084
+// removes the refusal and these skips together.
+const RestartGateReason = "blocked: pool admission refuses recycle.runtimeProcess restart until proposal 0084 " +
+	"rebinds the intra-pod MCP servers per runtime generation, so no restart pool exists on the Kind cluster"
+
+// ExecRuntime runs the probe binary with args in pod's runtime container,
+// which runs at the agent UID, and returns its stdout and stderr.
+func ExecRuntime(t testing.TB, c *kind.Cluster, pod string, args ...string) (string, error) {
+	t.Helper()
+	full := append([]string{"-n", Namespace, "exec", pod, "-c", "runtime", "--", ProbeExe}, args...)
+	return c.KubectlOut(t, full...)
+}
+
+// Attack runs one probe attack in pod's runtime container and decodes its
+// result. A failure to run the attack at all fails the test.
+func Attack(t testing.TB, c *kind.Cluster, pod, attack string, args ...string) superviseprobe.AttackResult {
+	t.Helper()
+	out, err := ExecRuntime(t, c, pod, append([]string{superviseprobe.SubAttack, attack}, args...)...)
+	if err != nil {
+		t.Fatalf("run attack %s in %s: %v\n%s", attack, pod, err, out)
+	}
+	var r superviseprobe.AttackResult
+	if err := json.Unmarshal([]byte(lastLine(out)), &r); err != nil {
+		t.Fatalf("decode attack %s result %q: %v", attack, out, err)
+	}
+	return r
+}
+
+// Processes lists the processes of pod's runtime container.
+func Processes(t testing.TB, c *kind.Cluster, pod string) []superviseprobe.Process {
+	t.Helper()
+	out, err := ExecRuntime(t, c, pod, superviseprobe.SubProcesses)
+	if err != nil {
+		t.Fatalf("list processes in %s: %v\n%s", pod, err, out)
+	}
+	var procs []superviseprobe.Process
+	if err := json.Unmarshal([]byte(lastLine(out)), &procs); err != nil {
+		t.Fatalf("decode process list %q: %v", out, err)
+	}
+	return procs
+}
+
+// ServingProbes returns the serving probe processes of a process list, the
+// runtime processes the supervisor launched.
+func ServingProbes(procs []superviseprobe.Process) []superviseprobe.Process {
+	var out []superviseprobe.Process
+	for _, p := range procs {
+		if superviseprobe.IsServingProbe(p, ProbeExe) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// lastLine is the last non-empty line of out, which drops a kubectl warning
+// printed before the command's own output.
+func lastLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// NewTenant bootstraps a uniquely named tenant that may create sessions with
+// no environment.
+func NewTenant(ctx context.Context, t testing.TB, d *sessiondriver.Driver, base string) string {
+	t.Helper()
+	tenant := fmt.Sprintf("%s-%d", base, time.Now().UnixNano())
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant %s: %v", tenant, err)
+	}
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment for %s: %v", tenant, err)
+	}
+	return tenant
+}
+
+// Command sends one probe command on a session and returns the reply text.
+func Command(ctx context.Context, t testing.TB, d *sessiondriver.Driver, tenant, session, cmd string) string {
+	t.Helper()
+	resp, err := d.SendMessage(ctx, tenant, session, cmd)
+	if err != nil {
+		t.Fatalf("send %q to session %s: %v", cmd, session, err)
+	}
+	text, err := OutputText(resp.Output)
+	if err != nil {
+		t.Fatalf("session %s reply to %q: %v", session, cmd, err)
+	}
+	return text
+}
+
+// OutputText is the text of a message response's first text part.
+func OutputText(output json.RawMessage) (string, error) {
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(output, &parts); err != nil {
+		return "", fmt.Errorf("decode output %s: %w", output, err)
+	}
+	for _, p := range parts {
+		if p.Type == "text" {
+			return p.Text, nil
+		}
+	}
+	return "", fmt.Errorf("output %s has no text part", output)
+}
+
+// Report asks a session's probe for its Record.
+func Report(ctx context.Context, t testing.TB, d *sessiondriver.Driver, tenant, session string) superviseprobe.Record {
+	t.Helper()
+	var r superviseprobe.Record
+	Decode(t, Command(ctx, t, d, tenant, session, superviseprobe.CmdReport), &r)
+	return r
+}
+
+// Action sends a probe action command and decodes its ActionResult.
+func Action(ctx context.Context, t testing.TB, d *sessiondriver.Driver, tenant, session, cmd string) superviseprobe.ActionResult {
+	t.Helper()
+	var r superviseprobe.ActionResult
+	Decode(t, Command(ctx, t, d, tenant, session, cmd), &r)
+	return r
+}
+
+// Residue asks a session's probe which objects of res still exist.
+func Residue(ctx context.Context, t testing.TB, d *sessiondriver.Driver, tenant, session string, res superviseprobe.Residue) superviseprobe.ResidueResult {
+	t.Helper()
+	arg, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("encode residue: %v", err)
+	}
+	var r superviseprobe.ResidueResult
+	Decode(t, Command(ctx, t, d, tenant, session, superviseprobe.CmdResidue+" "+string(arg)), &r)
+	return r
+}
+
+// Decode unmarshals a probe reply into v, failing the test on a reply that
+// is not the expected JSON.
+func Decode(t testing.TB, reply string, v any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(reply), v); err != nil {
+		t.Fatalf("decode probe reply %q: %v", reply, err)
+	}
+}
+
+// EnvValue returns the value of name in a NAME=VALUE list.
+func EnvValue(env []string, name string) (string, bool) {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// WaitClaimPhase polls the binding state on pod's SandboxClaim until it is
+// want, failing the test at timeout. The reserved state lasts only the
+// §4.6.1 hold, so the poll is short.
+func WaitClaimPhase(t testing.TB, c *kind.Cluster, pod, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxclaim", "claim-"+pod, "-o", "jsonpath={.status.phase}")
+		if err != nil {
+			t.Fatalf("read claim of %s: %v\n%s", pod, err, out)
+		}
+		if last = strings.TrimSpace(out); last == want {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("claim of %s did not reach %q within %s (last %q)", pod, want, timeout, last)
+}
+
+// ReservedKeepPod runs one session for a fresh tenant on the keep pool,
+// terminates it, and waits for the pod to be reserved for the tenant, so the
+// tenant's next start is placed on that pod. It returns the tenant and the
+// pod. spec: §5.2 (Recycle lifecycle).
+func ReservedKeepPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver, c *kind.Cluster) (tenant, pod string) {
+	t.Helper()
+	tenant = NewTenant(ctx, t, d, "supervisor-reserved")
+	s, err := d.CreateAndStart(ctx, tenant, KeepRuntime)
+	if err != nil {
+		t.Fatalf("start a session on %s: %v", KeepRuntime, err)
+	}
+	if err := d.Terminate(ctx, tenant, s.ID); err != nil {
+		t.Fatalf("terminate session %s: %v", s.ID, err)
+	}
+	WaitClaimPhase(t, c, s.PodAssignment, "reserved", 2*time.Minute)
+	return tenant, s.PodAssignment
+}
+
+// claimExists reports whether pod has a SandboxClaim. A pod with none is
+// idle once it is Ready.
+func claimExists(t testing.TB, c *kind.Cluster, pod string) bool {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxclaim", "claim-"+pod, "--ignore-not-found", "-o", "name")
+	if err != nil {
+		t.Fatalf("read claim of %s: %v\n%s", pod, err, out)
+	}
+	return strings.TrimSpace(out) != ""
+}
+
+// soleIdlePod returns the pool's only idle pod when the pool has settled
+// with exactly one: one Ready pod with no claim, and every other pod either
+// claimed or being deleted, so no warming pod is about to become a second
+// idle pod. ok is false while the pool has not settled that way.
+func soleIdlePod(t testing.TB, c *kind.Cluster, pool string) (pod string, ok bool) {
+	t.Helper()
+	var idle []string
+	for _, p := range PoolPods(t, c, pool) {
+		if p.Deleting || claimExists(t, c, p.Name) {
+			continue
+		}
+		if !p.Ready {
+			return "", false
+		}
+		idle = append(idle, p.Name)
+	}
+	if len(idle) != 1 {
+		return "", false
+	}
+	return idle[0], true
+}
+
+// SoleIdleUsedPod returns a pod of IdlePool that served a session, returned
+// to idle when its reserved hold ended, and is the pool's only idle pod, so
+// the pool's next session start is placed on it. The pool warms one idle
+// pod, and the WarmPoolController drains idle pods above that in name
+// order, so the used pod is not always the one that stays; each attempt
+// runs one session for a fresh tenant and waits for the pool to settle, and
+// an attempt whose used pod was drained is followed by another.
+// spec: §5.2 (Recycle lifecycle); §4.6.1.
+func SoleIdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver, c *kind.Cluster) string {
+	t.Helper()
+	const attempts = 8
+	for i := 0; i < attempts; i++ {
+		tenant := NewTenant(ctx, t, d, "supervisor-idle")
+		s, err := d.CreateAndStart(ctx, tenant, IdleRuntime)
+		if err != nil {
+			t.Fatalf("start a session on %s: %v", IdleRuntime, err)
+		}
+		if err := d.Terminate(ctx, tenant, s.ID); err != nil {
+			t.Fatalf("terminate session %s: %v", s.ID, err)
+		}
+		if pod, ok := settleAfterHold(t, c, s.PodAssignment, 2*time.Minute); ok {
+			return pod
+		}
+	}
+	t.Skipf("not-yet-applicable: %s did not settle with a used pod as its only idle pod in %d attempts", IdlePool, attempts)
+	return ""
+}
+
+// settleAfterHold waits for used's reserved hold to end and then for
+// IdlePool to settle with one idle pod. ok is true when that pod is used.
+func settleAfterHold(t testing.TB, c *kind.Cluster, used string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) && claimExists(t, c, used) {
+		time.Sleep(time.Second)
+	}
+	for time.Now().Before(deadline) {
+		if pod, ok := soleIdlePod(t, c, IdlePool); ok {
+			return pod, pod == used
+		}
+		time.Sleep(time.Second)
+	}
+	return "", false
+}

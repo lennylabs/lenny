@@ -140,6 +140,27 @@ FIXTURE_IMAGES=(
 )
 FIXTURE_DOCKERFILE="${REPO_ROOT}/tests/testinfra/heartbeatsilence/Dockerfile"
 
+# Images built from their own Dockerfile rather than the platform one. Each
+# entry is <image-base>=<dockerfile path relative to the repository root>.
+# lenny-supervisor is the runtime supervisor every sidecar pod of a
+# type: agent runtime stages into its read-only supervisor volume (§4.7.10
+# Runtime supervisor; §13.1 Runtime supervisor volume); e2e-values.yaml names
+# it as controller.supervisorImage, and without it the controller creates no
+# pod for any such pool. lenny-runtime-supervise-probe is the test-only probe
+# runtime (tests/testinfra/superviseprobe) the supervisor's cluster tiers run;
+# its image sets an ENV variable no Runtime env sets and STOPSIGNAL SIGINT.
+DOCKERFILE_IMAGES=(
+  "lenny-supervisor=Dockerfile.supervisor"
+  "lenny-runtime-supervise-probe=cmd/runtimes/supervise-probe/Dockerfile"
+)
+
+# ADAPTER_OVERLAY_DOCKERFILE adds the supervise-probe binary to the e2e
+# adapter image as /usr/local/bin/lenny-setup-probe, the setup command the
+# supervised scrub's setup-residue case runs in the adapter container
+# (§5.2 Supervised scrub sequence). The overlay is rebuilt on every build
+# because it is a single COPY over whatever lenny-adapter:${TAG} holds.
+ADAPTER_OVERLAY_DOCKERFILE="${REPO_ROOT}/cmd/runtimes/supervise-probe/adapter-overlay.Dockerfile"
+
 log() { printf '==> %s\n' "$*"; }
 
 require() {
@@ -242,6 +263,32 @@ build_fixture_image() {
   fi
 }
 
+# build_dockerfile_image <image-base> <dockerfile> builds <image-base>:${TAG}
+# from the named Dockerfile with the repository root as context, with the same
+# skip and legacy-builder fallback as build_image.
+build_dockerfile_image() {
+  local image="$1:${TAG}"
+  local dockerfile="${REPO_ROOT}/$2"
+
+  if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
+    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
+    return 0
+  fi
+
+  log "building ${image} from ${dockerfile}"
+  docker build -f "${dockerfile}" -t "${image}" "${REPO_ROOT}"
+
+  if ! docker image inspect "${image}" >/dev/null 2>&1; then
+    log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
+    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" -t "${image}" "${REPO_ROOT}"
+  fi
+
+  if ! docker image inspect "${image}" >/dev/null 2>&1; then
+    echo "error: image ${image} is still absent after both build attempts" >&2
+    exit 1
+  fi
+}
+
 if [[ "${LENNY_SKIP_BUILD:-}" == "1" ]]; then
   log "LENNY_SKIP_BUILD=1; skipping image build and load"
 else
@@ -254,6 +301,14 @@ else
   for entry in "${FIXTURE_IMAGES[@]}"; do
     build_fixture_image "${entry%%=*}" "${entry#*=}"
   done
+  for entry in "${DOCKERFILE_IMAGES[@]}"; do
+    build_dockerfile_image "${entry%%=*}" "${entry#*=}"
+  done
+  log "overlaying lenny-supervise-probe onto lenny-adapter:${TAG} as lenny-setup-probe"
+  docker build -f "${ADAPTER_OVERLAY_DOCKERFILE}" \
+    --build-arg "BASE_IMAGE=lenny-adapter:${TAG}" \
+    --build-arg "PROBE_IMAGE=lenny-runtime-supervise-probe:${TAG}" \
+    -t "lenny-adapter:${TAG}" "$(dirname "${ADAPTER_OVERLAY_DOCKERFILE}")"
 fi
 
 # ---------------------------------------------------------------------
@@ -345,7 +400,7 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   for binary in "${BINARIES[@]}"; do
     images+=("${binary}:${TAG}")
   done
-  for entry in "${RUNTIME_IMAGES[@]}" "${FIXTURE_IMAGES[@]}"; do
+  for entry in "${RUNTIME_IMAGES[@]}" "${FIXTURE_IMAGES[@]}" "${DOCKERFILE_IMAGES[@]}"; do
     images+=("${entry%%=*}:${TAG}")
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
@@ -420,6 +475,7 @@ ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}"
 ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-echo-concurrent:${TAG}")"
 HEARTBEAT_SILENCE_ECHO_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo:${TAG}")"
 HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo-concurrent:${TAG}")"
+SUPERVISE_PROBE_IMAGE="$(resolve_digest "lenny-runtime-supervise-probe:${TAG}")"
 log "echo runtime image pinned to ${ECHO_IMAGE}"
 
 # ---------------------------------------------------------------------
@@ -451,6 +507,7 @@ RUNTIME_DIGEST_REFS=(
   "${ECHO_CONCURRENT_IMAGE}"
   "${HEARTBEAT_SILENCE_ECHO_IMAGE}"
   "${HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE}"
+  "${SUPERVISE_PROBE_IMAGE}"
 )
 for node in $(kind get nodes --name "${CLUSTER}"); do
   for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
@@ -838,6 +895,82 @@ bootstrap:
           modes: [immediate, queued]
       labels:
         lenny.dev/e2e: heartbeat-silence-concurrent
+    # Test-only supervise-probe runtimes (tests/testinfra/superviseprobe) for
+    # the runtime supervisor's cluster tiers. Each backs one supervised probe
+    # pool below, so each pool is the only match for its runtimeRef. The
+    # matching Runtime CRs in agent-workload.yaml carry the command and env
+    # the supervisor launches with (§5.1 command and env), which the pod
+    # builder reads from the CRD. They are Standard level, so the probe's
+    # manifest names the platform MCP server. capabilities.injection is
+    # supported so a test can send several commands on one session.
+    - name: supervise-probe-keep
+      type: agent
+      image: ${SUPERVISE_PROBE_IMAGE}
+      integrationLevel: standard
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      # Setup commands run in the adapter container, whose distroless image
+      # has no /bin/sh, so this runtime execs them as argv (§7.5). The
+      # setup-residue case runs the probe binary the e2e adapter image
+      # carries (ADAPTER_OVERLAY_DOCKERFILE).
+      setupCommandPolicy:
+        shell: false
+      labels:
+        lenny.dev/e2e: supervise-probe-keep
+    - name: supervise-probe-idle
+      type: agent
+      image: ${SUPERVISE_PROBE_IMAGE}
+      integrationLevel: standard
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      labels:
+        lenny.dev/e2e: supervise-probe-idle
+    - name: supervise-probe-preconnect
+      type: agent
+      image: ${SUPERVISE_PROBE_IMAGE}
+      integrationLevel: standard
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        preConnect: true
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      labels:
+        lenny.dev/e2e: supervise-probe-preconnect
+    - name: supervise-probe-podwarm
+      type: agent
+      image: ${SUPERVISE_PROBE_IMAGE}
+      integrationLevel: standard
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        preConnect: true
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      labels:
+        lenny.dev/e2e: supervise-probe-podwarm
+    - name: supervise-probe-service
+      type: agent
+      image: ${SUPERVISE_PROBE_IMAGE}
+      integrationLevel: standard
+      executionMode: service
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: supervise-probe-service
   pools:
     # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
     # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
@@ -1000,6 +1133,100 @@ bootstrap:
         maxConcurrentSessions: 2
         acknowledgeProcessLevelIsolation: true
         cleanupTimeoutSeconds: 30
+    # Supervised probe pools for the runtime supervisor's cluster tiers
+    # (tests/tier5_e2e_kind/runtime_supervisor_test.go and the tier-8, tier-9,
+    # and tier-10 cases). warmCount is 2 for the PoolWarmingUp-race reason
+    # task-mode-echo-pool states.
+    #
+    # supervise-probe-keep-pool is a reusing recycling pool under
+    # recycle.runtimeProcess: keep, so its pods keep one runtime process across
+    # the sessions they serve and §5.2 requires
+    # acknowledgeProcessLevelIsolation. Its cleanupCommands run the probe's
+    # cleanup-record subcommand, which the supervisor runs at the agent UID in
+    # the runtime container (§4.7.10 Runtime supervisor, Cleanup) and which
+    # reports to the kept runtime process.
+    #
+    # The matching restart pool is not seeded: gateway pool admission refuses
+    # recycle.runtimeProcess: restart until proposal 0084 rebinds the
+    # intra-pod MCP servers per runtime generation, so the seed would fail the
+    # bootstrap Job. The restart cases skip with a blocked reason naming that
+    # refusal, and proposal 0084 adds the pool when it removes the refusal.
+    - name: supervise-probe-keep-pool
+      runtimeRef: supervise-probe-keep
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        acknowledgeProcessLevelIsolation: true
+        recycle:
+          enabled: true
+          acknowledgeBestEffortScrub: true
+          maxSessionsPerPod: 5
+          runtimeProcess: keep
+        cleanupCommands:
+          - /usr/local/bin/lenny cleanup-record
+        cleanupTimeoutSeconds: 30
+    # supervise-probe-idle-pool is a second keep pool that warms one idle
+    # pod. The WarmPoolController drains idle pods above that, so once a
+    # used pod's reserved hold ends the pool settles with one idle pod, and
+    # a tier-8 case makes that pod the target of the next session start
+    # after killing its kept runtime process (§4.7.10 Runtime supervisor,
+    # Liveness, the idle row's Start channel).
+    - name: supervise-probe-idle-pool
+      runtimeRef: supervise-probe-idle
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        acknowledgeProcessLevelIsolation: true
+        recycle:
+          enabled: true
+          acknowledgeBestEffortScrub: true
+          maxSessionsPerPod: 5
+          runtimeProcess: keep
+        cleanupTimeoutSeconds: 30
+    # Sidecar preConnect probe pool: its pods launch the runtime process at
+    # warm-up (--launch-mode=preconnect-sdk-warm) while the pool's SDK-warm
+    # circuit breaker is closed. The Runtime CR sets the probe's CH-MSGSOCK
+    # dial delay (PROBE_DIAL_DELAY) between the rendered ping interval plus
+    # ping timeout and the warm-up timeout (§4.7.10 Runtime supervisor,
+    # Launch; §28.5.3 CH-SUPERVISE, Timing).
+    - name: supervise-probe-preconnect-pool
+      runtimeRef: supervise-probe-preconnect
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+    # Sidecar preConnect probe pool created with the SDK-warm circuit breaker
+    # forced open, so its pods are created under
+    # --launch-mode=preconnect-pod-warm and launch at startup step 7 (§6.1
+    # Circuit-breaker for SDK-warm pools).
+    - name: supervise-probe-podwarm-pool
+      runtimeRef: supervise-probe-podwarm
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sdkWarm:
+        circuitBreakerOverride: disabled
+    # Supervised service-mode probe pool: the runtime process is launched at
+    # warm-up and kept for the pod's life (§4.7.10 Runtime supervisor,
+    # Launch). maxConcurrent is the service-mode per-pod capacity §5.2
+    # requires. The Runtime CR sets the same dial delay as the preConnect pool.
+    - name: supervise-probe-service-pool
+      runtimeRef: supervise-probe-service
+      isolationProfile: standard
+      executionMode: service
+      maxConcurrent: 1
+      warmCount: 1
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
 EOF
 
 # §25.4 — "No anonymous access except /healthz." lenny-ops only
@@ -1113,6 +1340,7 @@ sed \
   -e "s|__ECHO_CONCURRENT_IMAGE__|${ECHO_CONCURRENT_IMAGE}|g" \
   -e "s|__HEARTBEAT_SILENCE_ECHO_IMAGE__|${HEARTBEAT_SILENCE_ECHO_IMAGE}|g" \
   -e "s|__HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__|${HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE}|g" \
+  -e "s|__SUPERVISE_PROBE_IMAGE__|${SUPERVISE_PROBE_IMAGE}|g" \
   "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
 # The pools reach Postgres only after the post-install lenny-bootstrap Job

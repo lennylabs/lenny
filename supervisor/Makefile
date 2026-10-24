@@ -45,8 +45,13 @@ $(OUT)/lenny-supervisor: $(SRCS) $(FREESTANDING) $(HDRS) | $(OUT)
 $(OUT)/lenny-supervisor-prefixed: $(SRCS) $(FREESTANDING) $(HDRS) | $(OUT)
 	$(CC) $(CFLAGS_FREE) -DSV_PATH_PREFIX='"$(TEST_PREFIX)"' $(LDFLAGS_FREE) -o $@ $(SRCS) $(FREESTANDING) -lgcc
 
+# HARNESS_LDFLAGS is empty for the tier-1 driver. The supervise-probe image
+# sets it to -static so the harness runs in its distroless image, where
+# tier 6 runs the synchronous-fault case under each sandboxed runtime.
+HARNESS_LDFLAGS ?=
+
 $(OUT)/harness: $(SRCS) $(HDRS) test/harness.c test/harness.h test/cases_*.c | $(OUT)
-	$(CC) $(TEST_CFLAGS) -DSV_PATH_PREFIX='"$(TEST_PREFIX)"' -I. -o $@ $(SRCS) test/harness.c test/cases_*.c
+	$(CC) $(TEST_CFLAGS) -DSV_PATH_PREFIX='"$(TEST_PREFIX)"' -I. $(HARNESS_LDFLAGS) -o $@ $(SRCS) test/harness.c test/cases_*.c
 
 # The fuzz driver is built with the address and undefined-behaviour
 # sanitizers where the toolchain links and runs a sanitized program, and

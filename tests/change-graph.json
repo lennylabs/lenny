@@ -4,7 +4,8 @@
   "globs": {
     "supervisor/": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
-      "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."]
+      "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"]
     },
     "Dockerfile.supervisor": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"]
@@ -15,6 +16,30 @@
     },
     "tests/tier1_unit/supervisor": {
       "unit": ["tests/tier1_unit/supervisor/..."]
+    },
+    "cmd/runtimes/supervise-probe/": {
+      "unit": ["tests/testinfra/superviseprobe/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
+    },
+    "tests/testinfra/superviseprobe": {
+      "unit": ["tests/testinfra/superviseprobe/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
+    },
+    "tests/testinfra/supervisedpod": {
+      "unit": ["tests/testinfra/supervisedpod/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
     },
     "pkg/store/session": {
       "unit": ["pkg/store/session/..."],

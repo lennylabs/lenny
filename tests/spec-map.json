@@ -926,7 +926,9 @@
         "pkg/adapter/manifest_fields_test.go",
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
         "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
-        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11"
+        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter"
@@ -1120,7 +1122,34 @@
         "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnreadSupervisedPlatformVariable",
         "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
-        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestRecyclePropertyOnASupervisedKeepPod_spec_5_2",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestRecyclePropertyOnASupervisedRestartPod_spec_5_2",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4_7_10",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestKeepPodKeepsOneProcessAndRunsCleanupAtTheAgentUID_spec_5_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestRestartPodLaunchesAFreshProcessAndRemovesResidue_spec_5_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestServicePodRetiresWhenItsRuntimeProcessDies_spec_4_7_10",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestSupervisedPodsReadyOnlyWithTheSupervisorAsFirstProcess_spec_4_7_10",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestWarmUpLaunchGatesReadyAndEndsOnSIGTERM_spec_4_7_10",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go::TestSupervisorSignalsAndLimitsUnderSandboxedRuntimes_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestAdapterDeathEndsTheSupervisorAndTheRuntimeProcess_spec_28_5_3",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestPodDeletionDeliversNoStopSignalToTheRuntimeProcess_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestReservedPodWithAStoppedSupervisorRefusesTheRebindAndDrains_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorIgnoresSIGKILLAndSIGSTOPFromInsideItsNamespace_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorKilledFromOutsideItsNamespaceRetiresThePod_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorStoppedDuringTheWarmUpLaunchRetiresTheServicePod_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorStoppedOnAnIdleServicePodRetiresIt_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
@@ -1186,7 +1215,15 @@
         "pkg/supervisorselftest/supervisorselftest_test.go::TestGatingPropertiesAreNondumpableAndKillReach_spec_4_7_11",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRunOutcomes_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodRendering_spec_24_2",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestPreflightSupervisorReportsEachPropertyAndLeavesNoPod_spec_24_2",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go::TestSupervisorSelfTestUnderSandboxedRuntimes_spec_4_7_11",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorIgnoresSIGKILLAndSIGSTOPFromInsideItsNamespace_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestAgentUIDCannotTraceReadOrRewriteTheSupervisor_spec_4_7_11"
       ],
       "packages": [
         "pkg/adapter",
@@ -1730,7 +1767,21 @@
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodLifetimeReadFailsClosedOnTransientError_spec_5_2",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodUnsupervisedRuntimesCarryOnlyTheLifetimeLabel_spec_4_7_10",
         "pkg/admission/label_immutability/runtime_process_test.go::TestDecideImmutableLabelsHoldsTheRuntimeProcessLabel_spec_17_2",
-        "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks"
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestRecyclePropertyOnASupervisedKeepPod_spec_5_2",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestRecyclePropertyOnASupervisedRestartPod_spec_5_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestKeepPodKeepsOneProcessAndRunsCleanupAtTheAgentUID_spec_5_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestRestartPodLaunchesAFreshProcessAndRemovesResidue_spec_5_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestSetupCommandResidueIsGoneBeforeTheNextSession_spec_5_2",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestReservedPodWithAStoppedSupervisorRefusesTheRebindAndDrains_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestLabelImmutabilityRefusesARuntimeProcessRelabel_spec_17_2",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1833,7 +1884,12 @@
         "pkg/adapter/preready_cancel_test.go::TestRunPreReadySignalEndsTheWaitAndLaunchesNothing_spec_6_1",
         "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstWarmUpLaunchRace_spec_6_1",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodLaunchModeFromExecutionModePreConnectAndBreaker_spec_4_7_10",
-        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodFailedPoolReadOnPreConnectCreatesNoPod_spec_6_1"
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodFailedPoolReadOnPreConnectCreatesNoPod_spec_6_1",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestWarmUpLaunchGatesReadyAndEndsOnSIGTERM_spec_4_7_10",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorStoppedDuringTheWarmUpLaunchRetiresTheServicePod_spec_4_7_10"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -4263,7 +4319,12 @@
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodAdmittedByPodSecurity_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorOverrideOnlyValuesUseChartDefaults_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorValuesOverrideChartDefaults_spec_24_2",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestSupervisedPodsReadyOnlyWithTheSupervisorAsFirstProcess_spec_4_7_10",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestAgentUIDCannotTraceReadOrRewriteTheSupervisor_spec_4_7_11",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestWebhookRefusesInjectedContainersAndSupervisorVolumeWriters_spec_13_1"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -4982,7 +5043,9 @@
         "pkg/adapter/runtimegeneration_test.go",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
-        "pkg/runtimekit/echocore/echocore_test.go::TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3"
+        "pkg/runtimekit/echocore/echocore_test.go::TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4_7_10"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
@@ -5011,7 +5074,9 @@
         "cmd/lenny-compliance/full.go::checkDeadlineSignal",
         "tests/tier0_static/compliance_check_channel_naming_test.go::TestComplianceFullChecksNamedForTheirChannel",
         "tests/tier0_static/compliance_check_channel_naming_test.go::TestSpecMapComplianceCheckReferencesResolve",
-        "tests/tier10_conformance/heartbeat_busy_conformance_test.go::TestHeartbeatBusyConformance_spec_15_4_6"
+        "tests/tier10_conformance/heartbeat_busy_conformance_test.go::TestHeartbeatBusyConformance_spec_15_4_6",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6"
       ],
       "packages": [
         "cmd/lenny-compliance"
@@ -5426,7 +5491,9 @@
         "pkg/controller/sandbox/podspec/podspec_test.go",
         "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildUnsupervisedPodsCarryNoSupervisorButCarryTheLifetimeLabel_spec_5_2",
         "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRendersSupervisedRestartPodForRestartableRuntime_spec_5_2",
-        "pkg/admission/label_immutability/runtime_process_test.go::TestDecideImmutableLabelsHoldsTheRuntimeProcessLabel_spec_17_2"
+        "pkg/admission/label_immutability/runtime_process_test.go::TestDecideImmutableLabelsHoldsTheRuntimeProcessLabel_spec_17_2",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestLabelImmutabilityRefusesARuntimeProcessRelabel_spec_17_2"
       ],
       "packages": [
         "charts/lenny"
@@ -5722,7 +5789,11 @@
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorCommandRefusesBadInvocation_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightValuesDecodeSupervisorKeys_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorBuildsClientFromKubeconfig_spec_24_2",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestPreflightSupervisorReportsEachPropertyAndLeavesNoPod_spec_24_2",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go::TestSupervisorSelfTestUnderSandboxedRuntimes_spec_4_7_11"
       ],
       "packages": [
         "cmd/lenny-ctl",
@@ -7121,7 +7192,13 @@
         "cmd/lenny-controller/flags_test.go::TestValidateFlagsRefusesNonPositiveSuperviseTiming",
         "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnreadSupervisedPlatformVariable",
-        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go",
+        "tests/tier10_conformance/supervised_recycle_conformance_test.go::TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
+        "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestAdapterDeathEndsTheSupervisorAndTheRuntimeProcess_spec_28_5_3",
+        "tests/tier9_security/runtime_supervisor_security_test.go",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSquattedSuperviseSocketReceivesNoConnection_spec_28_5_3"
       ],
       "packages": [
         "pkg/adapter",
