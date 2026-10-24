@@ -19,6 +19,10 @@ import (
 // platform MCP server.
 const platformMCPDialTimeout = 5 * time.Second
 
+// platformMCPCallTimeout bounds each request after the handshake, so a
+// forwarded call that never answers cannot hold the probe's MCP command.
+const platformMCPCallTimeout = 30 * time.Second
+
 // errNoPlatformMCP reports a manifest that advertises no platform MCP server.
 var errNoPlatformMCP = errors.New("the manifest advertises no platform MCP server")
 
@@ -50,15 +54,11 @@ type rpcReply struct {
 	Error  *rpcError       `json:"error"`
 }
 
-// dialPlatformMCP reads the manifest at path, dials the platform MCP socket
-// it advertises, completes the nonce-authenticated initialize handshake, and
-// discovers the catalog. A discovery refused because the process holds no
-// session is not an error. spec: §15.4.3 (Authentication).
-func dialPlatformMCP(path string) (*platformMCP, error) {
-	socket, nonce, err := readPlatformMCPEndpoint(path)
-	if err != nil {
-		return nil, err
-	}
+// dialPlatformMCP dials the platform MCP socket, completes the
+// nonce-authenticated initialize handshake, and discovers the catalog. A
+// discovery refused because the process holds no session is not an error.
+// spec: §15.4.3 (Authentication).
+func dialPlatformMCP(socket, nonce string) (*platformMCP, error) {
 	addr := socket
 	if strings.HasPrefix(socket, "@") {
 		addr = "\x00" + socket[1:]
@@ -149,6 +149,8 @@ func (c *platformMCP) Call(name string) error {
 func (c *platformMCP) call(method string, params any) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	_ = c.conn.SetDeadline(time.Now().Add(platformMCPCallTimeout))
+	defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
 	if err := c.writeLocked(method, params); err != nil {
 		return nil, err
 	}

@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -18,13 +20,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
 )
 
-// gatedProvider refuses tools/list with listErr and records each call.
+// gatedProvider refuses tools/list with listErr, blocks it on hold when set,
+// and records each call.
 type gatedProvider struct {
 	listErr error
+	hold    chan struct{}
 	calls   []string
 }
 
 func (p *gatedProvider) List(context.Context) ([]mcp.Tool, error) {
+	if p.hold != nil {
+		<-p.hold
+	}
 	if p.listErr != nil {
 		return nil, p.listErr
 	}
@@ -78,12 +85,13 @@ func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 	refused := status.Error(codes.FailedPrecondition, "no single calling session")
 	t.Run("no-session refusal keeps the connection", func(t *testing.T) {
 		p := &gatedProvider{listErr: refused}
-		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"))
+		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"), io.Discard)
+		<-tools.done
 		if tools.err != nil || tools.conn == nil {
 			t.Fatalf("openPlatformMCP = %+v; want a connection", tools)
 		}
 		defer tools.close()
-		if res := callPlatformMCP(tools); !res.OK {
+		if res := callPlatformMCP(context.Background(), tools); !res.OK {
 			t.Fatalf("platform tool call on the warm-up connection failed: %s", res.Error)
 		}
 		if len(p.calls) != 1 {
@@ -92,12 +100,13 @@ func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 	})
 	t.Run("another discovery failure leaves no connection", func(t *testing.T) {
 		p := &gatedProvider{listErr: errors.New("catalog backend down")}
-		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"))
+		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"), io.Discard)
+		<-tools.done
 		defer tools.close()
 		if tools.conn != nil || tools.err == nil {
 			t.Fatal("openPlatformMCP kept a connection although the catalog discovery failed for another reason")
 		}
-		if res := callPlatformMCP(tools); res.OK || !strings.Contains(res.Error, "catalog backend down") {
+		if res := callPlatformMCP(context.Background(), tools); res.OK || !strings.Contains(res.Error, "catalog backend down") {
 			t.Fatalf("callPlatformMCP = %+v; want the discovery failure reported", res)
 		}
 	})
@@ -109,13 +118,35 @@ func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 		m["mcpNonce"] = "session-nonce"
 		body, _ = json.Marshal(m)
 		_ = os.WriteFile(manifest, body, 0o600)
-		tools := openPlatformMCP(manifest)
+		tools := openPlatformMCP(manifest, io.Discard)
+		<-tools.done
 		defer tools.close()
 		if tools.conn != nil || tools.err == nil {
 			t.Fatal("openPlatformMCP authenticated with a nonce the running server does not validate")
 		}
-		if res := callPlatformMCP(tools); res.OK {
+		if res := callPlatformMCP(context.Background(), tools); res.OK {
 			t.Fatal("callPlatformMCP reported OK with no connection")
+		}
+	})
+	t.Run("a discovery that has not answered does not hold the start", func(t *testing.T) {
+		p := &gatedProvider{hold: make(chan struct{})}
+		manifest := servePlatformMCP(t, p, "warm-nonce")
+		tools := openPlatformMCP(manifest, io.Discard)
+		select {
+		case <-tools.done:
+			t.Fatal("the platform MCP dial finished although its catalog discovery has not answered")
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		if res := callPlatformMCP(ctx, tools); res.OK {
+			t.Fatal("callPlatformMCP reported OK before the dial finished")
+		}
+		close(p.hold)
+		<-tools.done
+		defer tools.close()
+		if res := callPlatformMCP(context.Background(), tools); !res.OK {
+			t.Fatalf("platform tool call after the discovery answered failed: %s", res.Error)
 		}
 	})
 	t.Run("no platform MCP server in the manifest", func(t *testing.T) {
@@ -123,7 +154,8 @@ func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 		manifest := filepath.Join(dir, "adapter-manifest.json")
 		_ = os.WriteFile(manifest, []byte(`{"mcpNonce":"n"}`), 0o600)
 		for _, path := range []string{manifest, filepath.Join(dir, "absent.json")} {
-			tools := openPlatformMCP(path)
+			tools := openPlatformMCP(path, io.Discard)
+			<-tools.done
 			if tools.conn != nil || !errors.Is(tools.err, errNoPlatformMCP) {
 				t.Fatalf("openPlatformMCP(%s) = %+v; want no connection and errNoPlatformMCP", path, tools)
 			}
