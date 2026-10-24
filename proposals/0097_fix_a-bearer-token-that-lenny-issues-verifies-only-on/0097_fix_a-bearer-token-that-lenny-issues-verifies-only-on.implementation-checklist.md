@@ -8,7 +8,7 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands all of SPEC-3: the fixed lifetime, the `auth.capabilityTokenTtlSeconds` default, and the request `expires_in` row.
       Tiers 0, 11. Depends on: S1
-- [ ] **S4 · spec** — SPEC-4. Lands all of SPEC-4: the KMS signing failure mode and its error row.
+- [ ] **S4 · spec** — SPEC-4. Lands all of SPEC-4: the KMS signing failure mode, its error row, and the §11.6 automatic-breaker ownership sentence (Edit 3).
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S5 · spec** — SPEC-5. Lands all of SPEC-5: the signing metrics and alerts.
       Tiers 0, 11. Depends on: S4
@@ -26,8 +26,8 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 11. Depends on: S2
 - [ ] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
       Tiers 0, 1, 6. Depends on: S1, S2, S4, S9
-- [ ] **S13 · code** — CODE-2. Lands the context-taking `Sign`, the remote ES256 signer, and `KeySet`.
-      Tiers 0, 1. Depends on: S1, S2, S12
+- [ ] **S13 · code** — CODE-2. Lands the context-taking `Sign`, the remote ES256 signer, `KeySet`, and the `HMACSigner` test-site ports.
+      Tiers 0, 1, 2, 3, 9. Depends on: S1, S2, S12
 - [ ] **S14 · code** — CODE-3. Lands the breaker backpressure changes.
       Tiers 0, 1. Depends on: S4, S5, S13
 - [ ] **S15 · code** — CODE-10. Lands the JWKS endpoint and rotation observer deletion.
