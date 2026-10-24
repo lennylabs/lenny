@@ -645,7 +645,7 @@ type secondHalfFiling struct {
 // The first two were filed by its cross-cutting tests and block a case of the
 // tier-4 tenant deletion test.
 var secondHalfFilings = []secondHalfFiling{
-	{id: "F-10.2.22", owner: "Owner: unassigned.", deviation: "## Proposed: the tier-4 peer-replica refusal probe checks each Lenny-issued bearer only on its minting replica"},
+	{id: "F-10.2.22", owner: "Owner: unassigned.", deviation: "## the tier-4 peer-replica refusal probe checks each Lenny-issued bearer only on its minting replica"},
 	{id: "F-27.8.1", owner: "Owner: unassigned.", deviation: "## the tier-4 playground-bearer refusal case is skipped"},
 	{id: "F-4.9.40", owner: "Owner: a direct fix."},
 	{id: "F-4.9.41", owner: "Owner: a direct fix."},
@@ -698,7 +698,7 @@ func TestDataLifecycleSecondHalfFilingsAreFiledOnceWithTheirOwners(t *testing.T)
 				t.Errorf("BUILD-GAPS.md:%d %s\n  does not name %s as the proposal that filed it", f.line, f.heading, secondHalfProposal)
 			}
 			if c.deviation != "" {
-				title := strings.TrimPrefix(c.deviation, "## Proposed: ")
+				title := strings.TrimPrefix(strings.TrimPrefix(c.deviation, "## Proposed: "), "## ")
 				if !strings.Contains(f.body, secondHalfDeviations) || !strings.Contains(f.body, title) {
 					t.Errorf("BUILD-GAPS.md:%d %s\n  does not point at the deviation entry %q in %s", f.line, f.heading, title, secondHalfDeviations)
 				}
