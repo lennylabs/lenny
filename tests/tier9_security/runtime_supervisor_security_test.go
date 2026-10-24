@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisedpod"
@@ -113,7 +112,7 @@ func TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10(t *testin
 	// a signal stopped or wedged has missed a pong by now.
 	time.Sleep(10 * time.Second)
 
-	requireSupervisorStillLive(t, c, pod)
+	supervisedpod.RequireSupervisorStillLive(t, c, pod)
 	after := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
 	if after.Token != before.Token {
 		t.Errorf("the runtime process changed from %s to %s after the signals", before.Token, after.Token)
@@ -122,34 +121,6 @@ func TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10(t *testin
 		t.Errorf("the runtime process received signals sent to the supervisor: %v", after.Signals)
 	}
 	requireBoundaryKeepsThePod(ctx, t, d, c, tenant, sess, before.Token)
-}
-
-// requireSupervisorStillLive asserts what a missed pong on a claimed keep
-// pod would change while the pod is still claimed: the supervisor (PID 1) is
-// running and not stopped, and the adapter recorded no CH-SUPERVISE link
-// failure and no not-live cause. spec: §4.7.10 (Runtime supervisor,
-// Liveness).
-func requireSupervisorStillLive(t *testing.T, c *kind.Cluster, pod string) {
-	t.Helper()
-	st, found := supervisedpod.GetPod(t, c, pod)
-	if !found || st.Deleting || !st.Container["adapter"].Running || !st.Container["runtime"].Running {
-		t.Fatalf("pod %s did not survive the signals to its supervisor: found=%v %s", pod, found, st.Describe())
-	}
-	var pid1 *superviseprobe.Process
-	procs := supervisedpod.Processes(t, c, pod)
-	for i := range procs {
-		if procs[i].PID == 1 {
-			pid1 = &procs[i]
-		}
-	}
-	if pid1 == nil || pid1.State == "T" || pid1.State == "t" || pid1.State == "Z" {
-		t.Errorf("pod %s: the supervisor (PID 1) is stopped or gone after the signals: %+v", pod, pid1)
-	}
-	for _, event := range []string{adapter.LogSuperviseLinkFailure, adapter.LogRuntimeNotLive} {
-		if at := supervisedpod.AdapterEventTimes(t, c, pod, event); len(at) != 0 {
-			t.Errorf("pod %s: the adapter logged %s at %v after the signals to the supervisor", pod, event, at)
-		}
-	}
 }
 
 // requireBoundaryKeepsThePod ends the session and asserts the pod passed its

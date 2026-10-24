@@ -34,10 +34,11 @@ const supLivenessWindow = 10 * time.Second
 // spec: §4.7.10 (Runtime supervisor, Signals; Liveness), §4.7.11 item 8
 //
 // diagnosis: SIGKILL or SIGSTOP sent to the supervisor from inside its PID
-// namespace (by the agent UID) retired the pod or stopped the supervisor
-// answering ping. On runc the namespace init is immune to both, so a pod
-// that retires here means the supervisor is not PID 1 of the runtime
-// container or the kernel delivered the signal.
+// namespace (by the agent UID) retired the pod, stopped PID 1, or stopped
+// the supervisor answering ping, which the adapter records as a CH-SUPERVISE
+// link failure or a not-live cause in its log. On runc the namespace init is
+// immune to both, so a failure here means the supervisor is not PID 1 of the
+// runtime container or the kernel delivered the signal.
 func TestSupervisorIgnoresSIGKILLAndSIGSTOPFromInsideItsNamespace_spec_4_7_10(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)[0]
@@ -52,10 +53,10 @@ func TestSupervisorIgnoresSIGKILLAndSIGSTOPFromInsideItsNamespace_spec_4_7_10(t 
 	if a := st.Container["adapter"]; !a.Running || a.RestartCount != 0 {
 		t.Errorf("pod %s: the adapter is not running after in-namespace signals to the supervisor: %s", pod.Name, st.Describe())
 	}
-	procs := supervisedpod.Processes(t, c, pod.Name)
-	if len(procs) == 0 || procs[0].PID != 1 || procs[0].State == "T" {
-		t.Errorf("pod %s: the supervisor is stopped or gone after in-namespace SIGSTOP: %+v", pod.Name, procs)
-	}
+	// The pod and adapter state above cannot see a missed pong: on an idle
+	// keep pod it goes down the Liveness Start channel and leaves the pod
+	// Ready. The adapter's log records it.
+	supervisedpod.RequireSupervisorStillLive(t, c, pod.Name)
 }
 
 // spec: §4.7.10 (Runtime supervisor, Signals; Liveness), §6.2
