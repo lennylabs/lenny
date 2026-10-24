@@ -363,7 +363,11 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	and `env` rows, or the `env` row no longer states that `env` is valid
 //	only beside `command`. An author who misses them builds an image whose
 //	entrypoint never runs, a runtime that exits at a session's end, or a
-//	sidecar runtime launched without the variables its binary needs.
+//	sidecar runtime launched without the variables its binary needs. The
+//	test also fails when the Session End paragraph states one lifetime for
+//	every pod instead of the `keep` and `restart` lifetimes, or when the pod
+//	termination paragraph has the supervisor exit after the adapter's end
+//	request rather than only on the close of the adapter's connection.
 func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
@@ -394,10 +398,22 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"on a `restart` pod, when the supervisor's startup self-test reports a failed gating property",
 			"Before the pod becomes ready, and at any time on a service-mode pod, the adapter exits instead, and the platform replaces the pod",
 		})
+	requireAllContain(t, "lifecycle.md Runtime Supervisor",
+		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
+			"until the adapter asks the supervisor to end it. When the adapter's connection to the supervisor closes, the supervisor exits",
+		})
 	requireNoneContain(t, "lifecycle.md Runtime Supervisor",
 		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
 			"ends or freezes every process",
+			"or the adapter's connection to the supervisor closes. The supervisor then exits",
 		})
+	sessionEnd := supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Session End")
+	requireAllContain(t, "lifecycle.md Session End", sessionEnd, []string{
+		"the process serves the pod's other sessions, and on a `keep` pod also later ones, while on a `restart` pod the next whole-pod scrub ends it",
+	})
+	requireNoneContain(t, "lifecycle.md Session End", sessionEnd, []string{
+		"the process serves the pod's other sessions and later ones",
+	})
 	requireAllContain(t, "runtime-configuration.md Identity and image",
 		supervisedDocSection(t, root, "runtime-author-guide/runtime-configuration.md", "Identity and image"), []string{
 			"| `command` |",
@@ -451,7 +467,13 @@ func stopSessionRPCComment(t *testing.T, body string) string {
 //	keyed on `keep`, or the warm-pool-exhaustion step for a supervised pool
 //	whose pods never reach idle, with its `lenny-ctl preflight supervisor`
 //	invocation and its `controller.tuning` keys. An operator then cannot
-//	diagnose a pool whose adapters exit before READY.
+//	diagnose a pool whose adapters exit before READY. The test also fails
+//	when the execution-modes page limits the post-update refusal to `keep`
+//	pods for an update that leaves the pool not reusing pods, which refuses
+//	every pod that served an earlier session, or when the troubleshooting
+//	remedy for the acknowledgment error omits that `restart` needs a
+//	restartable runtime or that the non-reusing alternatives need
+//	`recycle.runtimeProcess` removed, which pool admission otherwise rejects.
 func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "configuration.md", supervisedDocPage(t, root, "reference/configuration.md"), []string{
@@ -462,6 +484,11 @@ func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *tes
 	requireAllContain(t, "execution-modes.md Runtime process lifetime", exec, []string{
 		"**Runtime process kept across sessions.**",
 		"A sequential pool under `restart` does not require it",
+		"the gateway places no later session on any pod that served an earlier session, `restart` pods included",
+		"After a sequential pool's change from `keep` to `restart`, the gateway places no later session on a `keep` pod that served an earlier session",
+	})
+	requireNoneContain(t, "execution-modes.md Runtime process lifetime", exec, []string{
+		"takes effect at the next session: the gateway places no later session on a `keep` pod",
 	})
 	requireAllContain(t, "execution-modes.md", supervisedDocPage(t, root, "reference/execution-modes.md"), []string{
 		"its runtime cannot serve the next session",
@@ -475,6 +502,8 @@ func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *tes
 		supervisedDocSection(t, root, "operator-guide/troubleshooting.md", "Recycling Pool Does Not Reuse Pods"), []string{
 			"`recycle.runtimeProcess: keep`",
 			"also follows every other cause of the adapter's not-live state",
+			"The `restart` value requires a restartable runtime, which carries `command`, runs in `session` mode, and does not declare `capabilities.preConnect: true`",
+			"alternatives also require removing `recycle.runtimeProcess`, because pool admission rejects the field on a pool that does not reuse pods",
 		})
 	requireAllContain(t, "lenny-ctl.md", supervisedDocPage(t, root, "operator-guide/lenny-ctl.md"), []string{
 		"| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` |",
