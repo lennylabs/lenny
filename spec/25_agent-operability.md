@@ -1510,7 +1510,7 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 | Data | StoreRouter method | Rationale |
 |------|-------------------|-----------|
 | Event stream (`ops:events:stream`) | `PlatformRedis()` | Platform-scoped event stream, not tenant-routed. |
-| Remediation locks (`ops:lock:{scope}`) | `PlatformRedis()` | Platform-scoped coordination keys. |
+| Remediation locks (`ops:{lock}:*`, see Tier 2 — Redis) | `PlatformRedis()` | Platform-scoped coordination keys under one hash tag. |
 | Escalation buffer (`ops:escalations:{id}`) | `PlatformRedis()` | Platform-scoped operational records. |
 | Webhook cursor tracking | `PlatformRedis()` | Platform-scoped delivery state. |
 
@@ -2239,10 +2239,10 @@ The default (`"single-replica-only"`) matches the recommendation for the v1 depl
 
 The critical failure mode in a naive tiered design is split-brain: agent A holds a lock in Postgres; Postgres fails; agent B acquires the same lock in Redis; both run concurrently. Lenny prevents this with **outage epochs**:
 
-**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:lock-epoch:current`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
+**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:{lock}:epoch`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
 
-- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:lock-epoch:current`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
-- On Tier 2 → Postgres recovery: the service reads `MAX(ops:lock-epoch:current_redis, ops_lock_epoch.current_postgres)`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
+- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:{lock}:epoch`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
+- On Tier 2 → Postgres recovery: the service reads the maximum of `ops:{lock}:epoch` and `ops_lock_epoch.current`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
 - On Tier 3 (both stores down) operation: `lenny-ops` records the outage start time and an in-memory `pendingEpochIncrement` flag. When **either** Redis or Postgres recovers first, the recovering store's epoch counter is incremented by 1 and stamped with the outage start time. When the second store recovers, the standard `MAX(redis_epoch, postgres_epoch)` reconciliation brings them into sync.
 
 Because both stores hold the epoch and reconciliation uses the maximum, the system is **safe under any single-store outage and any out-of-order recovery sequence**. The only failure mode is "neither store ever recovers," in which case Lenny is effectively offline.
@@ -2296,9 +2296,9 @@ The losing holder (always notified via the heartbeat path) can either back off (
 
 #### Clock Source
 
-All TTLs and `expiresAt` timestamps are authored by a single clock per tier:
+All TTLs and `expiresAt` timestamps are authored by a server-side clock source per tier:
 - Tier 1: Postgres `now() at time zone 'UTC'`.
-- Tier 2: Redis `TIME` command (via Lua script).
+- Tier 2: Redis `TIME` command, which any primary of a Redis Cluster may answer.
 - Tier 3: the `lenny-ops` process clock.
 
 Agents do not pass `expiresAt` in the request body; they pass `ttlSeconds`. The server computes `expiresAt = server_clock + ttlSeconds`. This removes client-side clock dependence and most clock-skew failure modes. Clock skew between nodes running Postgres and Redis is bounded by NTP (operator-managed); `lenny-ops` monitors drift and alerts when Postgres ↔ Redis skew exceeds 10s (see Self-Monitoring).
