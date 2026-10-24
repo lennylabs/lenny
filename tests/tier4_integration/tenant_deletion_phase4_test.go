@@ -363,8 +363,9 @@ func assertGlobexLive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, liv
 // deletionGatewayArgs are the flags of each gateway replica in the tenant
 // deletion test. The T-10.2.11 startup gate requires --tenancy-mode=multi and
 // --multi-tenant=true together. The trusted HMAC key lets the test sign an
-// embedded-OIDC bearer every replica verifies. The playground stays disabled,
-// because a gateway started with it enabled exits at startup (F-27.8.1).
+// embedded-OIDC bearer every replica verifies. The dev-mode playground is
+// bound to acme, because multi-tenant dev mode requires an explicit
+// non-default dev tenant.
 func deletionGatewayArgs(pgDSN, redisAddr, keyFile string) []string {
 	return []string{
 		"--no-environment-policy", "allow-all", "--dev-mode",
@@ -376,6 +377,8 @@ func deletionGatewayArgs(pgDSN, redisAddr, keyFile string) []string {
 		"--tenancy-mode=multi", "--multi-tenant=true",
 		"--bearer-trust-hmac-key-file=" + keyFile,
 		"--tenant-deletion-interval=300ms",
+		"--playground-enabled", "--playground-auth-mode=dev",
+		"--playground-dev-tenant-id=acme",
 	}
 }
 
@@ -450,6 +453,46 @@ func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) 
 		})
 	}
 	return out
+}
+
+// playgroundProbes mints one dev-mode playground bearer for the gateway's
+// dev tenant on each replica through POST /v1/playground/token and returns
+// a probe per bearer whose replica list is the minting replica. The mint
+// runs behind the dev-tenant Ready gate, so it needs the tenant seeded.
+//
+// spec: §27.3.1 (OIDC cookie-to-MCP-bearer exchange), §27.3 (Authentication).
+func playgroundProbes(t *testing.T, tenant string, replicas []string) []bearerProbe {
+	t.Helper()
+	out := make([]bearerProbe, 0, len(replicas))
+	for i, base := range replicas {
+		out = append(out, bearerProbe{
+			name:     fmt.Sprintf("%s playground (replica %d)", tenant, i),
+			bearer:   mintPlaygroundBearer(t, base),
+			replicas: []string{base},
+		})
+	}
+	return out
+}
+
+// mintPlaygroundBearer mints a dev-mode playground bearer on base.
+func mintPlaygroundBearer(t *testing.T, base string) string {
+	t.Helper()
+	resp, err := http.Post(base+"/v1/playground/token", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token on %s: %v", base, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /v1/playground/token on %s: status %d: %s", base, resp.StatusCode, raw)
+	}
+	var out struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || out.BearerToken == "" {
+		t.Fatalf("POST /v1/playground/token on %s: no bearer in %s (%v)", base, raw, err)
+	}
+	return out.BearerToken
 }
 
 // bearerProbe is one bearer and the replicas that verify its signature.
@@ -638,7 +681,7 @@ func nonGDPRAuditRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ten
 // spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4), §12.8
 // (Compliance Interfaces: Lifecycle fence and drain), §12.8 (Tenant
 // deletion lifecycle), §8.10 (Delegation Tree Recovery), §10.2
-// (Authentication).
+// (Authentication), §27.3.1 (OIDC cookie-to-MCP-bearer exchange).
 func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -677,17 +720,15 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 	// The embedded-OIDC bearer verifies on both replicas. A Lenny-issued
 	// bearer is minted by each replica's platform-admin impersonation
 	// endpoint under that replica's own Token Service key, so it verifies
-	// only on the replica that minted it. A playground bearer, minted before
-	// Phase 3 because the mint runs no registry check, needs a gateway
-	// started with the playground enabled, which exits at startup today.
-	t.Run("playground bearer", func(t *testing.T) {
-		t.Skip("blocked: F-27.8.1 — a gateway started with --playground-enabled exits at startup, so no playground bearer can be minted")
-	})
+	// only on the replica that minted it. Each replica also mints a
+	// playground bearer under its own Token Service key, so each playground
+	// bearer is probed only on the replica that minted it.
 	replicas := []string{gwA.BaseURL(), gwB.BaseURL()}
 	createTenantUser(t, gwA.BaseURL(), "acme", "alice@acme.com")
 	createTenantUser(t, gwA.BaseURL(), "globex", "bob@globex.com")
 	probes := append([]bearerProbe{{"embedded OIDC", mintTenancyBearer(t, "acme"), replicas}},
 		lennyIssuedProbes(t, "acme", "alice@acme.com", replicas)...)
+	probes = append(probes, playgroundProbes(t, "acme", replicas)...)
 	globexProbes := append([]bearerProbe{{"globex embedded OIDC", mintTenancyBearer(t, "globex"), replicas}},
 		lennyIssuedProbes(t, "globex", "bob@globex.com", replicas)...)
 	requireBearersAdmitted(t, "before the deletion", append(probes, globexProbes...))
