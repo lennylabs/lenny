@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -448,6 +449,59 @@ type cancelOnGet struct {
 func (c cancelOnGet) Get(ctx context.Context, name string) (*corev1.Pod, error) {
 	c.cancel()
 	return c.recordingPods.Get(ctx, name)
+}
+
+// spec: 24.2 (Preflight)
+// An interrupt or termination signal delivered to the process during the
+// completion wait cancels the run, and the command still deletes its pod.
+// Without the signal-cancelled context the default handler would end the
+// test process with the pod left behind.
+func TestPreflightSupervisorDeletesPodOnSignal_spec_24_2(t *testing.T) {
+	for name, sig := range map[string]syscall.Signal{"interrupt": syscall.SIGINT, "terminate": syscall.SIGTERM} {
+		t.Run(name, func(t *testing.T) {
+			values := filepath.Join(t.TempDir(), "values.yaml")
+			doc := "agentNamespaces:\n  - name: " + selftestNS + "\ncontroller:\n  supervisorImage: " + selftestImage + "\n"
+			if err := os.WriteFile(values, []byte(doc), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f := newRecordingPods()
+			f.phases = []corev1.PodPhase{corev1.PodPending}
+			cmd := preflightSupervisor{
+				newPods:       func(string) (selftestPodClient, error) { return &signalOnGet{recordingPods: f, sig: sig}, nil },
+				poll:          time.Millisecond,
+				deleteTimeout: time.Second,
+			}
+			var out, errb bytes.Buffer
+			args := []string{"--runtime-class", "runc", "--config", values, "--wait-timeout", "1m"}
+			if code := cmd.run(context.Background(), args, &out, &errb); code != 1 {
+				t.Fatalf("exit = %d, want 1 (stderr %q)", code, errb.String())
+			}
+			if !strings.Contains(errb.String(), context.Canceled.Error()) {
+				t.Errorf("stderr %q, want the wait ended by the signal's cancellation", errb.String())
+			}
+			assertDeletedOnEveryPath(t, f, f.requests[0].name, false)
+			if len(f.pods) != 0 {
+				t.Errorf("pods left after the signal: %d", len(f.pods))
+			}
+		})
+	}
+}
+
+// signalOnGet sends a signal to the test process on the first completion
+// read, as an operator pressing Ctrl-C or a SIGTERM during the wait does.
+type signalOnGet struct {
+	*recordingPods
+	sig  syscall.Signal
+	once sync.Once
+}
+
+func (s *signalOnGet) Get(ctx context.Context, name string) (*corev1.Pod, error) {
+	var err error
+	s.once.Do(func() { err = syscall.Kill(os.Getpid(), s.sig) })
+	if err != nil {
+		return nil, err
+	}
+	return s.recordingPods.Get(ctx, name)
 }
 
 // spec: 24.2 (Preflight)

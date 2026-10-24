@@ -5717,6 +5717,7 @@
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorValuesOverrideChartDefaults_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRunOutcomes_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorDeletesAfterCancellation_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorDeletesPodOnSignal_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorClientRequestsWithinPermissionCell_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorCommandRefusesBadInvocation_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightValuesDecodeSupervisorKeys_spec_24_2",

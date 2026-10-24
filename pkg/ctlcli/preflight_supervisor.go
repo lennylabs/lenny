@@ -8,6 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -56,6 +59,28 @@ type selftestPodClient interface {
 // pod. It exits non-zero when a property that gates a `restart` pod fails.
 // spec: §24.2; §4.7.11 (Runtime supervisor, Property self-test).
 func cmdPreflightSupervisor(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	cmd := preflightSupervisor{newPods: kubeSelftestPods, poll: selftestPollInterval, deleteTimeout: selftestDeleteTimeout}
+	return cmd.run(ctx, args, stdout, stderr)
+}
+
+// preflightSupervisor holds the dependencies of the command: the pod client
+// constructor and the poll and delete bounds.
+type preflightSupervisor struct {
+	newPods       func(namespace string) (selftestPodClient, error)
+	poll          time.Duration
+	deleteTimeout time.Duration
+}
+
+// selftestSignals are the signals that interrupt the command. Each cancels
+// the run's context, so the deferred delete still removes the pod rather
+// than the default handler ending the process with the pod left behind.
+// spec: §24.2 (Preflight).
+var selftestSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+// run parses the flags, builds the pod and its client, and drives the
+// self-test under a context that an interrupt or termination signal
+// cancels.
+func (c preflightSupervisor) run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("preflight supervisor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	runtimeClass := fs.String("runtime-class", "", "RuntimeClass the self-test pod runs under (required)")
@@ -73,12 +98,14 @@ func cmdPreflightSupervisor(ctx context.Context, args []string, stdout, stderr i
 		fmt.Fprintf(stderr, "lenny-ctl preflight supervisor: %v\n", err)
 		return 1
 	}
-	pods, err := kubeSelftestPods(pod.Namespace)
+	pods, err := c.newPods(pod.Namespace)
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny-ctl preflight supervisor: %v\n", err)
 		return 1
 	}
-	r := selftestRun{pods: pods, poll: selftestPollInterval, wait: *wait, deleteTimeout: selftestDeleteTimeout}
+	ctx, stop := signal.NotifyContext(ctx, selftestSignals...)
+	defer stop()
+	r := selftestRun{pods: pods, poll: c.poll, wait: *wait, deleteTimeout: c.deleteTimeout}
 	return r.run(ctx, pod, stdout, stderr)
 }
 
