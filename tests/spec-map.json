@@ -3682,6 +3682,7 @@
         "tests/tier2_component/breakers/breakerstore_test.go",
         "tests/tier2_component/quota/quotastore_test.go",
         "pkg/redisconn/redisconn_test.go",
+        "tests/tier11_docs/remediation_plan_redis_condition_audit_test.go",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisStoreClientInstallsSlotGuard_spec_12_4",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisLockKeysShareOneSlot_spec_25_4",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisListClusterCompleteness_spec_25_4",

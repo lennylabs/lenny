@@ -2972,12 +2972,76 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
   - Size: about 15 production files and 20 test files; tiers 0, 1, 2, 4, and 9, plus 3 if the channels are
     renamed.
   - Also land F-12.4.30 (concern-specific probes and health checks ping the base client), about five files.
-- [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule**
+- [x] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule**
   (`proposals/0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis/`). F-12.4.28
   class B/C, 3 operations in 1 family.
   - **Progress.** Part 1 (the `ops:{lock}:` keys, the §12.4 brace rule, the in-script epoch stamp, and the
     compare-and-set Extend, Steal, and Release) landed at cb37a9e54, 114cf1293, and 65c2d38ef and closed
-    F-12.4.28 class B/C. P6 stays open until the Part 2 topology relaxation and its condition audit land.
+    F-12.4.28 class B/C. Part 2 (the §12.4 **Shared Redis topology.** paragraph and lease-renewal row, the
+    whole-deployment Redis Cluster migration pre-plan, the §17.8.2 Tier 3 rows, and the §16.5
+    `DurableInboxRedisUnavailable` row) landed at 4e89f1f9d, 43d9ebaa3, and 011e487aa. The condition audit
+    below closes P6.
+  - **Condition audit.** The table has one row per Redis package: every non-test package under `pkg/`,
+    `cmd/`, and `sdks/` that imports go-redis, which is the set the tier-0 `scanRedisUsage` enumerates and
+    which includes the `lenny-ops` lock store (`pkg/ops/coordination/redisstore`) and escalation store
+    (`pkg/ops/escalation/redisstore`). It has one column per condition of §12.4 **Shared Redis topology.**
+    The single-slot column is met for every package because `TestRedisStoresInstallSlotGuard_spec_12_4`
+    passes with an empty `redisSlotGuardExempt` map, and the `SCAN` column is met for every package because
+    `TestRedisScanRoutesByNode_spec_12_4` passes; both tests are in
+    `tests/tier0_static/redis_cluster_safety_test.go`. The durability column records whether a coordination
+    guarantee the package carries depends on Redis keeping its data. The failure column names the package's
+    error mapping and the state it ends in. The lease column applies to the session coordination lease: the
+    Sweeper sets the lease TTL to four times `--coordination-interval` in `NewSweeper`
+    (`pkg/gateway/coordination/coordination/coordination.go`), and the at-bind acquire stamps
+    `DefaultCoordinationLeaseTTL`, 60s (`pkg/gateway/sessionserver/sessionserver.go`). The separation column
+    records whether the package's concern can move to its own instance with the topology the §12.4 separation
+    table names. A package that holds no Redis state reads n/a in the durability, failure, and lease columns.
+    Each unmet cell names the finding filed for it.
+
+    | Package | Single slot | Cross-slot `SCAN` | Coordination durability | Failure path | Lease TTL | Separation |
+    |:--|:--|:--|:--|:--|:--|:--|
+    | `cmd/lenny-controller` | met | met | n/a | n/a | n/a | n/a: a direct-address client for the §25.5 stream emitter, and the chart wires no Redis to the controller |
+    | `cmd/lenny-gateway` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): each per-concern URL passes through `redistopology.Build` |
+    | `cmd/lenny-ops` | met | met | n/a | n/a | n/a | n/a: `lenny-ops` connects through its own `--redis-url`, `--redis-sentinel-addrs`, and `--redis-cluster-addrs` flags |
+    | `pkg/connectoroauth` | met | met | met: the single-use OAuth `state` context has no coordination role | met: a `Consume` error returns 400 `CONNECTOR_OAUTH_STATE_UNKNOWN`, and the flow restarts (§9.3) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/billing/billingstore/failover/redisstream` | met | met | met: staged billing entries replay idempotently into Postgres and have no coordination role | met: a Redis error moves the event to the bounded in-memory buffer, and a full buffer returns `ErrBufferFull`, which maps to 503 (§11.2.1) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/eventbuffer` | met | met | met: the §25.5 event stream has no coordination role | met: an `XADD` error keeps the event in the local buffer (§25.5) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/experiment/experimentsticky` | met | met | met: assignments re-derive from the HMAC bucketing (§10.7) | met: a `Get` error recomputes the assignment | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/externalapi/admin` | met | met | met: the scatter-gather cache has no coordination role | met: a read error is a miss, and a write error is logged (§25.9) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/llmproxy/semanticcache/redisstore` | met | met | met: cache entries have no coordination role | met: `proxycache.Lookup` treats an error as a miss, and the gateway wires the in-memory cache | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/mcpfabric/delegationtree/treebudget` | met | met | met: the counters are rebuilt from the Postgres checkpoint and the live pods on recovery (§12.4 delegation budget reconciliation) | met: a Redis error returns `ErrBudgetUnavailable`, surfaced as the retryable `DELEGATION_BUDGET_UNAVAILABLE` | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/mcpfabric/playground` | met | met | met: session records and revocation markers have no coordination role | met: a Redis error fails the auth path closed with 503 (§27.3.1) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore` | met | met | met: breaker state has no coordination role | met: an outage keeps the last-known snapshot, so open breakers stay enforced (§11.6) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore` | met | met | met: breaker state has no coordination role | met: errors return to `cachingstore`, which keeps the last-known snapshot | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/operability/health/backends` | met | met | n/a | n/a | n/a | n/a: probes the clients the gateway registers |
+    | `pkg/gateway/policy/ratelimit/redisstore` | met | met | met: per-minute counters have no coordination role | met: the middleware fails open for `rateLimitFailOpenMaxSeconds` (60s) and then rejects with 429 (`pkg/gateway/middleware/ratelimit`) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/quota/quotastore` | met | met | met: counters reconcile by the MAX rule on recovery (§12.4) | met: the per-replica fail-open ceiling and the cumulative timer (`pkg/gateway/storage/failopen`) end in fail-closed | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/quota/storagequota/redisstore` | met | met | met: the counter rehydrates from Postgres | met: `storagequota.Failover` falls back to the Postgres sum and returns `ErrUnavailable` when Postgres is also down (§11.2) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/session/routingcache` | met | met | met: the cache has no coordination role | met: a transport error is `ErrCacheMiss`, and the caller reads Postgres; no production package constructs it | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/session/sessionevents` | met | met | met: the relay stream has no coordination role | met: an `XADD` error is logged, and the local in-memory history keeps serving (§4.4) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/session/sessioninbox` | met | met | met: the inbox and DLQ hold undelivered messages and have no coordination role | met: a Redis error returns `ErrInboxUnavailable`, and the sender receives an `error` receipt with reason `inbox_unavailable` (§7.2, §15.4) | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/storage/derivelock` | met | met | met: snapshot references name immutable objects, so a lost lock cannot tear a read (§7.1) | met: a Redis error returns 500, and the derive is refused | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/storage/leasestore` | met | met | met: the Postgres `coordination_generation` fence orders holders (§10.1) | met: `Failover` routes an infrastructure error to the `pgstore` advisory-lock fallback (§12.4) | unmet (F-12.4.31): the Sweeper stamps four intervals, and the at-bind acquire stamps a fixed 60s | unmet (F-12.4.32) |
+    | `pkg/gateway/storage/pubsub` | met | met | met: each security cache bounds staleness by rehydration or TTL | met: delivery is at-most-once, and a dropped message delays convergence until rehydration | n/a | unmet (F-12.4.32) |
+    | `pkg/gateway/storage/rediskeys` | met | met | n/a | n/a | n/a | n/a: the key guard holds no state |
+    | `pkg/gateway/storage/redistopology` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): `Build` clears the Sentinel and Cluster addresses of each per-concern URL |
+    | `pkg/gateway/storage/slotcounter` | met | met | met: after an outage the rebuild deletes the `rehydrated` flag of every pod a non-terminal session names, and the next reservation rehydrates from the session rows (§5.2) | met: the Postgres fallback under a per-pod advisory lock runs for `slotCounterPostgresFallbackMaxSeconds`, then admission fails closed (§12.4) | n/a | unmet (F-12.4.32) |
+    | `pkg/ops/coordination/redisstore` | met | met | met: Tier 2 serves only during a Postgres outage, and the outage epoch orders Tier 2 locks against Postgres locks at reconciliation (§25.4) | unmet (F-25.4.32): the store maps every Redis error to `ErrStoreUnavailable`, but `Service.Reconcile` reads a failed `Epoch` or `ActiveLocks` as empty | n/a | n/a: `lenny-ops` has its own Redis flags |
+    | `pkg/ops/escalation/redisstore` | met | met | met: escalation records have no coordination role | met: a Redis error returns `escalation.ErrStoreUnavailable`, and the service falls back to the in-memory tier (§25.4) | n/a | n/a: `lenny-ops` has its own Redis flags |
+    | `pkg/ops/events` | met | met | n/a | n/a | n/a | n/a: reads the §25.5 stream and reports a Redis error through the degradation envelope |
+    | `pkg/ops/opsservice` | met | met | n/a | n/a | n/a | n/a: reads the event stream and probes Redis |
+    | `pkg/preflight/infra` | met | met | n/a | n/a | n/a | n/a: the preflight check dials Redis and holds no state |
+    | `pkg/redisconn` | met | met | n/a | n/a | n/a | n/a: builds clients and routes `SCAN` |
+    | `pkg/redisconn/clustertest` | met | met | n/a | n/a | n/a | n/a: test cluster helper |
+    | `pkg/redisconn/slotguard` | met | met | n/a | n/a | n/a | n/a: test slot hook |
+    | `pkg/storerouter` | met | met | n/a | n/a | n/a | n/a: hands each concern the client `redistopology` built |
+    | `pkg/tokenservice/cache` | met | met | met: cached claims have no coordination role | met: `Get` returns a wrapped error, and no validation path reads the cache yet | n/a | n/a: `lenny-token-service` takes its own `--redis-url`, and the chart wires no Redis to it |
+
+  - **Filed.** The audit filed F-12.4.31 (the at-bind coordination lease TTL is fixed at 60s while
+    `--coordination-interval` is configurable), F-12.4.32 (a per-concern Redis URL builds a direct-address
+    client, so a split concern has no Sentinel failover or Cluster sharding), and F-25.4.32
+    (`Service.Reconcile` treats a failed Redis epoch or lock read as empty and still leaves the Postgres-down
+    state).
   - **Scope.** §25.4 describes one Lua script over `ops:lock:{scope}` that also reads `ops:lock-epoch:current`
     atomically; if the braces are a hash tag, those keys sit in different slots. The code also uses an
     `ops:lockidx:<id>` key that no section documents, and reads the epoch with a separate `GET` outside the
