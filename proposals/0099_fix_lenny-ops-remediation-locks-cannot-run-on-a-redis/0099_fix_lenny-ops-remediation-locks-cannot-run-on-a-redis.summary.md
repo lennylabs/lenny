@@ -33,6 +33,7 @@
 - D16. The §12.4 lease-renewal row is corrected to one renewal per `--coordination-interval`. Its "one per coordination TTL / 2" contradicts the four-interval condition, and the code renews four times per TTL (the Sweeper sets TTL to 4 × interval, the default lease TTL is 60s, and the interval defaults to 15s).
 - D17. Part 1 and Part 2 are separate checklist deliverables. No Part 1 step depends on a Part 2 step, Part 1 is verified and recorded by REC-1 on its own, and Part 1 does not wait on the Part 2 audit.
 - D18. Every Tier 2 write tolerates a repeated send (SPEC-1 repeat paragraph), because go-redis v9 re-sends a command whose reply it lost and `redisconn` leaves the retry count at its default. The acquire check requires revision 0 as well as the lock ID, so a repeat that arrives after an intervening steal reports the conflict rather than returning a lock the caller no longer holds. A repeated Release keeps its 404 (non-spec Edge cases). `IncrementEpoch` and `SetEpoch` keep their code: a doubled `INCR` skips one epoch value, which §25.4 tolerates because it uses epochs only by order and maximum, and the `MAX` script writes nothing on a repeat. Turning re-sends off was rejected, because a lost reply would then surface as `ErrStoreUnavailable` after Redis applied the write and send the request to the in-memory tier (D6).
+- D19. The classic `PUBLISH` broadcast load on a shared Tier 3 Redis Cluster is accepted as a residual for this proposal and filed as a separate performance finding under Defects (decision 7, owner's delegate, 2026-10-24). 0099 stages nothing for it.
 
 **Watch out for.**
 
@@ -42,7 +43,6 @@
 - Tier-11 check (e) forbids `ops:{lock}:` anywhere in §12.4. SPEC-3 and SPEC-4 quote no `ops:` key, and an implementor must not add one while editing them.
 - The SPEC-3 paragraph goes after the wrapper-layer paragraph. Placing it after the exception-summary paragraph lets the tier-11 exception-summary parser read it as part of that summary.
 - Every table row SPEC-1, SPEC-2, SPEC-4, and SPEC-6 replace stays one physical line.
-- The owner has not yet decided whether Part 2 stays in this proposal or moves to a sibling proposal. If it moves, checklist steps S4, S5, S6, S12, and S14 leave with it and Part 1 is unchanged.
 
 ## Goals
 
