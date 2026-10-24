@@ -3,6 +3,7 @@
 ## Standing context
 
 ### Settled
+- OD3 is settled as option (c) by the owner's delegate (2026-10-24, D26): §17.4 item 3 stays universal, `lenny-ops` stays on `--production` in CODE-6, and the mismatch is a Defects entry for a direct code fix after this proposal lands. Do not re-raise it.
 
 - Owner decision 1 (2026-10-23): production signing is remote asymmetric KMS signing, and every verifier verifies locally against public keys selected by `kid`. Rejected: one shared HS256 key sealed by the KMS, and a per-replica KMS-signed intermediate key as a default.
 - Owner decision 2 (2026-10-23): Lenny-issued tokens have a fixed lifetime, the gateway never re-mints per interaction, and holders refresh by pulling.
@@ -1228,6 +1229,11 @@ DECISION: OPEN line 751 (`lenny-ops` relaxations gated on `--production` rather 
 
 DECISION: OD3 (`lenny-ops` dev relaxations gated on `--production` rather than `LENNY_DEV_MODE`) stays the human's. The summary's OD3 entry under "Open decisions for human to make" is rewritten with the question, options (a), (b), and (c), recommendation (c), why (a) and (b) lost, the cost of each choice, and moderate confidence. No answer is staged and no Defects entry is added, because (c)'s Defects entry is part of the answer. Authority: spec/17_deployment-topology.md:283; cmd/lenny-ops/main.go:171-195; charts/lenny/values.yaml:3281; charts/lenny/templates/ops-deployment.yaml:176; charts/lenny/presets/values-tier2.yaml:96; charts/lenny/presets/values-tier3.yaml:139; cmd/lenny-gateway/token_signing.go:144.
 FACT: The Tier 2 and Tier 3 presets live under charts/lenny/presets/ and set `ops.production: true`; the Tier 1 preset does not.
+
+### [owner-decisions-2026-10-24b]
+
+- DECISION: OD3 settled as option (c) by the owner's delegate under the owner's overnight delegation (2026-10-24). Recorded as D26 and a Defects entry.
+- WATCHOUT: do not widen CODE-6 to add a `lenny-ops` dev-mode gate; the follow-up is a direct fix against §17.4 item 3.
 
 ## Retired
 
