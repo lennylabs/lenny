@@ -252,9 +252,9 @@ func ReservedKeepPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver,
 	return tenant, s.PodAssignment
 }
 
-// claimExists reports whether pod has a SandboxClaim. A pod with none is
+// ClaimExists reports whether pod has a SandboxClaim. A pod with none is
 // idle once it is Ready.
-func claimExists(t testing.TB, c *kind.Cluster, pod string) bool {
+func ClaimExists(t testing.TB, c *kind.Cluster, pod string) bool {
 	t.Helper()
 	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxclaim", "claim-"+pod, "--ignore-not-found", "-o", "name")
 	if err != nil {
@@ -271,7 +271,7 @@ func soleIdlePod(t testing.TB, c *kind.Cluster, pool string) (pod string, ok boo
 	t.Helper()
 	var idle []string
 	for _, p := range PoolPods(t, c, pool) {
-		if p.Deleting || claimExists(t, c, p.Name) {
+		if p.Deleting || ClaimExists(t, c, p.Name) {
 			continue
 		}
 		if !p.Ready {
@@ -318,7 +318,7 @@ func SoleIdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver,
 func settleAfterHold(t testing.TB, c *kind.Cluster, used string, timeout time.Duration) (string, bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) && claimExists(t, c, used) {
+	for time.Now().Before(deadline) && ClaimExists(t, c, used) {
 		time.Sleep(time.Second)
 	}
 	for time.Now().Before(deadline) {

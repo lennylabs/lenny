@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisedpod"
@@ -78,9 +79,8 @@ func supStartFor(ctx context.Context, t *testing.T, d *sessiondriver.Driver, ten
 // lenny-supervisor-stage init container having staged the binary, or with a
 // runtime process already running on an idle session-mode pod, where the
 // first launch belongs to startup step 7 after the manifest exists. Either
-// the pod builder stopped rendering the supervisor, the adapter's READY gate
-// no longer waits for the supervisor's ready, or the launch moved ahead of
-// the manifest (the first-session manifest defect the supervisor closes).
+// the pod builder stopped rendering the supervisor or the launch moved ahead
+// of the manifest (the first-session manifest defect the supervisor closes).
 func TestSupervisedPodsReadyOnlyWithTheSupervisorAsFirstProcess_spec_4_7_10(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pods := supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)
@@ -106,6 +106,42 @@ func TestSupervisedPodsReadyOnlyWithTheSupervisorAsFirstProcess_spec_4_7_10(t *t
 		}
 	}
 	requireEverySidecarAgentPodSupervised(t, c)
+}
+
+// supervisedPools are every supervised probe pool the Kind install seeds:
+// the session-mode pools that launch at step 7 (keep, idle, and the pool
+// created while the SDK-warm breaker is open), and the pools whose warm-up
+// launch runs before READY (preConnect and service mode).
+var supervisedPools = []string{
+	supervisedpod.KeepPool,
+	supervisedpod.IdlePool,
+	supervisedpod.PodWarmPool,
+	supervisedpod.PreconnectPool,
+	supervisedpod.ServicePool,
+}
+
+// spec: §4.7.10 (Runtime supervisor, Launch), §4.7.9 (step 4)
+//
+// diagnosis: a supervised pod turned Ready before its adapter accepted the
+// runtime supervisor's ready on CH-SUPERVISE, or its adapter log records no
+// accepted ready at all. The adapter binds its gRPC listener, which the
+// readiness probe reads as READY, only after the supervisor gate returns, so
+// either the bind moved ahead of the gate or the gate stopped waiting for
+// the supervisor's connection. The pools that do not warm up (keep, idle,
+// and pod-warm) carry no dial delay that would hide the reordering, so they
+// are the discriminating cases.
+func TestEverySupervisedPodIsReadyOnlyAfterTheSupervisorConnects_spec_4_7_10(t *testing.T) {
+	c := kind.InstallLenny(t)
+	for _, pool := range supervisedPools {
+		t.Run(pool, func(t *testing.T) {
+			for _, p := range supervisedpod.WaitReadyPods(t, c, pool, 1, 4*time.Minute) {
+				connects := supervisedpod.AdapterEventTimes(t, c, p.Name, adapter.LogSupervisorReady)
+				if err := supervisedpod.CheckReadyAfterSupervisor(p.ReadyAt, connects); err != nil {
+					t.Errorf("pod %s: %v", p.Name, err)
+				}
+			}
+		})
+	}
 }
 
 // podInitState is "REASON:EXIT" of a pod's init container.

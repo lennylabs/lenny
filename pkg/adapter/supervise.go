@@ -64,13 +64,27 @@ type AwaitSupervisorConfig struct {
 	Logger *slog.Logger
 }
 
+// Adapter log events for the CH-SUPERVISE link. The cluster tests read them
+// from the adapter container's log: the ready record dates the supervisor's
+// connection, which the pod's READY must not precede, and the failure record
+// marks a link the adapter has taken down. spec: §4.7.10 (Runtime supervisor,
+// Launch; Liveness); §4.7.9 (step 4).
+const (
+	// LogSupervisorReady is logged once AwaitSupervisor has accepted the
+	// supervisor's connection and its ready has passed the property gate.
+	LogSupervisorReady = "supervisor_ready"
+	// LogSuperviseLinkFailure is logged when an attached link fails.
+	LogSuperviseLinkFailure = "supervise_link_failure"
+)
+
 // AwaitSupervisor accepts the runtime supervisor's one connection and reads
 // its ready. It listens through peerCheckedListener with the agent-UID check
 // (none in nonce-only mode), accepts one connection, and closes the listener,
 // so a later dial is refused. It reads ready within the same timeout, logs
 // each failed property under its enumerated name, and, on a restart pod,
-// fails when a gating property failed. A missing, late, or malformed ready,
-// or a first message other than ready, is an error. On success it returns the
+// fails when a gating property failed. It logs LogSupervisorReady once the
+// ready is accepted. A missing, late, or malformed ready, or a first message
+// other than ready, is an error. On success it returns the
 // link with its reader running; the caller starts the ping with RunPing.
 // spec: §4.7.11 (Runtime supervisor, Property self-test); §28.5.3
 // (CH-SUPERVISE, Endpoint; CH-SUPERVISE, Preconditions; CH-SUPERVISE,
@@ -96,6 +110,7 @@ func AwaitSupervisor(ctx context.Context, cfg AwaitSupervisorConfig) (*Superviso
 		return nil, err
 	}
 	l.properties = props
+	l.logger.Info(LogSupervisorReady)
 	go l.readLoop()
 	return l, nil
 }
@@ -382,7 +397,7 @@ func (l *SupervisorLink) fail(err error) {
 	close(l.failedCh)
 	_ = l.conn.Close()
 	if onFailure != nil {
-		l.logger.Warn("supervise_link_failure", "error", err)
+		l.logger.Warn(LogSuperviseLinkFailure, "error", err)
 		onFailure(err)
 	}
 }

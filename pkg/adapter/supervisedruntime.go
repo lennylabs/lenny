@@ -321,9 +321,13 @@ func (r *SupervisedRuntime) markNotLive(cause LivenessCause) bool {
 	return true
 }
 
+// LogRuntimeNotLive is the adapter log event that records the cause the
+// not-live state was set for. spec: §4.7.10 (Runtime supervisor, Liveness).
+const LogRuntimeNotLive = "runtime_not_live"
+
 // notifyNotLive logs the cause and runs the observer.
 func (r *SupervisedRuntime) notifyNotLive(cause LivenessCause) {
-	r.logger.Warn("runtime_not_live", "cause", string(cause))
+	r.logger.Warn(LogRuntimeNotLive, "cause", string(cause))
 	r.mu.Lock()
 	fn := r.onNotLive
 	r.mu.Unlock()

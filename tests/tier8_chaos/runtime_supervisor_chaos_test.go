@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisedpod"
@@ -189,10 +190,12 @@ func warmingSupervisedPod(t *testing.T, c *kind.Cluster, pool string) supervised
 // lifecycle)
 //
 // diagnosis: a supervised keep pod whose runtime process died while it was
-// idle (it had served a session and its reserved hold had ended) stopped its
-// adapter, or the next session start placed on it did not fail, ran a
-// session on it, or was not followed by the pod's drain. The kept process
-// is gone and a keep pod does not relaunch, so the adapter must keep running
+// idle (it had served a session and its reserved hold had ended) took the
+// Exit channel instead of the Start channel: its adapter exited or restarted
+// after handling the exit, or the pod was deleted or claimed before any
+// start. Or the next session start was not placed on it, succeeded and ran a
+// session on it, or was not followed by the pod's drain. The kept process is
+// gone and a keep pod does not relaunch, so the adapter must keep running
 // and refuse the start that follows the gateway's claim of the idle pod.
 func TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 60 * time.Second})
@@ -205,9 +208,9 @@ func TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10(t *te
 	if err != nil || !strings.Contains(out, `"ok":true`) {
 		t.Fatalf("kill the runtime process of %s: %v\n%s", pod, err, out)
 	}
-	if st, _ := supervisedpod.GetPod(t, c, pod); !st.Container["adapter"].Running {
-		t.Errorf("pod %s: the adapter stopped after the idle runtime process died; it must keep running: %s", pod, st.Describe())
-	}
+	requireStartChannelAfterIdleExit(t, c, pod)
+
+	claim := supervisedpod.WatchClaim(t, c, pod)
 	tenant := supervisedpod.NewTenant(ctx, t, d, "supervisor-idle-start")
 	next, err := d.CreateAndStart(ctx, tenant, supervisedpod.IdleRuntime)
 	if err == nil {
@@ -215,8 +218,42 @@ func TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10(t *te
 		t.Fatalf("the start placed on idle pod %s, the pool's only idle pod, succeeded on %s; a start on a pod "+
 			"whose kept runtime process died must fail and run no session", pod, next.PodAssignment)
 	}
+	if !claim.Claimed() {
+		t.Fatalf("the failed start (%v) never claimed idle pod %s, so it failed for another reason, such as "+
+			"capacity, rather than on the pod whose runtime process died", err, pod)
+	}
 	if last, gone := supervisedpod.WaitGone(t, c, pod, 4*time.Minute); !gone {
 		t.Fatalf("pod %s was not drained within 4m after refusing a start: %s", pod, last.Describe())
+	}
+}
+
+// requireStartChannelAfterIdleExit waits until pod's adapter has recorded
+// the idle runtime process's exit as a not-live cause, lets the window an
+// Exit-channel exit would need pass, and asserts the Start channel's state:
+// the adapter still running with no restart, and the pod still idle, with no
+// claim and no deletion. spec: §4.7.10 (Runtime supervisor, Liveness).
+func requireStartChannelAfterIdleExit(t *testing.T, c *kind.Cluster, pod string) {
+	t.Helper()
+	deadline := time.Now().Add(supLivenessWindow * 3)
+	for len(supervisedpod.AdapterEventTimes(t, c, pod, adapter.LogRuntimeNotLive)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("pod %s: the adapter logged no %s within %s after the idle runtime process died",
+				pod, adapter.LogRuntimeNotLive, supLivenessWindow*3)
+		}
+		time.Sleep(time.Second)
+	}
+	time.Sleep(supLivenessWindow)
+	st, found := supervisedpod.GetPod(t, c, pod)
+	if !found || st.Deleting {
+		t.Fatalf("pod %s was retired before any start after its idle runtime process died: found=%v %s",
+			pod, found, st.Describe())
+	}
+	if a := st.Container["adapter"]; !a.Running || a.RestartCount != 0 {
+		t.Fatalf("pod %s: the adapter exited after the idle runtime process died; the Start channel keeps it "+
+			"running until the next start: %s", pod, st.Describe())
+	}
+	if supervisedpod.ClaimExists(t, c, pod) {
+		t.Fatalf("pod %s was claimed before the test's start", pod)
 	}
 }
 

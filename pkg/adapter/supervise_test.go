@@ -3,8 +3,10 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -142,6 +144,57 @@ func TestAwaitSupervisorAcceptsOnlyTheAgentUIDOnceAndClosesItsListener_spec_28_5
 		}
 		if calls.Load() != 0 {
 			t.Fatal("nonce-only mode ran the UID check")
+		}
+	})
+}
+
+// spec: 4.7.10 (Runtime supervisor, Launch), 4.7.9 (step 4)
+//
+// The ready record dates the supervisor's connection in the adapter log, and
+// the cluster tests compare the pod's READY transition against it, so it is
+// written only for a ready the gate accepted: never for a refused gating
+// property on a restart pod, and never for a missing or malformed ready.
+func TestAwaitSupervisorLogsTheReadyRecordOnlyForAnAcceptedReady_spec_4_7_10(t *testing.T) {
+	auth := SocketPeerAuth{ExpectedUID: currentUID()}
+	cases := []struct {
+		name     string
+		lifetime RuntimeLifetime
+		ready    string
+		accepted bool
+	}{
+		{"keep pod, every property passing", LifetimeKeep, readyLine(), true},
+		{"keep pod, a gating property failing", LifetimeKeep, readyLine(supervisorselftest.PropertyNondumpable), true},
+		{"restart pod, every property passing", LifetimeRestart, readyLine(), true},
+		{"malformed ready", LifetimeKeep, `{"type":"ready","gen":0}`, false},
+		{"first message is not ready", LifetimeKeep, `{"type":"pong","gen":0,"id":1}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			cfg := AwaitSupervisorConfig{Auth: auth, Lifetime: tc.lifetime, Logger: logger, Timeout: 500 * time.Millisecond}
+			_, err := awaitWith(t, cfg, func(s string) { dialFakeSupervisor(t, s, tc.ready) })
+			if tc.accepted != (err == nil) {
+				t.Fatalf("AwaitSupervisor error = %v, want accepted %v", err, tc.accepted)
+			}
+			want := 0
+			if tc.accepted {
+				want = 1
+			}
+			if got := strings.Count(buf.String(), "msg="+LogSupervisorReady); got != want {
+				t.Fatalf("logged %s %d times, want %d:\n%s", LogSupervisorReady, got, want, buf.String())
+			}
+		})
+	}
+	t.Run("restart pod, a gating property failing", func(t *testing.T) {
+		gating := supervisorselftest.PropertyNondumpable
+		var buf bytes.Buffer
+		cfg := AwaitSupervisorConfig{Auth: auth, Lifetime: LifetimeRestart, Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+		if _, err := awaitWith(t, cfg, func(s string) { dialFakeSupervisor(t, s, readyLine(gating)) }); err == nil {
+			t.Fatal("AwaitSupervisor accepted a restart pod whose gating property failed")
+		}
+		if strings.Contains(buf.String(), LogSupervisorReady) {
+			t.Fatalf("logged %s for a refused ready:\n%s", LogSupervisorReady, buf.String())
 		}
 	})
 }

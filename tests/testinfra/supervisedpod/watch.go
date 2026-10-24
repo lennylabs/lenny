@@ -68,3 +68,58 @@ func FirstTerminated(states []PodState, container string) (ContainerState, bool)
 	}
 	return ContainerState{}, false
 }
+
+// ClaimWatch follows the SandboxClaim the gateway creates when it claims one
+// pod, named claim-<pod>. It records whether that claim was created or
+// updated while the watch ran, so a test can tell that a session start was
+// placed on the pod even when the start failed and the claim was removed
+// with the pod. spec: §4.6.1; §5.2 (Recycle lifecycle).
+type ClaimWatch struct {
+	stream *LogStream
+	name   string
+}
+
+// WatchClaim starts watching pod's claim. Start it before the session start
+// whose placement the test reads.
+func WatchClaim(t testing.TB, c *kind.Cluster, pod string) *ClaimWatch {
+	t.Helper()
+	buf := &syncBuffer{}
+	name := "claim-" + pod
+	cmd := c.Kubectl("-n", Namespace, "get", "sandboxclaims", "--field-selector", "metadata.name="+name,
+		"--watch", "--output-watch-events", "-o", "json")
+	cmd.Stdout = buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("watch claim %s: %v", name, err)
+	}
+	w := &ClaimWatch{stream: &LogStream{cmd: cmd, buf: buf}, name: name}
+	t.Cleanup(func() { w.stream.Stop() })
+	return w
+}
+
+// Claimed stops the watch and reports whether the claim was created or
+// updated while it ran.
+func (w *ClaimWatch) Claimed() bool {
+	return claimSeen(w.stream.Stop(), w.name)
+}
+
+// claimSeen reports whether the concatenated watch events in raw carry an
+// ADDED or MODIFIED event for the object named name.
+func claimSeen(raw, name string) bool {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	for {
+		var ev struct {
+			Type   string `json:"type"`
+			Object struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+			} `json:"object"`
+		}
+		if err := dec.Decode(&ev); err != nil {
+			return false // io.EOF, or a truncated trailing event
+		}
+		if (ev.Type == "ADDED" || ev.Type == "MODIFIED") && ev.Object.Metadata.Name == name {
+			return true
+		}
+	}
+}

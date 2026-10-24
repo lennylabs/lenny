@@ -987,7 +987,10 @@
         "pkg/adapter/socketruntime_e2e_test.go",
         "pkg/adapter/sdkwarm_test.go",
         "pkg/adapter/preready_cancel_test.go::TestAwaitSupervisorReadyReadEndsOnCancellation_spec_4_7_9",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestEverySupervisedPodIsReadyOnlyAfterTheSupervisorConnects_spec_4_7_10",
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorLogsTheReadyRecordOnlyForAnAcceptedReady_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter"
@@ -1149,7 +1152,9 @@
         "tests/tier9_security/runtime_supervisor_security_test.go",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2",
-        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10"
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10",
+        "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestEverySupervisedPodIsReadyOnlyAfterTheSupervisorConnects_spec_4_7_10",
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorLogsTheReadyRecordOnlyForAnAcceptedReady_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
@@ -1781,7 +1786,8 @@
         "tests/tier9_security/runtime_supervisor_security_test.go",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestLabelImmutabilityRefusesARuntimeProcessRelabel_spec_17_2",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
-        "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2"
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2",
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10"
       ],
       "packages": [
         "pkg/admission/label_immutability",

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisedpod"
@@ -66,46 +67,110 @@ func catchableSignals() []int {
 	return out
 }
 
-// spec: §4.7.10 (Runtime supervisor, Signals)
+// spec: §4.7.10 (Runtime supervisor, Signals; Liveness), §5.2 (Supervised
+// scrub sequence; Recycle lifecycle)
 //
 // diagnosis: a catchable signal the agent UID sent to the supervisor (PID 1)
-// stopped it answering ping, retired the pod, or reached the runtime
-// process. The supervisor acts on no signal's sender and forwards nothing,
-// so the probe that serves the session must count no signal.
+// stopped it answering ping, stopped it outright, retired the pod, or reached
+// the runtime process. The supervisor acts on no signal's sender and forwards
+// nothing, so the probe that serves the session must count no signal. On a
+// claimed keep pod a missed pong takes the Claim channel, which leaves the
+// pod Ready and running until the release, so the case reads the outcomes a
+// missed pong changes: the adapter's link-failure and not-live records, the
+// supervisor's process state, and the boundary, where a not-live pod retires
+// instead of reaching reserved and serving the tenant's next session.
 func TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 60 * time.Second})
 	c := d.Cluster()
 	supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	tenant := supervisedpod.NewTenant(ctx, t, d, "supervisor-signals")
 	sess, err := d.CreateAndStart(ctx, tenant, supervisedpod.KeepRuntime)
 	if err != nil {
 		t.Fatalf("start a session: %v", err)
 	}
+	// The boundary check terminates the session itself; this cleanup only
+	// covers a failure before it, and its error is ignored.
 	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
+	pod := sess.PodAssignment
 	before := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
 
 	for _, s := range catchableSignals() {
-		r := supervisedpod.Attack(t, c, sess.PodAssignment, superviseprobe.AttackSignalPID1, strconv.Itoa(s))
+		r := supervisedpod.Attack(t, c, pod, superviseprobe.AttackSignalPID1, strconv.Itoa(s))
 		if !r.OK {
 			t.Logf("signal %d to PID 1 refused by the kernel: %s", s, r.Errno)
 		}
 	}
 	// Longer than the rendered ping interval plus timeout, so a supervisor
-	// a signal stopped or killed has missed a pong by now.
+	// a signal stopped or wedged has missed a pong by now.
 	time.Sleep(10 * time.Second)
 
-	st, found := supervisedpod.GetPod(t, c, sess.PodAssignment)
-	if !found || st.Deleting || !st.Container["adapter"].Running || !st.Container["runtime"].Running {
-		t.Fatalf("pod %s did not survive the signals to its supervisor: found=%v %s", sess.PodAssignment, found, st.Describe())
-	}
+	requireSupervisorStillLive(t, c, pod)
 	after := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
 	if after.Token != before.Token {
 		t.Errorf("the runtime process changed from %s to %s after the signals", before.Token, after.Token)
 	}
 	if len(after.Signals) != 0 {
 		t.Errorf("the runtime process received signals sent to the supervisor: %v", after.Signals)
+	}
+	requireBoundaryKeepsThePod(ctx, t, d, c, tenant, sess, before.Token)
+}
+
+// requireSupervisorStillLive asserts what a missed pong on a claimed keep
+// pod would change while the pod is still claimed: the supervisor (PID 1) is
+// running and not stopped, and the adapter recorded no CH-SUPERVISE link
+// failure and no not-live cause. spec: §4.7.10 (Runtime supervisor,
+// Liveness).
+func requireSupervisorStillLive(t *testing.T, c *kind.Cluster, pod string) {
+	t.Helper()
+	st, found := supervisedpod.GetPod(t, c, pod)
+	if !found || st.Deleting || !st.Container["adapter"].Running || !st.Container["runtime"].Running {
+		t.Fatalf("pod %s did not survive the signals to its supervisor: found=%v %s", pod, found, st.Describe())
+	}
+	var pid1 *superviseprobe.Process
+	procs := supervisedpod.Processes(t, c, pod)
+	for i := range procs {
+		if procs[i].PID == 1 {
+			pid1 = &procs[i]
+		}
+	}
+	if pid1 == nil || pid1.State == "T" || pid1.State == "t" || pid1.State == "Z" {
+		t.Errorf("pod %s: the supervisor (PID 1) is stopped or gone after the signals: %+v", pod, pid1)
+	}
+	for _, event := range []string{adapter.LogSuperviseLinkFailure, adapter.LogRuntimeNotLive} {
+		if at := supervisedpod.AdapterEventTimes(t, c, pod, event); len(at) != 0 {
+			t.Errorf("pod %s: the adapter logged %s at %v after the signals to the supervisor", pod, event, at)
+		}
+	}
+}
+
+// requireBoundaryKeepsThePod ends the session and asserts the pod passed its
+// boundary with a live runtime: the claim reaches reserved, which needs a
+// scrub report with the runtime live, and the tenant's next session lands on
+// the same pod and the same runtime process. A pod whose supervisor missed a
+// pong is not live, so it retires at the release instead. spec: §5.2
+// (Supervised scrub sequence; Recycle lifecycle); §4.7.10 (Runtime
+// supervisor, Liveness).
+func requireBoundaryKeepsThePod(ctx context.Context, t *testing.T, d *sessiondriver.Driver, c *kind.Cluster,
+	tenant string, sess *sessiondriver.Session, token string,
+) {
+	t.Helper()
+	if err := d.Terminate(ctx, tenant, sess.ID); err != nil {
+		t.Fatalf("terminate session %s: %v", sess.ID, err)
+	}
+	supervisedpod.WaitClaimPhase(t, c, sess.PodAssignment, "reserved", 2*time.Minute)
+	next, err := d.CreateAndStart(ctx, tenant, supervisedpod.KeepRuntime)
+	if err != nil {
+		t.Fatalf("start the tenant's next session: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, next.ID) })
+	if next.PodAssignment != sess.PodAssignment {
+		t.Fatalf("the tenant's next session landed on %s, want the reserved pod %s", next.PodAssignment, sess.PodAssignment)
+	}
+	if rec := supervisedpod.Report(ctx, t, d, tenant, next.ID); rec.Token != token {
+		t.Errorf("pod %s served the next session on runtime process %s, want the kept process %s",
+			sess.PodAssignment, rec.Token, token)
 	}
 }
 
