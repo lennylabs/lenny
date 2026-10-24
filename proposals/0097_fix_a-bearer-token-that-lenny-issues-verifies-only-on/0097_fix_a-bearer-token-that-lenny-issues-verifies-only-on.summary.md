@@ -143,7 +143,7 @@ None. OD1, OD2, and OD3 are settled (D23, D24, D26).
 - SPEC-1 — spec/10_gateway-internals.md, spec/16_observability.md, spec/17_deployment-topology.md, spec/27_web-playground.md — signing algorithm, providers, reference immutability, dev posture, signing topology, playground signer references, the "dev HMAC JWT" renames in §10.3, §17.6, and §27, `typ` stamping, and the `session_mint` audit type.
 - SPEC-2 — spec/10_gateway-internals.md — verifier key set and three-rollout rotation, replacing "Key rotation".
 - SPEC-3 — spec/10_gateway-internals.md, spec/13_security-model.md, spec/27_web-playground.md — fixed lifetime, `auth.capabilityTokenTtlSeconds` as the default for playground bearers and `POST /v1/oauth/token` JWTs, the request `expires_in` minimum, and the §13.3 request `expires_in` row.
-- SPEC-4 — spec/10_gateway-internals.md, spec/15_external-api-surface.md — KMS signing failure mode with throttling backpressure and `Retry-After`.
+- SPEC-4 — spec/10_gateway-internals.md, spec/11_policy-and-controls.md, spec/15_external-api-surface.md — KMS signing failure mode with throttling backpressure and `Retry-After`, and the §11.6 automatic-breaker ownership sentence.
 - SPEC-5 — spec/16_observability.md — signing errors and sign requests metrics, and the two signing alerts.
 - SPEC-6 — spec/04_system-components.md, spec/17_deployment-topology.md — §4.3 item 3 minting topology and the §17.7 audit-lock remedy.
 - SPEC-7 — spec/13_security-model.md, spec/08_recursive-delegation.md, spec/15_external-api-surface.md — signing outside the lock, the step (1a) re-read, `subject_token_revoked`, the per-dialect caps, the §13.3 in-process mint exception, and the playground caller refusal.

@@ -129,7 +129,7 @@ The row stays one physical line.
 | `expires_in` (request, Lenny extension) | Optional requested lifetime of an issued JWT, in seconds. The [§10.2](10_gateway-internals.md#102-authentication) "JWT claims" `expiry` rule states how it, or its absence, sets `exp` |
 ```
 
-### SPEC-4 · spec/10_gateway-internals.md § 10.2 Authentication: "KMS signing failure mode"; spec/15_external-api-surface.md error table: `KMS_SIGNING_UNAVAILABLE`
+### SPEC-4 · spec/10_gateway-internals.md § 10.2 Authentication: "KMS signing failure mode"; spec/15_external-api-surface.md error table: `KMS_SIGNING_UNAVAILABLE`; spec/11_policy-and-controls.md § 11.6 Circuit breakers: "Two types of circuit breaker exist in the platform."
 
 **Edit 1.** Replace the whole paragraph that begins "**KMS signing failure mode:** If the KMS service is unavailable when the gateway attempts to mint a new session JWT" with:
 
@@ -142,6 +142,8 @@ The row stays one physical line.
 ```markdown
 | `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         | The JWT signer (gateway or Token Service) could not obtain a signature, so no token was minted. The response carries `Retry-After`. See [Section 10.2](10_gateway-internals.md#102-authentication). |
 ```
+
+**Edit 3.** In spec/11_policy-and-controls.md §11.6, in the paragraph that begins "**Two types of circuit breaker exist in the platform.**", replace "in-memory, managed by each gateway replica," with "in-memory, held by each replica of the process that makes the protected calls,". The rest of the paragraph stays unchanged.
 
 ### SPEC-5 · spec/16_observability.md § 16.1 Metrics and § 16.5 Alerting Rules and SLOs: signing metrics and alerts
 
@@ -376,6 +378,7 @@ The sentence "When the `strict=true` check returns 503, the response body identi
 - spec/04_system-components.md (SPEC-6)
 - spec/08_recursive-delegation.md (SPEC-7)
 - spec/10_gateway-internals.md (SPEC-1, SPEC-2, SPEC-3, SPEC-4)
+- spec/11_policy-and-controls.md (SPEC-4)
 - spec/13_security-model.md (SPEC-3, SPEC-7, SPEC-10)
 - spec/15_external-api-surface.md (SPEC-4, SPEC-7)
 - spec/16_observability.md (SPEC-1, SPEC-5)
