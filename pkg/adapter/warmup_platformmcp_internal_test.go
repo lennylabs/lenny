@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // warmUpServer is a Server holding f's supervised runtime, with a manifest
@@ -184,6 +185,61 @@ func TestFirstClaimAfterWarmUpKeepsTheWarmUpPlatformMCPServer_spec_15_4_3(t *tes
 		_ = c.conn.Close()
 		t.Fatal("the session's manifest write re-armed the running server on the session nonce")
 	}
+}
+
+// spec: §4.7.10 (Runtime supervisor, SDK-warm; Runtime supervisor, Launch),
+// §4.7.6 (mcpNonce row), §15.4.3 (Authentication), §6.1
+// diagnosis: after an idle DemoteSDK ended the SDK-warm process, the platform
+// MCP server the warm-up preparation bound kept validating only the warm-up
+// nonce, and the next session's claim took that server over as already bound,
+// so the process launched at startup step 7 read the final manifest's nonce
+// and its platform MCP initialize was refused. Read demoteIdleSDK,
+// releaseWarmUpPlatformMCPLocked, and mcpArmingHeldLocked.
+func TestIdleDemotionAfterWarmUpRearmsThePlatformMCPServerOnTheSessionNonce_spec_4_7_10(t *testing.T) {
+	f := newSupervisedFixture(t, LifetimeKeep, LaunchPreconnectSDKWarm, nil)
+	s := warmUpServer(t, f, RuntimeKindAgent)
+	if err := s.PreConnect(startCtx(t, 5*time.Second)); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	_, warmNonce := s.PodMCPArming()
+	if warmNonce == "" {
+		t.Fatal("the warm-up preparation armed no platform MCP server")
+	}
+
+	if _, err := s.DemoteSDK(startCtx(t, 5*time.Second), &adapterv1.DemoteSDKRequest{}); err != nil {
+		t.Fatalf("DemoteSDK: %v", err)
+	}
+	if _, nonce := s.PodMCPArming(); nonce != "" {
+		t.Fatalf("the idle demotion left the warm-up platform MCP server armed on nonce %q", nonce)
+	}
+	if c := dialInitialized(s.MCPSocket, warmNonce); c != nil {
+		_ = c.conn.Close()
+		t.Fatal("the platform MCP server still validates the warm-up nonce after the demotion ended the warm-up process")
+	}
+
+	claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+	if err != nil {
+		t.Fatalf("claim alice: %v", err)
+	}
+	if !claim.startMCP || claim.platformBound {
+		t.Fatalf("first claim after an idle demotion: startMCP=%v platformBound=%v, want the once-per-pod start with no server bound",
+			claim.startMCP, claim.platformBound)
+	}
+	sessionNonce, err := s.writeSessionManifest(manifestInputs{})
+	if err != nil {
+		t.Fatalf("write the session manifest: %v", err)
+	}
+	if err := s.startClaimedPlatformMCP(claim, sessionNonce); err != nil {
+		t.Fatalf("startClaimedPlatformMCP: %v", err)
+	}
+	if id, nonce := s.PodMCPArming(); id != "alice" || nonce != sessionNonce {
+		t.Fatalf("PodMCPArming = (%q, %q), want (alice, the session manifest's nonce)", id, nonce)
+	}
+	c := dialInitialized(s.MCPSocket, sessionNonce)
+	if c == nil {
+		t.Fatal("the platform MCP server refused the nonce in the final manifest the step-7 process reads")
+	}
+	_ = c.conn.Close()
 }
 
 // spec: §4.7.10 (Runtime supervisor, Launch), §5.1

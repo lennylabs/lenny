@@ -188,6 +188,10 @@ type Record struct {
 	// sent to PID 1 must not appear here. spec: §4.7.10 (Runtime
 	// supervisor, Signals).
 	Signals map[string]int `json:"signals"`
+	// Uncounted names the catchable signals the probe does not register,
+	// so a forwarded one would not appear in Signals. It is empty when the
+	// process runs with asynchronous preemption off.
+	Uncounted []string `json:"uncounted,omitempty"`
 	// RecordServerError is the record server's bind failure, if any.
 	RecordServerError string `json:"recordServerError,omitempty"`
 }

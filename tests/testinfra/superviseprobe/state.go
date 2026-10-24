@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,6 +26,8 @@ type state struct {
 
 	sigs chan os.Signal
 	srv  *recordServer
+	// uncounted names the catchable signals the probe does not register.
+	uncounted []string
 
 	// mu guards links, cleanups, and signals.
 	mu       sync.Mutex
@@ -52,7 +55,7 @@ func newState(stderr io.Writer, launchMarker string) (*state, error) {
 		delay:    delay,
 		signals:  map[string]int{},
 	}
-	st.countSignals(stderr)
+	st.countSignals(stderr, os.Exit)
 	st.srv = startRecordServer(RecordSocket, st)
 	return st, nil
 }
@@ -85,30 +88,64 @@ func claimDialDelay(raw, marker string) (time.Duration, error) {
 	return delay, nil
 }
 
-// countSignals counts every catchable signal the process receives, except
-// SIGPIPE, which a closed adapter connection raises on a write and which the
-// Go runtime already turns into a write error. SIGURG is left alone because
-// the Go runtime uses it for goroutine preemption. Each signal is logged as
-// "received signal NAME" so a test streaming the runtime container's log
-// sees it even when the pod is gone before a report can be read.
-func (st *state) countSignals(stderr io.Writer) {
+// countSignals counts every catchable signal the process receives and logs
+// each one as "received signal NAME", so a test streaming the runtime
+// container's log sees it even when the pod is gone before a report can be
+// read. The fault signals and SIGPIPE are registered too: Go delivers only a
+// kill()-sent fault signal to the channel and still crashes on a real fault,
+// and a write to a closed connection still returns EPIPE, while an
+// unregistered fault signal or SIGPIPE would be dropped and a forwarded one
+// would go unseen. SIGURG is counted only when the process's GODEBUG turns
+// off asynchronous preemption, the Go runtime's own use of SIGURG; otherwise
+// the record lists it as uncounted. SIGTERM is counted, logged, and then
+// honored by exiting 0, as a Standard-level runtime ends on SIGTERM, so a
+// supervisor `end` finishes on the SIGTERM rather than at its SIGKILL.
+// spec: §4.7.10 (Runtime supervisor, Signals; End); §15.4 (Standard-level
+// graceful shutdown).
+func (st *state) countSignals(stderr io.Writer, exit func(code int)) {
+	counted, uncounted := countedSignals(os.Getenv("GODEBUG"))
+	st.uncounted = uncounted
 	st.sigs = make(chan os.Signal, 64)
+	signal.Notify(st.sigs, counted...)
+	go st.recordSignals(stderr, exit)
+}
+
+// countedSignals splits the catchable signals into those the probe
+// registers and the names of those it leaves to the Go runtime. Only SIGURG
+// can be left out, when godebug does not set asyncpreemptoff=1.
+func countedSignals(godebug string) (counted []os.Signal, uncounted []string) {
+	preemptOff := false
+	for _, kv := range strings.Split(godebug, ",") {
+		if strings.TrimSpace(kv) == "asyncpreemptoff=1" {
+			preemptOff = true
+		}
+	}
 	for s := syscall.Signal(1); s < 65; s++ {
-		switch s {
-		case syscall.SIGKILL, syscall.SIGSTOP, syscall.SIGPIPE, syscall.SIGURG,
-			syscall.SIGSEGV, syscall.SIGBUS, syscall.SIGFPE, syscall.SIGILL:
+		switch {
+		case s == syscall.SIGKILL || s == syscall.SIGSTOP:
+			continue
+		case s == syscall.SIGURG && !preemptOff:
+			uncounted = append(uncounted, s.String())
 			continue
 		}
-		signal.Notify(st.sigs, s)
+		counted = append(counted, s)
 	}
-	go func() {
-		for s := range st.sigs {
-			st.mu.Lock()
-			st.signals[s.String()]++
-			st.mu.Unlock()
-			fmt.Fprintf(stderr, "supervise-probe: %s %s\n", SignalLogPrefix, s)
+	return counted, uncounted
+}
+
+// recordSignals counts and logs each signal st.sigs delivers, and exits 0
+// through exit after logging SIGTERM.
+func (st *state) recordSignals(stderr io.Writer, exit func(code int)) {
+	for s := range st.sigs {
+		st.mu.Lock()
+		st.signals[s.String()]++
+		st.mu.Unlock()
+		fmt.Fprintf(stderr, "supervise-probe: %s %s\n", SignalLogPrefix, s)
+		if s == syscall.SIGTERM {
+			exit(exitOK)
+			return
 		}
-	}()
+	}
 }
 
 // close stops the signal counter and the record server.
@@ -134,6 +171,7 @@ func (st *state) record() Record {
 		Env:             st.env,
 		Cleanups:        append([]CleanupRecord{}, st.cleanups...),
 		Signals:         signals,
+		Uncounted:       append([]string(nil), st.uncounted...),
 	}
 	if st.delay > 0 {
 		r.DialDelay = st.delay.String()

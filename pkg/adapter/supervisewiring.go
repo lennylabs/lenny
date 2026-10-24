@@ -84,3 +84,14 @@ func (s *Server) markWarmUpPlatformMCPArmed() {
 	defer s.mu.Unlock()
 	s.mcpWarmUpArmed = s.mcpCancel != nil
 }
+
+// releaseWarmUpPlatformMCPLocked ends the warm-up binding's hold on the
+// platform MCP server once the warm-up process is gone before any claim, so
+// the server counts as residue no live process uses: an idle cancellation
+// stops it, and the next claim starts the server on its own manifest's
+// nonce rather than taking over one that validates only the warm-up nonce.
+// Callers hold s.mu. spec: §15.4.3; §4.7.6 (mcpNonce row); §4.7.10
+// (Runtime supervisor, SDK-warm).
+func (s *Server) releaseWarmUpPlatformMCPLocked() {
+	s.mcpWarmUpArmed = false
+}

@@ -417,14 +417,24 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 // demoteIdleSDK is DemoteSDK on a registry that holds no entry: no session
 // is running, so no session_end is owed and no slot is released. It tears
 // the pre-connected SDK down, clears sdkConnected, and stops a pod-wide
-// MCP surface no session uses. spec: §4.7; §6.1; §28.5.3 (CH-MSGSOCK,
-// Session frame writes).
+// MCP surface no session uses.
+//
+// The demotion ends the warm-up process, so the platform MCP server the
+// warm-up preparation bound on the warm-up manifest's nonce serves no live
+// process. The warm-up binding is released before the idle cancellation,
+// which then stops that server; the next session's claim starts the server
+// on the nonce in the final manifest its step-7 process reads.
+//
+// spec: §4.7; §6.1; §4.7.10 (Runtime supervisor, SDK-warm; Runtime
+// supervisor, Launch); §4.7.6 (mcpNonce row); §15.4.3; §28.5.3
+// (CH-MSGSOCK, Session frame writes).
 func (s *Server) demoteIdleSDK(ctx context.Context, sw SDKWarmRuntime) (*adapterv1.DemoteSDKResponse, error) {
 	if err := sw.DemoteSDK(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
 	}
 	s.mu.Lock()
 	s.sdkConnected = false
+	s.releaseWarmUpPlatformMCPLocked()
 	s.mu.Unlock()
 	s.cancelPodMCPIfRuntimeIdle()
 	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil

@@ -311,6 +311,10 @@ spec:
   env:
     - name: PROBE_RUNTIME_ENV
       value: from-runtime-env
+    # Asynchronous preemption off frees SIGURG from the Go runtime, so the
+    # probe counts it and the tier-9 signal case observes a forwarded copy.
+    - name: GODEBUG
+      value: asyncpreemptoff=1
   # The Runtime controller mirrors this CR into the runtime registry over the
   # bootstrap row, so the CR carries the same argv-only setup-command policy
   # the bootstrap overlay seeds: the distroless adapter image has no /bin/sh

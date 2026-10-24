@@ -73,7 +73,10 @@ func catchableSignals() []int {
 // diagnosis: a catchable signal the agent UID sent to the supervisor (PID 1)
 // stopped it answering ping, stopped it outright, retired the pod, or reached
 // the runtime process. The supervisor acts on no signal's sender and forwards
-// nothing, so the probe that serves the session must count no signal. On a
+// nothing, so the probe that serves the session must count no signal. The
+// probe registers every catchable signal, the fault signals, SIGPIPE, and
+// (with asynchronous preemption off) SIGURG included, and it exits on SIGTERM,
+// so a forwarded SIGTERM shows as a changed process token. On a
 // claimed keep pod a missed pong takes the Claim channel, which leaves the
 // pod Ready and running until the release, so the case reads the outcomes a
 // missed pong changes: the adapter's link-failure and not-live records, the
@@ -95,6 +98,10 @@ func TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10(t *testin
 	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
 	pod := sess.PodAssignment
 	before := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
+	if len(before.Uncounted) != 0 {
+		t.Fatalf("the keep pool's probe does not count %v, so a forwarded copy would go unseen; its Runtime env "+
+			"must set GODEBUG=asyncpreemptoff=1", before.Uncounted)
+	}
 
 	for _, s := range catchableSignals() {
 		r := supervisedpod.Attack(t, c, pod, superviseprobe.AttackSignalPID1, strconv.Itoa(s))

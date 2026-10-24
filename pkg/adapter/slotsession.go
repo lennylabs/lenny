@@ -437,9 +437,9 @@ func (s *Server) cancelPodMCPIfRuntimeIdle() {
 
 // mcpArmingHeldLocked reports that the session which armed the pod's MCP
 // surface still holds a slot on the pod, or that the surface is the
-// warm-up binding no claim has taken yet, so the surface is one a live
-// process is using rather than a departed session's residue. Callers
-// hold s.mu. spec: §15.4.3.
+// warm-up binding no claim has taken yet and whose warm-up process has not
+// been ended, so the surface is one a live process is using rather than a
+// departed session's residue. Callers hold s.mu. spec: §15.4.3.
 func (s *Server) mcpArmingHeldLocked() bool {
 	if s.mcpWarmUpArmed {
 		return true

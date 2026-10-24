@@ -339,12 +339,14 @@ func TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4
 }
 
 // spec: §4.7.10 (Runtime supervisor, SDK-warm; Launch), §6.1 (Circuit-breaker
-// for SDK-warm pools)
+// for SDK-warm pools), §15.4.3 (Authentication)
 //
 // diagnosis: a sidecar preConnect pod did not launch its runtime process at
 // warm-up, did not serve a session on that process, did not serve a session
 // whose workspace forced a demotion (DemoteSDK must end the process and a
-// step-7 launch serve the session), or a pod created while the pool's
+// step-7 launch serve the session, whose platform MCP call authenticates
+// with the final manifest's nonce rather than finding the server still
+// armed on the warm-up nonce), or a pod created while the pool's
 // SDK-warm circuit breaker was open launched at warm-up instead of at the
 // session's step 7. A step-7 launch that reports the probe's dial delay
 // slept a delay sized for the warm-up timeout inside the launching start's
@@ -385,6 +387,12 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		if rec.DialDelay != "" {
 			t.Errorf("the step-7 launch on demoted pod %s slept dial delay %s; only the warm-up launch takes it",
 				sess.PodAssignment, rec.DialDelay)
+		}
+		// The demotion ended the warm-up process, so the platform MCP server
+		// must validate the nonce of the final manifest the step-7 process
+		// read rather than the warm-up manifest's nonce.
+		if mcp := supervisedpod.Action(ctx, t, d, tenant, sess.ID, superviseprobe.CmdMCP); !mcp.OK {
+			t.Errorf("platform MCP call from the step-7 process on demoted pod %s failed: %s", sess.PodAssignment, mcp.Error)
 		}
 	})
 	t.Run("pod created while the breaker is open launches at step 7", func(t *testing.T) {
