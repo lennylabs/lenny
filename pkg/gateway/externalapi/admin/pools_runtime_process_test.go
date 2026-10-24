@@ -5,10 +5,14 @@ package admin_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -228,4 +232,119 @@ func TestBootstrapPoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {
 // plain quotes a decoded error message carries.
 func unescape(s string) string {
 	return string(bytes.ReplaceAll([]byte(s), []byte(`\"`), []byte(`"`)))
+}
+
+// errPoolRead is the transient store failure flakyPoolStore injects.
+var errPoolRead = errors.New("pool store unavailable")
+
+// flakyPoolStore wraps the in-memory pool store. It fails the failGet-th
+// Get call counted from arming with errPoolRead, which is not
+// poolstore.ErrNotFound, and counts the Update calls that reach the store.
+// With skipStoreValidation set, Update applies the mutation without the
+// store-side validations, standing in for a store whose write succeeds once
+// the interim refusal of `restart` is gone from those validations.
+type flakyPoolStore struct {
+	*poolstore.Memory
+	armed               bool
+	gets                int
+	failGet             int
+	updates             int
+	skipStoreValidation bool
+}
+
+func (f *flakyPoolStore) Get(ctx context.Context, name string) (poolstore.Pool, error) {
+	if f.armed {
+		f.gets++
+		if f.gets == f.failGet {
+			return poolstore.Pool{}, errPoolRead
+		}
+	}
+	return f.Memory.Get(ctx, name)
+}
+
+func (f *flakyPoolStore) Update(ctx context.Context, name string, mutate func(*poolstore.Pool) error) (poolstore.Pool, error) {
+	f.updates++
+	if !f.skipStoreValidation {
+		return f.Memory.Update(ctx, name, mutate)
+	}
+	p, err := f.Memory.Get(ctx, name)
+	if err != nil {
+		return poolstore.Pool{}, err
+	}
+	if err := mutate(&p); err != nil {
+		return poolstore.Pool{}, err
+	}
+	p.Generation++
+	return p, nil
+}
+
+// runtimeProcessReadGet is the position, among the Get calls one PUT makes
+// with a runtime store wired, of the read the recycle.runtimeProcess check
+// performs: after the If-Match read, the credential-delivery read, and the
+// cross-tenant and preConnect read. The response message pins the failure
+// to that check, so a change in the order fails the test rather than
+// passing it vacuously.
+const runtimeProcessReadGet = 4
+
+// spec: §5.2 (Runtime-process lifetime), §15.1 (dryRun)
+// diagnosis: the PUT admission of recycle.runtimeProcess skips the
+// restartable refusal when its read of the stored pool fails with an error
+// other than not-found, so a persisted PUT or a dry run selecting `restart`
+// on a non-restartable runtime reaches the store or the preview (and, once
+// the interim refusal is gone, is admitted) instead of being refused.
+func TestUpdatePoolRuntimeProcessReadFailureFailsClosed_spec_5_2(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                string
+		query               string
+		skipStoreValidation bool
+	}{
+		{"persisted PUT", "", false},
+		{"persisted PUT without the interim store refusal", "", true},
+		{"dry-run PUT", "?dryRun=true", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &flakyPoolStore{
+				Memory: poolstore.NewMemory(), failGet: runtimeProcessReadGet,
+				skipStoreValidation: tc.skipStoreValidation,
+			}
+			runtimes := runtimestore.NewMemory()
+			seedLifetimeRuntimes(t, runtimes)
+			router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+				Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+				Audit: &recordingAudit{},
+			}).WithRuntimes(runtimes).WithPools(store)
+			if err := store.Create(context.Background(), poolstore.Pool{
+				Name: "lt", RuntimeRef: "legacy", ExecutionMode: runtimestore.ExecutionModeSession,
+			}); err != nil {
+				t.Fatalf("seed pool: %v", err)
+			}
+			h := router.Handler()
+			body, _ := json.Marshal(admin.UpdatePoolRequest{
+				SessionPolicy: lifetimePolicy(0, 5, runtimestore.RuntimeProcessRestart, true),
+			})
+			req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/pools/lt"+tc.query, bytes.NewReader(body)))
+			req.Header.Set("If-Match", currentPoolETag(h, "/v1/admin/pools/lt"))
+			store.armed = true
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusInternalServerError ||
+				!bytes.Contains(rr.Body.Bytes(), []byte(`"INTERNAL_ERROR"`)) ||
+				!bytes.Contains(rr.Body.Bytes(), []byte("recycle.runtimeProcess check")) {
+				t.Fatalf("status %d body %s, want 500 INTERNAL_ERROR from the recycle.runtimeProcess check", rr.Code, rr.Body.Bytes())
+			}
+			if store.updates != 0 {
+				t.Errorf("store Update called %d times, want 0: the refused PUT reached the store", store.updates)
+			}
+			if store.gets != runtimeProcessReadGet {
+				t.Errorf("Get calls %d, want %d: the request read the pool after the failed read", store.gets, runtimeProcessReadGet)
+			}
+			stored, err := store.Memory.Get(context.Background(), "lt")
+			if err != nil || stored.SessionPolicy != nil {
+				t.Errorf("stored pool %+v (err %v), want the seeded row unchanged", stored, err)
+			}
+		})
+	}
 }

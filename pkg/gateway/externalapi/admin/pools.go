@@ -1700,12 +1700,19 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 // non-restartable runtime and a sessionPolicy that newly selects `restart`
 // are both caught. An unresolved runtime, including one read while no
 // runtime store is wired, reads as not restartable. A missing pool is left
-// to the persist and preview stages, which resolve the 404. It writes the
-// failure to w and returns false. spec: §5.2 (Runtime-process lifetime).
+// to the persist and preview stages, which resolve the 404; any other read
+// failure refuses the request with 500, so the refusal fails closed rather
+// than admitting a pool it could not evaluate. It writes the failure to w
+// and returns false. spec: §5.2 (Runtime-process lifetime).
 func (r *Router) validateUpdateRuntimeProcess(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) bool {
 	current, err := r.pools.Get(req.Context(), name)
-	if err != nil {
+	if errors.Is(err, poolstore.ErrNotFound) {
 		return true
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"read pool for the recycle.runtimeProcess check: "+err.Error(), nil)
+		return false
 	}
 	applyPoolUpdateMerge(&current, body)
 	if verr := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), current.RuntimeRef), current); verr != nil {
