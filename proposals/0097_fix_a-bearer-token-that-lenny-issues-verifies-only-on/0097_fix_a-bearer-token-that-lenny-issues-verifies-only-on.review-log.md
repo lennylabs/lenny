@@ -1491,6 +1491,9 @@ OPEN: DEFERRED line 910 (client-guide half) and OPEN line 746 are not closed. do
 OPEN: Standing context "Deferred" item on docs/operator-guide/security.md and docs/getting-started/architecture.md (review-log line 259 OPEN) is not closed. Both pages still name the admin credential as the only in-process mint, and DOCS-2 does not edit those passages (lands in non-spec-changes.md DOCS-2).
 DECISION: no summary edit for open decisions. Every unclosed OPEN in this log is a separate pre-existing finding, a verification question, or a non-spec carry-forward; OD1, OD2, and OD3 are settled (D23, D24, D26), so "None" in the summary stays accurate.
 
+### [f2.other-proposals]
+DECISION: 0095 impact row extended with the `Rehydrate` change: CODE-6 item 6 replaces carry-forward with a swap that keeps the read's rows plus `jti`s revoked after the read began, which retires 0095's review-log premise (0095 review-log.md:1812); CODE-3 item 7, T1.25, and the `allTenantsLister` wiring survive and now also cover running replicas, and the wiring row stays in place. Written in summary `## Impacts on other proposals`, 0095 row. Authority: pkg/gateway/credentials/revocation/revocation.go:138-143; cmd/lenny-gateway/billing_security_workers.go:202; cmd/lenny-gateway/release_wiring_test.go:103; 0097 non-spec-changes.md:83; 0095 status.md:5,12.
+
 ## Retired
 
 No ledger entry has been retired.
