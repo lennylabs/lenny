@@ -35,37 +35,71 @@ type selftestPodSpec struct {
 	CredReadersGID   int64
 }
 
+// chartDefaultAgentNamespace is the first entry of the chart's default
+// agentNamespaces list, the namespace an install whose values file leaves
+// agentNamespaces unset places its agent pods in. spec: §24.2; §17.2.
+const chartDefaultAgentNamespace = "lenny-agents"
+
 // errSelftestPodInput is the class of every values-file or flag input the
 // self-test pod cannot be built from.
 var errSelftestPodInput = errors.New("preflight supervisor: cannot build the self-test pod")
 
-// selftestPodSpecFromValues resolves the pod inputs from the values file. It
-// refuses a values file that names no agent namespace, no supervisor image,
-// or no lenny-cred-readers GID, because a pod built from a guessed value
-// would test a namespace, an image, or an fsGroup other than the install's.
+// selftestPodSpecFromValues resolves the pod inputs from the values file.
+// A values file that omits agentNamespaces or security.podUIDs resolves them
+// to the chart defaults, the same values the controller's pod builder and the
+// lenny-pod-security webhook apply to that install, so the pod's fsGroup is
+// the GID the webhook enforces. It refuses a values file with no supervisor
+// image, because the chart default for controller.supervisorImage is empty,
+// and an agentNamespaces entry with an empty name.
 // spec: §24.2; §13.1 (Runtime supervisor volume; Container identity).
 func selftestPodSpecFromValues(v preflightValues, runtimeClass, name string) (selftestPodSpec, error) {
-	switch {
-	case runtimeClass == "":
+	if runtimeClass == "" {
 		return selftestPodSpec{}, fmt.Errorf("%w: --runtime-class is required", errSelftestPodInput)
-	case len(v.AgentNamespaces) == 0 || v.AgentNamespaces[0].Name == "":
-		return selftestPodSpec{}, fmt.Errorf("%w: the values file names no agentNamespaces", errSelftestPodInput)
-	case v.Controller.SupervisorImage == "":
+	}
+	if v.Controller.SupervisorImage == "" {
 		return selftestPodSpec{}, fmt.Errorf("%w: the values file sets no controller.supervisorImage", errSelftestPodInput)
-	case v.Security.PodUIDs.CredReadersGID == 0:
-		return selftestPodSpec{}, fmt.Errorf("%w: the values file sets no security.podUIDs.credReadersGID", errSelftestPodInput)
+	}
+	namespace, err := selftestNamespace(v)
+	if err != nil {
+		return selftestPodSpec{}, err
 	}
 	uids := v.Security.PodUIDs
-	if uids.Adapter == podspec.SupervisorStageUID || uids.Agent == podspec.SupervisorStageUID {
+	adapter := identityOrDefault(uids.Adapter, podspec.AdapterUID)
+	agent := identityOrDefault(uids.Agent, podspec.AgentUID)
+	if adapter == podspec.SupervisorStageUID || agent == podspec.SupervisorStageUID {
 		return selftestPodSpec{}, fmt.Errorf("%w: the supervisor stage UID %d collides with security.podUIDs", errSelftestPodInput, podspec.SupervisorStageUID)
 	}
 	return selftestPodSpec{
 		Name:             name,
-		Namespace:        v.AgentNamespaces[0].Name,
+		Namespace:        namespace,
 		RuntimeClassName: runtimeClass,
 		SupervisorImage:  v.Controller.SupervisorImage,
-		CredReadersGID:   uids.CredReadersGID,
+		CredReadersGID:   identityOrDefault(uids.CredReadersGID, podspec.CredReadersGID),
 	}, nil
+}
+
+// selftestNamespace is the install's first agent namespace: the values
+// file's first agentNamespaces entry, or the chart default when the file
+// lists none. spec: §24.2.
+func selftestNamespace(v preflightValues) (string, error) {
+	if len(v.AgentNamespaces) == 0 {
+		return chartDefaultAgentNamespace, nil
+	}
+	if v.AgentNamespaces[0].Name == "" {
+		return "", fmt.Errorf("%w: the first agentNamespaces entry has no name", errSelftestPodInput)
+	}
+	return v.AgentNamespaces[0].Name, nil
+}
+
+// identityOrDefault resolves a security.podUIDs value the way the chart and
+// the controller's pod builder do: an unset (zero) value is the default.
+// Zero is never a legitimate override because §13.1 forbids root.
+// spec: §13.1 (Container identity).
+func identityOrDefault(override, def int64) int64 {
+	if override != 0 {
+		return override
+	}
+	return def
 }
 
 // newSelftestPodName mints a unique self-test pod name.

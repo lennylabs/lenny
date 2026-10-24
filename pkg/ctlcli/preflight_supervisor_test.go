@@ -131,10 +131,8 @@ func TestPreflightSupervisorRefusesIncompleteValues_spec_24_2(t *testing.T) {
 		runtimeClass string
 	}{
 		"no runtime class":         {func(*preflightValues) {}, ""},
-		"no agent namespace":       {func(v *preflightValues) { v.AgentNamespaces = nil }, "runc"},
-		"empty agent namespace":    {func(v *preflightValues) { v.AgentNamespaces[0].Name = "" }, "runc"},
+		"unnamed agent namespace":  {func(v *preflightValues) { v.AgentNamespaces[0].Name = "" }, "runc"},
 		"no supervisor image":      {func(v *preflightValues) { v.Controller.SupervisorImage = "" }, "runc"},
-		"no cred-readers GID":      {func(v *preflightValues) { v.Security.PodUIDs.CredReadersGID = 0 }, "runc"},
 		"adapter UID is stage UID": {func(v *preflightValues) { v.Security.PodUIDs.Adapter = podspec.SupervisorStageUID }, "runc"},
 		"agent UID is stage UID":   {func(v *preflightValues) { v.Security.PodUIDs.Agent = podspec.SupervisorStageUID }, "runc"},
 	}
@@ -146,6 +144,57 @@ func TestPreflightSupervisorRefusesIncompleteValues_spec_24_2(t *testing.T) {
 				t.Fatalf("err = %v, want errSelftestPodInput", err)
 			}
 		})
+	}
+}
+
+// An install values file that sets only overrides leaves agentNamespaces and
+// security.podUIDs to the chart defaults. The self-test pod resolves them to
+// the same defaults the controller and lenny-pod-security apply, so it lands
+// in the chart's first agent namespace with the default lenny-cred-readers
+// GID and is admitted.
+// spec: 24.2 (Preflight), 13.1 (Pod Security and Runtime Isolation, Container identity)
+func TestPreflightSupervisorOverrideOnlyValuesUseChartDefaults_spec_24_2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte("controller:\n  supervisorImage: "+selftestImage+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v, err := readPreflightValues(path)
+	if err != nil {
+		t.Fatalf("readPreflightValues: %v", err)
+	}
+	spec, err := selftestPodSpecFromValues(v, "runc", selftestPodPrefix+"test")
+	if err != nil {
+		t.Fatalf("selftestPodSpecFromValues refused an override-only values file: %v", err)
+	}
+	pod := buildSelftestPod(spec)
+	if pod.Namespace != "lenny-agents" {
+		t.Errorf("namespace = %q, want the chart's first agent namespace lenny-agents", pod.Namespace)
+	}
+	sc := pod.Spec.SecurityContext
+	if *sc.FSGroup != podspec.CredReadersGID || sc.SupplementalGroups[0] != podspec.CredReadersGID {
+		t.Errorf("fsGroup %d supplementalGroups %v, want the default lenny-cred-readers GID %d", *sc.FSGroup, sc.SupplementalGroups, podspec.CredReadersGID)
+	}
+	if resp := decideSelftestPod(t, pod, podspec.CredReadersGID); !resp.Allowed {
+		t.Fatalf("lenny-pod-security refused the self-test pod built from chart defaults: %s", resp.Result.Message)
+	}
+}
+
+// Values the file does set win over the chart defaults.
+// spec: 24.2 (Preflight), 13.1 (Pod Security and Runtime Isolation, Container identity)
+func TestPreflightSupervisorValuesOverrideChartDefaults_spec_24_2(t *testing.T) {
+	const gid int64 = 4242
+	v := selftestValues()
+	v.AgentNamespaces[0].Name = "team-agents"
+	v.Security.PodUIDs.CredReadersGID = gid
+	spec, err := selftestPodSpecFromValues(v, "runc", "p")
+	if err != nil {
+		t.Fatalf("selftestPodSpecFromValues: %v", err)
+	}
+	if spec.Namespace != "team-agents" || spec.CredReadersGID != gid {
+		t.Errorf("namespace %q GID %d, want team-agents and %d", spec.Namespace, spec.CredReadersGID, gid)
+	}
+	if resp := decideSelftestPod(t, buildSelftestPod(spec), gid); !resp.Allowed {
+		t.Fatalf("lenny-pod-security refused the self-test pod for an overridden GID: %s", resp.Result.Message)
 	}
 }
 

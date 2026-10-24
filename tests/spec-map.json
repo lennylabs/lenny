@@ -4261,6 +4261,8 @@
         "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
         "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodAdmittedByPodSecurity_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorOverrideOnlyValuesUseChartDefaults_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorValuesOverrideChartDefaults_spec_24_2",
         "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
       ],
       "packages": [
@@ -5711,6 +5713,8 @@
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodAdmittedByPodSecurity_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodRendering_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRefusesIncompleteValues_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorOverrideOnlyValuesUseChartDefaults_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorValuesOverrideChartDefaults_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRunOutcomes_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorDeletesAfterCancellation_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorClientRequestsWithinPermissionCell_spec_24_2",
