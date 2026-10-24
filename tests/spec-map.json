@@ -6676,7 +6676,8 @@
       "title": "Web Playground \u2014 Metrics",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161"
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
+        "pkg/gateway/mcpfabric/playground/metrics_test.go::TestNewMetricsRegistersThroughTheLabelValidator_spec_27_8"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
