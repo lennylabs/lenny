@@ -550,7 +550,8 @@
         "tests/tier3_contract/adapter_supervise/..."
       ],
       "load_local": [
-        "pkg/adapter/supervise_race_load_test.go"
+        "pkg/adapter/supervise_race_load_test.go",
+        "pkg/adapter/supervise_failorder_load_test.go"
       ]
     },
     "pkg/supervisorselftest": {
@@ -571,7 +572,8 @@
         "tests/tier3_contract/adapter_supervise/..."
       ],
       "load_local": [
-        "pkg/adapter/supervise_race_load_test.go"
+        "pkg/adapter/supervise_race_load_test.go",
+        "pkg/adapter/supervise_failorder_load_test.go"
       ]
     },
     "pkg/adapter/linefanout": {

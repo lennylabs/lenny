@@ -316,6 +316,18 @@ func (r *SupervisedRuntime) MarkNotLive(cause LivenessCause) {
 	}
 }
 
+// notLiveLocked reports whether the runtime cannot serve: the not-live state
+// is set, or the attached link has failed and its failure handler has not set
+// the state yet. A link failure is the link-failure cause of the not-live
+// state, so the two read as one event to every start and liveness sample.
+// The caller holds r.mu; the link's own lock is taken after it, and the link
+// never calls into the runtime while it holds that lock. spec: §4.7.10
+// (Runtime supervisor, Liveness); §5.2 (Pod retirement policy, Runtime not
+// live).
+func (r *SupervisedRuntime) notLiveLocked() bool {
+	return r.notLive || (r.link != nil && r.link.Failed())
+}
+
 // markNotLive sets the state and reports whether this call set it.
 func (r *SupervisedRuntime) markNotLive(cause LivenessCause) bool {
 	r.mu.Lock()
@@ -473,7 +485,7 @@ func (r *SupervisedRuntime) confirmStart(sessionID string) error {
 	gen, ok := r.startGens[sessionID]
 	delete(r.startGens, sessionID)
 	switch {
-	case r.notLive:
+	case r.notLiveLocked():
 		return errRuntimeNotLive
 	case !ok:
 		return fmt.Errorf("%w: session %s has no start outstanding", errRuntimeNotLive, sessionID)
@@ -581,7 +593,7 @@ func startComposed(ctx context.Context, t *SocketRuntimeProcess, sessionID strin
 // The caller holds launchMu.
 func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeProcess, uint64, bool, error) {
 	r.mu.Lock()
-	if r.notLive {
+	if r.notLiveLocked() {
 		r.mu.Unlock()
 		return nil, 0, false, errRuntimeNotLive
 	}
@@ -597,7 +609,7 @@ func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeP
 		return nil, 0, false, fmt.Errorf("launch: %w", err)
 	}
 	r.mu.Lock()
-	if r.notLive {
+	if r.notLiveLocked() {
 		r.mu.Unlock()
 		return nil, 0, false, errRuntimeNotLive
 	}
@@ -886,7 +898,7 @@ func (r *SupervisedRuntime) Close(_ context.Context, sessionID string) error {
 // spec: §4.7.10 (Runtime supervisor, Liveness); §5.2 (Runtime not live).
 func (r *SupervisedRuntime) ServesNextSession() bool {
 	r.mu.Lock()
-	notLive, permitted, t := r.notLive, r.launchPermitted, r.transport
+	notLive, permitted, t := r.notLiveLocked(), r.launchPermitted, r.transport
 	r.mu.Unlock()
 	if notLive {
 		return false

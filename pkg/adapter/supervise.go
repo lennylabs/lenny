@@ -382,8 +382,12 @@ func (l *SupervisorLink) dispatch(m superviseMessage) error {
 	}
 }
 
-// fail records the link failure once, closes the connection, and runs the
-// failure handler.
+// fail records the link failure once, closes the connection, runs the
+// failure handler, and only then releases the requests waiting on failedCh.
+// The handler sets the not-live state, so a request that returns a link
+// failure returns after that state is set and no caller that goes on from
+// the failed request can read the runtime as live. spec: §4.7.10 (Runtime
+// supervisor, Liveness); §5.2 (Supervised scrub sequence).
 func (l *SupervisorLink) fail(err error) {
 	l.mu.Lock()
 	if l.failed {
@@ -394,12 +398,12 @@ func (l *SupervisorLink) fail(err error) {
 	l.failErr = err
 	onFailure := l.onFailure
 	l.mu.Unlock()
-	close(l.failedCh)
 	_ = l.conn.Close()
 	if onFailure != nil {
 		l.logger.Warn(LogSuperviseLinkFailure, "error", err)
 		onFailure(err)
 	}
+	close(l.failedCh)
 }
 
 // request sends one request and waits for its reply. bound is the request's
@@ -423,6 +427,9 @@ func (l *SupervisorLink) requestLocked(ctx context.Context, req superviseRequest
 	}
 	p, err := l.register(&req)
 	if err != nil {
+		// register refuses only a failed link; the refusal waits for the
+		// failure handler as a waiting request does.
+		<-l.failedCh
 		return superviseMessage{}, err
 	}
 	line, err := encodeSuperviseRequest(req)
