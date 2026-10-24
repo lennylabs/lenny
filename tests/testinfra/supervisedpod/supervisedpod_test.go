@@ -76,3 +76,30 @@ func TestProbeReplyHelpersReadTheTextPartAndEnvironment(t *testing.T) {
 		t.Errorf("ServingProbes = %+v; want PID 7", got)
 	}
 }
+
+// spec: §5.2 (Pinned idle inventory)
+//
+// diagnosis: the pinned idle bound the idle-keep chaos case checks before it
+// runs disagrees with §5.2: it is not maxWarm minus minWarm capped at
+// maxWarm, or it goes below zero, so the case runs on a pool that drains
+// every used pod at the end of its hold, or skips on one that keeps it.
+func TestPinnedIdleBoundIsMaxWarmMinusTheWarmTarget(t *testing.T) {
+	cases := []struct {
+		name             string
+		minWarm, maxWarm int
+		want             int
+	}{
+		{"equal bounds keep none", 1, 1, 0},
+		{"both zero keep none", 0, 0, 0},
+		{"maxWarm above minWarm keeps the difference", 1, 3, 2},
+		{"minWarm zero widens the bound to maxWarm", 0, 2, 2},
+		{"minWarm above maxWarm is capped and keeps none", 4, 2, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pinnedIdleBound(tc.minWarm, tc.maxWarm); got != tc.want {
+				t.Errorf("pinnedIdleBound(%d, %d) = %d, want %d", tc.minWarm, tc.maxWarm, got, tc.want)
+			}
+		})
+	}
+}

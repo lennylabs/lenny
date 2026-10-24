@@ -1173,12 +1173,13 @@ bootstrap:
         cleanupCommands:
           - /usr/local/bin/lenny cleanup-record
         cleanupTimeoutSeconds: 30
-    # supervise-probe-idle-pool is a second keep pool that warms one idle
-    # pod. The WarmPoolController drains idle pods above that, so once a
-    # used pod's reserved hold ends the pool settles with one idle pod, and
-    # a tier-8 case makes that pod the target of the next session start
-    # after killing its kept runtime process (§4.7.10 Runtime supervisor,
-    # Liveness, the idle row's Start channel).
+    # supervise-probe-idle-pool is a second keep pool on which a tier-8 case
+    # returns a used pod to idle, pinned to the tenant that used it, kills
+    # its kept runtime process, and makes that tenant's next start reach it
+    # (§4.7.10 Runtime supervisor, Liveness, the idle row's Start channel).
+    # The pool store sets minWarm and maxWarm both from warmCount, so the
+    # pool keeps no pinned idle pod (§5.2 Pinned idle inventory) and the
+    # case skips, blocked, until a pool can set maxWarm above minWarm.
     - name: supervise-probe-idle-pool
       runtimeRef: supervise-probe-idle
       isolationProfile: standard

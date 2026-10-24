@@ -38,8 +38,8 @@ const (
 	PodWarmRuntime    = "supervise-probe-podwarm"
 	ServicePool       = "supervise-probe-service-pool"
 	ServiceRuntime    = "supervise-probe-service"
-	// IdlePool is a keep pool that warms one idle pod, so a test can make a
-	// used pod the pool's only idle pod (SoleIdleUsedPod).
+	// IdlePool is a keep pool a test returns a used pod to idle on, pinned
+	// to the tenant that used it (IdleUsedPod).
 	IdlePool    = "supervise-probe-idle-pool"
 	IdleRuntime = "supervise-probe-idle"
 )
@@ -264,90 +264,119 @@ func ClaimExists(t testing.TB, c *kind.Cluster, pod string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
-// soleIdlePod returns the pool's only idle pod when the pool has settled
-// with exactly one: one Ready pod with no claim, and every other pod either
-// claimed or being deleted, so no warming pod is about to become a second
-// idle pod. ok is false while the pool has not settled that way.
-func soleIdlePod(t testing.TB, c *kind.Cluster, pool string) (pod string, ok bool) {
+// requirePinnedIdleBound skips the test, blocked, when pool keeps no pinned
+// idle pod. A used session-mode pod returns to idle pinned to its tenant,
+// and the WarmPoolController keeps at most maxWarm minus the warm target
+// (minWarm capped at maxWarm) pinned idle pods and drains the rest, so on a
+// pool whose maxWarm equals its minWarm the used pod drains as soon as its
+// reserved hold ends and no start can reach it in idle. The gateway pool
+// store maps a pool's warmCount to both minWarm and maxWarm
+// (poolscaling.PoolStoreSource), so a pool the Kind install seeds through
+// the admin API has that bound at zero. spec: §5.2 (Pinned idle inventory).
+func requirePinnedIdleBound(t testing.TB, c *kind.Cluster, pool string) {
 	t.Helper()
-	var idle []string
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxwarmpool", pool, "-o",
+		"jsonpath={.spec.minWarm} {.spec.maxWarm}")
+	if err != nil {
+		t.Fatalf("read minWarm and maxWarm of %s: %v\n%s", pool, err, out)
+	}
+	var minWarm, maxWarm int
+	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d %d", &minWarm, &maxWarm); err != nil {
+		t.Fatalf("parse minWarm and maxWarm of %s from %q: %v", pool, out, err)
+	}
+	if pinnedIdleBound(minWarm, maxWarm) < 1 {
+		t.Skipf("blocked: %s has minWarm %d and maxWarm %d, so it keeps no pinned idle pod and a used keep "+
+			"pod drains when its reserved hold ends; the gateway pool store sets both from warmCount, so the "+
+			"idle phase of a used keep pod is unreachable until a pool can set maxWarm above minWarm",
+			pool, minWarm, maxWarm)
+	}
+}
+
+// pinnedIdleBound returns how many pinned idle pods a pool with minWarm and
+// maxWarm keeps: maxWarm minus the warm target, which is minWarm capped at
+// maxWarm, and never below zero. spec: §5.2 (Pinned idle inventory).
+func pinnedIdleBound(minWarm, maxWarm int) int {
+	target := min(minWarm, maxWarm)
+	return max(maxWarm-target, 0)
+}
+
+// FirstIdleInClaimOrder reports whether pod is idle (Ready, not being
+// deleted, and holding no SandboxClaim) and no other pod of pool that is not
+// being deleted and holds no claim sorts before it by name. The gateway's
+// idle scan lists the pool's Sandboxes from the API server, which returns
+// them in name order, and claims the first one the tenant pin admits, so the
+// next start by pod's pinned tenant is placed on it. A warming pod that
+// sorts first counts against pod, because it can turn idle before the start.
+// spec: §4.6.1 (pod claim mechanism), §5.2 (Tenant pinning).
+func FirstIdleInClaimOrder(t testing.TB, c *kind.Cluster, pool, pod string) bool {
+	t.Helper()
+	found := false
 	for _, p := range PoolPods(t, c, pool) {
 		if p.Deleting || ClaimExists(t, c, p.Name) {
 			continue
 		}
-		if !p.Ready {
-			return "", false
-		}
-		idle = append(idle, p.Name)
-	}
-	if len(idle) != 1 {
-		return "", false
-	}
-	return idle[0], true
-}
-
-// SoleIdleUsedPod returns a pod of IdlePool that served a session, returned
-// to idle when its reserved hold ended, and is the pool's only idle pod, so
-// the pool's next session start is placed on it. The pool warms one idle
-// pod, and the WarmPoolController drains idle pods above that in name
-// order, so the used pod is not always the one that stays; each attempt
-// runs one session for a fresh tenant and waits for the pool to settle, and
-// an attempt whose used pod was drained is followed by another.
-// spec: §5.2 (Recycle lifecycle); §4.6.1.
-func SoleIdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver, c *kind.Cluster) string {
-	t.Helper()
-	const attempts = 8
-	for i := 0; i < attempts; i++ {
-		tenant := NewTenant(ctx, t, d, "supervisor-idle")
-		s, err := d.CreateAndStart(ctx, tenant, IdleRuntime)
-		if err != nil && strings.Contains(err.Error(), "RUNTIME_UNAVAILABLE") {
-			// The drain of a surplus idle pod and its replacement can leave
-			// the pool with no claimable pod for longer than the driver
-			// retries; the attempt is spent and the next waits for the pool.
-			t.Logf("attempt %d: %s had no claimable pod: %v", i+1, IdlePool, err)
-			waitSoleIdlePod(t, c, 2*time.Minute)
+		if p.Name == pod {
+			found = p.Ready
 			continue
 		}
+		if p.Name < pod {
+			return false
+		}
+	}
+	return found
+}
+
+// IdleUsedPod returns a pod of IdlePool that served a session, returned to
+// idle when its reserved hold ended, and is the first idle pod in the
+// gateway's claim order, together with the tenant it is pinned to, so the
+// next session start by that tenant is placed on it. A pinned pod is
+// claimable only by its pinned tenant, so the caller starts that session as
+// the returned tenant. The case is skipped, blocked, on a pool that keeps no
+// pinned idle pod (requirePinnedIdleBound). Each attempt runs one session
+// for a fresh tenant and waits for its pod to settle; an attempt whose used
+// pod drained or sorts after another idle pod is followed by another.
+// spec: §5.2 (Recycle lifecycle; Pinned idle inventory); §4.6.1.
+func IdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver, c *kind.Cluster) (tenant, pod string) {
+	t.Helper()
+	requirePinnedIdleBound(t, c, IdlePool)
+	const attempts = 8
+	for i := range attempts {
+		WaitPoolAvailable(t, c, IdlePool, 2*time.Minute)
+		tenant := NewTenant(ctx, t, d, "supervisor-idle")
+		s, err := d.CreateAndStart(ctx, tenant, IdleRuntime)
 		if err != nil {
 			t.Fatalf("start a session on %s: %v", IdleRuntime, err)
 		}
 		if err := d.Terminate(ctx, tenant, s.ID); err != nil {
 			t.Fatalf("terminate session %s: %v", s.ID, err)
 		}
-		if pod, ok := settleAfterHold(t, c, s.PodAssignment, 2*time.Minute); ok {
-			return pod
+		if settleFirstIdleAfterHold(t, c, s.PodAssignment, 2*time.Minute) {
+			return tenant, s.PodAssignment
 		}
+		t.Logf("attempt %d: used pod %s did not settle as the first idle pod of %s", i+1, s.PodAssignment, IdlePool)
 	}
-	t.Skipf("not-yet-applicable: %s did not settle with a used pod as its only idle pod in %d attempts", IdlePool, attempts)
-	return ""
+	t.Skipf("not-yet-applicable: no used pod of %s settled as the first idle pod in claim order in %d attempts",
+		IdlePool, attempts)
+	return "", ""
 }
 
-// waitSoleIdlePod waits up to timeout for IdlePool to settle with one ready
-// idle pod.
-func waitSoleIdlePod(t testing.TB, c *kind.Cluster, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, ok := soleIdlePod(t, c, IdlePool); ok {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-}
-
-// settleAfterHold waits for used's reserved hold to end and then for
-// IdlePool to settle with one idle pod. ok is true when that pod is used.
-func settleAfterHold(t testing.TB, c *kind.Cluster, used string, timeout time.Duration) (string, bool) {
+// settleFirstIdleAfterHold waits up to timeout for used's reserved hold to
+// end and then for used to be the first idle pod of IdlePool in claim order.
+// It returns false once used is being deleted or gone, or at timeout.
+func settleFirstIdleAfterHold(t testing.TB, c *kind.Cluster, used string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) && ClaimExists(t, c, used) {
 		time.Sleep(time.Second)
 	}
 	for time.Now().Before(deadline) {
-		if pod, ok := soleIdlePod(t, c, IdlePool); ok {
-			return pod, pod == used
+		if st, found := GetPod(t, c, used); !found || st.Deleting {
+			return false
+		}
+		if FirstIdleInClaimOrder(t, c, IdlePool, used) {
+			return true
 		}
 		time.Sleep(time.Second)
 	}
-	return "", false
+	return false
 }

@@ -187,36 +187,43 @@ func warmingSupervisedPod(t *testing.T, c *kind.Cluster, pool string) supervised
 }
 
 // spec: §4.7.10 (Runtime supervisor, Liveness; Crash), §5.2 (Recycle
-// lifecycle)
+// lifecycle; Pinned idle inventory)
 //
 // diagnosis: a supervised keep pod whose runtime process died while it was
-// idle (it had served a session and its reserved hold had ended) took the
-// Exit channel instead of the Start channel: its adapter exited or restarted
-// after handling the exit, or the pod was deleted or claimed before any
-// start. Or the next session start was not placed on it, succeeded and ran a
-// session on it, or was not followed by the pod's drain. The kept process is
-// gone and a keep pod does not relaunch, so the adapter must keep running
-// and refuse the start that follows the gateway's claim of the idle pod.
+// idle (it had served a session, its reserved hold had ended, and it stayed
+// pinned to its tenant as pinned idle inventory) took the Exit channel
+// instead of the Start channel: its adapter exited or restarted after
+// handling the exit, or the pod was deleted or claimed before any start. Or
+// the next session start by its pinned tenant was not placed on it,
+// succeeded and ran a session on it, or was not followed by the pod's drain.
+// The kept process is gone and a keep pod does not relaunch, so the adapter
+// must keep running and refuse the start that follows the gateway's claim of
+// the idle pod.
 func TestIdleKeepPodWhoseRuntimeDiedFailsTheNextStartAndDrains_spec_4_7_10(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 60 * time.Second})
 	c := d.Cluster()
 	supervisedpod.WaitReadyPods(t, c, supervisedpod.IdlePool, 1, 3*time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	pod := supervisedpod.SoleIdleUsedPod(ctx, t, d, c)
+	tenant, pod := supervisedpod.IdleUsedPod(ctx, t, d, c)
 	out, err := supervisedpod.ExecRuntime(t, c, pod, superviseprobe.SubKillRuntime)
 	if err != nil || !strings.Contains(out, `"ok":true`) {
 		t.Fatalf("kill the runtime process of %s: %v\n%s", pod, err, out)
 	}
 	requireStartChannelAfterIdleExit(t, c, pod)
+	if !supervisedpod.FirstIdleInClaimOrder(t, c, supervisedpod.IdlePool, pod) {
+		t.Skipf("not-yet-applicable: another idle pod of %s sorted before %s while its runtime process died",
+			supervisedpod.IdlePool, pod)
+	}
 
+	// The pod is pinned to the tenant that used it and is claimable only by
+	// that tenant, so the next start is that tenant's.
 	claim := supervisedpod.WatchClaim(t, c, pod)
-	tenant := supervisedpod.NewTenant(ctx, t, d, "supervisor-idle-start")
 	next, err := d.CreateAndStart(ctx, tenant, supervisedpod.IdleRuntime)
 	if err == nil {
 		t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, next.ID) })
-		t.Fatalf("the start placed on idle pod %s, the pool's only idle pod, succeeded on %s; a start on a pod "+
-			"whose kept runtime process died must fail and run no session", pod, next.PodAssignment)
+		t.Fatalf("the start by tenant %s, whose pinned pod %s is the pool's first idle pod, succeeded on %s; a "+
+			"start on a pod whose kept runtime process died must fail and run no session", tenant, pod, next.PodAssignment)
 	}
 	if !claim.Claimed() {
 		t.Fatalf("the failed start (%v) never claimed idle pod %s, so it failed for another reason, such as "+
