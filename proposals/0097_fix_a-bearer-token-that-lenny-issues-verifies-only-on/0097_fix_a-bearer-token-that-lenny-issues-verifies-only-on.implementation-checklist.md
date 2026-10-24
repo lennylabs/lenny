@@ -6,13 +6,13 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. Lands all of SPEC-2: the verifier key set and rotation paragraph.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-3. Lands all of SPEC-3: the fixed lifetime and the `auth.capabilityTokenTtlSeconds` default.
+- [ ] **S3 · spec** — SPEC-3. Lands all of SPEC-3: the fixed lifetime, the `auth.capabilityTokenTtlSeconds` default, and the request `expires_in` row.
       Tiers 0, 11. Depends on: S1
 - [ ] **S4 · spec** — SPEC-4. Lands all of SPEC-4: the KMS signing failure mode and its error row.
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S5 · spec** — SPEC-5. Lands all of SPEC-5: the signing metrics and alerts.
       Tiers 0, 11. Depends on: S4
-- [ ] **S6 · spec** — SPEC-6. Lands all of SPEC-6: the Token Service minting topology.
+- [ ] **S6 · spec** — SPEC-6. Lands all of SPEC-6: the §4.3 item 3 minting topology and the §17.7 audit-lock remedy.
       Tiers 0, 11. Depends on: S1
 - [ ] **S7 · spec** — SPEC-7. Lands all of SPEC-7: signing outside the lock and the in-transaction revocation re-read.
       Tiers 0, 11. Depends on: S1
@@ -61,8 +61,8 @@ Every step lands the tests that the non-spec Testing section places under its de
 - [ ] **S29 · test** — TEST-1. Lands the harness change and the cross-process tests.
       Tiers 0, 4, 5, 9, 11. Depends on: S16, S17, S18, S19, S22, S25, S33
 - [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
-      Tiers 0, 11. Depends on: S2, S23
-- [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, and error catalog edits.
-      Tiers 0, 11. Depends on: S1, S3, S4, S8, S11
+      Tiers 0, 11. Depends on: S1, S2, S23
+- [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, error catalog, and audit-pipeline-degraded runbook edits.
+      Tiers 0, 11. Depends on: S1, S3, S4, S6, S8, S11
 - [ ] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
       Tiers 0, 11. Depends on: S29, S30, S31

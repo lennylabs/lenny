@@ -72,7 +72,7 @@ Targets: `cmd/lenny-token-service/kms.go`, `cmd/lenny-token-service/server.go`, 
 
 ### CODE-6 · `lenny-ops` wiring: KMS flags, key set, the dev trust hook, and the revocation set
 
-Targets: `cmd/lenny-ops/main.go` (`buildAuthConfig`), `cmd/lenny-ops/flags.go`, a new `cmd/lenny-ops/revocation.go` (item 6), `pkg/gateway/middleware/auth` and `pkg/gateway/credentials/revocation` (item 6, only if the IMPLEMENTOR'S CHOICE below needs a new option or method), `charts/lenny/templates/ops-deployment.yaml` (items 5 and 6), `charts/lenny/tests/ops-deployment_test.yaml` (item 6).
+Targets: `cmd/lenny-ops/main.go` (`buildAuthConfig`), `cmd/lenny-ops/flags.go`, a new `cmd/lenny-ops/revocation.go` (item 6), `pkg/gateway/credentials/revocation` (item 6, `Rehydrate`), `pkg/gateway/middleware/auth` (item 6, only if the IMPLEMENTOR'S CHOICE below needs a new option), `charts/lenny/templates/ops-deployment.yaml` (items 5 and 6), `charts/lenny/tests/ops-deployment_test.yaml` (item 6).
 
 1. Register `providerflags.Bind` on the `lenny-ops` flag set.
 2. When `--production` is set, `lenny-ops` refuses a resolved `local` provider at startup, independent of `--environment`. `lenny-ops` has no `--dev-mode`, and `--production` is its only production signal, so the providerflags environment check alone would admit `local` under `--production` without `LENNY_ENV=prod`.
@@ -80,7 +80,7 @@ Targets: `cmd/lenny-ops/main.go` (`buildAuthConfig`), `cmd/lenny-ops/flags.go`, 
 4. `--bearer-trust-hmac-key-file` is fatal when `--production` is set. Outside production it stays as the dev embedded-OIDC trust hook, alongside the key set.
 5. In the same commit, `charts/lenny/templates/ops-deployment.yaml` stops rendering `--bearer-trust-hmac-key-file` and its key mount when `ops.production` is true. Without this, a production render passes a flag the binary now refuses, and `lenny-ops` crashloops.
 6. Revocation set (SPEC-11 Edit 2 rules 1 to 7), wired in `cmd/lenny-ops/revocation.go`:
-   - The set is a `revocation.Cache` (`pkg/gateway/credentials/revocation`). `Rehydrate` serves rule 1 and `IsRevoked` serves rule 3 through `authmw.Options.Revocations`.
+   - The set is a `revocation.Cache` (`pkg/gateway/credentials/revocation`). `IsRevoked` serves rule 3 through `authmw.Options.Revocations`. `Rehydrate` serves rule 1 once its swap keeps the `jti`s that `Revoke` added after the read began, in place of every `jti` already in the set; the gateway's rehydration loop gets the same behavior. `TestRehydrateUnionsLocalRevocations` is rewritten to pin it: a `jti` revoked inside the fake source's `ListRevoked` survives the read, and a `jti` revoked before `Rehydrate` that the source does not return is dropped.
    - One goroutine runs the rule-1 read at startup and on a 30-second ticker until shutdown. Each failed read logs at error level, and a failed startup read does not stop the process.
    - When Redis is configured, `propagator.New(cache, bus).Run` serves rule 2. The bus is built from the Redis the gateway's propagator publishes on (the `RedisConcernCachePubSub` concern, `cmd/lenny-gateway/store_router.go`). `cmd/lenny-ops/flags.go` gains `--redis-cache-pubsub-url` (`LENNY_REDIS_CACHE_PUBSUB_URL`), matching the gateway's flag. When it is set the bus uses that URL, and when it is unset the bus uses the base Redis client. `ops-deployment.yaml` renders `LENNY_REDIS_CACHE_PUBSUB_URL` from the `lenny-datastore-conn` key `redis-cache-pubsub-url` when `redis.concerns.cachePubSubUrl` is set, as `gateway-deployment.yaml` does.
    - `ops-deployment.yaml` renders `LENNY_POSTGRES_DSN` from the `lenny-datastore-conn` key `postgres-dsn` when `postgres.dsn` is set, as `gateway-deployment.yaml` does, so a chart-deployed `lenny-ops` runs the rule-1 read. The template header sentence "Postgres (postgres.dsn) is not wired here, so audit, backup, and upgrade state degrade gracefully when Postgres is absent (§25.4)." is reworded to say that Postgres is wired when `postgres.dsn` is set and that those features degrade when it is unset.
@@ -107,7 +107,7 @@ Targets: `cmd/lenny-gateway/flags.go`, `pkg/gateway/mcpfabric/playground/playgro
 
 1. Rename `--playground-bearer-ttl-seconds` to `--capability-token-ttl-seconds` (environment variable `LENNY_CAPABILITY_TOKEN_TTL_SECONDS`, default 900). Startup is fatal outside the SPEC-3 Edit 1 bound. No alias for the old flag is kept. In the same commit, `charts/lenny/templates/gateway-deployment.yaml` renders the new flag name from the existing `playground.bearerTtlSeconds` value, so the chart never passes a flag the binary no longer defines; CHART-1 then renames the value.
 2. The playground bearer `exp` rule is SPEC-3 Edit 1. Rename `BearerTTL` and its error text to name `auth.capabilityTokenTtlSeconds`.
-3. Token Service default (SPEC-3 Edit 1, owner decision 5). `durationFromExpiresIn` in `pkg/tokenservice/tokenservice.go` returns a hard-coded 1 hour for an absent `expires_in` today. Replace it with `Options.CapabilityTokenTTL`, which `buildServer` sets from a new `lenny-token-service` flag `--capability-token-ttl-seconds` (environment variable `LENNY_CAPABILITY_TOKEN_TTL_SECONDS`, default 900, fatal outside the SPEC-3 Edit 1 bound). `NewServer` returns an error when the value is zero. A request that carries `expires_in` keeps it, and the per-dialect caps clamp it as today.
+3. Token Service default (SPEC-3 Edit 1, owner decision 5). `durationFromExpiresIn` in `pkg/tokenservice/tokenservice.go` returns a hard-coded 1 hour for an absent `expires_in` today. Replace it with `Options.CapabilityTokenTTL`, which `buildServer` sets from a new `lenny-token-service` flag `--capability-token-ttl-seconds` (environment variable `LENNY_CAPABILITY_TOKEN_TTL_SECONDS`, default 900, fatal outside the SPEC-3 Edit 1 bound). `NewServer` returns an error when the value is zero. A request that carries `expires_in` follows the SPEC-3 Edit 1 rule, and `parseRequest` records whether the field is present in both encodings, because today the JSON branch decodes an absent field as 0 and the form branch drops the field.
 4. For an exchange that carries an `actor_token` (`a2a_delegation`) with no `expires_in`, `buildExchangeRequest` leaves `RequestedExp` zero instead of setting `now + 1 hour` as it does today. `tokenexchange.Derive` already treats a zero `RequestedExp` as absent, so the child's `exp` is `min(subject_token.exp, actor_token.exp, per-dialect cap)` and the capability default never applies to it.
 5. In the same commit, `charts/lenny/templates/token-service-deployment.yaml` renders `--capability-token-ttl-seconds` from the same value the gateway template reads, so both binaries take one operator-set default.
 
@@ -190,7 +190,7 @@ Target: `docs/runbooks/jwt-key-rotation.md`.
 
 Remove every `/.well-known/jwks.json` step, the `signing_keys` psql step, the `tokenService.signingKeySealed` and `signingKid` values, the `platform:token-service-signing` alias, and the `RotatingVerifier` overlap and `key_retired` text. Describe the three rollouts and the step-2 `lenny-ctl admin users rotate-token --user lenny-admin`, in the reader-facing form the doc rules require, with no spec section numbers. Replace the "every replica advertises the same JWK Set" check with a check that every gateway, Token Service, and `lenny-ops` pod rolled out under the same `platform:jwt-signing` and `platform:jwt-verify` values. List the IAM grants on every key either alias names, granted on the new key before the first rollout maps it: the gateway and Token Service ServiceAccounts get `Sign` and `GetPublicKey`, and the `lenny-ops` ServiceAccount gets `GetPublicKey` only. State the startup behavior during a KMS outage. Add `lenny-ops` to `components`. Add a "KMS Sign quota" section for the `KMSSignQuotaApproaching` alert, and add the alert to `triggers`.
 
-### DOCS-2 · Reference, operator guide, and error catalog pages
+### DOCS-2 · Reference, operator guide, runbook, and error catalog pages
 
 Targets and edits:
 
@@ -199,6 +199,7 @@ Targets and edits:
 - `docs/operator-guide/security.md` "Supported KMS Providers": remove the HashiCorp Vault Transit row, list Azure Key Vault for JWT signing, and state that all three cloud providers sign with ES256.
 - `docs/operator-guide/agent-operability.md` failure table, "Postgres down" and "Postgres + Redis both down" rows: give, in reader-facing form, the behavior of SPEC-11 Edit 2 rules 4 and 5.
 - `docs/reference/error-catalog.md`, `KMS_SIGNING_UNAVAILABLE` row: rewrite the description and the client action from the SPEC-4 Edit 2 row, in reader-facing form.
+- `docs/runbooks/audit-pipeline-degraded.md` Step 2 (Audit-lock contention) item 1: replace the `oauth.rateLimit.tenantPerSecond` Helm step and the sentence saying it slows new-session creation with the remedy SPEC-6 Edit 2 stages, in reader-facing form. The step is an admin API call, so its access marker is `api method=PUT path=/v1/admin/tenants/{id}` rather than the current `kubectl requires=cluster-access`.
 
 ### REC-1 · Records
 
@@ -229,7 +230,7 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 - Tier 1, Token Service: `NewServer` with a nil `Verifier` returns an error.
 - Tier 1, `lenny-ops`: `--production` with `kms.provider=local` is fatal, `--production` with `--bearer-trust-hmac-key-file` is fatal, and an unloadable key set is fatal with and without `--production`.
 - Tier 1, `cmd/lenny-ops` revocation set (`// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow)`), with a fake source, fake clock, and fake bus. There is one case per SPEC-11 Edit 2 rule:
-  - Rule 1, bus down: a row added to the source is refused after the next 30 s tick and admitted before it.
+  - Rule 1, bus down: a row added to the source is refused after the next 30 s tick and admitted before it. A row removed from the source is admitted after the next tick, and a `jti` that a rule-2 event added while that read ran is still refused after it.
   - Rule 2: an event is enforced before the next tick, including while the source fails.
   - Rule 3: the response equals the response the gateway's `authmw` writes for a revoked `jti`.
   - Rule 4: before the first successful read, a key-set token, a key-set token carrying `origin: "playground"`, and a key-set token whose `jti` a rule-2 event added each get the response `authmw` writes for a stale revocation set.
@@ -245,7 +246,7 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 ### Tests that land with CODE-8
 
 - Tier 1, gateway and Token Service flags: 119 and 3601 are fatal, and 120 and 3600 start. The playground mint gives `exp` per the SPEC-3 Edit 1 rule at both boundaries.
-- Tier 1, `pkg/tokenservice` (`// spec: 10.2 (Authentication), 13.3 (Credential Flow)`): a rotation or scope-narrowing request with no `expires_in` receives `exp = now + CapabilityTokenTTL` when the subject outlives it and `subject_token.exp` when it does not; a request with `expires_in: 3000` and audience `lenny-ops` receives 3000 s; a request with `expires_in` above the per-dialect cap is clamped to the cap; an `actor_token` exchange with no `expires_in` receives `min(subject_token.exp, actor_token.exp, per-dialect cap)` and never the capability default; `NewServer` with a zero `CapabilityTokenTTL` returns an error.
+- Tier 1, `pkg/tokenservice` (`// spec: 10.2 (Authentication), 13.3 (Credential Flow)`): a rotation or scope-narrowing request with no `expires_in` receives `exp = now + CapabilityTokenTTL` when the subject outlives it and `subject_token.exp` when it does not; a request with `expires_in: 3000` and audience `lenny-ops` receives 3000 s; a request with `expires_in` above the per-dialect cap is clamped to the cap; a request that carries `expires_in` of 0 as JSON, or 59 as a form field, is rejected with `invalid_request` (the JSON 0 case separates presence from a zero value, and the form 59 case shows the form branch reads the field); an `actor_token` exchange with no `expires_in` receives `min(subject_token.exp, actor_token.exp, per-dialect cap)` and never the capability default; `NewServer` with a zero `CapabilityTokenTTL` returns an error.
 
 ### Tests that land with CODE-9
 
@@ -318,9 +319,9 @@ Targets: `tests/testinfra/gateway/gateway.go`, `tests/testinfra/tokenservice/tok
 - cmd/lenny-gateway/token_signing.go, httpsurface.go, auth_seams.go, flags.go, config_parse.go, authposture.go, auditpipeline.go, wiring_fields.go, adminrouter.go, user_revocation.go, user_revocation_test.go
 - cmd/lenny-token-service/kms.go, server.go, flags.go
 - cmd/lenny-ops/main.go, flags.go, revocation.go (new)
-- pkg/gateway/middleware/auth and pkg/gateway/credentials/revocation (only if CODE-6 item 6 adds an option or method)
+- pkg/gateway/credentials/revocation (revocation.go, revocation_test.go); pkg/gateway/middleware/auth (only if CODE-6 item 6 adds an option)
 - charts/lenny/values.yaml, values.schema.json, presets/dev.yaml, templates/gateway-deployment.yaml, templates/token-service-deployment.yaml, templates/ops-deployment.yaml, templates/ops-network-policies.yaml, templates/system-network-policies.yaml, templates/prometheusrule.yaml, a new local KMS master key Secret template, files/alerting-rules.yaml (generated), tests/
 - pkg/embedded/stack/bringup.go, stack.go, and their tests; pkg/embedded/manifests/manifests.yaml (regenerated by `make generate`)
-- docs/runbooks/jwt-key-rotation.md, docs/reference/configuration.md, docs/operator-guide/web-playground.md, docs/operator-guide/security.md, docs/operator-guide/agent-operability.md, docs/reference/error-catalog.md, docs/alerting/rules.yaml (generated)
+- docs/runbooks/jwt-key-rotation.md, docs/reference/configuration.md, docs/operator-guide/web-playground.md, docs/operator-guide/security.md, docs/operator-guide/agent-operability.md, docs/reference/error-catalog.md, docs/runbooks/audit-pipeline-degraded.md, docs/alerting/rules.yaml (generated)
 - BUILD-GAPS.md, TEST-GAPS.md
 - tests/testinfra/stubs/kms/provider.go, tests/testinfra/gateway/gateway.go, tests/testinfra/tokenservice/tokenservice.go, tests/testinfra/opsprocess/opsprocess.go, tests/tier4_integration/tenant_deletion_phase4_test.go, tests/tier4_integration/jwks_test.go (deleted), a new tier-4 test, tests/tier5_e2e_kind, the tier-9 suite, tests/spec-map.json

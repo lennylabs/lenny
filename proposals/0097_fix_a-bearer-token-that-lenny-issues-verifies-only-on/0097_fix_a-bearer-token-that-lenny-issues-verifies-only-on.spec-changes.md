@@ -88,7 +88,7 @@ Rotation is three configuration rollouts of the gateway, the Token Service, and 
 **Edit 1.** In §10.2 "**JWT claims:**", replace the bullet "`expiry` (short-lived, refreshed by gateway on each interaction)" with:
 
 ```markdown
-- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. `auth.capabilityTokenTtlSeconds` is the default lifetime of every Lenny-issued JWT whose holder obtains a new token before `exp` by requesting one. It defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. A JWT issued on `POST /v1/oauth/token` from a request that carries no `expires_in` receives `requested_exp = now + auth.capabilityTokenTtlSeconds`; a request that carries `expires_in` receives `requested_exp = now + expires_in`. Both then take the [§13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling" formula. Tokens whose holder has no refresh path do not take the default. For an `a2a_delegation` child token minted through `actor_token`, an absent `expires_in` leaves `requested_exp` out of that formula. The `session_capability` token minted on the session-creation path keeps its per-dialect cap. The bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
+- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. `auth.capabilityTokenTtlSeconds` is the default lifetime of every Lenny-issued JWT whose holder obtains a new token before `exp` by requesting one. It defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. A JWT issued on `POST /v1/oauth/token` from a request that carries no `expires_in` receives `requested_exp = now + auth.capabilityTokenTtlSeconds`; a request that carries `expires_in` of at least 60 receives `requested_exp = now + expires_in`, and a request that carries a smaller value is rejected with `invalid_request`. Both then take the [§13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling" formula. Tokens whose holder has no refresh path do not take the default. For an `a2a_delegation` child token minted through `actor_token`, an absent `expires_in` leaves `requested_exp` out of that formula. The `session_capability` token minted on the session-creation path keeps its per-dialect cap. The bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
 ```
 
 **Edit 2.** In §10.2 "**Playground mint invariants**", item 4 "**Origin and duration.**", replace "`exp = min(subject_token.exp, now + playground.bearerTtlSeconds)`" with:
@@ -169,15 +169,17 @@ The row stays one physical line.
 | `KMSSignQuotaApproaching`        | `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * kms.signQuotaPerSecond` for > 10 min; the fleet-wide rate of sign requests that reach the KMS exceeds 80% of the configured provider quota ([Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) "KMS Sign rate"). Rendered only when `kms.provider` is not `local`. Operator should raise the provider's asymmetric `Sign` quota and `kms.signQuotaPerSecond` together. See [Section 10.2](10_gateway-internals.md#102-authentication). | Warning  |
 ```
 
-### SPEC-6 · spec/04_system-components.md § 4.3 Token Service: Role item 3 "Canonical token endpoint"
+### SPEC-6 · spec/04_system-components.md § 4.3 Token Service: Role item 3 "Canonical token endpoint"; spec/17_deployment-topology.md § 17.7 Operational Runbooks: "Audit pipeline degradation" remediation
 
-In item 3, replace "Session tokens, delegation child tokens, credential-lease tokens, operability-scope tokens, and the general admin and service-principal self-rotation grant" with "Delegation child tokens, credential-lease tokens, operability-scope tokens, and the general admin and service-principal self-rotation grant", keeping the rest of that sentence, including the parenthetical "(either via direct caller request or via internal Token Service calls from other gateway subsystems)". Insert immediately after that sentence, before "The bootstrap admin-credential (`lenny-admin`) initial mint":
+**Edit 1.** In item 3, replace "Session tokens, delegation child tokens, credential-lease tokens, operability-scope tokens, and the general admin and service-principal self-rotation grant" with "Delegation child tokens, credential-lease tokens, operability-scope tokens, and the general admin and service-principal self-rotation grant", keeping the rest of that sentence, including the parenthetical "(either via direct caller request or via internal Token Service calls from other gateway subsystems)". Insert immediately after that sentence, before "The bootstrap admin-credential (`lenny-admin`) initial mint":
 
 ```markdown
 The gateway mints in process the tokens that [§10.2](10_gateway-internals.md#102-authentication) "Signing topology" lists, and both components sign with the one key that section defines.
 ```
 
 The bootstrap admin carve-out sentence and the custody sentences under **Deployment** are unchanged.
+
+**Edit 2.** In spec/17_deployment-topology.md §17.7, in the **Audit pipeline degradation** *Remediation* item (2), replace "by lowering `oauth.rateLimit.tenantPerSecond` for that tenant (Helm upgrade) so that `/v1/oauth/token` throttles further session creation" with "by lowering that tenant's concurrent-session quota ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas))". The bullet stays one physical line.
 
 ### SPEC-7 · spec/13_security-model.md § 13.3 Credential Flow: token issuance, write-before-issue, `exp` granularity, and actor-token freshness; spec/08_recursive-delegation.md § 8.2 Delegation Mechanism: actor-token freshness; spec/15_external-api-surface.md error table: `DELEGATION_PARENT_REVOKED`
 
@@ -306,7 +308,7 @@ Then insert the following as a new paragraph and list immediately after the para
 ```markdown
 **Revocation set.** `lenny-ops` checks each Lenny-issued token the key set verifies against an in-memory revocation set:
 
-1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read adds the rows it returns to the set.
+1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read replaces the set with the rows it returns and the `jti` of each event rule 2 added after the read began.
 2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
 3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
 4. Until the first successful read since the process started, every Lenny-issued token is refused with the response a gateway replica returns when it cannot reach Postgres to validate a token ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"). Rule 4 takes precedence over rules 3 and 7.
@@ -371,7 +373,7 @@ The sentence "When the `strict=true` check returns 503, the response body identi
 - spec/13_security-model.md (SPEC-3, SPEC-7, SPEC-10)
 - spec/15_external-api-surface.md (SPEC-4, SPEC-7)
 - spec/16_observability.md (SPEC-1, SPEC-5)
-- spec/17_deployment-topology.md (SPEC-1, SPEC-8, SPEC-9, SPEC-10)
+- spec/17_deployment-topology.md (SPEC-1, SPEC-6, SPEC-8, SPEC-9, SPEC-10)
 - spec/18_build-sequence.md (SPEC-11)
 - spec/25_agent-operability.md (SPEC-10, SPEC-11)
 - spec/27_web-playground.md (SPEC-1, SPEC-3)
