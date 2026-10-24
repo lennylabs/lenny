@@ -34,10 +34,9 @@ func serve(stderr io.Writer) int {
 	if st.delay > 0 {
 		time.Sleep(st.delay)
 	}
-	tools, err := openPlatformMCP(manifestPath())
-	if err != nil {
-		fmt.Fprintf(stderr, "supervise-probe: %v\n", err)
-		return exitRuntimeError
+	tools := openPlatformMCP(manifestPath())
+	if tools.err != nil {
+		fmt.Fprintf(stderr, "supervise-probe: %v\n", tools.err)
 	}
 	defer tools.close()
 	logf := func(format string, args ...any) { fmt.Fprintf(stderr, "supervise-probe: "+format+"\n", args...) }
@@ -54,9 +53,8 @@ func serve(stderr io.Writer) int {
 // handler answers each session message's command.
 type handler struct {
 	st *state
-	// tools is the platform MCP connection, nil when the manifest
-	// advertises no platform MCP server.
-	tools *platformMCP
+	// tools is the platform MCP connection the process opened at start.
+	tools platformMCPConn
 }
 
 // OnCreate accepts every session.
@@ -114,30 +112,40 @@ func firstText(msg runtime.Message) string {
 	return ""
 }
 
+// platformMCPConn is the outcome of the process's platform MCP dial at
+// start: the connection, or the reason there is none.
+type platformMCPConn struct {
+	conn *platformMCP
+	err  error
+}
+
+// close releases the connection, if any.
+func (c platformMCPConn) close() { c.conn.close() }
+
 // openPlatformMCP opens the process's platform MCP connection from the
-// manifest at path. A manifest that advertises no platform MCP server leaves
-// the process with none; a dial or handshake that fails after the socket is
-// advertised ends the process. spec: §15.4.3 (Authentication).
-func openPlatformMCP(path string) (*platformMCP, error) {
-	tools, err := dialPlatformMCP(path)
+// manifest at path. A failed dial or handshake does not end the process: a
+// process launched after the pod's intra-pod MCP servers were bound reads a
+// manifest nonce those servers do not validate (§15.4.3 Authentication: a
+// later manifest write does not re-arm a running server), and the probe
+// still serves its other commands. The failure is reported by the platform
+// MCP command. spec: §15.4.3 (Authentication).
+func openPlatformMCP(path string) platformMCPConn {
+	conn, err := dialPlatformMCP(path)
 	if errors.Is(err, errNoPlatformMCP) || errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return platformMCPConn{err: errNoPlatformMCP}
 	}
-	if err != nil {
-		return nil, err
-	}
-	return tools, nil
+	return platformMCPConn{conn: conn, err: err}
 }
 
 // callPlatformMCP makes one platform MCP call over the connection the
 // process opened with the manifest nonce of its start. A relaunched process
 // holds its own connection, so the call proves the process authenticated
 // with the manifest it read. spec: §15.4.3 (Authentication).
-func callPlatformMCP(tools *platformMCP) ActionResult {
-	if tools == nil {
-		return ActionResult{Error: "no platform MCP connection"}
+func callPlatformMCP(tools platformMCPConn) ActionResult {
+	if tools.conn == nil {
+		return ActionResult{Error: fmt.Sprintf("no platform MCP connection: %v", tools.err)}
 	}
-	if err := tools.Call("lenny/get_task_tree"); err != nil {
+	if err := tools.conn.Call("lenny/get_task_tree"); err != nil {
 		return ActionResult{Error: err.Error()}
 	}
 	return ActionResult{OK: true}

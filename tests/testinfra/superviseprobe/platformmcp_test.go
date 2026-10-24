@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -71,14 +72,15 @@ func servePlatformMCP(t *testing.T, p mcp.ToolProvider, nonce string) string {
 // session, so the adapter refuses its catalog discovery with
 // FailedPrecondition, and the probe must keep its authenticated connection
 // and serve a later platform tool call on it. Any other discovery failure,
-// and a wrong nonce, still end the start.
+// and a nonce the running server does not validate, leave the process with
+// no connection and a platform MCP command that reports why.
 func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 	refused := status.Error(codes.FailedPrecondition, "no single calling session")
-	t.Run("no-session refusal is not fatal", func(t *testing.T) {
+	t.Run("no-session refusal keeps the connection", func(t *testing.T) {
 		p := &gatedProvider{listErr: refused}
-		tools, err := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"))
-		if err != nil || tools == nil {
-			t.Fatalf("openPlatformMCP = %v, %v; want a connection", tools, err)
+		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"))
+		if tools.err != nil || tools.conn == nil {
+			t.Fatalf("openPlatformMCP = %+v; want a connection", tools)
 		}
 		defer tools.close()
 		if res := callPlatformMCP(tools); !res.OK {
@@ -88,39 +90,43 @@ func TestProbeStartsWhenTheNoSessionCatalogDiscoveryIsRefused(t *testing.T) {
 			t.Fatalf("provider saw %d calls, want 1", len(p.calls))
 		}
 	})
-	t.Run("another discovery failure is fatal", func(t *testing.T) {
+	t.Run("another discovery failure leaves no connection", func(t *testing.T) {
 		p := &gatedProvider{listErr: errors.New("catalog backend down")}
-		if tools, err := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce")); err == nil {
-			tools.close()
-			t.Fatal("openPlatformMCP succeeded although the catalog discovery failed for another reason")
+		tools := openPlatformMCP(servePlatformMCP(t, p, "warm-nonce"))
+		defer tools.close()
+		if tools.conn != nil || tools.err == nil {
+			t.Fatal("openPlatformMCP kept a connection although the catalog discovery failed for another reason")
+		}
+		if res := callPlatformMCP(tools); res.OK || !strings.Contains(res.Error, "catalog backend down") {
+			t.Fatalf("callPlatformMCP = %+v; want the discovery failure reported", res)
 		}
 	})
-	t.Run("a wrong nonce is fatal", func(t *testing.T) {
+	t.Run("a nonce the server does not validate leaves no connection", func(t *testing.T) {
 		manifest := servePlatformMCP(t, &gatedProvider{}, "warm-nonce")
 		body, _ := os.ReadFile(manifest)
 		var m map[string]any
 		_ = json.Unmarshal(body, &m)
-		m["mcpNonce"] = "other-nonce"
+		m["mcpNonce"] = "session-nonce"
 		body, _ = json.Marshal(m)
 		_ = os.WriteFile(manifest, body, 0o600)
-		if tools, err := openPlatformMCP(manifest); err == nil {
-			tools.close()
-			t.Fatal("openPlatformMCP succeeded with a nonce the server does not validate")
+		tools := openPlatformMCP(manifest)
+		defer tools.close()
+		if tools.conn != nil || tools.err == nil {
+			t.Fatal("openPlatformMCP authenticated with a nonce the running server does not validate")
+		}
+		if res := callPlatformMCP(tools); res.OK {
+			t.Fatal("callPlatformMCP reported OK with no connection")
 		}
 	})
 	t.Run("no platform MCP server in the manifest", func(t *testing.T) {
 		dir := t.TempDir()
 		manifest := filepath.Join(dir, "adapter-manifest.json")
 		_ = os.WriteFile(manifest, []byte(`{"mcpNonce":"n"}`), 0o600)
-		tools, err := openPlatformMCP(manifest)
-		if err != nil || tools != nil {
-			t.Fatalf("openPlatformMCP = %v, %v; want no connection and no error", tools, err)
-		}
-		if res := callPlatformMCP(nil); res.OK {
-			t.Fatal("callPlatformMCP with no connection reported OK")
-		}
-		if tools, err := openPlatformMCP(filepath.Join(dir, "absent.json")); err != nil || tools != nil {
-			t.Fatalf("openPlatformMCP on an absent manifest = %v, %v; want no connection and no error", tools, err)
+		for _, path := range []string{manifest, filepath.Join(dir, "absent.json")} {
+			tools := openPlatformMCP(path)
+			if tools.conn != nil || !errors.Is(tools.err, errNoPlatformMCP) {
+				t.Fatalf("openPlatformMCP(%s) = %+v; want no connection and errNoPlatformMCP", path, tools)
+			}
 		}
 	})
 }
