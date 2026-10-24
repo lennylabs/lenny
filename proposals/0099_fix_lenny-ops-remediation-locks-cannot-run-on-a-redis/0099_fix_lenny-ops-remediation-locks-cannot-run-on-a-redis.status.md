@@ -2,13 +2,13 @@
 proposal: 0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis
 title: lenny-ops remediation locks cannot run on a Redis Cluster
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-24
 drafted-by: change-proposal
 reviewed-date: 2026-10-24
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-24
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
