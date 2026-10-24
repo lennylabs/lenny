@@ -26,3 +26,5 @@
       Tiers 0, 11. Depends on: S4, S5, S6, S11
 - [ ] **S13 · docs** — DOCS-1. Lands the ops-clock-skew runbook clock-source sentence.
       Tiers 0, 11. Depends on: S3
+- [ ] **S14 · chart** — CHART-1. Lands the two `charts/lenny/values.yaml` Redis comment corrections.
+      Tiers 0, 11. Depends on: S5, S6

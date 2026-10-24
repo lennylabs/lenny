@@ -94,7 +94,11 @@ The new `data` string is `json.Marshal` of the lock `decide` returned.
 
 ## Staged schema, chart, and migration changes
 
-None.
+### CHART-1 · Correct two Redis comments in charts/lenny/values.yaml
+
+(a) In the `redis.cluster.addrs` comment, replace "the Tier 2→3 migration topology for the high-write Quota/Rate Limiting instance" with "the topology a deployment moves to at the §12.4 whole-deployment `redis.provider` cutover".
+
+(b) In the `capacityPlanning.singleTenantRedisTopology` comment, delete the sentence "At Tier 3 single-tenant scale the total Redis ops/s is well below the single-threaded-primary ceiling, so a 3-4 node Sentinel topology is sufficient and simpler than Redis Cluster." The rest of each comment stays unchanged.
 
 ## Staged docs changes
 
@@ -190,5 +194,6 @@ Targets: `tests/tier0_static/redis_cluster_safety_test.go` and `tests/tier11_doc
 - tests/tier0_static/redis_cluster_safety_test.go
 - tests/tier11_docs/redis_key_prefix_registry_test.go
 - tests/spec-map.json
+- charts/lenny/values.yaml
 - BUILD-GAPS.md
 - gateway-runtime-comms-remediation.md

@@ -83,9 +83,8 @@
 
 ## Open decisions for human to make
 
-The spec review loop routed these questions without a recommendation. Entry 7 carries the recommendation the open-decisions-and-impact-review phase derived for it. Entry 6 carries no recommendation, because the gate refuted this phase's resolution of it and nothing was staged.
+The spec review loop routed the question below without a recommendation. The open-decisions-and-impact-review phase derived the recommendation it now carries.
 
-6. **Chart comments outside the P6 code bound.** In `charts/lenny/values.yaml`, the `redis.cluster.addrs` comment calls cluster mode the migration topology for the Quota/Rate Limiting instance only, which SPEC-5's whole-deployment cutover makes inaccurate. The `capacityPlanning.singleTenantRedisTopology` comment repeats the single-primary capacity rationale that SPEC-6 Edit 2 deletes from §17.8.2. Should 0099 stage chart comment edits, or should these be filed separately? The loop left both outside the code bound.
 7. **Pub/sub load on a shared Tier 3 Redis Cluster.** The gateway EventBus publishes events with classic Redis `PUBLISH` (`pkg/gateway/storage/eventbus/eventbus.go:254`), and no sharded `SPUBLISH` call exists in the tree. A Redis Cluster broadcasts a classic `PUBLISH` to every node. Under the owner's 2026-10-21 decision that one Redis Cluster may serve every concern at Tier 3 (SPEC-4), event pub/sub traffic therefore reaches the primaries that hold session coordination leases. The question is whether to file this residual as a separate performance finding, for example to evaluate a switch to sharded `SPUBLISH`, or to accept it with nothing filed.
    - Recommendation: accept the residual and file nothing. The operator splits the cache and pub/sub concern onto its own instance when the §12.4 pub/sub ceiling signal fires.
    - Ground: no spec text requires sharded pub/sub or forbids pub/sub on nodes that hold leases, so classic `PUBLISH` is not a code defect. §12.4 defines the pub/sub ceiling signal in its **Pub/sub fan-out cost** bullet (`spec/12_storage-architecture.md:245`). SPEC-4's last condition keeps separation by concern available when a concern's ceiling signals trigger (spec-changes.md:139), and SPEC-6 Edit 1 names the per-store-role connection string as the means.
@@ -102,6 +101,7 @@ The spec review loop routed these questions without a recommendation. Entry 7 ca
 - The §25.2 Error Response Envelope example gives `REMEDIATION_LOCK_CONFLICT` the category `TRANSIENT`, while the §25.4 Error Codes row and `pkg/ops/opsserver` give `POLICY`. The example is the defect, and SPEC-1 Edit 3 keeps `POLICY`.
 - The §12.4 **Data-at-rest posture** says every Redis-backed role has a durable fallback and that total Redis data loss is recoverable, and §28.5.7 and `docs/operator-guide/disaster-recovery.md` repeat the claim. Circuit breakers, playground revocation markers, the durable inbox and DLQ, and staged billing entries have no durable copy, so the claim overstates recovery after an unplanned Redis loss. The overclaim predates this proposal and does not depend on topology. SPEC-4 cites the posture only for its coordination-durability condition, which REC-2 audits store by store.
 - §25.4 reconciliation step 2 ("epoch ≥ the epoch of the last reconciliation") disagrees with the code, which copies every active lock, and §25.4 overstates Redis durability on failover. Both are adjacent spec defects outside this problem.
+- The `--redis-cluster-addrs` help text in `cmd/lenny-gateway/flags.go` still calls cluster mode the migration topology for the Quota/Rate Limiting instance, which SPEC-5's whole-deployment cutover replaces. It sits outside the P6 code bound.
 
 ## Impacts on other proposals
 
