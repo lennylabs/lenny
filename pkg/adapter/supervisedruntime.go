@@ -332,6 +332,12 @@ func (r *SupervisedRuntime) notLiveLocked() bool {
 func (r *SupervisedRuntime) markNotLive(cause LivenessCause) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.markNotLiveLocked(cause)
+}
+
+// markNotLiveLocked sets the state and reports whether this call set it. The
+// caller holds r.mu.
+func (r *SupervisedRuntime) markNotLiveLocked(cause LivenessCause) bool {
 	if r.notLive {
 		return false
 	}
@@ -362,6 +368,12 @@ func (r *SupervisedRuntime) notifyNotLive(cause LivenessCause) {
 func (r *SupervisedRuntime) SetEndDisposition(d EndDisposition) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.setEndDispositionLocked(d)
+}
+
+// setEndDispositionLocked applies the precedence rule of SetEndDisposition.
+// The caller holds r.mu.
+func (r *SupervisedRuntime) setEndDispositionLocked(d EndDisposition) {
 	if d < r.disposition {
 		r.disposition = d
 	}
@@ -910,14 +922,19 @@ func (r *SupervisedRuntime) ServesNextSession() bool {
 }
 
 // CloseForHoldTimeout applies the coordinator hold timeout's close of the
-// runtime connection. It sets the holdTimeout disposition, hands the current
-// generation's end to the Runtime exits handling, sets the not-live state
-// with the no-connection cause, and then ends the composed transport. Each of
+// runtime connection. It sets the holdTimeout disposition and the not-live
+// state with the no-connection cause, hands the current generation's end to
+// the Runtime exits handling, and then ends the composed transport. Each of
 // these runs before it returns, so the onHoldTimeout pass that reads the
 // registry next finds the generation ended and the pod not live: a start that
 // joined the process before this call is refused by confirmStart, and every
 // later start is refused by ensureLaunched, rather than being recorded on a
 // connection the close is ending.
+//
+// The disposition, the generation the end is handed for, and the not-live
+// state are fixed while no launch is in flight (see retireForHoldTimeout), so
+// a launch either completes first and its generation ends on the holdTimeout
+// row, or is refused and never sent.
 //
 // The not-live state is set whether or not a generation is live, because the
 // close retires the pod in every case: with a launch in flight, between an
@@ -928,19 +945,38 @@ func (r *SupervisedRuntime) ServesNextSession() bool {
 // spec: §4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
 // Liveness); §10.1 (Hold state timeout).
 func (r *SupervisedRuntime) CloseForHoldTimeout() {
-	r.SetEndDisposition(EndHoldTimeout)
-	r.mu.Lock()
-	t, gen := r.transport, r.gen
-	r.mu.Unlock()
+	t, gen, newlyNotLive := r.retireForHoldTimeout()
 	if gen > 0 {
 		// takeEnd refuses a generation whose end was already handled, so a
 		// generation an earlier event ended keeps the row it took.
 		r.endEvent(gen, RuntimeEndEvent{Kind: EndByConnection})
 	}
-	r.MarkNotLive(CauseNoConnection)
+	if newlyNotLive {
+		r.notifyNotLive(CauseNoConnection)
+	}
 	if t != nil {
 		_ = t.CloseListener()
 	}
+}
+
+// retireForHoldTimeout waits for a launch in flight to receive its reply,
+// then, in one critical section, sets the holdTimeout disposition, sets the
+// not-live state with the no-connection cause, and returns the transport, the
+// current generation, and whether this call set the not-live state. A launch
+// that completed first reset the disposition of the generation it started,
+// so the holdTimeout value applies to that generation; a launch that had not
+// incremented the generation is refused by ensureLaunched's not-live check.
+// Without sendMu a launch could increment the generation between the
+// disposition and the generation read, and that generation's end would take
+// the none row. spec: §4.7.10 (Runtime supervisor, Runtime exits; Runtime
+// supervisor, Launch).
+func (r *SupervisedRuntime) retireForHoldTimeout() (*SocketRuntimeProcess, uint64, bool) {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setEndDispositionLocked(EndHoldTimeout)
+	return r.transport, r.gen, r.markNotLiveLocked(CauseNoConnection)
 }
 
 // CloseListener is the adapter's exit teardown: it closes the composed

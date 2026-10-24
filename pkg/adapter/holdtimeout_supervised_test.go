@@ -150,3 +150,53 @@ func TestSupervisedHoldTimeoutCloseEndsTheGenerationBeforeItReturns_spec_4_7_10(
 		requireLaterStartRefused(t, s, f, 1)
 	})
 }
+
+// A hold-timeout close that meets a launch in flight waits for that launch's
+// reply, and the generation the launch started ends on the holdTimeout row:
+// no session fails with runtime_crash, the not-live cause is no-connection,
+// and no launch reaches the supervisor after the close has returned.
+// spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Launch), 10.1 (Hold state timeout)
+// diagnosis: the close set the disposition and read the generation in two
+// critical sections with no ordering against a launch, so a launch could
+// increment the generation and reset the disposition to none between them,
+// and that generation's end took the none row; and a launch that had passed
+// its not-live check was sent after the close returned, starting a process
+// that could never connect.
+func TestSupervisedHoldTimeoutCloseWaitsForTheLaunchInFlight_spec_4_7_10(t *testing.T) {
+	s, f := supervisedServer(t)
+	f.sup.react(superviseLaunch, fakeReaction{noProcess: true})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// The hook runs after the generation increment and before the launch
+	// request, which is the window the close must not overtake.
+	f.rt.setLaunchHook(func() { close(entered); <-release })
+	startDone := make(chan error, 1)
+	go func() { startDone <- s.Runtime.Start(startCtx(t, 5*time.Second), "b") }()
+	<-entered
+	closeDone := make(chan struct{})
+	go func() { s.endRuntimeForHoldTimeout(); close(closeDone) }()
+	select {
+	case <-closeDone:
+		t.Fatal("the hold-timeout close returned while a launch was in flight, before its request was sent")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-closeDone
+	launchesAtReturn := f.sup.count(superviseLaunch)
+	if err := <-startDone; err == nil {
+		t.Fatal("the launching start succeeded on a runtime the hold timeout closed")
+	}
+	requireNotLive(t, f.rt, CauseNoConnection)
+	if disp, handled := f.rt.handledEnd(1); !handled || disp != EndHoldTimeout {
+		t.Fatalf("generation 1 end handled = %v (%s), want handled on %s", handled, disp, EndHoldTimeout)
+	}
+	if recordedOn(s, "b") {
+		t.Fatal("the launching start was recorded on the generation the close ended")
+	}
+	requireLaterStartRefused(t, s, f, launchesAtReturn)
+	if launchesAtReturn != 1 {
+		t.Fatalf("launches when the close returned = %d, want 1", launchesAtReturn)
+	}
+	requireListenerClosed(t, f)
+}

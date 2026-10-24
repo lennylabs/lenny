@@ -640,3 +640,60 @@ func TestServiceTerminationAgainstWarmUpLaunchRace_spec_4_7_10(t *testing.T) {
 		}()
 	}
 }
+
+// spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Launch), 10.1 (Hold state timeout)
+// diagnosis: a launch that ran between the hold-timeout close's disposition
+// write and its generation read reset the disposition to none, so the new
+// generation's end took the none row (runtime_crash, runtime-exit cause);
+// and a launch that passed its not-live check before the close set the state
+// was sent to the supervisor after the close returned.
+func TestSupervisedHoldTimeoutAgainstLaunchRace_spec_4_7_10(t *testing.T) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for round := 0; round < 40; round++ {
+		s, f := supervisedServer(t)
+		f.sup.react(superviseLaunch, fakeReaction{
+			noProcess: rand.Intn(2) == 0,
+			delay:     time.Duration(rand.Intn(3)) * time.Millisecond,
+		})
+		launchesAtReturn := -1
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			jitter(r)
+			s.endRuntimeForHoldTimeout()
+			launchesAtReturn = f.sup.count(superviseLaunch)
+		}()
+		go func() {
+			defer wg.Done()
+			jitter(r)
+			_ = joinDuringHoldTimeout(t, s)
+		}()
+		wg.Wait()
+		requireNotLive(t, f.rt, CauseNoConnection)
+		// The supervisor reads a launch before the adapter's start can
+		// return, so a launch sent after the close shows up by the time
+		// both goroutines are done; a short settle covers the fake's reader.
+		time.Sleep(5 * time.Millisecond)
+		if n := f.sup.count(superviseLaunch); n != launchesAtReturn {
+			t.Fatalf("round %d: %d launches at the close's return, %d afterwards", round, launchesAtReturn, n)
+		}
+		if launchesAtReturn == 1 {
+			if disp, handled := f.rt.handledEnd(1); !handled || disp != EndHoldTimeout {
+				t.Fatalf("round %d: generation 1 end handled = %v (%s), want handled on %s", round, handled, disp, EndHoldTimeout)
+			}
+		}
+		if sessionCrashed(s, "b") {
+			t.Fatalf("round %d: the holdTimeout close failed a session with runtime_crash", round)
+		}
+		_ = f.rt.CloseListener()
+		f.sup.close()
+	}
+}
+
+// sessionCrashed reports whether the session's stream was failed with
+// runtime_crash.
+func sessionCrashed(s *Server, id string) bool {
+	return (&exitsFixture{s: s}).crashed(id)
+}
