@@ -1075,6 +1075,7 @@
         "pkg/adapter/supervisedruntime_test.go::TestEndDispositionPrecedence_spec_4_7_10",
         "pkg/adapter/runtimeexits_test.go::TestRuntimeExitsRowPerDispositionEventAndPodKind_spec_4_7_10",
         "pkg/adapter/runtimeexits_test.go::TestRuntimeExitsHandlesEachGenerationOnce_spec_4_7_10",
+        "pkg/adapter/runtimeexits_test.go::TestShutdownRowWarnsOnALateNonZeroExited_spec_28_5_3",
         "pkg/adapter/runtimeexits_test.go::TestRuntimeCrashFailsOnlyTheSessionsTheProcessHolds_spec_4_7_10",
         "pkg/adapter/runtimeexits_test.go::TestAdapterExitAndRebindClosesSelectNoRow_spec_4_7_10",
         "pkg/adapter/runtimeexits_test.go::TestLivenessCausesOnTheServer_spec_4_7_10",
@@ -6874,6 +6875,7 @@
       "tests": [
         "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorCHarness_spec_4_7_10",
         "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorBoundedFuzz_spec_28_5_3",
+        "pkg/adapter/runtimeexits_test.go::TestShutdownRowWarnsOnALateNonZeroExited_spec_28_5_3",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_busy_test.go::TestRuntimeSDKsReportBusyOnHeartbeatAck_spec_28_5_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",

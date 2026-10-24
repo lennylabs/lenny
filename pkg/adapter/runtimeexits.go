@@ -144,9 +144,12 @@ var errRuntimeCrash = status.Error(codes.Internal, "runtime_crash: the runtime p
 // lock: a session whose entry stands and whose rule-8 record names gen when
 // the lock is taken is a session the process holds. The first event the
 // adapter handles for a generation selects the row by the disposition then
-// held, and a later event for the same generation changes nothing.
+// held, and a later event for the same generation changes nothing in the
+// row's outcome. A late exited still receives the Exit Codes check, because
+// only the exited report carries the status and the connection end or the
+// ended reply can be handled first.
 // spec: §4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
-// Crash); §4.7.1 (The registry critical section).
+// Crash); §4.7.1 (The registry critical section); §28.5.3 (Exit Codes).
 func (s *Server) handleRuntimeEnd(rt *SupervisedRuntime, gen uint64, ev RuntimeEndEvent) {
 	s.mu.Lock()
 	disp, ok := rt.takeEnd(gen)
@@ -163,12 +166,28 @@ func (s *Server) handleRuntimeEnd(rt *SupervisedRuntime, gen uint64, ev RuntimeE
 	}
 	s.mu.Unlock()
 	if !ok {
+		warnLateShutdownExit(rt, gen, ev)
 		return
 	}
 	if newlyNotLive {
 		rt.notifyNotLive(row.notLive)
 	}
 	logRuntimeEnd(rt.logger, gen, ev, disp, crashed)
+}
+
+// warnLateShutdownExit records the Exit Codes alert for an exited report that
+// arrives after another event already handled its generation's end on the
+// shutdown row. It logs a non-zero status at warning level and changes
+// nothing else. spec: §4.7.10 (Runtime supervisor, Runtime exits); §28.5.3
+// (Exit Codes).
+func warnLateShutdownExit(rt *SupervisedRuntime, gen uint64, ev RuntimeEndEvent) {
+	if ev.Kind != EndByExited || ev.Exit.Clean() {
+		return
+	}
+	if disp, handled := rt.handledEnd(gen); handled && disp == EndShutdown {
+		rt.logger.Warn("runtime_shutdown_exit_nonzero",
+			"gen", gen, "event", string(ev.Kind), "disposition", disp.String(), "exit", ev.Exit.String(), "late", true)
+	}
 }
 
 // crashSessionsLocked fails every session the ended generation holds: a

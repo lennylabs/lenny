@@ -208,6 +208,64 @@ func TestRuntimeExitsHandlesEachGenerationOnce_spec_4_7_10(t *testing.T) {
 	})
 }
 
+// A runtime that exits after the shutdown write closes its CH-MSGSOCK socket
+// and the supervisor reports its exited, in either order. When the connection
+// end or the ended reply is handled first, the later exited still records the
+// Exit Codes warning with its status and applies no second row.
+// spec: 4.7.10 (Runtime supervisor, Runtime exits), 28.5.3 (Exit Codes)
+func TestShutdownRowWarnsOnALateNonZeroExited_spec_28_5_3(t *testing.T) {
+	cases := []struct {
+		name   string
+		first  string
+		exited string
+		disp   EndDisposition
+		warn   bool
+	}{
+		{"connection then exited status 2", "connection", `{"type":"exited","gen":1,"status":2}`, EndShutdown, true},
+		{"connection then exited by signal", "connection", `{"type":"exited","gen":1,"signal":9}`, EndShutdown, true},
+		{"ended then exited status 2", "ended", `{"type":"exited","gen":1,"status":2}`, EndShutdown, true},
+		{"connection then exited status 0", "connection", `{"type":"exited","gen":1,"status":0}`, EndShutdown, false},
+		{"connection then exited status 2 on the scrub row", "connection", `{"type":"exited","gen":1,"status":2}`, EndScrub, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newExitsFixture(t, LifetimeKeep, LaunchSession)
+			e.hold("a")
+			e.rt.SetEndDisposition(tc.disp)
+			e.endBy(t, tc.first)
+			// A disposition change after the first handled event does not
+			// change which row the late exited is checked against.
+			e.rt.SetEndDisposition(EndNone)
+			e.sup.writeLine(tc.exited)
+			if tc.warn {
+				waitFor(t, "the late Exit Codes warning", func() bool {
+					return strings.Contains(e.logs.String(), "runtime_shutdown_exit_nonzero")
+				})
+			} else {
+				time.Sleep(50 * time.Millisecond)
+			}
+			logs := e.logs.String()
+			want := 0
+			if tc.warn {
+				want = 1
+			}
+			if c := strings.Count(logs, "runtime_shutdown_exit_nonzero"); c != want {
+				t.Fatalf("Exit Codes warnings = %d, want %d; logs:\n%s", c, want, logs)
+			}
+			if tc.warn && !strings.Contains(logs, "exit=") {
+				t.Fatalf("the warning does not carry the status; logs:\n%s", logs)
+			}
+			if c := strings.Count(logs, "runtime_process_ended"); c != 1 {
+				t.Fatalf("row applied %d times, want once", c)
+			}
+			if e.crashed("a") {
+				t.Fatal("the late exited applied a crash row")
+			}
+			requireLive(t, e.rt)
+		})
+	}
+}
+
 // spec: 4.7.10 (Runtime supervisor, Crash), 4.7.1 (The registry critical
 // section)
 func TestRuntimeCrashFailsOnlyTheSessionsTheProcessHolds_spec_4_7_10(t *testing.T) {

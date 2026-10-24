@@ -135,10 +135,13 @@ type SupervisedRuntime struct {
 	// Launch).
 	launchPermitted bool
 	// endHandled records that the current generation's end was handled.
-	endHandled  bool
-	disposition EndDisposition
-	notLive     bool
-	cause       LivenessCause
+	endHandled bool
+	// handledDisposition is the disposition that selected the current
+	// generation's row when its end was handled.
+	handledDisposition EndDisposition
+	disposition        EndDisposition
+	notLive            bool
+	cause              LivenessCause
 	// onEnd hands an end event to the Server's Runtime exits handling.
 	onEnd func(gen uint64, ev RuntimeEndEvent)
 	// onNotLive observes the first cause of the not-live state. It must not
@@ -358,9 +361,22 @@ func (r *SupervisedRuntime) takeEnd(gen uint64) (EndDisposition, bool) {
 		return r.disposition, false
 	}
 	r.endHandled = true
+	r.handledDisposition = r.disposition
 	r.live = false
 	r.stopConnectWatchLocked()
 	return r.disposition, true
+}
+
+// handledEnd returns the disposition that selected the row of gen's end when
+// gen is the current generation and its end was already handled. It reports
+// false otherwise, including for a generation a later launch has replaced.
+func (r *SupervisedRuntime) handledEnd(gen uint64) (EndDisposition, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if gen == 0 || gen != r.gen || !r.endHandled {
+		return EndNone, false
+	}
+	return r.handledDisposition, true
 }
 
 // endEvent hands an end event to the Server's handling, or applies the row
