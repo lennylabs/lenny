@@ -3,8 +3,10 @@
 package superviseprobe
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,15 +33,15 @@ type state struct {
 	signals  map[string]int
 }
 
-// newState captures the identity before the dial and starts the record
-// server and the signal counter, which logs each signal to stderr, the
-// runtime container's log.
-func newState(stderr io.Writer) (*state, error) {
+// newState captures the identity before the dial, claims the dial delay
+// against launchMarker, and starts the record server and the signal
+// counter, which logs each signal to stderr, the runtime container's log.
+func newState(stderr io.Writer, launchMarker string) (*state, error) {
 	token, err := selfToken()
 	if err != nil {
 		return nil, err
 	}
-	delay, err := ParseDialDelay(os.Getenv(DialDelayEnvVar))
+	delay, err := claimDialDelay(os.Getenv(DialDelayEnvVar), launchMarker)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +55,34 @@ func newState(stderr io.Writer) (*state, error) {
 	st.countSignals(stderr)
 	st.srv = startRecordServer(RecordSocket, st)
 	return st, nil
+}
+
+// claimDialDelay is the delay this process sleeps before its CH-MSGSOCK
+// dial. The configured delay is sized against the warm-up launch's
+// deadline, the rendered --warm-up-timeout, and the warm-up launch is the
+// pod's first launch. The first process to create marker, a file on the
+// pod-scoped /tmp volume, takes the delay; a later launch in the same pod,
+// such as the startup step 7 launch that serves a session after DemoteSDK
+// ended the warm-up process, finds marker present and dials at once,
+// because its deadline is the launching start's rather than the warm-up
+// timeout. No marker is created when no delay is configured. spec: §4.7.10
+// (Runtime supervisor, Launch; SDK-warm).
+func claimDialDelay(raw, marker string) (time.Duration, error) {
+	delay, err := ParseDialDelay(raw)
+	if err != nil || delay == 0 {
+		return 0, err
+	}
+	f, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("claim launch marker %s: %w", marker, err)
+	}
+	if err := f.Close(); err != nil {
+		return 0, fmt.Errorf("close launch marker %s: %w", marker, err)
+	}
+	return delay, nil
 }
 
 // countSignals counts every catchable signal the process receives, except

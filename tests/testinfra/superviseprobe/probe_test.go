@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -375,7 +377,7 @@ func TestMainDispatchesSubcommands(t *testing.T) {
 func TestHandlerAnswersReportAndEchoesOtherText(t *testing.T) {
 	t.Setenv(manifestEnvVar, filepath.Join(t.TempDir(), "absent.json"))
 	t.Setenv(DialDelayEnvVar, "")
-	st, err := newState(io.Discard)
+	st, err := newState(io.Discard, filepath.Join(t.TempDir(), "launched"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,6 +410,58 @@ func TestHandlerAnswersReportAndEchoesOtherText(t *testing.T) {
 	} else if plant.Error == "" {
 		t.Error("a failed link plant carries no error")
 	}
+}
+
+// spec: §4.7.10 (Runtime supervisor, Launch; SDK-warm)
+//
+// diagnosis: a probe process launched after the pod's warm-up launch, such
+// as the startup step 7 launch that serves a session after DemoteSDK, slept
+// the dial delay sized for the warm-up timeout, so its dial can outrun the
+// launching start's accept bound; or the warm-up launch itself lost its
+// delay, or an unwritable marker was ignored instead of failing the start.
+func TestDialDelayAppliesOnlyToThePodsFirstLaunch(t *testing.T) {
+	t.Setenv(manifestEnvVar, filepath.Join(t.TempDir(), "absent.json"))
+	t.Setenv(DialDelayEnvVar, "30s")
+	marker := filepath.Join(t.TempDir(), "launched")
+	for i, want := range []string{"30s", "", ""} {
+		st, err := newState(io.Discard, marker)
+		if err != nil {
+			t.Fatalf("launch %d: %v", i, err)
+		}
+		got := st.record().DialDelay
+		st.close()
+		if got != want {
+			t.Errorf("launch %d reported dial delay %q, want %q", i, got, want)
+		}
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the first delayed launch left no marker: %v", err)
+	}
+
+	t.Run("no delay configured creates no marker", func(t *testing.T) {
+		fresh := filepath.Join(t.TempDir(), "launched")
+		if d, err := claimDialDelay("", fresh); err != nil || d != 0 {
+			t.Errorf("claimDialDelay(\"\") = %v, %v; want 0, nil", d, err)
+		}
+		if _, err := os.Stat(fresh); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("a launch with no delay created the marker: %v", err)
+		}
+	})
+	t.Run("an unwritable marker fails the start", func(t *testing.T) {
+		bad := filepath.Join(t.TempDir(), "missing-dir", "launched")
+		if d, err := claimDialDelay("30s", bad); err == nil || d != 0 {
+			t.Errorf("claimDialDelay with marker %s = %v, %v; want 0 and an error", bad, d, err)
+		}
+	})
+	t.Run("a malformed delay fails before the marker is claimed", func(t *testing.T) {
+		fresh := filepath.Join(t.TempDir(), "launched")
+		if _, err := claimDialDelay("soon", fresh); err == nil {
+			t.Error("claimDialDelay(\"soon\") returned no error")
+		}
+		if _, err := os.Stat(fresh); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("a malformed delay created the marker: %v", err)
+		}
+	})
 }
 
 // sendText sends one text message through h and returns the reply text.

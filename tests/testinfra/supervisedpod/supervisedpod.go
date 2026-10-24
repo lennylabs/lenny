@@ -49,7 +49,8 @@ const (
 const ProbeExe = "/usr/local/bin/lenny"
 
 // DialDelay is the PROBE_DIAL_DELAY the preConnect and service probe
-// Runtimes set in tests/testinfra/kind/agent-workload.yaml.
+// Runtimes set in tests/testinfra/kind/agent-workload.yaml. Only the pod's
+// warm-up launch sleeps it; a later launch in the same pod dials at once.
 const DialDelay = 30 * time.Second
 
 // RestartPool and RestartRuntime name the supervised `restart` pool and its

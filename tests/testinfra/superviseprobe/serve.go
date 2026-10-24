@@ -14,13 +14,15 @@ import (
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
 
-// serve records the process identity, sleeps the dial delay, and serves
-// sessions through the runtime SDK at the Standard level until the adapter
-// closes CH-MSGSOCK. The manifest is read before the dial, so the report
-// shows which manifest the process saw at start. spec: §4.7.10 (Runtime
-// supervisor, Launch); §4.7.9 step 7.
+// serve records the process identity, sleeps the dial delay when this is
+// the pod's warm-up launch (claimDialDelay), and serves sessions through
+// the runtime SDK at the Standard level until the adapter closes
+// CH-MSGSOCK. A later launch in the pod dials without the delay. The
+// manifest is read before the dial, so the report shows which manifest the
+// process saw at start. spec: §4.7.10 (Runtime supervisor, Launch;
+// SDK-warm); §4.7.9 step 7.
 func serve(stderr io.Writer) int {
-	st, err := newState(stderr)
+	st, err := newState(stderr, LaunchMarker)
 	if err != nil {
 		fmt.Fprintf(stderr, "supervise-probe: %v\n", err)
 		return exitRuntimeError

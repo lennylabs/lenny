@@ -1196,10 +1196,11 @@ bootstrap:
         cleanupTimeoutSeconds: 30
     # Sidecar preConnect probe pool: its pods launch the runtime process at
     # warm-up (--launch-mode=preconnect-sdk-warm) while the pool's SDK-warm
-    # circuit breaker is closed. The Runtime CR sets the probe's CH-MSGSOCK
-    # dial delay (PROBE_DIAL_DELAY) between the rendered ping interval plus
-    # ping timeout and the warm-up timeout (§4.7.10 Runtime supervisor,
-    # Launch; §28.5.3 CH-SUPERVISE, Timing).
+    # circuit breaker is closed. The Runtime CR sets the CH-MSGSOCK dial
+    # delay (PROBE_DIAL_DELAY) of the warm-up launch between the rendered
+    # ping interval plus ping timeout and the warm-up timeout; a step-7
+    # launch after a demotion dials at once (§4.7.10 Runtime supervisor,
+    # Launch; SDK-warm; §28.5.3 CH-SUPERVISE, Timing).
     - name: supervise-probe-preconnect-pool
       runtimeRef: supervise-probe-preconnect
       isolationProfile: standard

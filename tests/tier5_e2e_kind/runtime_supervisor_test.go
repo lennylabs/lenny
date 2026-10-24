@@ -343,7 +343,9 @@ func TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4
 // whose workspace forced a demotion (DemoteSDK must end the process and a
 // step-7 launch serve the session), or a pod created while the pool's
 // SDK-warm circuit breaker was open launched at warm-up instead of at the
-// session's step 7.
+// session's step 7. A step-7 launch that reports the probe's dial delay
+// slept a delay sized for the warm-up timeout inside the launching start's
+// accept bound; the probe must take it only on the pod's warm-up launch.
 func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
 	c := d.Cluster()
@@ -366,6 +368,9 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		if pid, ok := warmPID[sess.PodAssignment]; ok && rec.PID != pid {
 			t.Errorf("SDK-warm pod %s served the session on PID %d, want the warm-up process %d", sess.PodAssignment, rec.PID, pid)
 		}
+		if want := supervisedpod.DialDelay.String(); rec.DialDelay != want {
+			t.Errorf("the warm-up process on pod %s reported dial delay %q, want %q", sess.PodAssignment, rec.DialDelay, want)
+		}
 	})
 	t.Run("demoted session on a step-7 launch", func(t *testing.T) {
 		tenant, sess := supStart(ctx, t, d, supervisedpod.PreconnectRuntime, inlineWorkspacePlan("CLAUDE.md", "demote"))
@@ -373,6 +378,10 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		rec := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
 		if pid, ok := warmPID[sess.PodAssignment]; ok && rec.PID == pid {
 			t.Errorf("demoted pod %s served the session on its warm-up process %d; DemoteSDK must end it", sess.PodAssignment, pid)
+		}
+		if rec.DialDelay != "" {
+			t.Errorf("the step-7 launch on demoted pod %s slept dial delay %s; only the warm-up launch takes it",
+				sess.PodAssignment, rec.DialDelay)
 		}
 	})
 	t.Run("pod created while the breaker is open launches at step 7", func(t *testing.T) {

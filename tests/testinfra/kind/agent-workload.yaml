@@ -351,7 +351,10 @@ spec:
 # e2e-values.yaml), so a supervisor stopped during the delay misses a ping
 # before the probe connects, and shorter than the rendered --warm-up-timeout
 # (2m by default), so an undisturbed pod connects before the warm-up wait
-# ends.
+# ends. Only the pod's first launch, the warm-up launch, takes the delay:
+# the probe marks the pod's /tmp volume, so the startup step 7 launch that
+# serves a session after DemoteSDK dials at once, inside the launching
+# start's deadline.
 # spec: §4.7.10 (Runtime supervisor, Launch; SDK-warm), §28.5.3
 # (CH-SUPERVISE, Timing).
 apiVersion: lenny.dev/v1alpha1

@@ -21,8 +21,10 @@
 //
 // The image sets an ENV variable (ImageEnvVar) that the probe's Runtime
 // `env` does not, so a test can assert that the supervisor's launch
-// environment drops the image ENV. DialDelayEnvVar delays the probe's
-// CH-MSGSOCK dial, so a test can act on a pod during its warm-up launch.
+// environment drops the image ENV. DialDelayEnvVar delays the CH-MSGSOCK
+// dial of the pod's warm-up launch, the first launch in the pod, so a test
+// can act on a pod during that launch; a later launch in the same pod
+// dials without the delay.
 //
 // spec: §4.7.10 (Runtime supervisor); §4.7.11 item 8; §5.2 (Supervised scrub
 // sequence); §28.5.3 (CH-SUPERVISE).
@@ -101,8 +103,10 @@ const (
 // begins with LENNY_, which §5.1 reserves for the platform's own variables
 // and the Runtime CRD refuses in `env`.
 const (
-	// DialDelayEnvVar is a Go duration the probe sleeps before it dials
-	// CH-MSGSOCK. The Kind pools set it through the Runtime `env`.
+	// DialDelayEnvVar is a Go duration the pod's first probe process, the
+	// warm-up launch, sleeps before it dials CH-MSGSOCK. A later process in
+	// the same pod finds LaunchMarker and dials at once. The Kind pools set
+	// it through the Runtime `env`.
 	DialDelayEnvVar = "PROBE_DIAL_DELAY"
 	// RuntimeEnvVar is the variable the Kind probe Runtimes set in `env`.
 	RuntimeEnvVar = "PROBE_RUNTIME_ENV"
@@ -140,6 +144,10 @@ const (
 	AdapterRunDir = "/run/lenny"
 	// defaultManifestPath is the adapter manifest path. spec: §4.7.6.
 	defaultManifestPath = "/run/lenny/adapter-manifest.json"
+	// LaunchMarker is the file the pod's first delayed probe process
+	// creates on the pod-scoped /tmp volume, so a later launch in the same
+	// pod skips the dial delay.
+	LaunchMarker = "/tmp/lenny-probe-launched"
 	// mqName is the POSIX message queue CmdIPC creates.
 	mqName = "lenny-probe-mq"
 )
@@ -170,7 +178,8 @@ type Record struct {
 	ManifestNow ManifestView `json:"manifestNow"`
 	// Env is the probe's environment at start, as NAME=VALUE pairs.
 	Env []string `json:"env"`
-	// DialDelay is the delay the probe slept before its dial.
+	// DialDelay is the delay the probe slept before its dial, empty for a
+	// process that dialed at once.
 	DialDelay string `json:"dialDelay,omitempty"`
 	// Cleanups are the records cleanup commands reported to this process.
 	Cleanups []CleanupRecord `json:"cleanups"`
