@@ -49,9 +49,12 @@ var errRuntimeConnectTimeout = errors.New("adapter: runtime did not connect with
 // separate containers of the same pod. The containers share a network
 // namespace, so an abstract Unix socket the adapter binds is reachable
 // from the runtime container with no shared filesystem path. The
-// adapter never spawns the runtime in this model — the kubelet starts
-// the runtime container — so SocketRuntimeProcess binds the socket at
-// construction time and waits for the runtime to connect on Start.
+// adapter never spawns the runtime in this model: the runtime supervisor
+// in the runtime container launches it when the adapter asks on
+// CH-SUPERVISE (§4.7.10, Runtime supervisor), and SupervisedRuntime
+// composes one SocketRuntimeProcess per launched process. SocketRuntimeProcess
+// therefore binds the socket at construction time and waits for the
+// runtime to connect on Start.
 //
 // For tests, SpawnPath may be set: Start then execs that binary with
 // LENNY_ADAPTER_SOCKET pointing at the bound socket, so one host can

@@ -365,9 +365,10 @@ func (f *socketRecycleFixture) requireOneReport(t *testing.T, podID string) scru
 // lifetime), 5.2 (whole-pod scrub).
 //
 // The case drives the adapter Server on a real SocketRuntimeProcess whose
-// runtime dials once and never redials, which is the sidecar deployment
-// model: the kubelet starts the runtime container once and nothing inside
-// the pod starts it again.
+// runtime dials once and never redials, which is a keep pod in the
+// sidecar deployment model: the runtime supervisor launches the runtime
+// process once and launches nothing at the recycle boundary (§5.2,
+// Runtime-process lifetime).
 //
 // diagnosis: a Property 2 failure means the recycle Shutdown ended the
 //

@@ -1136,8 +1136,8 @@ type RecyclePolicy struct {
 	// request. §5.2 admits it only with microvm isolation,
 	// MaxConcurrentSessions 1, a `vm-restart` or `in-place` ScrubProfile,
 	// and a non-T4 runtime. A recycled pod stays pinned to its first
-	// tenant because it keeps the runtime process that served that tenant,
-	// so the field does not change which tenant a pod serves.
+	// tenant because the tenant pin applies on every pool, so the field
+	// does not change which tenant a pod serves.
 	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
 
 	// ScrubProfile is the §5.2 whole-pod scrub variant: `standard` (the

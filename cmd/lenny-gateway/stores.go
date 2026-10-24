@@ -385,7 +385,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	} else {
 		partialManifests = partialmanifeststore.NewMemoryStore(nil)
 	}
-	// §4.4 session-log store: persists runtime stderr to MinIO
+	// §4.4 session-log store: persists the session log to MinIO
 	// when a session reaches a terminal state. The store is best-effort;
 	// the Noop implementation drops the bytes and is sufficient for
 	// in-memory deployments. A MinIO endpoint configured below

@@ -113,7 +113,7 @@ func slotTreeProbe(t *testing.T, s *Server, sessionID string) (current, credenti
 // deletes the §6.1 credential file and the §6.4 cwd while the session still
 // uses them. Both call orders compile at every caller, so nothing but this
 // ordering assertion holds the split. The teardown writes no CH-RUNTIMEOPS
-// frame, because the runtime process lives as long as the pod.
+// frame, because no session teardown ends the runtime process.
 func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_6_4(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
@@ -181,8 +181,8 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_6_4(t *testing.T) {
 // message path, and its runtime, and the ending session's final usage report
 // and cleanup outcome name that session alone. The co-tenant's own teardown,
 // which leaves the pod at occupancy zero, also sends no frame and closes the
-// co-tenant's runtime once, because the runtime process lives as long as the
-// pod and serves the pod's later sessions.
+// co-tenant's runtime once, because no session teardown ends the runtime
+// process.
 //
 // diagnosis: a session teardown wrote a CH-RUNTIMEOPS frame; the channel
 // carries no message that ends a session or the runtime process, which the

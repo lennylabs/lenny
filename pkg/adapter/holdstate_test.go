@@ -451,7 +451,7 @@ func TestCoordinatorHoldTerminationLeavesTheRuntimeGeneration_spec_10_1(t *testi
 
 // sharedHoldRuntime models the pod's one shared runtime process. Close
 // records the closing member and ends nothing, as SocketRuntimeProcess.Close
-// does: the runtime process lives as long as the pod. It has no pod-scope
+// does: no per-session close ends the runtime process. It has no pod-scope
 // teardown, so on its own it models a transport the hold timeout does not
 // end, such as InProcessRuntime. onClose runs with the closing member's
 // identifier, so a case can observe adapter state at the instant a member's
@@ -966,8 +966,7 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 //
 // diagnosis: the coordinator hold timeout wrote a CH-RUNTIMEOPS frame; the
 // channel carries no message that ends a session or the runtime process,
-// which lives as long as the pod, and no drain coordination exists on this
-// path.
+// and no drain coordination exists on this path.
 func TestCoordinatorHoldTimeoutSendsNoTerminateFrame_spec_10_1_4(t *testing.T) {
 	setCoordinatorHold(false)
 	rt := newPodScopedHoldRuntime()

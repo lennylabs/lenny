@@ -394,11 +394,11 @@ func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session)
 // checkpoint, and the billing event. spec: §4.4; §8.8; §11.2; §10.6.
 func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
-	// captures the buffered runtime stderr and persists it as the
+	// persists the session log it is handed as the
 	// `/{tenant_id}/sessions/{session_id}/stderr.log` artifact. A
 	// failure (MinIO unavailable, catalog insert error) logs and
 	// drops rather than fail the terminal-state transition.
-	// spec: §4.4 — Session logs and runtime stderr.
+	// spec: §4.4 — Session logs.
 	if s.sessionLogHook != nil {
 		if err := s.sessionLogHook.OnSessionTerminal(ctx, sess.TenantID, sess.ID, nil, false); err != nil {
 			log.Printf("lenny-gateway: session-log close-hook session=%s: %v", sess.ID, err)

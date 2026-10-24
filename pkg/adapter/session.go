@@ -42,8 +42,9 @@ func setupOptionsFromProto(p *adapterv1.SetupPolicy, workdir string) workspace.S
 // RuntimeProcess is the adapter's handle on the pod's runtime process. The
 // §4.7 adapter makes the runtime live for a session at session start,
 // forwards message envelopes to it, and ends the session's use of it on
-// interrupt and at session teardown. The runtime process lives as long as
-// the pod (§4.7.10), so ending a session's use of it may keep the process.
+// interrupt and at session teardown. No session's teardown ends the
+// runtime process (§4.7.10), so ending a session's use of it may keep the
+// process.
 type RuntimeProcess interface {
 	// Start makes the runtime live for the session. The sidecar
 	// implementation accepts the runtime's connection once and carries
@@ -73,14 +74,16 @@ type RuntimeProcess interface {
 // (§4.7, §6.1). It is the final RPC of the §4.7 session assignment
 // sequence: the workspace is already materialized by FinalizeWorkspace
 // and setup is already run by RunSetup, so StartSession claims the pod,
-// writes the §15.4 adapter manifest, makes the runtime process, which the
-// kubelet started with the pod (§4.7.9), live for the session, and opens
-// the session on it with a §28.5.3 session_start. It
+// writes the §15.4 adapter manifest, makes the runtime process live for
+// the session, in the sidecar model by having the runtime supervisor launch
+// it after the final manifest is written when no process is live (§4.7.9,
+// §4.7.10), and opens the session on it with a §28.5.3 session_start. It
 // rejects the call with Unavailable when the pod already holds a
 // session. A pod with maxConcurrentSessions 1 holds one session at a
 // time: with recycling enabled it serves sequential sessions of one
-// tenant in one runtime process, and otherwise it is terminated and
-// replaced after the session ends (§5.2).
+// tenant, in one runtime process on a keep pod and in a newly launched
+// process after each whole-pod scrub on a restart pod, and otherwise it is
+// terminated and replaced after the session ends (§5.2).
 //
 // On any failure after the session is tentatively claimed, the pod is
 // returned to the idle state so a retry can land on a fresh pod.
@@ -446,8 +449,8 @@ type reclaimedSlot struct {
 // with no per-session dedup, so the one-report rule has to hold here.
 //
 // A session that reached running is released on the runtime with a
-// CH-MSGSOCK session_end, written before Runtime.Close. The runtime
-// process lives as long as the pod, so the session's end is signalled on
+// CH-MSGSOCK session_end, written before Runtime.Close. No session's
+// teardown ends the runtime process, so the session's end is signalled on
 // the connection that carries it rather than by ending the process.
 //
 // spec: §4.7.1 (role and gateway RPC contract), rules 12 and 14; §5.2 (pool
@@ -545,8 +548,8 @@ func (s *Server) answerShutdown(req *adapterv1.ShutdownRequest, outcome adapterv
 // contextWithGraceDeadline derives a context bounded by `grace` from
 // `parent`, returning a no-op cancel when `grace` is non-positive. The
 // deadline bounds RuntimeProcess.Close on a transport that ends a process
-// at Close; the sidecar transport's Close returns at once, because its
-// runtime process lives as long as the pod. spec: §11.4; §4.7.10.
+// at Close; the sidecar transport's Close returns at once, because no
+// session's teardown ends its runtime process. spec: §11.4; §4.7.10.
 func contextWithGraceDeadline(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
 	if grace <= 0 {
 		return parent, func() {}

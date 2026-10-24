@@ -321,7 +321,7 @@ const maxCrashStderrBytes = 4096
 // and capped to the last maxCrashStderrBytes so the message stays bounded.
 // spec: §28.5.3 — "When the process exits non-zero without
 // emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error
-// from the exit code and stderr."; §8.8.
+// from the exit status the runtime supervisor reports"; §8.8.
 func RuntimeCrash(exitCode int, stderr string) *Error {
 	trimmed := strings.TrimRight(stderr, " \t\r\n")
 	if len(trimmed) > maxCrashStderrBytes {

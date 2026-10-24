@@ -145,8 +145,9 @@ func podField(t *testing.T, c *kind.Cluster, ns, pod, jsonpath string) string {
 // spec: 4.7, 13.1 (Pod Security)
 // diagnosis: TestAdapterPeercredSelftestFaultCrashLoops asserts the §4.7
 // fail-closed contract in a real pod: when the adapter's SO_PEERCRED
-// self-test cannot pass, the adapter logs FATAL, exits non-zero, and the
-// pod enters CrashLoopBackOff, so it never becomes Ready and is never
+// self-test cannot pass, the adapter logs FATAL and exits non-zero, so the
+// pod is never marked idle (§4.7.11); the kubelet restarts the exiting
+// adapter into CrashLoopBackOff, so the pod never becomes Ready and is never
 // handed a session. The fault is injected by a native-sidecar helper
 // (tests/testinfra/sopeercredhog) that holds the abstract socket the
 // self-test binds, sharing the pod network namespace so the adapter's own
