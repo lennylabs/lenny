@@ -26,7 +26,7 @@
 - D9. A binding that disappears during the seal and a row absent on the primary end the window with `permanent`. Adapter gRPC `NotFound` stays transient because its meaning at the adapter is ambiguous.
 - D10. F-7.1.24: the Checkpointer confirms absence on the primary with `ReadPrimary` and releases through the existing D6 `ReleaseTerminalBinding` with a synthesized `failed` row. Without the release, the binding never leaves the registry, and the replica read would release live, just-bound sessions under lag.
 - D11. The §5.2 slot invariant is re-based on the terminal pipeline budget, and the §4.6.1 live-binding orphan predicate ages a terminal session from its terminal transition. Without the second change the controller drains the pod mid-seal, because a long session's `bound` claim passes `claimOrphanTimeout` from its binding transition before the session ends. Neither the stale-slot reaper nor the orphan GC can then reclaim a slot or pod the terminal pipeline is still using.
-- D12. `POST /terminate` yields `completed` from `resume_pending` and `resuming`, by aligning §7.2 and §6.2 to §15.1; the only code change is admitting `StateResuming`. §15.1 is the endpoint table and contrasts terminate with DELETE for audit and billing. The drafting stage flagged this for owner confirmation; the review loop records it under **Open decisions for human to make**.
+- D12. `POST /terminate` yields `completed` from `resume_pending` and `resuming`, by aligning §7.2 and §6.2 to §15.1; the only code change is admitting `StateResuming`. §15.1 is the endpoint table and contrasts terminate with DELETE for audit and billing. The owner's delegate confirmed it on 2026-10-24 under the owner's overnight delegation: §15.1 is the client-facing contract, and a terminate during an automatic restore ends the session as the caller asked.
 - D13. F-15.1.42 is resolved by merging derive rule 1's `completed` and `cancelled`/`expired` bullets into one sealed-else-checkpoint rule. The code already conforms and reports the source.
 - D14. F-7.1.27 is closed by a spec clause with no code change: for a slot session "terminates the pod anyway" means the §5.2 slot cleanup and release, which `Binder.ReleaseSlot` already performs.
 - D15. F-7.2.29 is resolved in `pgstore.Store.Update`, which stores a fresh `last_write_id` in every update and, after a commit error, reads it back from the primary. A transaction-ID status check (`pg_xact_status`) is not used, because a primary promoted by a failover, or restarted after a crash, can reassign the ID of a transaction whose WAL it never made durable. `updated_at` does not identify a write, because `MonotonicNext` stamps the same `prev + 1µs` on replicas whose clocks lag `prev`.
@@ -100,7 +100,7 @@
 
 ## Open decisions for human to make
 
-None at drafting time. The review loops write this section.
+None. D12 was confirmed by the owner's delegate on 2026-10-24.
 
 ## Defects in the shipped tree that this proposal does not stage
 

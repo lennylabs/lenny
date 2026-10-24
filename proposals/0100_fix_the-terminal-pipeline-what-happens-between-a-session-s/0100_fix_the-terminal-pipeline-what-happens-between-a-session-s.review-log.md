@@ -690,3 +690,7 @@ DECISION: F-12.8.43 out-of-scope-stands. Wrote one entry under summary.md `## De
 
 ### [f1.other-proposals]
 DECISION: 0097 impact-row. Rewrote the 0097 row under summary.md `## Impacts on other proposals` to name both shared files (`cmd/lenny-gateway/flags.go` and `charts/lenny/templates/gateway-deployment.yaml`), the status date, the disjoint edits, and that 0097 needs no re-review. AUTHORITY: proposals/0097_fix_a-bearer-token-that-lenny-issues-verifies-only-on/0097_fix_a-bearer-token-that-lenny-issues-verifies-only-on.status.md (approved-date: 2026-10-24); 0097 non-spec-changes.md:111,115,120,122,140,185,198; 0100 non-spec-changes.md:129-134; charts/lenny/templates/gateway-deployment.yaml:115-120 (0100 seal gate) and :719 (0097 flag line). No checklist change.
+
+### [owner-delegate-2026-10-24]
+
+- DECISION: D12 (POST /terminate yields `completed` from `resume_pending` and `resuming`, aligning §7.2 and §6.2 to §15.1) is confirmed by the owner's delegate under the overnight delegation. It is not an open decision; do not re-raise it.
