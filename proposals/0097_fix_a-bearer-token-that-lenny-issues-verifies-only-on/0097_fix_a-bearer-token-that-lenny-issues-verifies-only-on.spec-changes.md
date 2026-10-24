@@ -19,7 +19,7 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 - **Bootstrap admin credential across rotation.** Its lifetime exceeds the step-3 wait, so SPEC-2 step 2 re-mints it. An operator who skips that step is locked out at step 3.
 - **Concurrent rotation of one subject.** The second transaction's step (1a) re-read sees the subject revoked by the first and rejects with `subject_token_revoked` (SPEC-7). A retried rotation of an already-rotated token fails the same way.
 - **Postgres outage seen by `lenny-ops`.** SPEC-11 Edit 2 rules 4 and 5 state the behavior, and summary D22 records the accepted residual risks. SPEC-11 Edit 6 keeps every replica Ready while the Kubernetes API is reachable, so the Service keeps routing to `lenny-ops` during the outage (owner decision 6).
-- **One replica loses its own Postgres connection.** The replica stays Ready while its peers are healthy and serves degraded responses with `degradation.warnings` (SPEC-11 Edit 6). Owner decision 6 accepts this cost.
+- **One replica loses its own Postgres connection.** Summary D24 records the accepted cost (owner decision 6).
 - **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out revoked is discarded and never returned (SPEC-7).
 
 ## Staged edits
@@ -34,7 +34,7 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 - **Production:** AWS KMS (key spec `ECC_NIST_P256`), GCP Cloud KMS (algorithm `EC_SIGN_P256_SHA256`), or Azure Key Vault (algorithm `ES256`). With a cloud provider, the private key never exists in gateway or Token Service memory: the signer sends the SHA-256 digest of the JWT signing input to the KMS `Sign` operation and receives the signature. This eliminates the risk of key extraction from a compromised gateway process. The aliases `platform:jwt-signing` and `platform:jwt-verify` each map to an immutable key-version reference: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending in `/cryptoKeyVersions/<n>`, or an Azure key identifier with a non-empty `@<version>` suffix. A process refuses to start when either alias maps to a repointable reference, which is an AWS alias name or alias ARN, a GCP CryptoKey without a version, or an Azure key without a version.
 - **Development:** With `kms.provider: local`, the local provider derives the ES256 key from its master key and the key reference the alias maps to (the alias name itself when `platform:jwt-signing` is unmapped), so processes that share one master key share one signing key. The gateway, the Token Service, and `lenny-ops` refuse to start with `kms.provider: local` in a production deployment. The local provider is for development only ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)). Development and production run the same signer and verifier code, and no HMAC signer exists for Lenny-issued tokens.
 
-**Signing topology.** The gateway and the Token Service sign with the one `platform:jwt-signing` key. The Token Service mints the tokens issued on `POST /v1/oauth/token` ([§4.3](04_system-components.md#43-token-service) item 3). The gateway mints in process, through its `JWTSigner`, the bootstrap admin credential ([§13.3](13_security-model.md#133-credential-flow) "Gateway-mediated bootstrap admin-credential rotation ordering"), platform-admin impersonation bearers, playground bearers, and `session_capability` tokens on the session-creation path. The gateway records each session-creation `session_capability` token in `issued_tokens`, together with its `token.exchanged` audit row ([§16.7](16_observability.md#167-section-25-audit-events)), in one transaction under statements (1), (2), and (3) of [§13.3](13_security-model.md#133-credential-flow) "Write-before-issue ordering" before it returns the token. A token that either component signs verifies on every gateway replica, every Token Service replica, and `lenny-ops`. The gateway and Token Service ServiceAccounts hold the KMS `Sign` and `GetPublicKey` permissions on the signing key, and the `lenny-ops` ServiceAccount holds `GetPublicKey` only.
+**Signing topology.** The gateway and the Token Service sign with the one `platform:jwt-signing` key. The Token Service mints the tokens issued on `POST /v1/oauth/token` ([§4.3](04_system-components.md#43-token-service) item 3). The gateway mints in process, through its `JWTSigner`, the bootstrap admin credential ([§13.3](13_security-model.md#133-credential-flow) "Gateway-mediated bootstrap admin-credential rotation ordering"), platform-admin impersonation bearers, playground bearers, and `session_capability` tokens on the session-creation path. The gateway records each session-creation `session_capability` token in `issued_tokens`, together with its `token.exchanged` audit row ([§16.7](16_observability.md#167-section-25-audit-events)), in one transaction under statements (1), (2), and (3) of [§13.3](13_security-model.md#133-credential-flow) "Write-before-issue ordering" before it returns the token. A token that either component signs verifies on every gateway replica, every Token Service replica, and `lenny-ops`. The gateway and Token Service ServiceAccounts hold the KMS `Sign` and `GetPublicKey` permissions on every key that `platform:jwt-signing` or `platform:jwt-verify` names, and the `lenny-ops` ServiceAccount holds `GetPublicKey` only.
 ```
 
 **Edit 2.** In the paragraph "**Playground auth paths and `origin: "playground"` JWT claim.**", replace "they inherit KMS signing (production) or HMAC signing (dev mode, `LENNY_DEV_MODE=true`), key rotation, claim structure, and revocation semantics" with:
@@ -78,17 +78,17 @@ Replace the whole paragraph that begins "**Key rotation:** KMS backends support 
 
 Rotation is three configuration rollouts of the gateway, the Token Service, and `lenny-ops`. Each step begins only after the previous step's rollout has completed on every gateway, Token Service, and `lenny-ops` pod.
 
-1. Create the new key and map `platform:jwt-verify` to it. Every process then verifies with both keys and signs with the old key.
+1. Create the new key, grant it the permissions "Signing topology" states, and map `platform:jwt-verify` to it. Every process then verifies with both keys and signs with the old key.
 2. Swap the two mappings, so that `platform:jwt-signing` names the new key and `platform:jwt-verify` names the old key. After the rollout, rotate the bootstrap admin credential with `lenny-ctl admin users rotate-token --user lenny-admin` ([§17.6](17_deployment-topology.md#176-packaging-and-installation)). Its lifetime exceeds the step-3 wait, so an admin credential the old key signed would stop verifying at step 3.
 3. Remove `platform:jwt-verify` no earlier than the `lenny-gateway` per-dialect lifetime cap ([§13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling") after the step-2 rollout completes. That cap bounds every token the old key signed other than the bootstrap admin credential, including the gateway-minted impersonation and playground bearers, whose own caps are shorter.
 ```
 
-### SPEC-3 · spec/10_gateway-internals.md § 10.2 Authentication: `expiry` claim and playground mint invariant 4; spec/27_web-playground.md § 27.2 Placement and gating and § 27.3.1 OIDC cookie-to-MCP-bearer exchange
+### SPEC-3 · spec/10_gateway-internals.md § 10.2 Authentication: `expiry` claim and playground mint invariant 4; spec/27_web-playground.md § 27.2 Placement and gating and § 27.3.1 OIDC cookie-to-MCP-bearer exchange; spec/13_security-model.md § 13.3 Credential Flow: request `expires_in` row of the RFC 8693 parameter mapping
 
 **Edit 1.** In §10.2 "**JWT claims:**", replace the bullet "`expiry` (short-lived, refreshed by gateway on each interaction)" with:
 
 ```markdown
-- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. `auth.capabilityTokenTtlSeconds` is the default lifetime of every Lenny-issued token whose holder obtains a new token before `exp` by requesting one. It defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. A token issued on `POST /v1/oauth/token` from a request that carries no `expires_in` receives `requested_exp = now + auth.capabilityTokenTtlSeconds`, and the [§13.3](13_security-model.md#133-credential-flow) caps then apply; a request that carries `expires_in` receives the lifetime it asks for within those caps. Tokens whose holder has no refresh path do not take the default. An `a2a_delegation` child token minted through `actor_token` keeps the [§13.3](13_security-model.md#133-credential-flow) child formula, and an absent `expires_in` leaves `requested_exp` out of that formula. The `session_capability` token minted on the session-creation path keeps its per-dialect cap. The bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
+- `expiry`: fixed at mint and never extended; the gateway never re-mints a token on an interaction. `auth.capabilityTokenTtlSeconds` is the default lifetime of every Lenny-issued JWT whose holder obtains a new token before `exp` by requesting one. It defaults to `900` and is bounded `120 ≤ ttl ≤ 3600`. A `session_capability` token minted by `POST /v1/playground/token` receives `exp = min(now + auth.capabilityTokenTtlSeconds, subject token exp, per-dialect cap)`, and its holder obtains a new token before `exp` as [§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) states. A JWT issued on `POST /v1/oauth/token` from a request that carries no `expires_in` receives `requested_exp = now + auth.capabilityTokenTtlSeconds`; a request that carries `expires_in` receives `requested_exp = now + expires_in`. Both then take the [§13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling" formula. Tokens whose holder has no refresh path do not take the default. For an `a2a_delegation` child token minted through `actor_token`, an absent `expires_in` leaves `requested_exp` out of that formula. The `session_capability` token minted on the session-creation path keeps its per-dialect cap. The bootstrap admin credential has a 10-year lifetime and is retired by rotation ([§17.6](17_deployment-topology.md#176-packaging-and-installation)).
 ```
 
 **Edit 2.** In §10.2 "**Playground mint invariants**", item 4 "**Origin and duration.**", replace "`exp = min(subject_token.exp, now + playground.bearerTtlSeconds)`" with:
@@ -100,7 +100,7 @@ Rotation is three configuration rollouts of the gateway, the Token Service, and 
 **Edit 3.** In §27.2, replace the Helm table row that begins "| `playground.bearerTtlSeconds` | `900` |" with this row, kept on one physical line:
 
 ```markdown
-| `auth.capabilityTokenTtlSeconds` | `900` | Default lifetime of the Lenny-issued tokens whose holder refreshes them, including the MCP bearer tokens minted by `POST /v1/playground/token`. Defined in [§10.2](10_gateway-internals.md#102-authentication). See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
+| `auth.capabilityTokenTtlSeconds` | `900` | Default lifetime of the Lenny-issued JWTs whose holder refreshes them, including the MCP bearer tokens minted by `POST /v1/playground/token`. Defined in [§10.2](10_gateway-internals.md#102-authentication). See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
 ```
 
 **Edit 4.** In §27.3.1, in the sentence that begins "Default `expiresInSeconds` is `900` (15 min); configurable via `playground.bearerTtlSeconds`", replace "configurable via `playground.bearerTtlSeconds` (bounded `60 ≤ ttl ≤ 3600`)" with "configurable via `auth.capabilityTokenTtlSeconds` ([§10.2](10_gateway-internals.md#102-authentication))", and replace "(KMS-backed in production, HMAC in dev)" with:
@@ -122,6 +122,12 @@ bounded by `⌈oidcSessionTtlSeconds / auth.capabilityTokenTtlSeconds⌉ + 1`
 ```
 
 The row stays one physical line.
+
+**Edit 7.** In §13.3 "**RFC 8693 parameter mapping to Lenny claims:**", insert immediately before the row that begins "| Response `access_token` |" this row, kept on one physical line:
+
+```markdown
+| `expires_in` (request, Lenny extension) | Optional requested lifetime of an issued JWT, in seconds. The [§10.2](10_gateway-internals.md#102-authentication) "JWT claims" `expiry` rule states how it, or its absence, sets `exp` |
+```
 
 ### SPEC-4 · spec/10_gateway-internals.md § 10.2 Authentication: "KMS signing failure mode"; spec/15_external-api-surface.md error table: `KMS_SIGNING_UNAVAILABLE`
 
@@ -186,7 +192,7 @@ The sentences from "This closes the failover window:" to the end of the paragrap
 **Edit 2.** In §13.3 "**`exp` granularity and parent-expiry handling.**", replace the text from "if `actor_token.exp <= now` the exchange is rejected with `invalid_grant` reason `actor_token_expired`." to the end of the paragraph with:
 
 ```markdown
-if `actor_token.exp <= now` the exchange is rejected with `invalid_grant` reason `actor_token_expired`. A child token minted via `actor_token` receives `exp = min(requested_exp, subject_token.exp, actor_token.exp, per-dialect cap)`. The per-dialect lifetime caps are `lenny-gateway` 24 hours, `lenny-ops` 1 hour, and `llm-proxy` 1 hour. Signing precedes the write-before-issue transaction, so the `exp` clamp bounds a child to its subject's and actor's expiry.
+if `actor_token.exp <= now` the exchange is rejected with `invalid_grant` reason `actor_token_expired`. A JWT minted on an exchange receives `exp = min(requested_exp, subject_token.exp, per-dialect cap)`, and also `actor_token.exp` when an `actor_token` is present. The per-dialect lifetime caps are `lenny-gateway` 24 hours, `lenny-ops` 1 hour, and `llm-proxy` 1 hour. Signing precedes the write-before-issue transaction, so the `exp` clamp bounds the minted JWT to its subject's expiry and, when present, its actor's.
 ```
 
 **Edit 3.** In §13.3 "**Actor-token freshness under concurrent rotation.**", replace "the Token Service reads the `actor_token`'s `jti` against the revocation cache **inside** the same advisory-locked transaction that issues the child" with "the Token Service performs the Write-before-issue ordering step (1a) re-read of `issued_tokens.revoked_at` for the `actor_token`'s `jti` **inside** the advisory-locked transaction that issues the child", and replace "between the client's exchange submission and the Token Service's cache check" with:
@@ -220,14 +226,20 @@ Keep the row on one physical line. The rest of the row is unchanged.
 **Edit 1.** In the §17.8.1 table, insert immediately after the row that begins "| `/v1/oauth/token` per-tenant global rate limit (`oauth.rateLimit.tenantPerSecond`) |", each row on one physical line:
 
 ```markdown
-| Default lifetime of refreshable Lenny-issued tokens (`auth.capabilityTokenTtlSeconds`) | 900 s (15 min) | [§10.2](10_gateway-internals.md#102-authentication) |
+| Default lifetime of refreshable Lenny-issued JWTs (`auth.capabilityTokenTtlSeconds`) | 900 s (15 min) | [§10.2](10_gateway-internals.md#102-authentication) |
 | KMS asymmetric Sign quota (`kms.signQuotaPerSecond`) | No default; required when `kms.provider` is not `local` | [§17.8.2](#1782-capacity-tier-reference) |
 ```
 
 **Edit 2.** In §17.8.2, insert immediately before the heading `### 17.8.3 Tier Promotion Guide`:
 
 ```markdown
-**KMS Sign rate.** Every Lenny-issued JWT costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication)). The sustained fleet sign rate is approximately `session creation rate + delegation mint rate + concurrent holders of refreshable tokens ÷ (auth.capabilityTokenTtlSeconds − refresh lead) + admin, impersonation, and rotation mints`. A refreshable token is one that takes the `auth.capabilityTokenTtlSeconds` default ([§10.2](10_gateway-internals.md#102-authentication) "JWT claims"): a playground bearer, whose refresh lead is 60 seconds ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange)), or a `POST /v1/oauth/token` token issued without `expires_in`, whose refresh lead is the holder's own. The terms come from the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameters and the `capacityPlanning.*` workload values. At Tier 3 with the default lifetime (200 sessions/s, about 15 delegations/s, and 10,000 concurrent holders of refreshable tokens with a 60-second lead), the sustained sign rate is about 230/s, and about 690/s when the rate triples in a session storm. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the storm figure; a deployment whose quota is below the storm figure returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during storms. ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
+**KMS Sign rate.** Every Lenny-issued JWT costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication) "Signing topology"). A credential-lease token is an opaque handle ([§13.3](13_security-model.md#133-credential-flow) "RFC 8693 parameter mapping to Lenny claims", `requested_token_type`) and costs none. The sustained fleet sign rate is approximately `session_creation_rate + delegation_rate + Σ 1 ÷ (token_lifetime − refresh_lead) + operator_mints`, where:
+- `session_creation_rate` is one `session_capability` mint per created session, at the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameter "Session creation rate (sustained)".
+- `delegation_rate` is one child-token mint per delegation ([§8.2](08_recursive-delegation.md#82-delegation-mechanism)), at the sustained rate that the [§16.5](16_observability.md#165-alerting-rules-and-slos) "Workload profile assumptions" derivation gives from the `capacityPlanning.*` values.
+- `Σ 1 ÷ (token_lifetime − refresh_lead)` is summed over every concurrent holder that obtains a new token before `exp` ([§10.2](10_gateway-internals.md#102-authentication) "JWT claims", `expiry`). `token_lifetime` is the lifetime of the holder's token, which is `auth.capabilityTokenTtlSeconds` when the token takes the default. `refresh_lead` is how long before `exp` the holder obtains its next token, which is 60 seconds for a playground bearer ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) "Caching"). No tier parameter fixes the holder count or an API client's lead, so the operator supplies the holder count from the deployment's playground and API-client population, and the lead for each API client.
+- `operator_mints` counts bootstrap admin-credential rotations and platform-admin impersonation bearers, which are infrequent.
+
+The peak sign rate is the same sum evaluated at the deployment's peak session-creation rate (`burst_arrival_rate` in the gateway `minReplicas` formula above) and its peak delegation rate. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the peak sign rate. A deployment whose quota is below the peak sign rate returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during the peak ([§10.2](10_gateway-internals.md#102-authentication) "KMS signing failure mode"). ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
 ```
 
 ### SPEC-9 · spec/17_deployment-topology.md § 17.4 Local Development Mode: "Embedded Mode: `lenny up`" dependency table KMS row, "State and resets", and "Dev mode guard rails"
@@ -238,10 +250,10 @@ Keep the row on one physical line. The rest of the row is unchanged.
 | KMS            | Local provider (`kms.provider: local`)                           | Keyed by a master key Secret that `lenny up` generates when the embedded cluster has none, so the key persists with the substrate; derives KEKs and the ES256 JWT signing key from that master key ([§10.2](10_gateway-internals.md#102-authentication)). Refused in a production deployment; operators MUST NOT use this for production |
 ```
 
-**Edit 2.** Under "Dev mode guard rails", replace "Dev mode relaxes security defaults (TLS, JWT signing) for local convenience" with "Dev mode relaxes security defaults (TLS) for local convenience", and replace item 3's "including TLS bypass, JWT signing bypass, and any future relaxations." with:
+**Edit 2.** Under "Dev mode guard rails", replace "Dev mode relaxes security defaults (TLS, JWT signing) for local convenience" with "Dev mode relaxes security defaults (TLS, dev bearer trust) for local convenience", and replace item 3's "including TLS bypass, JWT signing bypass, and any future relaxations." with:
 
 ```markdown
-including TLS bypass and any future relaxations. JWT signing is not relaxed in dev mode ([§10.2](10_gateway-internals.md#102-authentication)).
+including TLS bypass, the gateway's dev bearer-trust hook (`--bearer-trust-hmac-key-file`), and any future relaxations.
 ```
 
 **Edit 3.** Under "State and resets", in the first bullet, replace "The application data stores (Postgres, Redis, KMS, artifacts)" with "The application data stores (Postgres, Redis, artifacts)".
@@ -297,10 +309,10 @@ Then insert the following as a new paragraph and list immediately after the para
 1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read adds the rows it returns to the set.
 2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
 3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
-4. Until the first successful read since the process started, every Lenny-issued token is refused with `503 token_validation_unavailable`.
+4. Until the first successful read since the process started, every Lenny-issued token is refused with the response a gateway replica returns when it cannot reach Postgres to validate a token ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"). Rule 4 takes precedence over rules 3 and 7.
 5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
 6. Rules 1 to 5 do not apply to upstream IdP tokens.
-7. A Lenny-issued token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with `401 UNAUTHORIZED`, because the playground calls only the gateway and `lenny-ops` does not consult the [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) playground revocation key.
+7. A token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with the response that [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) "Per-request revocation check" gives a revoked bearer, because a gateway replica checks its revocation in the playground revocation key, which `lenny-ops` does not read.
 ```
 
 **Edit 3.** In §25.4 "Startup and Readiness", replace "`lenny-ops` starts its HTTP listener immediately." with:
@@ -340,7 +352,7 @@ Then, in §25.1 "Component Model", insert this bullet after the "**Postgres, Red
 Then replace the bullet "- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness and startup." with:
 
 ```markdown
-- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness. Readiness uses the permissive check because a Postgres outage reaches every replica at once, and a readiness gate that required Postgres would remove every replica from the Service and leave the degraded mode of [Section 25.15](#2515-failure-mode-analysis) without a reachable replica. A replica whose own Postgres connection failed while its peers are healthy therefore stays Ready and serves degraded responses with `degradation.warnings`.
+- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness ("Startup and Readiness" below).
 ```
 
 Then replace the bullet "- **`/healthz?strict=true`** (strict): 200 only when both Postgres connection AND K8s API are reachable. Used by readiness — traffic is not routed to replicas that can't serve the full API." with:
@@ -356,7 +368,7 @@ The sentence "When the `strict=true` check returns 503, the response body identi
 - spec/04_system-components.md (SPEC-6)
 - spec/08_recursive-delegation.md (SPEC-7)
 - spec/10_gateway-internals.md (SPEC-1, SPEC-2, SPEC-3, SPEC-4)
-- spec/13_security-model.md (SPEC-7, SPEC-10)
+- spec/13_security-model.md (SPEC-3, SPEC-7, SPEC-10)
 - spec/15_external-api-surface.md (SPEC-4, SPEC-7)
 - spec/16_observability.md (SPEC-1, SPEC-5)
 - spec/17_deployment-topology.md (SPEC-1, SPEC-8, SPEC-9, SPEC-10)

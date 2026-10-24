@@ -153,8 +153,8 @@ The proposal states where those tokens will be signed once they are, so their la
 ## Validated premises
 
 **Premise lens (revise).**
-- Holds: each process makes its own random HMAC key through `NewKMSSigner` (gateway `boot`, Token Service `dev-1`), and `KMSSignerFromSealed` has no production caller. Load-bearing.
-- Holds: the gateway verifies only against its own key plus a dev-only HMAC trust key; no gateway verifies Token Service keys; Token Service replicas reject each other's tokens. Load-bearing.
+- Holds: each process makes its own random HMAC key through `NewKMSSigner` (gateway `boot`, Token Service `dev-1`), and `KMSSignerFromSealed` has no production caller. The proposal depends on this premise.
+- Holds: the gateway verifies only against its own key plus a dev-only HMAC trust key; no gateway verifies Token Service keys; Token Service replicas reject each other's tokens. The proposal depends on this premise.
 - Holds: `w.jwtSigner` mints impersonation, admin-token, and playground bearers.
 - Holds: the KMS seam lacks Sign and GetPublicKey, `Sign` takes no context, the JWK is `kty: oct`, and no Vault adapter exists.
 - Holds: the §10.2 quotes, the §16.1 label, and the git history match.
@@ -171,7 +171,7 @@ The proposal states where those tokens will be signed once they are, so their la
 - The evidence lens reported the chart value as `ops.oidc.bearerTrustKeySecret`; the repository shows `security.oidc.bearerTrustKeySecret` (charts/lenny/values.yaml:3584, charts/lenny/templates/ops-deployment.yaml:231), so the premise lens's correction stands.
 
 **Prior-art lens (stands).**
-- No proposal stages this change, and the spec answers none of the open questions. Load-bearing.
+- No proposal stages this change, and the spec answers none of the open questions. The proposal depends on this premise.
 - F-10.2.22's suggested fix is the rejected option, so the proposal replaces it; the remediation plan's carve-out justifies a proposal.
 - F-4.3.1 and F-10.2.14 bear on the change and were missing from the original; now cited.
 - Reusable `PublicJWK` code and the dev-mode shared-key mechanisms exist; the dev posture builds on or retires them.
@@ -182,13 +182,13 @@ The proposal states where those tokens will be signed once they are, so their la
 - The key, verifier, topology, rotation, and dev strands share one root and stay in one problem; `lenny-ops` belongs as a third verifier.
 - The fixed-lifetime rule is small and tied to remote signing cost; it stays.
 - The capacity and backpressure strand is a distinct sub-problem with its own security argument (§13.3 lock ordering).
-- The whole is too large for one implementation pass; the statement now records a staging recommendation and the production-posture obligation of a part 1 without cloud adapters. Load-bearing for the plan, not for the defect.
+- The whole is too large for one implementation pass; the statement now records a staging recommendation and the production-posture obligation of a part 1 without cloud adapters. The proposal depends on this premise for the plan, not for the defect.
 - The §18 citation fix is a rider; the out-of-scope list is drawn correctly.
 
 **Impact lens (stands).**
-- The defect is real: per-process keys, no reload caller. Load-bearing.
-- The default chart runs several replicas with no gateway session affinity, so the defect is reachable without special configuration. Load-bearing.
-- The RFC 8693 exchange is broken end to end in the default chart. Load-bearing.
+- The defect is real: per-process keys, no reload caller. The proposal depends on this premise.
+- The default chart runs several replicas with no gateway session affinity, so the defect is reachable without special configuration. The proposal depends on this premise.
+- The RFC 8693 exchange is broken end to end in the default chart. The proposal depends on this premise.
 - Restarts drop every token a process issued, with lifetimes up to 24h.
 - The 0095 tier-4 test is narrowed; this is a coverage gap rather than a current security hole.
 - §4.3, §10.1.1, and §13.3 statements are unmet for Lenny-issued tokens.
