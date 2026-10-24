@@ -360,8 +360,10 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	termination, ignores the signals a runtime sends it, never relaunches a
 //	process that exits by itself, and fails no session for an exit within a
 //	`shutdown` deadline; or the runtime configuration page lost the `command`
-//	and `env` rows. An author who misses them builds an image whose
-//	entrypoint never runs or a runtime that exits at a session's end.
+//	and `env` rows, or the `env` row no longer states that `env` is valid
+//	only beside `command`. An author who misses them builds an image whose
+//	entrypoint never runs, a runtime that exits at a session's end, or a
+//	sidecar runtime launched without the variables its binary needs.
 func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
@@ -401,6 +403,11 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"| `command` |",
 			"| `env` |",
 			"the admin registration payload and the bootstrap seed do not carry it",
+			"Valid only on a runtime that carries `command`, which is a `type: agent` runtime in the sidecar deployment model, and rejected on every other runtime",
+		})
+	requireNoneContain(t, "runtime-configuration.md Identity and image",
+		supervisedDocSection(t, root, "runtime-author-guide/runtime-configuration.md", "Identity and image"), []string{
+			"rejected wherever `command` is",
 		})
 	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
 		"The first process of the agent container is the runtime supervisor",
