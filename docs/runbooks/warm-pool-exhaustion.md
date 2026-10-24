@@ -149,7 +149,7 @@ Escalate to cluster admin for node scale-out. Do not uncordon until the root cau
 
 ### Step 3e — Supervised pods never reach `idle`
 
-On a pool of a sidecar `type: agent` runtime, a pod stays in `warming` and is replaced repeatedly when its adapter exits before the pod becomes ready. The adapter exits when the runtime supervisor sends no `ready` report within the adapter's wait, when the supervisor's self-test reports a failed gating property on a `restart` pod, or when a warm-up launch fails or its process does not connect within the warm-up wait. Read the adapter container's log of a replaced pod for the logged failure, and read the RuntimeClass the pod runs under:
+On a pool of a sidecar `type: agent` runtime, a pod never reaches `idle` and is replaced repeatedly when its adapter exits before the pod becomes ready. The pod fails from `warming`, or from `sdk_connecting` on an SDK-warm pool whose warm-up launch fails or whose warm-up process does not connect. The adapter exits when the runtime supervisor sends no `ready` report within the adapter's wait, when the supervisor's self-test reports a failed gating property on a `restart` pod, or when a warm-up launch fails or its process does not connect within the warm-up wait. Read the adapter container's log of a replaced pod for the logged failure, and read the RuntimeClass the pod runs under:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash

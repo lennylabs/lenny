@@ -426,6 +426,7 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"Before the pod becomes ready, and at any time on a service-mode pod, the adapter exits instead, and the platform replaces the pod",
 		})
 	requireRuntimeSupervisorLaunchCondition(t, root)
+	requireLivenessCausesMatchTheSpecification(t, root)
 	requireAllContain(t, "lifecycle.md Runtime Supervisor",
 		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
 			"until the adapter asks the supervisor to end it. When the adapter's connection to the supervisor closes, the supervisor exits",
@@ -459,21 +460,23 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"the supervisor launches the process when the session's workspace is configured",
 		})
 	requireAllContain(t, "runtime-configuration.md", supervisedDocPage(t, root, "runtime-author-guide/runtime-configuration.md"), []string{
-		"Whether the platform starts the agent SDK process during the warm phase",
+		"Whether the platform launches the agent SDK process during the warm phase",
 		"In the sidecar model the [runtime supervisor](lifecycle.md#runtime-supervisor) launches it, and only when the pool's SDK-warm circuit breaker is closed at the moment the pod is created",
 	})
 	requireNoneContain(t, "runtime-configuration.md", supervisedDocPage(t, root, "runtime-author-guide/runtime-configuration.md"), []string{
 		"Whether the runtime supervisor launches the agent SDK process during the warm phase",
+		"Whether the platform starts the agent SDK process during the warm phase",
 	})
 	requireAllContain(t, "testing.md", supervisedDocPage(t, root, "runtime-author-guide/testing.md"), []string{
 		"the runtime supervisor sends the process SIGTERM and then SIGKILL 10 seconds later",
 	})
 	requireAllContain(t, "publishing.md", supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
-		"When `preConnect: true`, the platform starts the runtime's SDK process during the warm phase",
+		"When `preConnect: true`, the platform launches the runtime's SDK process during the warm phase",
 	})
 	requireNoneContain(t, "publishing.md", supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
 		"the runtime process starts during the warm phase",
 		"When `preConnect: true`, the runtime supervisor launches the runtime process during the warm phase",
+		"When `preConnect: true`, the platform starts the runtime's SDK process during the warm phase",
 	})
 	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
 		"The first process of the agent container is the runtime supervisor",
@@ -492,6 +495,33 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 		"on a restart pod the whole-pod scrub ends it",
 	})
 	requireNoneContainFold(t, "internal.md StopSession comment", stop, []string{"shutdown"})
+}
+
+// requireLivenessCausesMatchTheSpecification fails when the **Liveness.**
+// paragraph makes any failed supervisor request a not-live cause, which would
+// retire a pod whose deployer `cleanupCommands` fail where the specification
+// fails only the scrub, or when the SDK-warm paragraph states the warm-phase
+// launch without the platform as its subject and "launch" as its verb.
+//
+// spec: 4.7.10 (Runtime supervisor: Launch, Liveness), 5.2 (Supervised scrub
+// sequence)
+func requireLivenessCausesMatchTheSpecification(t *testing.T, root string) {
+	t.Helper()
+	supervisor := supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor")
+	requireAllContain(t, "lifecycle.md Runtime Supervisor", supervisor, []string{
+		"when the supervisor's reply to a launch, end, or sweep request carries an error, when a request to the supervisor goes unanswered or its connection closes",
+		"A failed `cleanupCommands` run fails the scrub, which the pool's `onScrubFailure` setting handles, and does not mark the runtime not live",
+	})
+	requireNoneContain(t, "lifecycle.md Runtime Supervisor", supervisor, []string{
+		"when a request to the supervisor fails or goes unanswered",
+	})
+	page := supervisedDocPage(t, root, "runtime-author-guide/lifecycle.md")
+	requireAllContain(t, "lifecycle.md", page, []string{
+		"In SDK-warm mode, the platform launches the agent process during the warm phase (before any session)",
+	})
+	requireNoneContain(t, "lifecycle.md", page, []string{
+		"In SDK-warm mode, the agent process starts during the warm phase",
+	})
 }
 
 // launchTriggerPages are the documentation pages that state when the runtime
@@ -595,13 +625,23 @@ func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *tes
 		"lenny-ctl preflight supervisor --runtime-class <runtime-class> --config <values.yaml>",
 		"controller.tuning.superviseWaitTimeout",
 		"controller.tuning.warmUpTimeout",
+		"a pod never reaches `idle` and is replaced repeatedly when its adapter exits before the pod becomes ready",
+		"or from `sdk_connecting` on an SDK-warm pool whose warm-up launch fails or whose warm-up process does not connect",
+	})
+	requireNoneContain(t, "warm-pool-exhaustion.md", supervisedDocPage(t, root, "runbooks/warm-pool-exhaustion.md"), []string{
+		"a pod stays in `warming` and is replaced repeatedly",
 	})
 	requireAllContain(t, "troubleshooting.md Recycling Pool Does Not Reuse Pods",
 		supervisedDocSection(t, root, "operator-guide/troubleshooting.md", "Recycling Pool Does Not Reuse Pods"), []string{
 			"`recycle.runtimeProcess: keep`",
 			"also follows every other cause of the adapter's not-live state",
+			"such as a hung runtime or a failed launch, end, or sweep by the runtime supervisor",
 			"The `restart` value requires a restartable runtime, which carries `command`, runs in `session` mode, and does not declare `capabilities.preConnect: true`",
 			"alternatives also require removing `recycle.runtimeProcess`, because pool admission rejects the field on a pool that does not reuse pods",
+		})
+	requireNoneContain(t, "troubleshooting.md Recycling Pool Does Not Reuse Pods",
+		supervisedDocSection(t, root, "operator-guide/troubleshooting.md", "Recycling Pool Does Not Reuse Pods"), []string{
+			"a failed request to the runtime supervisor",
 		})
 	requireRestartAdmissionRefusalStated(t, root)
 	requireAllContain(t, "lenny-ctl.md", supervisedDocPage(t, root, "operator-guide/lenny-ctl.md"), []string{
