@@ -559,11 +559,11 @@ redis:
   deployResources: {}
   # cluster.addrs is a comma-separated list of §12.4 Redis Cluster seed
   # nodes (host:port). When set the gateway base Redis client is a
-  # CLUSTER KEYSLOT-aware ClusterClient — the Tier 2→3 migration topology
-  # for the high-write Quota/Rate Limiting instance. It takes precedence
-  # over url and the Sentinel fields. Empty keeps the single-instance
-  # topology. The addresses are not secret, so they render as a plain env
-  # var (LENNY_REDIS_CLUSTER_ADDRS).
+  # CLUSTER KEYSLOT-aware ClusterClient, the topology a deployment moves
+  # to at the §12.4 whole-deployment `redis.provider` cutover. It takes
+  # precedence over url and the Sentinel fields. Empty keeps the
+  # single-instance topology. The addresses are not secret, so they render
+  # as a plain env var (LENNY_REDIS_CLUSTER_ADDRS).
   cluster:
     addrs: ""
     # nodes is the deployed Redis Cluster size (provider=cluster +
@@ -3656,12 +3656,10 @@ capacityPlanning:
   # active-session pod demand.
   tier: tier1
   # §17.8.2 singleTenantRedisTopology documents the operator's
-  # Redis topology intent at Tier 3. At Tier 3 single-tenant scale the
-  # total Redis ops/s is well below the single-threaded-primary ceiling,
-  # so a 3-4 node Sentinel topology is sufficient and simpler than Redis
-  # Cluster. Set this to "sentinel" to record that intent and suppress the
-  # gateway's "[WARN] RedisClusterRecommended" startup log, which
-  # otherwise fires at Tier 3 when the gateway runs a Sentinel topology.
+  # Redis topology intent at Tier 3. Set this to "sentinel" to record
+  # that intent and suppress the gateway's "[WARN] RedisClusterRecommended"
+  # startup log, which otherwise fires at Tier 3 when the gateway runs a
+  # Sentinel topology.
   # Empty (the default) leaves the warning enabled. The value renders as
   # LENNY_SINGLE_TENANT_REDIS_TOPOLOGY on the gateway. F-17.8.7.
   singleTenantRedisTopology: ""

@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -79,7 +80,11 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 	}
 
 	pgStore := pgstore.New(pg.Pool)
-	rdStore := redisstore.New(rd.Client)
+	// The slot guard fails any script, transaction, or multi-key command
+	// whose keys span hash slots, as a Redis Cluster would (§12.4 Redis HA
+	// and Failure Modes), so this single-node container also proves the
+	// store's Tier 2 operations stay in one slot.
+	rdStore := redisstore.New(slotguard.Install(rd.Client))
 	metrics := &recMetrics{}
 	audit := &recAudit{}
 	svc := coordination.NewService(coordination.ServiceOptions{
@@ -108,7 +113,7 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 
 	// Postgres → Tier 2 transition: the Service increments the Redis-side
 	// outage epoch (§25.4, "increments the Redis-side epoch via
-	// INCR ops:lock-epoch:current") so every Tier 2 acquisition carries it.
+	// INCR ops:{lock}:epoch") so every Tier 2 acquisition carries it.
 	// This is the store effect of Service.onPostgresUnavailable; drive it
 	// directly since the live container cannot return a genuine outage.
 	postEpoch, err := rdStore.IncrementEpoch(ctx)
@@ -133,7 +138,7 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 			t.Fatalf("post-outage redis acquire %s: %v", a.Scope, err)
 		}
 		if lock.Epoch != 1 {
-			t.Errorf("redis lock %s epoch = %d, want 1 (stamped from ops:lock-epoch:current)", a.Scope, lock.Epoch)
+			t.Errorf("redis lock %s epoch = %d, want 1 (stamped from ops:{lock}:epoch)", a.Scope, lock.Epoch)
 		}
 	}
 
@@ -256,7 +261,11 @@ func TestSplitBrainLosingHolderReceives409_spec_25_4(t *testing.T) {
 	}
 
 	pgStore := pgstore.New(pg.Pool)
-	rdStore := redisstore.New(rd.Client)
+	// The slot guard fails any script, transaction, or multi-key command
+	// whose keys span hash slots, as a Redis Cluster would (§12.4 Redis HA
+	// and Failure Modes), so this single-node container also proves the
+	// store's Tier 2 operations stay in one slot.
+	rdStore := redisstore.New(slotguard.Install(rd.Client))
 	svc := coordination.NewService(coordination.ServiceOptions{
 		Postgres: pgStore,
 		Redis:    rdStore,

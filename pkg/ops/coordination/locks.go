@@ -49,7 +49,8 @@ const (
 // each to its documented status code and §25.2 category.
 const (
 	// ErrCodeConflict is REMEDIATION_LOCK_CONFLICT: a non-expired lock
-	// already holds the scope.
+	// already holds the scope, or a Tier 2 extend, steal, or release
+	// exhausted its compare-and-set retries and wrote nothing.
 	ErrCodeConflict = "REMEDIATION_LOCK_CONFLICT"
 	// ErrCodeNotFound is REMEDIATION_LOCK_NOT_FOUND: the lock id is
 	// unknown or the lock has expired or been released.
