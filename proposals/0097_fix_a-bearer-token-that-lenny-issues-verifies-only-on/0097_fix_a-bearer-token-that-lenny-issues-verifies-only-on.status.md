@@ -2,13 +2,13 @@
 proposal: 0097_fix_a-bearer-token-that-lenny-issues-verifies-only-on
 title: Lenny-issued bearer tokens verify only on the process that signed them
 kind: fix
-status: Draft
+status: Approved
 drafted-date: 2026-10-23
 drafted-by: change-proposal
-reviewed-date: 
-reviewed-by: 
-approved-date: 
-approved-by: 
+reviewed-date: 2026-10-24
+reviewed-by: jaf
+approved-date: 2026-10-24
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
