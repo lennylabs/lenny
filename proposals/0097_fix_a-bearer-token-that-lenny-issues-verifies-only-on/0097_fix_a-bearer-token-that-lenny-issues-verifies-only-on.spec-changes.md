@@ -11,14 +11,14 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 ## Edge cases and accepted failure modes
 
 - **KMS unreachable at process start.** The process cannot load its key set and does not start (SPEC-2). A crashlooping pod is the accepted fail-closed cost of loading keys once.
-- **KMS unreachable while running.** Verification is unaffected because the key set is in memory (SPEC-2). New mints fail with `KMS_SIGNING_UNAVAILABLE` once the breaker opens (SPEC-4).
+- **KMS unreachable while running.** Verification is unaffected because the key set is in memory (SPEC-2). New mints fail with `KMS_SIGNING_UNAVAILABLE` (SPEC-4).
 - **Token with no `kid` or an unknown `kid`.** Rejected with `missing_kid` or `unknown_kid`, with no KMS call (SPEC-2). An attacker-chosen `kid` cannot drive KMS traffic.
 - **A repointable key reference.** A process refuses to start when a `platform:jwt-*` alias names an AWS alias, a GCP CryptoKey without a version, or an Azure key without a version (SPEC-1). Without this rule a reference repointed outside Helm would make every new token fail on every verifier.
 - **Quota throttling burst.** Throttled requests return a retryable 503 with `Retry-After` and do not count toward the breaker trip (SPEC-4). Mints degrade under a burst and do not stop fleet-wide.
 - **Rotation step taken early.** Step 2 before step 1 has rolled out everywhere makes new tokens fail on processes that lack the new key. Step 3 before the `lenny-gateway` cap elapses rejects unexpired tokens the old key signed. SPEC-2 states the ordering and the wait.
 - **Bootstrap admin credential across rotation.** Its lifetime exceeds the step-3 wait, so SPEC-2 step 2 re-mints it. An operator who skips that step is locked out at step 3.
 - **Concurrent rotation of one subject.** The second transaction's step (1a) re-read sees the subject revoked by the first and rejects with `subject_token_revoked` (SPEC-7). A retried rotation of an already-rotated token fails the same way.
-- **Postgres outage seen by `lenny-ops`.** `lenny-ops` keeps accepting Lenny-issued tokens that are not in its revocation set, so the §25.15 degraded-mode loop keeps working for operability agents (SPEC-11 Edit 2, owner decision 4). A revocation committed in the seconds before the outage that had not reached the set is missed until the token's `exp`. A `lenny-ops` process that starts during the outage refuses Lenny-issued tokens until Postgres returns. Both are accepted residual risks.
+- **Postgres outage seen by `lenny-ops`.** SPEC-11 Edit 2 rules 4 and 5 state the behavior, and summary D22 records the accepted residual risks.
 - **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out revoked is discarded and never returned (SPEC-7).
 
 ## Staged edits
@@ -127,13 +127,13 @@ The row stays one physical line.
 **Edit 1.** Replace the whole paragraph that begins "**KMS signing failure mode:** If the KMS service is unavailable when the gateway attempts to mint a new session JWT" with:
 
 ```markdown
-**KMS signing failure mode:** If a signer cannot obtain a signature, the mint fails with a retryable `KMS_SIGNING_UNAVAILABLE` error (HTTP 503, `retryable: true`) and no token is issued. The rule covers every mint path on the gateway and on the Token Service. Existing sessions and previously issued tokens are **unaffected**: their JWTs are already signed, and verification uses the key set loaded at startup (see "Verifier key set and rotation" above) rather than a live KMS call. Each signer process wraps its KMS signing calls in an automatic, in-memory circuit breaker (distinct from the operator-managed circuit breakers in [Section 11.6](11_policy-and-controls.md#116-circuit-breakers)). When the `JWTSigner` circuit breaker trips to open state (> 3 consecutive signing failures within 30s), every new mint on that process is rejected with `KMS_SIGNING_UNAVAILABLE` until the circuit resets. Provider throttling is backpressure rather than a signing failure: a sign request the KMS throttles returns `KMS_SIGNING_UNAVAILABLE` and does not count toward the trip. Every `KMS_SIGNING_UNAVAILABLE` response carries `Retry-After`, in whole seconds and at least 1: the remaining breaker cooldown when the breaker is open, and 1 second when the KMS throttled the request. The `KMSSigningUnavailable` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the signing error rate exceeds its threshold, and the `KMSSignQuotaApproaching` alert fires when the fleet sign rate nears the configured provider quota.
+**KMS signing failure mode:** If a signer cannot obtain a signature, the mint fails with a retryable `KMS_SIGNING_UNAVAILABLE` error (HTTP 503, `retryable: true`) and no token is issued. The rule covers every mint path on the gateway and on the Token Service. Previously issued tokens keep verifying until `exp`, because verification uses the key set loaded at startup (see "Verifier key set and rotation" above) rather than a live KMS call. A running session's own mints, such as a delegation child token, fail until signing recovers. Each signer process wraps its KMS signing calls in an automatic, in-memory circuit breaker (distinct from the operator-managed circuit breakers in [Section 11.6](11_policy-and-controls.md#116-circuit-breakers)). When the `JWTSigner` circuit breaker trips to open state (> 3 consecutive signing failures within 30s), every new mint on that process is rejected with `KMS_SIGNING_UNAVAILABLE` until the circuit resets. Provider throttling is backpressure rather than a signing failure: a sign request the KMS throttles returns `KMS_SIGNING_UNAVAILABLE` and does not count toward the trip. Every `KMS_SIGNING_UNAVAILABLE` response carries `Retry-After`, in whole seconds and at least 1: the remaining breaker cooldown when the breaker is open, and 1 second otherwise. The `KMSSigningUnavailable` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the signing error rate exceeds its threshold, and the `KMSSignQuotaApproaching` alert fires when the fleet sign rate nears the configured provider quota.
 ```
 
 **Edit 2.** In the §15 error table, replace the row that begins "| `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         |" with this row, kept on one physical line:
 
 ```markdown
-| `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         | The JWT signer (gateway or Token Service) could not obtain a signature: its circuit breaker is open or the KMS throttled the request. The response carries `Retry-After`. Existing sessions are unaffected until token expiry. See [Section 10.2](10_gateway-internals.md#102-authentication). |
+| `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         | The JWT signer (gateway or Token Service) could not obtain a signature, so no token was minted. The response carries `Retry-After`. See [Section 10.2](10_gateway-internals.md#102-authentication). |
 ```
 
 ### SPEC-5 · spec/16_observability.md § 16.1 Metrics and § 16.5 Alerting Rules and SLOs: signing metrics and alerts
@@ -153,7 +153,7 @@ The row stays one physical line.
 **Edit 3.** In §16.5, replace the row that begins "| `KMSSigningUnavailable`          |" with this row, kept on one physical line:
 
 ```markdown
-| `KMSSigningUnavailable`          | `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1` for > 60s; a `JWTSigner` circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with `KMS_SIGNING_UNAVAILABLE`. Existing sessions are unaffected until JWT expiry. Operator should verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's `job` label names. See [Section 10.2](10_gateway-internals.md#102-authentication). | Warning  |
+| `KMSSigningUnavailable`          | `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1` for > 60s; a `JWTSigner` circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with `KMS_SIGNING_UNAVAILABLE`. Operator should verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's `job` label names. See [Section 10.2](10_gateway-internals.md#102-authentication). | Warning  |
 ```
 
 **Edit 4.** In §16.5, insert immediately after that row, on one physical line:
@@ -172,7 +172,7 @@ The gateway mints in process the tokens that [§10.2](10_gateway-internals.md#10
 
 The bootstrap admin carve-out sentence and the custody sentences under **Deployment** are unchanged.
 
-### SPEC-7 · spec/13_security-model.md § 13.3 Credential Flow: token issuance, write-before-issue, `exp` granularity, and actor-token freshness; spec/08_recursive-delegation.md § 8.2 Delegation Mechanism: actor-token freshness
+### SPEC-7 · spec/13_security-model.md § 13.3 Credential Flow: token issuance, write-before-issue, `exp` granularity, and actor-token freshness; spec/08_recursive-delegation.md § 8.2 Delegation Mechanism: actor-token freshness; spec/15_external-api-surface.md error table: `DELEGATION_PARENT_REVOKED`
 
 **Edit 1.** In §13.3 "**Write-before-issue ordering.**", replace the text from "The ordering is a single Postgres transaction with three statements" through "the caller receives `500 token_exchange_failed` with no token." with:
 
@@ -206,6 +206,14 @@ The Token Service performs the [§13.3](13_security-model.md#133-credential-flow
 The gateway in-process mints that [§10.2](10_gateway-internals.md#102-authentication) "Signing topology" lists, including the bootstrap `lenny-admin` Secret rotation, do not go through `/v1/oauth/token`
 ```
 
+**Edit 6.** In the spec/15_external-api-surface.md error table, in the `DELEGATION_PARENT_REVOKED` row, replace "resolves to a revoked entry in the revocation cache" with:
+
+```markdown
+has `revoked_at` set at the [Section 13.3](13_security-model.md#133-credential-flow) "Write-before-issue ordering" step (1a) re-read
+```
+
+Keep the row on one physical line. The rest of the row is unchanged.
+
 ### SPEC-8 · spec/17_deployment-topology.md § 17.8.1 Operational Defaults — Quick Reference and § 17.8.2 Capacity Tier Reference: lifetime, quota, and sign rate
 
 **Edit 1.** In the §17.8.1 table, insert immediately after the row that begins "| `/v1/oauth/token` per-tenant global rate limit (`oauth.rateLimit.tenantPerSecond`) |", each row on one physical line:
@@ -218,7 +226,7 @@ The gateway in-process mints that [§10.2](10_gateway-internals.md#102-authentic
 **Edit 2.** In §17.8.2, insert immediately before the heading `### 17.8.3 Tier Promotion Guide`:
 
 ```markdown
-**KMS Sign rate.** Every Lenny-issued token costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication)). The sustained fleet sign rate is approximately `session creation rate + delegation mint rate + concurrent holders of refreshable tokens ÷ (auth.capabilityTokenTtlSeconds − refresh lead) + admin, impersonation, and rotation mints`. A refreshable token is one that takes the `auth.capabilityTokenTtlSeconds` default ([§10.2](10_gateway-internals.md#102-authentication) "JWT claims"): a playground bearer, whose refresh lead is 60 seconds ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange)), or a `POST /v1/oauth/token` token issued without `expires_in`, whose refresh lead is the holder's own, such as `security.oidc.tokenRefreshBeforeExpirySeconds` for the [§25.4](25_agent-operability.md#254-the-lenny-ops-service) GatewayClient. The terms come from the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameters and the `capacityPlanning.*` workload values. At Tier 3 with the default lifetime (200 sessions/s, about 15 delegations/s, and 10,000 concurrent holders of refreshable tokens with a 60-second lead), the sustained sign rate is about 230/s, and about 690/s when the rate triples in a session storm. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the storm figure; a deployment whose quota is below the storm figure returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during storms. ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
+**KMS Sign rate.** Every Lenny-issued JWT costs one KMS `Sign` call ([§10.2](10_gateway-internals.md#102-authentication)). The sustained fleet sign rate is approximately `session creation rate + delegation mint rate + concurrent holders of refreshable tokens ÷ (auth.capabilityTokenTtlSeconds − refresh lead) + admin, impersonation, and rotation mints`. A refreshable token is one that takes the `auth.capabilityTokenTtlSeconds` default ([§10.2](10_gateway-internals.md#102-authentication) "JWT claims"): a playground bearer, whose refresh lead is 60 seconds ([§27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange)), or a `POST /v1/oauth/token` token issued without `expires_in`, whose refresh lead is the holder's own. The terms come from the [§16.5](16_observability.md#165-alerting-rules-and-slos) tier parameters and the `capacityPlanning.*` workload values. At Tier 3 with the default lifetime (200 sessions/s, about 15 delegations/s, and 10,000 concurrent holders of refreshable tokens with a 60-second lead), the sustained sign rate is about 230/s, and about 690/s when the rate triples in a session storm. Set `kms.signQuotaPerSecond` to the provider's documented asymmetric `Sign` quota for the account and region, and raise the provider quota to at least the storm figure; a deployment whose quota is below the storm figure returns retryable `503 KMS_SIGNING_UNAVAILABLE` responses during storms. ES256 verification adds tens of microseconds of gateway CPU per authenticated request.
 ```
 
 ### SPEC-9 · spec/17_deployment-topology.md § 17.4 Local Development Mode: "Embedded Mode: `lenny up`" dependency table KMS row, "State and resets", and "Dev mode guard rails"
@@ -226,7 +234,7 @@ The gateway in-process mints that [§10.2](10_gateway-internals.md#102-authentic
 **Edit 1.** Replace the dependency table row that begins "| KMS            | In-process random KEK (`kms.provider: local`)" with this row, kept on one physical line:
 
 ```markdown
-| KMS            | Local provider (`kms.provider: local`)                           | Keyed by a master key Secret the chart generates once per install; derives KEKs and the ES256 JWT signing key from that master key ([§10.2](10_gateway-internals.md#102-authentication)). Refused in a production deployment; operators MUST NOT use this for production |
+| KMS            | Local provider (`kms.provider: local`)                           | Keyed by a master key Secret that `lenny up` generates when the embedded cluster has none, so the key persists with the substrate; derives KEKs and the ES256 JWT signing key from that master key ([§10.2](10_gateway-internals.md#102-authentication)). Refused in a production deployment; operators MUST NOT use this for production |
 ```
 
 **Edit 2.** Under "Dev mode guard rails", replace "Dev mode relaxes security defaults (TLS, JWT signing) for local convenience" with "Dev mode relaxes security defaults (TLS) for local convenience", and replace item 3's "including TLS bypass, JWT signing bypass, and any future relaxations." with:
@@ -266,7 +274,7 @@ see [Section 25.4](25_agent-operability.md#254-the-lenny-ops-service) `lenny-ops
 Egress allows Postgres, Redis, MinIO, Prometheus, and the KMS endpoint when `kms.provider` is not `local`.
 ```
 
-### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.4 The `lenny-ops` Service: Startup and Readiness and Authentication, and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
+### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.1 Design Philosophy and Agent Model: Component Model dependency list; § 25.4 The `lenny-ops` Service: Startup and Readiness, Authentication, and Dependencies; and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
 
 **Edit 1.** In §18.33, replace the bullet "- JWT signing-key rotation procedure per [§13.3](13_security-model.md#133-credential-flow): JWK Set publication endpoint, key-overlap window, rollover audit event emission (`platform.jwt_signing_key_rotated`), and the operator runbook." with:
 
@@ -277,19 +285,49 @@ Egress allows Postgres, Redis, MinIO, Prometheus, and the KMS endpoint when `kms
 **Edit 2.** In §25.4 "Authentication", replace "`lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint." with:
 
 ```markdown
-`lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway. It validates Lenny-issued tokens against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation" and refuses a Lenny-issued token whose `jti` is in its in-memory revocation set with `401 token_revoked`. `lenny-ops` loads the revocation set from `issued_tokens` at startup and, while Postgres is reachable, keeps it current by the mechanisms the gateway's revocation cache uses ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation" and "Authoritative durability for revocation"). When Redis is unreachable and Postgres is reachable, the `issued_tokens` reads keep the set current without `token.revoked` events. `lenny-ops` does not apply the gateway's refusal to validate while Postgres is unreachable. During a Postgres outage it keeps accepting a Lenny-issued token that verifies against the key set and is not in the revocation set, because no revocation can commit while Postgres is down, and the set stays frozen at its last state until Postgres returns. A revocation that committed before the outage and had not reached the set is missed until the token's `exp`, and a token whose audience is `lenny-ops` lives at most the 1-hour `lenny-ops` per-dialect cap ([Section 13.3](13_security-model.md#133-credential-flow) "`exp` granularity and parent-expiry handling"). A `lenny-ops` process that has not loaded the revocation set since it started refuses every Lenny-issued token with `503 token_validation_unavailable` until a load succeeds. The revocation set does not apply to upstream IdP tokens.
+`lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway, and validates Lenny-issued tokens, whatever their audience, against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation".
+```
+
+Then insert the following as a new paragraph and list immediately after the paragraph that ends "No anonymous access except `/healthz`.":
+
+```markdown
+**Revocation set.** `lenny-ops` checks each Lenny-issued token the key set verifies against an in-memory revocation set:
+
+1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read adds the rows it returns to the set.
+2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
+3. A token whose `jti` is in the set is refused with `401 token_revoked`.
+4. Until the first successful read since the process started, every Lenny-issued token is refused with `503 token_validation_unavailable`.
+5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
+6. Rules 1 to 5 do not apply to upstream IdP tokens.
+7. A Lenny-issued token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with `401 UNAUTHORIZED`, because the playground calls only the gateway and `lenny-ops` does not consult the [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) playground revocation key.
 ```
 
 **Edit 3.** In §25.4 "Startup and Readiness", replace "`lenny-ops` starts its HTTP listener immediately." with:
 
 ```markdown
-`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set of "Authentication" below loads from Postgres when Postgres is reachable and gates neither the listener nor readiness.
+`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set ("Authentication" below) is an input to neither the listener nor readiness.
 ```
 
 **Edit 4.** In the §25.15 table, append this sentence to the end of the Impact cell of the "**Postgres down**" row and of the "**Postgres + Redis both down**" row, keeping each row on one physical line:
 
 ```markdown
-Lenny-issued tokens remain accepted against the revocation set `lenny-ops` loaded before the outage, and a `lenny-ops` cold start during the outage refuses Lenny-issued tokens until Postgres recovers ([Section 25.4](#254-the-lenny-ops-service) "Authentication").
+`lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state.
+```
+
+**Edit 5.** In the §25.4 "Dependencies" table, insert the first block below as a row after the Redis row, and append the second block to the end of the Used-by cell of the Postgres row, keeping each row on one physical line:
+
+```markdown
+| KMS (when `kms.provider` is not `local`) | Yes, at startup | Loading the verifier key set ([Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation") |
+```
+
+```markdown
+Lenny-issued tokens are accepted as "Authentication" **Revocation set** rules 4, 5, and 7 state.
+```
+
+Then, in §25.1 "Component Model", insert this bullet after the "**Postgres, Redis, K8s API, gateway admin API**" bullet:
+
+```markdown
+- **KMS**, when `kms.provider` is not `local`, is required at process start.
 ```
 
 ## Spec files touched
@@ -298,7 +336,7 @@ Lenny-issued tokens remain accepted against the revocation set `lenny-ops` loade
 - spec/08_recursive-delegation.md (SPEC-7)
 - spec/10_gateway-internals.md (SPEC-1, SPEC-2, SPEC-3, SPEC-4)
 - spec/13_security-model.md (SPEC-7, SPEC-10)
-- spec/15_external-api-surface.md (SPEC-4)
+- spec/15_external-api-surface.md (SPEC-4, SPEC-7)
 - spec/16_observability.md (SPEC-1, SPEC-5)
 - spec/17_deployment-topology.md (SPEC-1, SPEC-8, SPEC-9, SPEC-10)
 - spec/18_build-sequence.md (SPEC-11)

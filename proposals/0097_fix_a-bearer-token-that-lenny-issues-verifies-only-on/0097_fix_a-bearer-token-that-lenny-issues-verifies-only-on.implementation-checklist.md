@@ -1,4 +1,3 @@
-
 ## Implementation checklist
 
 Every step lands the tests that the non-spec Testing section places under its deliverables. S1, S4, S6, and S9 land in one spec pass (see the spec-changes **Design** section). S26 is retired with CHART-3, and the later steps keep their numbers.
@@ -38,7 +37,7 @@ Every step lands the tests that the non-spec Testing section places under its de
 - [ ] **S17 · code** — CODE-5. Lands the Token Service wiring.
       Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S13, S14
 - [ ] **S18 · code** — CODE-6. Lands the `lenny-ops` wiring, including the key set in every process and the revocation set.
-      Tiers 0, 1, 4, 5, 9. Depends on: S1, S2, S11, S13
+      Tiers 0, 1, 2, 4, 5, 9. Depends on: S1, S2, S11, S13
 - [ ] **S19 · code** — CODE-12. Lands the deletion of the HMAC signer and `RotatingVerifier`.
       Tiers 0, 1. Depends on: S16, S17, S18
 - [ ] **S20 · code** — CODE-7. Lands the outcome mapping and the sign metrics.
@@ -62,6 +61,6 @@ Every step lands the tests that the non-spec Testing section places under its de
 - [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
       Tiers 0, 11. Depends on: S2, S23
 - [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, and error catalog edits.
-      Tiers 0, 11. Depends on: S1, S3, S4, S8
+      Tiers 0, 11. Depends on: S1, S3, S4, S8, S11
 - [ ] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
       Tiers 0, 11. Depends on: S29, S30, S31
