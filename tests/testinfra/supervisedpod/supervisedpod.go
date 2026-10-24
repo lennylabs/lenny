@@ -300,6 +300,14 @@ func SoleIdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver,
 	for i := 0; i < attempts; i++ {
 		tenant := NewTenant(ctx, t, d, "supervisor-idle")
 		s, err := d.CreateAndStart(ctx, tenant, IdleRuntime)
+		if err != nil && strings.Contains(err.Error(), "RUNTIME_UNAVAILABLE") {
+			// The drain of a surplus idle pod and its replacement can leave
+			// the pool with no claimable pod for longer than the driver
+			// retries; the attempt is spent and the next waits for the pool.
+			t.Logf("attempt %d: %s had no claimable pod: %v", i+1, IdlePool, err)
+			waitSoleIdlePod(t, c, 2*time.Minute)
+			continue
+		}
 		if err != nil {
 			t.Fatalf("start a session on %s: %v", IdleRuntime, err)
 		}
@@ -312,6 +320,19 @@ func SoleIdleUsedPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver,
 	}
 	t.Skipf("not-yet-applicable: %s did not settle with a used pod as its only idle pod in %d attempts", IdlePool, attempts)
 	return ""
+}
+
+// waitSoleIdlePod waits up to timeout for IdlePool to settle with one ready
+// idle pod.
+func waitSoleIdlePod(t testing.TB, c *kind.Cluster, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, ok := soleIdlePod(t, c, IdlePool); ok {
+			return
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 // settleAfterHold waits for used's reserved hold to end and then for
