@@ -372,7 +372,11 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	request rather than only on the close of the adapter's connection, or
 //	when the publishing page's `preConnect` paragraph no longer has the
 //	supervisor launch the process at warm-up only under a closed SDK-warm
-//	circuit breaker and otherwise at workspace configuration. It also fails
+//	circuit breaker and otherwise at workspace configuration, or when the
+//	publishing page's `preConnect` paragraph or the runtime configuration
+//	page's `capabilities.preConnect` row makes the supervisor the warm-phase
+//	launcher in every deployment model, where the embedded model has no
+//	supervisor and the breaker can withhold the warm-up launch. It also fails
 //	when a page makes "no runtime process is live" the launch trigger, which
 //	would have a session after a crash launch a new process where the
 //	specification refuses the start and retires the pod; when the **Launch.**
@@ -453,13 +457,21 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"the supervisor launches the process when the session's workspace is configured",
 		})
 	requireAllContain(t, "runtime-configuration.md", supervisedDocPage(t, root, "runtime-author-guide/runtime-configuration.md"), []string{
+		"Whether the platform starts the agent SDK process during the warm phase",
+		"In the sidecar model the [runtime supervisor](lifecycle.md#runtime-supervisor) launches it, and only when the pool's SDK-warm circuit breaker is closed at the moment the pod is created",
+	})
+	requireNoneContain(t, "runtime-configuration.md", supervisedDocPage(t, root, "runtime-author-guide/runtime-configuration.md"), []string{
 		"Whether the runtime supervisor launches the agent SDK process during the warm phase",
 	})
 	requireAllContain(t, "testing.md", supervisedDocPage(t, root, "runtime-author-guide/testing.md"), []string{
 		"the runtime supervisor sends the process SIGTERM and then SIGKILL 10 seconds later",
 	})
+	requireAllContain(t, "publishing.md", supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
+		"When `preConnect: true`, the platform starts the runtime's SDK process during the warm phase",
+	})
 	requireNoneContain(t, "publishing.md", supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
 		"the runtime process starts during the warm phase",
+		"When `preConnect: true`, the runtime supervisor launches the runtime process during the warm phase",
 	})
 	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
 		"The first process of the agent container is the runtime supervisor",
