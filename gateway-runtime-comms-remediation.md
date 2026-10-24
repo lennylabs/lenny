@@ -3137,9 +3137,11 @@ narrows to Kata.
 
 - [ ] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
   replica (and the Token Service) generates and seals its own signing key at process start, so a peer
-  replica rejects the token. It fails closed but breaks every multi-replica deployment. The fix loads one
-  shared sealed key (and its rotation set, §10.3) on every replica; if the spec does not already state the
-  shared key source, it goes through the proposal pipeline first. Next after 0087 converges, ahead of P2.
+  replica rejects the token. It fails closed but breaks every multi-replica deployment. The spec does not
+  state a shared key source and contradicts itself on the signing topology, so the fix goes through
+  proposal 0097 (draft, in review on 2026-10-24): remote ES256 KMS signing with one key shared by the
+  gateway and the Token Service, a startup-loaded verifier key set on every replica and on `lenny-ops`,
+  and fixed-lifetime tokens. Its owner decisions are in section 10.3.
 - [x] **F-27.8.1: the gateway exits at startup with the playground enabled** (proposal 0098, implemented
   2026-10-24). §27.8 names the label
   `authMode` and §16.1.1 requires snake_case label names, and the validator refuses it. A small spec
@@ -3263,6 +3265,24 @@ Answered on 2026-10-01 for the later phases:
   Sweeper interval alone (2026-10-21, decided under the owner's standing delegation).
 - P6 relaxes §17.8.2 and §12.4 so one Redis Cluster may serve every concern at Tier 3 (2026-10-21; the
   conditions are in P6's entry).
+- Proposal 0097 (F-10.2.22) decisions (owner, 2026-10-23 and 2026-10-24):
+  - Production signing is remote asymmetric KMS signing, and the private key never exists in gateway or
+    Token Service memory. A shared HS256 key sealed by the KMS and a per-replica KMS-signed intermediate
+    key were rejected.
+  - Lenny-issued tokens have a fixed lifetime and are never re-minted per interaction. The §10.2
+    "refreshed by gateway on each interaction" sentence dates from a gateway-internal HMAC key and is
+    replaced.
+  - The default capability token lifetime is 15 minutes. It governs every token whose holder can pull a
+    fresh one: playground bearers and `POST /v1/oauth/token` tokens. Pod-held session tokens and
+    delegation actor tokens keep their session and tree caps, and a gateway-to-pod renewal path is a
+    recorded follow-up.
+  - `lenny-ops` keeps an in-memory revocation set and accepts verified, non-revoked Lenny-issued tokens
+    through a Postgres outage. Refusing every token during the outage, and accepting only ops-audience
+    tokens with revocation deferred, were rejected.
+  - `lenny-ops` production readiness passes when either Postgres or the Kubernetes API is reachable, so
+    the §25 degraded-mode design is reachable in production. Deferring the probe fix was rejected.
+  - Under the owner's delegation, `lenny-ops` reuses the gateway's revoked-token response, and the missing
+    §15 catalog row is recorded as a defect.
 
 ### 10.4 Related work outside this track
 
