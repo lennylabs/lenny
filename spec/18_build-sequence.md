@@ -667,7 +667,7 @@ _Network and TLS posture._
 - Final default-deny + gateway-egress allowlist NetworkPolicy posture.
 - `lenny-preflight` NetworkPolicy selector-consistency and parity audits per [§13.2](13_security-model.md#132-network-isolation) and [§17.2](17_deployment-topology.md#172-namespace-layout): NET-047, NET-050, NET-067, and NET-068 canonical-selector parity; DNS `podSelector` parity; the `ipblock-family-parity` check; the NET-057 SSRF private-range `except` parity between `allow-gateway-egress-llm-upstream` and `lenny-ops-egress`; the NET-061 `ops-egress-selector-parity` two-selector enforcement; the NET-064 SPIFFE-trust-domain and SA-token-audience uniqueness checks; and the NET-065 cluster-CIDR/IMDS symmetry check extended across the three rendered egress surfaces.
 - CA rotation procedure executed end-to-end against the documented 24-hour overlap window, including the `TestRedisTLSEnforcement` and `TestPgBouncerTLSEnforcement` regression suite.
-- JWT signing-key rotation procedure per [§13.3](13_security-model.md#133-credential-flow): JWK Set publication endpoint, key-overlap window, rollover audit event emission (`platform.jwt_signing_key_rotated`), and the operator runbook.
+- JWT signing-key rotation procedure per [§10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation": the three-rollout alias rotation, the bootstrap admin credential rotation in step 2, and the operator runbook.
 - seccomp profile validation.
 
 _Hardening validation._

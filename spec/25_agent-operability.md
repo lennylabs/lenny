@@ -18,6 +18,7 @@ The operability surface defined in this section is implemented by two components
 External dependencies and their requirement levels are summarized in Section 25.4 (Dependencies) and Section 25.15 (Failure Mode Analysis):
 
 - **Postgres, Redis, K8s API, gateway admin API** — required for full functionality; `lenny-ops` degrades gracefully when each is transiently unavailable.
+- **KMS**, when `kms.provider` is not `local`, is required at process start.
 - **Prometheus** (or any Prometheus-HTTP-API-compatible time-series backend) — optional at Tier 1 (dev), **required at Tier 2/3** (production). Several `lenny-ops` features are functionally broken without persistent time-series storage; see Section 25.4, Prometheus Requirement.
 - **MinIO** (or any S3-compatible object store) — required for backup storage; degraded only for backup verification.
 
@@ -1046,7 +1047,7 @@ startupProbe:
   periodSeconds: 2          # 60s total — covers Postgres connection establishment
 readinessProbe:
   httpGet:
-    path: /healthz?strict=true
+    path: /healthz
     port: 8090
   failureThreshold: 3
   periodSeconds: 5
@@ -1058,8 +1059,8 @@ livenessProbe:
   periodSeconds: 10
 ```
 
-- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness and startup.
-- **`/healthz?strict=true`** (strict): 200 only when both Postgres connection AND K8s API are reachable. Used by readiness — traffic is not routed to replicas that can't serve the full API.
+- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness ("Startup and Readiness" below).
+- **`/healthz?strict=true`** (strict): 200 only when both the Postgres connection and the K8s API are reachable. No probe uses it. It is a diagnostic check that an operator or an agent runs against a replica to learn whether that replica can serve the full API.
 
 When the `strict=true` check returns 503, the response body identifies which dependencies are degraded so operators reading endpoint logs can diagnose the cause.
 
@@ -1432,8 +1433,9 @@ For clusters without internet access:
 
 | Dependency | Required | Used by |
 |---|---|---|
-| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. |
+| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. Lenny-issued tokens are accepted as "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | Redis | No (degraded) | Event stream falls back to gateway in-memory buffer. Remediation locks fall back to in-memory. Escalation creation falls back to in-memory. |
+| KMS (when `kms.provider` is not `local`) | Yes, at startup | Loading the verifier key set ([Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation") |
 | K8s API | Yes | Diagnostics (pod events, pod state fallback), upgrade orchestration, backup jobs, version introspection |
 | Gateway admin API | Yes | Drift reconciliation, diagnostics (pool config, connectors), version aggregation, event buffer fallback |
 | Prometheus (or compatible) | Required at Tier 2/3; optional at Tier 1 | Cross-replica health aggregation, capacity recommendations, diagnostics (pool bottleneck analysis), bundled alerting rules (Section 25.13). Has fallback paths for transient outages, but several features are functionally broken without persistent time-series storage — see Prometheus Requirement below. |
@@ -1564,11 +1566,21 @@ For most deployments, the answer to question 1 is "no" and a single-replica depl
 
 ### Startup and Readiness
 
-`lenny-ops` starts its HTTP listener immediately. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
+`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set ("Authentication" below) is an input to neither the listener nor readiness. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
 
 ### Authentication
 
-Same OIDC middleware as the gateway admin API. `lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint. Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+Same OIDC middleware as the gateway admin API. `lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway, and validates Lenny-issued tokens, whatever their audience, against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+
+**Revocation set.** `lenny-ops` checks each Lenny-issued token the key set verifies against an in-memory revocation set:
+
+1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read replaces the set with the rows it returns and the `jti` of each event rule 2 added after the read began.
+2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
+3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
+4. Until the first successful read since the process started, every Lenny-issued token is refused with the response a gateway replica returns when it cannot reach Postgres to validate a token ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"). Rule 4 takes precedence over rules 3 and 7.
+5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
+6. Rules 1 to 5 do not apply to upstream IdP tokens.
+7. A token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with the response that [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) "Per-request revocation check" gives a revoked bearer, because a gateway replica checks its revocation in the playground revocation key, which `lenny-ops` does not read.
 
 Callers are also subject to the optional `scope` JWT claim (Section 25.1, Scoped Tokens; RFC 9068). When present, the claim narrows the caller's effective tool surface below the role ceiling — a `platform-admin` token with `"scope": "tools:pool:* tools:health:read"` can call only pool tools and health reads despite its role theoretically permitting more.
 
@@ -4999,9 +5011,9 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 |---|---|
 | **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics and fetches runbooks. Remediation steps that call the gateway admin API will fail, as will audit queries (the audit query API is gateway-resident, Section 25.9) — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
 | **Gateway overloaded** | `lenny-ops` has an independent resource budget. Zero contention with client traffic. Health and recommendations on the gateway remain lightweight (in-process reads). |
-| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
+| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **Redis down** | Event stream falls back to gateway in-memory event buffer — degraded but functional. Webhook delivery continues from buffer with cached subscriptions. Remediation locks fall back to in-memory (if Postgres also down). Health endpoint still works (in-process circuit breaker cache fallback). |
-| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
+| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **`lenny-ops` degraded** | Self-monitoring detects internal degradation (Postgres pool, Redis lag, memory pressure) and emits `ops_health_status_changed` to the event stream (Redis or gateway buffer). Watchdog receives this event and can poll `GET /v1/admin/ops/health` for details. |
 | **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, drift, backup, and upgrade APIs are unavailable. The audit query API stays available because it is gateway-resident (Section 25.9). Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |
