@@ -2174,7 +2174,7 @@ The lock service attempts storage tiers in order, falling back on failure. Each 
 | Tier | Store | Acquire mechanism | Coordination scope | When used |
 |------|-------|-------------------|--------------------|-----------|
 | 1 | Postgres | `INSERT ... ON CONFLICT (scope) DO NOTHING RETURNING *` | All replicas (shared table) | Default — both stores available |
-| 2 | Redis | `SET NX EX` with Lua script writing `{lockID, epoch, revision}` atomically | All replicas (shared keyspace) | Postgres unreachable |
+| 2 | Redis | Lua script over the `ops:{lock}:` keys that checks the scope key and writes the lock with the current outage epoch atomically | All replicas (shared keyspace) | Postgres unreachable |
 | 3 | In-memory | `sync.Map` + per-replica TTL wheel | Depends on `ops.locks.memoryTier` (see below) | Both Postgres and Redis unreachable |
 
 **Tier 1 — Postgres (default):**
@@ -2200,12 +2200,30 @@ Acquisitions at Tier 1 use `epoch = 0` (reserved for the Postgres tier). `Acquir
 
 **Tier 2 — Redis:**
 
-Uses a Lua script on key `ops:lock:{scope}` that atomically:
-1. Reads the current outage epoch from `ops:lock-epoch:current` (see Tier Transitions).
-2. Checks for an existing non-expired lock.
-3. On no conflict, writes `{lockID, scope, operation, acquiredBy, operationID, acquiredAt, expiresAt, epoch, revision}` with `PEXPIREAT`.
+Every Tier 2 key starts with `ops:{lock}:`, whose `{lock}` segment is a Redis Cluster hash tag ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes) **Braces in key patterns**), so every Tier 2 key hashes to one slot:
 
-`acquiredAt` and `expiresAt` are derived from `redis.call('TIME')` so locks across replicas use a consistent clock source. Release uses a similar CAS script that verifies the lock ID matches before deleting.
+- `ops:{lock}:scope:<scope>` (the scope key) is a hash whose `id` field holds the lock ID and whose `data` field holds the serialized lock record.
+- `ops:{lock}:id:<lockID>` (the ID key) holds the scope, so a lock ID resolves to its scope key.
+- `ops:{lock}:epoch` (the epoch key) holds the Redis-side outage epoch (see Tier Transitions).
+
+`<scope>` and `<lockID>` are placeholders: the key carries the value without angle brackets.
+
+Acquire runs one Lua script over the scope key, the ID key, and the epoch key that atomically:
+1. Returns `409 REMEDIATION_LOCK_CONFLICT` with the existing lock record when the scope key exists.
+2. Reads the current outage epoch from the epoch key, treating an absent key as 0, and stamps it as the record's `epoch`.
+3. Writes the serialized `Lock` record (see Lock Struct) to the scope key and the scope to the ID key, and sets both keys to expire after the requested TTL.
+
+`lenny-ops` computes `acquiredAt` and `expiresAt` from a Redis `TIME` reading (see Clock Source) taken immediately before it runs a script that writes a lock record, and that script sets the expiry of the keys it writes as a TTL relative to the moment it runs.
+
+Extend, steal, and release resolve the lock ID through the ID key, read the stored lock record, and apply their change with one compare-and-set script over the scope key and the ID key. The script writes the new record, or deletes both keys on release, only when the stored record is identical to the record that was read. A lock ID whose scope key holds a different lock ID is treated as absent. When the comparison fails, `lenny-ops` reads the lock again and decides again:
+1. An absent lock returns `404 REMEDIATION_LOCK_NOT_FOUND`.
+2. On extend and release, a lock whose `acquiredBy` is no longer the caller returns `403 LOCK_NOT_OWNED`.
+3. Any other change retries the operation.
+4. After three failed comparisons the operation returns `409 REMEDIATION_LOCK_CONFLICT` and writes nothing.
+
+The split-brain reconciliation (see Tier Transitions) removes a losing Redis lock with a script that deletes the scope key and the ID key only when the stored lock ID matches, regardless of `acquiredBy`.
+
+The Redis client re-sends a command whose reply it lost, so each Tier 2 write in this section tolerates a repeat: an acquire whose scope key already holds its own lock ID at revision 0 returns that lock in place of the conflict that acquire step 1 returns, a compare-and-set whose stored record is identical to the new record counts as success without a write, a repeated release finds the lock absent, a repeated reconciliation removal deletes nothing, and a repeated `INCR` of the epoch key (see Tier Transitions) advances the epoch twice, which keeps it monotonic.
 
 **Tier 3 — In-memory:**
 
@@ -2325,7 +2343,7 @@ Deployers scaling `lenny-ops` beyond a single replica should review `ops.locks.m
 
 | Code | Category | HTTP | Description |
 |------|----------|------|-------------|
-| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope. Response includes `splitBrain: true` if a split-brain condition was detected. |
+| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope, or a Tier 2 extend, steal, or release exhausted its compare-and-set retries (see Storage Tiers). Response includes `splitBrain: true` if a split-brain condition was detected. |
 | `REMEDIATION_LOCK_NOT_FOUND` | `PERMANENT` | 404 | Lock ID not found or already expired. |
 | `LOCK_SCOPE_FORBIDDEN` | `AUTH` | 403 | The caller's role does not authorize this lock scope. |
 | `LOCK_NOT_OWNED` | `AUTH` | 403 | Caller is not the lock's `acquiredBy`; use `Steal` to take over an existing lock. |
