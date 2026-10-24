@@ -22,7 +22,7 @@ import (
 
 // buildLockService constructs the §25.4 tiered remediation-lock service:
 // the Postgres ops_remediation_locks store (Tier 1, migration 0121) when a
-// pool is available, then the Redis ops:lock:{scope} store (Tier 2) when a
+// pool is available, then the Redis ops:{lock}:scope:<scope> store (Tier 2) when a
 // Redis client is available, over the always-present in-memory Tier 3
 // store. The gate enforces the ops.locks.memoryTier policy on the Tier 3
 // fall-through; the metrics adapter publishes the §25.4 lock gauges and
