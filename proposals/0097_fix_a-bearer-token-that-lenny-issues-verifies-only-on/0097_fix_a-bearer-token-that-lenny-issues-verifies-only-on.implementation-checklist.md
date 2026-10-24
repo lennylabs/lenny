@@ -2,27 +2,27 @@
 
 Every step lands the tests that the non-spec Testing section places under its deliverables. S1, S4, S6, and S9 land in one spec pass (see the spec-changes **Design** section). S26 is retired with CHART-3, and the later steps keep their numbers. S33 (CODE-13) is listed after S19 because it depends only on S11, and S29 depends on it.
 
-- [ ] **S1 · spec** — SPEC-1. Lands all of SPEC-1: the signing model, the signing topology, and the edits that follow from them.
+- [x] **S1 · spec** — SPEC-1. Lands all of SPEC-1: the signing model, the signing topology, and the edits that follow from them.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands all of SPEC-2: the verifier key set and rotation paragraph.
+- [x] **S2 · spec** — SPEC-2. Lands all of SPEC-2: the verifier key set and rotation paragraph.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-3. Lands all of SPEC-3: the fixed lifetime, the `auth.capabilityTokenTtlSeconds` default, and the request `expires_in` row.
+- [x] **S3 · spec** — SPEC-3. Lands all of SPEC-3: the fixed lifetime, the `auth.capabilityTokenTtlSeconds` default, and the request `expires_in` row.
       Tiers 0, 11. Depends on: S1
-- [ ] **S4 · spec** — SPEC-4. Lands all of SPEC-4: the KMS signing failure mode, its error row, and the §11.6 automatic-breaker ownership sentence (Edit 3).
+- [x] **S4 · spec** — SPEC-4. Lands all of SPEC-4: the KMS signing failure mode, its error row, and the §11.6 automatic-breaker ownership sentence (Edit 3).
       Tiers 0, 11. Depends on: S1, S2
-- [ ] **S5 · spec** — SPEC-5. Lands all of SPEC-5: the signing metrics and alerts.
+- [x] **S5 · spec** — SPEC-5. Lands all of SPEC-5: the signing metrics and alerts.
       Tiers 0, 11. Depends on: S4
-- [ ] **S6 · spec** — SPEC-6. Lands all of SPEC-6: the §4.3 item 3 minting topology and the §17.7 audit-lock remedy.
+- [x] **S6 · spec** — SPEC-6. Lands all of SPEC-6: the §4.3 item 3 minting topology and the §17.7 audit-lock remedy.
       Tiers 0, 11. Depends on: S1
-- [ ] **S7 · spec** — SPEC-7. Lands all of SPEC-7: signing outside the lock, the in-transaction revocation re-read, and the playground caller refusal.
+- [x] **S7 · spec** — SPEC-7. Lands all of SPEC-7: signing outside the lock, the in-transaction revocation re-read, and the playground caller refusal.
       Tiers 0, 11. Depends on: S1
-- [ ] **S8 · spec** — SPEC-8. Lands all of SPEC-8: the lifetime and quota defaults and the KMS Sign rate.
+- [x] **S8 · spec** — SPEC-8. Lands all of SPEC-8: the lifetime and quota defaults and the KMS Sign rate.
       Tiers 0, 11. Depends on: S3, S4
-- [ ] **S9 · spec** — SPEC-9. Lands all of SPEC-9: the local development mode edits.
+- [x] **S9 · spec** — SPEC-9. Lands all of SPEC-9: the local development mode edits.
       Tiers 0, 11. Depends on: S1
-- [ ] **S10 · spec** — SPEC-10. Lands all of SPEC-10: the gateway and `lenny-ops` KMS endpoint egress.
+- [x] **S10 · spec** — SPEC-10. Lands all of SPEC-10: the gateway and `lenny-ops` KMS endpoint egress.
       Tiers 0, 11. Depends on: S1
-- [ ] **S11 · spec** — SPEC-11. Lands all of SPEC-11: the build-sequence bullet and the `lenny-ops` edits, including the revocation set of owner decision 4 and the readiness probe of owner decision 6.
+- [x] **S11 · spec** — SPEC-11. Lands all of SPEC-11: the build-sequence bullet and the `lenny-ops` edits, including the revocation set of owner decision 4 and the readiness probe of owner decision 6.
       Tiers 0, 11. Depends on: S2
 - [ ] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
       Tiers 0, 1, 6. Depends on: S1, S2, S4, S9
