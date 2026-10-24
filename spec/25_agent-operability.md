@@ -1256,6 +1256,10 @@ egress:
       - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
         podSelector: { matchLabels: { k8s-app: kube-dns } }
     ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  # KMS endpoint for GetPublicKey on the §10.2 JWT signing keys. Rendered when
+  # kms.provider is not local; §13.2.4 (Gateway row) states the CIDR rule.
+  - to: [{ ipBlock: { cidr: "{{ .Values.kms.endpointCIDR }}" } }]
+    ports: [{ protocol: TCP, port: 443 }]
   # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks).
   # Two parallel `ipBlock` peers are emitted — one per address family — because
   # Kubernetes NetworkPolicy requires every `except` entry to share the address
