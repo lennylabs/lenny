@@ -298,7 +298,8 @@ func TestRuntimeSupervisorParagraphHasOneSpecHome(t *testing.T) {
 // retiredSidecarLaunchPhrases are the sentences the runtime supervisor
 // retired from the documentation: a pod that keeps one runtime process on
 // every recycling pool, the kubelet starting the runtime binary through its
-// image entrypoint, an adapter that captures the runtime's stderr, and a
+// image entrypoint, an adapter that starts the runtime binary itself, an
+// adapter that captures the runtime's stderr, and a
 // scrub that leaves the runtime process untouched on every pod.
 var retiredSidecarLaunchPhrases = []string{
 	"keeps one runtime process",
@@ -313,6 +314,7 @@ var retiredSidecarLaunchPhrases = []string{
 	"Session logs and runtime stderr",
 	"its runtime process cannot serve the next session",
 	"the adapter SIGKILLs",
+	"the adapter starts the runtime binary",
 }
 
 // spec: 4.7.10 (Runtime supervisor, Runtime process lifetime), 5.2
@@ -367,7 +369,10 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	test also fails when the Session End paragraph states one lifetime for
 //	every pod instead of the `keep` and `restart` lifetimes, or when the pod
 //	termination paragraph has the supervisor exit after the adapter's end
-//	request rather than only on the close of the adapter's connection.
+//	request rather than only on the close of the adapter's connection, or
+//	when the publishing page's `preConnect` paragraph no longer has the
+//	supervisor launch the process at warm-up only under a closed SDK-warm
+//	circuit breaker and otherwise at workspace configuration.
 func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
@@ -424,6 +429,11 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	requireNoneContain(t, "runtime-configuration.md Identity and image",
 		supervisedDocSection(t, root, "runtime-author-guide/runtime-configuration.md", "Identity and image"), []string{
 			"rejected wherever `command` is",
+		})
+	requireAllContain(t, "publishing.md",
+		supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
+			"the [runtime supervisor](lifecycle.md#runtime-supervisor) launches the runtime's `command` at warm-up when the pool's SDK-warm circuit breaker is closed at the moment the pod is created",
+			"the supervisor launches the process when the session's workspace is configured",
 		})
 	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
 		"The first process of the agent container is the runtime supervisor",
