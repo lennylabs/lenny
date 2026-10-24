@@ -294,6 +294,105 @@ func TestSupervisedExitedAgainstHoldTimeoutRace_spec_4_7_10(t *testing.T) {
 	}
 }
 
+// holdRaceServer builds a Server whose supervised runtime's generation 1 is
+// launched and connected, with a started session "a" registered and the
+// coordinator hold armed on a fake timer, which it returns. With unread set,
+// the connection is one the accept loop installed after the launching start
+// was cancelled, so no start has started its reader.
+func holdRaceServer(t *testing.T, unread bool) (*Server, *supervisedFixture, func()) {
+	t.Helper()
+	var s *Server
+	var f *supervisedFixture
+	if unread {
+		s, f = supervisedServer(t)
+		launchUnconnected(t, f)
+		f.sup.startProcess()
+		tr, err := f.rt.current()
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the late connection", tr.hasConnected)
+	} else {
+		e := newExitsFixture(t, LifetimeKeep, LaunchSession)
+		s, f = e.s, e.supervisedFixture
+	}
+	s.mu.Lock()
+	if s.slots == nil {
+		s.slots = map[string]*slotState{}
+	}
+	s.slots["a"] = &slotState{sessionID: "a", started: true}
+	s.mu.Unlock()
+	clk := &fakeExpiryClock{}
+	s.HoldAfterFunc = clk.After
+	s.enterHoldState()
+	return s, f, func() { clk.last().fire() }
+}
+
+// joinDuringHoldTimeout claims "b", starts it on the supervised runtime, and
+// takes its rule-8 record, as a StartSession admitted once the hold cleared
+// does. It reports whether the record was taken.
+func joinDuringHoldTimeout(t *testing.T, s *Server) bool {
+	t.Helper()
+	claim := claimForRecordTest(t, s, "b")
+	if err := s.Runtime.Start(startCtx(t, 5*time.Second), "b"); err != nil {
+		return false
+	}
+	recorded, err := s.confirmRuntimeStart("b", claim.entry)
+	return recorded && err == nil
+}
+
+// spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Liveness), 10.1 (Hold state timeout), 10.1.4 (Hold state timeout), 4.7.1
+// (The registry critical section)
+// diagnosis: a start that joined the live supervised process while the hold
+// timeout ran was recorded on the connection the timeout was closing and left
+// registered outside the set pass 1 collected, so it ran on with no
+// coordinator and was never terminated with coordinator_lost; or the
+// not-live state was not set when the timeout's handling returned.
+func TestSupervisedHoldTimeoutAgainstJoiningStartRace_spec_4_7_10(t *testing.T) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var refused, collected int
+	for _, unread := range []bool{false, true} {
+		for round := 0; round < 25; round++ {
+			s, f, fire := holdRaceServer(t, unread)
+			var notLiveOnReturn bool
+			var recorded bool
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				fire()
+				notLiveOnReturn, _ = f.rt.NotLive()
+			}()
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				recorded = joinDuringHoldTimeout(t, s)
+			}()
+			wg.Wait()
+			if !notLiveOnReturn {
+				t.Fatalf("unread=%v round %d: the not-live state was not set when the hold timeout returned", unread, round)
+			}
+			s.mu.Lock()
+			_, registered := s.slots["b"]
+			s.mu.Unlock()
+			switch {
+			case recorded && registered && recordedOn(s, "b"):
+				t.Fatalf("unread=%v round %d: a start recorded on the closing connection escaped pass 1", unread, round)
+			case recorded:
+				collected++
+			default:
+				refused++
+			}
+			requireNotLive(t, f.rt, CauseNoConnection)
+			_ = f.rt.CloseListener()
+			f.sup.close()
+		}
+	}
+	t.Logf("recorded then collected by pass 1: %d, refused: %d", collected, refused)
+}
+
 // spec: 28.5.3 (CH-SUPERVISE, Degradation)
 // diagnosis: closing the link while a request was outstanding hung the
 // request or leaked a goroutine.

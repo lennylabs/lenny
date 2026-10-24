@@ -897,17 +897,37 @@ func (r *SupervisedRuntime) ServesNextSession() bool {
 	return t != nil && t.ServesNextSession()
 }
 
-// CloseForHoldTimeout sets the holdTimeout disposition and closes the current
-// process's connection through the path that runs the end handler, so the
-// end takes the holdTimeout row. spec: §4.7.10 (Runtime supervisor, Runtime
-// exits); §10.1 (Hold state timeout).
+// CloseForHoldTimeout applies the coordinator hold timeout's close of the
+// runtime connection. It sets the holdTimeout disposition, hands the current
+// generation's end to the Runtime exits handling, sets the not-live state
+// with the no-connection cause, and then ends the composed transport. Each of
+// these runs before it returns, so the onHoldTimeout pass that reads the
+// registry next finds the generation ended and the pod not live: a start that
+// joined the process before this call is refused by confirmStart, and every
+// later start is refused by ensureLaunched, rather than being recorded on a
+// connection the close is ending.
+//
+// The not-live state is set whether or not a generation is live, because the
+// close retires the pod in every case: with a launch in flight, between an
+// attested end and the rebind, or with a connection installed whose reader no
+// start has started yet. The transport is ended through its pod-scope
+// teardown, which closes the listener as well, so no later process can
+// connect. That teardown runs no end handler; the end was handled here.
+// spec: §4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
+// Liveness); §10.1 (Hold state timeout).
 func (r *SupervisedRuntime) CloseForHoldTimeout() {
 	r.SetEndDisposition(EndHoldTimeout)
 	r.mu.Lock()
-	t := r.transport
+	t, gen := r.transport, r.gen
 	r.mu.Unlock()
+	if gen > 0 {
+		// takeEnd refuses a generation whose end was already handled, so a
+		// generation an earlier event ended keeps the row it took.
+		r.endEvent(gen, RuntimeEndEvent{Kind: EndByConnection})
+	}
+	r.MarkNotLive(CauseNoConnection)
 	if t != nil {
-		t.CloseConnection()
+		_ = t.CloseListener()
 	}
 }
 

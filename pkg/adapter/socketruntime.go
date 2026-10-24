@@ -161,8 +161,8 @@ type SocketRuntimeProcess struct {
 	// next Start, so every reader start is a Start's. Guarded by mu.
 	reading bool
 	// onEnded, when set, runs once when the installed connection ends for a
-	// reason other than CloseListener: the runtime closed its end, the reader
-	// stopped at the line limit, or CloseConnection closed it. A supervised
+	// reason other than CloseListener: the runtime closed its end, or the
+	// reader stopped at the line limit. A supervised
 	// runtime sets it to hand the end to the adapter's Runtime exits
 	// handling; CloseListener, the adapter's exit and rebind close, calls no
 	// end handler. Written before the first Start. spec: §4.7.10 (Runtime
@@ -436,22 +436,6 @@ func (p *SocketRuntimeProcess) markEnded() {
 	p.mu.Unlock()
 	if notify != nil {
 		notify()
-	}
-}
-
-// CloseConnection closes the installed runtime connection without the
-// pod-scope teardown: the fan-out reader then ends and the end handler set by
-// a supervised runtime runs. The coordinator hold timeout closes the
-// connection this way, so the end takes the holdTimeout row of the Runtime
-// exits table. A transport with no installed connection is left as it is.
-// spec: §4.7.10 (Runtime supervisor, Runtime exits); §10.1 (Hold state
-// timeout).
-func (p *SocketRuntimeProcess) CloseConnection() {
-	p.mu.Lock()
-	conn := p.conn
-	p.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
 	}
 }
 

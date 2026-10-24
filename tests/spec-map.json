@@ -1094,6 +1094,8 @@
         "pkg/adapter/runtimeexits_test.go::TestServiceTerminationDuringAnInFlightWarmUpLaunchEndsUnderDeleting_spec_4_7_10",
         "pkg/adapter/supervise_race_load_test.go::TestSupervisedExitedAgainstDeregistrationRace_spec_4_7_10",
         "pkg/adapter/supervise_race_load_test.go::TestSupervisedExitedAgainstHoldTimeoutRace_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedHoldTimeoutAgainstJoiningStartRace_spec_4_7_10",
+        "pkg/adapter/holdtimeout_supervised_test.go::TestSupervisedHoldTimeoutCloseEndsTheGenerationBeforeItReturns_spec_4_7_10",
         "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstGatesRace_spec_4_7_10",
         "pkg/adapter/supervise_race_load_test.go::TestSupervisedLaunchAfterScrubOrdering_spec_4_7_10",
         "cmd/lenny-adapter/supervise_test.go::TestAdapterInputsTable_spec_4_7_10",

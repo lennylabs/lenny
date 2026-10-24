@@ -240,11 +240,12 @@ type podScopeRuntime interface {
 // teardown error is logged and does not stop the termination.
 // spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
 //
-// On a supervised pod the close sets the holdTimeout disposition and goes
-// through the path that runs the end handler, so the end takes the
-// holdTimeout row: no session fails with runtime_crash, and the not-live
-// state is set with the no-connection cause. spec: §4.7.10 (Runtime
-// supervisor, Runtime exits).
+// On a supervised pod the close sets the holdTimeout disposition and hands
+// the current generation's end to the Runtime exits handling before it
+// returns, so the end takes the holdTimeout row: no session fails with
+// runtime_crash, and the not-live state is set with the no-connection cause,
+// also when no generation is live, before pass 1 reads the registry.
+// spec: §4.7.10 (Runtime supervisor, Runtime exits).
 func (s *Server) endRuntimeForHoldTimeout() {
 	if sr := s.supervisedRuntime(); sr != nil {
 		sr.CloseForHoldTimeout()
