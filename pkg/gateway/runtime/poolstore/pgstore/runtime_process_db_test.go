@@ -32,7 +32,7 @@ import (
 // session_policy on create or update or is not read back on scan.
 func TestRuntimeProcessSessionPolicyPgRoundTrip_spec_5_2(t *testing.T) {
 	if testing.Short() {
-		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+		t.Skip("blocked: precondition not met: the test downloads the PostgreSQL bundle, which -short excludes")
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
