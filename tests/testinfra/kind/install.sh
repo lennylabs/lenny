@@ -1211,12 +1211,15 @@ bootstrap:
     # Sidecar preConnect probe pool created with the SDK-warm circuit breaker
     # forced open, so its pods are created under
     # --launch-mode=preconnect-pod-warm and launch at startup step 7 (§6.1
-    # Circuit-breaker for SDK-warm pools).
+    # Circuit-breaker for SDK-warm pools). It warms two pods, as the
+    # preConnect pool does, so a session start that claims one leaves an
+    # idle pod and the pool does not report PoolWarmingUp while the start
+    # launches on the claimed pod (§5.2 PoolWarmingUp condition).
     - name: supervise-probe-podwarm-pool
       runtimeRef: supervise-probe-podwarm
       isolationProfile: standard
       executionMode: session
-      warmCount: 1
+      warmCount: 2
       allowStandardIsolation: true
       dnsPolicy: cluster-default
       sdkWarm:

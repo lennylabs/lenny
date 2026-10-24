@@ -161,6 +161,79 @@ func WaitReadyPods(t testing.TB, c *kind.Cluster, pool string, n int, timeout ti
 	}
 }
 
+// WaitClaimablePods waits until pool has n pods a session start can claim
+// and returns them: each is Ready, not being deleted, and has no
+// SandboxClaim, and the pool's SandboxTemplate no longer reports
+// PoolWarmingUp. A Ready pod that served an earlier session can still hold a
+// claim through its reserved hold and drain, and the gateway answers a start
+// with 503 RUNTIME_UNAVAILABLE while the template reports PoolWarmingUp, so
+// neither a Ready pod alone nor an unclaimed pod alone makes a start
+// claimable. A pool that does not reach n within timeout skips the test as
+// not yet applicable, as WaitReadyPods does.
+// spec: §5.2 (PoolWarmingUp condition); §4.6.1.
+func WaitClaimablePods(t testing.TB, c *kind.Cluster, pool string, n int, timeout time.Duration) []PodState {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		idle := unclaimedReadyPods(t, c, pool)
+		warming := PoolWarmingUp(t, c, pool)
+		if len(idle) >= n && !warming {
+			return idle
+		}
+		if time.Now().After(deadline) {
+			t.Skipf("not-yet-applicable: %s has %d Ready unclaimed pods (PoolWarmingUp=%t), "+
+				"fewer than the %d claimable pods the case needs", pool, len(idle), warming, n)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// WaitPoolAvailable waits up to timeout for pool's SandboxTemplate to stop
+// reporting PoolWarmingUp, so the gateway claims from the pool rather than
+// answering 503 RUNTIME_UNAVAILABLE. A pool still warming at timeout skips
+// the test as not yet applicable. spec: §5.2 (PoolWarmingUp condition).
+func WaitPoolAvailable(t testing.TB, c *kind.Cluster, pool string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for PoolWarmingUp(t, c, pool) {
+		if time.Now().After(deadline) {
+			t.Skipf("not-yet-applicable: %s still reports PoolWarmingUp after %s", pool, timeout)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// unclaimedReadyPods returns the pods of pool that are Ready, not being
+// deleted, and hold no SandboxClaim.
+func unclaimedReadyPods(t testing.TB, c *kind.Cluster, pool string) []PodState {
+	t.Helper()
+	var idle []PodState
+	for _, p := range PoolPods(t, c, pool) {
+		if p.Ready && !p.Deleting && !ClaimExists(t, c, p.Name) {
+			idle = append(idle, p)
+		}
+	}
+	return idle
+}
+
+// PoolWarmingUp reports whether the SandboxTemplate behind pool carries the
+// PoolWarmingUp condition with status True, the condition the gateway reads
+// to refuse a start while the pool has no idle pod.
+// spec: §5.2 (PoolWarmingUp condition).
+func PoolWarmingUp(t testing.TB, c *kind.Cluster, pool string) bool {
+	t.Helper()
+	tmpl, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxwarmpool", pool, "-o", "jsonpath={.spec.templateRef}")
+	if err != nil {
+		t.Fatalf("read templateRef of %s: %v\n%s", pool, err, tmpl)
+	}
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxtemplate", strings.TrimSpace(tmpl), "-o",
+		`jsonpath={.status.conditions[?(@.type=="PoolWarmingUp")].status}`)
+	if err != nil {
+		t.Fatalf("read PoolWarmingUp of template %s: %v\n%s", tmpl, err, out)
+	}
+	return strings.TrimSpace(out) == "True"
+}
+
 // FreshIdlePods deletes every unclaimed pod of pool and waits until the pool
 // has n Ready, unclaimed pods it created after the deletion, which it
 // returns. None of them has served a session. A keep pod returns to idle

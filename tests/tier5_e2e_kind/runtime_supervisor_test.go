@@ -338,6 +338,14 @@ func TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4
 	}
 }
 
+// claimableBeforeStart is the number of claimable pods a preConnect or
+// pod-warm case waits for before a session start. The start claims one pod
+// and then launches on it; if that claim took the pool's last idle pod, the
+// pool reports PoolWarmingUp while its replacement warms and the launch is
+// refused with 503 RUNTIME_UNAVAILABLE. Waiting for two keeps an idle pod
+// through the launch. spec: §5.2 (PoolWarmingUp condition).
+const claimableBeforeStart = 2
+
 // spec: §4.7.10 (Runtime supervisor, SDK-warm; Launch), §6.1 (Circuit-breaker
 // for SDK-warm pools), §15.4.3 (Authentication)
 //
@@ -354,7 +362,7 @@ func TestFirstSessionProcessReadsTheFinalManifestWithTheLaunchEnvironment_spec_4
 func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
 	c := d.Cluster()
-	warm := supervisedpod.WaitReadyPods(t, c, supervisedpod.PreconnectPool, 2, 4*time.Minute)
+	warm := supervisedpod.WaitClaimablePods(t, c, supervisedpod.PreconnectPool, claimableBeforeStart, 4*time.Minute)
 	warmPID := map[string]int{}
 	for _, p := range warm {
 		probes := supervisedpod.ServingProbes(supervisedpod.Processes(t, c, p.Name))
@@ -363,7 +371,9 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		}
 		warmPID[p.Name] = probes[0].PID
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	// The bound covers each subtest's wait for a claimable pod as well as
+	// its session.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	t.Run("warm session on the warm-up process", func(t *testing.T) {
@@ -378,6 +388,7 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		}
 	})
 	t.Run("demoted session on a step-7 launch", func(t *testing.T) {
+		supervisedpod.WaitClaimablePods(t, c, supervisedpod.PreconnectPool, claimableBeforeStart, 3*time.Minute)
 		tenant, sess := supStart(ctx, t, d, supervisedpod.PreconnectRuntime, inlineWorkspacePlan("CLAUDE.md", "demote"))
 		t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
 		rec := supervisedpod.Report(ctx, t, d, tenant, sess.ID)
@@ -396,7 +407,12 @@ func TestSidecarPreconnectPodsServeWarmDemotedAndPodWarmSessions_spec_6_1(t *tes
 		}
 	})
 	t.Run("pod created while the breaker is open launches at step 7", func(t *testing.T) {
-		podWarm := supervisedpod.WaitReadyPods(t, c, supervisedpod.PodWarmPool, 1, 3*time.Minute)
+		// A pod-warm pod that served an earlier session returns to idle
+		// still running that session's runtime process, so the case reads
+		// pods the pool created after its idle pods were replaced, and
+		// starts only once the replacements have ended PoolWarmingUp.
+		podWarm := supervisedpod.FreshIdlePods(t, c, supervisedpod.PodWarmPool, claimableBeforeStart, 4*time.Minute)
+		supervisedpod.WaitPoolAvailable(t, c, supervisedpod.PodWarmPool, 2*time.Minute)
 		for _, p := range podWarm {
 			if n := len(supervisedpod.ServingProbes(supervisedpod.Processes(t, c, p.Name))); n != 0 {
 				t.Errorf("pod-warm pod %s runs %d runtime processes before a session, want none", p.Name, n)

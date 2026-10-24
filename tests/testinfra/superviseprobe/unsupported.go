@@ -28,6 +28,7 @@ func daemonGrandchild() {}
 func createSetupResidue(key int) SetupResidue {
 	return SetupResidue{Key: key, Error: errUnsupported.Error()}
 }
+
 func readSetupResidue(key int) SetupResidue {
 	return SetupResidue{Key: key, Error: errUnsupported.Error()}
 }
