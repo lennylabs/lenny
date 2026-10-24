@@ -147,6 +147,34 @@ kubectl drain <saturated-node> --ignore-daemonsets --delete-emptydir-data
 
 Escalate to cluster admin for node scale-out. Do not uncordon until the root cause is understood.
 
+### Step 3e — Supervised pods never reach `idle`
+
+On a pool of a sidecar `type: agent` runtime, a pod stays in `warming` and is replaced repeatedly when its adapter exits before the pod becomes ready. The adapter exits when the runtime supervisor sends no `ready` report within the adapter's wait, when the supervisor's self-test reports a failed gating property on a `restart` pod, or when a warm-up launch fails or its process does not connect within the warm-up wait. Read the adapter container's log of a replaced pod for the logged failure, and read the RuntimeClass the pod runs under:
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl logs <pod-name> -n <agent-ns> -c adapter --previous
+kubectl get pod <pod-name> -n <agent-ns> -o jsonpath='{.spec.runtimeClassName}'
+```
+
+Run the supervisor's property self-test against that RuntimeClass with the install's values file. The command exits non-zero when a property that gates a `restart` pod fails:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl preflight supervisor --runtime-class <runtime-class> --config <values.yaml>
+```
+
+When a gating property fails, move the pool to a RuntimeClass on which the self-test passes, or set the pool's `recycle.runtimeProcess` to `keep`, which also requires `acknowledgeProcessLevelIsolation: true`. When the log shows the supervisor wait expiring, such as on a slow registry that pulls the runtime image during the wait, raise `controller.tuning.superviseWaitTimeout`. When it shows the warm-up wait expiring, raise `controller.tuning.warmUpTimeout`:
+
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm upgrade lenny charts/lenny \
+  --namespace lenny-system \
+  --reuse-values \
+  --set controller.tuning.superviseWaitTimeout=10m \
+  --set controller.tuning.warmUpTimeout=5m
+```
+
 ### Step 4 — Verify recovery
 
 <!-- access: lenny-ctl -->

@@ -1173,6 +1173,7 @@
       "tests": [
         "tests/tier0_static/supervisor_binary_test.go::TestRuntimeSupervisorBinaryIsFreestandingStatic_spec_4_7_11",
         "tests/tier0_static/supervisor_binary_test.go::TestRuntimeSupervisorBinaryCheckRejectsDynamicAndNSSBinaries_spec_4_7_11",
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier1_unit/supervisor/harness_test.go::TestRuntimeSupervisorCHarness_spec_4_7_10",
         "cmd/lenny-compliance/full_test.go",
         "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
@@ -1368,6 +1369,7 @@
         "pkg/controller/runtime/restartable_test.go::TestMirror_RestartableFollowsCRDEdits_spec_5_1",
         "pkg/gateway/runtime/runtimestore/merge_test.go::TestMergeInheritsRestartable_spec_5_1",
         "migrations/runtime_definitions_restartable_test.go::TestRuntimeRestartableMigration_spec_5_1",
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier2_component/controllers/runtime_command_env_validation_test.go",
         "tests/tier2_component/controllers/runtime_command_env_validation_test.go::TestRuntimeCRDCommandEnvValidation_spec_5_1",
         "tests/tier2_component/stores/runtimestore_test.go::TestRuntimeStoreRestartableRoundTrip_spec_5_1",
@@ -4294,6 +4296,7 @@
         "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities",
         "pkg/podsecurity/podsecurity_test.go::TestCapabilitiesDropped_spec_13_1",
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier5_e2e_kind/admission_test.go",
         "tests/tier9_security/admission_cred_test.go",
         "tests/tier9_security/admission_ephemeral_test.go",
@@ -5616,7 +5619,8 @@
         "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedTimingFlagsRenderOnlyWhenSet_spec_28_5_3",
         "pkg/controller/sandbox/podspec/supervisor_test.go::TestSuperviseTimingValidateRefusesNonPositive_spec_28_5_3",
         "cmd/lenny-controller/flags_test.go::TestValidateFlagsRefusesNonPositiveSuperviseTiming",
-        "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet"
+        "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet",
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "14",
@@ -5797,6 +5801,7 @@
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightValuesDecodeSupervisorKeys_spec_24_2",
         "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorBuildsClientFromKubeconfig_spec_24_2",
         "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2",
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier5_e2e_kind/runtime_supervisor_test.go",
         "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestPreflightSupervisorReportsEachPropertyAndLeavesNoPod_spec_24_2",
         "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go",

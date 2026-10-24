@@ -79,8 +79,8 @@ service RuntimeAdapter {
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
 
   // StopSession gracefully terminates the current session.
-  // The adapter sends shutdown to the agent binary; the runtime process
-  // stays alive after the session ends.
+  // The adapter sends shutdown to the agent binary. On a keep pod the
+  // runtime process stays alive after the session ends.
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // Attach opens a bidirectional stream for real-time communication
@@ -290,7 +290,7 @@ message DemoteSDKResponse {
 }
 ```
 
-**Timeout:** Default 10 seconds. If the SDK process does not exit within this window, the adapter sends SIGKILL.
+**Timeout:** Default 10 seconds. In the sidecar model the runtime supervisor ends the SDK process with a SIGTERM grace that ends within this window, then SIGKILL.
 
 ---
 
@@ -530,7 +530,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `0` | Normal completion |
 | `1` | Runtime error |
 | `2` | Protocol error (could not parse messages) |
-| `137` | SIGKILL (pod not reused) |
+| `137` | SIGKILL |
 
 For the complete binary protocol specification, including the `MessagePart` format, see the technical design document Section 28.5.3, the `CH-MSGSOCK` card. For the `MessageEnvelope` schema and level-specific behavior, see the technical design document Section 15.4.
 

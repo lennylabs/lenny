@@ -45,7 +45,7 @@ ENTRYPOINT ["/my-agent"]
 | Build with `CGO_ENABLED=0` | Produces a static binary that runs on `scratch`. |
 | Use `-ldflags="-s -w"` | Strips debug info, reducing binary size by ~30%. |
 | Copy only the binary | No source code, no intermediate artifacts. |
-| Set `ENTRYPOINT` to your binary | In the sidecar model the kubelet starts your binary through the entrypoint when the pod starts; your binary dials the adapter, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process. |
+| Set `ENTRYPOINT` to your binary, and the same argv in the `Runtime`'s `command` | In the sidecar model the runtime supervisor ignores `ENTRYPOINT`, `CMD`, and `ENV` and launches the `command` of your `Runtime` with the `env` it lists ([Runtime Configuration](runtime-configuration.md)); the entrypoint serves running the image directly. |
 
 ### Python Runtimes
 

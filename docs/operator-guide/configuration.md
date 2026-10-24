@@ -301,9 +301,10 @@ pools:
     sessionPolicy:
       maxConcurrentSessions: 1           # simultaneous sessions per pod; > 1 requires acknowledgeProcessLevelIsolation
       acknowledgeProcessLevelIsolation: false  # required when maxConcurrentSessions > 1, and when recycling
-                                               # with maxSessionsPerPod > 1 and a scrubProfile other than
-                                               # vm-restart, because the pod keeps one runtime process
-                                               # across its sessions; admission refuses the pool without it
+                                               # with maxSessionsPerPod > 1, a scrubProfile other than
+                                               # vm-restart, and runtimeProcess: keep, because a later
+                                               # session can run in the process that served an earlier
+                                               # one; admission refuses the pool without it
       recycle:
         enabled: false                   # true requires acknowledgeBestEffortScrub
         acknowledgeBestEffortScrub: false
@@ -312,6 +313,7 @@ pools:
         maxScrubFailures: 3
         onScrubFailure: warn             # warn | fail
         scrubProfile: standard           # standard | vm-restart | in-place
+        runtimeProcess: keep             # keep | restart; required when maxSessionsPerPod > 1 and scrubProfile is not vm-restart
         acknowledgeMicrovmResidualState: false  # required when scrubProfile: in-place
         allowCrossTenantReuse: false     # requires isolationProfile: microvm; never permitted when maxConcurrentSessions > 1
       cleanupCommands:

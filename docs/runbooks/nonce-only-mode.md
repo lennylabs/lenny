@@ -26,7 +26,7 @@ related:
 
 # nonce-only-mode
 
-A pool is running in nonce-only mode for the adapter-agent authentication boundary. In nonce-only mode the adapter does not require a functional `SO_PEERCRED` UID check and relies on the manifest nonce handshake alone, a deliberate fallback for confirmed gVisor `SO_PEERCRED` divergence. The mode is an audited security-degradation state under a human-review SLA.
+A pool is running in nonce-only mode for the adapter-agent authentication boundary. In nonce-only mode the adapter does not require a functional `SO_PEERCRED` UID check and relies on the manifest nonce handshake alone, a deliberate fallback for confirmed gVisor `SO_PEERCRED` divergence. On a sidecar `type: agent` pod the adapter's connection from the runtime supervisor (`CH-SUPERVISE`) carries no nonce, and in nonce-only mode ordering alone identifies both ends: the supervisor is the runtime container's first process and launches no runtime code before the adapter accepts its connection. The mode is an audited security-degradation state under a human-review SLA.
 
 A pool enters nonce-only mode when its `deploymentModel: sidecar` runtime sets `Runtime.spec.requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`. The pool remains degraded after an operator reverts the runtime field for as long as a pre-revert nonce-only pod is still serving. The WarmPoolController publishes `lenny_pool_security_degraded` and writes `SecurityDegradedMode=True` on the `SandboxTemplate` in the same reconcile, and writes `SOPeercredDisabled=True` on each rendered `Sandbox`.
 

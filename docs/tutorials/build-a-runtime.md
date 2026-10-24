@@ -569,9 +569,9 @@ USER agent
 
 COPY --from=builder /calc-runtime /usr/local/bin/calc-runtime
 
-# The entrypoint is the runtime binary. In the sidecar model the kubelet
-# starts it when the pod starts, and the adapter runs in its own container.
-# For embedded model testing, you can use this entrypoint directly:
+# The entrypoint is the runtime binary. In the sidecar model the runtime
+# supervisor ignores it and launches the Runtime's command, and the adapter
+# runs in its own container. For local testing, run the entrypoint directly:
 ENTRYPOINT ["/usr/local/bin/calc-runtime"]
 ```
 

@@ -279,6 +279,17 @@ The adapter-agent connection within a pod is secured via:
 
 Nonce-only mode is an operator opt-in for a confirmed gVisor `SO_PEERCRED` divergence, rather than an automatic reaction. After confirming the divergence (the Phase 3.5 `SO_PEERCRED` integration tests), the operator sets `Runtime.spec.requireSoPeercred: false` on the affected runtime, and the pool that references it must carry `acknowledgeNonceOnlyAuth: true`. A pool referencing a nonce-only runtime without the acknowledgment is rejected by the gateway pool admission path. When an acknowledged pool renders nonce-only pods, the platform surfaces the state: the WarmPoolController sets `SOPeercredDisabled=True` on each `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, and the bundled `PoolSecurityDegraded` alert fires on the `lenny_pool_security_degraded` gauge. The setting returns to `requireSoPeercred: true` when the divergence is fixed, and is re-evaluated when the container runtime version changes. See [nonce-only-mode](../runbooks/nonce-only-mode.md).
 
+### Runtime Supervisor
+
+On every sidecar pod of a `type: agent` runtime, the first process of the runtime container is the runtime supervisor, a platform binary that launches and ends the runtime process at the adapter's request over the intra-pod `CH-SUPERVISE` socket ([Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor)).
+
+- **Trust basis.** The supervisor runs at the agent UID, on the untrusted side of the adapter-agent boundary. The adapter sends every request, the supervisor sends only its `ready` report, replies, and exit reports, and no byte a runtime writes crosses the socket. Each end checks the other's UID with `SO_PEERCRED`. The connection is made before any runtime code exists in the pod, because the supervisor is the runtime container's first process and launches nothing before the adapter asks it to; in nonce-only mode that ordering alone identifies both ends. The supervisor is a static binary with no program interpreter that loads no library, clears its environment first, opens only `/proc` and platform volumes without following symbolic links, and marks itself non-dumpable, so runtime code with every capability dropped cannot attach to it or read its memory. Work that reads runtime-controlled data, and every `cleanupCommands` command, runs in a forked worker that holds no connection to the adapter. The binary runs from a read-only mount that an init container fills from the supervisor's own digest-pinned image.
+- **Signals.** A fault signal (SIGSEGV, SIGBUS, SIGFPE, or SIGILL) that a runtime sends the supervisor is blocked and has no effect, while a fault in the supervisor itself ends it. Every other catchable signal a runtime sends it is ignored. A runtime can kill or freeze its own pod's supervisor with SIGKILL or SIGSTOP where the container runtime does not make the init of a process namespace immune to them. The effect is confined to that pod: a killed or frozen supervisor ends the adapter's link to it, and the pod retires.
+- **What rests on it.** A `restart` pod's decision to give a later session a newly launched runtime process rests on the supervisor's attested end and sweep. Tenant isolation does not rest on it, because the tenant pin applies on every pool.
+- **Property self-test.** At startup the supervisor tests that its non-dumpable mark resists same-UID inspection, that its kill reaches a double-forked descendant, and whether it is immune as the namespace init to SIGKILL and SIGSTOP. The adapter logs each failed property. A failed non-dumpable mark or kill reach keeps a `restart` pod from becoming ready; no property gates a `keep` pod. Run the same self-test against a RuntimeClass with `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>`, and run it again when the container runtime version changes.
+- **Image signing.** Set `controller.supervisorImage` to the supervisor image pinned by digest from the release registry. The cosign webhook verifies its signature as it verifies every other agent-pod image (see [Cosign Image Verification](#cosign-image-verification)), and the controller creates no pod for a sidecar `type: agent` pool while the value is empty.
+- **Process limits.** On runc without user namespaces, a runtime that fork-bombs its container exhausts process IDs shared with the node. Set a pod PID limit (the kubelet's `podPidsLimit`) and a node-level process limit to bound it.
+
 ---
 
 ## Network Policies
@@ -443,6 +454,8 @@ pgaudit captures any `GRANT`, `REVOKE`, or DDL statement on audit tables -- incl
 ### Cosign Image Verification
 
 Container image signing is verified via a cosign `ValidatingAdmissionWebhook` configured as **fail-closed** (`failurePolicy: Fail`). If the webhook is unavailable, pod admission is blocked for agent namespaces -- no new pods can be scheduled, halting warm pool replenishment.
+
+The verified agent-pod images include the runtime supervisor image (`controller.supervisorImage`), which an init container of every sidecar pod of a `type: agent` runtime runs.
 
 The `CosignWebhookUnavailable` critical alert fires when the cosign webhook endpoint returns errors for > 60 seconds. See the admission webhook outage runbook for recovery steps.
 

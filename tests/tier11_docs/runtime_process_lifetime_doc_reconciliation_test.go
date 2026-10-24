@@ -2,15 +2,17 @@
 
 // Tier-11 documentation check for the runtime process lifetime.
 //
-// The runtime process lives as long as the pod. In the sidecar deployment
-// model the kubelet starts it in the runtime container when the pod starts,
-// the runtime dials the adapter, and the adapter accepts that connection at the
-// pod's first session; every later session on the pod reaches the same
-// process, keyed by `sessionId`. No session's end, interrupt, or missed
-// heartbeat signals or ends the process, no occupancy-zero boundary closes its
-// connection, the whole-pod scrub does not reach it, and the adapter sends it
-// no drain frame at pod exit. A pod whose runtime cannot serve the next
-// session retires at the recycle boundary.
+// Every agent pod is a `keep` pod or a `restart` pod. A `keep` pod's runtime
+// process lives as long as the pod unless `DemoteSDK` ends it, and a
+// `restart` pod's runtime process lives from its launch to the next
+// whole-pod scrub. In the sidecar deployment model the runtime supervisor,
+// the runtime container's first process, launches the runtime's `command`
+// when the adapter asks it to, after the manifest exists, and ends it at the
+// adapter's request. Each process serves every session that starts while it
+// is live over one connection, keyed by `sessionId`. No session's end,
+// interrupt, or missed heartbeat signals or ends the process, no
+// occupancy-zero boundary on a `keep` pod closes its connection, and a
+// process that exits by itself is never relaunched: the pod retires.
 //
 // The retired readings are a fresh runtime process per session, an adapter
 // that spawns the runtime binary, a session end, interrupt, or missed
@@ -36,6 +38,7 @@ package tier11_docs_test
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,11 +160,11 @@ func specAndDocFiles(t *testing.T, root string) map[string]string {
 // spec: 4.7.10 (Deployment Model), 5.2 (Pool Configuration and Execution Modes)
 // diagnosis: a page again promises a per-session runtime process or a scrub
 //
-//	that ends the runtime. The runtime process lives as long as the pod and
-//	serves every later session on a recycled pod, and the whole-pod scrub does
-//	not reach it. A runtime author who reads the retired text writes a runtime
-//	that exits after each session, and every recycled pod then retires at the
-//	recycle boundary instead of serving its next session. The test also fails
+//	that ends the runtime on every pod. A `keep` pod's runtime process lives as
+//	long as the pod and serves every later session on it, and the scrub does
+//	not end it on a `keep` pod. A runtime author who reads the retired text
+//	writes a runtime that exits after each session, and every recycled pod
+//	then retires at the recycle boundary instead of serving its next session. The test also fails
 //	when the specification loses the paragraphs that state the lifetime, the
 //	scrub's reach, or the deployer acknowledgment.
 func TestRuntimeProcessLifetimeStatementsAgreeAcrossSpecAndDocs(t *testing.T) {
@@ -188,9 +191,9 @@ func TestRuntimeProcessLifetimeStatementsAgreeAcrossSpecAndDocs(t *testing.T) {
 //
 //	heartbeat signals or ends the runtime process, or that the adapter starts
 //	it, or that a session's end or the pod's exit coordinates a drain with the
-//	runtime. The runtime process lives as long as the pod, the kubelet starts
-//	it in the sidecar model, the adapter sends it no signal at a session's end,
-//	and no drain coordination exists at pod exit.
+//	runtime. The runtime supervisor launches the process in the sidecar model,
+//	the adapter sends it no signal at a session's end, and no drain
+//	coordination exists at pod exit.
 func TestPerSessionProcessStatementsRemovedFromStagedSites(t *testing.T) {
 	root := repoRoot(t)
 	for path, body := range specAndDocFiles(t, root) {
@@ -248,4 +251,213 @@ func TestKeptRuntimeRetireConditionHasOneSpecHome(t *testing.T) {
 	if homes != 1 {
 		t.Errorf("spec/05_runtime-registry-and-pool-model.md: want exactly one line carrying %q, found %d (renamed, removed, or duplicated?)", keptRuntimeRetireHomeLabel, homes)
 	}
+}
+
+// runtimeSupervisorHomeLabel opens the §4.7.10 paragraph that is the one home
+// of the runtime supervisor's mechanism.
+const runtimeSupervisorHomeLabel = "**Runtime supervisor.**"
+
+// spec: 4.7.10 (Runtime supervisor)
+// diagnosis: a specification chapter opens a second paragraph with the
+//
+//	runtime supervisor's label, or §4.7.10 lost the paragraph. The
+//	supervisor's launch, environment, end, signal, exit, and liveness rules
+//	have one home, and every other site cites it by name; a second paragraph
+//	that restates them drifts from the first.
+func TestRuntimeSupervisorParagraphHasOneSpecHome(t *testing.T) {
+	root := repoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "spec"))
+	if err != nil {
+		t.Fatalf("read spec/: %v", err)
+	}
+	homes := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		lines := strings.Split(readRepoFile(t, root, "spec", e.Name()), "\n")
+		for i, line := range lines {
+			// A paragraph opens with the label after a blank line; a citation
+			// wrapped onto the start of a line continues its paragraph.
+			opensParagraph := i == 0 || strings.TrimSpace(lines[i-1]) == ""
+			if !opensParagraph || !strings.HasPrefix(strings.TrimSpace(line), runtimeSupervisorHomeLabel) {
+				continue
+			}
+			if e.Name() != "04_system-components.md" {
+				t.Errorf("spec/%s line %d opens a paragraph with %q; cite the §4.7.10 paragraph instead", e.Name(), i+1, runtimeSupervisorHomeLabel)
+				continue
+			}
+			homes++
+		}
+	}
+	if homes != 1 {
+		t.Errorf("spec/04_system-components.md: want exactly one paragraph opening with %q, found %d", runtimeSupervisorHomeLabel, homes)
+	}
+}
+
+// retiredSidecarLaunchPhrases are the sentences the runtime supervisor
+// retired from the documentation: a pod that keeps one runtime process on
+// every recycling pool, the kubelet starting the runtime binary through its
+// image entrypoint, an adapter that captures the runtime's stderr, and a
+// scrub that leaves the runtime process untouched on every pod.
+var retiredSidecarLaunchPhrases = []string{
+	"keeps one runtime process",
+	"keeps the runtime process that served",
+	"no longer keeps runtime processes",
+	"kubelet starts",
+	"kubelet started",
+	"captured by the adapter",
+	"captured by adapter",
+	"does not reach your runtime process",
+	"does not reach the runtime process",
+	"Session logs and runtime stderr",
+	"its runtime process cannot serve the next session",
+	"the adapter SIGKILLs",
+}
+
+// spec: 4.7.10 (Runtime supervisor, Runtime process lifetime), 5.2
+// (Runtime-process lifetime, What the scrub reaches)
+// diagnosis: a page again says that the kubelet starts the runtime binary,
+//
+//	that every recycling pod keeps one runtime process, or that the scrub
+//	never reaches the runtime process. In the sidecar model the runtime
+//	supervisor launches the runtime's `command`, a `restart` pod ends its
+//	runtime process in each whole-pod scrub, and the runtime's stderr goes to
+//	its container's log.
+func TestRetiredSidecarLaunchPhrasesAbsentFromSpecAndDocs(t *testing.T) {
+	root := repoRoot(t)
+	for path, body := range specAndDocFiles(t, root) {
+		requireNoneContainFold(t, path, body, retiredSidecarLaunchPhrases)
+	}
+}
+
+// supervisedDocSection returns the named section of a documentation page with each
+// whitespace run collapsed, so a pinned sentence wrapped across lines still
+// matches.
+func supervisedDocSection(t *testing.T, root, page, heading string) string {
+	t.Helper()
+	body := section(readDocPage(t, filepath.Join(root, "docs", page)), heading)
+	if body == "" {
+		t.Fatalf("docs/%s: section %q not found", page, heading)
+	}
+	return strings.Join(strings.Fields(body), " ")
+}
+
+// supervisedDocPage returns a whole documentation page with each whitespace run
+// collapsed.
+func supervisedDocPage(t *testing.T, root, page string) string {
+	t.Helper()
+	return strings.Join(strings.Fields(readDocPage(t, filepath.Join(root, "docs", page))), " ")
+}
+
+// spec: 4.7.10 (Runtime supervisor, Runtime process lifetime), 5.1
+// (command, env)
+// diagnosis: the runtime-author pages no longer state what the runtime
+//
+//	supervisor does to the runtime process: that it launches `command` after
+//	the manifest exists, ignores the image's ENTRYPOINT, CMD, and ENV, ends
+//	every process in the container, forwards no stop signal at pod
+//	termination, ignores the signals a runtime sends it, never relaunches a
+//	process that exits by itself, and fails no session for an exit within a
+//	`shutdown` deadline; or the runtime configuration page lost the `command`
+//	and `env` rows. An author who misses them builds an image whose
+//	entrypoint never runs or a runtime that exits at a session's end.
+func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
+	root := repoRoot(t)
+	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
+		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Process Lifetime"), []string{
+			"On a `keep` pod your runtime process lives as long as the pod, unless `DemoteSDK` ends it",
+			"On a `restart` pod each runtime process lives from its launch to the next whole-pod scrub",
+		})
+	requireAllContain(t, "lifecycle.md Runtime Supervisor",
+		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
+			"**Launch.**",
+			"after the manifest your process reads exists",
+			"**Environment.**",
+			"The image's `ENTRYPOINT`, `CMD`, and `ENV` are not used",
+			"**End.**",
+			"only after two consecutive passes find no other process",
+			"**Pod termination.**",
+			"the supervisor forwards no stop signal to your runtime process",
+			"**Signals.**",
+			"SIGKILL and SIGSTOP are the only signals a process can make take effect on it",
+			"**Runtime exits.**",
+			"A runtime does not exit at the end of a session",
+			"A runtime that exits after `shutdown` within its `deadline_ms` fails no session",
+			"**Liveness.**",
+		})
+	requireAllContain(t, "runtime-configuration.md Identity and image",
+		supervisedDocSection(t, root, "runtime-author-guide/runtime-configuration.md", "Identity and image"), []string{
+			"| `command` |",
+			"| `env` |",
+			"the admin registration payload and the bootstrap seed do not carry it",
+		})
+	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
+		"The first process of the agent container is the runtime supervisor",
+		"whether the runtime can serve the next session, sampled after the scrub finishes",
+		"**stderr** goes to the agent container's log",
+	})
+}
+
+// spec: 5.2 (Runtime-process lifetime, Deployer acknowledgment (runtime
+// process kept across sessions)), 17.8.1, 24.2
+// diagnosis: an operator page no longer documents `recycle.runtimeProcess`,
+//
+//	where `cleanupCommands` run on a supervised pod, the acknowledgment rule
+//	keyed on `keep`, or the warm-pool-exhaustion step for a supervised pool
+//	whose pods never reach idle, with its `lenny-ctl preflight supervisor`
+//	invocation and its `controller.tuning` keys. An operator then cannot
+//	diagnose a pool whose adapters exit before READY.
+func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *testing.T) {
+	root := repoRoot(t)
+	requireAllContain(t, "configuration.md", supervisedDocPage(t, root, "reference/configuration.md"), []string{
+		"| `sessionPolicy.recycle.runtimeProcess` |",
+		"the runtime supervisor runs them in the runtime image at the agent UID",
+	})
+	exec := supervisedDocSection(t, root, "reference/execution-modes.md", "Runtime process lifetime")
+	requireAllContain(t, "execution-modes.md Runtime process lifetime", exec, []string{
+		"**Runtime process kept across sessions.**",
+		"A sequential pool under `restart` does not require it",
+	})
+	requireAllContain(t, "execution-modes.md", supervisedDocPage(t, root, "reference/execution-modes.md"), []string{
+		"its runtime cannot serve the next session",
+	})
+	requireAllContain(t, "warm-pool-exhaustion.md", supervisedDocPage(t, root, "runbooks/warm-pool-exhaustion.md"), []string{
+		"lenny-ctl preflight supervisor --runtime-class <runtime-class> --config <values.yaml>",
+		"controller.tuning.superviseWaitTimeout",
+		"controller.tuning.warmUpTimeout",
+	})
+	requireAllContain(t, "troubleshooting.md Recycling Pool Does Not Reuse Pods",
+		supervisedDocSection(t, root, "operator-guide/troubleshooting.md", "Recycling Pool Does Not Reuse Pods"), []string{
+			"`recycle.runtimeProcess: keep`",
+			"also follows every other cause of the adapter's not-live state",
+		})
+	requireAllContain(t, "lenny-ctl.md", supervisedDocPage(t, root, "operator-guide/lenny-ctl.md"), []string{
+		"| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` |",
+	})
+	requireAllContain(t, "architecture.md", supervisedDocPage(t, root, "getting-started/architecture.md"), []string{
+		"**Session logs:**",
+	})
+}
+
+// spec: 4.7.11 (item 8 Runtime supervisor), 13.1
+// diagnosis: the security page no longer states the runtime supervisor's
+//
+//	trust basis, that a runtime can kill or freeze its own pod's supervisor
+//	where the namespace init is not immune, that a sent fault signal has no
+//	effect, the property self-test and `lenny-ctl preflight supervisor`, the
+//	supervisor image under cosign verification, or the process-limit note
+//	that bounds a fork bomb on runc without user namespaces.
+func TestSecurityPageStatesTheRuntimeSupervisorTrustBasis(t *testing.T) {
+	root := repoRoot(t)
+	requireAllContain(t, "security.md Runtime Supervisor",
+		supervisedDocSection(t, root, "operator-guide/security.md", "Runtime Supervisor"), []string{
+			"**Trust basis.**",
+			"A runtime can kill or freeze its own pod's supervisor with SIGKILL or SIGSTOP",
+			"is blocked and has no effect, while a fault in the supervisor itself ends it",
+			"**Property self-test.**",
+			"lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>",
+			"`controller.supervisorImage`",
+			"`podPidsLimit`",
+		})
 }
