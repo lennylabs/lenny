@@ -1224,6 +1224,11 @@ OPEN: DEFERRED line 853 is not closed. CODE-8 should read `expires_in` from the 
 OPEN: DEFERRED line 909 (client-guide half) and OPEN line 745 are not closed. docs/client-guide/authentication.md carries an `"expires_in": 3600` example and does not document the request `expires_in` parameter or its default; DOCS-2 does not name the page (lands in non-spec-changes.md DOCS-2).
 DECISION: OPEN line 751 (`lenny-ops` relaxations gated on `--production` rather than `LENNY_DEV_MODE`) is a decision, and it is carried into the summary as OD3 with no recommendation, because the spec loop derived none.
 
+### [f1.human-decisions]
+
+DECISION: OD3 (`lenny-ops` dev relaxations gated on `--production` rather than `LENNY_DEV_MODE`) stays the human's. The summary's OD3 entry under "Open decisions for human to make" is rewritten with the question, options (a), (b), and (c), recommendation (c), why (a) and (b) lost, the cost of each choice, and moderate confidence. No answer is staged and no Defects entry is added, because (c)'s Defects entry is part of the answer. Authority: spec/17_deployment-topology.md:283; cmd/lenny-ops/main.go:171-195; charts/lenny/values.yaml:3281; charts/lenny/templates/ops-deployment.yaml:176; charts/lenny/presets/values-tier2.yaml:96; charts/lenny/presets/values-tier3.yaml:139; cmd/lenny-gateway/token_signing.go:144.
+FACT: The Tier 2 and Tier 3 presets live under charts/lenny/presets/ and set `ops.production: true`; the Tier 1 preset does not.
+
 ## Retired
 
 No ledger entry has been retired.
