@@ -154,11 +154,11 @@ None. OD1, OD2, and OD3 are settled (D23, D24, D26).
 - CODE-3 — pkg/auth/jwt/breakersigner.go — throttling, `Retry-After`, and the outcome hook.
 - CODE-4 — cmd/lenny-gateway and gateway mint packages — gateway wiring to the shared signer and key set.
 - CODE-5 — cmd/lenny-token-service, pkg/tokenservice — Token Service wiring and removal of the verifier fallback.
-- CODE-6 — cmd/lenny-ops, pkg/gateway/credentials/revocation, charts/lenny/templates/ops-deployment.yaml — KMS flags, key set in every process, production refusal of `local` and the HMAC trust flag, and the revocation set.
+- CODE-6 — cmd/lenny-ops, pkg/gateway/credentials/revocation, charts/lenny/templates/ops-deployment.yaml, charts/lenny/tests/ops-deployment_test.yaml — KMS flags, key set in every process, production refusal of `local` and the HMAC trust flag, and the revocation set.
 - CODE-7 — gateway and Token Service mint error paths and metrics — `Retry-After` and sign metrics.
 - CODE-8 — cmd/lenny-gateway, pkg/gateway/mcpfabric/playground, cmd/lenny-token-service, pkg/tokenservice, the gateway and Token Service deployment templates — `--capability-token-ttl-seconds` on both binaries and the Token Service default lifetime.
-- CODE-9 — pkg/gateway/storage/issuedtokenstore, pkg/tokenservice, cmd/lenny-gateway/user_revocation.go — in-transaction source-token revocation re-read.
-- CODE-10 — cmd/lenny-gateway, pkg/gateway/audit/jwtaudit, pkg/gateway/middleware/deprecation, pkg/auth/jwt/jwks.go — deletion of the JWKS endpoint and the rotation observer.
+- CODE-9 — pkg/gateway/storage/issuedtokenstore, pkg/tokenservice, cmd/lenny-gateway/user_revocation.go and its test — in-transaction source-token revocation re-read.
+- CODE-10 — cmd/lenny-gateway, pkg/gateway/audit/jwtaudit, pkg/gateway/middleware/deprecation, pkg/auth/jwt/jwks.go, tests/tier4_integration/jwks_test.go — deletion of the JWKS endpoint and the rotation observer.
 - CODE-11 — pkg/alerting/rules — `KMSSignQuotaApproaching` and the `KMSSigningUnavailable` text, with regenerated rule files.
 - CODE-12 — pkg/auth/jwt — deletion of the HMAC `KMSSigner`, `RotatingVerifier`, and `PublicJWK`.
 - CODE-13 — pkg/ops/opsserver, tests/testinfra/opsprocess, charts/lenny/templates/ops-deployment.yaml, charts/lenny/tests/ops-deployment_test.yaml, pkg/embedded/manifests/manifests.yaml — either-dependency permissive `/healthz`, the harness wait on `/readyz`, and the production readiness probe on `/healthz`.

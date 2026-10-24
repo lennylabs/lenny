@@ -63,6 +63,6 @@ Every step lands the tests that the non-spec Testing section places under its de
 - [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
       Tiers 0, 11. Depends on: S1, S2, S23
 - [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, error catalog, and audit-pipeline-degraded runbook edits.
-      Tiers 0, 11. Depends on: S1, S3, S4, S6, S8, S11
+      Tiers 0, 11. Depends on: S1, S3, S4, S6, S8, S10, S11
 - [ ] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
       Tiers 0, 11. Depends on: S29, S30, S31
