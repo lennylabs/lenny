@@ -44,10 +44,20 @@ type platformToolProvider struct {
 	server    *Server
 }
 
+// List forwards one tools/list under the calling session. A runtime process
+// launched at pod warm-up (§4.7.10 **Launch.**) dials the platform MCP
+// server and discovers its catalog before the pod holds any session. With no
+// session there is no principal to forward the listing under, so that
+// discovery receives an empty catalog instead of an error that would end the
+// warm-up process; a listing or a call made inside a session resolves that
+// session. spec: §4.7.10 (Runtime supervisor, Launch); §9.1; §15.4.3.
 func (p *platformToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
-	sessionID, err := p.server.callingSession()
+	sessionID, idle, err := p.server.listingSession()
 	if err != nil {
 		return nil, err
+	}
+	if idle {
+		return []mcp.Tool{}, nil
 	}
 	return p.forwarder.ListPlatformTools(ctx, sessionID)
 }
@@ -65,6 +75,29 @@ func (p *platformToolProvider) Call(ctx context.Context, name string, arguments 
 	return p.forwarder.CallPlatformTool(ctx, sessionID, name, arguments)
 }
 
+// listingSession is callingSession for a tools/list: idle reports that the
+// pod's shared runtime process serves no session, which is not an error for
+// a listing. The idleness and the session are read under one hold of s.mu.
+// spec: §9.1; §15.4.3.
+func (s *Server) listingSession() (sessionID string, idle bool, err error) {
+	s.mu.Lock()
+	idle = s.runtimeIdleLocked()
+	sessionID = s.soleSessionLocked()
+	s.mu.Unlock()
+	if idle {
+		return "", true, nil
+	}
+	if sessionID == "" {
+		return "", false, errAmbiguousCallingSession
+	}
+	return sessionID, false, nil
+}
+
+// errAmbiguousCallingSession refuses an intra-pod MCP call the adapter
+// cannot attribute to exactly one session.
+var errAmbiguousCallingSession = status.Error(codes.FailedPrecondition,
+	"the pod's shared runtime process is serving more than one session; the intra-pod MCP surface cannot name the calling session")
+
 // callingSession names the session an intra-pod MCP call may be forwarded
 // under. It is soleSession, refused with FailedPrecondition when empty: a
 // non-empty result is the statement that the pod's one shared runtime
@@ -74,8 +107,7 @@ func (p *platformToolProvider) Call(ctx context.Context, name string, arguments 
 func (s *Server) callingSession() (string, error) {
 	sessionID := s.soleSession()
 	if sessionID == "" {
-		return "", status.Error(codes.FailedPrecondition,
-			"the pod's shared runtime process is serving more than one session; the intra-pod MCP surface cannot name the calling session")
+		return "", errAmbiguousCallingSession
 	}
 	return sessionID, nil
 }

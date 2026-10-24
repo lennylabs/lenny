@@ -149,8 +149,9 @@ type SupervisedRuntime struct {
 	onNotLive func(LivenessCause)
 	// onLaunch runs when a launch is sent.
 	onLaunch func()
-	// writeManifest writes the warm-up manifest before the warm-up launch.
-	writeManifest func() error
+	// prepareWarmUp writes the warm-up manifest and binds the listeners the
+	// warm-up launch's process dials, before that launch.
+	prepareWarmUp func() error
 	// startGens records, per session, the generation its last successful
 	// Start launched or joined. The Server's rule-8 record consumes it
 	// through confirmStart, so a start is recorded only on the generation it
@@ -248,11 +249,11 @@ func (r *SupervisedRuntime) setLaunchHook(fn func()) {
 	r.mu.Unlock()
 }
 
-// SetWarmUpManifestWriter installs the writer of the manifest the warm-up
-// launch's process reads.
-func (r *SupervisedRuntime) SetWarmUpManifestWriter(fn func() error) {
+// SetWarmUpPreparer installs the step that writes the manifest the warm-up
+// launch's process reads and binds every adapter listener it dials.
+func (r *SupervisedRuntime) SetWarmUpPreparer(fn func() error) {
 	r.mu.Lock()
-	r.writeManifest = fn
+	r.prepareWarmUp = fn
 	r.mu.Unlock()
 }
 
@@ -631,19 +632,19 @@ func (r *SupervisedRuntime) sendLaunch(ctx context.Context, link *SupervisorLink
 	return nil
 }
 
-// WarmUp is the warm-up launch: it writes the warm-up manifest, launches the
-// process under the launch mutex and permit, and waits for its CH-MSGSOCK
-// connection within ctx. A failure is the warm-up-failure cause. Nothing
+// WarmUp is the warm-up launch: it writes the warm-up manifest and binds the
+// listeners the process dials, launches the process under the launch mutex
+// and permit, and waits for its CH-MSGSOCK connection within ctx. A failure is the warm-up-failure cause. Nothing
 // calls it again after warm-up, so the recycle re-warm edge launches nothing.
 // spec: §4.7.10 (Runtime supervisor, Launch; Runtime supervisor, SDK-warm).
 func (r *SupervisedRuntime) WarmUp(ctx context.Context) error {
 	r.mu.Lock()
-	write := r.writeManifest
+	prepare := r.prepareWarmUp
 	r.mu.Unlock()
-	if write != nil {
-		if err := write(); err != nil {
+	if prepare != nil {
+		if err := prepare(); err != nil {
 			r.MarkNotLive(CauseWarmUpFailure)
-			return fmt.Errorf("warm-up manifest: %w", err)
+			return fmt.Errorf("warm-up preparation: %w", err)
 		}
 	}
 	r.launchMu.Lock()

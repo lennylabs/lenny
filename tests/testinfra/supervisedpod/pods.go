@@ -161,6 +161,45 @@ func WaitReadyPods(t testing.TB, c *kind.Cluster, pool string, n int, timeout ti
 	}
 }
 
+// FreshIdlePods deletes every unclaimed pod of pool and waits until the pool
+// has n Ready, unclaimed pods it created after the deletion, which it
+// returns. None of them has served a session. A keep pod returns to idle
+// when its reserved hold ends, still running the runtime process its
+// sessions used and possibly still finishing post-session work in the
+// runtime container, so a case that reads a never-used pod cannot take any
+// Ready pod of a pool an earlier test used. Warming pods are deleted too,
+// because one that turns Ready would satisfy the pool's idle count and no
+// replacement would be created. A pool that does not reach n within
+// timeout skips the test as not yet applicable, as WaitReadyPods does.
+// spec: §5.2 (Recycle lifecycle); §4.6.1.
+func FreshIdlePods(t testing.TB, c *kind.Cluster, pool string, n int, timeout time.Duration) []PodState {
+	t.Helper()
+	before := map[string]bool{}
+	for _, p := range PoolPods(t, c, pool) {
+		before[p.Name] = true
+		if !p.Deleting && !ClaimExists(t, c, p.Name) {
+			DeletePod(t, c, p.Name)
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		var fresh []PodState
+		for _, p := range PoolPods(t, c, pool) {
+			if !before[p.Name] && p.Ready && !p.Deleting && !ClaimExists(t, c, p.Name) {
+				fresh = append(fresh, p)
+			}
+		}
+		if len(fresh) >= n {
+			return fresh
+		}
+		if time.Now().After(deadline) {
+			t.Skipf("not-yet-applicable: %s has %d Ready pods created after its idle pods were replaced, "+
+				"fewer than the %d the case needs", pool, len(fresh), n)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
 // WaitGone polls pod every interval until it no longer exists or timeout
 // elapses, and returns the last state it saw and whether the pod is gone.
 // The last state carries the containers' terminated states when the kubelet
@@ -211,10 +250,12 @@ func HostSignal(t testing.TB, node string, pid int, sig string) {
 	}
 }
 
-// DeletePod deletes pod without waiting for it to go.
+// DeletePod deletes pod without waiting for it to go. A pod that is already
+// gone is the outcome the call asks for, so it is not an error: a cleanup
+// runs after cases whose subject is the pod draining and being removed.
 func DeletePod(t testing.TB, c *kind.Cluster, pod string) {
 	t.Helper()
-	if out, err := c.KubectlOut(t, "-n", Namespace, "delete", "pod", pod, "--wait=false"); err != nil {
+	if out, err := c.KubectlOut(t, "-n", Namespace, "delete", "pod", pod, "--wait=false", "--ignore-not-found"); err != nil {
 		t.Fatalf("delete pod %s: %v\n%s", pod, err, out)
 	}
 }

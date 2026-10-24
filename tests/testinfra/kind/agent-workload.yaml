@@ -311,6 +311,12 @@ spec:
   env:
     - name: PROBE_RUNTIME_ENV
       value: from-runtime-env
+  # The Runtime controller mirrors this CR into the runtime registry over the
+  # bootstrap row, so the CR carries the same argv-only setup-command policy
+  # the bootstrap overlay seeds: the distroless adapter image has no /bin/sh
+  # for a shell-mode setup command. spec: §7.5.
+  setupCommandPolicy:
+    shell: false
   integrationLevel: standard
   executionMode: session
   isolationProfile: standard

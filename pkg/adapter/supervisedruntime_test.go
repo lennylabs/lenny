@@ -505,7 +505,7 @@ func TestSupervisedWarmUpLaunch_spec_4_7_10(t *testing.T) {
 	})
 	t.Run("a failed manifest write is a warm-up failure", func(t *testing.T) {
 		f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
-		f.rt.SetWarmUpManifestWriter(func() error { return errors.New("disk full") })
+		f.rt.SetWarmUpPreparer(func() error { return errors.New("disk full") })
 		if err := f.rt.WarmUp(startCtx(t, time.Second)); err == nil {
 			t.Fatal("WarmUp succeeded without a manifest")
 		}

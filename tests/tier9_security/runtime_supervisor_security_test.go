@@ -179,10 +179,13 @@ func requireBoundaryKeepsThePod(ctx context.Context, t *testing.T, d *sessiondri
 // diagnosis: a process at the agent UID that bound the CH-SUPERVISE socket
 // name after the adapter accepted the supervisor received a connection. The
 // adapter accepts once and closes its listener, and the supervisor dials
-// only at its start, so a squatter must receive nothing.
+// only at its start, so a squatter must receive nothing. The attack runs
+// on a pod that has served no session, because a used pod's post-session
+// work ends stray processes in the runtime container, the attack among
+// them.
 func TestSquattedSuperviseSocketReceivesNoConnection_spec_28_5_3(t *testing.T) {
 	c := kind.InstallLenny(t)
-	pod := supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)[0]
+	pod := supervisedpod.FreshIdlePods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)[0]
 	r := supervisedpod.Attack(t, c, pod.Name, superviseprobe.AttackBindSupervise, "10")
 	if r.Connections != 0 {
 		t.Errorf("pod %s: a squatted @lenny-supervise received %d connections", pod.Name, r.Connections)

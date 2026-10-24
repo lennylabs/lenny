@@ -83,7 +83,10 @@ func supStartFor(ctx context.Context, t *testing.T, d *sessiondriver.Driver, ten
 // of the manifest (the first-session manifest defect the supervisor closes).
 func TestSupervisedPodsReadyOnlyWithTheSupervisorAsFirstProcess_spec_4_7_10(t *testing.T) {
 	c := kind.InstallLenny(t)
-	pods := supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)
+	// A keep pod an earlier test used keeps its runtime process when it
+	// returns to idle, so the case reads only pods that have served no
+	// session.
+	pods := supervisedpod.FreshIdlePods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)
 
 	for _, p := range pods {
 		procs := supervisedpod.Processes(t, c, p.Name)

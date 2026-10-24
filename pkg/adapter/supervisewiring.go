@@ -2,10 +2,12 @@
 
 package adapter
 
+import "fmt"
+
 // This file wires a SupervisedRuntime into the Server: the Runtime exits
 // handling under the registry critical section, the SDK-warm wrapper on the
 // preconnect launch modes, sdkConnected at each launch on those modes, and
-// the warm-up manifest. spec: §4.7.10 (Runtime supervisor).
+// the warm-up launch's preparation. spec: §4.7.10 (Runtime supervisor).
 
 // supervisedCarrier is implemented by SupervisedRuntime and, through
 // embedding, by its SDK-warm wrapper.
@@ -35,7 +37,7 @@ func (s *Server) SupervisedRuntimeOrNil() *SupervisedRuntime { return s.supervis
 // exits).
 func (s *Server) UseSupervisedRuntime(rt *SupervisedRuntime) {
 	rt.setEndHandler(func(gen uint64, ev RuntimeEndEvent) { s.handleRuntimeEnd(rt, gen, ev) })
-	rt.SetWarmUpManifestWriter(s.WriteWarmUpManifest)
+	rt.SetWarmUpPreparer(s.PrepareWarmUpLaunch)
 	if rt.Mode().Preconnect() {
 		rt.setLaunchHook(func() {
 			s.mu.Lock()
@@ -48,10 +50,27 @@ func (s *Server) UseSupervisedRuntime(rt *SupervisedRuntime) {
 	s.Runtime = rt
 }
 
-// WriteWarmUpManifest writes the manifest the warm-up launch's process reads,
-// before any session: the session-independent fields and a fresh nonce.
-// spec: §4.7.10 (Runtime supervisor, Launch); §4.7.6.
-func (s *Server) WriteWarmUpManifest() error {
-	_, err := s.writeSessionManifest(manifestInputs{})
-	return err
+// PrepareWarmUpLaunch makes ready what the warm-up launch's process reads and
+// dials, before any session: it writes the manifest with the
+// session-independent fields and a fresh nonce, then binds the platform MCP
+// listener the manifest advertises, armed with that nonce. A Standard-level
+// process dials that listener at its start, so the warm-up launch may follow
+// only once it is bound. The first session claim takes the surface over and
+// re-arms the listener on the session's nonce; the connection the warm-up
+// process opened stays served across that re-arm, because tearing a server
+// down closes its listener and no accepted connection. A type: mcp runtime
+// dials no platform MCP server, so none is bound for it.
+// spec: §4.7.10 (Runtime supervisor, Launch); §4.7.6; §15.4.3.
+func (s *Server) PrepareWarmUpLaunch() error {
+	nonce, err := s.writeSessionManifest(manifestInputs{})
+	if err != nil {
+		return fmt.Errorf("write warm-up manifest: %w", err)
+	}
+	if s.RuntimeKind == RuntimeKindMCP {
+		return nil
+	}
+	if err := s.startPlatformMCP(nonce); err != nil {
+		return fmt.Errorf("bind the warm-up platform MCP listener: %w", err)
+	}
+	return nil
 }
