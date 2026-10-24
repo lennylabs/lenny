@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"strings"
 	"time"
@@ -41,6 +42,44 @@ type superviseFlags struct {
 	pingTimeout    time.Duration
 	waitTimeout    time.Duration
 	warmUpTimeout  time.Duration
+}
+
+// registerSuperviseFlags registers the supervised-pod flags on fs and returns
+// the values they parse into.
+func registerSuperviseFlags(fs *flag.FlagSet) *superviseFlags {
+	f := &superviseFlags{}
+	fs.StringVar(&f.socket, "supervise-socket", "",
+		"§28.5.3 abstract Unix socket (leading @) the adapter listens on for the runtime supervisor's CH-SUPERVISE connection; empty means the pod runs no supervisor")
+	fs.StringVar(&f.runtimeProcess, "runtime-process", "",
+		"§5.2 runtime-process lifetime of a supervised pod: keep or restart")
+	fs.StringVar(&f.launchMode, "launch-mode", "",
+		"§4.7.10 launch mode of a supervised pod: session, service, preconnect-sdk-warm, or preconnect-pod-warm")
+	fs.DurationVar(&f.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
+		"§28.5.3 interval at which the adapter pings the runtime supervisor while no other request is outstanding")
+	fs.DurationVar(&f.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
+		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure")
+	fs.DurationVar(&f.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
+		"§28.5.3 bound on the wait before READY for the supervisor's connection and its ready")
+	fs.DurationVar(&f.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
+		"§4.7.10 bound on the warm-up launch's CH-MSGSOCK connection before READY")
+	return f
+}
+
+// parseSuperviseInputs validates the supervised flags fs parsed into f. A
+// supervised pod launches its runtime processes through CH-MSGSOCK, so
+// --supervise-socket without --runtime-socket is refused.
+// spec: §4.7.10 (Runtime supervisor).
+func parseSuperviseInputs(fs *flag.FlagSet, f *superviseFlags, runtimeSocket string) (superviseInputs, error) {
+	set := map[string]bool{}
+	fs.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
+	in, err := validateSuperviseInputs(f, set)
+	if err != nil {
+		return superviseInputs{}, err
+	}
+	if in.Supervised() && runtimeSocket == "" {
+		return superviseInputs{}, errors.New("--supervise-socket requires --runtime-socket")
+	}
+	return in, nil
 }
 
 // superviseInputs is the validated supervised input contract. Zero (Socket
@@ -128,4 +167,38 @@ func positiveDurations(in superviseInputs) error {
 		}
 	}
 	return nil
+}
+
+// attachLifecycle binds the CH-RUNTIMEOPS listener when socket is set and
+// installs it on the server. It returns nil when socket is empty. It runs
+// before the runtime is composed, because a supervised runtime takes the
+// listener at construction.
+// spec: §15.4.6; §4.7.10 (Runtime supervisor).
+func attachLifecycle(srv *adapter.Server, socket string, auth adapter.SocketPeerAuth, nonce func() string) (*adapter.RuntimeOps, error) {
+	if socket == "" {
+		return nil, nil
+	}
+	ops, err := adapter.NewRuntimeOps(socket, auth, nonce)
+	if err != nil {
+		return nil, err
+	}
+	srv.Lifecycle = ops
+	return ops, nil
+}
+
+// newSupervisedRuntime composes the runtime a supervised pod launches through
+// the runtime supervisor, with one CH-MSGSOCK transport per launched process
+// bound on runtimeSocket.
+// spec: §4.7.10 (Runtime supervisor).
+func newSupervisedRuntime(in superviseInputs, runtimeSocket string, auth adapter.SocketPeerAuth,
+	nonce func() string, lifecycle *adapter.RuntimeOps,
+) (*adapter.SupervisedRuntime, error) {
+	return adapter.NewSupervisedRuntime(adapter.SupervisedRuntimeConfig{
+		Lifetime: in.Lifetime,
+		Mode:     in.Mode,
+		NewTransport: func() (*adapter.SocketRuntimeProcess, error) {
+			return adapter.NewSocketRuntimeProcess(runtimeSocket, auth, nonce)
+		},
+		RuntimeOps: lifecycle,
+	})
 }

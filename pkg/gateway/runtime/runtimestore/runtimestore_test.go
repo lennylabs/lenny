@@ -728,3 +728,26 @@ func TestSessionPolicyDropsRetiredMaxSessionRetries_spec_7_3(t *testing.T) {
 		t.Errorf("re-encoded policy carries maxSessionRetries: %s", out)
 	}
 }
+
+// TestRuntimeProcessLifetimeIsTheClosedKeepRestartEnum pins the §5.2
+// recycle.runtimeProcess domain: keep and restart are the only values, and
+// any other value, the empty one included, reports invalid so pool admission
+// can refuse it.
+//
+// spec: 5.2 (Runtime-process lifetime)
+func TestRuntimeProcessLifetimeIsTheClosedKeepRestartEnum_spec_5_2(t *testing.T) {
+	all := runtimestore.AllRuntimeProcessLifetimes()
+	if len(all) != 2 || all[0] != runtimestore.RuntimeProcessKeep || all[1] != runtimestore.RuntimeProcessRestart {
+		t.Fatalf("AllRuntimeProcessLifetimes() = %v, want [keep restart]", all)
+	}
+	for _, l := range all {
+		if !l.IsValid() {
+			t.Errorf("%q from the closed enum reports invalid", l)
+		}
+	}
+	for _, bad := range []runtimestore.RuntimeProcessLifetime{"", "always", "Keep"} {
+		if bad.IsValid() {
+			t.Errorf("%q reports valid; only keep and restart are runtime-process lifetimes", bad)
+		}
+	}
+}

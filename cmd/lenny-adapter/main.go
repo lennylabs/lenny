@@ -242,36 +242,17 @@ func main() {
 	objectStoreCABundle := flag.String("objectstore-ca-bundle",
 		os.Getenv("LENNY_OBJECTSTORE_CA_BUNDLE"),
 		"§13.2 path to the CA bundle the adapter trusts when it PUTs checkpoint chunks and GETs restore chunks against the object store over TLS; empty uses the system roots.")
-	supFlags := &superviseFlags{}
-	flag.StringVar(&supFlags.socket, "supervise-socket", "",
-		"§28.5.3 abstract Unix socket (leading @) the adapter listens on for the runtime supervisor's CH-SUPERVISE connection; empty means the pod runs no supervisor")
-	flag.StringVar(&supFlags.runtimeProcess, "runtime-process", "",
-		"§5.2 runtime-process lifetime of a supervised pod: keep or restart")
-	flag.StringVar(&supFlags.launchMode, "launch-mode", "",
-		"§4.7.10 launch mode of a supervised pod: session, service, preconnect-sdk-warm, or preconnect-pod-warm")
-	flag.DurationVar(&supFlags.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
-		"§28.5.3 interval at which the adapter pings the runtime supervisor while no other request is outstanding")
-	flag.DurationVar(&supFlags.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
-		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure")
-	flag.DurationVar(&supFlags.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
-		"§28.5.3 bound on the wait before READY for the supervisor's connection and its ready")
-	flag.DurationVar(&supFlags.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
-		"§4.7.10 bound on the warm-up launch's CH-MSGSOCK connection before READY")
+	supFlags := registerSuperviseFlags(flag.CommandLine)
 	flag.Parse()
-	setFlags := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
 		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
 	}
 	// spec: §4.7.10 (Runtime supervisor) — the adapter inputs of a
 	// supervised pod are validated before anything is launched or bound.
-	supIn, err := validateSuperviseInputs(supFlags, setFlags)
+	supIn, err := parseSuperviseInputs(flag.CommandLine, supFlags, *runtimeSocket)
 	if err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
-	}
-	if supIn.Supervised() && *runtimeSocket == "" {
-		log.Fatalf("lenny-adapter: --supervise-socket requires --runtime-socket")
 	}
 
 	// spec: §16.3 — install the process-wide TracerProvider and
@@ -439,13 +420,9 @@ func main() {
 	// §15.4.6: when a lifecycle socket is configured, the adapter listens
 	// on it for the Full-level runtime's lifecycle connection and
 	// advertises it in the session manifest.
-	var lifecycle *adapter.RuntimeOps
-	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth, runtimeNonce)
-		if err != nil {
-			log.Fatalf("lenny-adapter: %v", err)
-		}
-		adapterSrv.Lifecycle = lifecycle
+	lifecycle, err := attachLifecycle(adapterSrv, *lifecycleSocket, peerAuth, runtimeNonce)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
 	}
 
 	switch {
@@ -454,14 +431,7 @@ func main() {
 		// launched through the runtime supervisor, and one CH-MSGSOCK
 		// transport is composed per launched process; the first listener is
 		// bound here, before READY.
-		rt, err := adapter.NewSupervisedRuntime(adapter.SupervisedRuntimeConfig{
-			Lifetime: supIn.Lifetime,
-			Mode:     supIn.Mode,
-			NewTransport: func() (*adapter.SocketRuntimeProcess, error) {
-				return adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth, runtimeNonce)
-			},
-			RuntimeOps: lifecycle,
-		})
+		rt, err := newSupervisedRuntime(supIn, *runtimeSocket, peerAuth, runtimeNonce, lifecycle)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

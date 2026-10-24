@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -146,5 +147,54 @@ func TestRuntimeOpsNonceOnlyAndEmbeddedPosturesApplyNoPeerCheck_spec_4_7_11(t *t
 			}
 			requireOpsServed(t, fr, name+" peer")
 		})
+	}
+}
+
+// spec: 4.7.10 (Runtime supervisor, End), 5.2 (Supervised scrub sequence,
+// Listener rebind), 4.7.11 (Separate UIDs and connection authentication)
+func TestRuntimeOpsRebindDropsTheServedConnectionAndKeepsThePeerCheck_spec_4_7_10(t *testing.T) {
+	expected := uint32(os.Getuid())
+	logs := &syncBuffer{}
+	var foreign atomic.Bool
+	lc, sock := runRuntimeOps(t, SocketPeerAuth{ExpectedUID: expected}, func(lc *RuntimeOps) {
+		lc.peerUID = func(net.Conn) (uint32, error) {
+			if foreign.Load() {
+				return 4242, nil
+			}
+			return expected, nil
+		}
+		lc.logger = slog.New(slog.NewJSONHandler(logs, nil))
+	})
+	served := dialOps(t, sock)
+	requireOpsServed(t, served, "runtime before the rebind")
+
+	if err := lc.Rebind(); err != nil {
+		t.Fatalf("Rebind: %v", err)
+	}
+	// The ended process's connection is closed by the rebind.
+	_ = served.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		if _, err := served.r.ReadByte(); err != nil {
+			if !isClosedByAdapter(err) {
+				t.Fatalf("served connection after the rebind: %v, want EOF or reset", err)
+			}
+			break
+		}
+	}
+
+	// The new listener applies the same peer check and logs its refusals.
+	foreign.Store(true)
+	requireOpsRefused(t, dialOps(t, sock), "foreign peer after the rebind")
+	waitFor(t, "the refusal record", func() bool {
+		return strings.Contains(logs.String(), `"msg":"runtimeops_peer_refused"`)
+	})
+	foreign.Store(false)
+	requireOpsServed(t, dialOps(t, sock), "runtime after the rebind")
+
+	if err := lc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := lc.Rebind(); !errors.Is(err, errLifecycleClosed) {
+		t.Fatalf("Rebind after Close = %v, want errLifecycleClosed", err)
 	}
 }

@@ -1107,6 +1107,15 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		to: "and the deletes at hold expiry, when an acquisition ends the hold, and when a release ends the " +
 			"occupancy without reuse ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),",
 	},
+	{
+		// The §28.3 opening paragraph states the provenance value of a
+		// channel added after the channel inventory, which CH-SUPERVISE
+		// is the first to carry.
+		proposal:   "0087_new_under-the-default-sidecar-deployment-model-spec-4-7",
+		linePrefix: "derivation of every column without the retired prose being reproduced here.",
+		from:       "The naming table below the",
+		to:         "A channel added after that",
+	},
 }
 
 // applySupersessions returns a copy of staged with every register entry

@@ -986,7 +986,7 @@ func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: 5.1 (sessionPolicy block)
+// spec: 5.1 (sessionPolicy block), 5.2 (Runtime-process lifetime)
 func TestCreateRuntimeRejectsInvalidSessionPolicy(t *testing.T) {
 	// §5.1: sessionPolicy enums and numeric fields are validated.
 	router, _, _ := newRuntimeAdmin(t)
@@ -996,6 +996,8 @@ func TestCreateRuntimeRejectsInvalidSessionPolicy(t *testing.T) {
 		// old value is no longer a recognised scrubProfile.
 		{Recycle: &runtimestore.RecyclePolicy{ScrubProfile: "restart"}},
 		{Recycle: &runtimestore.RecyclePolicy{OnScrubFailure: "retry"}},
+		// §5.2 recycle.runtimeProcess is the closed keep | restart enum.
+		{Recycle: &runtimestore.RecyclePolicy{RuntimeProcess: "always"}},
 		{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: -1}},
 		{OnPoolExhausted: "drop"},
 	}

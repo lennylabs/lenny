@@ -3,53 +3,19 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 )
 
-// parseSupervise reads args as the adapter's command line would set the
-// supervised flags, starting from their compiled defaults, and validates
-// them.
+// parseSupervise parses args through the adapter's supervised flag set,
+// starting from their compiled defaults, and validates them beside a bound
+// runtime socket.
 func parseSupervise(t *testing.T, args ...string) (superviseInputs, error) {
 	t.Helper()
-	f := &superviseFlags{
-		pingInterval: defaultSupervisePingInterval, pingTimeout: defaultSupervisePingTimeout,
-		waitTimeout: defaultSuperviseWaitTimeout, warmUpTimeout: defaultWarmUpTimeout,
-	}
-	set := map[string]bool{}
-	for i := 0; i+1 < len(args); i += 2 {
-		name, v := strings.TrimPrefix(args[i], "--"), args[i+1]
-		set[name] = true
-		switch name {
-		case "supervise-socket":
-			f.socket = v
-		case "runtime-process":
-			f.runtimeProcess = v
-		case "launch-mode":
-			f.launchMode = v
-		default:
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				t.Fatalf("--%s=%s: %v", name, v, err)
-			}
-			switch name {
-			case "supervise-ping-interval":
-				f.pingInterval = d
-			case "supervise-ping-timeout":
-				f.pingTimeout = d
-			case "supervise-wait-timeout":
-				f.waitTimeout = d
-			case "warm-up-timeout":
-				f.warmUpTimeout = d
-			default:
-				t.Fatalf("unknown flag --%s", name)
-			}
-		}
-	}
-	return validateSuperviseInputs(f, set)
+	parsed := newSuperviseFlagSet(t, args...)
+	return parseSuperviseInputs(parsed.set, parsed.flags, "@lenny-runtime")
 }
 
 var supervisedBase = []string{"--supervise-socket", "@lenny-supervise", "--runtime-process", "keep", "--launch-mode", "session"}

@@ -543,6 +543,57 @@ func TestAttachEndsWithRuntimeCrashWhenTheHeldProcessCrashes_spec_4_7_10(t *test
 	}
 }
 
+// spec: 4.7.10 (Runtime supervisor, Crash)
+func TestIsClosedReadsAChannelWithoutBlocking_spec_4_7_10(t *testing.T) {
+	if isClosed(nil) {
+		t.Error("a nil channel reported closed; a session with no crash channel has not crashed")
+	}
+	ch := make(chan struct{})
+	if isClosed(ch) {
+		t.Error("an open channel reported closed")
+	}
+	close(ch)
+	if !isClosed(ch) {
+		t.Error("a closed channel reported open")
+	}
+}
+
+// spec: 4.7.10 (Runtime supervisor, Signals), 6.1 (Adapter SIGTERM behavior
+// during sdk_connecting)
+func TestServiceExitOnSignalEndsOnlyALaunchedProcess_spec_4_7_10(t *testing.T) {
+	t.Run("nothing launched: no end", func(t *testing.T) {
+		f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
+		s := New("test")
+		s.UseSupervisedRuntime(f.rt)
+		s.ExitOnSignal(time.Second, nil)
+		if n := f.sup.count(superviseEnd); n != 0 {
+			t.Fatalf("end sent %d times with nothing launched, want 0", n)
+		}
+		if f.rt.EndDisposition() != EndDeleting {
+			t.Fatalf("disposition = %s, want deleting", f.rt.EndDisposition())
+		}
+	})
+	t.Run("zero timeout falls back to the default bound", func(t *testing.T) {
+		e := newExitsFixture(t, LifetimeKeep, LaunchService)
+		e.s.ExitOnSignal(0, nil)
+		if n := e.sup.count(superviseEnd); n != 1 {
+			t.Fatalf("end sent %d times, want 1", n)
+		}
+	})
+	t.Run("a failed end is logged and the exit proceeds", func(t *testing.T) {
+		e := newExitsFixture(t, LifetimeKeep, LaunchService)
+		e.sup.react(superviseEnd, fakeReaction{errCode: SuperviseErrEndDeadline})
+		stopped := &recordingStopper{}
+		e.s.ExitOnSignal(time.Second, stopped)
+		if n := e.sup.count(superviseEnd); n != 1 {
+			t.Fatalf("end sent %d times, want 1", n)
+		}
+		if !stopped.stopped {
+			t.Fatal("the server was not stopped after a failed end")
+		}
+	})
+}
+
 // spec: 4.7.10 (Runtime supervisor, Runtime exits; Runtime supervisor,
 // Signals)
 // diagnosis: the pod's termination set the deleting disposition before a
