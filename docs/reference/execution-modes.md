@@ -25,7 +25,7 @@ sessionPolicy:                    # session mode only
     maxScrubFailures: 3
     onScrubFailure: warn          # warn | fail
     scrubProfile: standard        # standard | vm-restart | in-place
-    runtimeProcess: keep          # keep | restart; required when maxSessionsPerPod > 1 and scrubProfile is not vm-restart
+    # runtimeProcess: keep        # keep | restart; required, with no default, when recycle.enabled is true, maxSessionsPerPod > 1, and scrubProfile is not vm-restart; rejected on every other pool
     acknowledgeMicrovmResidualState: false  # required when scrubProfile: in-place
     allowCrossTenantReuse: false  # microvm-gated; never permitted when maxConcurrentSessions > 1
   cleanupCommands: []

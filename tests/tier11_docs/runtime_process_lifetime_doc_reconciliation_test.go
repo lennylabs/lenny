@@ -381,10 +381,20 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"the supervisor forwards no stop signal to your runtime process",
 			"**Signals.**",
 			"SIGKILL and SIGSTOP are the only signals a process can make take effect on it",
+			"a runtime that kills the supervisor ends every process in its own container",
+			"A runtime that stops the supervisor freezes only the supervisor, and your runtime process and its children keep running",
+			"In both cases the adapter loses its link to the supervisor, and the pod retires",
 			"**Runtime exits.**",
 			"A runtime does not exit at the end of a session",
 			"A runtime that exits after `shutdown` within its `deadline_ms` fails no session",
 			"**Liveness.**",
+			"when a launch at warm-up fails or its process does not connect within the adapter's wait",
+			"on a `restart` pod, when the supervisor's startup self-test reports a failed gating property",
+			"Before the pod becomes ready, and at any time on a service-mode pod, the adapter exits instead, and the platform replaces the pod",
+		})
+	requireNoneContain(t, "lifecycle.md Runtime Supervisor",
+		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
+			"ends or freezes every process",
 		})
 	requireAllContain(t, "runtime-configuration.md Identity and image",
 		supervisedDocSection(t, root, "runtime-author-guide/runtime-configuration.md", "Identity and image"), []string{
@@ -397,6 +407,33 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 		"whether the runtime can serve the next session, sampled after the scrub finishes",
 		"**stderr** goes to the agent container's log",
 	})
+	stop := stopSessionRPCComment(t, readDocPage(t, filepath.Join(root, "docs", "api", "internal.md")))
+	requireAllContain(t, "internal.md StopSession comment", stop, []string{
+		"session_end",
+		"On a keep pod the process stays alive for the pod's life unless DemoteSDK ends it",
+		"on a restart pod the whole-pod scrub ends it",
+	})
+	requireNoneContainFold(t, "internal.md StopSession comment", stop, []string{"shutdown"})
+}
+
+// stopSessionRPCComment returns the comment lines directly above the
+// `rpc StopSession` declaration of a page's protobuf block, joined with each
+// whitespace run collapsed.
+func stopSessionRPCComment(t *testing.T, body string) string {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "rpc StopSession(") {
+			continue
+		}
+		var comment []string
+		for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
+			comment = append([]string{strings.TrimPrefix(strings.TrimSpace(lines[j]), "//")}, comment...)
+		}
+		return strings.Join(strings.Fields(strings.Join(comment, " ")), " ")
+	}
+	t.Fatalf("no `rpc StopSession(` declaration found")
+	return ""
 }
 
 // spec: 5.2 (Runtime-process lifetime, Deployer acknowledgment (runtime
@@ -438,6 +475,84 @@ func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *tes
 	requireAllContain(t, "architecture.md", supervisedDocPage(t, root, "getting-started/architecture.md"), []string{
 		"**Session logs:**",
 	})
+}
+
+// spec: 5.2 (Runtime-process lifetime (`recycle.runtimeProcess`))
+// diagnosis: a pool example in the specification or the documentation sets
+//
+//	`recycle.runtimeProcess` on a pool whose `recycle.enabled` is not true.
+//	The field is accepted only on a reusing recycling pool, so the pool
+//	controller rejects every other pool that sets it, and a deployer who
+//	copies the example gets a pool that fails admission. An example that
+//	shows the key on such a pool writes it commented out.
+func TestRuntimeProcessKeySetOnlyOnRecyclingPoolExamples(t *testing.T) {
+	root := repoRoot(t)
+	keys := 0
+	for _, dir := range []string{"spec", "docs"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+				return err
+			}
+			body := readDocPage(t, path)
+			keys += strings.Count(body, "runtimeProcess:")
+			for _, site := range runtimeProcessKeysOutsideEnabledRecycle(body) {
+				rel, _ := filepath.Rel(root, path)
+				t.Errorf("%s line %d: `runtimeProcess:` is set in a recycle block whose `enabled` is not true; comment the key out", rel, site)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	if keys == 0 {
+		t.Fatalf("no `runtimeProcess:` key found in spec/ or docs/; the pool examples moved and this check reads nothing")
+	}
+}
+
+// runtimeProcessKeysOutsideEnabledRecycle returns the 1-based line numbers of
+// each uncommented `runtimeProcess:` key whose sibling keys at the same
+// indentation do not include `enabled: true`.
+func runtimeProcessKeysOutsideEnabledRecycle(body string) []int {
+	lines := strings.Split(body, "\n")
+	var sites []int
+	for i, line := range lines {
+		key := strings.TrimLeft(line, " ")
+		if !strings.HasPrefix(key, "runtimeProcess:") {
+			continue
+		}
+		if siblingKeyValue(lines, i, len(line)-len(key), "enabled") != "true" {
+			sites = append(sites, i+1)
+		}
+	}
+	return sites
+}
+
+// siblingKeyValue returns the value, without its trailing comment, of the
+// YAML key named key at the given indentation in the block that contains
+// line i, or "" when the block has no such key. The block ends at the first
+// non-blank line indented less than indent.
+func siblingKeyValue(lines []string, i, indent int, key string) string {
+	inBlock := func(l string) bool {
+		trimmed := strings.TrimLeft(l, " ")
+		return trimmed == "" || len(l)-len(trimmed) >= indent
+	}
+	start, end := i, i
+	for start > 0 && inBlock(lines[start-1]) {
+		start--
+	}
+	for end+1 < len(lines) && inBlock(lines[end+1]) {
+		end++
+	}
+	for _, l := range lines[start : end+1] {
+		trimmed := strings.TrimLeft(l, " ")
+		if len(l)-len(trimmed) != indent || !strings.HasPrefix(trimmed, key+":") {
+			continue
+		}
+		value, _, _ := strings.Cut(strings.TrimPrefix(trimmed, key+":"), "#")
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 // spec: 4.7.11 (item 8 Runtime supervisor), 13.1

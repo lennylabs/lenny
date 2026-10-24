@@ -79,8 +79,10 @@ service RuntimeAdapter {
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
 
   // StopSession gracefully terminates the current session.
-  // The adapter sends shutdown to the agent binary. On a keep pod the
-  // runtime process stays alive after the session ends.
+  // The adapter writes the session's session_end frame and ends the
+  // session's use of the runtime process. On a keep pod the process stays
+  // alive for the pod's life unless DemoteSDK ends it, and on a restart pod
+  // the whole-pod scrub ends it.
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // Attach opens a bidirectional stream for real-time communication
