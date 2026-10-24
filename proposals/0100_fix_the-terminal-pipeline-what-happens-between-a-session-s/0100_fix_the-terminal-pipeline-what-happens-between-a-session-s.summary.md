@@ -108,6 +108,7 @@ None at drafting time. The review loops write this section.
 - F-11.2.31: a budget termination lost to a crash before its write is not retried, because the enforcer state is process-local. It belongs to P4.
 - F-7.2.35: writers do not share one terminal-signal set. It belongs to P2b.
 - F-10.1.33: a terminal write made off the coordinating replica. It depends on the inter-replica carrier proposal.
+- F-12.8.43 (BUILD-GAPS.md:24696): user erasure can delete the row of a drained session bound on another replica before that replica releases the session's pod. `admin.DrainSessions` (`pkg/gateway/externalapi/admin/drain.go:82`) writes the terminal row on the draining replica, and the binding replica releases only through `ReleaseTerminalBinding` (`pkg/gateway/sessionserver/terminal_binding.go:44`) after it lists that row. Releasing the binding before the row is deleted needs the inter-replica carrier proposal. This proposal narrows the residual through CODE-5 and leaves the entry OPEN (see D20).
 - F-4.9.33, terminal-writer half: out of scope until the owner places it in P2a or P2b.
 
 ## Impacts on other proposals
@@ -118,7 +119,7 @@ None at drafting time. The review loops write this section.
 | 0093 | Implemented | Leaves its F-10.1.33 accepted departure standing and moves the entry's owner to the inter-replica carrier proposal. | Nothing. |
 | 0094 | Implemented | Closes the `session.force_terminated` half of F-11.7.22 that 0094 left to P2. | Nothing. |
 | 0095 | Implemented | Narrows the bound of its F-12.8.43 departure to one checkpoint interval on the binding replica. | Nothing. |
-| 0097 | Approved | Both edit help text in `cmd/lenny-gateway/flags.go`; the edits touch different flags. | Whichever lands second rebases the textual conflict. |
+| 0097 | Approved (2026-10-24) | Both edit `cmd/lenny-gateway/flags.go` and `charts/lenny/templates/gateway-deployment.yaml`. CODE-6 here edits the help text of `--slot-reaper-terminal-age` and `--max-resuming-seconds` and the chart's §5.2 seal-window `fail` gate. 0097 edits other flags and other chart lines (its CODE-7, CODE-8, CODE-10, CHART-2, and CHART-5). No 0097 deliverable loses its subject, and every 0097 deliverable survives. | Whichever lands second rebases the textual conflict. 0097 needs no re-review. |
 | P2b (plan step, no proposal yet) | Not drafted | Supplies the writer-context rule P2b depends on. | Cite §7.1 **Terminal pipeline context:**. |
 | P3 TT-44 (plan step, no proposal yet) | Not drafted | Supplies the bounded hook context TT-44 needs. | Cite §7.1 **Terminal pipeline context:**. |
 
