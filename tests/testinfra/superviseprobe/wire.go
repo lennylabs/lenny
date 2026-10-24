@@ -77,9 +77,12 @@ const (
 	// through the adapter's own client and pings it, printing PeerEvent
 	// lines, on a pod a test builds outside the platform.
 	SubSupervisePeer = "supervise-peer"
-	// subDaemonChild and subDaemonGrandchild are the two halves of the
-	// double fork CmdDaemon starts.
-	subDaemonChild      = "daemon-child"
+	// SubDaemonChild and subDaemonGrandchild are the two halves of the
+	// double fork CmdDaemon starts. SubDaemonChild is also a cleanup
+	// command's entry on a `restart` pool: it leaves a background process
+	// that the second end and sweep of the supervised scrub must remove
+	// before the next session.
+	SubDaemonChild      = "daemon-child"
 	subDaemonGrandchild = "daemon-grandchild"
 )
 

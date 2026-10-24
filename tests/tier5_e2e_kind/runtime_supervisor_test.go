@@ -13,7 +13,7 @@
 //
 // Gateway pool admission refuses recycle.runtimeProcess: restart until
 // proposal 0084 lands, so the cases that need a `restart` pod are written
-// here and skip with supervisedpod.RestartGateReason.
+// against supervisedpod.RestartPool and skip with a blocked reason first.
 
 package tier5_e2e_kind_test
 
@@ -223,13 +223,37 @@ func requireCleanupRecord(t *testing.T, rec superviseprobe.Record, plant supervi
 // process a cleanup command started survived into the next session, so the
 // boundary end and sweep did not reach the runtime container.
 func TestRestartPodLaunchesAFreshProcessAndRemovesResidue_spec_5_2(t *testing.T) {
-	for _, name := range []string{
-		"two sessions report different process tokens",
-		"daemon, IPC objects, and planted link absent in the next session",
-		"background process a cleanup command started is gone before the next session",
-	} {
-		t.Run(name, func(t *testing.T) { t.Skip(supervisedpod.RestartGateReason) })
-	}
+	t.Skip("blocked: pool admission refuses recycle.runtimeProcess restart until proposal 0084 rebinds the " +
+		"intra-pod MCP servers per runtime generation, so no restart pool exists on the Kind cluster")
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 60 * time.Second})
+	c := d.Cluster()
+	supervisedpod.WaitReadyPods(t, c, supervisedpod.RestartPool, 1, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tenant, sessA := supStart(ctx, t, d, supervisedpod.RestartRuntime, nil)
+	recA := supervisedpod.Report(ctx, t, d, tenant, sessA.ID)
+	residue := supervisedpod.PlantAgentResidue(ctx, t, d, tenant, sessA.ID)
+	sessB := supervisedpod.NextSessionOnPod(ctx, t, d, c, tenant, supervisedpod.RestartRuntime, sessA)
+	pod := sessA.PodAssignment
+
+	t.Run("two sessions report different process tokens", func(t *testing.T) {
+		if recB := supervisedpod.Report(ctx, t, d, tenant, sessB.ID); recB.Token == recA.Token {
+			t.Errorf("restart pod %s served both sessions on runtime process %s; the boundary end must end it "+
+				"and the next session's step 7 launch a fresh one", pod, recA.Token)
+		}
+	})
+	t.Run("daemon, IPC objects, and planted link absent in the next session", func(t *testing.T) {
+		if left := supervisedpod.ResidueLeft(supervisedpod.Residue(ctx, t, d, tenant, sessB.ID, residue)); len(left) != 0 {
+			t.Errorf("restart pod %s: %v from session A survived into session B", pod, left)
+		}
+	})
+	t.Run("background process a cleanup command started is gone before the next session", func(t *testing.T) {
+		if daemons := supervisedpod.ProbeDaemons(supervisedpod.Processes(t, c, pod)); len(daemons) != 0 {
+			t.Errorf("restart pod %s: background processes %+v a cleanup command started still run in the "+
+				"runtime container; the second end and sweep must remove them", pod, daemons)
+		}
+	})
 }
 
 // spec: §4.7.10 (Runtime supervisor, Environment; Launch), §4.7.6 (Adapter
@@ -460,32 +484,45 @@ func TestServicePodRetiresWhenItsRuntimeProcessDies_spec_4_7_10(t *testing.T) {
 // not exec setup commands as argv).
 func TestSetupCommandResidueIsGoneBeforeTheNextSession_spec_5_2(t *testing.T) {
 	t.Run("keep pod", func(t *testing.T) {
-		d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
-		c := d.Cluster()
-		supervisedpod.WaitReadyPods(t, c, supervisedpod.KeepPool, 1, 3*time.Minute)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		key := int(time.Now().UnixNano()%(1<<30)) + 1
-
-		tenant, sessA := supStart(ctx, t, d, supervisedpod.KeepRuntime, supervisedpod.SetupResiduePlan(key))
-		pod := sessA.PodAssignment
-		if r := supervisedpod.AdapterSetupResidue(t, c, pod, key); len(r.DaemonPIDs) == 0 || !r.ShmExists {
-			t.Fatalf("the setup command left no residue in the adapter container of %s: %+v", pod, r)
-		}
-		if err := d.Terminate(ctx, tenant, sessA.ID); err != nil {
-			t.Fatalf("terminate session A: %v", err)
-		}
-		waitClaimPhase(t, c, pod, "reserved", 2*time.Minute)
-		requireNoSetupResidue(t, c, pod, key, "after the scrub")
-
-		sessB := supStartFor(ctx, t, d, tenant, supervisedpod.KeepRuntime, nil)
-		t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sessB.ID) })
-		if sessB.PodAssignment != pod {
-			t.Fatalf("session B landed on %s, want the reused keep pod %s", sessB.PodAssignment, pod)
-		}
-		requireNoSetupResidue(t, c, pod, key, "in the next session")
+		requireSetupResidueGoneOnReuse(t, supervisedpod.KeepPool, supervisedpod.KeepRuntime)
 	})
-	t.Run("restart pod", func(t *testing.T) { t.Skip(supervisedpod.RestartGateReason) })
+	t.Run("restart pod", func(t *testing.T) {
+		t.Skip("blocked: pool admission refuses recycle.runtimeProcess restart until proposal 0084 rebinds the " +
+			"intra-pod MCP servers per runtime generation, so no restart pool exists on the Kind cluster")
+		requireSetupResidueGoneOnReuse(t, supervisedpod.RestartPool, supervisedpod.RestartRuntime)
+	})
+}
+
+// requireSetupResidueGoneOnReuse runs a session whose setup command leaves a
+// detached daemon and a System V segment in the adapter container of a pod
+// of pool, and asserts both are gone after the scrub and in the next
+// session the reused pod serves. spec: §5.2 (Supervised scrub sequence).
+func requireSetupResidueGoneOnReuse(t *testing.T, pool, runtime string) {
+	t.Helper()
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
+	c := d.Cluster()
+	supervisedpod.WaitReadyPods(t, c, pool, 1, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	key := int(time.Now().UnixNano()%(1<<30)) + 1
+
+	tenant, sessA := supStart(ctx, t, d, runtime, supervisedpod.SetupResiduePlan(key))
+	pod := sessA.PodAssignment
+	if r := supervisedpod.AdapterSetupResidue(t, c, pod, key); len(r.DaemonPIDs) == 0 || !r.ShmExists {
+		t.Fatalf("the setup command left no residue in the adapter container of %s: %+v", pod, r)
+	}
+	if err := d.Terminate(ctx, tenant, sessA.ID); err != nil {
+		t.Fatalf("terminate session A: %v", err)
+	}
+	waitClaimPhase(t, c, pod, "reserved", 2*time.Minute)
+	requireNoSetupResidue(t, c, pod, key, "after the scrub")
+
+	sessB := supStartFor(ctx, t, d, tenant, runtime, nil)
+	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sessB.ID) })
+	if sessB.PodAssignment != pod {
+		t.Fatalf("session B landed on %s, want the reused pod %s", sessB.PodAssignment, pod)
+	}
+	requireNoSetupResidue(t, c, pod, key, "in the next session")
 }
 
 // requireNoSetupResidue asserts that no setup-command daemon runs in pod's

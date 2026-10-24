@@ -26,7 +26,7 @@ import (
 // container's PID 1 and outlives the session that started it unless the
 // supervisor ends it. spec: §4.7.10 (Runtime supervisor, End).
 func startDaemon() ActionResult {
-	out, err := exec.Command(selfExe(), subDaemonChild).Output()
+	out, err := exec.Command(selfExe(), SubDaemonChild).Output()
 	if err != nil {
 		return ActionResult{Error: fmt.Sprintf("daemon child: %v", err)}
 	}

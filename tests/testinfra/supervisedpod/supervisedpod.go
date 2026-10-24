@@ -52,13 +52,19 @@ const ProbeExe = "/usr/local/bin/lenny"
 // Runtimes set in tests/testinfra/kind/agent-workload.yaml.
 const DialDelay = 30 * time.Second
 
-// RestartGateReason is the skip reason of every case that needs an admitted
-// `restart` pool. Gateway pool admission refuses recycle.runtimeProcess:
-// restart until proposal 0084 rebinds the intra-pod MCP servers per runtime
-// generation, so no such pool exists for the case to run on. Proposal 0084
-// removes the refusal and these skips together.
-const RestartGateReason = "blocked: pool admission refuses recycle.runtimeProcess restart until proposal 0084 " +
-	"rebinds the intra-pod MCP servers per runtime generation, so no restart pool exists on the Kind cluster"
+// RestartPool and RestartRuntime name the supervised `restart` pool and its
+// probe Runtime, which tests/testinfra/kind/install.sh does not seed while
+// gateway pool admission refuses recycle.runtimeProcess: restart. The cases
+// written against them skip with a blocked reason until the pool is seeded.
+// The pool mirrors KeepPool under recycle.runtimeProcess: restart, and its
+// cleanupCommands run the probe's cleanup-record and SubDaemonChild
+// subcommands, so a cleanup command leaves a background process for the
+// supervised scrub to remove. spec: §5.2 (Runtime-process lifetime;
+// Supervised scrub sequence).
+const (
+	RestartPool    = "supervise-probe-restart-pool"
+	RestartRuntime = "supervise-probe-restart"
+)
 
 // ExecRuntime runs the probe binary with args in pod's runtime container,
 // which runs at the agent UID, and returns its stdout and stderr.

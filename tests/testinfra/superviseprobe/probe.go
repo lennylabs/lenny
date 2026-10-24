@@ -46,7 +46,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return printSetupResidue(stdout, stderr, args[1:], createSetupResidue)
 	case SubSetupResidueCheck:
 		return printSetupResidue(stdout, stderr, args[1:], readSetupResidue)
-	case subDaemonChild:
+	case SubDaemonChild:
 		return daemonChild(stdout, stderr)
 	case subDaemonGrandchild:
 		daemonGrandchild()

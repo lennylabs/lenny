@@ -278,6 +278,32 @@ func TestServingProbeExcludesPID1AndSubcommands(t *testing.T) {
 	}
 }
 
+// spec: §4.7.10 (Runtime supervisor, End; Sweep), §5.2 (Supervised scrub
+// sequence)
+//
+// TestProbeDaemonMatchesOnlyTheLiveGrandchild pins the process a restart-pod
+// case looks for after the scrub: the daemon grandchild CmdDaemon or a
+// cleanup command leaves, and neither the serving probe, the short-lived
+// daemon child, nor a reaped zombie.
+func TestProbeDaemonMatchesOnlyTheLiveGrandchild(t *testing.T) {
+	exe := "/usr/local/bin/lenny"
+	cases := []struct {
+		p    Process
+		want bool
+	}{
+		{Process{PID: 9, Cmdline: []string{exe, subDaemonGrandchild}, State: "S"}, true},
+		{Process{PID: 9, Cmdline: []string{exe, subDaemonGrandchild}, State: "Z"}, false},
+		{Process{PID: 9, Cmdline: []string{exe, SubDaemonChild}, State: "S"}, false},
+		{Process{PID: 9, Cmdline: []string{exe}, State: "S"}, false},
+		{Process{PID: 9, Cmdline: []string{"/other", subDaemonGrandchild}, State: "S"}, false},
+	}
+	for _, tc := range cases {
+		if got := IsProbeDaemon(tc.p, exe); got != tc.want {
+			t.Errorf("IsProbeDaemon(%+v) = %v, want %v", tc.p, got, tc.want)
+		}
+	}
+}
+
 // spec: §4.7.11 item 8 (Runtime supervisor)
 //
 // TestAttacksReportTheirOutcome pins the attack dispatch: an unknown or

@@ -1151,6 +1151,11 @@ bootstrap:
     # intra-pod MCP servers per runtime generation, so the seed would fail the
     # bootstrap Job. The restart cases skip with a blocked reason naming that
     # refusal, and proposal 0084 adds the pool when it removes the refusal.
+    # The cases are written against supervise-probe-restart-pool on the
+    # supervise-probe-restart Runtime, a copy of the keep pool under
+    # runtimeProcess: restart whose cleanupCommands run the probe's
+    # cleanup-record and daemon-child subcommands, so a cleanup command
+    # leaves a background process.
     - name: supervise-probe-keep-pool
       runtimeRef: supervise-probe-keep
       isolationProfile: standard

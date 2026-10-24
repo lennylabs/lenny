@@ -181,7 +181,7 @@ func warmingSupervisedPod(t *testing.T, c *kind.Cluster, pool string) supervised
 		}
 		time.Sleep(time.Second)
 	}
-	t.Skip("not-yet-applicable: no replacement pod of " + pool + " reached its warm-up launch within 2m")
+	t.Skipf("not-yet-applicable: no replacement pod of %s reached its warm-up launch within 2m", pool)
 	return supervisedpod.PodState{}
 }
 

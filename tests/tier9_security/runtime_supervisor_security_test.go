@@ -339,5 +339,22 @@ func contains(list []string, s string) bool {
 // diagnosis: on a restart pod, a daemon, IPC objects, or a planted link the
 // agent left in one session survived the boundary end and sweep.
 func TestRestartPodSweepRemovesAgentResidue_spec_4_7_10(t *testing.T) {
-	t.Skip(supervisedpod.RestartGateReason)
+	t.Skip("blocked: pool admission refuses recycle.runtimeProcess restart until proposal 0084 rebinds the " +
+		"intra-pod MCP servers per runtime generation, so no restart pool exists on the Kind cluster")
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 60 * time.Second})
+	c := d.Cluster()
+	supervisedpod.WaitReadyPods(t, c, supervisedpod.RestartPool, 1, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tenant := supervisedpod.NewTenant(ctx, t, d, "supervisor-restart-sweep")
+	first, err := d.CreateAndStart(ctx, tenant, supervisedpod.RestartRuntime)
+	if err != nil {
+		t.Fatalf("start a session on %s: %v", supervisedpod.RestartRuntime, err)
+	}
+	residue := supervisedpod.PlantAgentResidue(ctx, t, d, tenant, first.ID)
+	next := supervisedpod.NextSessionOnPod(ctx, t, d, c, tenant, supervisedpod.RestartRuntime, first)
+	if left := supervisedpod.ResidueLeft(supervisedpod.Residue(ctx, t, d, tenant, next.ID, residue)); len(left) != 0 {
+		t.Errorf("restart pod %s: %v the agent left in one session survived the boundary end and sweep",
+			first.PodAssignment, left)
+	}
 }

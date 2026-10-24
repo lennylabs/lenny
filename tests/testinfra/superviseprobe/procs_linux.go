@@ -90,6 +90,12 @@ func IsServingProbe(p Process, exe string) bool {
 	return p.PID != 1 && len(p.Cmdline) == 1 && p.Cmdline[0] == exe && p.State != "Z"
 }
 
+// IsProbeDaemon reports whether p is a live probe daemon, the grandchild
+// that CmdDaemon or a cleanup command running SubDaemonChild leaves behind.
+func IsProbeDaemon(p Process, exe string) bool {
+	return len(p.Cmdline) == 2 && p.Cmdline[0] == exe && p.Cmdline[1] == subDaemonGrandchild && p.State != "Z"
+}
+
 // killRuntime sends SIGKILL to every serving probe process in the container,
 // which on a supervised pod is the runtime process. spec: §4.7.10 (Runtime
 // supervisor, Runtime exits).
