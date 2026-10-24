@@ -30,9 +30,10 @@
 //     /tmp, cgroup memory, network stack, and credential group-read
 //     access, so the deployer must set acknowledgeProcessLevelIsolation.
 //   - The runtime-process acknowledgment requirement: a recycling pool with
-//     maxSessionsPerPod above 1 and a scrubProfile other than vm-restart
-//     keeps one runtime process across the sessions it serves, so it also
-//     requires acknowledgeProcessLevelIsolation.
+//     maxSessionsPerPod above 1, a scrubProfile other than vm-restart, and
+//     recycle.runtimeProcess: keep keeps one runtime process across the
+//     sessions it serves, so it also requires
+//     acknowledgeProcessLevelIsolation.
 //
 // Each adversarial pool is created via POST /v1/admin/pools and must be
 // rejected with 400 VALIDATION_ERROR. A companion control pool (the same
@@ -315,11 +316,13 @@ func recycleCrossTenantScrubbed() string {
 
 // recycleNoCrossTenant is the same recycling sessionPolicy without the
 // cross-tenant flag, the corrected control for the T4 case. maxSessionsPerPod
-// above 1 keeps the pod's runtime process across sessions, so §5.2 requires
-// the process-level isolation acknowledgment.
+// above 1 makes it a reusing recycling pool, so §5.2 requires
+// recycle.runtimeProcess, and under `keep` the pod keeps its runtime process
+// across sessions, so §5.2 requires the process-level isolation
+// acknowledgment.
 func recycleNoCrossTenant() string {
 	return `"sessionPolicy":{"acknowledgeProcessLevelIsolation":true,` +
-		`"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,"maxSessionsPerPod":10}}`
+		`"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,"maxSessionsPerPod":10,"runtimeProcess":"keep"}}`
 }
 
 // recycleNoCrossTenantUnacknowledged is recycleNoCrossTenant without the
@@ -327,7 +330,7 @@ func recycleNoCrossTenant() string {
 // runtime-reuse acknowledgment gate.
 func recycleNoCrossTenantUnacknowledged() string {
 	return `"sessionPolicy":{"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,` +
-		`"maxSessionsPerPod":10}}`
+		`"maxSessionsPerPod":10,"runtimeProcess":"keep"}}`
 }
 
 // poolFields are the variable fields of an admin pool create body.

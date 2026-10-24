@@ -59,7 +59,9 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 // field the CRD models is copied. spec: §5.2 — the §5.2 sessionPolicy
 // recycle block carries the cross-tenant microvm scrub controls
 // (scrubProfile and acknowledgeMicrovmResidualState) the API server
-// enforces as a fail-closed admission gate; the remaining recycle and
+// enforces as a fail-closed admission gate, and the runtime-process
+// lifetime (runtimeProcess) the WarmPoolController reads at pod creation;
+// the remaining recycle and
 // concurrency knobs live in the gateway poolstore and reach the gateway
 // directly rather than through the CRD.
 func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
@@ -143,28 +145,33 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 }
 
 // sessionPolicyToCRD renders the store sessionPolicy recycle block into the
-// CRD SessionPolicy block. The CRD carries only the cross-tenant microvm
-// scrub controls the API server enforces as a fail-closed admission gate
-// (§4.6.3 ownership): the scrub profile and the in-place residual-state
-// acknowledgment. The store's `MicrovmScrubMode` enum carried on
+// CRD SessionPolicy block. The CRD carries the cross-tenant microvm scrub
+// controls the API server enforces as a fail-closed admission gate (§4.6.3
+// ownership), the scrub profile and the in-place residual-state
+// acknowledgment, and the runtime-process lifetime the WarmPoolController
+// reads when it creates a pod. The store's `MicrovmScrubMode` enum carried on
 // `recycle.scrubProfile` matches the CRD `scrubProfile` enum value-for-value
-// (`standard`, `vm-restart`, `in-place`), so it is passed through unchanged;
-// the remaining recycle and concurrency knobs reach the gateway directly
-// through the poolstore. A store row with no recycle scrub control returns
-// nil, leaving the CRD on its default one-session-per-pod configuration.
-// spec: §5.2 (recycle lifecycle, Kata scrub variant).
+// (`standard`, `vm-restart`, `in-place`), and its `RuntimeProcessLifetime`
+// enum matches the CRD `runtimeProcess` enum (`keep`, `restart`), so both are
+// passed through unchanged; the remaining recycle and concurrency knobs reach
+// the gateway directly through the poolstore. A store row that sets none of
+// the three returns nil, leaving the CRD on its default one-session-per-pod
+// configuration; a row that sets only the lifetime returns a block carrying
+// it. spec: §5.2 (recycle lifecycle, Kata scrub variant, Runtime-process
+// lifetime).
 func sessionPolicyToCRD(sp *runtimestore.SessionPolicy) *lennyv1.SessionPolicy {
 	if sp == nil || sp.Recycle == nil {
 		return nil
 	}
 	r := sp.Recycle
-	if r.ScrubProfile == "" && !r.AcknowledgeMicrovmResidualState {
+	if r.ScrubProfile == "" && !r.AcknowledgeMicrovmResidualState && r.RuntimeProcess == "" {
 		return nil
 	}
 	return &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{
 			ScrubProfile:                    string(r.ScrubProfile),
 			AcknowledgeMicrovmResidualState: r.AcknowledgeMicrovmResidualState,
+			RuntimeProcess:                  string(r.RuntimeProcess),
 		},
 	}
 }

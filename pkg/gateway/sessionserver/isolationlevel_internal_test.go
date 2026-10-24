@@ -110,6 +110,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          5,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {

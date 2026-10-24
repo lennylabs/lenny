@@ -267,6 +267,7 @@ func ssRecyclingPool(name, runtimeRef string) poolstore.Pool {
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          25,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}

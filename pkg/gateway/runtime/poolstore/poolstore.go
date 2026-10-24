@@ -523,11 +523,17 @@ func ValidateSDKWarmConfig(p Pool) error {
 //   - recycle.enabled requires acknowledgeBestEffortScrub: true and
 //     maxSessionsPerPod >= 1 (§5.2 deployer acknowledgment).
 //
-//   - recycle.enabled with maxSessionsPerPod > 1 and a scrubProfile other
-//     than vm-restart requires acknowledgeProcessLevelIsolation: the pod
-//     keeps one runtime process across the sessions it serves, and the
-//     whole-pod scrub does not reach it (§5.2 runtime-process
-//     acknowledgment).
+//   - recycle.runtimeProcess (keep or restart) is required with no default
+//     on a reusing recycling pool (recycle.enabled with maxSessionsPerPod > 1
+//     and a scrubProfile other than vm-restart) and rejected on every other
+//     pool (§5.2 Runtime-process lifetime). `restart` is refused on every
+//     pool for the interim stated at refuseRestartUntilPerGenerationMCP.
+//
+//   - A reusing recycling pool under recycle.runtimeProcess: keep requires
+//     acknowledgeProcessLevelIsolation: the `keep` pod keeps one runtime
+//     process across the sessions it serves, and the whole-pod scrub does
+//     not reach it (§5.2 runtime-process acknowledgment). A sequential pool
+//     under `restart` does not require it.
 //
 //   - recycle.allowCrossTenantReuse is permitted only with microvm
 //     isolation and only on the sequential-reuse path
@@ -542,7 +548,8 @@ func ValidateSDKWarmConfig(p Pool) error {
 //   - recycle.scrubProfile `in-place` requires
 //     acknowledgeMicrovmResidualState: true (§5.2 Kata scrub variant).
 //
-//   - The scrubProfile, onScrubFailure, and onPoolExhausted enums, if set,
+//   - The scrubProfile, onScrubFailure, runtimeProcess, and onPoolExhausted
+//     enums, if set,
 //     must be on the §5.2 closed enums, and numeric fields are
 //     non-negative. When maxConcurrentSessions > 1 a set cleanupTimeoutSeconds
 //     must satisfy cleanupTimeoutSeconds >= maxConcurrentSessions * 5.
@@ -592,10 +599,15 @@ func ValidateSessionPolicy(p Pool) error {
 // best-effort-scrub acknowledgment, the required session-count limit, the
 // microvm-only cross-tenant gate, the cross-tenant scrub-profile floor
 // (standard is insufficient; vm-restart or in-place is required), and the
-// in-place residual-state acknowledgment, and last the runtime-process
-// acknowledgment a recycling pool that keeps its runtime process across
-// sessions requires. spec: §5.2 (recycle lifecycle, Kata scrub variant,
-// Deployer acknowledgment (runtime process kept across sessions)).
+// in-place residual-state acknowledgment, the runtime-process lifetime
+// (recycle.runtimeProcess: a known value, required on a reusing recycling
+// pool and rejected on every other pool), the interim refusal of `restart`,
+// and last the runtime-process acknowledgment that a reusing recycling pool
+// under `keep` requires, because a `keep` pod keeps one runtime process
+// across the sessions it serves and the whole-pod scrub does not reach that
+// process. spec: §5.2 (recycle lifecycle, Kata scrub variant,
+// Runtime-process lifetime, Deployer acknowledgment (runtime process kept
+// across sessions)).
 func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.Enabled {
 		if !r.AcknowledgeBestEffortScrub {
@@ -635,46 +647,149 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
 		return errors.New("poolstore: recycle.onScrubFailure is not a recognised §5.2 disposition (warn, fail)")
 	}
+	if r.RuntimeProcess != "" && !r.RuntimeProcess.IsValid() {
+		return errors.New("poolstore: recycle.runtimeProcess is not a recognised §5.2 lifetime (keep, restart)")
+	}
 	if r.MaxScrubFailures < 0 || r.MaxPodUptimeSeconds < 0 {
 		return errors.New("poolstore: recycle numeric fields must be >= 0 (§5.2)")
+	}
+	if err := validateRuntimeProcessPresence(r); err != nil {
+		return err
+	}
+	if err := refuseRestartUntilPerGenerationMCP(r); err != nil {
+		return err
 	}
 	// spec: §5.2 (Deployer acknowledgment (runtime process kept across
 	// sessions)) — the clause runs last so every earlier rejection keeps its
 	// message. ValidateSessionPolicy has already rejected an unacknowledged
-	// maxConcurrentSessions > 1 pool, so this binds sequential pools.
-	if recycleKeepsRuntime(r) && !p.SessionPolicy.AcknowledgeProcessLevelIsolation {
-		return errors.New("poolstore: recycle.enabled with recycle.maxSessionsPerPod > 1 requires " +
-			"sessionPolicy.acknowledgeProcessLevelIsolation=true unless recycle.scrubProfile is vm-restart; " +
-			"the pod keeps one runtime process across the sessions it serves, and the whole-pod scrub " +
-			"does not reach that process (§5.2)")
+	// maxConcurrentSessions > 1 pool, so this binds sequential pools under
+	// `keep`.
+	if RequiresProcessAcknowledgment(p.SessionPolicy) && !p.SessionPolicy.AcknowledgeProcessLevelIsolation {
+		return processAcknowledgmentError(r)
 	}
 	return nil
 }
 
-// KeepsRuntimeAcrossSessions reports whether a pod of a pool with session
-// policy sp keeps one runtime process across the sessions it serves: true
-// when maxConcurrentSessions is above 1, or when the recycle block keeps the
-// runtime (recycleKeepsRuntime). A nil policy keeps none. These are the pools
-// whose definitions require sessionPolicy.acknowledgeProcessLevelIsolation,
-// and the gateway admits a session to a pod that has served an earlier
-// session only on such a pool. spec: §5.2 (Deployer acknowledgment (runtime
-// process kept across sessions)).
-func KeepsRuntimeAcrossSessions(sp *runtimestore.SessionPolicy) bool {
+// validateRuntimeProcessPresence enforces the presence rule of
+// recycle.runtimeProcess: required with no default on a reusing recycling
+// pool (isReusingRecycle), and rejected on every other pool.
+// spec: §5.2 (Runtime-process lifetime).
+func validateRuntimeProcessPresence(r *runtimestore.RecyclePolicy) error {
+	reusing := isReusingRecycle(r)
+	switch {
+	case reusing && r.RuntimeProcess == "":
+		return errors.New("poolstore: recycle.runtimeProcess (keep or restart) is required with no default on a pool " +
+			"with recycle.enabled, recycle.maxSessionsPerPod > 1, and a recycle.scrubProfile other than vm-restart (§5.2)")
+	case !reusing && r.RuntimeProcess != "":
+		return errors.New("poolstore: recycle.runtimeProcess is permitted only on a pool with recycle.enabled, " +
+			"recycle.maxSessionsPerPod > 1, and a recycle.scrubProfile other than vm-restart (§5.2)")
+	}
+	return nil
+}
+
+// errRestartRefusedInterim is the interim refusal of
+// recycle.runtimeProcess: restart.
+var errRestartRefusedInterim = errors.New(`poolstore: recycle.runtimeProcess "restart" is refused until the ` +
+	`intra-pod MCP servers rebind per runtime generation (proposal 0084); use "keep"`)
+
+// refuseRestartUntilPerGenerationMCP refuses recycle.runtimeProcess:
+// restart on every pool.
+//
+// INTERIM GATE. No specification text states this refusal; the
+// specification states only the end-state admission rule, under which a
+// `restart` pool on a restartable runtime is admitted. The reason for the
+// gate is the intra-pod MCP nonce rule: an intra-pod MCP server validates
+// the nonce bound at its start, and a later manifest write does not re-arm
+// it, so a runtime process launched after the first on a `restart` pod has
+// no specified way to authenticate its platform MCP calls. Proposal 0084
+// rebinds the intra-pod MCP servers per runtime generation. When proposal
+// 0084 lands, delete this function, errRestartRefusedInterim, its call in
+// validateRecyclePolicy, these comments, and its test
+// (TestValidateRecyclePolicyRefusesRestartInterim).
+//
+// The gateway admission path runs ValidateRuntimeProcessRestartable before
+// the store reaches this check, so a `restart` pool on a runtime that is not
+// restartable still receives the end-state error.
+func refuseRestartUntilPerGenerationMCP(r *runtimestore.RecyclePolicy) error {
+	if r.RuntimeProcess == runtimestore.RuntimeProcessRestart {
+		return errRestartRefusedInterim
+	}
+	return nil
+}
+
+// processAcknowledgmentError builds the runtime-process acknowledgment
+// rejection for a pool whose configuration requires
+// acknowledgeProcessLevelIsolation and lacks it. The clause stating that
+// the pod keeps one runtime process across the sessions it serves appears
+// only where the process is kept, which is a recycle block under `keep`; a
+// pool under `restart` is told only of the requirement.
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+// sessions)).
+func processAcknowledgmentError(r *runtimestore.RecyclePolicy) error {
+	msg := "poolstore: recycle.enabled with recycle.maxSessionsPerPod > 1 requires " +
+		"sessionPolicy.acknowledgeProcessLevelIsolation=true unless recycle.scrubProfile is vm-restart " +
+		"or recycle.runtimeProcess is restart"
+	if r != nil && r.RuntimeProcess == runtimestore.RuntimeProcessKeep {
+		msg += "; the pod keeps one runtime process across the sessions it serves, and the whole-pod scrub " +
+			"does not reach that process"
+	}
+	return errors.New(msg + " (§5.2)")
+}
+
+// RequiresProcessAcknowledgment reports whether a pool with session policy
+// sp requires sessionPolicy.acknowledgeProcessLevelIsolation because a
+// runtime process can serve two of its sessions: true when
+// maxConcurrentSessions is above 1, whose overlapping sessions share a
+// process under either lifetime, or when the pool is a reusing recycling
+// pool under recycle.runtimeProcess: keep. A nil policy requires none. An
+// acquisition admits a `keep` pod that has served an earlier session only
+// while the resolved configuration requires the acknowledgment. spec: §5.2
+// (Deployer acknowledgment (runtime process kept across sessions)).
+func RequiresProcessAcknowledgment(sp *runtimestore.SessionPolicy) bool {
 	if sp == nil {
 		return false
 	}
-	return sp.MaxConcurrentSessions > 1 || recycleKeepsRuntime(sp.Recycle)
+	return sp.MaxConcurrentSessions > 1 ||
+		(isReusingRecycle(sp.Recycle) && sp.Recycle.RuntimeProcess == runtimestore.RuntimeProcessKeep)
 }
 
-// recycleKeepsRuntime reports whether a recycle block reuses a pod for more
-// than one session in its kept runtime process: recycling is enabled,
-// maxSessionsPerPod is above 1, and the scrub profile is not vm-restart,
-// which retires the pod at every occupancy-zero recycle boundary. A nil
-// block keeps none. spec: §5.2 (Deployer acknowledgment (runtime process
-// kept across sessions); Pod retirement policy).
-func recycleKeepsRuntime(r *runtimestore.RecyclePolicy) bool {
+// ReusesPods reports whether a pool with session policy sp reuses pods, so
+// the gateway may admit a session to a pod that has served an earlier
+// session: true when maxConcurrentSessions is above 1, or when the pool is a
+// reusing recycling pool. It does not depend on recycle.runtimeProcess. A
+// nil policy reuses none. spec: §5.2 (Deployer acknowledgment (runtime
+// process kept across sessions)), §4.6.1 (Reserved hold).
+func ReusesPods(sp *runtimestore.SessionPolicy) bool {
+	if sp == nil {
+		return false
+	}
+	return sp.MaxConcurrentSessions > 1 || isReusingRecycle(sp.Recycle)
+}
+
+// isReusingRecycle reports whether a recycle block makes its pool a reusing
+// recycling pool: recycling is enabled, maxSessionsPerPod is above 1, and
+// the scrub profile is not vm-restart, which retires the pod at every
+// occupancy-zero recycle boundary. A nil block reuses none. spec: §5.2
+// (Runtime-process lifetime; Pod retirement policy).
+func isReusingRecycle(r *runtimestore.RecyclePolicy) bool {
 	return r != nil && r.Enabled && r.MaxSessionsPerPod > 1 &&
 		r.ScrubProfile != runtimestore.MicrovmScrubVMRestart
+}
+
+// ValidateRuntimeProcessRestartable rejects recycle.runtimeProcess: restart
+// on a pool whose runtime is not restartable (§5.1 `command`). restartable
+// is the resolved runtime's registry flag; the caller passes false for a
+// runtime it could not resolve, so an unresolved runtime reads as not
+// restartable. The gateway pool admission paths (create, PUT, their dry
+// runs, and the bootstrap seed) call it beside
+// ValidatePreConnectExecutionMode. spec: §5.2 (Runtime-process lifetime).
+func ValidateRuntimeProcessRestartable(restartable bool, p Pool) error {
+	if restartable || p.SessionPolicy == nil || p.SessionPolicy.Recycle == nil ||
+		p.SessionPolicy.Recycle.RuntimeProcess != runtimestore.RuntimeProcessRestart {
+		return nil
+	}
+	return errors.New(`poolstore: recycle.runtimeProcess "restart" requires a restartable runtime: one that ` +
+		"declares command, runs executionMode session, and does not declare capabilities.preConnect (§5.1, §5.2)")
 }
 
 // ValidateCrossTenantReuseTier enforces the §5.2 T4 cross-tenant

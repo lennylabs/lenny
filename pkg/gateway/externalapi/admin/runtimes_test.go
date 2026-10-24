@@ -956,6 +956,7 @@ func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				OnScrubFailure:             runtimestore.CleanupFailureWarn,
 				MaxSessionsPerPod:          50,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -970,7 +971,7 @@ func TestRuntimeSessionPolicyRoundTrip(t *testing.T) {
 	}
 
 	replacement := &runtimestore.SessionPolicy{
-		Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 99},
+		Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 99, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 	}
 	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
 		admin.UpdateRuntimeRequest{SessionPolicy: replacement})
@@ -1030,6 +1031,7 @@ func TestCreateRuntimeAdmitsSpecScrubProfiles(t *testing.T) {
 					AcknowledgeBestEffortScrub: true,
 					MaxSessionsPerPod:          10,
 					ScrubProfile:               profile,
+					RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 				},
 			},
 		})

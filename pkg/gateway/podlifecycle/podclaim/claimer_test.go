@@ -299,7 +299,8 @@ func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, no
 // spec: 3.2 (within-hold rebind, no acquisition round trip), 4.6.1 (reserved hold)
 func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	c := newEnvtestClient(t, reservedSandbox("sbx-held", "acme"))
+	// The rebind reads the reserved pod before its patch, so the Pod exists.
+	c := newEnvtestClient(t, reservedSandbox("sbx-held", "acme"), lifetimePod(testPool, "sbx-held", "acme", "keep"))
 	seedReservedClaim(t, c, "sbx-held", "acme", now, 30*time.Second)
 
 	var rebound []string
@@ -309,7 +310,7 @@ func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 		OnRebind: func(podID string) { rebound = append(rebound, podID) },
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-2", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-2", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -344,7 +345,7 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 		Now: func() time.Time { return now.Add(time.Minute) }, // past the 10s hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-3", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-3", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -371,7 +372,7 @@ func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
 		Client: c, Namespace: testNS, Now: func() time.Time { return now.Add(5 * time.Second) },
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-4", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-4", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)

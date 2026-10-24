@@ -88,12 +88,12 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
-      "contract": ["tests/tier3_contract/gateway_ops/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/..."],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_pools/runtime_process_wire_test.go"]
     },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
@@ -118,7 +118,7 @@
     },
     "pkg/apis/lenny/": {
       "unit": ["pkg/apis/lenny/..."],
-      "component": ["tests/tier2_component/controllers/runtime_command_env_validation_test.go"],
+      "component": ["tests/tier2_component/controllers/runtime_command_env_validation_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
       "contract": ["tests/tier3_contract/crd_schema/..."]
     },
     "pkg/controller/runtime": {
@@ -131,6 +131,18 @@
     "pkg/gateway/runtime/runtimestore": {
       "unit": ["pkg/gateway/runtime/runtimestore/..."],
       "component": ["tests/tier2_component/stores/runtimestore_test.go"]
+    },
+    "pkg/gateway/runtime/poolstore": {
+      "unit": ["pkg/gateway/runtime/poolstore/..."],
+      "component": ["tests/tier2_component/stores/poolstore_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
+      "contract": ["tests/tier3_contract/rest_pools/..."],
+      "integration": ["tests/tier4_integration/recycle_restart_pod_test.go", "tests/tier4_integration/recycle_scrub_path_test.go"],
+      "security": ["tests/tier9_security/pool_admission_isolation_test.go"]
+    },
+    "pkg/gateway/podlifecycle": {
+      "unit": ["pkg/gateway/podlifecycle/..."],
+      "integration": ["tests/tier4_integration/recycle_restart_pod_test.go"],
+      "security": ["tests/tier9_security/tenant_isolation_test.go"]
     },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
@@ -147,7 +159,7 @@
     },
     "pkg/controller/poolscaling": {
       "unit": ["pkg/controller/poolscaling/..."],
-      "component": ["tests/tier2_component/controllers/poolscaling_test.go"],
+      "component": ["tests/tier2_component/controllers/poolscaling_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/pool_upgrade_test.go"]
     },
     "pkg/controller/poolscaling/strategy": {

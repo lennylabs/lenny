@@ -1023,6 +1023,39 @@ func (d CleanupFailureDisposition) IsValid() bool {
 	return false
 }
 
+// RuntimeProcessLifetime is the §5.2 sessionPolicy.recycle.runtimeProcess
+// enum: the runtime-process lifetime of the pods a reusing recycling pool
+// creates. A `keep` pod keeps its runtime process across the recycle
+// boundary; a `restart` pod ends it in each whole-pod scrub and launches a
+// new process for the next session. The WarmPoolController records the value
+// in the pod label lenny.dev/runtime-process when it creates the pod.
+// spec: §5.2 (Runtime-process lifetime).
+type RuntimeProcessLifetime string
+
+const (
+	// RuntimeProcessKeep keeps the runtime process across the recycle
+	// boundary.
+	RuntimeProcessKeep RuntimeProcessLifetime = "keep"
+	// RuntimeProcessRestart ends the runtime process in each whole-pod scrub
+	// and launches a new one for the next session.
+	RuntimeProcessRestart RuntimeProcessLifetime = "restart"
+)
+
+// AllRuntimeProcessLifetimes returns the closed enum.
+func AllRuntimeProcessLifetimes() []RuntimeProcessLifetime {
+	return []RuntimeProcessLifetime{RuntimeProcessKeep, RuntimeProcessRestart}
+}
+
+// IsValid reports whether l is a known runtime-process lifetime.
+func (l RuntimeProcessLifetime) IsValid() bool {
+	for _, v := range AllRuntimeProcessLifetimes() {
+		if l == v {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionPolicy is the §5.1 / §5.2 sessionPolicy block: the session-mode
 // pod-reuse, concurrency, and workspace-cleanup policy for a runtime. The
 // former task and concurrent modes collapse into presets of this block:
@@ -1041,9 +1074,10 @@ type SessionPolicy struct {
 	// and credential group-read access, and a recycled pod carries the
 	// state the whole-pod scrub does not reach into its next session.
 	// Required when MaxConcurrentSessions > 1, and on a pool with
-	// Recycle.Enabled, Recycle.MaxSessionsPerPod > 1, and a
-	// Recycle.ScrubProfile other than `vm-restart`, because the pod then
-	// keeps one runtime process across its sessions. Pool admission
+	// Recycle.Enabled, Recycle.MaxSessionsPerPod > 1, a
+	// Recycle.ScrubProfile other than `vm-restart`, and
+	// Recycle.RuntimeProcess `keep`, because a `keep` pod keeps one runtime
+	// process across its sessions. Pool admission
 	// refuses the pool without it. spec: §5.2 (Deployer acknowledgment
 	// (runtime process kept across sessions)).
 	AcknowledgeProcessLevelIsolation bool `json:"acknowledgeProcessLevelIsolation,omitempty"`
@@ -1135,6 +1169,12 @@ type RecyclePolicy struct {
 
 	// MaxPodUptimeSeconds optionally retires a pod after this uptime.
 	MaxPodUptimeSeconds int `json:"maxPodUptimeSeconds,omitempty"`
+
+	// RuntimeProcess is the §5.2 runtime-process lifetime (`keep` or
+	// `restart`) of the pods the pool creates. It is required with no
+	// default on a reusing recycling pool and rejected on every other pool.
+	// spec: §5.2 (Runtime-process lifetime).
+	RuntimeProcess RuntimeProcessLifetime `json:"runtimeProcess,omitempty"`
 }
 
 // Clone returns a deep copy of the recycle policy. A nil receiver clones

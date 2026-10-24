@@ -43,6 +43,7 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 		var runtimeTier runtimestore.WorkspaceTier
 		var runtimePreConnect bool
 		runtimeRequireSoPeercred := true
+		runtimeRestartable := false
 		if r.runtimes != nil && p.RuntimeRef != "" {
 			rt, err := r.runtimes.Get(req.Context(), p.RuntimeRef)
 			if err != nil {
@@ -53,11 +54,20 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			runtimeTier = rt.WorkspaceTier
 			runtimePreConnect = poolstore.RuntimePreConnect(rt)
 			runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
+			runtimeRestartable = rt.Restartable
 		}
 		pl := r.poolFromPayload(p)
 		// spec: §5.2, §6.1 — an SDK-warm runtime cannot
 		// back a service-mode pool or a concurrent session-mode pool.
 		if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.SessionPolicy); err != nil {
+			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
+		// spec: §5.2 (Runtime-process lifetime) — the bootstrap seed holds
+		// the same refusal of `restart` on a runtime that is not restartable
+		// as the POST and PUT handlers; an unresolved runtime reads as not
+		// restartable.
+		if err := poolstore.ValidateRuntimeProcessRestartable(runtimeRestartable, pl); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}

@@ -42,6 +42,7 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 	base := newEnvtestClient(
 		t,
 		reservedSandbox("sbx-held", "acme"),
+		lifetimePod(testPool, "sbx-held", "acme", "keep"),
 		sandboxIn(testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, base, "sbx-held", "acme", now, 30*time.Second)
@@ -65,7 +66,7 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 		Now: func() time.Time { return now.Add(5 * time.Second) }, // within the hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-race", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-race", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: the rebind-vs-expiry race must fall through, got %v", err)

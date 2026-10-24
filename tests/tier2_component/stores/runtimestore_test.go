@@ -293,6 +293,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				OnScrubFailure:             runtimestore.CleanupFailureWarn,
 				MaxSessionsPerPod:          50,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 			CleanupCommands: []string{"rm -rf /tmp/x"},
 		}

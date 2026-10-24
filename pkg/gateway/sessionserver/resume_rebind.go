@@ -240,27 +240,28 @@ func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Cli
 }
 
 // checkpointResumeRequest assembles the §7.1 ResumeRequest that restores row
-// from its checkpoint onto a pod of the resolved pool match. KeepsRuntime is
-// copied from the pool match so the resume's claim applies the §5.2
+// from its checkpoint onto a pod of the resolved pool match. ReusesPods and
+// RequiresProcessAcknowledgment are copied from the pool match so the resume's claim applies the §5.2
 // process-reuse rule the session's pool configuration resolves to. rb
 // carries the resume driver's post-claim hook and its entry generation, which
 // the restore records on every lease it mints (§7.3 (Resume driver;
 // Credential leases on the replacement pod)).
 func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant, rb resumeBind) podsession.ResumeRequest {
 	return podsession.ResumeRequest{
-		Pool:                    match.Pool,
-		SessionID:               row.ID,
-		TenantID:                row.TenantID,
-		KeepsRuntime:            match.KeepsRuntime,
-		Runtime:                 row.RuntimeRef,
-		CheckpointID:            row.WorkspaceSnapshot.Ref,
-		ExperimentContext:       experimentContextToProto(row.ExperimentContext),
-		TracingContext:          row.TracingContext,
-		AgentInterface:          agentInterface,
-		MinPlatformVersion:      minPlatformVersion,
-		RecoveryGeneration:      row.RecoveryGeneration,
-		ExpectedWorkspaceBytes:  expectedBytes,
-		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
+		Pool:                          match.Pool,
+		SessionID:                     row.ID,
+		TenantID:                      row.TenantID,
+		ReusesPods:                    match.ReusesPods,
+		RequiresProcessAcknowledgment: match.RequiresProcessAcknowledgment,
+		Runtime:                       row.RuntimeRef,
+		CheckpointID:                  row.WorkspaceSnapshot.Ref,
+		ExperimentContext:             experimentContextToProto(row.ExperimentContext),
+		TracingContext:                row.TracingContext,
+		AgentInterface:                agentInterface,
+		MinPlatformVersion:            minPlatformVersion,
+		RecoveryGeneration:            row.RecoveryGeneration,
+		ExpectedWorkspaceBytes:        expectedBytes,
+		WorkspaceSizeLimitBytes:       match.WorkspaceSizeLimitBytes,
 		// spec: §7.3 step (d) — "Recreate same absolute `cwd`
 		// path." The gateway carries the original session's adapter-
 		// reported WorkspaceRoot (captured on the §15.5 handshake and

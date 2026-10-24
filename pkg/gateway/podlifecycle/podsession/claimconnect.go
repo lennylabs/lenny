@@ -37,7 +37,8 @@ type negotiated struct {
 // adapter connection: the post-claim hook runs between it and handshake, so a
 // caller can record the claim before any RPC reaches the pod. A failure here
 // leaves no claim behind for the caller to release. req carries the pool,
-// session, tenant, and the resolved pool's KeepsRuntime.
+// session, tenant, and the resolved pool's ReusesPods and
+// RequiresProcessAcknowledgment.
 //
 // spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)); §7.3 (Retry and
 // Resume).

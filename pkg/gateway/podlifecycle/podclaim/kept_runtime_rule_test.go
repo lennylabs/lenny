@@ -16,13 +16,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-// The cases in this file pin the acquisition rule for a pool whose
-// configuration keeps no runtime process across sessions (KeepsRuntime
-// false): every acquisition refuses a pod that has served a session, drains
-// a refused idle pod no claim holds, and ends a reserved hold with the
-// precondition-guarded DELETE instead of rebinding it.
+// The cases in this file pin the acquisition rule for a pool that reuses no
+// pod (ReusesPods false): every acquisition refuses a pod that has served a
+// session under the runtime-process acknowledgment, drains a refused idle pod
+// no claim holds, and ends a reserved hold with the precondition-guarded
+// DELETE instead of rebinding it. runtime_process_acquisition_test.go pins
+// the per-pod refusal of a `keep` pod on a pool that reuses pods.
 
-// claimOutside runs one Claim with KeepsRuntime false for acme.
+// claimOutside runs one Claim with both predicates false for acme.
 func claimOutside(claimer *podclaim.Claimer, pool, session string) (*lennyv1.SandboxClaim, error) {
 	return claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: pool, SessionID: session, TenantID: "acme",
@@ -31,7 +32,7 @@ func claimOutside(claimer *podclaim.Claimer, pool, session string) (*lennyv1.San
 
 // spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions)), 4.6.1 (Reserved hold)
 // diagnosis: a pod that served a session is dispatched into, or left
-// undrained, on a pool whose configuration keeps no runtime process, or an
+// undrained, on a pool that reuses no pod, or an
 // acquisition in progress on another replica loses its pod.
 func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2(t *testing.T) {
 	base := newEnvtestClient(
@@ -84,7 +85,7 @@ func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2(t *testing.T) {
 }
 
 // spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions)), 4.6.1 (Reserved hold)
-// diagnosis: on a pool whose configuration keeps no runtime process, a
+// diagnosis: on a pool that reuses no pod, a
 // reserved pod is rebound to its tenant's next session, its hold survives the
 // acquisition, a drain request lands before the pod returns to idle, or the
 // returned idle pod is never drained.

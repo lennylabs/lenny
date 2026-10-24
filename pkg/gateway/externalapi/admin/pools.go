@@ -602,6 +602,9 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// runtime whose registry definition carries an explicit
 	// requireSoPeercred: false. spec: §4.7.
 	runtimeRequireSoPeercred := true
+	// runtimeRestartable is the resolved §5.1 restartable flag of the pool's
+	// runtime; an unresolved runtime reads as not restartable.
+	runtimeRestartable := false
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -614,6 +617,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
 		runtimeMultiTurn = poolstore.RuntimeMultiTurn(rt)
 		runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
+		runtimeRestartable = rt.Restartable
 	}
 
 	pl := r.poolFromPayload(body)
@@ -622,6 +626,15 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// session-mode pool (maxConcurrentSessions > 1) before storage;
 	// SDK-warm assumes a single pre-connected agent process.
 	if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.SessionPolicy); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef})
+		return
+	}
+	// spec: §5.2 (Runtime-process lifetime) — refuse
+	// recycle.runtimeProcess: restart on a runtime that is not restartable
+	// before storage (and before the store's own recycle checks), on the
+	// persisted create and the dry run alike.
+	if err := poolstore.ValidateRuntimeProcessRestartable(runtimeRestartable, pl); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
@@ -1681,7 +1694,41 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 			}
 		}
 	}
+	return r.validateUpdateRuntimeProcess(w, req, name, body)
+}
+
+// validateUpdateRuntimeProcess refuses a PUT (persisted or dry run) that
+// would leave the pool under recycle.runtimeProcess: restart on a runtime
+// that is not restartable. It evaluates the merged effective pool (the
+// stored row with the body applied), so a runtimeRef swap to a
+// non-restartable runtime and a sessionPolicy that newly selects `restart`
+// are both caught. An unresolved runtime, including one read while no
+// runtime store is wired, reads as not restartable. A missing pool is left
+// to the persist and preview stages, which resolve the 404. It writes the
+// failure to w and returns false. spec: §5.2 (Runtime-process lifetime).
+func (r *Router) validateUpdateRuntimeProcess(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) bool {
+	current, err := r.pools.Get(req.Context(), name)
+	if err != nil {
+		return true
+	}
+	applyPoolUpdateMerge(&current, body)
+	if verr := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req, current.RuntimeRef), current); verr != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(),
+			map[string]any{"runtimeRef": current.RuntimeRef})
+		return false
+	}
 	return true
+}
+
+// runtimeRestartable resolves the §5.1 restartable flag of the runtime named
+// ref. It fails closed: no runtime store, an empty ref, or a failed lookup
+// reads as not restartable. spec: §5.2 (Runtime-process lifetime).
+func (r *Router) runtimeRestartable(req *http.Request, ref string) bool {
+	if r.runtimes == nil || ref == "" {
+		return false
+	}
+	rt, err := r.runtimes.Get(req.Context(), ref)
+	return err == nil && rt.Restartable
 }
 
 // previewPoolUpdate renders the §15.1 dryRun preview: it merges the body

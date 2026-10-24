@@ -942,6 +942,7 @@ bootstrap:
           enabled: true
           acknowledgeBestEffortScrub: true
           maxSessionsPerPod: 5
+          runtimeProcess: keep
         cleanupTimeoutSeconds: 30
     # §5.2 concurrent-session pool: maxConcurrentSessions > 1 multiplexes
     # simultaneous sessions onto one warm pod's echo-concurrent process,
@@ -980,6 +981,7 @@ bootstrap:
           enabled: true
           acknowledgeBestEffortScrub: true
           maxSessionsPerPod: 5
+          runtimeProcess: keep
         cleanupTimeoutSeconds: 30
     # §5.2 concurrent-session pool on the heartbeat-silence fixture. It
     # mirrors concurrent-echo-pool so the tier-5 stream-failure case can

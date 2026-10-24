@@ -454,6 +454,7 @@ func TestRuntimeSessionPolicyRoundTripAndIsolation(t *testing.T) {
 			OnScrubFailure:             runtimestore.CleanupFailureWarn,
 			MaxScrubFailures:           3,
 			MaxSessionsPerPod:          50,
+			RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 		},
 	}
 	if err := s.Create(context.Background(), runtimestore.Runtime{

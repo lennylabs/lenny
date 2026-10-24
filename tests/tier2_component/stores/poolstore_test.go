@@ -143,7 +143,7 @@ func TestPoolStoreContract(t *testing.T) {
 		// diagnosis: the Postgres store admits or persists a recycling pool
 		// that keeps a runtime process without the deployer acknowledgment.
 		keptRecycle := func() *runtimestore.RecyclePolicy {
-			return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5}
+			return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5, RuntimeProcess: runtimestore.RuntimeProcessKeep}
 		}
 		if err := store.Create(ctx, poolstore.Pool{
 			Name: poolName(t), ExecutionMode: runtimestore.ExecutionModeSession,

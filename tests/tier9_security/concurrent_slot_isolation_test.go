@@ -71,6 +71,7 @@ func TestConcurrentCrossTenantReuseRejected_spec_6_28(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          10,
 				AllowCrossTenantReuse:      true,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}
@@ -96,6 +97,7 @@ func TestConcurrentCrossTenantReuseRejected_spec_6_28(t *testing.T) {
 			Enabled:                    true,
 			AcknowledgeBestEffortScrub: true,
 			MaxSessionsPerPod:          10,
+			RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 		},
 	}
 	if err := poolstore.ValidateSessionPolicy(good); err != nil {
