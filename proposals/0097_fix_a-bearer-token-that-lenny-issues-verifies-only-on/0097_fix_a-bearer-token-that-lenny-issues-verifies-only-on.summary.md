@@ -2,7 +2,7 @@
 
 ## Summary
 
-**Problem statement.** Every gateway replica and every Token Service replica draws its own random HS256 key at startup and holds it in plaintext, and each verifier trusts only its own key. In a default multi-replica install, gateway-minted bearers fail on peer replicas, `POST /v1/oauth/token` bearers verify on no gateway, Token Service replicas reject each other's tokens, and every token stops verifying when its signer restarts. `lenny-ops` requires in production an HMAC key that no component signs with. The code also departs from the §10.2 rule that the signing key never exists in gateway memory. The spec is silent on the algorithm, key identity, verifier key distribution, signing topology, and rotation state, and it contradicts itself on which component mints, on per-interaction token refresh, and on where signing sits relative to the advisory lock. The owner has settled remote asymmetric KMS signing, a fixed token lifetime, a 15-minute default for every token whose holder can refresh it, and `lenny-ops` acceptance of unrevoked Lenny-issued tokens during a Postgres outage.
+**Problem statement.** Every gateway replica and every Token Service replica draws its own random HS256 key at startup and holds it in plaintext, and each verifier trusts only its own key. In a default multi-replica install, gateway-minted bearers fail on peer replicas, `POST /v1/oauth/token` bearers verify on no gateway, Token Service replicas reject each other's tokens, and every token stops verifying when its signer restarts. `lenny-ops` requires in production an HMAC key that no component signs with. The code also departs from the §10.2 rule that the signing key never exists in gateway memory. The spec is silent on the algorithm, key identity, verifier key distribution, signing topology, and rotation state, and it contradicts itself on which component mints, on per-interaction token refresh, and on where signing sits relative to the advisory lock. The owner has settled remote asymmetric KMS signing, a fixed token lifetime, a 15-minute default for every token whose holder can refresh it, `lenny-ops` acceptance of unrevoked Lenny-issued tokens during a Postgres outage, and `lenny-ops` production readiness that passes when either Postgres or the Kubernetes API is reachable.
 
 **What changes.**
 - §10.2, §4.3, §17.4, §18, §25.4, and §25.15: one ES256 key named by the `platform:jwt-signing` alias, signed remotely on AWS, GCP, or Azure and derived from the master key on `local`. A key set loaded once at startup by the gateway, the Token Service, and `lenny-ops`, and a three-rollout rotation, with `lenny-ops` holding a revocation set for Lenny-issued tokens that stays in force through a Postgres outage (SPEC-1, SPEC-2, SPEC-6, SPEC-9, SPEC-11, CODE-6).
@@ -10,6 +10,7 @@
 - §10.2, §15, §16, and §17.8: throttling as backpressure, a sign-rate metric, a near-quota alert, and sign-rate sizing (SPEC-4, SPEC-5, SPEC-8, CODE-3, CODE-7, CODE-11, CHART-5).
 - §13.3 and §8.2: signing before the write-before-issue transaction, with an in-lock revocation re-read of the subject and actor (SPEC-7, CODE-9).
 - `pkg/kms`, `pkg/auth/jwt`, and the three binaries: the KMS `Sign` and `PublicKey` seam, the remote signer and `KeySet`, the wiring, and deletion of the HMAC signer, `RotatingVerifier`, and the published JWKS endpoint (CODE-1, CODE-2, CODE-4, CODE-5, CODE-6, CODE-10, CODE-12).
+- §25.4 "Probes", `pkg/ops/opsserver`, and the `lenny-ops` chart: production readiness uses the permissive `/healthz`, which passes when Postgres or the Kubernetes API is reachable, and `/healthz?strict=true` remains a diagnostic check that no probe uses (SPEC-11, CODE-13).
 - Chart, docs, records, and cross-process tests: the local master key Secret, `lenny-ops` KMS wiring, gateway and `lenny-ops` KMS egress, the runbook rewrite, and the every-replica tier-4 probe (CHART-2, CHART-4, SPEC-10, DOCS-1, DOCS-2, REC-1, TEST-1).
 
 **Decisions.**
@@ -35,6 +36,8 @@
 - D20. Capacity text goes in §17.8 only. The `issued_tokens` write-rate gap in the §12.3 table predates this change, so this proposal leaves it unstaged. This departs from the problem statement's scope line asking for capacity guidance in "§17.8 and §12.2" with "the token-issuance rows in the Postgres write budget".
 - D21. There is one spec pass and one implementation pass, and every adapter gains signing before any binary switches. No interim production posture or claim-register row is needed.
 - D22. Per owner decision 4 (2026-10-23), `lenny-ops` keeps an in-memory revocation set for Lenny-issued tokens (option B). SPEC-11 Edit 2 states the rules and CODE-6 item 6 implements them. No revocation can commit while Postgres is down, so a set loaded before an outage misses only revocations that committed before it and had not arrived. Those are enforced at the first successful read after Postgres returns, or never if the token expires first. The window is bounded by the outage rather than by a lifetime cap, because `lenny-ops` accepts every audience: `lenny-ctl` presents its gateway bearer to `lenny-ops`. This departs from the 1-hour bound in the problem statement's owner decision 4, which assumed that only `lenny-ops`-audience tokens reach `lenny-ops`. A `lenny-ops` that starts during the outage refuses Lenny-issued tokens until a read succeeds. A read that fails while Postgres still accepts writes, such as a permissions or routing fault, leaves the set behind until a read succeeds, and the error log of each failed read records it. Both residual risks are accepted. The spec states the 30-second re-read for `lenny-ops` because §13.3 states no periodic read, and without it a Redis outage would leave the set unrefreshed. Rejected: option A, refusing all Lenny-issued tokens while Postgres is down, which disables the §25.15 loop in the outage it exists for; and option C, accepting only `lenny-ops`-audience tokens with revocation deferred, which leaves revocation unchecked.
+- D23. OD1 is settled as option (a) by the owner's delegate (2026-10-24). `lenny-ops` reuses the gateway's `authmw` unchanged and emits the gateway's existing revoked-token response, `401 TOKEN_REVOKED`. SPEC-11 Edit 2 rule 3 refers to the response a gateway replica returns for a revoked token and names no code, because the §15 error catalog defines no revoked-token code in either spelling, every §15 code is upper snake case, and §13.3's lowercase `token_revoked` reads as an informal mention. The CODE-6 rule-3 case and TEST-1 items 2 and 6 assert parity with the gateway's response. Rejected: option (b), changing `authmw` to emit `token_revoked`, which is a client-visible change on every gateway route and widens CODE-6 into the gateway. A follow-up reconciles §15 and §13.3 with the code (Defects).
+- D24. Per owner decision 6 (2026-10-24), OD2 is settled as option (b). `lenny-ops` production readiness passes when either Postgres or the Kubernetes API is reachable, as §25.4 "Startup and Readiness" already states. SPEC-11 Edit 6 moves the §25.4 "Probes" readiness probe to the permissive `/healthz` and keeps `/healthz?strict=true` as a diagnostic check that no probe uses. CODE-13 makes the permissive `/healthz` handler implement the either-dependency rule, which it does not today, and renders `/healthz` as the production readiness probe. A Postgres outage fails every replica at once, so strict readiness empties the Service and makes the §25 degraded-mode design unreachable in production. That design covers owner decision 4, the Tier 2 and Tier 3 remediation locks, the Redis escalation fallback, and the §25.15 rows. Accepted cost: a single replica whose Postgres connection broke while its peers are healthy stays in rotation and serves degraded responses with `degradation.warnings`. Because liveness and startup share the permissive `/healthz`, a pod that reaches neither dependency now fails liveness, as §25.4 already states. Rejected: option (a), deferring the probe fix to a follow-up proposal, which leaves owner decision 4 effective only in non-production renders.
 
 **Watch out for.**
 - SPEC-1, SPEC-4, SPEC-6, and SPEC-9 contradict each other unless they land in one pass (spec-changes **Design**).
@@ -50,6 +53,7 @@
 - `lenny-ops` must not wire the gateway's `RevocationFreshness` gate with `Cache.Stale`, which is option A (CODE-6 item 6).
 - Without the CODE-6 item 6 chart change, a chart-deployed `lenny-ops` has no Postgres DSN and refuses every Lenny-issued token for the life of the process.
 - `cmd/lenny-gateway/user_revocation.go` and its test fake change with the CODE-9 store signature, or `cmd/lenny-gateway` stops compiling (CODE-9 item 4).
+- After CODE-13 the permissive `/healthz` fails when neither Postgres nor the Kubernetes API is reachable, so the tier-4 Postgres-outage case needs a Kubernetes API for `lenny-ops` (TEST-1 item 2). The CODE-13 chart comment rewrite changes the dev-preset render, so the embedded manifests are regenerated in the same step (CODE-13 item 4).
 
 ## Goals
 
@@ -58,6 +62,7 @@
 - The spec states the algorithm, key identity, key distribution, signing topology, rotation procedure, dev posture, and token lifetime, and its contradictions on these points are resolved.
 - A KMS quota burst degrades mints with retryable 503s rather than tripping the breaker fleet-wide, and the spec sizes the sign rate and the quota.
 - A revoked subject or actor cannot produce a token, including through a concurrent rotation.
+- A production `lenny-ops` replica stays Ready during a Postgres outage while the Kubernetes API is reachable, so the §25.15 degraded mode and owner decision 4 hold in production.
 
 ## Non-goals
 
@@ -97,17 +102,12 @@
 - A per-request verified-token cache to offset ES256 verification cost. The problem does not exhibit the cost, and §17.8 records it as a sizing note.
 - Implementing the session-creation `session_capability` mint and delegation child-token signing. They are out of scope per the problem, and §10.2 "Signing topology" states which signer each will use.
 - Adding an `issued_tokens` row to the §12.3 write-IOPS table (D20).
+- Deferring the `lenny-ops` production readiness fix to a follow-up proposal (owner decision 6 option (a), D24).
+- Changing `authmw` to emit `token_revoked` (OD1 option (b), D23).
 
 ## Open decisions for human to make
 
-- OD1. Response code for a revoked `jti` on `lenny-ops`. SPEC-11 Edit 2 rule 3 keeps §13.3's `401 token_revoked`, while the gateway's `authmw` writes `TOKEN_REVOKED` (Defects).
-  - Option (a), the default: CODE-6 reuses `authmw` unchanged, and the CODE-6 rule-3 case and TEST-1 items 2 and 6 assert parity with the gateway's revoked-token response. Until the drift is fixed, `lenny-ops` and the gateway emit the same non-conforming code.
-  - Option (b): CODE-6 also changes `authmw` to emit `token_revoked`, and those tests assert `401 token_revoked`. This is a client-visible change on every gateway route and widens CODE-6 into the gateway.
-  - Default (a), because it is the smaller change and the drift predates 0097.
-- OD2. Production readiness during a Postgres outage. The production probe removes every `lenny-ops` replica from the Service while Postgres is down (Defects), so the rule-5 acceptance that owner decision 4 chose is unreachable in a production render.
-  - Option (a), the default: leave the contradiction unstaged. Owner decision 4 then holds only for non-production renders until a follow-up proposal reconciles §25.4 "Probes" with "Startup and Readiness".
-  - Option (b): stage a §25.4 "Probes" edit and a chart change so that production readiness uses the either-dependency rule. This widens 0097 beyond the problem statement and makes owner decision 4 effective in production.
-  - Default (a), because the contradiction predates 0097 and lies outside the problem statement. The owner may prefer (b), because (a) leaves the decision's motive unmet in production.
+None. OD1 and OD2 are settled (D23, D24).
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -120,8 +120,7 @@
 - The §12.3 write-IOPS table has no `issued_tokens` row for token issuance. It is a pre-existing sizing gap (D20).
 - F-10.2.23 and F-10.2.24 (tenancy-mode behavior) are out of scope per the problem statement.
 - `cmd/lenny-token-service` never sets `tokenservice.Options.RevocationPropagator`, so a committed rotation publishes no `token.revoked` event and records `propagation_mode: postgres_only`, although §13.3 "Token rotation and revocation" says the revocation propagates on the EventBus. Gateway replicas and `lenny-ops` learn of it only at their next 30-second read.
-- `authmw` refuses a revoked `jti` with code `TOKEN_REVOKED` (`pkg/gateway/middleware/auth/auth.go`), while §13.3 names `token_revoked`.
-- In production the `lenny-ops` readiness probe is `/healthz?strict=true`, which needs Postgres (`charts/lenny/templates/ops-deployment.yaml`, §25.4 "Probes"). This contradicts §25.4 "Startup and Readiness" ("either dependency suffices"). It removes every `lenny-ops` replica from the Service during a Postgres outage, which the §25.15 degraded loop and D22 assume stays reachable.
+- The §15 error catalog has no row for a revoked token, and §13.3 "Token rotation and revocation" spells the code `token_revoked` in lower case, while `authmw` refuses a revoked `jti` with `401 TOKEN_REVOKED` (`pkg/gateway/middleware/auth/auth.go`). `lenny-ops` emits the same response (D23). A follow-up proposal adds the §15 row and reconciles the §13.3 spelling with the code.
 - No verifier enforces `aud` by default. The admin credential and impersonation bearers carry the `--bearer-expected-audiences` value, which is empty by default.
 
 ## Impacts on other proposals
@@ -143,7 +142,7 @@
 - SPEC-8 — spec/17_deployment-topology.md — §17.8 lifetime and quota defaults and the KMS Sign rate paragraph.
 - SPEC-9 — spec/17_deployment-topology.md — §17.4 KMS row, state and resets, and dev guard rails.
 - SPEC-10 — spec/13_security-model.md, spec/25_agent-operability.md, spec/17_deployment-topology.md — gateway and `lenny-ops` KMS endpoint egress.
-- SPEC-11 — spec/18_build-sequence.md, spec/25_agent-operability.md — §18.33 rotation bullet, §25.4 startup and authentication sentences with the `lenny-ops` revocation set, the §25.1 dependency list and §25.4 Dependencies table, and §25.15 Postgres outage rows.
+- SPEC-11 — spec/18_build-sequence.md, spec/25_agent-operability.md — §18.33 rotation bullet, §25.4 startup and authentication sentences with the `lenny-ops` revocation set, the §25.1 dependency list and §25.4 Dependencies table, §25.15 Postgres outage rows, and the §25.4 "Probes" readiness probe and strict-check bullets.
 - CODE-1 — pkg/kms — `Sign`, `PublicKey`, `ErrThrottled`, local derivation, and reference validation.
 - CODE-2 — pkg/auth/jwt — context-taking `Sign`, remote ES256 signer, and `KeySet`.
 - CODE-3 — pkg/auth/jwt/breakersigner.go — throttling, `Retry-After`, and the outcome hook.
@@ -156,6 +155,7 @@
 - CODE-10 — cmd/lenny-gateway, pkg/gateway/audit/jwtaudit, pkg/auth/jwt/jwks.go — deletion of the JWKS endpoint and the rotation observer.
 - CODE-11 — pkg/alerting/rules — `KMSSignQuotaApproaching` and the `KMSSigningUnavailable` text, with regenerated rule files.
 - CODE-12 — pkg/auth/jwt — deletion of the HMAC `KMSSigner`, `RotatingVerifier`, and `PublicJWK`.
+- CODE-13 — pkg/ops/opsserver, tests/testinfra/opsprocess, charts/lenny/templates/ops-deployment.yaml, charts/lenny/tests/ops-deployment_test.yaml, pkg/embedded/manifests/manifests.yaml — either-dependency permissive `/healthz`, the harness wait on `/readyz`, and the production readiness probe on `/healthz`.
 - CHART-1 — charts/lenny values, schema, presets, pkg/chart/values — lifetime key, quota key, and comments.
 - CHART-2 — charts/lenny, pkg/embedded/stack — local master key Secret and KMS flags on all three deployments.
 - CHART-4 — charts/lenny/templates/system-network-policies.yaml, ops-network-policies.yaml, values.yaml — KMS endpoint egress for the gateway and `lenny-ops`.

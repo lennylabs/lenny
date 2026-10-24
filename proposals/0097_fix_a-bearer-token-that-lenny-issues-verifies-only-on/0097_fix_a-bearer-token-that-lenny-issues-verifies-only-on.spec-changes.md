@@ -18,7 +18,8 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 - **Rotation step taken early.** Step 2 before step 1 has rolled out everywhere makes new tokens fail on processes that lack the new key. Step 3 before the `lenny-gateway` cap elapses rejects unexpired tokens the old key signed. SPEC-2 states the ordering and the wait.
 - **Bootstrap admin credential across rotation.** Its lifetime exceeds the step-3 wait, so SPEC-2 step 2 re-mints it. An operator who skips that step is locked out at step 3.
 - **Concurrent rotation of one subject.** The second transaction's step (1a) re-read sees the subject revoked by the first and rejects with `subject_token_revoked` (SPEC-7). A retried rotation of an already-rotated token fails the same way.
-- **Postgres outage seen by `lenny-ops`.** SPEC-11 Edit 2 rules 4 and 5 state the behavior, and summary D22 records the accepted residual risks.
+- **Postgres outage seen by `lenny-ops`.** SPEC-11 Edit 2 rules 4 and 5 state the behavior, and summary D22 records the accepted residual risks. SPEC-11 Edit 6 keeps every replica Ready while the Kubernetes API is reachable, so the Service keeps routing to `lenny-ops` during the outage (owner decision 6).
+- **One replica loses its own Postgres connection.** The replica stays Ready while its peers are healthy and serves degraded responses with `degradation.warnings` (SPEC-11 Edit 6). Owner decision 6 accepts this cost.
 - **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out revoked is discarded and never returned (SPEC-7).
 
 ## Staged edits
@@ -274,7 +275,7 @@ see [Section 25.4](25_agent-operability.md#254-the-lenny-ops-service) `lenny-ops
 Egress allows Postgres, Redis, MinIO, Prometheus, and the KMS endpoint when `kms.provider` is not `local`.
 ```
 
-### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.1 Design Philosophy and Agent Model: Component Model dependency list; § 25.4 The `lenny-ops` Service: Startup and Readiness, Authentication, and Dependencies; and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
+### SPEC-11 · spec/18_build-sequence.md § 18.33 Phase 14 — Comprehensive security hardening; spec/25_agent-operability.md § 25.1 Design Philosophy and Agent Model: Component Model dependency list; § 25.4 The `lenny-ops` Service: Probes, Startup and Readiness, Authentication, and Dependencies; and § 25.15 Failure Mode Analysis: "Postgres down" and "Postgres + Redis both down" rows
 
 **Edit 1.** In §18.33, replace the bullet "- JWT signing-key rotation procedure per [§13.3](13_security-model.md#133-credential-flow): JWK Set publication endpoint, key-overlap window, rollover audit event emission (`platform.jwt_signing_key_rotated`), and the operator runbook." with:
 
@@ -295,7 +296,7 @@ Then insert the following as a new paragraph and list immediately after the para
 
 1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read adds the rows it returns to the set.
 2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
-3. A token whose `jti` is in the set is refused with `401 token_revoked`.
+3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
 4. Until the first successful read since the process started, every Lenny-issued token is refused with `503 token_validation_unavailable`.
 5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
 6. Rules 1 to 5 do not apply to upstream IdP tokens.
@@ -329,6 +330,26 @@ Then, in §25.1 "Component Model", insert this bullet after the "**Postgres, Red
 ```markdown
 - **KMS**, when `kms.provider` is not `local`, is required at process start.
 ```
+
+**Edit 6.** In §25.4 "Probes", make readiness use the permissive check that §25.4 "Startup and Readiness" already states (owner decision 6). In the YAML block, replace the `readinessProbe` entry's line "    path: /healthz?strict=true" with:
+
+```yaml
+    path: /healthz
+```
+
+Then replace the bullet "- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness and startup." with:
+
+```markdown
+- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness. Readiness uses the permissive check because a Postgres outage reaches every replica at once, and a readiness gate that required Postgres would remove every replica from the Service and leave the degraded mode of [Section 25.15](#2515-failure-mode-analysis) without a reachable replica. A replica whose own Postgres connection failed while its peers are healthy therefore stays Ready and serves degraded responses with `degradation.warnings`.
+```
+
+Then replace the bullet "- **`/healthz?strict=true`** (strict): 200 only when both Postgres connection AND K8s API are reachable. Used by readiness — traffic is not routed to replicas that can't serve the full API." with:
+
+```markdown
+- **`/healthz?strict=true`** (strict): 200 only when both the Postgres connection and the K8s API are reachable. No probe uses it. It is a diagnostic check that an operator or an agent runs against a replica to learn whether that replica can serve the full API.
+```
+
+The sentence "When the `strict=true` check returns 503, the response body identifies which dependencies are degraded so operators reading endpoint logs can diagnose the cause." stays unchanged.
 
 ## Spec files touched
 

@@ -1,6 +1,6 @@
 ## Implementation checklist
 
-Every step lands the tests that the non-spec Testing section places under its deliverables. S1, S4, S6, and S9 land in one spec pass (see the spec-changes **Design** section). S26 is retired with CHART-3, and the later steps keep their numbers.
+Every step lands the tests that the non-spec Testing section places under its deliverables. S1, S4, S6, and S9 land in one spec pass (see the spec-changes **Design** section). S26 is retired with CHART-3, and the later steps keep their numbers. S33 (CODE-13) is listed after S19 because it depends only on S11, and S29 depends on it.
 
 - [ ] **S1 · spec** — SPEC-1. Lands the §10.2 signing model, signing topology, `typ` stamping, and playground signer edits, and the SPEC-1 edits in §10.3, §16.7, §17.6, §27.2, and §27.3.
       Tiers 0, 11. Depends on: —
@@ -22,7 +22,7 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 11. Depends on: S1
 - [ ] **S10 · spec** — SPEC-10. Lands the §13.2.4, §25.4, and §17.1 egress edits.
       Tiers 0, 11. Depends on: S1
-- [ ] **S11 · spec** — SPEC-11. Lands the §18.33, §25.4, and §25.15 edits, including the `lenny-ops` revocation set of owner decision 4.
+- [ ] **S11 · spec** — SPEC-11. Lands the §18.33, §25.4, and §25.15 edits, including the `lenny-ops` revocation set of owner decision 4 and the §25.4 "Probes" readiness edit of owner decision 6 (Edit 6).
       Tiers 0, 11. Depends on: S2
 - [ ] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
       Tiers 0, 1, 6. Depends on: S1, S2
@@ -40,6 +40,8 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 1, 2, 4, 5, 9. Depends on: S1, S2, S11, S13
 - [ ] **S19 · code** — CODE-12. Lands the deletion of the HMAC signer and `RotatingVerifier`.
       Tiers 0, 1. Depends on: S16, S17, S18
+- [ ] **S33 · code** — CODE-13. Lands the either-dependency permissive `/healthz`, the harness wait on `/readyz`, the production readiness probe on `/healthz`, the regenerated embedded manifests, and their tier-1, Helm, and embedded-manifest sync tests.
+      Tiers 0, 1, 4, 5, 11. Depends on: S11
 - [ ] **S20 · code** — CODE-7. Lands the outcome mapping and the sign metrics.
       Tiers 0, 1, 2, 3, 7a. Depends on: S4, S5, S8, S14, S16, S17
 - [ ] **S21 · code** — CODE-8. Lands the lifetime flag rename on the gateway and the Token Service default lifetime.
@@ -57,7 +59,7 @@ Every step lands the tests that the non-spec Testing section places under its de
 - [ ] **S28 · code** — CHART-5. Lands the PrometheusRule rendering.
       Tiers 0, 11. Depends on: S5, S23, S24
 - [ ] **S29 · test** — TEST-1. Lands the harness change and the cross-process tests.
-      Tiers 0, 4, 5, 9, 11. Depends on: S16, S17, S18, S19, S22, S25
+      Tiers 0, 4, 5, 9, 11. Depends on: S16, S17, S18, S19, S22, S25, S33
 - [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
       Tiers 0, 11. Depends on: S2, S23
 - [ ] **S31 · docs** — DOCS-2. Lands the reference, operator guide, and error catalog edits.
