@@ -2,7 +2,7 @@
 
 ## Design (implementation-facing)
 
-CODE-1 implements SPEC-1 and SPEC-2 in `pkg/ops/coordination/redisstore`. Every key moves under the `ops:{lock}:` tag, the acquire script stamps the epoch, and one compare-and-set script replaces `persist` and the id-only release for Extend, Steal, and Release. `RemoveByID` keeps the id-matched `releaseScript`. `scanAll`, `readByScope`, `conflictFromBlob`, `Epoch`, `IncrementEpoch`, `SetEpoch`, `ServerTime`, `Tier`, and `Reap` keep their logic and pick up the new constants. TEST-1 runs the store under the slot guard on miniredis and on `clustertest`, TEST-2 runs it on a real Redis Cluster, and TEST-3 turns on the tier-0 and tier-11 gates. REC-1 records Part 1. REC-2 is the Part 2 condition audit; it adds no code.
+CODE-1 implements SPEC-1 and SPEC-2 in `pkg/ops/coordination/redisstore`. Every key moves under the `ops:{lock}:` tag, the acquire script stamps the epoch, and one compare-and-set script replaces `persist` and the id-only release for Extend, Steal, and Release. `RemoveByID` keeps the id-matched `releaseScript`. `scanAll`, `conflictFromBlob`, `Epoch`, `IncrementEpoch`, `SetEpoch`, `ServerTime`, `Tier`, and `Reap` keep their logic and pick up the new constants. TEST-1 runs the store under the slot guard on miniredis and on `clustertest`, TEST-2 runs it on a real Redis Cluster, and TEST-3 turns on the tier-0 and tier-11 gates. REC-1 records Part 1. REC-2 is the Part 2 condition audit; it adds no code.
 
 ## Staged code changes
 
@@ -40,10 +40,12 @@ return {0, tostring(e)}
 
 `Acquire` keeps the `serverTime` call before the script, deletes the `s.Epoch(ctx)` call, and passes the three keys. A reply of `{1, data}` returns `conflictFromBlob(req.Scope, data)`. A reply of `{0, epoch}` sets `lock.Epoch` from the parsed epoch string and returns the lock. Any other reply, or a parse failure, returns `coordination.ErrStoreUnavailable`. The Lua `false` / `redis.Nil` branch goes away.
 
-**casScript.** Add the following. KEYS are the scope key and the ID key. ARGV are the expected stored `data` string, the new `data` string or `''` for delete, the PTTL in milliseconds, the scope, and the lock ID.
+**casScript.** Add the following. KEYS are the scope key and the ID key. ARGV are the expected stored `data` string, the new `data` string or `''` for delete, the PTTL in milliseconds, the scope, and the lock ID. The second line returns 1 for a write that go-redis re-sent after losing the reply, because a stored `data` equal to the new string is that operation's own write or an identical concurrent write.
 
 ```lua
-if redis.call('HGET', KEYS[1], 'data') ~= ARGV[1] then return 0 end
+local cur = redis.call('HGET', KEYS[1], 'data')
+if ARGV[2] ~= '' and cur == ARGV[2] then return 1 end
+if cur ~= ARGV[1] then return 0 end
 if ARGV[2] == '' then
   redis.call('DEL', KEYS[1], KEYS[2])
   return 1
@@ -61,7 +63,7 @@ func (s *Store) mutate(ctx context.Context, id string, ttl int,
 	decide func(cur coordination.Lock, now time.Time) (*coordination.Lock, error)) (*coordination.Lock, error)
 ```
 
-It loops at most 3 times. Each attempt:
+Extend and Steal pass `coordination.NormalizeTTL` of the request TTL as `ttl`; ARGV[3] is `ttl` in milliseconds. It loops at most 3 times. Each attempt:
 
 1. Calls `readByID`. An error returns `unavailable(err)`. A nil lock returns `&coordination.Error{Code: coordination.ErrCodeNotFound}`.
 2. Reads `serverTime`. An error returns `unavailable(err)`.
@@ -72,17 +74,17 @@ After 3 attempts that each returned 0 it returns `&coordination.Error{Code: coor
 
 The `decide` functions:
 
-- Extend: return `ErrCodeNotOwned` when `cur.AcquiredBy != caller`; otherwise set `ExpiresAt = now + NormalizeTTL(ttlSeconds)` and increment `Revision`.
-- Steal: set `StolenFrom = cur.AcquiredBy`, `AcquiredBy = req.AcquiredBy`, `OperationID = ""`, `AcquiredAt = now`, `ExpiresAt = now + NormalizeTTL(req.TTLSeconds)`, and increment `Revision`. Steal has no holder check.
+- Extend: return `ErrCodeNotOwned` when `cur.AcquiredBy != caller`; otherwise set `ExpiresAt = now + ttl` and increment `Revision`.
+- Steal: set `StolenFrom = cur.AcquiredBy`, `AcquiredBy = req.AcquiredBy`, `OperationID = ""`, `AcquiredAt = now`, `ExpiresAt = now + ttl`, and increment `Revision`. Steal has no holder check.
 - Release: return `ErrCodeNotOwned` when `cur.AcquiredBy != caller`; otherwise return nil.
 
 The new `data` string is `json.Marshal` of the lock `decide` returned.
 
-**readByID.** Change it to return the decoded lock and the raw stored `data` string: `(lock *coordination.Lock, raw string, err error)`. It returns a nil lock with a nil error when the ID key or the scope hash is absent, when the blob does not decode, or when the decoded lock's `ID` differs from the requested id. `Get` and `RemoveByID` take the lock and ignore the raw string. `readByScope` may delegate to a shared decode helper; its callers and results stay the same.
+**readByID.** Change it to return the decoded lock and the raw stored `data` string: `(lock *coordination.Lock, raw string, err error)`. It returns a nil lock with a nil error when the ID key or the scope hash is absent, when the blob does not decode, or when the decoded lock's `ID` differs from the requested id. `Get` and `RemoveByID` take the lock and ignore the raw string.
 
 **RemoveByID.** Keeps `releaseScript` (the id-matched delete, regardless of holder) over `scopeKey(lock.Scope)` and `idxKey(lockID)`.
 
-**Deletions.** Delete `persist`. `Release` no longer calls `releaseScript`.
+**Deletions.** Delete `persist`, and delete `readByScope`, whose HGET and decode move into `readByID`. `Release` no longer calls `releaseScript`.
 
 **scanAll.** Keeps `redisconn.ScanKeys(ctx, s.client, "", scopePrefix+"*", 256, ...)` with no routing key.
 
@@ -96,6 +98,12 @@ None.
 
 ## Staged docs changes
 
+### DOCS-1 · Correct the clock-source sentence in the ops-clock-skew runbook
+
+Target: `docs/runbooks/ops-clock-skew.md`, opening paragraph under `# ops-clock-skew`.
+
+Replace "`lenny-ops` authors every remediation lock's `expiresAt` from a single per-tier server clock" with "`lenny-ops` authors every remediation lock's `expiresAt` from each tier's server-side clock, and on a Redis Cluster any primary may answer the Redis `TIME` command". The rest of the paragraph stays unchanged.
+
 ### REC-1 · Close F-12.4.28 and record Part 1 on P6
 
 Targets: `BUILD-GAPS.md`, finding "F-12.4.28 — Gateway and ops Redis stores issue multi-key commands across hash slots, which Redis Cluster rejects", and `gateway-runtime-comms-remediation.md` §10.2 entry "**P6. `lenny-ops` remediation-lock keys and the Redis key brace rule**".
@@ -107,14 +115,14 @@ Targets: `BUILD-GAPS.md`, finding "F-12.4.28 — Gateway and ops Redis stores is
 
 ### REC-2 · (Part 2) Condition audit and findings
 
-Targets: a `## Condition audit (REC-2)` section appended to this file at implementation, `BUILD-GAPS.md` (one new finding per unmet condition), and `gateway-runtime-comms-remediation.md` §10.2 P6.
+Targets: `gateway-runtime-comms-remediation.md` §10.2 P6 (the audit table and the closure) and `BUILD-GAPS.md` (one new finding per unmet condition).
 
-1. Build a table with one row per Redis store package (the set the tier-0 `scanRedisUsage` enumerates, plus the lenny-ops lock and escalation stores) and one column per condition of §12.4 **Shared Redis topology** (SPEC-4). The single-slot and `SCAN` columns cite `TestRedisStoresInstallSlotGuard_spec_12_4` and `TestRedisScanRoutesByNode_spec_12_4` once the exemption list is empty. The durability and fail-closed columns cite each store's error mapping (for example `coordination.ErrStoreUnavailable` and the lease store's Postgres fallback). The lease column cites the Sweeper TTL in `pkg/gateway/coordination/coordination/coordination.go` and `DefaultCoordinationLeaseTTL` in `pkg/gateway/sessionserver/sessionserver.go`.
+1. Under P6, add a **Condition audit.** sub-item holding a table with one row per Redis store package (the set the tier-0 `scanRedisUsage` enumerates, plus the lenny-ops lock and escalation stores) and one column per condition of §12.4 **Shared Redis topology** (SPEC-4). The single-slot and `SCAN` columns cite `TestRedisStoresInstallSlotGuard_spec_12_4` and `TestRedisScanRoutesByNode_spec_12_4` once the exemption list is empty. The durability and fail-closed columns cite each store's error mapping (for example `coordination.ErrStoreUnavailable` and the lease store's Postgres fallback). The lease column cites the Sweeper TTL in `pkg/gateway/coordination/coordination/coordination.go` and `DefaultCoordinationLeaseTTL` in `pkg/gateway/sessionserver/sessionserver.go`.
 2. Verify these leads and file each confirmed one in `BUILD-GAPS.md`:
    - (i) The at-bind lease TTL is fixed at 60s while `--coordination-interval` is configurable, so a non-default interval breaks the four-interval condition at bind.
    - (ii) `Service.Reconcile` treats a failed Redis `Epoch` or `ActiveLocks` read as an empty set and still clears the Postgres-down state, which is a fail-open on a Redis failure path.
 3. Each unmet cell becomes a BUILD-GAPS finding. An unmet cell does not block this proposal.
-4. Tick P6 and add a line naming the audit section and the findings it filed.
+4. Tick P6 and list the BUILD-GAPS findings the audit filed.
 
 ## Testing
 
@@ -124,7 +132,7 @@ Target: `pkg/ops/coordination/redisstore/redisstore_test.go`. Every test carries
 
 The existing `clustertest` test already satisfies the tier-0 gate. The guard must also wrap `newStore`, so that every miniredis test runs the single-slot path, as the `newStore` comment requires.
 
-- (a) `newStore` wraps the client in `slotguard.Install`, and its comment drops the P6 text. Add a backend table with two entries, a guarded miniredis and `clustertest.New(t, 3)`, and run the existing operation and epoch tests over both. A test that needs clock control on the cluster backend calls `FastForward` or `SetTime` on `c.ServerFor(key)`. Do not add a separate table-driven cluster test.
+- (a) `newStore` wraps the client in `slotguard.Install`, and its comment drops the P6 text. Add a backend table with two entries, a guarded miniredis and `clustertest.New(t, 3)`, and run the existing operation and epoch tests over both. A test that needs clock control on the cluster backend calls `SetTime` on every server in `c.Servers` and `FastForward` on `c.ServerFor(key)`. Do not add a separate table-driven cluster test.
 - (b) Negative control: an `EVAL` through the guarded `newStore` client over `ops:{lock}:scope:x` and an untagged key returns `slotguard.ErrCrossSlot`. It proves the guard is wired on this package's client.
 - (c) `TestRedisLockKeysShareOneSlot_spec_25_4`: the scope key, the ID key, and the epoch key hash to one slot (`slotguard.Slot`) for scopes including `epoch`, `id:x`, and `pool:{evil}`, and acquiring scope `epoch` leaves the epoch key a string that `IncrementEpoch` still increments.
 - (d) Rename `TestRedisListCoversEveryClusterMaster_spec_25_4` to `TestRedisListClusterCompleteness_spec_25_4`. Seed it through `Acquire` and assert one slot and a complete, scope-ordered list. Its comment notes that `TestRedisScanRoutesByNode_spec_12_4` pins the scan of every node.
@@ -132,12 +140,15 @@ The existing `clustertest` test already satisfies the tier-0 gate. The guard mus
   - (e1) Epoch: the hook runs `INCR ops:{lock}:epoch` before the acquire script. The returned lock and the stored record carry the incremented epoch. This is the assertion that distinguishes the new code from the old, which read the epoch in Go before the script.
   - (e2) Stale extend: holder `alice` extends while the hook steals the lock for `bob`. Extend returns `LOCK_NOT_OWNED`, and the stored record is `bob`'s with `stolenFrom` `alice`.
   - (e3) Stale release: holder `alice` releases while the hook steals the lock for `bob`. Release returns `LOCK_NOT_OWNED`, and `bob`'s lock and its ID key survive.
-  - (e4) Disappearance: the hook deletes the lock (release by the holder) before an Extend; the Extend returns `REMEDIATION_LOCK_NOT_FOUND`. In a second case the hook releases the lock and acquires the same scope under a new ID before a `Get` of the old ID resolves the scope hash; `Get` and `Extend` of the old ID return `REMEDIATION_LOCK_NOT_FOUND`, and the new lock is untouched.
-  - (e5) Retry: a hook that changes the record once (a same-holder Extend) makes the next operation retry and succeed with `revision` incremented twice. A hook that changes the record before every script makes the operation return `REMEDIATION_LOCK_CONFLICT` after three attempts, and the stored record equals the hook's last write. The test asserts the error is not `ErrStoreUnavailable`.
+  - (e4) Disappearance: the hook deletes the lock (release by the holder) before an Extend; the Extend returns `REMEDIATION_LOCK_NOT_FOUND`.
+  - (e5) Retry: a hook that changes the record once (a same-holder Extend with a `ttlSeconds` different from the operation under test, so its record cannot equal the operation's new record under a frozen clock) makes the next operation retry and succeed with `revision` incremented twice. The same hook run before every script makes the operation return `REMEDIATION_LOCK_CONFLICT` after three attempts, and the stored record equals the hook's last write. The test asserts the error is not `ErrStoreUnavailable`.
+  - (e6) Stale steal: `bob` steals `alice`'s lock while the hook steals it for `carol`. Bob's Steal succeeds with `stolenFrom` `carol` and `revision` the original plus 2.
 - (f) Randomized checker, run with `-race`: goroutines issue Acquire, Extend, Release, and Steal over a few scopes with random holders, while a reader polls the stored records. Invariants: a successful Extend or Release returns only when the stored record's `acquiredBy` equaled the caller at the CAS; a stale Extend never overwrites a stealer's record; the stored `revision` a concurrent reader sees for one lock ID never decreases, and every steal increases it. Steals are exempt from the holder check, per §25.4 Stealing.
-- (g) Expiry: after Acquire, and again after Extend, the PTTL of the scope key and of the ID key each equals the requested TTL and is at least `expiresAt - acquiredAt`.
-- (h) Outage: close miniredis and assert `ErrStoreUnavailable` from Acquire, Get, List, ActiveLocks, Extend, Release, Steal, RemoveByID, Epoch, IncrementEpoch, and SetEpoch. Tier, Reap, and ServerTime are excluded; ServerTime returns the raw error.
+- (g) Expiry: after Acquire, and again after an Extend with `ttlSeconds` 0 and a Steal with `ttlSeconds` above the ceiling, each preceded by a `FastForward` of half the TTL, the PTTL of the scope key and of the ID key each equals `coordination.NormalizeTTL` of the requested TTL.
+- (h) Outage: close miniredis and assert `ErrStoreUnavailable` from Acquire, Get, List, ActiveLocks, Extend, Release, Steal, RemoveByID, Epoch, IncrementEpoch, and SetEpoch. Tier, Reap, and ServerTime are excluded; ServerTime returns the raw error. A second case makes the (e) hook return a connection error in place of the first script command of Extend, Steal, and Release, and asserts `ErrStoreUnavailable`.
 - (i) cjson round trip: a lock with `operationId` empty and `stolenFrom` set after a steal decodes after Acquire, Extend, and Steal with every field equal to the value Go wrote, except `epoch`, which equals the stamped value.
+- (j) Stale ID key: acquire scope `s`, release it, acquire `s` again under a new ID, and then `SET ops:{lock}:id:<oldID> s` through the raw client. `Get`, `Extend`, `Steal`, and `Release` of the old ID each return `REMEDIATION_LOCK_NOT_FOUND`, and the new lock and its ID key are unchanged. The `Get` assertion discriminates, because without the `readByID` ID check it returns the new lock.
+- (k) Replay: a `ProcessHook` that, on the operation's first script command that does not fail with `NOSCRIPT`, calls `next` a second time and returns the second reply makes Extend return `revision` +1, and makes `bob`'s Steal of `alice`'s lock return `stolenFrom` `alice` and `revision` +1. In each case the stored record equals the returned lock.
 
 Add each new or renamed test to section `"25.4"` in `tests/spec-map.json`, and the slot tests also to `"12.4"`.
 
@@ -163,8 +174,8 @@ Targets: `tests/tier0_static/redis_cluster_safety_test.go` and `tests/tier11_doc
 
 ## Edge cases and accepted failure modes
 
-- A CAS operation that loses three times returns 409 and writes nothing; the caller retries at the API level (SPEC-1, CAS rule 4).
 - A Redis error inside `mutate` maps to `ErrStoreUnavailable` and the tiered Service falls back as it does today. Only ownership and exhaustion outcomes are 403, 404, or 409.
+- A Release whose script deleted the lock but whose reply was lost, and which go-redis re-sends, re-reads an absent lock and returns `REMEDIATION_LOCK_NOT_FOUND`. Do not treat an absent re-read as success: that cannot be told apart from expiry or a stealer's release.
 - The keyless `TIME` read may be answered by a node other than the lock slot's owner (summary D4).
 - Locks written under the old key names are not migrated. No deployments exist, and Redis lock state is ephemeral.
 
@@ -181,4 +192,3 @@ Targets: `tests/tier0_static/redis_cluster_safety_test.go` and `tests/tier11_doc
 - tests/spec-map.json
 - BUILD-GAPS.md
 - gateway-runtime-comms-remediation.md
-- proposals/0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis/0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis.non-spec-changes.md (REC-2 audit section)

@@ -11,7 +11,6 @@ Part 2. SPEC-4 adds the §12.4 **Shared Redis topology.** paragraph, which permi
 - A scope whose text contains braces, such as `pool:{evil}`, stays in the lock slot, because the key's first braced substring is `{lock}` (SPEC-3, last sentence).
 - A scope named `epoch` or `id:x` does not collide with the epoch key or an ID key, because scope keys carry the `scope:` segment (SPEC-1 key layout).
 - A lock ID whose ID key outlives a re-acquisition of the same scope under a new ID is treated as absent (SPEC-1, CAS paragraph).
-- A compare-and-set operation that keeps losing to concurrent changes returns `409 REMEDIATION_LOCK_CONFLICT` after three failed comparisons and writes nothing (SPEC-1, CAS paragraph).
 - All remediation locks share one Redis Cluster slot, and so one primary. This is accepted at remediation-lock volume.
 
 ## Staged edits
@@ -50,7 +49,7 @@ Acquire runs one Lua script over the scope key, the ID key, and the epoch key th
 
 `lenny-ops` computes `acquiredAt` and `expiresAt` from a Redis `TIME` reading (see Clock Source) taken immediately before it runs a script that writes a lock record, and that script sets the expiry of the keys it writes as a TTL relative to the moment it runs.
 
-Extend, steal, and release resolve the lock ID through the ID key, read the stored lock record, and apply their change with one compare-and-set script over the scope key and the ID key. The script writes the new record, or deletes both keys on release, only when the stored record is identical to the record that was read. A lock ID whose scope key holds a different lock ID is treated as absent. When the comparison fails, `lenny-ops` reads the lock again and decides again:
+Extend, steal, and release resolve the lock ID through the ID key, read the stored lock record, and apply their change with one compare-and-set script over the scope key and the ID key. The script writes the new record, or deletes both keys on release, only when the stored record is identical to the record that was read. A stored record identical to the new record counts as success without a write. A lock ID whose scope key holds a different lock ID is treated as absent. When the comparison fails, `lenny-ops` reads the lock again and decides again:
 1. An absent lock returns `404 REMEDIATION_LOCK_NOT_FOUND`.
 2. On extend and release, a lock whose `acquiredBy` is no longer the caller returns `403 LOCK_NOT_OWNED`.
 3. Any other change retries the operation.
