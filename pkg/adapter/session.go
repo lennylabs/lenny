@@ -274,7 +274,9 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // Runtime.Close is also not uniformly session-scoped: InProcessRuntime.Close
 // and MCPRuntime.Close ignore the session identifier and tear the runtime
 // down on any call. SocketRuntimeProcess.Close ends nothing, because the
-// sidecar runtime's connection lives as long as the pod (§4.7.10).
+// sidecar runtime's connection serves every session of its process and
+// closes only at an attested end of that process (§4.7.10, Runtime process
+// lifetime).
 //
 // A non-positive deadline_ms leaves Runtime.Close on the inbound context;
 // a positive one bounds it, which honors the gateway's teardown deadline on

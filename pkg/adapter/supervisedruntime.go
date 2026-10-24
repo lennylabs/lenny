@@ -36,8 +36,8 @@ type LaunchMode string
 const (
 	// LaunchSession launches the first process at startup step 7.
 	LaunchSession LaunchMode = "session"
-	// LaunchService launches the process at warm-up and keeps it for the
-	// pod's life.
+	// LaunchService launches the process at warm-up; the process then
+	// follows the pod's runtime-process lifetime (§5.2).
 	LaunchService LaunchMode = "service"
 	// LaunchPreconnectSDKWarm launches the SDK process at warm-up.
 	LaunchPreconnectSDKWarm LaunchMode = "preconnect-sdk-warm"

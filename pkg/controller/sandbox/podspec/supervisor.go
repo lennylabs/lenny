@@ -58,8 +58,8 @@ const (
 const (
 	// LaunchSession launches the first runtime process at startup step 7.
 	LaunchSession = "session"
-	// LaunchService launches the runtime process at warm-up and keeps it
-	// for the pod's life.
+	// LaunchService launches the runtime process at warm-up; the process
+	// then follows the pod's runtime-process lifetime (§5.2).
 	LaunchService = "service"
 	// LaunchPreconnectSDKWarm launches at warm-up on a preConnect runtime
 	// whose pool's SDK-warm circuit breaker was closed at pod creation.

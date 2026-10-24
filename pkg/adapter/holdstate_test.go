@@ -602,8 +602,8 @@ func drainControlEvents(t *testing.T, stream *fakeControlStream, want int) []con
 //
 // The timeout terminates every session the adapter started on the pod,
 // once per member, and ends the runtime through the pod-scope teardown
-// once. Closing each member ends nothing, because the runtime process lives
-// as long as the pod, so without the teardown both sessions' code goes on
+// once. Closing each member ends nothing, because no session's close ends
+// the runtime process, so without the teardown both sessions' code goes on
 // running with live provider credentials and no coordinator. The teardown
 // runs before the deregistration pass, so it records the two started
 // entries still in the registry.

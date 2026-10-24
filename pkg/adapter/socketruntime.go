@@ -71,13 +71,17 @@ var errRuntimeConnectTimeout = errors.New("adapter: runtime did not connect with
 // subscriber receives every frame the runtime emits; the Attach handler
 // demultiplexes by sessionId.
 //
-// The transport lives as long as the pod. The connection is accepted at the
-// pod's first session start and serves every later session the pod serves,
-// across occupancy zero, multiplexed by sessionId. Close and Interrupt end
-// nothing: no session teardown, interrupt, or heartbeat escalation closes
-// the connection or signals the process. The pod-scope teardown,
-// CloseListener, is the transport's only close. The adapter runs it at
-// process exit and at the coordinator hold timeout.
+// A SocketRuntimeProcess serves one launched runtime process. Its connection
+// is accepted at the first session start after the launch and serves every
+// session that starts while that process is live, multiplexed by sessionId.
+// Close and Interrupt end nothing: no session teardown, interrupt, or
+// heartbeat escalation closes the connection or signals the process.
+// CloseListener is the transport's only close. On a supervised pod
+// SupervisedRuntime runs it after each attested end of the process and binds
+// a new SocketRuntimeProcess at the rebind. On a keep pod the process, and so
+// the transport, outlives every session; on a restart pod the process ends in
+// each whole-pod scrub. The adapter also runs CloseListener at process exit
+// and at the coordinator hold timeout.
 //
 // When the runtime closes its end, the fan-out reader records a sticky
 // ended state, and every later Start and Output fails at once with
@@ -96,7 +100,8 @@ var errRuntimeConnectTimeout = errors.New("adapter: runtime did not connect with
 // no protocol response, and the accept loop waits for the next connection,
 // so a foreign or unauthenticated process neither becomes the runtime
 // connection nor consumes the accept the runtime's own dial is owed.
-// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §4.7.11 (Separate UIDs
+// spec: §4.7.9, §4.7.10 (Runtime process lifetime; Runtime supervisor, End),
+// §5.2 (Runtime-process lifetime), §4.7.11 (Separate UIDs
 // and connection authentication, Runtime connection handshake), §5.2
 // (Runtime not live), §28.5.3 (CH-MSGSOCK).
 type SocketRuntimeProcess struct {
@@ -324,7 +329,8 @@ func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time
 // again, so a runtime refused for a replaced nonce is installed when it
 // redials. The first connection that passes is installed, with its reader,
 // as the runtime's connection, and the loop returns, so the listener installs
-// one connection for the pod's life and a later dial stays unaccepted. A
+// one connection for the launched process it serves and a later dial stays
+// unaccepted. A
 // connection that passes after the pod-scope teardown has run is closed here,
 // because no Start can claim it. The loop ends when the listener closes.
 // spec: §4.7.10 (Runtime process lifetime), §4.7.11 (Runtime connection
@@ -523,19 +529,19 @@ func (p *SocketRuntimeProcess) ServesNextSession() bool {
 	return p.connected && !p.ended
 }
 
-// Interrupt returns nil. The transport lives as long as the pod and the
-// pod-scope teardown, CloseListener, is its only close, so no interrupt,
-// clean or hard, and no heartbeat escalation closes the connection or
-// signals the runtime process. spec: §4.7.10 (Runtime process lifetime).
+// Interrupt returns nil. CloseListener is the transport's only close, so no
+// interrupt, clean or hard, and no heartbeat escalation closes the
+// connection or signals the runtime process; only an attested end of the
+// process, or the adapter's own teardown, closes it. spec: §4.7.10 (Runtime
+// process lifetime; Runtime supervisor, End).
 func (p *SocketRuntimeProcess) Interrupt(context.Context, string, bool) error {
 	return nil
 }
 
-// Close returns nil. The transport lives as long as the pod and the
-// pod-scope teardown, CloseListener, is its only close, so a session's
-// teardown, including the last one before occupancy zero, leaves the
-// connection up for the pod's later sessions. spec: §4.7.10 (Runtime process
-// lifetime).
+// Close returns nil. CloseListener is the transport's only close, so a
+// session's teardown, including the last one before occupancy zero, leaves
+// the connection up for the later sessions the same process serves.
+// spec: §4.7.10 (Runtime process lifetime).
 func (p *SocketRuntimeProcess) Close(context.Context, string) error {
 	return nil
 }

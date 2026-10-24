@@ -108,12 +108,15 @@ func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket 
 // the scrub. Leaving ScrubOps nil would make the driver report PodScrubFailed
 // on every recycle, which the default warn policy treats as a reuse: the
 // gateway would hand the pod to the next session with no scrub having run (a
-// between-session isolation regression). SandboxUser is left empty, so scrub
-// step 1 (`kill -9 -1`) runs as the adapter's own user and signals the
-// adapter container's processes only. In the sidecar model the runtime
-// container has its own process namespace and UID, and its process is kept for
-// the pod's life. spec: §5.2 (whole-pod scrub, steps 0-6); §5.2 ("What the
-// scrub reaches").
+// between-session isolation regression). DefaultOps makes the step-1
+// kill(-1, SIGKILL) and the System V IPC_RMID removals as direct syscalls,
+// with no exec, as the adapter's own user, so they reach the adapter
+// container's processes and IPC objects only. In the sidecar model the
+// runtime container has its own process namespace and UID: its process
+// outlives sessions on a keep pod and ends in each whole-pod scrub on a
+// restart pod, through the runtime supervisor. spec: §5.2 (whole-pod scrub,
+// steps 0-6; "What the scrub reaches"; Runtime-process lifetime); §4.7.10
+// (Runtime supervisor, End).
 func newScrubOps() scrub.DefaultOps {
 	return scrub.DefaultOps{}
 }
@@ -370,7 +373,8 @@ func main() {
 	// spec: §28.5.3 — production sidecar probes runtime liveness with
 	// heartbeats and ends the session's stream when the runtime misses the
 	// ack window. Runtime.Interrupt then ends nothing on the sidecar
-	// transport, whose runtime process lives as long as the pod (§4.7.10).
+	// transport; on a supervised pod the escalation sets the not-live
+	// state's hang cause instead (§4.7.10, Runtime supervisor, Liveness).
 	// A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second

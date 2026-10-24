@@ -153,7 +153,7 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_6_4(t *testing.T) {
 
 	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
 		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the session teardown; the runtime process "+
-			"lives as long as the pod and no teardown sends it a terminate frame", frame.Type)
+			"serves every session it is given and no teardown sends it a terminate frame", frame.Type)
 	}
 	if !atClose.current || !atClose.credentials {
 		t.Errorf("on entry to Runtime.Close: cwd present = %v, credential file present = %v, want both; "+
@@ -262,7 +262,7 @@ func TestShutdownOfACoTenantedPodSendsNoDrain_spec_5_2(t *testing.T) {
 	}
 	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
 		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the occupancy-zero teardown; the runtime "+
-			"process lives as long as the pod", frame.Type)
+			"process serves every later session of a keep pod", frame.Type)
 	}
 	if len(rt.closed) != 2 || rt.closed[0] != "alice" || rt.closed[1] != "bob" {
 		t.Errorf("runtime closed = %v, want [alice bob]", rt.closed)

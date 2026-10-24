@@ -268,8 +268,8 @@ func (s *Server) entryHeartbeatHung(sessionID string) <-chan struct{} {
 // escalation. The session's heartbeat monitor calls it once, after its hung
 // channel closes; an open Attach stream for the session then ends.
 // Interrupt signals a process only on the developer-loop executor; the
-// sidecar transport ends nothing, because the runtime process lives as long
-// as the pod.
+// sidecar transport ends nothing, because no heartbeat escalation signals
+// the runtime process.
 // spec: §28.5.3; §4.7.10 (Runtime process lifetime).
 //
 // On a supervised pod the escalation is the hang cause of the not-live

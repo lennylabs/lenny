@@ -200,8 +200,8 @@ func (s *Server) runtimeGeneration() uint64 {
 	return 0
 }
 
-// soleSession returns the session the pod's runtime process has been
-// given, and nothing else, for the pod's life, while that session is still
+// soleSession returns the session the current runtime process has been
+// given, and nothing else, since its launch, while that session is still
 // live in the process. It is the empty string whenever another session's
 // code may be or may have been resident in that process, and once the one
 // session it was given has closed, so a pod-global surface fails closed

@@ -896,3 +896,120 @@ func TestPublishingCommandFindingsFlagsRelativeArgv(t *testing.T) {
 		})
 	}
 }
+
+// podLifetimePhrases state that something lives for the pod's whole life.
+// Said of a runtime process, its CH-MSGSOCK connection, or the sidecar
+// transport without the keep-pod qualifier, each restates the retired
+// contract: a restart pod ends its runtime process in each whole-pod scrub,
+// and a supervised pod closes the transport after every attested end.
+var podLifetimePhrases = []string{"lives as long as the pod", "for the pod's life"}
+
+// podLifetimeSubjects name the runtime process and its transport. A sentence
+// carrying a podLifetimePhrase and one of these, without a keep qualifier,
+// is a finding.
+var podLifetimeSubjects = []string{"runtime process", "the process", "transport", "connection"}
+
+// goCommentRuns returns the comment text of a Go file as one string per run
+// of consecutive line comments, with each comment marker dropped and
+// whitespace collapsed, so a sentence wrapped across comment lines is one
+// match.
+func goCommentRuns(src string) []string {
+	var runs []string
+	var cur []string
+	flush := func() {
+		if len(cur) > 0 {
+			runs = append(runs, strings.Join(strings.Fields(strings.Join(cur, " ")), " "))
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if i := strings.Index(trimmed, "//"); i >= 0 && (i == 0 || !strings.Contains(trimmed[:i], "\"")) {
+			cur = append(cur, trimmed[i+2:])
+			if i > 0 {
+				flush()
+			}
+			continue
+		}
+		flush()
+	}
+	flush()
+	return runs
+}
+
+// podLifetimeFindings returns each sentence of the comment runs that states
+// the runtime process or its transport lives for the pod's whole life
+// without the keep-pod qualifier.
+func podLifetimeFindings(runs []string) []string {
+	var out []string
+	for _, run := range runs {
+		for _, sentence := range strings.Split(run, ". ") {
+			lower := strings.ToLower(sentence)
+			if strings.Contains(lower, "keep") || !containsAny(lower, podLifetimePhrases) || !containsAny(lower, podLifetimeSubjects) {
+				continue
+			}
+			out = append(out, sentence)
+		}
+	}
+	return out
+}
+
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// spec: 4.7.10 (Runtime process lifetime; Runtime supervisor, End), 5.2
+// (Runtime-process lifetime)
+// diagnosis: a Go comment under pkg/ or cmd/ again says the sidecar transport,
+//
+//	its connection, or the runtime process lives as long as the pod. A
+//	SocketRuntimeProcess serves one launched process: a supervised pod closes
+//	it after each attested end, and a restart pod ends its process in each
+//	whole-pod scrub. A maintainer who trusts the stale comment keeps one
+//	transport across launches or treats a not-live restart pod as unreachable.
+func TestGoCommentsDoNotStateAPodLongRuntimeProcess(t *testing.T) {
+	root := repoRoot(t)
+	for _, dir := range []string{"pkg", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.Contains(path, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
+				return err
+			}
+			for _, f := range podLifetimeFindings(goCommentRuns(readDocPage(t, path))) {
+				rel, _ := filepath.Rel(root, path)
+				t.Errorf("%s: comment states a pod-long runtime process or transport: %q", rel, f)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+}
+
+// spec: 4.7.10 (Runtime process lifetime), 5.2 (Runtime-process lifetime)
+// diagnosis: the comment matcher stopped finding a wrapped pod-long
+// statement, or started flagging the keep-pod and adapter-process sentences
+// that are true, so the sweep above passes or fails for the wrong reason.
+func TestPodLifetimeFindingsMatchOnlyUnqualifiedRuntimeStatements(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want int
+	}{
+		{"// The transport lives as long as\n// the pod. Close ends nothing.\n", 1},
+		{"\t// the runtime process lives as long as the pod.\n", 1},
+		{"// one connection for the pod's life and a later dial stays unaccepted.\n", 1},
+		{"// the runtime process, which on a keep pod lives as long as the pod.\n", 0},
+		{"// the loop runs in the adapter's own process, which lives as long as the pod.\n", 0},
+		{"x := \"// the transport lives as long as the pod\"\n", 0},
+		{"// A runtime without it has one process for the pod's life, generation 0.\n", 0},
+	} {
+		if got := podLifetimeFindings(goCommentRuns(tc.src)); len(got) != tc.want {
+			t.Errorf("findings for %q = %q, want %d", tc.src, got, tc.want)
+		}
+	}
+}
