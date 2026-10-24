@@ -520,6 +520,16 @@
         "pkg/adapter/supervise_race_load_test.go"
       ]
     },
+    "pkg/supervisorselftest": {
+      "unit": [
+        "pkg/supervisorselftest/...",
+        "pkg/adapter/...",
+        "pkg/ctlcli/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ]
+    },
     "cmd/lenny-adapter": {
       "unit": [
         "cmd/lenny-adapter/..."

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 )
 
 // This file holds the CH-SUPERVISE wire format: the requests the adapter
@@ -87,32 +89,6 @@ var superviseErrorCodes = map[string]bool{
 	SuperviseErrCleanupTimeout: true,
 	SuperviseErrMalformed:      true,
 	SuperviseErrGenMismatch:    true,
-}
-
-// Property names of the supervisor's startup self-test, as ready carries
-// them. spec: §4.7.11 (Runtime supervisor, Property self-test).
-const (
-	PropertyNondumpable       = "nondumpable"
-	PropertyKillReach         = "killReach"
-	PropertyInitSigkillImmune = "initSigkillImmune"
-	PropertyInitSigstopImmune = "initSigstopImmune"
-)
-
-// SupervisorProperties lists every property ready reports, in the order the
-// supervisor writes them.
-var SupervisorProperties = []string{
-	PropertyNondumpable,
-	PropertyKillReach,
-	PropertyInitSigkillImmune,
-	PropertyInitSigstopImmune,
-}
-
-// gatingProperties are the properties whose failure keeps a restart pod from
-// becoming READY. PID-namespace init signal immunity is reported and gates no
-// pod. spec: §4.7.11 (Runtime supervisor, Property self-test).
-var gatingProperties = map[string]bool{
-	PropertyNondumpable: true,
-	PropertyKillReach:   true,
 }
 
 // errSuperviseDecode is the class of every strict-decoding failure. A message
@@ -267,22 +243,22 @@ func decodeReady(members map[string]json.RawMessage, m *superviseMessage) error 
 	if err != nil {
 		return err
 	}
-	m.Properties = make(map[string]bool, len(SupervisorProperties))
-	for _, name := range SupervisorProperties {
+	m.Properties = make(map[string]bool, len(supervisorselftest.Properties))
+	for _, name := range supervisorselftest.Properties {
 		v, err := stringMember(props, name)
 		if err != nil {
 			return err
 		}
 		switch v {
-		case "pass":
+		case supervisorselftest.ResultPass:
 			m.Properties[name] = true
-		case "fail":
+		case supervisorselftest.ResultFail:
 			m.Properties[name] = false
 		default:
 			return fmt.Errorf("%w: property %s has value %q", errSuperviseDecode, name, v)
 		}
 	}
-	return allowOnly(props, SupervisorProperties...)
+	return allowOnly(props, supervisorselftest.Properties...)
 }
 
 // decodeExited decodes an exited message, which carries exactly one of

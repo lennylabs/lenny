@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
@@ -103,7 +104,7 @@ func dialUntil(t *testing.T, socket string) net.Conn {
 // named ones.
 func readyLine(failing ...string) string {
 	props := map[string]string{}
-	for _, p := range SupervisorProperties {
+	for _, p := range supervisorselftest.Properties {
 		props[p] = "pass"
 	}
 	for _, p := range failing {

@@ -181,6 +181,30 @@ func supervisorStageContainer(in Inputs) corev1.Container {
 	}
 }
 
+// SelftestContainerName names the container of the one-off pod that runs
+// the supervisor image's `selftest` mode for `lenny-ctl preflight
+// supervisor`. It is neither the adapter nor the runtime container, so it
+// holds no §13.1 reserved UID and no credential-volume membership.
+const SelftestContainerName = "lenny-supervisor-selftest"
+
+// SupervisorSelftestContainer is the container of the one-off pod `lenny-ctl
+// preflight supervisor` creates. It runs the supervisor image's `selftest`
+// mode with the image's entrypoint, so the supervisor is PID 1 of the pod's
+// PID namespace as it is in a supervised runtime container. It runs at the
+// stage UID with the §13.1 container baseline, the identity the stage init
+// container uses, because §13.1 (Container identity) reserves the adapter and
+// agent UIDs for the regular adapter and runtime containers.
+// spec: §24.2; §4.7.11 (Runtime supervisor, Property self-test); §13.1
+// (Container identity).
+func SupervisorSelftestContainer(image string) corev1.Container {
+	return corev1.Container{
+		Name:            SelftestContainerName,
+		Image:           image,
+		Args:            []string{"selftest"},
+		SecurityContext: containerSecurityContext(SupervisorStageUID),
+	}
+}
+
 // supervisorCommand renders the runtime container's argv:
 //
 //	/lenny-supervisor/lenny-supervisor run --socket @lenny-supervise

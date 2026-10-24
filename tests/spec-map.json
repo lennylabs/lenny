@@ -1180,10 +1180,17 @@
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11",
         "pkg/adapter/supervise_test.go::TestAwaitSupervisorAppliesThePropertyGateOnRestartPodsOnly_spec_4_7_11",
-        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisorAdapterUIDFollowsNonceOnlyMode_spec_4_7_10"
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisorAdapterUIDFollowsNonceOnlyMode_spec_4_7_10",
+        "pkg/supervisorselftest/supervisorselftest_test.go::TestParseReportReadsEveryProperty_spec_4_7_11",
+        "pkg/supervisorselftest/supervisorselftest_test.go::TestParseReportRefusesMalformedReports_spec_4_7_11",
+        "pkg/supervisorselftest/supervisorselftest_test.go::TestGatingPropertiesAreNondumpableAndKillReach_spec_4_7_11",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRunOutcomes_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodRendering_spec_24_2",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
       ],
       "packages": [
-        "pkg/adapter"
+        "pkg/adapter",
+        "pkg/supervisorselftest"
       ],
       "depends_on_sections": [
         "4.7",
@@ -4252,7 +4259,9 @@
         "pkg/admission/webhook/pod_security_supervisor_test.go::TestPodSecurityRefusesWritableSupervisorVolumeOutsideTheStageInitContainer_spec_13_1",
         "pkg/admission/webhook/pod_security_supervisor_test.go::TestValidateAgentPodSupervisorVolumeRuleDisabledWithoutAVolumeName_spec_13_1",
         "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
-        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodAdmittedByPodSecurity_spec_24_2",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -5698,10 +5707,21 @@
       "title": "Preflight",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodAdmittedByPodSecurity_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorPodRendering_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRefusesIncompleteValues_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorRunOutcomes_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorDeletesAfterCancellation_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorClientRequestsWithinPermissionCell_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorCommandRefusesBadInvocation_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightValuesDecodeSupervisorKeys_spec_24_2",
+        "pkg/ctlcli/preflight_supervisor_test.go::TestPreflightSupervisorBuildsClientFromKubeconfig_spec_24_2",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2"
       ],
       "packages": [
-        "cmd/lenny-ctl"
+        "cmd/lenny-ctl",
+        "pkg/ctlcli"
       ],
       "blocked_until_phase": "14",
       "notes": "lenny-ctl preflight subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."

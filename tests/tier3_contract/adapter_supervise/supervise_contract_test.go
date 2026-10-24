@@ -34,6 +34,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisorbuild"
@@ -239,7 +240,7 @@ func TestSupervisorAndAdapterClientAgreeOnEveryMessage_spec_28_5_3(t *testing.T)
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	want := append([]string{}, adapter.SupervisorProperties...)
+	want := append([]string{}, supervisorselftest.Properties...)
 	sort.Strings(want)
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("ready properties = %v, want %v", names, want)

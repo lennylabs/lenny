@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 )
 
 // spec: 28.5.3 (CH-SUPERVISE, Degradation), 4.7.11 (Runtime supervisor,
@@ -49,8 +51,8 @@ func TestSuperviseDecoderRejectsEveryStrictDecodeFailure_spec_28_5_3(t *testing.
 
 // spec: 28.5.3 (CH-SUPERVISE, Messages)
 func TestSuperviseDecoderAcceptsEveryMessageTheSupervisorWrites_spec_28_5_3(t *testing.T) {
-	m, err := decodeSuperviseMessage([]byte(readyLine(PropertyKillReach)))
-	if err != nil || m.Type != superviseReady || m.Properties[PropertyKillReach] || !m.Properties[PropertyNondumpable] {
+	m, err := decodeSuperviseMessage([]byte(readyLine(supervisorselftest.PropertyKillReach)))
+	if err != nil || m.Type != superviseReady || m.Properties[supervisorselftest.PropertyKillReach] || !m.Properties[supervisorselftest.PropertyNondumpable] {
 		t.Fatalf("ready = %+v, %v", m, err)
 	}
 	m, err = decodeSuperviseMessage([]byte(`{"type":"swept","gen":3,"id":7,"error":"sweep_bound"}`))

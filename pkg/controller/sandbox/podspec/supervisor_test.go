@@ -4,6 +4,7 @@ package podspec_test
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -312,5 +313,24 @@ func TestApplyResourcesStampsTheStageInitContainer_spec_6_4(t *testing.T) {
 	got := pod.Spec.InitContainers[0].Resources.Limits[corev1.ResourceMemory]
 	if got.String() != "1Gi" {
 		t.Errorf("stage init container memory limit = %s, want 1Gi", got.String())
+	}
+}
+
+// spec: 24.2 (Preflight), 4.7.11 (Adapter-Agent Security Boundary, Runtime supervisor, Property self-test), 13.1 (Container identity)
+func TestSupervisorSelftestContainerRunsSelftestAtStageIdentity_spec_24_2(t *testing.T) {
+	in := supervisedInputs()
+	stage := buildOK(t, in).Spec.InitContainers[0]
+	c := podspec.SupervisorSelftestContainer(in.SupervisorImage)
+	if c.Name != podspec.SelftestContainerName || c.Image != in.SupervisorImage {
+		t.Errorf("self-test container = %s/%s", c.Name, c.Image)
+	}
+	if !slices.Equal(c.Args, []string{"selftest"}) || len(c.Command) != 0 {
+		t.Errorf("self-test argv = %v %v, want the image entrypoint with selftest", c.Command, c.Args)
+	}
+	if !reflect.DeepEqual(c.SecurityContext, stage.SecurityContext) {
+		t.Errorf("self-test securityContext = %+v, want the stage container's %+v", c.SecurityContext, stage.SecurityContext)
+	}
+	if len(c.VolumeMounts) != 0 {
+		t.Errorf("self-test mounts = %+v, want none", c.VolumeMounts)
 	}
 }

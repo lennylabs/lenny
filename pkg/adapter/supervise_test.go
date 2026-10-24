@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 )
 
 // awaitWith runs AwaitSupervisor on a fresh socket while dial runs against
@@ -37,14 +39,14 @@ func awaitWith(t *testing.T, cfg AwaitSupervisorConfig, dial func(socket string)
 
 // spec: 4.7.11 (Runtime supervisor, Property self-test), 28.5.3 (CH-SUPERVISE)
 func TestAwaitSupervisorAppliesThePropertyGateOnRestartPodsOnly_spec_4_7_11(t *testing.T) {
-	for _, prop := range SupervisorProperties {
+	for _, prop := range supervisorselftest.Properties {
 		for _, lifetime := range []RuntimeLifetime{LifetimeKeep, LifetimeRestart} {
 			t.Run(prop+"/"+string(lifetime), func(t *testing.T) {
 				auth := SocketPeerAuth{ExpectedUID: currentUID()}
 				l, err := awaitWith(t, AwaitSupervisorConfig{Auth: auth, Lifetime: lifetime}, func(s string) {
 					dialFakeSupervisor(t, s, readyLine(prop))
 				})
-				wantRefused := lifetime == LifetimeRestart && gatingProperties[prop]
+				wantRefused := lifetime == LifetimeRestart && supervisorselftest.Gates(prop)
 				if wantRefused != (err != nil) {
 					t.Fatalf("AwaitSupervisor(failed %s, %s) error = %v, want refused %v", prop, lifetime, err, wantRefused)
 				}

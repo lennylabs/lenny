@@ -11,6 +11,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 )
 
 // This file holds the adapter's end of CH-SUPERVISE: the single accept
@@ -146,12 +148,12 @@ func acceptOneSupervisor(ctx context.Context, cfg AwaitSupervisorConfig) (net.Co
 // Property self-test).
 func gateProperties(props map[string]bool, lifetime RuntimeLifetime, logger *slog.Logger) error {
 	var gateFailed []string
-	for _, name := range SupervisorProperties {
+	for _, name := range supervisorselftest.Properties {
 		if props[name] {
 			continue
 		}
-		logger.Warn("supervisor_property_failed", "property", name, "gating", gatingProperties[name])
-		if gatingProperties[name] {
+		logger.Warn("supervisor_property_failed", "property", name, "gating", supervisorselftest.Gates(name))
+		if supervisorselftest.Gates(name) {
 			gateFailed = append(gateFailed, name)
 		}
 	}
