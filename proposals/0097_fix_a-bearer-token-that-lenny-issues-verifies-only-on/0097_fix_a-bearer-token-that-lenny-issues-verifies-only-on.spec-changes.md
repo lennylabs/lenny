@@ -4,7 +4,7 @@
 
 Every Lenny-issued JWT is signed with one ES256 key that the KMS alias `platform:jwt-signing` names. The gateway and the Token Service both sign with it, through remote KMS `Sign` calls on a cloud provider and through a master-key-derived key on the local provider. Every gateway replica, every Token Service replica, and `lenny-ops` load the public keys of `platform:jwt-signing` and the optional `platform:jwt-verify` once at startup and verify locally by `kid`. Rotation state lives in the alias map and changes only through configuration rollouts. SPEC-1 states the algorithm, the providers, the reference immutability rule, the dev posture, the signing topology, and the recording of the gateway's session-creation mint. SPEC-2 states the key set and the rotation procedure.
 
-Lenny-issued tokens have a fixed lifetime set at mint (SPEC-3). Signing runs before the write-before-issue transaction, and a revocation re-read inside that transaction discards a signed token whose subject or actor was revoked (SPEC-7). Provider throttling returns the existing retryable `KMS_SIGNING_UNAVAILABLE` without tripping the breaker (SPEC-4, SPEC-5), and §17.8 sizes the sign rate and the quota (SPEC-8). SPEC-6, SPEC-9, SPEC-10, and SPEC-11 correct the sentences elsewhere in the spec that the new model makes false.
+Lenny-issued tokens have a fixed lifetime set at mint (SPEC-3). Signing runs before the write-before-issue transaction, and a revocation re-read inside that transaction discards a signed token whose subject or actor has a revoked `issued_tokens` row (SPEC-7). Provider throttling returns the existing retryable `KMS_SIGNING_UNAVAILABLE` without tripping the breaker (SPEC-4, SPEC-5), and §17.8 sizes the sign rate and the quota (SPEC-8). SPEC-6, SPEC-9, SPEC-10, and SPEC-11 correct the sentences elsewhere in the spec that the new model makes false.
 
 SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contradicts the other until all of them land: SPEC-1 names a single signer, while the current §10.2 failure-mode paragraph (SPEC-4), §4.3 item 3 (SPEC-6), and the §17.4 KMS row (SPEC-9) each describe the old model.
 
@@ -13,14 +13,14 @@ SPEC-1, SPEC-4, SPEC-6, and SPEC-9 land in the same spec pass. Each pair contrad
 - **KMS unreachable at process start.** The process cannot load its key set and does not start (SPEC-2). A crashlooping pod is the accepted fail-closed cost of loading keys once.
 - **KMS unreachable while running.** Verification is unaffected because the key set is in memory (SPEC-2). New mints fail with `KMS_SIGNING_UNAVAILABLE` (SPEC-4).
 - **Token with no `kid` or an unknown `kid`.** Rejected with `missing_kid` or `unknown_kid`, with no KMS call (SPEC-2). An attacker-chosen `kid` cannot drive KMS traffic.
-- **A repointable key reference.** A process refuses to start when a `platform:jwt-*` alias names an AWS alias, a GCP CryptoKey without a version, or an Azure key without a version (SPEC-1). Without this rule a reference repointed outside Helm would make every new token fail on every verifier.
+- **A repointable key reference.** A process refuses to start when a `platform:jwt-*` alias names a repointable key reference (SPEC-1). Without this rule a reference repointed outside Helm would make every new token fail on every verifier.
 - **Quota throttling burst.** Throttled requests return a retryable 503 with `Retry-After` and do not count toward the breaker trip (SPEC-4). Mints degrade under a burst and do not stop fleet-wide.
 - **Rotation step taken early.** Step 2 before step 1 has rolled out everywhere makes new tokens fail on processes that lack the new key. Step 3 before the `lenny-gateway` cap elapses rejects unexpired tokens the old key signed. SPEC-2 states the ordering and the wait.
 - **Bootstrap admin credential across rotation.** Its lifetime exceeds the step-3 wait, so SPEC-2 step 2 re-mints it. An operator who skips that step is locked out at step 3.
 - **Concurrent rotation of one subject.** The second transaction's step (1a) re-read sees the subject revoked by the first and rejects with `subject_token_revoked` (SPEC-7). A retried rotation of an already-rotated token fails the same way.
 - **Postgres outage seen by `lenny-ops`.** SPEC-11 Edit 2 rules 4 and 5 state the behavior, and summary D22 records the accepted residual risks. SPEC-11 Edit 6 keeps every replica Ready while the Kubernetes API is reachable, so the Service keeps routing to `lenny-ops` during the outage (owner decision 6).
 - **One replica loses its own Postgres connection.** Summary D24 records the accepted cost (owner decision 6).
-- **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out revoked is discarded and never returned (SPEC-7).
+- **Signed but rejected token.** A token signed before the transaction whose subject or actor turns out to have a revoked `issued_tokens` row is discarded and never returned (SPEC-7).
 
 ## Staged edits
 
@@ -166,7 +166,7 @@ The row stays one physical line.
 **Edit 4.** In §16.5, insert immediately after that row, on one physical line:
 
 ```markdown
-| `KMSSignQuotaApproaching`        | `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * kms.signQuotaPerSecond` for > 10 min; the fleet-wide rate of sign requests that reach the KMS exceeds 80% of the configured provider quota ([Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) "KMS Sign rate"). Rendered only when `kms.provider` is not `local`. Operator should raise the provider's asymmetric `Sign` quota and `kms.signQuotaPerSecond` together. See [Section 10.2](10_gateway-internals.md#102-authentication). | Warning  |
+| `KMSSignQuotaApproaching`        | `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m]))` > 80% of `kms.signQuotaPerSecond` for > 10 min; the fleet-wide rate of sign requests that reach the KMS exceeds 80% of the configured provider quota ([Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) "KMS Sign rate"). Operator should raise the provider's asymmetric `Sign` quota and `kms.signQuotaPerSecond` together. See [Section 10.2](10_gateway-internals.md#102-authentication). | Warning  |
 ```
 
 ### SPEC-6 · spec/04_system-components.md § 4.3 Token Service: Role item 3 "Canonical token endpoint"; spec/17_deployment-topology.md § 17.7 Operational Runbooks: "Audit pipeline degradation" remediation
@@ -181,7 +181,7 @@ The bootstrap admin carve-out sentence and the custody sentences under **Deploym
 
 **Edit 2.** In spec/17_deployment-topology.md §17.7, in the **Audit pipeline degradation** *Remediation* item (2), replace "by lowering `oauth.rateLimit.tenantPerSecond` for that tenant (Helm upgrade) so that `/v1/oauth/token` throttles further session creation" with "by lowering that tenant's concurrent-session quota ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas))". The bullet stays one physical line.
 
-### SPEC-7 · spec/13_security-model.md § 13.3 Credential Flow: token issuance, write-before-issue, `exp` granularity, and actor-token freshness; spec/08_recursive-delegation.md § 8.2 Delegation Mechanism: actor-token freshness; spec/15_external-api-surface.md error table: `DELEGATION_PARENT_REVOKED`
+### SPEC-7 · spec/13_security-model.md § 13.3 Credential Flow: token issuance, write-before-issue, `exp` granularity, actor-token freshness, and client authentication; spec/08_recursive-delegation.md § 8.2 Delegation Mechanism: actor-token freshness; spec/15_external-api-surface.md error table: `DELEGATION_PARENT_REVOKED`
 
 **Edit 1.** In §13.3 "**Write-before-issue ordering.**", replace the text from "The ordering is a single Postgres transaction with three statements" through "the caller receives `500 token_exchange_failed` with no token." with:
 
@@ -222,6 +222,12 @@ has `revoked_at` set at the [Section 13.3](13_security-model.md#133-credential-f
 ```
 
 Keep the row on one physical line. The rest of the row is unchanged.
+
+**Edit 7.** In §13.3 "**Client authentication on `/v1/oauth/token`.**", insert immediately after "or (b) a previously issued Lenny access token.":
+
+```markdown
+A token that carries the `origin: "playground"` claim ([§27.3](27_web-playground.md#273-authentication)) is not a caller credential, and the Token Service refuses it as the caller token with `401 invalid_client`.
+```
 
 ### SPEC-8 · spec/17_deployment-topology.md § 17.8.1 Operational Defaults — Quick Reference and § 17.8.2 Capacity Tier Reference: lifetime, quota, and sign rate
 
