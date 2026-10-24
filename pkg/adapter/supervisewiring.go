@@ -55,12 +55,12 @@ func (s *Server) UseSupervisedRuntime(rt *SupervisedRuntime) {
 // session-independent fields and a fresh nonce, then binds the platform MCP
 // listener the manifest advertises, armed with that nonce. A Standard-level
 // process dials that listener at its start, so the warm-up launch may follow
-// only once it is bound. The first session claim takes the surface over and
-// re-arms the listener on the session's nonce; the connection the warm-up
-// process opened stays served across that re-arm, because tearing a server
-// down closes its listener and no accepted connection. A type: mcp runtime
-// dials no platform MCP server, so none is bound for it.
-// spec: §4.7.10 (Runtime supervisor, Launch); §4.7.6; §15.4.3.
+// only once it is bound. That bind is the pod's one platform MCP start: the
+// first session claim takes it over without restarting the server, so the
+// server keeps validating the warm-up nonce across the session's manifest
+// write and the warm-up process's connection and handshake record stand. A
+// type: mcp runtime dials no platform MCP server, so none is bound for it.
+// spec: §4.7.10 (Runtime supervisor, Launch); §4.7.6 (mcpNonce row); §15.4.3.
 func (s *Server) PrepareWarmUpLaunch() error {
 	nonce, err := s.writeSessionManifest(manifestInputs{})
 	if err != nil {
@@ -72,5 +72,15 @@ func (s *Server) PrepareWarmUpLaunch() error {
 	if err := s.startPlatformMCP(nonce); err != nil {
 		return fmt.Errorf("bind the warm-up platform MCP listener: %w", err)
 	}
+	s.markWarmUpPlatformMCPArmed()
 	return nil
+}
+
+// markWarmUpPlatformMCPArmed records a running platform MCP server as the
+// warm-up binding the first session claim takes over. It records nothing
+// when no server runs (no MCP socket configured). spec: §15.4.3.
+func (s *Server) markWarmUpPlatformMCPArmed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpWarmUpArmed = s.mcpCancel != nil
 }

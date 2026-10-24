@@ -111,29 +111,78 @@ func TestWarmUpLaunchFollowsThePlatformMCPListenerBind_spec_4_7_10(t *testing.T)
 	}
 	defer warm.conn.Close()
 
-	// The first session claim re-arms the listener on its own nonce. The
-	// connection the warm-up process opened keeps being served.
+	if !s.mcpHandshakeWasSeen() {
+		t.Fatal("the warm-up process's handshake was not recorded")
+	}
+}
+
+// spec: §15.4.3 (Authentication), §4.7.6 (mcpNonce row), §4.7.11 item 7,
+// §4.7.10 (Runtime supervisor, Launch), §5.1
+// diagnosis: the pod-wide platform MCP server started twice on a supervised
+// warm-up pod: the first session claim cancelled the server the warm-up bound
+// and armed a second one on the session's nonce, so the warm-up process's
+// connection was authenticated against a nonce the armed server no longer
+// validated and the §5.1 handshake record was cleared. Read
+// claimPodMCPStartLocked's warm-up arm, startClaimedPlatformMCP, and
+// markWarmUpPlatformMCPArmed.
+func TestFirstClaimAfterWarmUpKeepsTheWarmUpPlatformMCPServer_spec_15_4_3(t *testing.T) {
+	f := newSupervisedFixture(t, LifetimeKeep, LaunchService, nil)
+	s := warmUpServer(t, f, RuntimeKindAgent)
+	var warm *mcpConn
+	var warmNonce string
+	f.rt.setLaunchHook(func() {
+		if m, err := ReadManifest(s.ManifestDir); err == nil {
+			warmNonce = m.MCPNonce
+			warm = dialInitialized(s.MCPSocket, warmNonce)
+		}
+	})
+	if err := f.rt.WarmUp(startCtx(t, 5*time.Second)); err != nil {
+		t.Fatalf("WarmUp: %v", err)
+	}
+	if warm == nil {
+		t.Fatal("the warm-up process could not connect to the platform MCP server")
+	}
+	defer warm.conn.Close()
+
+	// A release path that finds the runtime idle before any claim must not
+	// cancel the warm-up binding.
+	s.cancelPodMCPIfRuntimeIdle()
+	if _, nonce := s.PodMCPArming(); nonce != warmNonce {
+		t.Fatalf("the idle cancellation before any claim disarmed the warm-up server: armed nonce %q, want the warm-up nonce", nonce)
+	}
+
 	claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
-	if !claim.startMCP {
-		t.Fatal("the first session claim did not take the pod's MCP surface over from the warm-up arming")
+	if !claim.startMCP || !claim.platformBound {
+		t.Fatalf("first claim after warm-up: startMCP=%v platformBound=%v, want the once-per-pod start with the platform server already bound",
+			claim.startMCP, claim.platformBound)
 	}
-	if err := s.startPlatformMCP("nonce-alice"); err != nil {
-		t.Fatalf("re-arm on the session nonce: %v", err)
+	sessionNonce, err := s.writeSessionManifest(manifestInputs{})
+	if err != nil {
+		t.Fatalf("write the session manifest: %v", err)
+	}
+	if err := s.startClaimedPlatformMCP(claim, sessionNonce); err != nil {
+		t.Fatalf("startClaimedPlatformMCP: %v", err)
+	}
+	if id, nonce := s.PodMCPArming(); id != "alice" || nonce != warmNonce {
+		t.Fatalf("PodMCPArming = (%q, %q), want (alice, the warm-up nonce)", id, nonce)
+	}
+	if !s.mcpHandshakeWasSeen() {
+		t.Fatal("the first claim cleared the warm-up process's handshake record")
 	}
 	if !warm.listsTools() {
-		t.Fatal("the warm-up process's platform MCP connection stopped being served after the session re-armed the listener")
+		t.Fatal("the warm-up process's connection stopped being served after the first claim")
 	}
-	if c := dialInitialized(s.MCPSocket, "nonce-alice"); c == nil {
-		t.Fatal("the re-armed listener refused the session nonce")
+	if c := dialInitialized(s.MCPSocket, warmNonce); c == nil {
+		t.Fatal("the running server stopped validating the warm-up nonce after the session's manifest write")
 	} else {
 		_ = c.conn.Close()
 	}
-	if c := dialInitialized(s.MCPSocket, warmNonce); c != nil {
+	if c := dialInitialized(s.MCPSocket, sessionNonce); c != nil {
 		_ = c.conn.Close()
-		t.Fatal("the re-armed listener accepted a new connection on the warm-up nonce")
+		t.Fatal("the session's manifest write re-armed the running server on the session nonce")
 	}
 }
 
@@ -197,27 +246,22 @@ func (f *recordingForwarder) CallPlatformTool(_ context.Context, sessionID, _ st
 	return json.RawMessage(`{}`), nil
 }
 
-// spec: §4.7.10 (Runtime supervisor, Launch), §9.1, §15.4.3
-// diagnosis: a runtime process launched at warm-up discovers the platform
-// tool catalog before the pod holds a session; a refused listing ends the
-// process (the SDK treats a failed discovery as fatal) and the service-mode
-// pod never turns Ready. A listing with no session must return an empty
-// catalog without forwarding, while a call with no session, and a listing or
-// call with two sessions, stay refused. Read platformToolProvider.List and
-// listingSession.
-func TestPlatformToolListingWithNoSessionIsEmptyAndForwardsNothing_spec_4_7_10(t *testing.T) {
+// spec: §15.4.3 (Authentication), §4.7.11 item 7, §9.1, §28.5.3
+// diagnosis: the platform MCP server answered a tools/list from a process
+// holding no session with an empty catalog, where the calling-session rule
+// requires a refusal unless the shared runtime process has been given exactly
+// one session. Read platformToolProvider.List and callingSession.
+func TestPlatformToolListingWithNoSessionIsRefused_spec_15_4_3(t *testing.T) {
 	s := New("test")
 	fwd := &recordingForwarder{}
 	p := &platformToolProvider{forwarder: fwd, server: s}
 	ctx := context.Background()
 
-	tools, err := p.List(ctx)
-	if err != nil {
-		t.Fatalf("a listing with no session was refused: %v", err)
+	if tools, err := p.List(ctx); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("a listing with no session returned %d tools and err=%v, want FailedPrecondition", len(tools), err)
 	}
-	if len(tools) != 0 || len(fwd.listed) != 0 {
-		t.Fatalf("a listing with no session returned %d tools and forwarded %d times, want an empty catalog and no forward",
-			len(tools), len(fwd.listed))
+	if len(fwd.listed) != 0 {
+		t.Fatalf("a listing with no session forwarded under %v, want no forward", fwd.listed)
 	}
 	if _, err := p.Call(ctx, "lenny/echo", json.RawMessage(`{}`)); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("a call with no session returned %v, want FailedPrecondition", err)

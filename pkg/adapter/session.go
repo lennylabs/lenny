@@ -159,7 +159,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// client instead. The servers bind pod-wide sockets, so only the claim
 	// that took the once-per-pod start arms them.
 	if s.RuntimeKind != RuntimeKindMCP && startMCP {
-		if err := s.startPlatformMCP(nonce); err != nil {
+		if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
 			s.releaseClaimedSlot(ctx, sessionID, claim)
 			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)

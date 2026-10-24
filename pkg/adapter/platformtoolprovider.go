@@ -44,20 +44,14 @@ type platformToolProvider struct {
 	server    *Server
 }
 
-// List forwards one tools/list under the calling session. A runtime process
-// launched at pod warm-up (§4.7.10 **Launch.**) dials the platform MCP
-// server and discovers its catalog before the pod holds any session. With no
-// session there is no principal to forward the listing under, so that
-// discovery receives an empty catalog instead of an error that would end the
-// warm-up process; a listing or a call made inside a session resolves that
-// session. spec: §4.7.10 (Runtime supervisor, Launch); §9.1; §15.4.3.
+// List forwards one tools/list under the calling session, and refuses it
+// when the pod's shared runtime process has not been given exactly one
+// session, including when it has been given none. spec: §9.1; §15.4.3;
+// §4.7.11 item 7.
 func (p *platformToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
-	sessionID, idle, err := p.server.listingSession()
+	sessionID, err := p.server.callingSession()
 	if err != nil {
 		return nil, err
-	}
-	if idle {
-		return []mcp.Tool{}, nil
 	}
 	return p.forwarder.ListPlatformTools(ctx, sessionID)
 }
@@ -73,24 +67,6 @@ func (p *platformToolProvider) Call(ctx context.Context, name string, arguments 
 	}
 	defer end()
 	return p.forwarder.CallPlatformTool(ctx, sessionID, name, arguments)
-}
-
-// listingSession is callingSession for a tools/list: idle reports that the
-// pod's shared runtime process serves no session, which is not an error for
-// a listing. The idleness and the session are read under one hold of s.mu.
-// spec: §9.1; §15.4.3.
-func (s *Server) listingSession() (sessionID string, idle bool, err error) {
-	s.mu.Lock()
-	idle = s.runtimeIdleLocked()
-	sessionID = s.soleSessionLocked()
-	s.mu.Unlock()
-	if idle {
-		return "", true, nil
-	}
-	if sessionID == "" {
-		return "", false, errAmbiguousCallingSession
-	}
-	return sessionID, false, nil
 }
 
 // errAmbiguousCallingSession refuses an intra-pod MCP call the adapter

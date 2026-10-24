@@ -373,6 +373,12 @@ type Server struct {
 	// names the arming that is live rather than the last one written to
 	// the pod's one manifest file. spec: §15.4.3.
 	mcpArmedNonce string
+	// mcpWarmUpArmed records that the warm-up launch's preparation bound
+	// the pod's platform MCP server and no session claim has taken it yet.
+	// The first claim takes that binding as the pod's one platform start
+	// instead of restarting the server. spec: §4.7.6 (mcpNonce row);
+	// §15.4.3.
+	mcpWarmUpArmed bool
 	// connectorCancels stops the §9.3 per-connector MCP servers, one
 	// cancel per connector socket. Reset to nil after every server is
 	// stopped. F-9.1.2.

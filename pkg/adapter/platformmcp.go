@@ -11,7 +11,8 @@ import (
 // startPlatformMCP starts the §4.7 platform MCP server on the adapter's
 // configured Unix socket, authenticated by the manifest nonce. The socket
 // is pod-wide, so the server is started at most once per pod, by the
-// claim that took the once-per-pod start. It is a no-op when no MCP
+// warm-up launch's preparation or by the claim that took the once-per-pod
+// start. It is a no-op when no MCP
 // socket is configured or no nonce was issued (no manifest, so the
 // runtime could not read one). The server runs until a release leaves the
 // pod's shared runtime process serving no session.

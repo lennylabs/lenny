@@ -151,7 +151,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// sockets are pod-wide, so only the claim that took the once-per-pod
 	// start arms them.
 	if startMCP {
-		if err := s.startPlatformMCP(nonce); err != nil {
+		if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
 			s.releaseSessionSlotUnderGuard(sessionID, true)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}

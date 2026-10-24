@@ -70,6 +70,11 @@ type slotClaim struct {
 	// and two concurrent claims that both observed it free would hand the
 	// loser EADDRINUSE.
 	startMCP bool
+	// platformBound reports that the pod's platform MCP server was bound by
+	// the warm-up launch's preparation, so the claim that took the
+	// once-per-pod start finds it running and starts only the connector
+	// servers. spec: §4.7.6 (mcpNonce row); §15.4.3.
+	platformBound bool
 	// entry is the registry entry the claim was admitted against. The
 	// handler holds it across Runtime.Start and passes it to
 	// noteRuntimeStarted, so the start confirmation compares the entry the
@@ -114,8 +119,8 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, r slotResolve, sdkW
 	}
 	st.sessionID = sessionID
 	st.started = true
-	startMCP, stale := s.claimPodMCPStartLocked(sessionID)
-	return slotClaim{fresh: true, startMCP: startMCP, entry: st}, stale, nil
+	startMCP, platformBound, stale := s.claimPodMCPStartLocked(sessionID)
+	return slotClaim{fresh: true, startMCP: startMCP, platformBound: platformBound, entry: st}, stale, nil
 }
 
 // claimPodMCPStartLocked reports whether the caller must arm the pod's
@@ -133,14 +138,38 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, r slotResolve, sdkW
 // identifier under s.mu, so a departing session's release cannot cancel
 // the surface a successor's claim has already taken.
 //
-// Callers hold s.mu. spec: §15.4.3.
-func (s *Server) claimPodMCPStartLocked(sessionID string) (startMCP bool, stale []context.CancelFunc) {
+// A platform server the warm-up launch's preparation bound is the pod's
+// one platform start rather than a departed session's residue: the first
+// claim records itself as the claimant, reports platformBound, and leaves
+// that server, its armed nonce, and the handshake record in place, so the
+// server keeps validating the warm-up nonce across the session's manifest
+// write.
+//
+// Callers hold s.mu. spec: §15.4.3; §4.7.6 (mcpNonce row); §4.7.10
+// (Runtime supervisor, Launch).
+func (s *Server) claimPodMCPStartLocked(sessionID string) (startMCP, platformBound bool, stale []context.CancelFunc) {
 	if len(s.slots) != 1 || s.mcpSession == sessionID {
-		return false, nil
+		return false, false, nil
+	}
+	if s.mcpWarmUpArmed {
+		s.mcpWarmUpArmed = false
+		s.mcpSession = sessionID
+		return true, true, nil
 	}
 	stale = s.takePodMCPCancelsLocked()
 	s.mcpSession = sessionID
-	return true, stale
+	return true, false, stale
+}
+
+// startClaimedPlatformMCP starts the pod's platform MCP server for a claim
+// that took the once-per-pod start, and starts nothing when the warm-up
+// launch's preparation already bound it. spec: §15.4.3; §4.7.6 (mcpNonce
+// row).
+func (s *Server) startClaimedPlatformMCP(claim slotClaim, nonce string) error {
+	if claim.platformBound {
+		return nil
+	}
+	return s.startPlatformMCP(nonce)
 }
 
 // takePodMCPCancelsLocked clears the pod's intra-pod MCP surface state
@@ -157,6 +186,7 @@ func (s *Server) takePodMCPCancelsLocked() []context.CancelFunc {
 	s.connectorCancels = nil
 	s.mcpHandshakeSeen = false
 	s.mcpArmedNonce = ""
+	s.mcpWarmUpArmed = false
 	return cancels
 }
 
@@ -406,10 +436,14 @@ func (s *Server) cancelPodMCPIfRuntimeIdle() {
 }
 
 // mcpArmingHeldLocked reports that the session which armed the pod's MCP
-// surface still holds a slot on the pod, so the surface is one a live
-// claimant is using rather than a departed session's residue. Callers
+// surface still holds a slot on the pod, or that the surface is the
+// warm-up binding no claim has taken yet, so the surface is one a live
+// process is using rather than a departed session's residue. Callers
 // hold s.mu. spec: §15.4.3.
 func (s *Server) mcpArmingHeldLocked() bool {
+	if s.mcpWarmUpArmed {
+		return true
+	}
 	if s.mcpSession == "" {
 		return false
 	}

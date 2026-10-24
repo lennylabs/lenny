@@ -254,7 +254,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 		}
 		if s.RuntimeKind != RuntimeKindMCP && startMCP {
-			if err := s.startPlatformMCP(nonce); err != nil {
+			if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
 				s.releaseClaimedSlot(ctx, sessionID, claim)
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
