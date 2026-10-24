@@ -646,7 +646,7 @@ type secondHalfFiling struct {
 // tier-4 tenant deletion test.
 var secondHalfFilings = []secondHalfFiling{
 	{id: "F-10.2.22", owner: "Owner: unassigned.", deviation: "## Proposed: the tier-4 peer-replica refusal probe checks each Lenny-issued bearer only on its minting replica"},
-	{id: "F-27.8.1", owner: "Owner: unassigned.", deviation: "## Proposed: the tier-4 playground-bearer refusal case is skipped"},
+	{id: "F-27.8.1", owner: "Owner: unassigned.", deviation: "## the tier-4 playground-bearer refusal case is skipped"},
 	{id: "F-4.9.40", owner: "Owner: a direct fix."},
 	{id: "F-4.9.41", owner: "Owner: a direct fix."},
 	{id: "F-10.2.23", owner: "Owner: unassigned."},

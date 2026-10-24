@@ -1,21 +1,36 @@
 // SPDX-License-Identifier: MIT
 
 // Package redisstore is the Redis-backed §25.4 remediation-lock store
-// (Tier 2). It holds each lock at the platform-scoped key ops:lock:{scope}
-// as a hash {id, data} with a key-level PTTL, so exclusivity holds across
-// every lenny-ops replica while Postgres is unreachable. The two
-// CAS-critical paths — acquire and release — run as Lua scripts so the
-// existence check and the write are atomic (no check-then-write window,
-// §25.4); acquiredAt and expiresAt are authored from the Redis
-// TIME command so locks across replicas share one clock (§25.4).
-// A Redis outage surfaces as coordination.ErrStoreUnavailable so the
-// tiered Service falls back to the in-memory (Tier 3) store.
+// (Tier 2). Every key sits under the ops:{lock}: prefix, whose {lock}
+// segment is a Redis Cluster hash tag, so every key the store writes hashes
+// to one slot and each script runs on one Redis Cluster primary:
+//
+//   - ops:{lock}:scope:<scope> is a hash {id, data} holding the lock ID and
+//     the serialized lock record, with a key-level PTTL;
+//   - ops:{lock}:id:<lockID> holds the scope, so a lock ID resolves to its
+//     scope key;
+//   - ops:{lock}:epoch holds the Redis-side outage epoch.
+//
+// Acquire is one Lua script that conflicts on an existing scope key, reads
+// the epoch key, and stamps that epoch into the record it writes. Extend,
+// Steal, and Release resolve the lock ID through the ID key, decide the
+// change in Go, and apply it with one compare-and-set script that writes
+// only when the stored record still equals the record that was read; a
+// failed comparison re-reads and decides again, at most three times, and
+// then reports REMEDIATION_LOCK_CONFLICT. acquiredAt and expiresAt come from
+// a Redis TIME reading taken before the script runs, and the script sets a
+// relative PEXPIRE, so a key lives at least the requested TTL after that
+// reading whichever primary answered TIME. Every write tolerates a client
+// re-send. A Redis transport error surfaces as
+// coordination.ErrStoreUnavailable so the tiered Service falls back to the
+// in-memory (Tier 3) store; an ownership, absence, or retry-exhaustion
+// outcome is a coordination.Error and never ErrStoreUnavailable.
 //
 // The keyspace is platform-scoped (remediation locks are platform
 // operational records, not tenant data), so the keys carry no tenant
 // prefix, matching the other ops: Redis namespaces.
 //
-// spec: §25.4.
+// spec: §25.4 (Storage Tiers); §12.4 (Redis HA and Failure Modes).
 package redisstore
 
 import (
@@ -32,14 +47,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
-// Key namespaces. The scope key holds the lock; the id index maps a lock
-// id back to its scope for Get/Release/Extend-by-id; the epoch key is the
-// §25.4 ops:lock-epoch:current counter.
+// Key namespaces, all under the ops:{lock}: hash tag. The scope key holds
+// the lock; the ID key maps a lock ID back to its scope for the by-ID
+// operations; the epoch key is the §25.4 ops:{lock}:epoch outage-epoch
+// counter. The scope: and id: segments keep a free-form scope from
+// colliding with the epoch key or an ID key.
+//
+// spec: §25.4 (Storage Tiers, Tier Transitions).
 const (
-	scopePrefix = "ops:lock:"
-	idxPrefix   = "ops:lockidx:"
-	epochKey    = "ops:lock-epoch:current"
+	scopePrefix = "ops:{lock}:scope:"
+	idxPrefix   = "ops:{lock}:id:"
+	epochKey    = "ops:{lock}:epoch"
 )
+
+// maxCASAttempts bounds the compare-and-set retries of Extend, Steal, and
+// Release (§25.4 Storage Tiers: three failed comparisons end in
+// REMEDIATION_LOCK_CONFLICT).
+const maxCASAttempts = 3
 
 func scopeKey(scope string) string { return scopePrefix + scope }
 func idxKey(id string) string      { return idxPrefix + id }
@@ -65,28 +89,65 @@ func unavailable(err error) error {
 	return coordination.ErrStoreUnavailable
 }
 
-// acquireScript is the §25.4 atomic acquire CAS: a held scope
-// returns its current lock data (the conflict path); a free scope is
-// written with the lock hash + id index under a shared PTTL.
+// acquireScript is the §25.4 atomic acquire. A held scope replies {1, data}
+// with the stored record (the conflict path), unless the scope already holds
+// this lock ID at revision 0, which is a re-sent acquire and replies
+// {0, epoch} with the epoch stamped on the first send. A free scope reads the
+// epoch key (absent is 0), stamps it into the record built in Go, writes the
+// scope hash and the ID key under one relative PTTL, and replies {0, epoch}.
 //
-//	KEYS[1] = scope key   KEYS[2] = id index key
-//	ARGV[1] = lock id     ARGV[2] = lock json   ARGV[3] = pttl ms   ARGV[4] = scope
+//	KEYS[1] = scope key   KEYS[2] = ID key   KEYS[3] = epoch key
+//	ARGV[1] = lock ID     ARGV[2] = lock JSON (epoch 0)
+//	ARGV[3] = PTTL ms     ARGV[4] = scope
 var acquireScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 1 then
-  return redis.call('HGET', KEYS[1], 'data')
+  local d = redis.call('HGET', KEYS[1], 'data')
+  if redis.call('HGET', KEYS[1], 'id') == ARGV[1] then
+    local s = cjson.decode(d)
+    if s.revision == 0 then return {0, tostring(s.epoch)} end
+  end
+  return {1, d}
 end
-redis.call('HSET', KEYS[1], 'id', ARGV[1], 'data', ARGV[2])
+local e = tonumber(redis.call('GET', KEYS[3]) or '0')
+local l = cjson.decode(ARGV[2])
+l.epoch = e
+local d = cjson.encode(l)
+redis.call('HSET', KEYS[1], 'id', ARGV[1], 'data', d)
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 redis.call('SET', KEYS[2], ARGV[4], 'PX', ARGV[3])
-return false
+return {0, tostring(e)}
 `)
 
-// releaseScript is the §25.4 atomic release CAS: it deletes the
-// scope and index keys only when the stored lock id matches the expected
-// id, so a steal that re-keyed the scope is not clobbered by a stale
-// release. Returns 1 on delete, 0 on id mismatch.
+// casScript is the §25.4 compare-and-set behind Extend, Steal, and Release.
+// It writes the new record, or deletes both keys when the new record is
+// empty, only when the stored data string equals the expected one. A stored
+// record already equal to the new record is a re-sent or identical
+// concurrent write and counts as success. Returns 1 on success, 0 when the
+// comparison fails.
 //
-//	KEYS[1] = scope key   KEYS[2] = id index key   ARGV[1] = expected lock id
+//	KEYS[1] = scope key   KEYS[2] = ID key
+//	ARGV[1] = expected data   ARGV[2] = new data, or '' for delete
+//	ARGV[3] = PTTL ms         ARGV[4] = scope   ARGV[5] = lock ID
+var casScript = redis.NewScript(`
+local cur = redis.call('HGET', KEYS[1], 'data')
+if ARGV[2] ~= '' and cur == ARGV[2] then return 1 end
+if cur ~= ARGV[1] then return 0 end
+if ARGV[2] == '' then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return 1
+end
+redis.call('HSET', KEYS[1], 'id', ARGV[5], 'data', ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+redis.call('SET', KEYS[2], ARGV[4], 'PX', ARGV[3])
+return 1
+`)
+
+// releaseScript is the §25.4 reconciliation removal: it deletes the scope
+// key and the ID key only when the stored lock ID matches the expected ID,
+// regardless of acquiredBy. Returns 1 on delete, 0 on ID mismatch, so a
+// re-sent removal deletes nothing.
+//
+//	KEYS[1] = scope key   KEYS[2] = ID key   ARGV[1] = expected lock ID
 var releaseScript = redis.NewScript(`
 if redis.call('HGET', KEYS[1], 'id') == ARGV[1] then
   redis.call('DEL', KEYS[1])
@@ -108,18 +169,17 @@ if cand > cur then redis.call('SET', KEYS[1], ARGV[1]) end
 return redis.call('GET', KEYS[1])
 `)
 
-// Acquire creates a §25.4 lock on req.Scope, stamping the current
-// ops:lock-epoch:current value (the §25.4 read; the passed epoch
-// is advisory and ignored so Redis remains the authoritative Tier 2 epoch
-// source). acquiredAt and expiresAt come from the Redis TIME command.
+// Acquire creates a §25.4 lock on req.Scope. acquiredAt and expiresAt come
+// from a Redis TIME reading taken before the script; acquireScript then
+// reads ops:{lock}:epoch and stamps it into the lock inside the same script,
+// so the stamped epoch is the value current when the lock was written. The
+// epoch argument is unused because Redis holds the Tier 2 epoch.
+//
+// spec: §25.4 (Storage Tiers, Clock Source).
 func (s *Store) Acquire(ctx context.Context, req coordination.LockRequest, _ uint64) (*coordination.Lock, error) {
 	now, err := s.serverTime(ctx)
 	if err != nil {
 		return nil, unavailable(err)
-	}
-	epoch, err := s.Epoch(ctx)
-	if err != nil {
-		return nil, err
 	}
 	ttl := coordination.NormalizeTTL(req.TTLSeconds)
 	lock := coordination.Lock{
@@ -131,28 +191,51 @@ func (s *Store) Acquire(ctx context.Context, req coordination.LockRequest, _ uin
 		AcquiredAt:  now,
 		ExpiresAt:   now.Add(time.Duration(ttl) * time.Second),
 		LockStore:   coordination.StoreRedis,
-		Epoch:       epoch,
 	}
 	blob, err := json.Marshal(lock)
 	if err != nil {
 		return nil, err
 	}
-	pttl := strconv.FormatInt(int64(ttl)*1000, 10)
 	res, err := acquireScript.Run(ctx, s.client,
-		[]string{scopeKey(req.Scope), idxKey(lock.ID)}, lock.ID, blob, pttl, req.Scope).Result()
-	// A free scope returns the Lua `false` (a nil reply, surfaced as
-	// redis.Nil) — the acquired path. A held scope returns the existing
-	// lock data string — the conflict path. Any other error is an outage.
-	if errors.Is(err, redis.Nil) {
-		return &lock, nil
-	}
+		[]string{scopeKey(req.Scope), idxKey(lock.ID), epochKey},
+		lock.ID, blob, pttlMillis(ttl), req.Scope).Result()
 	if err != nil {
-		return nil, unavailable(err)
+		return nil, coordination.ErrStoreUnavailable
 	}
-	if held, ok := res.(string); ok {
-		return nil, conflictFromBlob(req.Scope, held)
+	conflict, payload, ok := parseAcquireReply(res)
+	if !ok {
+		return nil, coordination.ErrStoreUnavailable
 	}
+	if conflict {
+		return nil, conflictFromBlob(req.Scope, payload)
+	}
+	epoch, err := strconv.ParseUint(payload, 10, 64)
+	if err != nil {
+		return nil, coordination.ErrStoreUnavailable
+	}
+	lock.Epoch = epoch
 	return &lock, nil
+}
+
+// parseAcquireReply decodes the acquireScript reply: {0, epoch} is an
+// acquired lock and {1, data} a conflict carrying the stored record. ok is
+// false for any other reply.
+func parseAcquireReply(res interface{}) (conflict bool, payload string, ok bool) {
+	parts, isSlice := res.([]interface{})
+	if !isSlice || len(parts) != 2 {
+		return false, "", false
+	}
+	code, isInt := parts[0].(int64)
+	payload, isStr := parts[1].(string)
+	if !isInt || !isStr || (code != 0 && code != 1) {
+		return false, "", false
+	}
+	return code == 1, payload, true
+}
+
+// pttlMillis renders a TTL in seconds as the PTTL argument of a script.
+func pttlMillis(ttlSeconds int) string {
+	return strconv.FormatInt(int64(ttlSeconds)*1000, 10)
 }
 
 // conflictFromBlob builds the §25.4 REMEDIATION_LOCK_CONFLICT error from
@@ -188,88 +271,138 @@ func (s *Store) ActiveLocks(ctx context.Context) ([]coordination.Lock, error) {
 
 // Get returns a single §25.4 lock by id, or REMEDIATION_LOCK_NOT_FOUND.
 func (s *Store) Get(ctx context.Context, lockID string) (*coordination.Lock, error) {
-	lock, err := s.readByID(ctx, lockID)
+	lock, _, err := s.readByID(ctx, lockID)
 	if err != nil {
 		return nil, unavailable(err)
 	}
 	if lock == nil {
-		return nil, &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
+		return nil, notFound(lockID)
 	}
 	return lock, nil
 }
 
 // Extend renews a §25.4 lock's TTL. caller MUST be the current acquiredBy;
-// extension increments revision and re-stamps the key PTTL from Redis TIME.
+// extension increments revision and recomputes expiresAt from Redis TIME.
+//
+// spec: §25.4 (Storage Tiers).
 func (s *Store) Extend(ctx context.Context, lockID string, ttlSeconds int, caller string) (*coordination.Lock, error) {
-	lock, err := s.readByID(ctx, lockID)
-	if err != nil {
-		return nil, unavailable(err)
-	}
-	if lock == nil {
-		return nil, &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
-	}
-	if lock.AcquiredBy != caller {
-		return nil, &coordination.Error{Code: coordination.ErrCodeNotOwned, Message: "lock " + lockID + " is not owned by the caller"}
-	}
-	now, err := s.serverTime(ctx)
-	if err != nil {
-		return nil, unavailable(err)
-	}
 	ttl := coordination.NormalizeTTL(ttlSeconds)
-	lock.ExpiresAt = now.Add(time.Duration(ttl) * time.Second)
-	lock.Revision++
-	if err := s.persist(ctx, *lock, ttl); err != nil {
-		return nil, unavailable(err)
-	}
-	return lock, nil
+	return s.mutate(ctx, lockID, ttl, func(cur coordination.Lock, now time.Time) (*coordination.Lock, error) {
+		if cur.AcquiredBy != caller {
+			return nil, notOwned(lockID)
+		}
+		cur.ExpiresAt = now.Add(time.Duration(ttl) * time.Second)
+		cur.Revision++
+		return &cur, nil
+	})
 }
 
 // Release frees a §25.4 lock. caller MUST be the current acquiredBy. The
-// delete is an atomic CAS on the lock id so a steal is not clobbered.
+// delete is a compare-and-set on the record the ownership check read, so a
+// lock a steal replaced is never deleted by its former holder.
+//
+// spec: §25.4 (Storage Tiers).
 func (s *Store) Release(ctx context.Context, lockID, caller string) error {
-	lock, err := s.readByID(ctx, lockID)
-	if err != nil {
-		return unavailable(err)
-	}
-	if lock == nil {
-		return &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
-	}
-	if lock.AcquiredBy != caller {
-		return &coordination.Error{Code: coordination.ErrCodeNotOwned, Message: "lock " + lockID + " is not owned by the caller"}
-	}
-	if _, err := releaseScript.Run(ctx, s.client,
-		[]string{scopeKey(lock.Scope), idxKey(lockID)}, lockID).Result(); err != nil {
-		return unavailable(err)
-	}
-	return nil
+	_, err := s.mutate(ctx, lockID, 0, func(cur coordination.Lock, _ time.Time) (*coordination.Lock, error) {
+		if cur.AcquiredBy != caller {
+			return nil, notOwned(lockID)
+		}
+		return nil, nil
+	})
+	return err
 }
 
 // Steal takes over a §25.4 lock: caller becomes acquiredBy, the prior
 // holder is recorded in stolenFrom, revision increments, and the TTL is
-// reset from Redis TIME.
+// reset from Redis TIME. Steal has no holder check (§25.4 Stealing).
+//
+// spec: §25.4 (Storage Tiers).
 func (s *Store) Steal(ctx context.Context, lockID string, req coordination.StealRequest) (*coordination.Lock, error) {
-	lock, err := s.readByID(ctx, lockID)
-	if err != nil {
-		return nil, unavailable(err)
-	}
-	if lock == nil {
-		return nil, &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
-	}
-	now, err := s.serverTime(ctx)
-	if err != nil {
-		return nil, unavailable(err)
-	}
 	ttl := coordination.NormalizeTTL(req.TTLSeconds)
-	lock.StolenFrom = lock.AcquiredBy
-	lock.AcquiredBy = req.AcquiredBy
-	lock.OperationID = ""
-	lock.AcquiredAt = now
-	lock.ExpiresAt = now.Add(time.Duration(ttl) * time.Second)
-	lock.Revision++
-	if err := s.persist(ctx, *lock, ttl); err != nil {
-		return nil, unavailable(err)
+	return s.mutate(ctx, lockID, ttl, func(cur coordination.Lock, now time.Time) (*coordination.Lock, error) {
+		cur.StolenFrom = cur.AcquiredBy
+		cur.AcquiredBy = req.AcquiredBy
+		cur.OperationID = ""
+		cur.AcquiredAt = now
+		cur.ExpiresAt = now.Add(time.Duration(ttl) * time.Second)
+		cur.Revision++
+		return &cur, nil
+	})
+}
+
+// decideFunc computes a by-ID mutation from the stored lock and the Redis
+// TIME reading. A nil lock with a nil error deletes the lock; an error is
+// returned to the caller unchanged.
+type decideFunc func(cur coordination.Lock, now time.Time) (*coordination.Lock, error)
+
+// mutate applies a §25.4 by-ID change with casScript. Each attempt reads
+// the lock through the ID key, reads Redis TIME, decides, and runs the
+// compare-and-set against the raw stored data string (never a re-marshal,
+// because the acquire script re-encodes the record). A failed comparison
+// starts the next attempt; after maxCASAttempts it returns
+// REMEDIATION_LOCK_CONFLICT, never ErrStoreUnavailable, because that error
+// would send the request to the in-memory tier and could create a second
+// holder. A Redis transport error maps to ErrStoreUnavailable.
+//
+// spec: §25.4 (Storage Tiers, Error Codes).
+func (s *Store) mutate(ctx context.Context, id string, ttl int, decide decideFunc) (*coordination.Lock, error) {
+	for attempt := 0; attempt < maxCASAttempts; attempt++ {
+		cur, raw, err := s.readByID(ctx, id)
+		if err != nil {
+			return nil, unavailable(err)
+		}
+		if cur == nil {
+			return nil, notFound(id)
+		}
+		now, err := s.serverTime(ctx)
+		if err != nil {
+			return nil, unavailable(err)
+		}
+		next, err := decide(*cur, now)
+		if err != nil {
+			return nil, err
+		}
+		applied, err := s.compareAndSet(ctx, *cur, raw, next, ttl)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			return next, nil
+		}
 	}
-	return lock, nil
+	return nil, &coordination.Error{
+		Code:    coordination.ErrCodeConflict,
+		Message: "lock " + id + " changed concurrently on every attempt",
+	}
+}
+
+// compareAndSet runs casScript for cur, expecting the stored data string
+// raw and writing next (or deleting when next is nil). It reports whether
+// the script applied the change.
+func (s *Store) compareAndSet(ctx context.Context, cur coordination.Lock, raw string, next *coordination.Lock, ttl int) (bool, error) {
+	newData := ""
+	if next != nil {
+		blob, err := json.Marshal(next)
+		if err != nil {
+			return false, err
+		}
+		newData = string(blob)
+	}
+	res, err := casScript.Run(ctx, s.client,
+		[]string{scopeKey(cur.Scope), idxKey(cur.ID)},
+		raw, newData, pttlMillis(ttl), cur.Scope, cur.ID).Int64()
+	if err != nil {
+		return false, coordination.ErrStoreUnavailable
+	}
+	return res == 1, nil
+}
+
+func notFound(lockID string) error {
+	return &coordination.Error{Code: coordination.ErrCodeNotFound, Message: "no lock " + lockID}
+}
+
+func notOwned(lockID string) error {
+	return &coordination.Error{Code: coordination.ErrCodeNotOwned, Message: "lock " + lockID + " is not owned by the caller"}
 }
 
 // Reap is a no-op for the Redis tier: key-level PTTL expires locks
@@ -279,15 +412,14 @@ func (s *Store) Reap(_ context.Context) (int, error) { return 0, nil }
 
 // RemoveByID drops the lock with lockID from Redis regardless of holder.
 // The §25.4 reconciliation calls it to remove a losing split-brain Redis
-// lock once the pre-outage Postgres holder has won ("The Redis lock is
-// removed", line 2267), so a later Postgres outage cannot resurface the
-// stale lock. The delete is the same atomic id-matched CAS as Release, so a
-// steal that re-keyed the scope is not clobbered; a lock that has already
-// expired or been re-keyed is a no-op.
+// lock once the pre-outage Postgres holder has won, so a later Postgres
+// outage cannot resurface the stale lock. The delete is the ID-matched
+// releaseScript over the scope key and the ID key; a lock that has already
+// expired or been removed, or a re-sent removal, is a no-op.
 //
-// spec: §25.4.
+// spec: §25.4 (Storage Tiers, Tier Transitions).
 func (s *Store) RemoveByID(ctx context.Context, lockID string) error {
-	lock, err := s.readByID(ctx, lockID)
+	lock, _, err := s.readByID(ctx, lockID)
 	if err != nil {
 		return unavailable(err)
 	}
@@ -301,7 +433,7 @@ func (s *Store) RemoveByID(ctx context.Context, lockID string) error {
 	return nil
 }
 
-// Epoch returns the §25.4 ops:lock-epoch:current value, defaulting to 0.
+// Epoch returns the §25.4 ops:{lock}:epoch value, defaulting to 0.
 func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	v, err := s.client.Get(ctx, epochKey).Uint64()
 	if errors.Is(err, redis.Nil) {
@@ -313,7 +445,8 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	return v, nil
 }
 
-// IncrementEpoch advances ops:lock-epoch:current by one (the §25.4 Postgres→Tier-2 transition) and returns the new value.
+// IncrementEpoch advances ops:{lock}:epoch by one (the §25.4
+// Postgres→Tier-2 transition) and returns the new value.
 func (s *Store) IncrementEpoch(ctx context.Context) (uint64, error) {
 	v, err := s.client.Incr(ctx, epochKey).Result()
 	if err != nil {
@@ -322,9 +455,9 @@ func (s *Store) IncrementEpoch(ctx context.Context) (uint64, error) {
 	return uint64(v), nil
 }
 
-// SetEpoch writes v as ops:lock-epoch:current when it exceeds the stored
-// value (the §25.4 MAX reconciliation, applied to the Redis side after a
-// Postgres recovery).
+// SetEpoch writes v as ops:{lock}:epoch when it exceeds the stored value
+// (the §25.4 MAX reconciliation, applied to the Redis side after a Postgres
+// recovery).
 func (s *Store) SetEpoch(ctx context.Context, v uint64) error {
 	if _, err := setEpochScript.Run(ctx, s.client, []string{epochKey}, strconv.FormatUint(v, 10)).Result(); err != nil {
 		return coordination.ErrStoreUnavailable
@@ -348,66 +481,47 @@ func (s *Store) serverTime(ctx context.Context) (time.Time, error) {
 // reuses the same source acquiredAt/expiresAt are authored from, so the
 // monitored skew is the skew that affects lease expiry computation.
 //
-// spec: §25.4.
+// spec: §25.4 (Clock Source).
 func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
 	return s.serverTime(ctx)
 }
 
-// persist re-writes lock's hash + index with a fresh PTTL. Used by Extend
-// and Steal, which operate on an already-identified lock.
-func (s *Store) persist(ctx context.Context, lock coordination.Lock, ttl int) error {
-	blob, err := json.Marshal(lock)
-	if err != nil {
-		return err
-	}
-	pttl := time.Duration(ttl) * time.Second
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, scopeKey(lock.Scope), "id", lock.ID, "data", blob)
-	pipe.PExpire(ctx, scopeKey(lock.Scope), pttl)
-	pipe.Set(ctx, idxKey(lock.ID), lock.Scope, pttl)
-	_, err = pipe.Exec(ctx)
-	return err
-}
-
-// readByID resolves a lock id to its scope via the index, then reads the
-// scope hash. It returns (nil, nil) when either key is absent or expired.
-func (s *Store) readByID(ctx context.Context, id string) (*coordination.Lock, error) {
+// readByID resolves a lock ID to its scope through the ID key, then reads
+// the scope hash. It returns the decoded lock and the raw stored data
+// string, or a nil lock with a nil error when either key is absent, the
+// record does not decode, or the scope key holds a different lock ID (a
+// stale ID key whose scope another lock has since acquired).
+//
+// spec: §25.4 (Storage Tiers).
+func (s *Store) readByID(ctx context.Context, id string) (*coordination.Lock, string, error) {
 	scope, err := s.client.Get(ctx, idxKey(id)).Result()
 	if errors.Is(err, redis.Nil) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return s.readByScope(ctx, scope)
-}
-
-// readByScope reads and decodes the lock at the scope hash, or (nil, nil)
-// on a miss.
-func (s *Store) readByScope(ctx context.Context, scope string) (*coordination.Lock, error) {
-	blob, err := s.client.HGet(ctx, scopeKey(scope), "data").Bytes()
+	raw, err := s.client.HGet(ctx, scopeKey(scope), "data").Result()
 	if errors.Is(err, redis.Nil) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var lock coordination.Lock
-	if err := json.Unmarshal(blob, &lock); err != nil {
-		return nil, nil
+	if err := json.Unmarshal([]byte(raw), &lock); err != nil || lock.ID != id {
+		return nil, "", nil
 	}
-	return &lock, nil
+	return &lock, raw, nil
 }
 
-// scanAll iterates the scope keyspace and decodes every live lock. The
-// ops:lock:{scope} keys carry no shared hash tag, so on a Redis Cluster
-// they spread over every master: the SCAN runs on each master
-// (redisconn.ScanKeys with no routing key) and each lock is read with its
-// own HGET, so the listing is complete (F-12.4.29). The lock scripts and
-// the persist transaction still span hash slots; that is F-12.4.28 class
-// B/C, which P6 resolves by renaming the lock keys under one hash tag.
+// scanAll iterates the scope keyspace and decodes every live lock. Every
+// ops:{lock}:scope:<scope> key shares the {lock} hash tag, so on a Redis
+// Cluster they sit in one slot; the SCAN still runs on every primary
+// (redisconn.ScanKeys with no routing key), so the listing stays complete
+// while that slot migrates during resharding.
 //
-// spec: §25.4; §12.4 Redis HA and Failure Modes.
+// spec: §25.4 (Storage Tiers); §12.4 (Redis HA and Failure Modes).
 func (s *Store) scanAll(ctx context.Context) ([]coordination.Lock, error) {
 	var out []coordination.Lock
 	err := redisconn.ScanKeys(ctx, s.client, "", scopePrefix+"*", 256, func(keys []string) error {

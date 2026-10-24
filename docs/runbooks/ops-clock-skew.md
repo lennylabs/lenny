@@ -30,7 +30,7 @@ related:
 
 # ops-clock-skew
 
-The measured clock skew between the Postgres dependency clock (Tier 1, `now()`) and the Redis dependency clock (Tier 2, the `TIME` command) exceeds the 10s tolerance NTP is expected to hold. `lenny-ops` authors every remediation lock's `expiresAt` from a single per-tier server clock, and outage-epoch reconciliation compares timestamps across the two stores when a tier recovers. A sustained skew breach risks premature or delayed lease expiry and timestamp inconsistencies during reconciliation. The 10s threshold is the operator-managed NTP tolerance the spec bounds Postgres-Redis skew by; it is the alert threshold, not a fixed design invariant.
+The measured clock skew between the Postgres dependency clock (Tier 1, `now()`) and the Redis dependency clock (Tier 2, the `TIME` command) exceeds the 10s tolerance NTP is expected to hold. `lenny-ops` authors every remediation lock's `expiresAt` from each tier's server-side clock, and on a Redis Cluster any primary may answer the Redis `TIME` command, and outage-epoch reconciliation compares timestamps across the two stores when a tier recovers. A sustained skew breach risks premature or delayed lease expiry and timestamp inconsistencies during reconciliation. The 10s threshold is the operator-managed NTP tolerance the spec bounds Postgres-Redis skew by; it is the alert threshold, not a fixed design invariant.
 
 ## Trigger
 

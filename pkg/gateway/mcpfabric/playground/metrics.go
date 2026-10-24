@@ -33,7 +33,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	pageViews, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_playground_page_views_total",
 		Help: "Playground index loads, labelled by auth mode (§27.8).",
-	}, []string{"authMode"})
+	}, []string{"auth_mode"})
 	if err != nil {
 		return nil, err
 	}
