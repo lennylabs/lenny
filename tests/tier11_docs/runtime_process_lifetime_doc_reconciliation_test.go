@@ -301,8 +301,9 @@ func TestRuntimeSupervisorParagraphHasOneSpecHome(t *testing.T) {
 // retired from the documentation: a pod that keeps one runtime process on
 // every recycling pool, the kubelet starting the runtime binary through its
 // image entrypoint, an adapter that starts the runtime binary itself, an
-// adapter that captures the runtime's stderr, and a
-// scrub that leaves the runtime process untouched on every pod.
+// adapter that captures the runtime's stderr, a
+// scrub that leaves the runtime process untouched on every pod, and a
+// runtime process that a pod has from its start.
 var retiredSidecarLaunchPhrases = []string{
 	"keeps one runtime process",
 	"keeps the runtime process that served",
@@ -317,6 +318,8 @@ var retiredSidecarLaunchPhrases = []string{
 	"its runtime process cannot serve the next session",
 	"the adapter SIGKILLs",
 	"the adapter starts the runtime binary",
+	"process the pod started with",
+	"process the new pod started with",
 }
 
 // spec: 4.7.10 (Runtime supervisor, Runtime process lifetime), 5.2

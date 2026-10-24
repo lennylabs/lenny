@@ -80,7 +80,7 @@ stateDiagram-v2
 
 **resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a retryable pod or runtime failure while retries remain, or when a message or resume call reaches a suspended session whose pod was released. The gateway's resume driver claims a new warm pod and restores the session onto it. While the warm pool or the session's credential pool is exhausted, the session waits in this state.
 
-**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process the new pod started with.
+**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process that the runtime supervisor launches on the new pod, as [Runtime Supervisor](../runtime-author-guide/lifecycle.md#runtime-supervisor) states.
 
 **awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
@@ -98,7 +98,7 @@ When a session is resumed (after pod failure or suspended pod release), the gate
 
 1. Claims a new warm pod from the pool.
 2. Assigns the session new credential leases on the new pod.
-3. Materializes the workspace from the last successful checkpoint snapshot and restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process the pod started with. A session that has neither a checkpoint nor a minimal eviction state record is rebuilt instead: the gateway materializes its workspace from the session's workspace plan, runs the plan's setup commands, and starts the runtime with no carried conversation state.
+3. Materializes the workspace from the last successful checkpoint snapshot and restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process that the runtime supervisor launches on the new pod. A session that has neither a checkpoint nor a minimal eviction state record is rebuilt instead: the gateway materializes its workspace from the session's workspace plan, runs the plan's setup commands, and starts the runtime with no carried conversation state.
 4. Emits a `session.resumed` event to the client with `resumeMode` (either `full` for a normal checkpoint restore, or `conversation_only` if only the minimal eviction state was preserved) and `workspaceLost` (boolean indicating whether workspace files were lost).
 5. Increments `recovery_generation` on the session record. Clients can observe this counter to track how many times a session has been recovered.
 
