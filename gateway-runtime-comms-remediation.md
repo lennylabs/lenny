@@ -2972,8 +2972,12 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
   - Size: about 15 production files and 20 test files; tiers 0, 1, 2, 4, and 9, plus 3 if the channels are
     renamed.
   - Also land F-12.4.30 (concern-specific probes and health checks ping the base client), about five files.
-- [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule** (not yet written). F-12.4.28
+- [ ] **P6. `lenny-ops` remediation-lock keys and the Redis key brace rule**
+  (`proposals/0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis/`). F-12.4.28
   class B/C, 3 operations in 1 family.
+  - **Progress.** Part 1 (the `ops:{lock}:` keys, the §12.4 brace rule, the in-script epoch stamp, and the
+    compare-and-set Extend, Steal, and Release) landed at cb37a9e54, 114cf1293, and 65c2d38ef and closed
+    F-12.4.28 class B/C. P6 stays open until the Part 2 topology relaxation and its condition audit land.
   - **Scope.** §25.4 describes one Lua script over `ops:lock:{scope}` that also reads `ops:lock-epoch:current`
     atomically; if the braces are a hash tag, those keys sit in different slots. The code also uses an
     `ops:lockidx:<id>` key that no section documents, and reads the epoch with a separate `GET` outside the

@@ -5933,6 +5933,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestRedisKeyPrefixRegistryCompleteness_0032",
+        "tests/tier11_docs/build_gaps_ops_lock_cross_slot_currency_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsserverSelectsContractTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
