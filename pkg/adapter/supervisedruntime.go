@@ -148,6 +148,13 @@ type SupervisedRuntime struct {
 	onLaunch func()
 	// writeManifest writes the warm-up manifest before the warm-up launch.
 	writeManifest func() error
+	// startGens records, per session, the generation its last successful
+	// Start launched or joined. The Server's rule-8 record consumes it
+	// through confirmStart, so a start is recorded only on the generation it
+	// was given to and only while that generation's end is unhandled.
+	// spec: §4.7.1 (The registry critical section); §4.7.10 (Runtime
+	// supervisor, Crash; Runtime supervisor, Liveness).
+	startGens map[string]uint64
 	// connectWatch is the timer that holds a launched process to the
 	// deadline of the start that launched it after that start was cancelled
 	// before its deadline. A successful start and the generation's handled
@@ -392,7 +399,7 @@ func (r *SupervisedRuntime) endEvent(gen uint64, ev RuntimeEndEvent) {
 func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 	r.launchMu.Lock()
 	defer r.launchMu.Unlock()
-	t, launched, err := r.ensureLaunched(ctx)
+	t, gen, launched, err := r.ensureLaunched(ctx)
 	if err != nil {
 		return err
 	}
@@ -407,6 +414,45 @@ func (r *SupervisedRuntime) Start(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("start supervised runtime: %w", err)
 	}
 	r.stopConnectWatch()
+	r.noteStartGen(sessionID, gen)
+	return nil
+}
+
+// noteStartGen records gen as the generation sessionID's start was given to.
+func (r *SupervisedRuntime) noteStartGen(sessionID string, gen uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.startGens == nil {
+		r.startGens = map[string]uint64{}
+	}
+	r.startGens[sessionID] = gen
+}
+
+// confirmStart consumes sessionID's start generation and reports whether the
+// session may be recorded as held by the current process. It refuses with
+// errRuntimeNotLive while the not-live state is set, when no successful
+// Start of the session is outstanding, when the generation the start was
+// given to is no longer the current one, and when that generation's end was
+// already handled. The Server calls it inside the hold of s.mu that takes
+// the rule-8 record, which is the hold the Runtime exits handling takes, so
+// each start is either seen by a crash of its generation (record first) or
+// sees that generation's end (end first). Lock order: the Server's mu, then
+// r.mu. spec: §4.7.1 (The registry critical section); §4.7.10 (Runtime
+// supervisor, Crash; Runtime supervisor, Liveness); §5.2 (Pod retirement
+// policy, Runtime not live).
+func (r *SupervisedRuntime) confirmStart(sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	gen, ok := r.startGens[sessionID]
+	delete(r.startGens, sessionID)
+	switch {
+	case r.notLive:
+		return errRuntimeNotLive
+	case !ok:
+		return fmt.Errorf("%w: session %s has no start outstanding", errRuntimeNotLive, sessionID)
+	case gen != r.gen || r.endHandled:
+		return fmt.Errorf("%w: generation %d ended before session %s was recorded", errRuntimeNotLive, gen, sessionID)
+	}
 	return nil
 }
 
@@ -506,31 +552,31 @@ func startComposed(ctx context.Context, t *SocketRuntimeProcess, sessionID strin
 // handler cancels the warm-up context before ExitOnSignal decides whether a
 // process was launched, so a launch that decision did not see is never sent.
 // The caller holds launchMu.
-func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeProcess, bool, error) {
+func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeProcess, uint64, bool, error) {
 	r.mu.Lock()
 	if r.notLive {
 		r.mu.Unlock()
-		return nil, false, errRuntimeNotLive
+		return nil, 0, false, errRuntimeNotLive
 	}
 	if r.live && r.transport != nil {
-		t := r.transport
+		t, gen := r.transport, r.gen
 		r.mu.Unlock()
-		return t, false, nil
+		return t, gen, false, nil
 	}
 	r.mu.Unlock()
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return nil, false, fmt.Errorf("launch: %w", err)
+		return nil, 0, false, fmt.Errorf("launch: %w", err)
 	}
 	r.mu.Lock()
 	if r.notLive {
 		r.mu.Unlock()
-		return nil, false, errRuntimeNotLive
+		return nil, 0, false, errRuntimeNotLive
 	}
 	if !r.launchPermitted || r.link == nil || r.transport == nil {
 		r.mu.Unlock()
-		return nil, false, errRuntimeNotLive
+		return nil, 0, false, errRuntimeNotLive
 	}
 	r.gen++
 	gen, t, link, onLaunch := r.gen, r.transport, r.link, r.onLaunch
@@ -544,9 +590,9 @@ func (r *SupervisedRuntime) ensureLaunched(ctx context.Context) (*SocketRuntimeP
 		onLaunch()
 	}
 	if err := r.sendLaunch(ctx, link, gen); err != nil {
-		return nil, true, err
+		return nil, gen, true, err
 	}
-	return t, true, nil
+	return t, gen, true, nil
 }
 
 // sendLaunch sends launch for gen. A launched that carries an error fails the
@@ -582,7 +628,7 @@ func (r *SupervisedRuntime) WarmUp(ctx context.Context) error {
 	}
 	r.launchMu.Lock()
 	defer r.launchMu.Unlock()
-	t, _, err := r.ensureLaunched(ctx)
+	t, _, _, err := r.ensureLaunched(ctx)
 	if err == nil {
 		err = startComposed(ctx, t, "")
 	}
@@ -795,9 +841,15 @@ func (r *SupervisedRuntime) Output(ctx context.Context, sessionID string) (<-cha
 // §4.7.10 (Runtime process lifetime).
 func (r *SupervisedRuntime) Interrupt(context.Context, string, bool) error { return nil }
 
-// Close returns nil: a session's teardown ends no runtime process. spec:
-// §4.7.10 (Runtime process lifetime).
-func (r *SupervisedRuntime) Close(context.Context, string) error { return nil }
+// Close drops the session's outstanding start generation and returns nil: a
+// session's teardown ends no runtime process. spec: §4.7.10 (Runtime process
+// lifetime).
+func (r *SupervisedRuntime) Close(_ context.Context, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.startGens, sessionID)
+	return nil
+}
 
 // ServesNextSession reports whether the runtime can serve the pod's next
 // session. It is false while the not-live state is set. On a keep pod it is

@@ -204,6 +204,57 @@ func TestSupervisedExitedAgainstDeregistrationRace_spec_4_7_10(t *testing.T) {
 	}
 }
 
+// spec: 4.7.1 (The registry critical section), 4.7.10 (Runtime supervisor,
+// Crash; Runtime supervisor, Liveness)
+// diagnosis: a start whose open sequence ran after the generation's end was
+// handled was still recorded on that generation, so it neither failed as a
+// not-live start nor had its stream failed with runtime_crash.
+func TestSupervisedStartRecordAgainstExitedRace_spec_4_7_10(t *testing.T) {
+	checkNoGoroutineLeak(t)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var recorded, refused int
+	for _, lifetime := range []RuntimeLifetime{LifetimeKeep, LifetimeRestart} {
+		for round := 0; round < 20; round++ {
+			e := newExitsFixture(t, lifetime, LaunchSession)
+			claim := claimForRecordTest(t, e.s, "b")
+			if err := e.s.Runtime.Start(startCtx(t, 5*time.Second), "b"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			var confirmed bool
+			var openErr error
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				confirmed, openErr = e.s.openRuntimeSession(startCtx(t, 5*time.Second), "b", claim, manifestInputs{}, false)
+			}()
+			go func() {
+				defer wg.Done()
+				jitter(r)
+				e.sup.writeLine(`{"type":"exited","gen":1,"signal":9}`)
+			}()
+			wg.Wait()
+			requireNotLive(t, e.rt, CauseRuntimeExit)
+			switch {
+			case confirmed && openErr == nil:
+				recorded++
+				waitFor(t, "the recorded session to fail with runtime_crash", func() bool { return e.crashed("b") })
+			case !confirmed && errors.Is(openErr, errRuntimeNotLive):
+				refused++
+				if recordedOn(e.s, "b") || e.crashed("b") {
+					t.Fatalf("%s round %d: a refused start was recorded or crashed", lifetime, round)
+				}
+			default:
+				t.Fatalf("%s round %d: openRuntimeSession = %v, %v; want recorded or not-live", lifetime, round, confirmed, openErr)
+			}
+			_ = e.rt.CloseListener()
+			e.sup.close()
+		}
+	}
+	t.Logf("recorded then crashed: %d, refused as not live: %d", recorded, refused)
+}
+
 // spec: 4.7.10 (Runtime supervisor, Runtime exits), 10.1 (Hold state timeout)
 // diagnosis: once the hold timeout's close ran, the end did not take the
 // holdTimeout row: a session failed with runtime_crash, or the not-live

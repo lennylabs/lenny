@@ -69,18 +69,43 @@ import (
 // spec: §7.1 (normal flow); §4.7.1 (Role and Gateway RPC Contract), rule 8
 // (the start-confirmation rule); §15.4.3.
 func (s *Server) noteRuntimeStarted(sessionID string, entry *slotState) bool {
+	ok, err := s.confirmRuntimeStart(sessionID, entry)
+	return ok && err == nil
+}
+
+// confirmRuntimeStart is noteRuntimeStarted with the supervised runtime's
+// liveness read inside the same hold of s.mu. It reports false with a nil
+// error when rule 8 refuses (the entry left the registry or was replaced),
+// and false with an error wrapping errRuntimeNotLive when the entry stands
+// but the pod's supervised runtime cannot hold the session: the not-live
+// state is set, or the generation the start was given to has ended, whether
+// by a reported exit or by the end of the process's CH-MSGSOCK connection.
+// The Runtime exits handling takes the same lock, so a start recorded here
+// is one a crash of its generation fails with runtime_crash, and a start
+// whose generation's end was handled first is refused here rather than
+// recorded on a process that no longer runs.
+// spec: §4.7.1 (The registry critical section; Role and Gateway RPC
+// Contract, rule 8); §4.7.10 (Runtime supervisor, Crash; Runtime supervisor,
+// Liveness); §5.2 (Pod retirement policy, Runtime not live).
+func (s *Server) confirmRuntimeStart(sessionID string, entry *slotState) (bool, error) {
 	if sessionID == "" || entry == nil {
-		return false
+		return false, nil
 	}
+	rt := s.supervisedRuntime()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// spec: §4.7.1 (Role and Gateway RPC Contract), rule 8: entry identity.
 	st, ok := s.slots[sessionID]
 	if !ok || st != entry || st.sessionID != sessionID {
-		return false
+		return false, nil
+	}
+	if rt != nil {
+		if err := rt.confirmStart(sessionID); err != nil {
+			return false, err
+		}
 	}
 	s.noteRuntimeStartedLocked(sessionID)
-	return true
+	return true, nil
 }
 
 // rollbackUnconfirmedStart is the arm a start takes when noteRuntimeStarted

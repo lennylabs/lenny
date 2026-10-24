@@ -1094,7 +1094,13 @@
         "pkg/adapter/supervisedruntime_test.go::TestSupervisedWarmUpLaunch_spec_4_7_10",
         "pkg/adapter/preready_cancel_test.go::TestSupervisedRuntimeSendsNoLaunchUnderACancelledContext_spec_4_7_10",
         "pkg/adapter/preready_cancel_test.go::TestSupervisedConnectionWaitIsBoundedByTheStartDeadline_spec_4_7_10",
-        "pkg/adapter/supervisedruntime_test.go::TestSupervisedEndIsOrderedAfterTheLaunchInFlight_spec_4_7_10"
+        "pkg/adapter/supervisedruntime_test.go::TestSupervisedEndIsOrderedAfterTheLaunchInFlight_spec_4_7_10",
+        "pkg/adapter/runtimestartrecord_test.go::TestSupervisedStartRecordRefusesAnEndedGeneration_spec_4_7_10",
+        "pkg/adapter/runtimestartrecord_test.go::TestSupervisedStartRecordRefusesWhileNotLive_spec_4_7_10",
+        "pkg/adapter/runtimestartrecord_test.go::TestSupervisedStartRecordedBeforeTheEndIsCrashed_spec_4_7_10",
+        "pkg/adapter/runtimestartrecord_test.go::TestSupervisedCloseDropsTheOutstandingStart_spec_4_7_10",
+        "pkg/adapter/runtimestartrecord_test.go::TestOpenRuntimeSessionFailsWhenTheGenerationEndedAfterStart_spec_4_7_10",
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedStartRecordAgainstExitedRace_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
