@@ -627,6 +627,7 @@ Lenny issues bearer tokens through a single canonical endpoint: `POST /v1/oauth/
 | `actor_token` | For delegation only: the parent session's token. The issued child token's `act` claim carries the parent's `sub`, `session_id`, `tenant_id`, and `delegation_depth`; `delegation_depth` on the child = parent + 1 |
 | `actor_token_type` | `urn:ietf:params:oauth:token-type:jwt` |
 | `audience` | The target audience: `lenny-gateway` (default), `lenny-ops` (operability-scope tokens), `llm-proxy` (credential-lease tokens) |
+| `expires_in` (request, Lenny extension) | Optional requested lifetime of an issued JWT, in seconds. The [§10.2](10_gateway-internals.md#102-authentication) "JWT claims" `expiry` rule states how it, or its absence, sets `exp` |
 | Response `access_token` | The issued Lenny token |
 | Response `issued_token_type` | Matches `requested_token_type` |
 | Response `expires_in` | Seconds until expiry; constrained by upstream lifetime caps (lease TTL, delegation tree TTL, user session max, etc.) |
