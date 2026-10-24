@@ -21,6 +21,7 @@ package tier6_e2e_cloud_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,8 +33,14 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lennylabs/lenny/pkg/supervisorselftest"
 	"github.com/lennylabs/lenny/tests/testinfra/supervisedpod"
@@ -98,23 +105,43 @@ const (
 // amd64 and arm64.
 var faultSignals = []int{4, 7, 8, 11} // SIGILL, SIGBUS, SIGFPE, SIGSEGV
 
+// errNoRuntimeClass reports that the cluster carries none of a sandboxed
+// runtime's RuntimeClasses, the one condition under which a case skips.
+var errNoRuntimeClass = errors.New("no RuntimeClass found")
+
 // resolveRuntimeClass returns the first RuntimeClass of rt the cluster
-// carries, and skips the test when it carries none.
-func resolveRuntimeClass(t *testing.T, cli *kubernetes.Clientset, rt sandboxedRuntime) string {
+// carries. It skips the test only when every candidate is absent, and fails
+// it on any other lookup error, so an API or RBAC failure on a cluster that
+// does carry the RuntimeClass is not recorded as a missing one.
+func resolveRuntimeClass(t *testing.T, cli kubernetes.Interface, rt sandboxedRuntime) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	var lastErr error
-	for _, rc := range rt.RuntimeClasses {
-		_, err := cli.NodeV1().RuntimeClasses().Get(ctx, rc, metav1.GetOptions{})
-		if err == nil {
-			return rc
-		}
-		lastErr = err
+	rc, err := firstRuntimeClass(ctx, cli, rt.RuntimeClasses)
+	switch {
+	case errors.Is(err, errNoRuntimeClass):
+		t.Skipf("blocked: the cluster has no RuntimeClass among %v; provision %s to run this case",
+			rt.RuntimeClasses, rt.Provision)
+	case err != nil:
+		t.Fatalf("look up the RuntimeClasses %v: %v", rt.RuntimeClasses, err)
 	}
-	t.Skipf("blocked: the cluster has no RuntimeClass among %v (%v); provision %s to run this case",
-		rt.RuntimeClasses, lastErr, rt.Provision)
-	return ""
+	return rc
+}
+
+// firstRuntimeClass returns the first of names the cluster carries. It
+// returns errNoRuntimeClass when every lookup reports NotFound, and the
+// lookup error itself when any lookup fails for another reason.
+func firstRuntimeClass(ctx context.Context, cli kubernetes.Interface, names []string) (string, error) {
+	for _, rc := range names {
+		_, err := cli.NodeV1().RuntimeClasses().Get(ctx, rc, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			return rc, nil
+		case !apierrors.IsNotFound(err):
+			return "", fmt.Errorf("get RuntimeClass %s: %w", rc, err)
+		}
+	}
+	return "", fmt.Errorf("%w among %v", errNoRuntimeClass, names)
 }
 
 // sandboxedImages reads the supervisor and probe images, failing the test
@@ -445,4 +472,49 @@ func (e sandboxedEnv) requireSyncFaultDelivered(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("the synchronous-fault pod under %s did not finish within 5m", e.rc)
+}
+
+// spec: §4.7.11 (Runtime supervisor, Property self-test)
+// diagnosis: a failure means the sandboxed supervisor cases skip as "no
+// RuntimeClass" on a lookup error other than NotFound, so an API or RBAC
+// failure on a provisioned cluster hides the cases instead of failing them.
+//
+// TestRuntimeClassLookupSkipsOnlyOnAbsence_spec_4_7_11 pins the RuntimeClass lookup the
+// sandboxed cases resolve before running: an absent candidate falls through
+// to the next, every candidate absent is errNoRuntimeClass, and any other
+// lookup error is returned as itself.
+func TestRuntimeClassLookupSkipsOnlyOnAbsence_spec_4_7_11(t *testing.T) {
+	gr := schema.GroupResource{Group: "node.k8s.io", Resource: "runtimeclasses"}
+	cases := []struct {
+		name      string
+		present   []string
+		failWith  error
+		want      string
+		wantAbsnt bool
+		wantErr   bool
+	}{
+		{name: "second candidate present", present: []string{"kata-containers"}, want: "kata-containers"},
+		{name: "all absent", wantAbsnt: true, wantErr: true},
+		{name: "forbidden", failWith: apierrors.NewForbidden(gr, "kata", errors.New("rbac")), wantErr: true},
+		{name: "timeout", failWith: apierrors.NewTimeoutError("slow", 1), wantErr: true},
+		{name: "unreachable", failWith: errors.New("dial tcp: connection refused"), wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var objs []runtime.Object
+			for _, n := range c.present {
+				objs = append(objs, &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: n}, Handler: n})
+			}
+			cli := fake.NewSimpleClientset(objs...)
+			if c.failWith != nil {
+				cli.PrependReactor("get", "runtimeclasses", func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, c.failWith
+				})
+			}
+			got, err := firstRuntimeClass(context.Background(), cli, []string{"kata", "kata-containers"})
+			if got != c.want || (err != nil) != c.wantErr || errors.Is(err, errNoRuntimeClass) != c.wantAbsnt {
+				t.Fatalf("firstRuntimeClass = %q, %v; want %q, error %v, absent %v", got, err, c.want, c.wantErr, c.wantAbsnt)
+			}
+		})
+	}
 }

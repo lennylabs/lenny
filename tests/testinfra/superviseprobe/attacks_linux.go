@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,18 +62,61 @@ func attackResult(name string, err error) AttackResult {
 	return r
 }
 
-// readProc1Mem opens /proc/1/mem and reads one byte at the start of the
-// supervisor's text. The supervisor is non-dumpable, so the open must fail
-// at the agent UID. spec: §4.7.11 item 8 (Property self-test).
+// readProc1Mem opens the supervisor's memory. The supervisor is
+// non-dumpable, so the open must fail at the agent UID, and a successful
+// open is the breach whatever a following read returns. spec: §4.7.11
+// item 8 (Property self-test).
 func readProc1Mem() AttackResult {
-	f, err := os.Open("/proc/1/mem")
+	return readProcMem("/proc/1/mem", "/proc/1/maps")
+}
+
+// readProcMem opens memPath and reports a successful open as the breach.
+// It then confirms the breach by reading one byte at the first readable
+// mapping mapsPath lists, and records the read's outcome in Detail without
+// changing OK, because the supervisor need not map any fixed address.
+func readProcMem(memPath, mapsPath string) AttackResult {
+	f, err := os.Open(memPath)
 	if err != nil {
 		return attackResult(AttackReadProc1Mem, err)
 	}
 	defer f.Close()
-	buf := make([]byte, 1)
-	_, err = f.ReadAt(buf, 0x400000)
-	return attackResult(AttackReadProc1Mem, err)
+	r := AttackResult{Attack: AttackReadProc1Mem, OK: true, Detail: "open succeeded"}
+	addr, err := firstReadableMapping(mapsPath)
+	if err != nil {
+		r.Detail += "; no readable mapping: " + err.Error()
+		return r
+	}
+	if _, err := f.ReadAt(make([]byte, 1), addr); err != nil {
+		r.Detail += fmt.Sprintf("; read at %#x: %s", addr, errnoName(err))
+		return r
+	}
+	r.Detail += fmt.Sprintf("; read at %#x succeeded", addr)
+	return r
+}
+
+// firstReadableMapping returns the start address of the first mapping in
+// the /proc/<pid>/maps file at path whose permissions allow reads.
+func firstReadableMapping(path string) (int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.HasPrefix(fields[1], "r") {
+			continue
+		}
+		start, _, ok := strings.Cut(fields[0], "-")
+		if !ok {
+			continue
+		}
+		addr, err := strconv.ParseInt(start, 16, 64)
+		if err != nil {
+			continue
+		}
+		return addr, nil
+	}
+	return 0, fmt.Errorf("%s lists no readable mapping", path)
 }
 
 // signalPID1 sends the named signal to PID 1. args[0] is a signal number.

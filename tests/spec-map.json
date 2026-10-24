@@ -1225,6 +1225,7 @@
         "tests/tier5_e2e_kind/runtime_supervisor_test.go::TestPreflightSupervisorReportsEachPropertyAndLeavesNoPod_spec_24_2",
         "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go",
         "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go::TestSupervisorSelfTestUnderSandboxedRuntimes_spec_4_7_11",
+        "tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go::TestRuntimeClassLookupSkipsOnlyOnAbsence_spec_4_7_11",
         "tests/tier8_chaos/runtime_supervisor_chaos_test.go",
         "tests/tier8_chaos/runtime_supervisor_chaos_test.go::TestSupervisorIgnoresSIGKILLAndSIGSTOPFromInsideItsNamespace_spec_4_7_10",
         "tests/tier9_security/runtime_supervisor_security_test.go",
