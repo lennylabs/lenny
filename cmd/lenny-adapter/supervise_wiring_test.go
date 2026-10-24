@@ -29,21 +29,34 @@ func abstractSocket(t *testing.T, stem string) string {
 
 func noNonce() string { return "" }
 
-// parsedSuperviseFlags is a supervised flag set after a parse.
+// parsedSuperviseFlags is the supervised flags after a parse, with the names
+// of the flags the command line set.
 type parsedSuperviseFlags struct {
-	set   *flag.FlagSet
+	set   map[string]bool
 	flags *superviseFlags
 }
 
-// newSuperviseFlagSet parses args through the adapter's supervised flag set.
+// newSuperviseFlagSet parses args through a flag set declaring the supervised
+// flags with the names and compiled defaults main declares them with. The
+// tier-0 deployment-boundary gate pins main's declarations against every
+// rendered argv.
 func newSuperviseFlagSet(t *testing.T, args ...string) parsedSuperviseFlags {
 	t.Helper()
+	f := &superviseFlags{}
 	fs := flag.NewFlagSet("lenny-adapter", flag.ContinueOnError)
-	f := registerSuperviseFlags(fs)
+	fs.StringVar(&f.socket, "supervise-socket", "", "")
+	fs.StringVar(&f.runtimeProcess, "runtime-process", "", "")
+	fs.StringVar(&f.launchMode, "launch-mode", "", "")
+	fs.DurationVar(&f.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval, "")
+	fs.DurationVar(&f.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout, "")
+	fs.DurationVar(&f.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout, "")
+	fs.DurationVar(&f.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout, "")
 	if err := fs.Parse(args); err != nil {
 		t.Fatalf("parse %v: %v", args, err)
 	}
-	return parsedSuperviseFlags{set: fs, flags: f}
+	set := map[string]bool{}
+	fs.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
+	return parsedSuperviseFlags{set: set, flags: f}
 }
 
 // supervisedInputs returns validated supervised inputs for mode on a socket
@@ -74,15 +87,15 @@ func newTestSupervisedRuntime(t *testing.T, in superviseInputs) (*adapter.Server
 // spec: 4.7.10 (Runtime supervisor), 28.5.3 (CH-SUPERVISE, Endpoint)
 func TestSuperviseSocketRequiresTheRuntimeSocket_spec_4_7_10(t *testing.T) {
 	parsed := newSuperviseFlagSet(t, withFlags()...)
-	if _, err := parseSuperviseInputs(parsed.set, parsed.flags, ""); err == nil {
+	if _, err := parseSuperviseInputs(parsed.flags, parsed.set, ""); err == nil {
 		t.Fatal("--supervise-socket without --runtime-socket was accepted")
 	}
-	in, err := parseSuperviseInputs(parsed.set, parsed.flags, "@lenny-runtime")
+	in, err := parseSuperviseInputs(parsed.flags, parsed.set, "@lenny-runtime")
 	if err != nil || !in.Supervised() {
 		t.Fatalf("with --runtime-socket = %+v, %v; want a supervised pod", in, err)
 	}
 	unsupervised := newSuperviseFlagSet(t)
-	if in, err := parseSuperviseInputs(unsupervised.set, unsupervised.flags, ""); err != nil || in.Supervised() {
+	if in, err := parseSuperviseInputs(unsupervised.flags, unsupervised.set, ""); err != nil || in.Supervised() {
 		t.Fatalf("no supervised flags and no runtime socket = %+v, %v; want unsupervised", in, err)
 	}
 }

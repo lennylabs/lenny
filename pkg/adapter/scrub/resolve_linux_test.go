@@ -17,7 +17,7 @@ import (
 func skipAsRoot(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("root bypasses the permission bits this case relies on")
+		t.Skip("not-yet-applicable: root bypasses the permission bits this case relies on; run as a non-root user")
 	}
 }
 

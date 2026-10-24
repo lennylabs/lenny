@@ -4,7 +4,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"strings"
 	"time"
@@ -44,34 +43,12 @@ type superviseFlags struct {
 	warmUpTimeout  time.Duration
 }
 
-// registerSuperviseFlags registers the supervised-pod flags on fs and returns
-// the values they parse into.
-func registerSuperviseFlags(fs *flag.FlagSet) *superviseFlags {
-	f := &superviseFlags{}
-	fs.StringVar(&f.socket, "supervise-socket", "",
-		"§28.5.3 abstract Unix socket (leading @) the adapter listens on for the runtime supervisor's CH-SUPERVISE connection; empty means the pod runs no supervisor")
-	fs.StringVar(&f.runtimeProcess, "runtime-process", "",
-		"§5.2 runtime-process lifetime of a supervised pod: keep or restart")
-	fs.StringVar(&f.launchMode, "launch-mode", "",
-		"§4.7.10 launch mode of a supervised pod: session, service, preconnect-sdk-warm, or preconnect-pod-warm")
-	fs.DurationVar(&f.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
-		"§28.5.3 interval at which the adapter pings the runtime supervisor while no other request is outstanding")
-	fs.DurationVar(&f.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
-		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure")
-	fs.DurationVar(&f.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
-		"§28.5.3 bound on the wait before READY for the supervisor's connection and its ready")
-	fs.DurationVar(&f.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
-		"§4.7.10 bound on the warm-up launch's CH-MSGSOCK connection before READY")
-	return f
-}
-
-// parseSuperviseInputs validates the supervised flags fs parsed into f. A
-// supervised pod launches its runtime processes through CH-MSGSOCK, so
-// --supervise-socket without --runtime-socket is refused.
+// parseSuperviseInputs validates the supervised flags parsed into f; set
+// names the flags given on the command line. A supervised pod launches its
+// runtime processes through CH-MSGSOCK, so --supervise-socket without
+// --runtime-socket is refused.
 // spec: §4.7.10 (Runtime supervisor).
-func parseSuperviseInputs(fs *flag.FlagSet, f *superviseFlags, runtimeSocket string) (superviseInputs, error) {
-	set := map[string]bool{}
-	fs.Visit(func(fl *flag.Flag) { set[fl.Name] = true })
+func parseSuperviseInputs(f *superviseFlags, set map[string]bool, runtimeSocket string) (superviseInputs, error) {
 	in, err := validateSuperviseInputs(f, set)
 	if err != nil {
 		return superviseInputs{}, err

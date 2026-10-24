@@ -23,9 +23,9 @@
 //     "exact":    ["maxSessionRetries", {"pattern": "idle[- ]terminat", "regex": true, "ignoreCase": true}],
 //     "meaning":  [{"query": "an idle session is terminated", "context": "checking for restatements"}],
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
-//     "lines":    ["spec/07_session-lifecycle.md:430-446"],   // line ranges to return verbatim
+//     "lines":    ["spec/NN_file-name.md:430-446"],   // line ranges to return verbatim
 //     "related":  [{"text": "the passage being changed", "change": "what the edit does",
-//                   "after": "the passage's new wording", "at": "spec/07_session-lifecycle.md:430",
+//                   "after": "the passage's new wording", "at": "spec/NN_file-name.md:430",
 //                   "min": 0.7}],       // passages that state or rely on what the change alters,
 //                                       // judged by Jev. Pass the old passage as text, a one-line
 //                                       // description as change, and the new wording as after.

@@ -15,7 +15,7 @@ import (
 func parseSupervise(t *testing.T, args ...string) (superviseInputs, error) {
 	t.Helper()
 	parsed := newSuperviseFlagSet(t, args...)
-	return parseSuperviseInputs(parsed.set, parsed.flags, "@lenny-runtime")
+	return parseSuperviseInputs(parsed.flags, parsed.set, "@lenny-runtime")
 }
 
 var supervisedBase = []string{"--supervise-socket", "@lenny-supervise", "--runtime-process", "keep", "--launch-mode", "session"}
