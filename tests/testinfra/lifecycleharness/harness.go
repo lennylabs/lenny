@@ -101,10 +101,11 @@ type Options struct {
 	// the gateway pool registry carries the pool's session policy.
 	MaxConcurrentSessions int32
 	// KeepRuntime, on a recycling harness with an exclusive pool, registers
-	// the pool's session policy with recycle.maxSessionsPerPod above 1 and
-	// the process-level isolation acknowledgment, so a pod keeps its runtime
-	// across the sessions it serves and a same-tenant acquisition rebinds a
-	// reserved pod rather than ending its hold (§5.2 Deployer acknowledgment
+	// the pool's session policy with recycle.maxSessionsPerPod above 1,
+	// recycle.runtimeProcess: keep, and the process-level isolation
+	// acknowledgment. The reuse limit makes a same-tenant acquisition rebind
+	// a reserved pod rather than end its hold, and the keep setting is what
+	// keeps a pod's runtime across the sessions it serves (§5.2 Deployer acknowledgment
 	// (runtime process kept across sessions), §4.6.1 within-hold rebind).
 	KeepRuntime bool
 	// QueueAddr, when set, maps the shared Redis address to the address the

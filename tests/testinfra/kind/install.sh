@@ -925,9 +925,12 @@ bootstrap:
     # serves the next session") still routes the tenant's second session
     # back onto the same recycled pod. maxSessionsPerPod is required with
     # no default when recycle.enabled is true (§5.2); 5 gives the test
-    # headroom for more than one cycle. maxSessionsPerPod above 1 keeps the
-    # pod's runtime process across the sessions it serves, so §5.2 requires
-    # sessionPolicy.acknowledgeProcessLevelIsolation: true, and pool
+    # headroom for more than one cycle. maxSessionsPerPod above 1 with a
+    # non-vm-restart scrub profile makes this a reusing recycling pool, so
+    # §5.2 requires recycle.runtimeProcess. The pool sets keep, so the pod
+    # keeps its runtime process across the sessions it serves. That keep
+    # setting is why §5.2 requires
+    # sessionPolicy.acknowledgeProcessLevelIsolation: true and why pool
     # admission refuses the bootstrap seed without it.
     - name: task-mode-echo-pool
       runtimeRef: echo-runtime-task-mode
