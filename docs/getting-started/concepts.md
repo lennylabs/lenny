@@ -70,7 +70,7 @@ stateDiagram-v2
 
 **ready** -- Workspace materialization and setup commands have completed successfully.
 
-**starting** -- The gateway has called `StartSession` on the adapter, and the runtime process becomes live for the session with the finalized workspace as its working directory. In the sidecar model, when no runtime process is live, the runtime supervisor in the runtime container launches the runtime's configured `command` after the adapter writes the manifest, and the binary dials the adapter. A session that starts while a process is live reaches that process.
+**starting** -- The gateway has called `StartSession` on the adapter, and the runtime process becomes live for the session with the finalized workspace as its working directory. In the sidecar model, when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, the runtime supervisor in the runtime container launches the runtime's configured `command` after the adapter writes the manifest, and the binary dials the adapter. A session that starts while a process is live reaches that process.
 
 **running** -- The agent binary is active and processing messages. The client can send messages, and the agent produces streaming output. This is the main interactive state.
 

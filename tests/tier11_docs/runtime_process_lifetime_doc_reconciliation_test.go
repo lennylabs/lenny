@@ -372,7 +372,14 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	request rather than only on the close of the adapter's connection, or
 //	when the publishing page's `preConnect` paragraph no longer has the
 //	supervisor launch the process at warm-up only under a closed SDK-warm
-//	circuit breaker and otherwise at workspace configuration.
+//	circuit breaker and otherwise at workspace configuration. It also fails
+//	when a page makes "no runtime process is live" the launch trigger, which
+//	would have a session after a crash launch a new process where the
+//	specification refuses the start and retires the pod; when the **Launch.**
+//	paragraph omits the not-live condition or the refused start; when the
+//	**Runtime exits.** table has the gateway rather than the adapter terminate
+//	the sessions at the coordinator hold timeout; or when a warm-phase or
+//	`shutdown`-deadline sentence names no launcher or ender.
 func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
@@ -403,6 +410,7 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"on a `restart` pod, when the supervisor's startup self-test reports a failed gating property",
 			"Before the pod becomes ready, and at any time on a service-mode pod, the adapter exits instead, and the platform replaces the pod",
 		})
+	requireRuntimeSupervisorLaunchCondition(t, root)
 	requireAllContain(t, "lifecycle.md Runtime Supervisor",
 		supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor"), []string{
 			"until the adapter asks the supervisor to end it. When the adapter's connection to the supervisor closes, the supervisor exits",
@@ -435,6 +443,15 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"the [runtime supervisor](lifecycle.md#runtime-supervisor) launches the runtime's `command` at warm-up when the pool's SDK-warm circuit breaker is closed at the moment the pod is created",
 			"the supervisor launches the process when the session's workspace is configured",
 		})
+	requireAllContain(t, "runtime-configuration.md", supervisedDocPage(t, root, "runtime-author-guide/runtime-configuration.md"), []string{
+		"Whether the runtime supervisor launches the agent SDK process during the warm phase",
+	})
+	requireAllContain(t, "testing.md", supervisedDocPage(t, root, "runtime-author-guide/testing.md"), []string{
+		"the runtime supervisor sends the process SIGTERM and then SIGKILL 10 seconds later",
+	})
+	requireNoneContain(t, "publishing.md", supervisedDocPage(t, root, "runtime-author-guide/publishing.md"), []string{
+		"the runtime process starts during the warm phase",
+	})
 	requireAllContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
 		"The first process of the agent container is the runtime supervisor",
 		"whether the runtime can serve the next session, sampled after the scrub finishes",
@@ -447,6 +464,45 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 		"on a restart pod the whole-pod scrub ends it",
 	})
 	requireNoneContainFold(t, "internal.md StopSession comment", stop, []string{"shutdown"})
+}
+
+// launchTriggerPages are the documentation pages that state when the runtime
+// supervisor launches the runtime process.
+var launchTriggerPages = []string{
+	"runtime-author-guide/lifecycle.md",
+	"runtime-author-guide/echo-runtime.md",
+	"getting-started/concepts.md",
+	"reference/state-machines.md",
+}
+
+// requireRuntimeSupervisorLaunchCondition fails when a page states the launch
+// trigger as "no runtime process is live" rather than the specification's
+// launch condition, when the **Launch.** paragraph omits the not-live
+// condition or the refused start, or when the **Runtime exits.** table names
+// the gateway as the terminator at the coordinator hold timeout.
+//
+// spec: 4.7.10 (Runtime supervisor: Launch, Liveness, Runtime exits), 10.1
+// (Hold state timeout)
+func requireRuntimeSupervisorLaunchCondition(t *testing.T, root string) {
+	t.Helper()
+	for _, page := range launchTriggerPages {
+		requireNoneContainFold(t, page, supervisedDocPage(t, root, page), []string{
+			"when no runtime process is live",
+			"finds no live process",
+		})
+		requireAllContain(t, page, supervisedDocPage(t, root, page), []string{
+			"the pod has launched no runtime process since its creation or since the platform last ended one",
+		})
+	}
+	supervisor := supervisedDocSection(t, root, "runtime-author-guide/lifecycle.md", "Runtime Supervisor")
+	requireAllContain(t, "lifecycle.md Runtime Supervisor", supervisor, []string{
+		"and while the not-live state ([Liveness](#runtime-supervisor)) is clear",
+		"A session that starts when no process is live and these conditions permit no launch, such as after your runtime process exits by itself, fails its start, and the pod retires",
+		"| The adapter's close of the connection at the coordinator hold timeout | None fails with `runtime_crash`; the adapter terminates each one with `coordinator_lost` |",
+	})
+	requireNoneContain(t, "lifecycle.md Runtime Supervisor", supervisor, []string{
+		"The gateway terminates each one",
+	})
 }
 
 // stopSessionRPCComment returns the comment lines directly above the
@@ -484,6 +540,10 @@ func stopSessionRPCComment(t *testing.T, body string) string {
 //	remedy for the acknowledgment error omits that `restart` needs a
 //	restartable runtime or that the non-reusing alternatives need
 //	`recycle.runtimeProcess` removed, which pool admission otherwise rejects.
+//	It also fails when the troubleshooting remedy or the execution-modes
+//	decision guide offers `restart` without stating that pool admission
+//	currently refuses it on every pool; that pin is removed together with the
+//	pool-admission refusal of `restart` and the interim doc sentences.
 func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "configuration.md", supervisedDocPage(t, root, "reference/configuration.md"), []string{
@@ -515,12 +575,33 @@ func TestOperatorPagesStateTheRuntimeProcessLifetimeAndSupervisorRemedies(t *tes
 			"The `restart` value requires a restartable runtime, which carries `command`, runs in `session` mode, and does not declare `capabilities.preConnect: true`",
 			"alternatives also require removing `recycle.runtimeProcess`, because pool admission rejects the field on a pool that does not reuse pods",
 		})
+	requireRestartAdmissionRefusalStated(t, root)
 	requireAllContain(t, "lenny-ctl.md", supervisedDocPage(t, root, "operator-guide/lenny-ctl.md"), []string{
 		"| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` |",
 	})
 	requireAllContain(t, "architecture.md", supervisedDocPage(t, root, "getting-started/architecture.md"), []string{
 		"**Session logs:**",
 	})
+}
+
+// restartAdmissionRefusal is the interim sentence an operator page states
+// beside every remedy that offers `recycle.runtimeProcess: restart`, while
+// pool admission refuses that value on every pool.
+const restartAdmissionRefusal = "Pool admission currently refuses `recycle.runtimeProcess: restart` on every pool with `400 VALIDATION_ERROR`, so the remedies available today are `acknowledgeProcessLevelIsolation: true`, `recycle.maxSessionsPerPod: 1`, and `recycle.scrubProfile: vm-restart`."
+
+// requireRestartAdmissionRefusalStated fails when the troubleshooting remedy
+// for the acknowledgment error or the execution-modes decision guide offers
+// `restart` without the interim refusal sentence.
+//
+// spec: 5.2 (Runtime-process lifetime (`recycle.runtimeProcess`))
+func requireRestartAdmissionRefusalStated(t *testing.T, root string) {
+	t.Helper()
+	requireAllContain(t, "troubleshooting.md Recycling Pool Does Not Reuse Pods",
+		supervisedDocSection(t, root, "operator-guide/troubleshooting.md", "Recycling Pool Does Not Reuse Pods"),
+		[]string{restartAdmissionRefusal})
+	requireAllContain(t, "execution-modes.md Decision guide",
+		supervisedDocSection(t, root, "reference/execution-modes.md", "Decision guide"),
+		[]string{restartAdmissionRefusal})
 }
 
 // spec: 5.2 (Runtime-process lifetime (`recycle.runtimeProcess`))

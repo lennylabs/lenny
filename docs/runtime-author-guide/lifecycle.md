@@ -39,7 +39,7 @@ ASCII fallback for the diagram above (pod-warm-path):
 | `receiving_uploads` | Client files are streaming into the session's `/workspace/slots/{sessionId}/staging`. |
 | `finalizing_workspace` | Files are validated and promoted from `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. |
 | `running_setup` | Setup commands (if any) execute in the workspace. Bounded by `setupTimeoutSeconds` (default: 300s). |
-| `starting_session` | Your runtime process becomes live for the session. In the sidecar model, when no runtime process is live, the runtime supervisor launches your runtime's `command` after the adapter has written the manifest, and your binary dials the adapter. Later sessions that start while that process is live reach the same process, as [Runtime Process Lifetime](#runtime-process-lifetime) states. |
+| `starting_session` | Your runtime process becomes live for the session. In the sidecar model, when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, the runtime supervisor launches your runtime's `command` after the adapter has written the manifest, and your binary dials the adapter. Later sessions that start while that process is live reach the same process, as [Runtime Process Lifetime](#runtime-process-lifetime) states. |
 | `attached` | Session is live. Bidirectional message flow begins. |
 
 ### SDK-Warm Path (preConnect: true)
@@ -103,7 +103,7 @@ A session's context arrives in its `session_start` frame. The following is an ex
 
 In the sidecar model the first process of the runtime container is the runtime supervisor, a platform binary that launches and ends your runtime process. The supervisor launches nothing unless the adapter asks it to. The embedded model has no runtime container and no supervisor.
 
-**Launch.** The supervisor launches your runtime's `command`, which the `Runtime` resource sets (see [Runtime Configuration](runtime-configuration.md)). The adapter asks for a launch only when no runtime process is live on the pod, after the manifest your process reads exists, and after every adapter socket your runtime dials is bound, so the manifest is present when your binary starts. On a service-mode pod, and on an SDK-warm pod whose pool launches at warm-up, the process is launched while the pod warms, and the pod becomes ready only after the process has connected. Otherwise the process is launched at the start of the session that finds no live process. A session that starts while a process is live, or while a launch is in flight, uses that process. On a `restart` pod no launch follows an occupancy-zero boundary before that boundary's whole-pod scrub has run.
+**Launch.** The supervisor launches your runtime's `command`, which the `Runtime` resource sets (see [Runtime Configuration](runtime-configuration.md)). The adapter asks for a launch only when the pod has launched no runtime process since its creation or since the platform last ended one, after the manifest your process reads exists, after every adapter socket your runtime dials is bound, and while the not-live state ([Liveness](#runtime-supervisor)) is clear, so the manifest is present when your binary starts. On a service-mode pod, and on an SDK-warm pod whose pool launches at warm-up, the process is launched while the pod warms, and the pod becomes ready only after the process has connected. Otherwise the supervisor launches the process at the start of a session that these conditions permit. A session that starts while a process is live, or while a launch is in flight, uses that process, unless the not-live state refuses the start. On a `restart` pod no launch follows an occupancy-zero boundary before that boundary's whole-pod scrub has run. A session that starts when no process is live and these conditions permit no launch, such as after your runtime process exits by itself, fails its start, and the pod retires (see **Liveness.** below).
 
 **Environment.** Each launch starts from an empty environment to which the supervisor adds a fixed `PATH`, the `env` pairs of your `Runtime`, and the platform's runtime variables. A `PATH` pair in `env` replaces the fixed `PATH`. The image's `ENTRYPOINT`, `CMD`, and `ENV` are not used, so name your binary in `command` and every variable it needs in `env`. The values in `env` are readable inside the runtime container, so they carry no secrets; credentials reach your runtime through its credential file.
 
@@ -124,7 +124,7 @@ In the sidecar model the first process of the runtime container is the runtime s
 | `DemoteSDK` | None fails; the demoted session's start launches a new process | Served |
 | The whole-pod scrub on a `restart` pod | None; the scrub runs after the last session's release | Served by a newly launched process |
 | An exit after `shutdown`, or the supervisor's end at the `shutdown` deadline | None fails; the exit status has the meaning [Exit Codes](#exit-codes) states | None; the pod is draining |
-| The adapter's close of the connection at the coordinator hold timeout | The gateway terminates each one | None; the pod retires |
+| The adapter's close of the connection at the coordinator hold timeout | None fails with `runtime_crash`; the adapter terminates each one with `coordinator_lost` | None; the pod retires |
 | The pod's termination | Each fails with `runtime_crash` | None; the pod is being deleted |
 | Anything else: the process exits by itself, closes its connection, or writes a line longer than the adapter's line limit, or the supervisor ends | Each fails with `runtime_crash` | None; the pod retires |
 
@@ -144,7 +144,7 @@ When a pod is claimed for a session, the gateway materializes the client's files
 
 3. **Setup commands:** If the runtime defines setup commands (e.g., `npm install`), they run in `/workspace/slots/{sessionId}/current` with a bounded timeout. Setup command output is captured for diagnostics.
 
-4. **Session start:** Your runtime process receives the session's `session_start` frame and then its first message. The session's working directory is `/workspace/slots/{sessionId}/current`. In the sidecar model, when no runtime process is live, the runtime supervisor launches your runtime's `command` at this step, after the adapter writes the final manifest, and your binary dials the adapter; a session that starts while a process is live reaches that process.
+4. **Session start:** Your runtime process receives the session's `session_start` frame and then its first message. The session's working directory is `/workspace/slots/{sessionId}/current`. In the sidecar model, when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, the runtime supervisor launches your runtime's `command` at this step, after the adapter writes the final manifest, and your binary dials the adapter; a session that starts while a process is live reaches that process.
 
 ### Filesystem Layout
 

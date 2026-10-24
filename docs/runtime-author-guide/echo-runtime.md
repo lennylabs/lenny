@@ -275,7 +275,7 @@ When the pod starts, the adapter:
 3. Signals readiness to the gateway (pod enters the warm pool).
 4. Waits for session assignment.
 5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
-6. Asks the runtime supervisor to launch your binary when no runtime process is live, after the manifest is written, and accepts the connection your binary dials. A session that starts while a process is live reaches that process.
+6. Asks the runtime supervisor to launch your binary when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, after the manifest is written, and accepts the connection your binary dials. A session that starts while a process is live reaches that process.
 7. Writes the session's `session_start` frame on stdin, before the session's first message.
 8. Delivers the first `message` on stdin.
 9. Relays your `response` from stdout to the gateway.
