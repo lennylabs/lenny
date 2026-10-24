@@ -237,7 +237,7 @@ Content-Security-Policy: default-src 'self';
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `lenny_playground_page_views_total` | Counter | `authMode` | Playground index loads |
+| `lenny_playground_page_views_total` | Counter | `auth_mode` | Playground index loads |
 | `lenny_playground_sessions_created_total` | Counter | `runtime` | Sessions initiated from the playground |
 | `lenny_playground_ws_connect_total` | Counter | `outcome` | MCP WebSocket connections opened from the playground (success/failure) |
 | `lenny_playground_session_revocations_total` | Counter | `reason` | Playground session-record revocations. `reason ∈ {user_logout, idle_timeout, admin_revoke, oidc_session_ended, user_invalidated}`. Incremented exactly once per `DEL t:{tenant_id}:pg:sess:{session_id}` performed by the revocation path in [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange) ("Session record backing store"). |
