@@ -567,7 +567,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 | 2 | Protocol error --- agent could not parse inbound messages |
 | 137 | SIGKILL (set by OS) |
 
-In the sidecar model the runtime supervisor reports each exit status to the adapter. An exit that the platform did not request is a crash: each session the process holds fails with `runtime_crash`, and the pod serves no later session. An exit during the pod's termination also fails each session the process holds with `runtime_crash`. The [Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor) page states the outcome of each way a runtime process ends.
+In the sidecar model the runtime supervisor reports each exit status to the adapter. An exit that the platform did not request is a crash: each session the process holds fails with `runtime_crash`, and the pod serves no later session. An end during the pod's termination that does not follow the adapter's `shutdown` write, such as the adapter's `end` during the drain or a runtime exit before `shutdown` is written, also fails each session the process holds with `runtime_crash`. A runtime that exits after `shutdown` within its `deadline_ms` fails no session, including during the pod's termination. The [Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor) page states the outcome of each way a runtime process ends.
 
 ---
 

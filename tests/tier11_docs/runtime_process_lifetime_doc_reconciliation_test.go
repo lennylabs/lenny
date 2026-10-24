@@ -379,7 +379,14 @@ func supervisedDocPage(t *testing.T, root, page string) string {
 //	paragraph omits the not-live condition or the refused start; when the
 //	**Runtime exits.** table has the gateway rather than the adapter terminate
 //	the sessions at the coordinator hold timeout; or when a warm-phase or
-//	`shutdown`-deadline sentence names no launcher or ender.
+//	`shutdown`-deadline sentence names no launcher or ender. It also fails
+//	when the lifecycle page no longer says that the higher **Runtime exits.**
+//	row decides an end more than one row matches, or when the adapter contract
+//	fails every session on an exit during the pod's termination, which
+//	contradicts the precedence that gives an exit after the drain's `shutdown`
+//	the `shutdown` row; and when the **Liveness.** paragraph omits the
+//	adapter's failure to rebind its runtime sockets after an attested end,
+//	which retires a `restart` pod with `runtime_not_live` at the scrub.
 func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 	root := repoRoot(t)
 	requireAllContain(t, "lifecycle.md Runtime Process Lifetime",
@@ -405,7 +412,9 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 			"**Runtime exits.**",
 			"A runtime does not exit at the end of a session",
 			"A runtime that exits after `shutdown` within its `deadline_ms` fails no session",
+			"When more than one row applies to one end, the row higher in the table decides, so an exit after `shutdown` during the pod's termination fails no session",
 			"**Liveness.**",
+			"or when the adapter fails to rebind its runtime sockets after the platform ends a runtime process",
 			"when a launch at warm-up fails or its process does not connect within the adapter's wait",
 			"on a `restart` pod, when the supervisor's startup self-test reports a failed gating property",
 			"Before the pod becomes ready, and at any time on a service-mode pod, the adapter exits instead, and the platform replaces the pod",
@@ -456,6 +465,11 @@ func TestRuntimeAuthorPagesStateTheRuntimeSupervisor(t *testing.T) {
 		"The first process of the agent container is the runtime supervisor",
 		"whether the runtime can serve the next session, sampled after the scrub finishes",
 		"**stderr** goes to the agent container's log",
+		"An end during the pod's termination that does not follow the adapter's `shutdown` write",
+		"A runtime that exits after `shutdown` within its `deadline_ms` fails no session, including during the pod's termination",
+	})
+	requireNoneContain(t, "adapter-contract.md", supervisedDocPage(t, root, "reference/adapter-contract.md"), []string{
+		"An exit during the pod's termination also fails each session the process holds with `runtime_crash`",
 	})
 	stop := stopSessionRPCComment(t, readDocPage(t, filepath.Join(root, "docs", "api", "internal.md")))
 	requireAllContain(t, "internal.md StopSession comment", stop, []string{
