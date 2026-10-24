@@ -62,7 +62,7 @@ var table12_4Prefixes = []wiredGatewayPrefix{
 }
 
 // spec: 12.4 (canonical key-prefix table), 11.4 (user invalidation fan-out),
-// 25.5 (operational event stream)
+// 25.5 (operational event stream), 25.4 (Storage Tiers, Storage Routing)
 // diagnosis: a Redis key or channel prefix emitted by wired gateway code
 // has no documented home, or a §12.4 registry row names a prefix no code
 // emits. Proposal 0032 established that every wired gateway prefix resolves
@@ -83,6 +83,7 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 	s126 := specSection(t, filepath.Join(specDir, "12_storage-architecture.md"), "### 12.6 ")
 	s114 := specSection(t, filepath.Join(specDir, "11_policy-and-controls.md"), "### 11.4 ")
 	s255 := specSection(t, filepath.Join(specDir, "25_agent-operability.md"), "## 25.5 ")
+	s254 := specSection(t, filepath.Join(specDir, "25_agent-operability.md"), "## 25.4 ")
 
 	// (a) Every §12.4-dispositioned prefix appears as a literal in the §12.4
 	// table body.
@@ -131,11 +132,31 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 	// (e) The component-owned Token Service and lenny-ops prefixes are owned by
 	// their own sections (§4.3 / §25.4), not by this gateway datastore
 	// registry. The §12.4 table must not register them.
-	for _, componentPrefix := range []string{"lenny:token:", "ops:lock:", "ops:escalations:", "ops:lockidx:"} {
+	// The retired lenny-ops spellings stay on the list so they cannot return
+	// to §12.4, and the current `ops:{lock}:` hash-tagged spelling joins them.
+	for _, componentPrefix := range []string{"lenny:token:", "ops:lock:", "ops:escalations:", "ops:lockidx:", "ops:{lock}:"} {
 		if strings.Contains(s124, componentPrefix) {
 			t.Errorf("§12.4 registers component-owned prefix %q; it is documented in its owning §4.3/§25.4 section, not in the gateway datastore registry", componentPrefix)
 		}
 	}
+	// §12.4 states which braces in a key pattern are hash tags, so a reader
+	// can tell the `ops:{lock}:` tag in §25.4 from a placeholder.
+	if !strings.Contains(s124, "**Braces in key patterns.**") {
+		t.Errorf("§12.4 is missing the **Braces in key patterns.** paragraph that tells a hash tag from a placeholder")
+	}
+	// §25.4 owns the lenny-ops remediation-lock keys. Every one sits under the
+	// `ops:{lock}:` hash tag so the acquire, compare-and-set, and release
+	// scripts stay in one slot on Redis Cluster; the retired untagged spellings
+	// hash to unrelated slots and must not return to the Storage Tiers,
+	// Tier Transitions, or Storage Routing text.
+	if !strings.Contains(s254, "ops:{lock}:epoch") {
+		t.Errorf("§25.4 no longer names the `ops:{lock}:epoch` key; the outage epoch must share the `ops:{lock}:` hash tag with every lock key")
+	}
+	requireNoneContain(t, "§25.4 retired untagged lenny-ops lock keys", s254, []string{
+		"ops:lock:",
+		"ops:lockidx:",
+		"ops:lock-epoch",
+	})
 
 	// (f) The §12.4 intro makes no platform-wide "lists all keys in use"
 	// completeness claim. Proposal 0032 scoped the intro to the tenant-isolation
