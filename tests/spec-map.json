@@ -984,7 +984,8 @@
         "pkg/adapter/socketruntime_test.go",
         "pkg/adapter/socketruntime_e2e_test.go",
         "pkg/adapter/sdkwarm_test.go",
-        "pkg/adapter/preready_cancel_test.go::TestAwaitSupervisorReadyReadEndsOnCancellation_spec_4_7_9"
+        "pkg/adapter/preready_cancel_test.go::TestAwaitSupervisorReadyReadEndsOnCancellation_spec_4_7_9",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9"
       ],
       "packages": [
         "pkg/adapter"
@@ -1101,7 +1102,25 @@
         "pkg/adapter/runtimestartrecord_test.go::TestSupervisedStartRecordedBeforeTheEndIsCrashed_spec_4_7_10",
         "pkg/adapter/runtimestartrecord_test.go::TestSupervisedCloseDropsTheOutstandingStart_spec_4_7_10",
         "pkg/adapter/runtimestartrecord_test.go::TestOpenRuntimeSessionFailsWhenTheGenerationEndedAfterStart_spec_4_7_10",
-        "pkg/adapter/supervise_race_load_test.go::TestSupervisedStartRecordAgainstExitedRace_spec_4_7_10"
+        "pkg/adapter/supervise_race_load_test.go::TestSupervisedStartRecordAgainstExitedRace_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedPodRendersSupervisorStageAndCommand_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisorAdapterUIDFollowsNonceOnlyMode_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisorEnvOrderRuntimeEnvThenPlatform_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedAdapterFlagsPerLaunchModeAndLifetime_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildRefusesSupervisedInputsTheAdapterWouldRefuse_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildUnsupervisedPodsCarryNoSupervisorButCarryTheLifetimeLabel_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRendersSupervisedRestartPodForRestartableRuntime_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodLaunchModeFromExecutionModePreConnectAndBreaker_spec_4_7_10",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodFailedPoolReadOnPreConnectCreatesNoPod_spec_6_1",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodUnsupervisedRuntimesCarryOnlyTheLifetimeLabel_spec_4_7_10",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodSupervisedWithoutSupervisorImageCreatesNoPod_spec_4_7_10",
+        "pkg/admission/webhook/pod_security_supervisor_test.go::TestPodSecurityAdmitsTheSupervisedPodTheBuilderRenders_spec_13_1",
+        "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnreadSupervisedPlatformVariable",
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",
@@ -1160,7 +1179,8 @@
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11",
-        "pkg/adapter/supervise_test.go::TestAwaitSupervisorAppliesThePropertyGateOnRestartPodsOnly_spec_4_7_11"
+        "pkg/adapter/supervise_test.go::TestAwaitSupervisorAppliesThePropertyGateOnRestartPodsOnly_spec_4_7_11",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisorAdapterUIDFollowsNonceOnlyMode_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter"
@@ -1313,7 +1333,9 @@
         "pkg/adapter/staging_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRejectsUnderperformingRuntime_spec_5_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1"
       ],
       "packages": [
         "pkg/runtime"
@@ -1692,7 +1714,16 @@
         "pkg/adapter/scrub/scrub_supervised_test.go::TestRunNotLiveErrorsLeaveTheScrubOutcome_spec_5_2",
         "pkg/adapter/scrub/scrub_supervised_test.go::TestRunSkipsCleanupWhenCredentialEnumerationFails_spec_5_2",
         "pkg/adapter/scrub/scrub_supervised_test.go::TestRunJoinsEnumerationAndRemovalErrorsInStep0_spec_5_2",
-        "pkg/adapter/podscrub_test.go::TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated_spec_5_2"
+        "pkg/adapter/podscrub_test.go::TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated_spec_5_2",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedAdapterFlagsPerLaunchModeAndLifetime_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildRefusesSupervisedInputsTheAdapterWouldRefuse_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildUnsupervisedPodsCarryNoSupervisorButCarryTheLifetimeLabel_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRendersSupervisedRestartPodForRestartableRuntime_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodLifetimeReadFailsClosedOnTransientError_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodUnsupervisedRuntimesCarryOnlyTheLifetimeLabel_spec_4_7_10",
+        "pkg/admission/label_immutability/runtime_process_test.go::TestDecideImmutableLabelsHoldsTheRuntimeProcessLabel_spec_17_2",
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1793,7 +1824,9 @@
         "pkg/adapter/runtimeexits_test.go::TestSupervisedShutdownDemoteSDK_spec_6_1",
         "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
         "pkg/adapter/preready_cancel_test.go::TestRunPreReadySignalEndsTheWaitAndLaunchesNothing_spec_6_1",
-        "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstWarmUpLaunchRace_spec_6_1"
+        "pkg/adapter/supervise_race_load_test.go::TestPreReadySignalAgainstWarmUpLaunchRace_spec_6_1",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodLaunchModeFromExecutionModePreConnectAndBreaker_spec_4_7_10",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodFailedPoolReadOnPreConnectCreatesNoPod_spec_6_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1944,7 +1977,8 @@
         "tests/tier7a_load_local/slot_counter_rebuild_race_test.go",
         "tests/tier7a_load_local/slot_release_paths_race_test.go",
         "tests/tier7a_load_local/stale_slot_reaper_race_test.go",
-        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2"
+        "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestRedisRestartLosingTheSlotSets_spec_5_2",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildAdapterReadinessProbeOnEverySidecarPod_spec_4_7_9"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2017,7 +2051,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/adapter/slotlayout/slotlayout_test.go",
         "pkg/adapter/slotsession_test.go",
-        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults"
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestApplyResourcesStampsTheStageInitContainer_spec_6_4"
       ],
       "packages": [
         "pkg/workspace"
@@ -4208,7 +4243,16 @@
         "tests/tier9_security/concurrent_slot_isolation_test.go::TestPerSlotCredentialFileReadScope_spec_6_60",
         "pkg/controller/sandbox/podspec/podspec_test.go",
         "tests/tier3_contract/admission_pod_security/container_identity_test.go",
-        "tests/tier9_security/admission_manifest_offline_test.go"
+        "tests/tier9_security/admission_manifest_offline_test.go",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedPodRendersSupervisorStageAndCommand_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildRefusesSupervisedInputsTheAdapterWouldRefuse_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestApplyResourcesStampsTheStageInitContainer_spec_6_4",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodSupervisedWithoutSupervisorImageCreatesNoPod_spec_4_7_10",
+        "pkg/admission/webhook/pod_security_supervisor_test.go::TestPodSecurityAdmitsTheSupervisedPodTheBuilderRenders_spec_13_1",
+        "pkg/admission/webhook/pod_security_supervisor_test.go::TestPodSecurityRefusesWritableSupervisorVolumeOutsideTheStageInitContainer_spec_13_1",
+        "pkg/admission/webhook/pod_security_supervisor_test.go::TestValidateAgentPodSupervisorVolumeRuleDisabledWithoutAVolumeName_spec_13_1",
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go::TestSupervisedPodPassesPodSecurityAndCosignWebhooks",
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -5368,7 +5412,10 @@
         "tests/tier8_chaos/pod_disruption_test.go",
         "tests/tier5_e2e_kind/admission_test.go",
         "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
-        "pkg/controller/sandbox/podspec/podspec_test.go"
+        "pkg/controller/sandbox/podspec/podspec_test.go",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildUnsupervisedPodsCarryNoSupervisorButCarryTheLifetimeLabel_spec_5_2",
+        "pkg/controller/sandbox/supervision_internal_test.go::TestCreatePodRendersSupervisedRestartPodForRestartableRuntime_spec_5_2",
+        "pkg/admission/label_immutability/runtime_process_test.go::TestDecideImmutableLabelsHoldsTheRuntimeProcessLabel_spec_17_2"
       ],
       "packages": [
         "charts/lenny"
@@ -5480,7 +5527,12 @@
     "17.8.1": {
       "title": "Operational Defaults \u2014 Quick Reference",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedTimingFlagsRenderOnlyWhenSet_spec_28_5_3",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSuperviseTimingValidateRefusesNonPositive_spec_28_5_3",
+        "cmd/lenny-controller/flags_test.go::TestValidateFlagsRefusesNonPositiveSuperviseTiming",
+        "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
       "notes": "Reference table of operational defaults. Non-normative summary; the binding values live in chart presets (\u00a717.8.4)."
@@ -7037,7 +7089,14 @@
         "pkg/adapter/supervise_race_load_test.go::TestSupervisorLinkCloseAgainstOutstandingRequest_spec_28_5_3",
         "cmd/lenny-adapter/supervise_test.go::TestZeroRuntimeUIDRefusedWhenOnlyTheSuperviseSocketIsBound_spec_28_5_3",
         "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorAndAdapterClientAgreeOnEveryMessage_spec_28_5_3",
-        "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorDialAndConnectionLifetime_spec_28_5_3"
+        "tests/tier3_contract/adapter_supervise/supervise_contract_test.go::TestSupervisorDialAndConnectionLifetime_spec_28_5_3",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedPodRendersSupervisorStageAndCommand_spec_4_7_10",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestBuildSupervisedTimingFlagsRenderOnlyWhenSet_spec_28_5_3",
+        "pkg/controller/sandbox/podspec/supervisor_test.go::TestSuperviseTimingValidateRefusesNonPositive_spec_28_5_3",
+        "cmd/lenny-controller/flags_test.go::TestValidateFlagsRefusesNonPositiveSuperviseTiming",
+        "tests/tier0_static/controller_chart_flags_test.go::TestChartRendersSupervisorImageAndTimingOnlyWhenSet",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnreadSupervisedPlatformVariable",
+        "tests/tier3_contract/adapter_supervise/rendered_argv_test.go::TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10"
       ],
       "packages": [
         "pkg/adapter",

@@ -124,6 +124,11 @@ runtimeClasses:
 # imports. spec: §17.4.
 controller:
   adapterImage: ghcr.io/lennylabs/lenny-adapter:0.1.0
+  # The runtime supervisor image every sidecar pod of a type: agent runtime
+  # stages into its read-only supervisor volume (§4.7.10 Runtime
+  # supervisor). It is bundled at the same tag as the adapter, and the pod
+  # builder refuses a supervised pod without it.
+  supervisorImage: ghcr.io/lennylabs/lenny-supervisor:0.1.0
   # Single replica on the single-node embedded cluster. The chart's
   # controller anti-affinity (controller.antiAffinity) keeps only the
   # advisory `preferred`/`required` modes with no off setting, so this

@@ -3897,6 +3897,7 @@ spec:
             # renders the same value (§5.2 Slot assignment atomicity).
             - --claim-orphan-timeout=900s
             - --adapter-image=ghcr.io/lennylabs/lenny-adapter:0.1.0
+            - --supervisor-image=ghcr.io/lennylabs/lenny-supervisor:0.1.0
             - --gateway-grpc-addr=lenny-gateway.default.svc:50051
             - --agent-namespaces=lenny-agents
             - --dev-mode

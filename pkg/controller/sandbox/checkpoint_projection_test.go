@@ -56,6 +56,7 @@ func reconcileWithCA(t *testing.T, c client.Client, s *runtime.Scheme, caConfigM
 		Client:                 c,
 		Scheme:                 s,
 		AdapterImage:           "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage:        "ghcr.io/lennylabs/lenny-supervisor:v1",
 		ObjectStoreCAConfigMap: caConfigMap,
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{

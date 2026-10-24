@@ -407,6 +407,49 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --initial-fill-grace-period=120s
 
+  # spec: §4.7.10 (Runtime supervisor); §28.5.3 (CH-SUPERVISE, Timing);
+  # §17.8.1. A stock render leaves the supervisor image unset and the
+  # supervise timing flags to the controller defaults.
+  - it: omits the supervisor image and supervise timing flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=5s
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=2m
+
+  - it: renders the supervisor image and supervise timing flags when set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.supervisorImage: ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      controller.tuning:
+        supervisePingInterval: 3s
+        supervisePingTimeout: 4s
+        superviseWaitTimeout: 6m
+        warmUpTimeout: 90s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervisor-image=ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=3s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-timeout=4s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-wait-timeout=6m
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=90s
+
   # spec: §17.8.2 controller-tuning table — "Controller pod
   # anti-affinity". F-17.8.6.
   - it: renders a preferred anti-affinity against the PSC by default

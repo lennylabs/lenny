@@ -19,4 +19,10 @@ func applyResources(in Inputs, pod *corev1.Pod) {
 	for i := range pod.Spec.Containers {
 		pod.Spec.Containers[i].Resources = *in.Resources.DeepCopy()
 	}
+	// spec: §6.4 — the lenny-supervisor-stage init container of a
+	// supervised pod is stamped too, so every container the builder renders
+	// carries the pod's resource bound.
+	for i := range pod.Spec.InitContainers {
+		pod.Spec.InitContainers[i].Resources = *in.Resources.DeepCopy()
+	}
 }

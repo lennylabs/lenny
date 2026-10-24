@@ -77,6 +77,12 @@ spec:
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}
+            {{- /* spec: §4.7.10 (Runtime supervisor) — the image the
+                   lenny-supervisor-stage init container of every supervised
+                   agent pod runs. */}}
+            {{- if .Values.controller.supervisorImage }}
+            - --supervisor-image={{ .Values.controller.supervisorImage }}
+            {{- end }}
             {{- if .Values.minio.tls.caBundle }}
             {{- /* spec: §13.2 (NET-071) — name the per-agent-namespace
                    object-store CA ConfigMap (agent-objectstore-ca.yaml) so
@@ -193,6 +199,21 @@ spec:
             {{- end }}
             {{- with .initialFillGracePeriod }}
             - --initial-fill-grace-period={{ . }}
+            {{- end }}
+            {{- /* spec: §28.5.3 (CH-SUPERVISE, Timing); §17.8.1 — the
+                   runtime supervisor timing bounds, rendered only when set
+                   so a stock render keeps the controller defaults. */}}
+            {{- with .supervisePingInterval }}
+            - --supervise-ping-interval={{ . }}
+            {{- end }}
+            {{- with .supervisePingTimeout }}
+            - --supervise-ping-timeout={{ . }}
+            {{- end }}
+            {{- with .superviseWaitTimeout }}
+            - --supervise-wait-timeout={{ . }}
+            {{- end }}
+            {{- with .warmUpTimeout }}
+            - --warm-up-timeout={{ . }}
             {{- end }}
             {{- end }}
           {{- if $hasPg }}

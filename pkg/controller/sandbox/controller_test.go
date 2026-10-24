@@ -207,7 +207,7 @@ func podCR(phase corev1.PodPhase, ready bool) *corev1.Pod {
 
 func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) error {
 	t.Helper()
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
 	})
@@ -234,7 +234,7 @@ func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 	sb.Spec.IsolationProfile = "" // exercise the controller default fallback
 	c := newClient(t, s, sb, runtimeCR())
 
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", DevMode: true}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1", DevMode: true}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
 	}); err != nil {

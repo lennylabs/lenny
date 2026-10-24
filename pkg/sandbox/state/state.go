@@ -42,6 +42,30 @@ const LabelState = "lenny.dev/state"
 // pod creation.
 const LabelRuntime = "lenny.dev/runtime"
 
+// LabelRuntimeProcess is the immutable pod label in which the
+// WarmPoolController records the pod's runtime-process lifetime when it
+// creates the pod. spec: §5.2 (Runtime-process lifetime), §17.2 item 5.
+const LabelRuntimeProcess = "lenny.dev/runtime-process"
+
+// The runtime-process lifetime values. A `keep` pod keeps its runtime
+// process across the recycle boundary, and a `restart` pod ends it in each
+// whole-pod scrub. spec: §5.2 (Runtime-process lifetime).
+const (
+	RuntimeProcessKeep    = "keep"
+	RuntimeProcessRestart = "restart"
+)
+
+// RuntimeProcessLifetime maps a pool's recycle.runtimeProcess value to the
+// pod's lifetime: `restart` when the value is `restart`, otherwise `keep`,
+// which is also the lifetime of a pod whose pool carries no value. spec:
+// §5.2 (Runtime-process lifetime).
+func RuntimeProcessLifetime(poolValue string) string {
+	if poolValue == RuntimeProcessRestart {
+		return RuntimeProcessRestart
+	}
+	return RuntimeProcessKeep
+}
+
 // The coarse pod-state label values. spec: §6.2 — the lenny.dev/state pod
 // label carries only these three operational values for kubectl,
 // monitoring, and NetworkPolicy selectors. CoarseIdle and CoarseDraining

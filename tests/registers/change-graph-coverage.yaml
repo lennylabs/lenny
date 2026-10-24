@@ -20,7 +20,6 @@ prefixes:
   - cmd/gen-alerting-rules/
   - cmd/git-credential-lenny/
   - cmd/lenny-chart-schema-gen/
-  - cmd/lenny-controller/
   - cmd/lenny-ctl/
   - cmd/lenny-ctl/runtimescaffold/
   - cmd/lenny-egress-capture/
@@ -46,7 +45,6 @@ prefixes:
   - pkg/admission/pool_config_validator/
   - pkg/admission/registry_digest/
   - pkg/admission/t4_node_isolation/
-  - pkg/admission/webhook/
   - pkg/agentpodstate/
   - pkg/agentpodstate/memstore/
   - pkg/agentpodstate/pgstore/

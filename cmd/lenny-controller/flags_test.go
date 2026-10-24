@@ -92,6 +92,12 @@ func TestParseFlagsPopulatesEveryControllerDefault(t *testing.T) {
 		{"certExpiryThreshold", f.certExpiryThreshold, 30 * time.Minute},
 		{"certIssuanceGrace", f.certIssuanceGrace, 60 * time.Second},
 		{"requireCertIssuance", f.requireCertIssuance, false},
+		// registerSupervisorFlags (§28.5.3 CH-SUPERVISE timing defaults)
+		{"supervisorImage", f.supervisorImage, ""},
+		{"supervisePingInterval", f.superviseTiming.PingInterval, defaultSupervisePingInterval},
+		{"supervisePingTimeout", f.superviseTiming.PingTimeout, defaultSupervisePingTimeout},
+		{"superviseWaitTimeout", f.superviseTiming.WaitTimeout, defaultSuperviseWaitTimeout},
+		{"warmUpTimeout", f.superviseTiming.WarmUpTimeout, defaultWarmUpTimeout},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -127,5 +133,35 @@ func clearControllerEnv(t *testing.T) {
 		"LENNY_DEV_MODE",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+// spec: 28.5.3 (CH-SUPERVISE, Timing), 17.8.1 (runtime supervisor timing)
+//
+// TestValidateFlagsRefusesNonPositiveSuperviseTiming pins the controller's
+// startup refusal of a zero or negative value of each CH-SUPERVISE timing
+// setting, and that the compiled defaults pass.
+func TestValidateFlagsRefusesNonPositiveSuperviseTiming(t *testing.T) {
+	base := podspec.SuperviseTiming{
+		PingInterval: defaultSupervisePingInterval, PingTimeout: defaultSupervisePingTimeout,
+		WaitTimeout: defaultSuperviseWaitTimeout, WarmUpTimeout: defaultWarmUpTimeout,
+	}
+	if err := validateFlags(&controllerFlags{superviseTiming: base}); err != nil {
+		t.Fatalf("defaults refused: %v", err)
+	}
+	setters := map[string]func(*podspec.SuperviseTiming, time.Duration){
+		"supervise-ping-interval": func(s *podspec.SuperviseTiming, d time.Duration) { s.PingInterval = d },
+		"supervise-ping-timeout":  func(s *podspec.SuperviseTiming, d time.Duration) { s.PingTimeout = d },
+		"supervise-wait-timeout":  func(s *podspec.SuperviseTiming, d time.Duration) { s.WaitTimeout = d },
+		"warm-up-timeout":         func(s *podspec.SuperviseTiming, d time.Duration) { s.WarmUpTimeout = d },
+	}
+	for name, set := range setters {
+		for _, d := range []time.Duration{0, -time.Second} {
+			tm := base
+			set(&tm, d)
+			if err := validateFlags(&controllerFlags{superviseTiming: tm}); err == nil {
+				t.Errorf("--%s=%s accepted, want a startup refusal", name, d)
+			}
+		}
 	}
 }

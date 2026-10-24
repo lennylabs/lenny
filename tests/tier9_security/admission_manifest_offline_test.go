@@ -34,7 +34,7 @@ func decideManifestOffline(t *testing.T, manifest string) (bool, string) {
 		t.Fatalf("convert manifest to JSON: %v\n%s", err, manifest)
 	}
 	decide := webhook.PodSecurity(podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID,
-		podspec.CredVolumeName, podsecurity.RuntimeClassPolicy{})
+		podspec.CredVolumeName, podspec.SupervisorVolumeName, podsecurity.RuntimeClassPolicy{})
 	resp := decide(context.Background(), &admissionv1.AdmissionRequest{
 		Operation: admissionv1.Create,
 		Object:    runtime.RawExtension{Raw: raw},

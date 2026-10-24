@@ -7,10 +7,12 @@
 //
 // The webhook enforces two distinct rules on agent-pod labels:
 //
-//  1. Three labels are strictly immutable on existing agent pods:
+//  1. These labels are strictly immutable on existing agent pods:
 //     - lenny.dev/managed
 //     - lenny.dev/delivery-mode
 //     - lenny.dev/egress-profile
+//     - lenny.dev/dns-policy
+//     - lenny.dev/runtime-process
 //     Any mutation (including unset → value or value → value) is
 //     rejected with HTTP 403.
 //
@@ -32,6 +34,8 @@ package label_immutability
 import (
 	"errors"
 	"fmt"
+
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // Canonical label keys watched by the webhook.
@@ -41,6 +45,10 @@ const (
 	LabelEgressProfile = "lenny.dev/egress-profile"
 	LabelDNSPolicy     = "lenny.dev/dns-policy"
 	LabelTenantID      = "lenny.dev/tenant-id"
+	// LabelRuntimeProcess records the pod's runtime-process lifetime, which
+	// the WarmPoolController fixes at creation. spec: §5.2 (Runtime-process
+	// lifetime); §17.2 item 5.
+	LabelRuntimeProcess = state.LabelRuntimeProcess
 )
 
 // UnassignedTenantID is the sentinel tenant-id value the
@@ -121,7 +129,12 @@ func Decide(r Request) (Decision, error) {
 // DecideImmutableLabels enforces the §17.2 item 5 rule that the
 // canonical egress-governing labels (lenny.dev/managed,
 // lenny.dev/delivery-mode, lenny.dev/egress-profile, lenny.dev/dns-policy)
-// are immutable on existing agent pods. spec: §13.2.2 — mutating
+// and the runtime-process lifetime label (lenny.dev/runtime-process) are
+// immutable on existing agent pods. spec: §5.2 (Runtime-process lifetime) —
+// relabelling a used `keep` pod as `restart` would let an acquisition admit
+// it on a pool that does not require the runtime-process acknowledgment, so
+// an UPDATE that changes, adds, or removes the label is refused, and a
+// CREATE carries any value. spec: §13.2.2 — mutating
 // lenny.dev/egress-profile from `restricted` to `internet`, or adding
 // lenny.dev/dns-policy to a non-opted-out pod, would broaden egress or
 // bypass the dedicated CoreDNS instance without re-admission through the
@@ -133,7 +146,7 @@ func DecideImmutableLabels(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels
 	}
-	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile, LabelDNSPolicy} {
+	for _, key := range []string{LabelManaged, LabelDeliveryMode, LabelEgressProfile, LabelDNSPolicy, LabelRuntimeProcess} {
 		if r.OldLabels == nil {
 			continue
 		}

@@ -31,6 +31,7 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 		Client:             c,
 		Scheme:             s,
 		AdapterImage:       "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage:    "ghcr.io/lennylabs/lenny-supervisor:v1",
 		EgressCaptureImage: "ghcr.io/lennylabs/lenny-egress-capture:e2e",
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -82,6 +83,7 @@ func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 		Client:             c,
 		Scheme:             s,
 		AdapterImage:       "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage:    "ghcr.io/lennylabs/lenny-supervisor:v1",
 		EgressCaptureImage: "ghcr.io/lennylabs/lenny-egress-capture:e2e",
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -116,9 +118,10 @@ func TestReconcileOmitsEgressCaptureWithoutControllerImage(t *testing.T) {
 	c := newClient(t, s, sb, runtimeCR())
 
 	r := &sandbox.Reconciler{
-		Client:       c,
-		Scheme:       s,
-		AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1",
+		Client:          c,
+		Scheme:          s,
+		AdapterImage:    "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1",
 		// EgressCaptureImage left empty.
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{

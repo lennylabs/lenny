@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/label_immutability"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // drainReasonKeptRuntimeOutsideRule is the reason the gateway logs when it
@@ -28,7 +29,7 @@ const drainReasonKeptRuntimeOutsideRule = "kept_runtime_outside_rule"
 // WarmPoolController records the pod's runtime-process lifetime (`keep` or
 // `restart`) when it creates the pod. spec: §5.2 (Runtime-process
 // lifetime), §17.2 item 5.
-const LabelRuntimeProcess = "lenny.dev/runtime-process"
+const LabelRuntimeProcess = state.LabelRuntimeProcess
 
 // refusesUsedPodLifetime reports whether an acquisition for req refuses a
 // pod that has served an earlier session because of the pod's

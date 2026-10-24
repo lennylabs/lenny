@@ -46,6 +46,9 @@ const (
 	runtimeModeEnv = "LENNY_SUPERVISE_CONTRACT_RUNTIME"
 	runtimeSockEnv = "LENNY_SUPERVISE_CONTRACT_SOCKET"
 	runtimeNonce   = "LENNY_SUPERVISE_CONTRACT_NONCE"
+	// runtimeEnvFile, when set, names a file the launched runtime writes
+	// its environment to before it dials, one variable per line.
+	runtimeEnvFile = "LENNY_SUPERVISE_CONTRACT_ENV_FILE"
 )
 
 func TestMain(m *testing.M) {
@@ -57,6 +60,11 @@ func TestMain(m *testing.M) {
 
 // runAsRuntime is the launched runtime process.
 func runAsRuntime(mode string) int {
+	if f := os.Getenv(runtimeEnvFile); f != "" {
+		if err := os.WriteFile(f, []byte(strings.Join(os.Environ(), "\n")), 0o600); err != nil {
+			return 5
+		}
+	}
 	c, err := net.Dial("unix", os.Getenv(runtimeSockEnv))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "runtime dial: %v\n", err)

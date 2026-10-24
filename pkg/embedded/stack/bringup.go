@@ -65,8 +65,8 @@ const devBearerTrustSecretKey = "key"
 
 // defaultPlatformBundleName is the file name of the deduplicated platform
 // image bundle shipped alongside the lenny binary. The bundle is a single
-// docker-save tarball holding the gateway, controller, lenny-ops, and
-// lenny-adapter images the dev render deploys or stamps, imported into the
+// docker-save tarball holding the gateway, controller, lenny-ops,
+// lenny-adapter, and lenny-supervisor images the dev render deploys or stamps, imported into the
 // embedded containerd in one ctr images import so the rendered pods resolve
 // their images locally with the default IfNotPresent pull policy.
 //
@@ -188,8 +188,8 @@ func ensureDevBearerKey(keyFilePath string) error {
 }
 
 // importPlatformBundle imports the deduplicated platform image bundle (the
-// gateway, controller, lenny-ops, and lenny-adapter images the dev render
-// deploys or stamps) into the embedded containerd in one ctr images import, so
+// gateway, controller, lenny-ops, lenny-adapter, and lenny-supervisor images
+// the dev render deploys or stamps) into the embedded containerd in one ctr images import, so
 // the rendered control-plane pods resolve their images locally with the
 // default IfNotPresent pull policy rather than entering ImagePullBackOff. A
 // missing bundle is non-fatal and logged: a developer build may not ship the

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1161,5 +1162,42 @@ var _ = podspec.Inputs{Name: "x"}
 	want := []string{"podspec.Inputs.ObjectStoreCAConfigMap: no production composite literal sets it"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("producer defects:\n got %q\nwant %q", got, want)
+	}
+}
+
+// spec: 4.7.10 (Runtime supervisor, Environment), 28.5.3 (CH-SUPERVISE)
+// diagnosis: the gate no longer applies the sidecar-runtime environment rule
+// to the supervised runtime's platform --env pairs, so a platform variable
+// the runtime SDK never reads passes tier 0 green on a supervised pod.
+func TestDeploymentBoundaryGateReportsAnUnreadSupervisedPlatformVariable(t *testing.T) {
+	t.Parallel()
+	m := measureBoundary(t)
+	envDefects := func(cases []builtCase) []string {
+		_, env, unmapped := attributeCases(cases)
+		if len(unmapped) > 0 {
+			t.Fatalf("supervised case has unmapped render sites: %v", unmapped)
+		}
+		return reverseEnvDefects(env, m.inputs)
+	}
+	if d := envDefects(copyCases(m.cases)); len(d) != 0 {
+		t.Fatalf("measured cases report env defects: %v", d)
+	}
+	extra := perturbedCases(t, m, "sidecar-supervised-maximal", func(pod *corev1.Pod) {
+		ctr := boundaryContainer(t, pod, "runtime")
+		i := slices.Index(ctr.Command, "--")
+		ctr.Command = slices.Insert(ctr.Command, i, "--env", "LENNY_ADAPTER_MANIFESTX=/run/lenny/x")
+	})
+	assertDefects(t, "unread supervised platform variable", envDefects(extra),
+		`env "LENNY_ADAPTER_MANIFESTX": the sidecar runtime container carries only`)
+
+	// A pair the case's Runtime env names is the deployer's and is not
+	// checked against the SDK.
+	deployer := perturbedCases(t, m, "sidecar-supervised-maximal", func(pod *corev1.Pod) {
+		ctr := boundaryContainer(t, pod, "runtime")
+		i := slices.Index(ctr.Command, "--")
+		ctr.Command = slices.Insert(ctr.Command, i, "--env", "VIRTUAL_ENV=/srv")
+	})
+	if d := envDefects(deployer); len(d) != 0 {
+		t.Errorf("a Runtime env pair is reported as a platform variable: %v", d)
 	}
 }

@@ -84,6 +84,11 @@ func (w *controllerWiring) registerCoreControllers() {
 		// spec: §5.2 / §6.4 — the resolved resource-class registry
 		// the reconciler consults to stamp container CPU/memory requirements.
 		ResourceClasses: w.resourceClasses,
+		// spec: §4.7.10 (Runtime supervisor); §28.5.3 (CH-SUPERVISE,
+		// Timing) — the supervisor image and timing bounds rendered on every
+		// supervised pod.
+		SupervisorImage: f.supervisorImage,
+		SuperviseTiming: f.superviseTiming,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}

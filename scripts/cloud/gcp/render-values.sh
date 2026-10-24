@@ -66,6 +66,7 @@ controller:
     tag: "${TAG}"
     pullPolicy: IfNotPresent
   adapterImage: ${AR_REGISTRY}/lenny-adapter:${TAG}
+  supervisorImage: ${AR_REGISTRY}/lenny-supervisor:${TAG}
 
 admissionWebhooks:
   image:

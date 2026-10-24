@@ -53,10 +53,11 @@ func TestReconcileDefersStatusWriteWithinDedupWindow(t *testing.T) {
 	c := newClient(t, s, runtimeCR(), sandboxCR("warming"), podCR("Running", true))
 
 	r := &sandbox.Reconciler{
-		Client:       c,
-		Scheme:       s,
-		AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1",
-		StatusDedup:  statusdedup.New(time.Hour),
+		Client:          c,
+		Scheme:          s,
+		AdapterImage:    "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1",
+		StatusDedup:     statusdedup.New(time.Hour),
 	}
 
 	// First reconcile: warming + ready pod → idle, status written. The
@@ -89,7 +90,7 @@ func TestReconcileWithoutDedupWritesImmediately(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, runtimeCR(), sandboxCR("warming"), podCR("Running", true))
 
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	reconcileResult(t, r)
 	applySandboxStatus(t, c, testName, lennyv1.SandboxStatus{Phase: "warming"})
 	if res := reconcileResult(t, r); res.RequeueAfter != 0 {

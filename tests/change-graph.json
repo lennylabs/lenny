@@ -110,11 +110,28 @@
       "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
     },
     "pkg/controller/sandbox": {
+      "static": [
+        "tests/tier0_static/deployment_boundary_test.go",
+        "tests/tier0_static/deployment_boundary_render_test.go"
+      ],
       "unit": ["pkg/controller/sandbox/..."],
       "component": [
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go",
-        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go"
-      ]
+        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go",
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go"
+      ],
+      "contract": ["tests/tier3_contract/adapter_supervise/rendered_argv_test.go"]
+    },
+    "pkg/admission/webhook": {
+      "unit": ["pkg/admission/webhook/..."],
+      "component": ["tests/tier2_component/admission/supervised_pod_webhooks_test.go"]
+    },
+    "cmd/lenny-controller": {
+      "static": [
+        "tests/tier0_static/controller_chart_flags_test.go",
+        "tests/tier0_static/dev_profile_render_test.go"
+      ],
+      "unit": ["cmd/lenny-controller/..."]
     },
     "pkg/apis/lenny/": {
       "unit": ["pkg/apis/lenny/..."],
@@ -267,7 +284,8 @@
       "integration": ["tests/tier4_integration/experiment_routing_test.go"]
     },
     "pkg/podsecurity": {
-      "unit": ["pkg/podsecurity/..."],
+      "unit": ["pkg/podsecurity/...", "pkg/admission/webhook/..."],
+      "component": ["tests/tier2_component/admission/supervised_pod_webhooks_test.go"],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go"

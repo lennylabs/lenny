@@ -189,7 +189,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// the adapter container and agentUID for the runtime container.
 	// rcPolicy applies the §17.2 RuntimeClass-aware split: gVisor pods
 	// skip the seccomp check, Kata pods may allow privilege escalation.
-	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(adapterUID, agentUID, credReadersGID, podspec.CredVolumeName, rcPolicy)))
+	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(adapterUID, agentUID, credReadersGID, podspec.CredVolumeName, podspec.SupervisorVolumeName, rcPolicy)))
 	// §5.2 cosign-verify: rejects agent pods whose in-scope container
 	// images carry no valid cosign signature. The route is registered
 	// only when the chart enables cosign verification and supplies a
