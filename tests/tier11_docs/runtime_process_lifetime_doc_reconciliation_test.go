@@ -37,9 +37,11 @@
 package tier11_docs_test
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -728,4 +730,126 @@ func TestSecurityPageStatesTheRuntimeSupervisorTrustBasis(t *testing.T) {
 			"`controller.supervisorImage`",
 			"`podPidsLimit`",
 		})
+}
+
+// spec: 5.1 (command), 4.7.10 (Runtime supervisor, Environment)
+// diagnosis: the publishing page tells a runtime author to copy the image's
+//
+//	ENTRYPOINT into the Runtime's `command`, which the API server rejects for
+//	an interpreter image whose ENTRYPOINT names `python` or `node` by bare
+//	name, and which leaves a script path relative to a WORKDIR the launch
+//	does not depend on; or a Dockerfile example with a relative ENTRYPOINT
+//	carries no matching `command` with an absolute first element and
+//	absolute script paths.
+func TestPublishingGuideCommandExamplesUseAbsolutePaths(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "docs", "runtime-author-guide", "publishing.md")
+	page := readDocPage(t, path)
+	requireNoneContain(t, "publishing.md", strings.Join(strings.Fields(page), " "), []string{
+		"the same argv in the `Runtime`'s `command`",
+	})
+	requireAllContain(t, "publishing.md", strings.Join(strings.Fields(page), " "), []string{
+		"The first element of `command` is the absolute path of the binary or interpreter in the image",
+		"List every variable the image's `ENV` sets in `env`",
+	})
+	blocks, err := extractFencedBlocks(path)
+	if err != nil {
+		t.Fatalf("read code blocks of %s: %v", path, err)
+	}
+	for _, f := range publishingCommandFindings(blocks) {
+		t.Errorf("docs/runtime-author-guide/publishing.md: %s", f)
+	}
+}
+
+var (
+	entrypointLine = regexp.MustCompile(`(?m)^ENTRYPOINT\s+(\[.*\])\s*$`)
+	commandLine    = regexp.MustCompile(`(?m)^command:\s*(\[.*\])\s*$`)
+	scriptArgument = regexp.MustCompile(`\.(py|js|mjs|cjs|ts)$`)
+)
+
+// publishingCommandFindings checks every `command` example on the page for an
+// absolute first element and absolute script arguments, and requires each
+// Dockerfile whose ENTRYPOINT does not start with an absolute path to be
+// followed, before the next Dockerfile, by a `command` example.
+func publishingCommandFindings(blocks []fencedBlock) []string {
+	var findings []string
+	pendingEntrypoint := ""
+	for _, b := range blocks {
+		if m := entrypointLine.FindStringSubmatch(b.Body); b.Language == "dockerfile" && m != nil {
+			if pendingEntrypoint != "" {
+				findings = append(findings, "ENTRYPOINT "+pendingEntrypoint+" has no matching `command` example")
+			}
+			pendingEntrypoint = ""
+			if argv := jsonArgv(m[1]); len(argv) == 0 || !strings.HasPrefix(argv[0], "/") {
+				pendingEntrypoint = m[1]
+			}
+			continue
+		}
+		m := commandLine.FindStringSubmatch(b.Body)
+		if m == nil {
+			continue
+		}
+		pendingEntrypoint = ""
+		findings = append(findings, commandArgvFindings(m[1])...)
+	}
+	if pendingEntrypoint != "" {
+		findings = append(findings, "ENTRYPOINT "+pendingEntrypoint+" has no matching `command` example")
+	}
+	return findings
+}
+
+// commandArgvFindings reports a `command` whose first element or whose script
+// argument is not an absolute path.
+func commandArgvFindings(raw string) []string {
+	argv := jsonArgv(raw)
+	if len(argv) == 0 {
+		return []string{"`command` " + raw + " is not a non-empty JSON string array"}
+	}
+	var findings []string
+	if !strings.HasPrefix(argv[0], "/") {
+		findings = append(findings, "`command` "+raw+" does not start with an absolute path")
+	}
+	for _, arg := range argv[1:] {
+		if scriptArgument.MatchString(arg) && !strings.HasPrefix(arg, "/") {
+			findings = append(findings, "`command` "+raw+" names script "+arg+" by a relative path")
+		}
+	}
+	return findings
+}
+
+// jsonArgv decodes an exec-form argv, returning nil when it is not a JSON
+// string array.
+func jsonArgv(raw string) []string {
+	var argv []string
+	if err := json.Unmarshal([]byte(raw), &argv); err != nil {
+		return nil
+	}
+	return argv
+}
+
+func TestPublishingCommandFindingsFlagsRelativeArgv(t *testing.T) {
+	// spec: 5.1 (command)
+	docker := func(body string) fencedBlock { return fencedBlock{Language: "dockerfile", Body: body + "\n"} }
+	yaml := func(body string) fencedBlock { return fencedBlock{Language: "yaml", Body: body + "\n"} }
+	cases := []struct {
+		name   string
+		blocks []fencedBlock
+		want   int
+	}{
+		{"relative entrypoint without command", []fencedBlock{docker(`ENTRYPOINT ["python", "main.py"]`)}, 1},
+		{"relative entrypoint followed by another dockerfile", []fencedBlock{docker(`ENTRYPOINT ["python", "main.py"]`), docker(`ENTRYPOINT ["/my-agent"]`)}, 1},
+		{"copied entrypoint as command", []fencedBlock{docker(`ENTRYPOINT ["node", "dist/main.js"]`), yaml(`command: ["node", "dist/main.js"]`)}, 2},
+		{"absolute interpreter with relative script", []fencedBlock{yaml(`command: ["/usr/local/bin/python", "-u", "main.py"]`)}, 1},
+		{"absolute command", []fencedBlock{docker(`ENTRYPOINT ["node", "dist/main.js"]`), yaml(`command: ["/usr/local/bin/node", "/app/dist/main.js"]`)}, 0},
+		{"absolute entrypoint needs no command", []fencedBlock{docker(`ENTRYPOINT ["/my-agent"]`)}, 0},
+		{"unparseable command array", []fencedBlock{yaml(`command: ["a",]`)}, 1},
+		{"empty page", nil, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := publishingCommandFindings(tc.blocks); len(got) != tc.want {
+				t.Errorf("findings = %q, want %d", got, tc.want)
+			}
+		})
+	}
 }

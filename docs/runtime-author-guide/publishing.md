@@ -45,7 +45,7 @@ ENTRYPOINT ["/my-agent"]
 | Build with `CGO_ENABLED=0` | Produces a static binary that runs on `scratch`. |
 | Use `-ldflags="-s -w"` | Strips debug info, reducing binary size by ~30%. |
 | Copy only the binary | No source code, no intermediate artifacts. |
-| Set `ENTRYPOINT` to your binary, and the same argv in the `Runtime`'s `command` | In the sidecar model the runtime supervisor ignores `ENTRYPOINT`, `CMD`, and `ENV` and launches the `command` of your `Runtime` with the `env` it lists ([Runtime Configuration](runtime-configuration.md)); the entrypoint serves running the image directly. |
+| Set `ENTRYPOINT` to your binary, and its absolute path in the `Runtime`'s `command` | In the sidecar model the runtime supervisor ignores `ENTRYPOINT`, `CMD`, and `ENV` and launches the `command` of your `Runtime` with the `env` it lists. The first element of `command` is the absolute path of the binary or interpreter in the image. Name a script argument by absolute path as well, so the launch does not depend on the image's `WORKDIR`. List every variable the image's `ENV` sets in `env`. [Runtime Configuration](runtime-configuration.md) states the rules for both fields. The entrypoint serves running the image directly. |
 
 ### Python Runtimes
 
@@ -65,6 +65,15 @@ ENTRYPOINT ["python", "-u", "main.py"]
 
 The `-u` flag disables Python's stdout buffering. Without it, the adapter never receives your output and the session hangs.
 
+The `Runtime` for this image names the interpreter and the script by absolute path and lists in `env` the variable the base image's `ENV` sets for text encoding, because the supervisor does not apply the image's `ENV`:
+
+```yaml
+command: ["/usr/local/bin/python", "-u", "/app/main.py"]
+env:
+  - name: LANG
+    value: "C.UTF-8"
+```
+
 ### TypeScript Runtimes
 
 ```dockerfile
@@ -81,6 +90,12 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json .
 ENTRYPOINT ["node", "dist/main.js"]
+```
+
+The `Runtime` for this image names the interpreter and the script by absolute path:
+
+```yaml
+command: ["/usr/local/bin/node", "/app/dist/main.js"]
 ```
 
 ### Image Size Targets
