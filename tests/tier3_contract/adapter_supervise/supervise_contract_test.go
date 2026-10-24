@@ -84,13 +84,22 @@ func runAsRuntime(mode string) int {
 
 var (
 	buildOnce sync.Once
-	buildBin  string
+	buildOut  string
 	buildErr  error
 	prefix    string
 )
 
-// supervisorBinary builds the supervisor once per test binary.
-func supervisorBinary(t *testing.T) (bin, root string) {
+// The supervisor builds the tests run: the prefixed build of the shipped
+// code, and the same build with a sweep worker that never reports and a
+// short sweep backstop.
+const (
+	prefixedBuild   = "lenny-supervisor-prefixed"
+	sweepStallBuild = "lenny-supervisor-sweepstall"
+)
+
+// supervisorBinary builds the supervisors once per test binary and returns
+// the named build.
+func supervisorBinary(t *testing.T, build string) (bin, root string) {
 	t.Helper()
 	if _, err := exec.LookPath("unshare"); err != nil {
 		t.Skipf("blocked: unshare not on PATH: %v", err)
@@ -108,12 +117,11 @@ func supervisorBinary(t *testing.T) (bin, root string) {
 				return
 			}
 		}
-		out := filepath.Join(dir, "bin")
-		target := filepath.Join(out, "lenny-supervisor-prefixed")
+		buildOut = filepath.Join(dir, "bin")
 		_, buildErr = supervisorbuild.Build(context.Background(), supervisorbuild.Options{
-			RepoRoot: schematest.RepoRoot(t), Out: out, TestPrefix: prefix, Targets: []string{target},
+			RepoRoot: schematest.RepoRoot(t), Out: buildOut, TestPrefix: prefix,
+			Targets: []string{filepath.Join(buildOut, prefixedBuild), filepath.Join(buildOut, sweepStallBuild)},
 		})
-		buildBin = target
 	})
 	if errors.Is(buildErr, supervisorbuild.ErrToolchainMissing) {
 		t.Skipf("blocked: supervisor toolchain missing: %v", buildErr)
@@ -121,7 +129,7 @@ func supervisorBinary(t *testing.T) (bin, root string) {
 	if buildErr != nil {
 		t.Fatalf("build supervisor: %v", buildErr)
 	}
-	return buildBin, prefix
+	return filepath.Join(buildOut, build), prefix
 }
 
 func socketName(kind string) string {
@@ -136,11 +144,18 @@ type supervisorProc struct {
 	done chan error
 }
 
-// startSupervisor runs the supervisor as the init of a scratch user, PID,
-// mount, and IPC namespace.
+// startSupervisor runs the prefixed supervisor as the init of a scratch
+// user, PID, mount, and IPC namespace.
 func startSupervisor(t *testing.T, socket string, flags []string, env []string) *supervisorProc {
 	t.Helper()
-	bin, _ := supervisorBinary(t)
+	return startSupervisorBuild(t, prefixedBuild, socket, flags, env)
+}
+
+// startSupervisorBuild runs the named supervisor build as startSupervisor
+// does.
+func startSupervisorBuild(t *testing.T, build, socket string, flags []string, env []string) *supervisorProc {
+	t.Helper()
+	bin, _ := supervisorBinary(t, build)
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +212,12 @@ type contractPod struct {
 
 func newContractPod(t *testing.T, lifetime adapter.RuntimeLifetime, runtimeMode string) *contractPod {
 	t.Helper()
+	return newContractPodBuild(t, prefixedBuild, lifetime, runtimeMode)
+}
+
+// newContractPodBuild is newContractPod against the named supervisor build.
+func newContractPodBuild(t *testing.T, build string, lifetime adapter.RuntimeLifetime, runtimeMode string) *contractPod {
+	t.Helper()
 	m := runtimenonce.Publish(t, nil)
 	msgSock, supSock := socketName("msg"), socketName("sup")
 	auth := adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
@@ -210,7 +231,7 @@ func newContractPod(t *testing.T, lifetime adapter.RuntimeLifetime, runtimeMode 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = rt.CloseListener() })
-	sup := startSupervisor(t, supSock, []string{"--dial-timeout", "10s", "--adapter-uid", fmt.Sprint(os.Getuid())},
+	sup := startSupervisorBuild(t, build, supSock, []string{"--dial-timeout", "10s", "--adapter-uid", fmt.Sprint(os.Getuid())},
 		[]string{runtimeModeEnv + "=" + runtimeMode, runtimeSockEnv + "=" + msgSock, runtimeNonce + "=" + m.Nonce})
 	link, err := adapter.AwaitSupervisor(context.Background(), adapter.AwaitSupervisorConfig{
 		Socket: supSock, Auth: auth, Lifetime: lifetime, Timeout: 10 * time.Second,
@@ -359,4 +380,67 @@ func TestSupervisorDialAndConnectionLifetime_spec_28_5_3(t *testing.T) {
 			t.Fatal("supervisor exited 0 after a peer mismatch")
 		}
 	})
+}
+
+// noopScrubOps is a scrub.Ops that touches nothing on the host, so the
+// contract test runs scrub.Run for its supervisor requests alone.
+type noopScrubOps struct{}
+
+func (noopScrubOps) KillUserProcesses(context.Context) error { return nil }
+func (noopScrubOps) PurgeIPCShm(context.Context) error       { return nil }
+func (noopScrubOps) RemoveAll(string) error                  { return nil }
+func (noopScrubOps) ClearContents(string) error              { return nil }
+func (noopScrubOps) PathState(string) (bool, bool, error)    { return false, true, nil }
+
+// stepRecord returns the named step's record in the report.
+func stepRecord(t *testing.T, rep *scrub.Report, step scrub.StepName) scrub.StepRecord {
+	t.Helper()
+	for _, s := range rep.Steps {
+		if s.Step == step {
+			return s
+		}
+	}
+	t.Fatalf("report has no %s step: %+v", step, rep.Steps)
+	return scrub.StepRecord{}
+}
+
+// spec: 4.7.10 (Runtime supervisor, Children; Runtime supervisor, Sweep),
+// 5.2 (Supervised scrub sequence), 28.5.3 (CH-SUPERVISE, Timing)
+// diagnosis: a sweep worker that never reports reached the adapter as a link
+// failure rather than as the supervisor's swept carrying sweep_failed, so the
+// whole-pod scrub skipped cleanupCommands and the second end and sweep. The
+// adapter's sweep request bound has to outlast the supervisor's sweep
+// backstop answer; this build shortens that backstop so the answer arrives
+// within the test.
+func TestStalledSweepWorkerAnswersSweepFailedAndTheScrubRunsCleanup_spec_4_7_10(t *testing.T) {
+	pod := newContractPodBuild(t, sweepStallBuild, adapter.LifetimeRestart, "hold")
+	if err := pod.rt.Start(ctxFor(t, 10*time.Second), "s1"); err != nil {
+		t.Fatalf("launch and accept: %v", err)
+	}
+	rep, err := scrub.Run(ctxFor(t, 60*time.Second), noopScrubOps{}, scrub.Config{
+		CleanupCommands: []string{"/bin/true"},
+		CleanupTimeout:  5 * time.Second,
+		CleanupRunner:   pod.rt,
+		EndRuntime:      pod.rt.EndAndSweep,
+		EndRuntimeAgain: pod.rt.EndAndSweep,
+		RebindListeners: pod.rt.RebindListeners,
+	})
+	if err != nil {
+		t.Fatalf("scrub.Run: %v", err)
+	}
+	if pod.link.Failed() {
+		t.Fatal("the stalled sweep failed the link; want a swept reply carrying sweep_failed")
+	}
+	for _, step := range []scrub.StepName{scrub.StepEndRuntime, scrub.StepEndRuntimeAgain} {
+		rec := stepRecord(t, rep, step)
+		if rec.Err == nil || !errors.Is(rec.Err, scrub.ErrNotLive) || !strings.Contains(rec.Err.Error(), adapter.SuperviseErrSweepFailed) {
+			t.Errorf("%s error = %v, want not live with %s", step, rec.Err, adapter.SuperviseErrSweepFailed)
+		}
+	}
+	if rec := stepRecord(t, rep, scrub.StepCleanupCommands); rec.Skipped || rec.Err != nil {
+		t.Fatalf("cleanup_commands = %+v, want run through the supervisor and succeeded", rec)
+	}
+	if nl, cause := pod.rt.NotLive(); !nl || cause != adapter.CauseReplyError {
+		t.Fatalf("not-live = %v (%s), want the reply-error cause", nl, cause)
+	}
 }

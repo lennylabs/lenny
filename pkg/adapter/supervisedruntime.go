@@ -58,10 +58,16 @@ func (m LaunchMode) Preconnect() bool {
 
 // Request bounds. The specification bounds every CH-SUPERVISE request without
 // stating a value. The end bound covers the supervisor's SIGKILL passes after
-// a zero grace, the sweep bound a bounded walk of the runtime container's
-// writable volumes, and the cleanup bound exceeds the cleanupTimeoutSeconds
-// deadline by the supervisor's backstop and its wait after a kill.
-// spec: §28.5.3 (CH-SUPERVISE, Timing).
+// a zero grace, and the cleanup bound exceeds the cleanupTimeoutSeconds
+// deadline by the supervisor's backstop and its wait after a kill. The sweep
+// bound exceeds the supervisor's latest sweep answer: its sweep worker
+// backstop (SV_SWEEP_BACKSTOP_MS in supervisor/supervisor.h), its wait after
+// the backstop SIGKILL, and its end pass bound. A worker that runs too long
+// then reaches the adapter as a swept carrying sweep_failed, the reply-error
+// cause, and the scrub's later requests still run, rather than as a link
+// failure that skips them.
+// spec: §28.5.3 (CH-SUPERVISE, Timing); §4.7.10 (Runtime supervisor,
+// Children; Runtime supervisor, Sweep); §5.2 (Supervised scrub sequence).
 const (
 	superviseLaunchBound  = 30 * time.Second
 	superviseEndBound     = 30 * time.Second

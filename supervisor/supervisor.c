@@ -163,6 +163,11 @@ static void sv_handle_end(struct sv_server *s, struct sv_request *r)
 static int sv_sweep_body(void *arg)
 {
 	(void)arg;
+#ifdef SV_TEST_SWEEP_STALL
+	/* Tier-3 test build: the worker never reports, so only its backstop ends it. */
+	for (;;)
+		sv_ppoll(SV_NULL, 0, SV_NULL, SV_NULL);
+#endif
 	return sv_sweep_all(sv_getuid());
 }
 

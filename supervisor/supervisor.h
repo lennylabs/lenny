@@ -47,8 +47,19 @@
 #define SV_END_KILL_BOUND_MS 5000
 /* The pause between two end passes. */
 #define SV_END_PASS_INTERVAL_MS 10
-/* The sweep worker's backstop: at it the worker is sent SIGKILL. */
-#define SV_SWEEP_BACKSTOP_MS (10ULL * 60 * 1000)
+/*
+ * The sweep worker's backstop: at it the worker is sent SIGKILL. The
+ * supervisor answers a sweep no later than this backstop plus
+ * SV_WAIT_AFTER_KILL_MS plus SV_END_KILL_BOUND_MS, and that sum stays below
+ * the adapter's sweep request bound (superviseSweepBound in
+ * pkg/adapter/supervisedruntime.go), so a worker that runs too long reaches
+ * the adapter as `swept` with sweep_failed rather than as a link failure
+ * (spec: §4.7.10 Runtime supervisor, Sweep; §28.5.3 CH-SUPERVISE, Timing).
+ * A tier-3 test build defines a shorter backstop.
+ */
+#ifndef SV_SWEEP_BACKSTOP_MS
+#define SV_SWEEP_BACKSTOP_MS (4ULL * 60 * 1000)
+#endif
 /* The cleanup worker's backstop beyond timeoutMs. */
 #define SV_CLEANUP_BACKSTOP_SLACK_MS 5000
 /* How long a waiting step waits for a status after its backstop SIGKILL. */

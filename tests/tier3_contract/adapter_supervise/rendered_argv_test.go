@@ -112,7 +112,7 @@ func stageFromRenderedArgv(t *testing.T, bin string, stage corev1.Container, dir
 // reach the adapter on the rendered socket, or the launched process does not
 // get the Runtime env and the platform variables in the rendered order.
 func TestSupervisorStartsFromTheArgvThePodBuilderRenders_spec_4_7_10(t *testing.T) {
-	bin, _ := supervisorBinary(t)
+	bin, _ := supervisorBinary(t, prefixedBuild)
 	if _, err := exec.LookPath("unshare"); err != nil {
 		t.Skipf("blocked: unshare not on PATH: %v", err)
 	}
