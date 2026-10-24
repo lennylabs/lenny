@@ -22,11 +22,16 @@ const (
 
 `scopeKey` and `idxKey` keep their bodies.
 
-**acquireScript.** Replace the script with the following. KEYS are the scope key, the ID key, and the epoch key. ARGV are the lock ID, the lock JSON built in Go with `Epoch` 0, the PTTL in milliseconds, and the scope.
+**acquireScript.** Replace the script with the following. KEYS are the scope key, the ID key, and the epoch key. ARGV are the lock ID, the lock JSON built in Go with `Epoch` 0, the PTTL in milliseconds, and the scope. The `EXISTS` branch implements the acquire clause of the SPEC-1 repeat paragraph (D18).
 
 ```lua
 if redis.call('EXISTS', KEYS[1]) == 1 then
-  return {1, redis.call('HGET', KEYS[1], 'data')}
+  local d = redis.call('HGET', KEYS[1], 'data')
+  if redis.call('HGET', KEYS[1], 'id') == ARGV[1] then
+    local s = cjson.decode(d)
+    if s.revision == 0 then return {0, tostring(s.epoch)} end
+  end
+  return {1, d}
 end
 local e = tonumber(redis.call('GET', KEYS[3]) or '0')
 local l = cjson.decode(ARGV[2])
@@ -40,7 +45,7 @@ return {0, tostring(e)}
 
 `Acquire` keeps the `serverTime` call before the script, deletes the `s.Epoch(ctx)` call, and passes the three keys. A reply of `{1, data}` returns `conflictFromBlob(req.Scope, data)`. A reply of `{0, epoch}` sets `lock.Epoch` from the parsed epoch string and returns the lock. Any other reply, or a parse failure, returns `coordination.ErrStoreUnavailable`. The Lua `false` / `redis.Nil` branch goes away.
 
-**casScript.** Add the following. KEYS are the scope key and the ID key. ARGV are the expected stored `data` string, the new `data` string or `''` for delete, the PTTL in milliseconds, the scope, and the lock ID. The second line returns 1 for a write that go-redis re-sent after losing the reply, because a stored `data` equal to the new string is that operation's own write or an identical concurrent write.
+**casScript.** Add the following. KEYS are the scope key and the ID key. ARGV are the expected stored `data` string, the new `data` string or `''` for delete, the PTTL in milliseconds, the scope, and the lock ID. The second line implements the compare-and-set clause of the SPEC-1 repeat paragraph (D18), and it also reports success for an identical concurrent write.
 
 ```lua
 local cur = redis.call('HGET', KEYS[1], 'data')
@@ -82,7 +87,7 @@ The new `data` string is `json.Marshal` of the lock `decide` returned.
 
 **readByID.** Change it to return the decoded lock and the raw stored `data` string: `(lock *coordination.Lock, raw string, err error)`. It returns a nil lock with a nil error when the ID key or the scope hash is absent, when the blob does not decode, or when the decoded lock's `ID` differs from the requested id. `Get` and `RemoveByID` take the lock and ignore the raw string.
 
-**RemoveByID.** Keeps `releaseScript` (the id-matched delete, regardless of holder) over `scopeKey(lock.Scope)` and `idxKey(lockID)`.
+**RemoveByID.** Keeps `releaseScript` (the id-matched delete, regardless of holder) over `scopeKey(lock.Scope)` and `idxKey(lockID)`, and keeps discarding the script's 0 or 1 result, which implements the reconciliation-removal clause of the SPEC-1 repeat paragraph.
 
 **Deletions.** Delete `persist`, and delete `readByScope`, whose HGET and decode move into `readByID`. `Release` no longer calls `releaseScript`.
 
@@ -152,7 +157,7 @@ The existing `clustertest` test already satisfies the tier-0 gate. The guard mus
 - (h) Outage: close miniredis and assert `ErrStoreUnavailable` from Acquire, Get, List, ActiveLocks, Extend, Release, Steal, RemoveByID, Epoch, IncrementEpoch, and SetEpoch. Tier, Reap, and ServerTime are excluded; ServerTime returns the raw error. A second case makes the (e) hook return a connection error in place of the first script command of Extend, Steal, and Release, and asserts `ErrStoreUnavailable`.
 - (i) cjson round trip: a lock with `operationId` empty and `stolenFrom` set after a steal decodes after Acquire, Extend, and Steal with every field equal to the value Go wrote, except `epoch`, which equals the stamped value.
 - (j) Stale ID key: acquire scope `s`, release it, acquire `s` again under a new ID, and then `SET ops:{lock}:id:<oldID> s` through the raw client. `Get`, `Extend`, `Steal`, and `Release` of the old ID each return `REMEDIATION_LOCK_NOT_FOUND`, and the new lock and its ID key are unchanged. The `Get` assertion discriminates, because without the `readByID` ID check it returns the new lock.
-- (k) Replay: a `ProcessHook` that, on the operation's first script command that does not fail with `NOSCRIPT`, calls `next` a second time and returns the second reply makes Extend return `revision` +1, and makes `bob`'s Steal of `alice`'s lock return `stolenFrom` `alice` and `revision` +1. In each case the stored record equals the returned lock.
+- (k) Replay, one case per clause of the SPEC-1 repeat paragraph. A `ProcessHook` calls `next` a second time on the operation's first write command (the first script command that does not fail with `NOSCRIPT`, or the `INCR`) and returns the second reply. Acquire returns the lock it wrote, carrying the stamped epoch. In a second Acquire case, the hook reads the lock ID from the command's arguments and steals that lock for `bob` through a second, unhooked client between the two sends; Acquire returns `REMEDIATION_LOCK_CONFLICT` and `bob`'s record is unchanged. Extend returns `revision` +1. `bob`'s Steal of `alice`'s lock returns `stolenFrom` `alice` and `revision` +1. Release returns `REMEDIATION_LOCK_NOT_FOUND` and leaves neither key. `RemoveByID` returns nil and leaves neither key. `IncrementEpoch` returns the stored epoch, two above its starting value. In each case that returns a lock, the stored record equals the returned lock.
 
 Add each new or renamed test to section `"25.4"` in `tests/spec-map.json`, and the slot tests also to `"12.4"`.
 
@@ -179,7 +184,8 @@ Targets: `tests/tier0_static/redis_cluster_safety_test.go` and `tests/tier11_doc
 ## Edge cases and accepted failure modes
 
 - A Redis error inside `mutate` maps to `ErrStoreUnavailable` and the tiered Service falls back as it does today. Only ownership and exhaustion outcomes are 403, 404, or 409.
-- A Release whose script deleted the lock but whose reply was lost, and which go-redis re-sends, re-reads an absent lock and returns `REMEDIATION_LOCK_NOT_FOUND`. Do not treat an absent re-read as success: that cannot be told apart from expiry or a stealer's release.
+- A repeated Release that already deleted ends at `REMEDIATION_LOCK_NOT_FOUND` under the SPEC-1 repeat paragraph. Do not treat an absent re-read as success, because it cannot be told apart from expiry or a stealer's release.
+- When go-redis exhausts its re-sends, the operation returns `ErrStoreUnavailable` as any Redis error does, whether or not an earlier send applied, and an applied write stands.
 - The keyless `TIME` read may be answered by a node other than the lock slot's owner (summary D4).
 - Locks written under the old key names are not migrated. No deployments exist, and Redis lock state is ephemeral.
 
@@ -195,5 +201,6 @@ Targets: `tests/tier0_static/redis_cluster_safety_test.go` and `tests/tier11_doc
 - tests/tier11_docs/redis_key_prefix_registry_test.go
 - tests/spec-map.json
 - charts/lenny/values.yaml
+- docs/runbooks/ops-clock-skew.md
 - BUILD-GAPS.md
 - gateway-runtime-comms-remediation.md

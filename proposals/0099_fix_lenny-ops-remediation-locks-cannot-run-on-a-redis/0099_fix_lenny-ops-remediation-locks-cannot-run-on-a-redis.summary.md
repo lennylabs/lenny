@@ -11,6 +11,7 @@
 - CODE-1 rewrites `pkg/ops/coordination/redisstore` to the tagged keys, an acquire script that stamps the epoch, and one CAS script for Extend, Steal, and Release. TEST-1, TEST-2, and TEST-3 cover it at tiers 1, 2, and 4 and turn on the tier-0 and tier-11 gates.
 - SPEC-4, SPEC-5, and SPEC-6 add the §12.4 **Shared Redis topology.** paragraph, correct the lease-renewal row, rewrite the migration pre-plan as a whole-deployment cutover, and rewrite the §17.8.2 Tier 3 rows and the §16.5 `DurableInboxRedisUnavailable` row.
 - REC-1 closes F-12.4.28. REC-2 records the Part 2 condition audit and files each unmet condition.
+- DOCS-1 corrects the ops-clock-skew runbook's clock-source sentence, and CHART-1 corrects two `charts/lenny/values.yaml` Redis comments.
 
 **Decisions.**
 
@@ -31,6 +32,7 @@
 - D15. The pre-plan becomes a whole-deployment `redis.provider` cutover that copies every key from Sentinel to the Cluster while every Redis-connected component is stopped. Several roles hold Redis state with no durable copy (operator-opened breakers, playground revocation markers, delegation-budget counters, the durable inbox and DLQ, staged billing entries, and Tier 2 locks), so a discarding switch would lose them, and a rolling switch would split replicas across two keyspaces.
 - D16. The §12.4 lease-renewal row is corrected to one renewal per `--coordination-interval`. Its "one per coordination TTL / 2" contradicts the four-interval condition, and the code renews four times per TTL (the Sweeper sets TTL to 4 × interval, the default lease TTL is 60s, and the interval defaults to 15s).
 - D17. Part 1 and Part 2 are separate checklist deliverables. No Part 1 step depends on a Part 2 step, Part 1 is verified and recorded by REC-1 on its own, and Part 1 does not wait on the Part 2 audit.
+- D18. Every Tier 2 write tolerates a repeated send (SPEC-1 repeat paragraph), because go-redis v9 re-sends a command whose reply it lost and `redisconn` leaves the retry count at its default. The acquire check requires revision 0 as well as the lock ID, so a repeat that arrives after an intervening steal reports the conflict rather than returning a lock the caller no longer holds. A repeated Release keeps its 404 (non-spec Edge cases). `IncrementEpoch` and `SetEpoch` keep their code: a doubled `INCR` skips one epoch value, which §25.4 tolerates because it uses epochs only by order and maximum, and the `MAX` script writes nothing on a repeat. Turning re-sends off was rejected, because a lost reply would then surface as `ErrStoreUnavailable` after Redis applied the write and send the request to the in-memory tier (D6).
 
 **Watch out for.**
 
@@ -40,7 +42,7 @@
 - Tier-11 check (e) forbids `ops:{lock}:` anywhere in §12.4. SPEC-3 and SPEC-4 quote no `ops:` key, and an implementor must not add one while editing them.
 - The SPEC-3 paragraph goes after the wrapper-layer paragraph. Placing it after the exception-summary paragraph lets the tier-11 exception-summary parser read it as part of that summary.
 - Every table row SPEC-1, SPEC-2, SPEC-4, and SPEC-6 replace stays one physical line.
-- The owner has not yet decided whether Part 2 stays in this proposal or moves to a sibling proposal. If it moves, checklist steps S4, S5, S6, and S12 leave with it and Part 1 is unchanged.
+- The owner has not yet decided whether Part 2 stays in this proposal or moves to a sibling proposal. If it moves, checklist steps S4, S5, S6, S12, and S14 leave with it and Part 1 is unchanged.
 
 ## Goals
 
@@ -96,6 +98,7 @@ None. Decision 7 (pub/sub load on a shared Tier 3 Redis Cluster) is settled by t
 - The §12.4 **Data-at-rest posture** says every Redis-backed role has a durable fallback and that total Redis data loss is recoverable, and §28.5.7 and `docs/operator-guide/disaster-recovery.md` repeat the claim. Circuit breakers, playground revocation markers, the durable inbox and DLQ, and staged billing entries have no durable copy, so the claim overstates recovery after an unplanned Redis loss. The overclaim predates this proposal and does not depend on topology. SPEC-4 cites the posture only for its coordination-durability condition, which REC-2 audits store by store.
 - §25.4 reconciliation step 2 ("epoch ≥ the epoch of the last reconciliation") disagrees with the code, which copies every active lock, and §25.4 overstates Redis durability on failover. Both are adjacent spec defects outside this problem.
 - The `--redis-cluster-addrs` help text in `cmd/lenny-gateway/flags.go` still calls cluster mode the migration topology for the Quota/Rate Limiting instance, which SPEC-5's whole-deployment cutover replaces. It sits outside the P6 code bound.
+- With `redis.deploy: true`, the chart renders the in-cluster Redis only for the resolved `redis.provider` (`charts/lenny/templates/redis-sentinel.yaml`, `charts/lenny/templates/redis-cluster.yaml`), so one release cannot run the Sentinel instance and the Cluster side by side, and SPEC-5 step 4(a) needs the Cluster deployed outside the chart or by a second release. The current §12.4 step 4(a) already requires the parallel deployment, so the gap predates this proposal, and D15 is unchanged.
 
 ## Impacts on other proposals
 
@@ -116,5 +119,7 @@ None. Decision 7 (pub/sub load on a shared Tier 3 Redis Cluster) is settled by t
 - TEST-1 — pkg/ops/coordination/redisstore/redisstore_test.go, tests/spec-map.json — Tier-1 store tests under the slot guard on miniredis and clustertest, with injected interleavings and a randomized checker.
 - TEST-2 — tests/tier4_integration/ops_lock_redis_cluster_test.go (or tests/tier4_integration/redis_cluster_smoke_test.go), tests/tier2_component/coordination/tier_transition_test.go — Real Redis Cluster coverage of the operations and epoch transitions, and the tier-2 slot guard.
 - TEST-3 — tests/tier0_static/redis_cluster_safety_test.go, tests/tier11_docs/redis_key_prefix_registry_test.go — Remove the tier-0 exemption and extend tier-11 check (e) to §25.4.
+- CHART-1 — charts/lenny/values.yaml — `redis.cluster.addrs` and `capacityPlanning.singleTenantRedisTopology` comments.
+- DOCS-1 — docs/runbooks/ops-clock-skew.md — Clock-source sentence in the opening paragraph.
 - REC-1 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — Close F-12.4.28 and record Part 1 progress on P6.
 - REC-2 — BUILD-GAPS.md, gateway-runtime-comms-remediation.md — Part 2 condition audit, findings for unmet conditions, and P6 closure.

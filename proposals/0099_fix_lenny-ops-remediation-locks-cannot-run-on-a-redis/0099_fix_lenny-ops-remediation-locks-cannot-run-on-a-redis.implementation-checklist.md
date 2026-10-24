@@ -17,7 +17,7 @@
 - [ ] **S7 · code** — CODE-1 and TEST-1. Lands the redisstore rewrite, the two cmd/lenny-ops comments, and the tier-1 store tests.
       Tiers 0, 1. Depends on: S1, S2, S3
 - [ ] **S9 · test** — TEST-2. Lands the tier-4 cluster test and the tier-2 slot guard.
-      Tiers 0, 2, 4. Depends on: S7
+      Tiers 0, 2, 4. Depends on: S1, S2, S3, S7
 - [ ] **S10 · test** — TEST-3. Lands the tier-0 exemption removal and the tier-11 check (e) edits.
       Tiers 0, 11. Depends on: S1, S2, S3, S7
 - [ ] **S11 · docs** — REC-1. Lands the F-12.4.28 closure and the P6 progress line.
@@ -26,5 +26,5 @@
       Tiers 0, 11. Depends on: S4, S5, S6, S11
 - [ ] **S13 · docs** — DOCS-1. Lands the ops-clock-skew runbook clock-source sentence.
       Tiers 0, 11. Depends on: S3
-- [ ] **S14 · chart** — CHART-1. Lands the two `charts/lenny/values.yaml` Redis comment corrections.
+- [ ] **S14 · schema** — CHART-1. Lands the two `charts/lenny/values.yaml` Redis comment corrections.
       Tiers 0, 11. Depends on: S5, S6
