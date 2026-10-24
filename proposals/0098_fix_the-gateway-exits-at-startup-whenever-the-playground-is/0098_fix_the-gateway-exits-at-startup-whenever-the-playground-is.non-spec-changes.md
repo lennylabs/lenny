@@ -72,7 +72,7 @@ All five edits land in one commit. The tier-11 currency test reads the BUILD-GAP
 
    Keep the 0095 annotation verbatim, because the tier-11 T-12.8.9 pin matches its text. Leave the T-12.8.9 heading OPEN.
 
-5. `gateway-runtime-comms-remediation.md`, the item `**F-27.8.1: the gateway exits at startup with the playground enabled.**`. Tick its box (`- [ ]` to `- [x]`), append `(proposal 0098, implemented <implementation date>)` to the bold title's sentence in the way the P5a and P5b items record theirs, and add a nested line in their format:
+5. `gateway-runtime-comms-remediation.md`, the item `**F-27.8.1: the gateway exits at startup with the playground enabled.**`. Tick its box (`- [ ]` to `- [x]`), append `(proposal 0098, implemented <implementation date>)` to the bold title's sentence in the way the P5 and P5b items record theirs, and add a nested line in their format:
 
    ```
      - **Outcome.** Proposal 0098 (`proposals/0098_fix_the-gateway-exits-at-startup-whenever-the-playground-is/`) renames the §27.8 page-views label to `auth_mode` in the spec and in `metrics.go`, adds a tier-1 test that registers the §27.8 set through the metric label validator, runs the tier-4 playground-bearer refusal case, and closes F-27.8.1.
@@ -104,13 +104,13 @@ func TestNewMetricsRegistersThroughTheLabelValidator_spec_27_8(t *testing.T) {
 
 Target: `tests/tier4_integration/tenant_deletion_phase4_test.go`.
 
-1. `deletionGatewayArgs`: append `"--playground-enabled"`, `"--playground-auth-mode=dev"`, and `"--playground-dev-tenant-id=acme"`. All three are required. Without `--playground-dev-tenant-id=acme`, `Config.Validate` refuses dev mode under `--multi-tenant=true` and the replica exits at startup with `LENNY_PLAYGROUND_DEV_TENANT_REQUIRED`, which reads like the original defect.
+1. `deletionGatewayArgs`: append `"--playground-enabled"`, `"--playground-auth-mode=dev"`, and `"--playground-dev-tenant-id=acme"`. All three are required (summary D5).
 2. The doc comment on `deletionGatewayArgs`: replace the sentence "The playground stays disabled, because a gateway started with it enabled exits at startup (F-27.8.1)." with a sentence stating that the dev-mode playground is bound to `acme`, because multi-tenant dev mode requires an explicit non-default dev tenant.
 3. In `TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8`, delete the `t.Run("playground bearer", ...)` block that calls `t.Skip`, and delete the comment sentence above it beginning "A playground bearer, minted before Phase 3 because the mint runs no registry check, needs a gateway started with the playground enabled". Replace that sentence with one stating that each replica mints a playground bearer under its own Token Service key, so each one is probed only on the replica that minted it.
 4. After `probes` is built and before the first `requireBearersAdmitted` call, mint one playground bearer per replica: for each index `i` and base URL in `replicas`, POST the body `{}` with `Content-Type: application/json` to `base + "/v1/playground/token"`, require status 200, decode the `bearerToken` field, and append `bearerProbe{name: fmt.Sprintf("acme playground (replica %d)", i), bearer: tok, replicas: []string{base}}` to `probes`. The mint must run after the bootstrap seed creates `acme` and before the DELETE request.
 5. Add no new assertion. The existing `requireBearersAdmitted(t, "before the deletion", ...)`, `requireBearersRefused(t, "during the Phase 3.5 pause", probes)`, and `requireBearersRefused(t, "after the tombstone", probes)` calls cover the new probes.
 
-**IMPLEMENTOR'S CHOICE:** whether step 4 is written inline or as a helper beside `lennyIssuedProbes`. Each probe's `replicas` holds only its minting replica's base URL, and the mint runs between the bootstrap seed and the DELETE.
+**IMPLEMENTOR'S CHOICE:** whether step 4 is written inline or as a helper beside `lennyIssuedProbes` — either form satisfies step 4.
 
 - Spec ties: the test keeps its existing `// spec:` annotation for §12.8, and the playground mint adds §27.3.1 (OIDC cookie-to-MCP-bearer exchange) to it.
 - Spec-named failure: the probes assert the §12.8 refusal of a playground bearer minted before Phase 3, both during the Phase 3.5 pause and after the tombstone.

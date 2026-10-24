@@ -19,7 +19,7 @@
 - D4. The validator and the fatal startup path stay as they are. The rename makes the fatal path unreachable for every valid configuration, and the path stays fail-closed for a future label that violates the spec.
 - D5. The tier-4 replicas need `--playground-dev-tenant-id=acme` in addition to `--playground-enabled` and `--playground-auth-mode=dev`. `Config.Validate` refuses dev mode under `--multi-tenant=true` while the dev tenant is `default`, so without the flag the gateway still exits at startup, with `LENNY_PLAYGROUND_DEV_TENANT_REQUIRED`. `--dev-mode` is already passed and satisfies the dev-mode backstop.
 - D6. Each playground bearer is probed only on the replica that minted it. The playground handler signs with the per-replica Token Service signer, the same limitation `lennyIssuedProbes` already respects. F-10.2.22 owns the cross-replica gap.
-- D7. The mint uses the dev-mode `POST /v1/playground/token` with body `{}`, after bootstrap seeds `acme` (which satisfies the §27.3 dev-tenant Ready gate) and before the DELETE. The probes join the existing `probes` slice, so the existing admitted and refused checks cover them with no new assertion code.
+- D7. The tier-4 test mints through the dev-mode playground token endpoint after bootstrap seeds `acme`, because the gateway's dev-tenant Ready gate (§27.3) wraps the token route (non-spec TEST-1 steps 4-5).
 - D8. The tier-11 `secondHalfFilings` F-27.8.1 `deviation` value and the BUILD-GAPS deviation-record quote are rewritten to the current 0095 heading, because the problem statement requires both repaired. Once F-27.8.1 is closed, the currency test takes its closed-finding branch, checks only for a `**Resolution` note, and never reads the `deviation` field, so the shared `TrimPrefix` logic stays untouched.
 - D9. The tier-1 test gathers the registry after one `pageView` and asserts the label name `auth_mode`. A nil-error assertion alone passes for any label the validator accepts and would not pin the §27.8 cell the test cites.
 - D10. A proposal-0098 annotation goes under TEST-GAPS T-12.8.9, because the 0095 annotation says the playground-bearer case "is skipped pending F-27.8.1", which this change makes false. The 0095 annotation stays verbatim, so the tier-11 T-12.8.9 pin on `F-27.8.1` still matches. T-12.8.9 stays OPEN for its tier-5 residuals.
@@ -29,7 +29,6 @@
 
 - `--playground-dev-tenant-id=acme` is mandatory on the tier-4 replicas (D5). Dropping it reproduces a startup exit with a different error code, which reads like the original defect.
 - Probing a playground bearer on the peer replica fails on F-10.2.22 rather than on anything this fix owns (D6).
-- The playground-bearer mint must run after the bootstrap seed creates `acme` and before the DELETE. Minting earlier fails the dev-tenant Ready gate, and minting later does not test a bearer minted before Phase 3.
 - A failure other than F-27.8.1 that surfaces in the re-enabled tier-4 case is filed as a new BUILD-GAPS finding. It does not widen 0098.
 - Leave proposal 0095's deviations file and its TEST-GAPS annotation untouched. 0095 is Implemented, and the tier-11 T-12.8.9 pin matches the 0095 annotation text.
 
@@ -79,7 +78,7 @@ None at drafting. The review loops add entries here.
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0095 | Implemented | Runs the tier-4 playground-bearer refusal case 0095 skipped, and makes 0095's TEST-GAPS T-12.8.9 statement that the case is skipped historical. | Nothing. 0095 is not edited, and its annotation stays verbatim. |
+| 0095 | Implemented (approved 2026-10-22, implemented 2026-10-23) | TEST-1 replaces the skipped `playground bearer` subtest that 0095 added to `TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8` with minted playground-bearer probes. This discharges 0095's deviation "the tier-4 playground-bearer refusal case is skipped" in the way that deviation anticipated, and makes 0095's TEST-GAPS T-12.8.9 statement that the case is skipped historical. REC-1 closes F-27.8.1, which 0095 filed, rewrites the F-27.8.1 `deviation` value in the tier-11 `secondHalfFilings` entry and the BUILD-GAPS deviation-record quote to 0095's current heading, and adds a 0098 annotation under T-12.8.9. 0095's OIDC and Lenny-issued bearer probes and the F-10.2.22 entry are unaffected. | Nothing. 0095's deviations file and its TEST-GAPS annotation stay verbatim, because 0095 is Implemented. |
 
 ## Deliverable index
 
