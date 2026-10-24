@@ -3140,10 +3140,14 @@ narrows to Kata.
   replica rejects the token. It fails closed but breaks every multi-replica deployment. The fix loads one
   shared sealed key (and its rotation set, §10.3) on every replica; if the spec does not already state the
   shared key source, it goes through the proposal pipeline first. Next after 0087 converges, ahead of P2.
-- [ ] **F-27.8.1: the gateway exits at startup with the playground enabled.** §27.8 names the label
+- [x] **F-27.8.1: the gateway exits at startup with the playground enabled** (proposal 0098, implemented
+  2026-10-24). §27.8 names the label
   `authMode` and §16.1.1 requires snake_case label names, and the validator refuses it. A small spec
   correction (rename to `auth_mode`) plus the code change; it unblocks 0095's skipped tier-4 playground
   bearer case.
+  - **Outcome.** Proposal 0098 (`proposals/0098_fix_the-gateway-exits-at-startup-whenever-the-playground-is/`) renames the §27.8 page-views label to `auth_mode` in the spec and in
+    `metrics.go`, adds a tier-1 test that registers the §27.8 set through the metric label validator, runs
+    the tier-4 playground-bearer refusal case, and closes F-27.8.1.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
