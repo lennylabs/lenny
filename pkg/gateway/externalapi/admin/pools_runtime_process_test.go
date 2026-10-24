@@ -48,7 +48,10 @@ func lifetimePolicy(concurrent, maxSessions int, lifetime runtimestore.RuntimePr
 
 // lifetimeCases enumerates each admission branch on a sequential and a
 // concurrent reusing recycling pool. "fixed" is restartable and "legacy" is
-// not. The restartable refusal runs before the interim refusal, so a
+// not; "fixed-derived" and "legacy-derived" are derived runtimes whose own
+// rows carry restartable: false and which inherit the flag from those bases,
+// and "orphan-derived" names a base that is not registered. The restartable
+// refusal runs before the interim refusal, so a
 // `restart` pool on a non-restartable runtime receives the end-state error.
 func lifetimeCases() []lifetimeCase {
 	keep, restart := runtimestore.RuntimeProcessKeep, runtimestore.RuntimeProcessRestart
@@ -63,6 +66,10 @@ func lifetimeCases() []lifetimeCase {
 			lifetimeCase{c.label + " restart on non-restartable runtime", "legacy", lifetimePolicy(c.concurrent, 5, restart, true), msgRestartable},
 			lifetimeCase{c.label + " restart on unresolved runtime", "", lifetimePolicy(c.concurrent, 5, restart, true), msgRestartable},
 			lifetimeCase{c.label + " restart on restartable runtime (interim)", "fixed", lifetimePolicy(c.concurrent, 5, restart, true), msgInterim},
+			lifetimeCase{c.label + " restart on derived runtime of restartable base (interim)", "fixed-derived", lifetimePolicy(c.concurrent, 5, restart, true), msgInterim},
+			lifetimeCase{c.label + " restart on derived runtime of non-restartable base", "legacy-derived", lifetimePolicy(c.concurrent, 5, restart, true), msgRestartable},
+			lifetimeCase{c.label + " restart on derived runtime with missing base", "orphan-derived", lifetimePolicy(c.concurrent, 5, restart, true), msgRestartable},
+			lifetimeCase{c.label + " keep on derived runtime admitted", "legacy-derived", lifetimePolicy(c.concurrent, 5, keep, true), ""},
 			lifetimeCase{c.label + " lifetime missing", "fixed", lifetimePolicy(c.concurrent, 5, "", true), msgRequired},
 			lifetimeCase{c.label + " lifetime unknown", "fixed", lifetimePolicy(c.concurrent, 5, "forever", true), msgUnknown},
 			lifetimeCase{c.label + " lifetime on one-session pool", "fixed", lifetimePolicy(c.concurrent, 1, keep, true), msgRejectedHere},
@@ -71,10 +78,17 @@ func lifetimeCases() []lifetimeCase {
 	return append(cases, lifetimeCase{"sequential keep unacknowledged", "fixed", lifetimePolicy(0, 5, keep, false), msgAcknowledging})
 }
 
-// seedLifetimeRuntimes registers a restartable and a non-restartable runtime.
+// seedLifetimeRuntimes registers a restartable and a non-restartable runtime,
+// a derived runtime of each, and a derived runtime whose base is missing.
 func seedLifetimeRuntimes(t *testing.T, runtimes *runtimestore.Memory) {
 	t.Helper()
-	for _, rt := range []runtimestore.Runtime{{Name: "fixed", Restartable: true}, {Name: "legacy"}} {
+	for _, rt := range []runtimestore.Runtime{
+		{Name: "fixed", Restartable: true},
+		{Name: "legacy"},
+		{Name: "fixed-derived", BaseRuntime: "fixed"},
+		{Name: "legacy-derived", BaseRuntime: "legacy"},
+		{Name: "orphan-derived", BaseRuntime: "absent"},
+	} {
 		if err := runtimes.Create(context.Background(), rt); err != nil {
 			t.Fatalf("seed runtime %s: %v", rt.Name, err)
 		}
@@ -99,11 +113,12 @@ func assertLifetimeOutcome(t *testing.T, where string, tc lifetimeCase, code int
 	}
 }
 
-// spec: §5.2 (Runtime-process lifetime), §15.1 (dryRun)
+// spec: §5.2 (Runtime-process lifetime), §5.1 (derived runtime merge), §15.1 (dryRun)
 // diagnosis: the create handler or its dry run admits a pool that the
 // recycle.runtimeProcess rule refuses, refuses the admitted `keep` pool,
 // returns another status or code, orders the interim refusal ahead of the
-// restartable refusal, or stores a refused pool.
+// restartable refusal, reads restartable from a derived runtime's own row
+// rather than the resolved runtime, or stores a refused pool.
 func TestCreatePoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {
 	for _, path := range []string{"/v1/admin/pools", "/v1/admin/pools?dryRun=true"} {
 		for _, tc := range lifetimeCases() {
@@ -123,10 +138,11 @@ func TestCreatePoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (Runtime-process lifetime), §15.1 (dryRun)
+// spec: §5.2 (Runtime-process lifetime), §5.1 (derived runtime merge), §15.1 (dryRun)
 // diagnosis: a PUT or its dry run admits a sessionPolicy or a runtimeRef
-// swap that the recycle.runtimeProcess rule refuses, or changes the stored
-// row on a refusal.
+// swap that the recycle.runtimeProcess rule refuses, reads restartable from
+// a derived runtime's own row rather than the resolved runtime, or changes
+// the stored row on a refusal.
 func TestUpdatePoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {
 	for _, query := range []string{"", "?dryRun=true"} {
 		for _, tc := range lifetimeCases() {
@@ -164,9 +180,10 @@ func TestUpdatePoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {
 		rr.Code, rr.Body.Bytes(), http.StatusOK)
 }
 
-// spec: §5.2 (Runtime-process lifetime), §17.6 (bootstrap)
+// spec: §5.2 (Runtime-process lifetime), §5.1 (derived runtime merge), §17.6 (bootstrap)
 // diagnosis: the bootstrap seed admits a pool the recycle.runtimeProcess
-// rule refuses, records the restartable refusal under a code other than
+// rule refuses, reads restartable from a derived runtime's own row rather
+// than the resolved runtime, records the restartable refusal under a code other than
 // SEED_VALIDATION or a store-side branch under one other than
 // SEED_STORE_ERROR, or stores a refused pool.
 func TestBootstrapPoolRuntimeProcessAdmission_spec_5_2(t *testing.T) {

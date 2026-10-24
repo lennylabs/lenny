@@ -602,9 +602,6 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// runtime whose registry definition carries an explicit
 	// requireSoPeercred: false. spec: §4.7.
 	runtimeRequireSoPeercred := true
-	// runtimeRestartable is the resolved §5.1 restartable flag of the pool's
-	// runtime; an unresolved runtime reads as not restartable.
-	runtimeRestartable := false
 	if r.runtimes != nil && body.RuntimeRef != "" {
 		rt, err := r.runtimes.Get(req.Context(), body.RuntimeRef)
 		if err != nil {
@@ -617,7 +614,6 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		runtimePreConnect = poolstore.RuntimePreConnect(rt)
 		runtimeMultiTurn = poolstore.RuntimeMultiTurn(rt)
 		runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
-		runtimeRestartable = rt.Restartable
 	}
 
 	pl := r.poolFromPayload(body)
@@ -634,7 +630,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// recycle.runtimeProcess: restart on a runtime that is not restartable
 	// before storage (and before the store's own recycle checks), on the
 	// persisted create and the dry run alike.
-	if err := poolstore.ValidateRuntimeProcessRestartable(runtimeRestartable, pl); err != nil {
+	if err := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), body.RuntimeRef), pl); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
@@ -1712,7 +1708,7 @@ func (r *Router) validateUpdateRuntimeProcess(w http.ResponseWriter, req *http.R
 		return true
 	}
 	applyPoolUpdateMerge(&current, body)
-	if verr := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req, current.RuntimeRef), current); verr != nil {
+	if verr := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), current.RuntimeRef), current); verr != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(),
 			map[string]any{"runtimeRef": current.RuntimeRef})
 		return false
@@ -1720,14 +1716,17 @@ func (r *Router) validateUpdateRuntimeProcess(w http.ResponseWriter, req *http.R
 	return true
 }
 
-// runtimeRestartable resolves the §5.1 restartable flag of the runtime named
-// ref. It fails closed: no runtime store, an empty ref, or a failed lookup
-// reads as not restartable. spec: §5.2 (Runtime-process lifetime).
-func (r *Router) runtimeRestartable(req *http.Request, ref string) bool {
+// runtimeRestartable reports the §5.1 restartable flag of the effective
+// runtime named ref, as runtimestore.Resolve returns it: a derived runtime
+// takes the flag from its base. It fails closed: no runtime store, an empty
+// ref, or a failed resolution (including a derived runtime whose base is
+// missing) reads as not restartable.
+// spec: §5.2 (Runtime-process lifetime), §5.1 (derived runtime merge).
+func (r *Router) runtimeRestartable(ctx context.Context, ref string) bool {
 	if r.runtimes == nil || ref == "" {
 		return false
 	}
-	rt, err := r.runtimes.Get(req.Context(), ref)
+	rt, err := runtimestore.Resolve(ctx, r.runtimes, ref)
 	return err == nil && rt.Restartable
 }
 
