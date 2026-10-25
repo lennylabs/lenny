@@ -24,13 +24,13 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 11. Depends on: S1
 - [x] **S11 · spec** — SPEC-11. Lands all of SPEC-11: the build-sequence bullet and the `lenny-ops` edits, including the revocation set of owner decision 4 and the readiness probe of owner decision 6.
       Tiers 0, 11. Depends on: S2
-- [ ] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
+- [x] **S12 · code** — CODE-1. Lands the KMS seam in every adapter and the reference validation.
       Tiers 0, 1, 6. Depends on: S1, S2, S4, S9
-- [ ] **S13 · code** — CODE-2. Lands the context-taking `Sign`, the remote ES256 signer, `KeySet`, and the `HMACSigner` test-site ports.
+- [x] **S13 · code** — CODE-2. Lands the context-taking `Sign`, the remote ES256 signer, `KeySet`, and the `HMACSigner` test-site ports.
       Tiers 0, 1, 2, 3, 9. Depends on: S1, S2, S12
-- [ ] **S14 · code** — CODE-3. Lands the breaker backpressure changes.
+- [x] **S14 · code** — CODE-3. Lands the breaker backpressure changes.
       Tiers 0, 1. Depends on: S4, S5, S13
-- [ ] **S15 · code** — CODE-10. Lands the JWKS endpoint and rotation observer deletion.
+- [x] **S15 · code** — CODE-10. Lands the JWKS endpoint and rotation observer deletion.
       Tiers 0, 1, 4. Depends on: S2, S11
 - [ ] **S16 · code** — CODE-4. Lands the gateway wiring.
       Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S13, S14, S15
