@@ -2280,3 +2280,7 @@ FACT: TEST-1 item 14 (d)'s new "slot-lock wait error in releaseTerminalBinding s
 FACT: releaseCurrentBinding returns (false, nil) when the registry no longer holds the same bind, which is the "release with no binding sets nothing" case — EVIDENCE: pkg/gateway/sessionserver/failure.go:352-360
 WATCHOUT: pkg/gateway/session/sessionstore/terminal_mark_test.go does not exist yet although TEST-1 item 14 does not mark it "new"; harmless, the implementor creates it — EVIDENCE: ls of that path fails
 DECISION: no findings this round — BECAUSE every CODE-1..7 behavior maps to a TEST-1 item with its non-happy paths (release-error marker, cap-zero fail-closed for gate/terminator/retention, lock-wait error, crash-cut budget), and the summary delta (decision 1 rewrite, 0097/0099 conflict rows) changes no tested behavior — ALTERNATIVES: filing missing tests for retentionForTier's create/roll fallback preservation and a failed single-shot request; rejected as nice-to-have / outside the changed behavior
+
+### [owner-delegate-2026-10-25b]
+
+- DECISION: open decisions 1 to 3 settled by the owner's delegate as staged: the controller caps the window at claimOrphanTimeout; the stale-slot reaper keeps its claimOrphanTimeout age; the §12.3 Tier 3 write estimate is unchanged. Do not re-raise.
