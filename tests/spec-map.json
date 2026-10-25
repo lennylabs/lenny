@@ -4738,6 +4738,8 @@
         "pkg/tokenservice/source_recheck_test.go::TestHandlerLiveSourcesPassReRead_spec_13_3",
         "pkg/tokenservice/source_recheck_test.go::TestSourceRevokedErrorReason_spec_13_3",
         "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/revoke_previous_test.go::TestRevokePreviousDistinguishesRevokedFromMissing_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/rotation_lockfree_revoke_test.go::TestRotationRefusesSubjectRevokedAfterReRead_spec_13_3",
         "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
         "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
         "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAuditFailureIs500_spec_13_3",

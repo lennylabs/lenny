@@ -255,12 +255,18 @@ func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, sources []
 // The two concurrent rotations serialize on the §11.7 lock, so the
 // second one reads the first one's committed revoked_at stamp.
 //
+// A revocation that does not take the §11.7 lock (Store.Revoke,
+// RevokeBySubject, or RevokeCascade) can commit after the step (1a)
+// re-read and before the revoke UPDATE below. The UPDATE then matches no
+// live row, so revokePrevious re-reads prevJTI's row and, when it exists
+// with revoked_at set, returns a *SourceRevokedError naming the subject.
+// The transaction rolls back and no second mint commits.
+//
 // revoked reports whether a row was revoked, and revokedSub carries that
 // row's subject so the caller can emit the §16.7 token.revoked row with
-// revocation_reason=rotation_replaced. The UPDATE finds no live row only
-// when prevJTI has no issued_tokens row in the tenant, such as an
-// upstream IdP token that was never recorded. The mint then still
-// commits and revoked is false. The §16.7 token.revoked audit row itself
+// revocation_reason=rotation_replaced. The rotation commits with revoked
+// false only when prevJTI has no issued_tokens row in the tenant, such
+// as an upstream IdP token that was never recorded. The §16.7 token.revoked audit row itself
 // is written by the caller after COMMIT because its propagation_mode
 // field records the post-commit EventBus publish outcome.
 //
@@ -293,7 +299,13 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, so
 
 // revokePrevious stamps revoked_at/revoked_reason on the rotated token
 // when its row exists in the tenant and is live, and returns its subject.
-// A missing row reports revoked=false with no error.
+// A missing row reports revoked=false with no error. A row that is
+// already revoked returns a *SourceRevokedError naming the subject token,
+// so a revocation that committed after the step (1a) re-read still
+// refuses the rotation.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, Token
+// rotation and revocation).
 func revokePrevious(ctx context.Context, tx pgx.Tx, tenantID, prevJTI, reason string, at time.Time) (string, bool, error) {
 	var sub string
 	err := tx.QueryRow(ctx,
@@ -302,12 +314,33 @@ func revokePrevious(ctx context.Context, tx pgx.Tx, tenantID, prevJTI, reason st
 		 RETURNING sub`,
 		prevJTI, tenantID, at, pgtenant.NullString(reason)).Scan(&sub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return "", false, previousRevokedError(ctx, tx, tenantID, prevJTI)
 	}
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("issuedtokenstore: revoke rotated token: %w", err)
 	}
 	return sub, true, nil
+}
+
+// previousRevokedError re-reads prevJTI's row after the revoke UPDATE
+// matched no live row. It returns nil when the tenant has no row for
+// prevJTI and a *SourceRevokedError naming the subject token when the row
+// exists with revoked_at set.
+func previousRevokedError(ctx context.Context, tx pgx.Tx, tenantID, prevJTI string) error {
+	var revokedAt *time.Time
+	err := tx.QueryRow(ctx,
+		`SELECT revoked_at FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
+		prevJTI, tenantID).Scan(&revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: re-read rotated token: %w", err)
+	}
+	if revokedAt == nil {
+		return fmt.Errorf("issuedtokenstore: rotated token %q is live but the revoke matched no row", prevJTI)
+	}
+	return &SourceRevokedError{Role: SourceSubjectToken, JTI: prevJTI, RevokedAt: *revokedAt}
 }
 
 // mapUniqueViolation maps a jti primary-key collision to ErrAlreadyExists
