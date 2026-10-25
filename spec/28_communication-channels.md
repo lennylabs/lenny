@@ -244,8 +244,10 @@ connection.
   operational RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 - **Timing.** The specification states no deadline for `Attach`. `SealSession` and `UnsealSession` each have a
   5s deadline ([§4.7](04_system-components.md#47-runtime-adapter)). The gateway holds one `Attach` stream for a
-  session from its first message delivery until it releases the session's binding. The end of the client
-  request that delivered a message does not end the stream. The connection carrying it uses gRPC
+  session from its first message delivery until it releases the session's binding or, for a session whose
+  terminal write has committed, until the seal begins
+  ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Delivery and checkpoints during the seal:**). The
+  end of the client request that delivered a message does not end the stream. The connection carrying it uses gRPC
   keepalive probes at a 10s interval with a 5s timeout
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
   [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).

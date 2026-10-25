@@ -616,7 +616,7 @@ session, and the terminate and delete calls that end one. The interrupt path sus
 leaves the pod held, so steps 1 through 9 end with the session in `suspended`. The session-end path is
 the same funnel for `POST /v1/sessions/{id}/terminate`, for `DELETE /v1/sessions/{id}`, and for the
 platform timers that expire a session, which differ in the terminal state they write and in whether a
-client is waiting on a response; steps 10 through 18 trace it. The two paths are alternatives rather
+client is waiting on a response; steps 10 through 19 trace it. The two paths are alternatives rather
 than a sequence, so every step opens with the verb under which it holds. The steps are numbered and
 written in the form §29.1 fixes.
 
@@ -717,6 +717,11 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
 
 11. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+    ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway marks the session terminal and
+    persists the final state ([§7.1](07_session-lifecycle.md#71-normal-flow)).
+
+12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway seals the
     workspace, exporting the final workspace snapshot to the Artifact Store before the pod is released
@@ -728,7 +733,14 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     ([§7.1](07_session-lifecycle.md#71-normal-flow)). The specification states the seal as a
     gateway-to-pod step of the normal flow and does not state which RPC or channel carries it.
 
-12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+13. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway`, `internal`. On the terminal transition the gateway drains the session's
+    inbox and its dead-letter queue, emitting a `message_expired` event with `reason: "target_terminated"`
+    on each sender's event stream, evaluates `cascadeOnFailure` for the session's children, and emits the
+    session's terminal event ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+    [§7.3](07_session-lifecycle.md#73-retry-and-resume)).
+
+14. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
     `Shutdown`, the graceful end-of-session teardown of the named session. On the recycle disposition,
@@ -739,7 +751,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
-13. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
+15. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
     `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
     `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage`
     pull has settled, as the final message before the stream closes, and the gateway waits for it or for
@@ -747,7 +759,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     `CH-ADAPTEREVENTS`, [§4.7](04_system-components.md#47-runtime-adapter),
     [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
 
-14. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
+16. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
     by an expiry timer, for a session whose start the adapter admitted: `adapter` → `runtime`,
     `CH-MSGSOCK`, `intra-pod`. The adapter writes the session's `session_end` when the session reached
     `running` (§28.5.3 `CH-MSGSOCK`, **Session frame writes.**), writes no `CH-RUNTIMEOPS` frame, and
@@ -755,28 +767,14 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
     [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 
-15. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
-    an expiry timer: `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
-    ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway marks the session terminal,
-    persists the final state, and records the artifact references
-    ([§7.1](07_session-lifecycle.md#71-normal-flow)). The terminal state is `completed` for the terminate
-    verb, `cancelled` for the delete verb, and `expired` for an expiry timer
-    ([§15.1](15_external-api-surface.md#151-rest-api),
-    [§7.2](07_session-lifecycle.md#72-interactive-session-model)). On the terminal transition the gateway
-    drains the session's inbox and its dead-letter queue, emitting a `message_expired` event with
-    `reason: "target_terminated"` on each sender's event stream, evaluates `cascadeOnFailure` for the
-    session's children, and emits the session's terminal event
-    ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
-    [§7.3](07_session-lifecycle.md#73-retry-and-resume)).
-
-16. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+17. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway`, `internal`. The gateway releases the session's credential lease back to
     the pool ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.9](04_system-components.md#49-credential-leasing-service)). Credentials are leased per session
     rather than per pod, so a recycling pod releases its lease before the next session begins
     ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).
 
-17. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+18. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway releases the
     pod. When the release ends the occupancy without reuse, the gateway deletes the claim
     ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries), §28.3), and the
@@ -790,7 +788,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
-18. On a session end triggered by `POST /v1/sessions/{id}/terminate` or by `DELETE /v1/sessions/{id}`:
+19. On a session end triggered by `POST /v1/sessions/{id}/terminate` or by `DELETE /v1/sessions/{id}`:
     `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway
     returns the terminal session row ([§15.1](15_external-api-surface.md#151-rest-api)). On an expiry
     timer no client call is outstanding, so this step does not occur and the terminal state reaches the

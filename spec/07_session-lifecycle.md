@@ -48,9 +48,10 @@
                          interrupts, elicitation, credential rotation on RATE_LIMITED)
 
 19. Session completes or client disconnects
-20. Gateway → Pod:       Seal workspace — export final workspace snapshot to Artifact Store
-21. Gateway → Pod:       Shutdown
-22. Gateway → Store:     Mark session completed, persist final state, record artifact refs
+20. Gateway → Store:     Mark session completed, persist final state
+21. Gateway → Pod:       Seal workspace — export final workspace snapshot to Artifact Store,
+                         record artifact refs
+22. Gateway → Pod:       Shutdown
 23. Gateway:             Release credential lease back to pool
 24. Warm Pool:           Release pod to draining → eventual cleanup
 ```
@@ -113,6 +114,18 @@ Clients MUST treat `uploadToken` as a secret credential: it MUST NOT be logged, 
 The `failureClass` field is `null` when `state != "failed"`. The field is distinct from (and does not replace) any human-readable `reason` string or `TaskResult.errorCode` — it is a coarse classification intended for filtering and metrics labels. Values are a closed enum; adding a new class is a coordinated spec change across §7.1, §7.2, §15.1, and §16.
 
 **Seal-and-export invariant:** The workspace is always exported to durable storage before the pod is released. If export fails, the pod is held in `draining` state and retried with exponential backoff (initial: 5s, factor: 2×, cap: 60s per attempt). The total retry window is bounded by `maxWorkspaceSealDurationSeconds` (pool-level configuration, default: 300s). If the seal does not succeed within this window, the gateway stops retrying, transitions the session to `failed` with reason `workspace_seal_timeout`, emits a `workspaceSealFailed` audit event (recording the last MinIO error), terminates the pod anyway, and fires the `WorkspaceSealStuck` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)). The retry window bounds transient export failures; an export failure the adapter reports as permanent ends the window on its first observation with the same terminal outcome. The `lenny_workspace_seal_duration_seconds` histogram (labeled by `pool` and `outcome`: `success`, `timeout`, `permanent`) tracks seal completion time across all sessions. `WorkspaceSealStuck` fires on the `timeout` arm alone. This ensures session output is never lost due to transient pod cleanup races while preventing a permanent MinIO outage from holding pods in `draining` indefinitely.
+
+**Terminal pipeline context:** After a terminal write commits, the gateway runs the session's terminal pipeline: the seal-and-export step (**Seal-and-export invariant:** above), the inbox drain, the terminal events and signals, the pod or slot release, and the close of the session log. The pipeline runs on a context the gateway owns. The end of the request, stream, or background task that made the terminal write does not end the pipeline, and no shorter deadline of that caller bounds it. The **terminal pipeline budget**, counted from the session's terminal transition, bounds the whole pipeline: the largest `maxWorkspaceSealDurationSeconds` of any pool plus the **release allowance**, a gateway setting the deployer configures (default 30 s), which bounds the release, the parent notification, and the cascade that follow the seal. The gateway gives a `CH-ATTACH` stream-failure report ([Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod)) the same bound. The seal retry window runs inside the budget. A terminal pipeline that the gateway process's exit cuts is not resumed; [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) **Terminal pipelines at process exit.** states the shutdown wait and the bound on what remains.
+
+**Post-terminal window:**
+
+1. A terminal session whose row names a pod (the pod-to-session binding, [Section 4.2](04_system-components.md#42-session-manager)) is in its post-terminal window from its terminal transition until the gateway records on the session row that the session's pod or slot is released, and for no longer than the terminal pipeline budget counted from the terminal transition. The replica that releases the session's binding, or reclaims the claim of a session that never started, records the release once that release has returned, on whichever path releases it.
+2. A session holds the pod its row names while the session is not terminal and while it is in its post-terminal window.
+3. While a session is in its post-terminal window, its pod, its slot, its binding, and the intent row of a checkpoint attempt in progress, the seal included, with the chunk objects under that row's prefix ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling) **Intent-row-first ordering (orphan prevention).**), are in use, and a component that treats a terminal session as finished does not act on any of them. A component may act on an intent row once that row's deadline has passed.
+
+**Gateway-owned terminal writes:** A terminal write runs on the writer's own context, except for two writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, and an administrative force-terminate together with its audit event. The gateway makes those two on a context it owns.
+
+**Delivery and checkpoints during the seal:** From the start of the seal until the release, the gateway delivers no message to the session's runtime and starts no checkpoint of the session other than the seal, including a preStop or `CheckpointBarrier` checkpoint ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)). A message that arrives in that interval is routed by the session's terminal state, as for a message to a terminal session.
 
 ### 7.2 Interactive Session Model
 
