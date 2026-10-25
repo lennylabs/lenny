@@ -728,10 +728,10 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.5](04_system-components.md#45-artifact-store)). When the export fails the pod is held in
     `draining` and the export is retried with exponential backoff within
-    `maxWorkspaceSealDurationSeconds`, after which the session goes to `failed` with reason
-    `workspace_seal_timeout`, the pod is terminated anyway, and the `WorkspaceSealStuck` alert fires
-    ([§7.1](07_session-lifecycle.md#71-normal-flow)). The specification states the seal as a
-    gateway-to-pod step of the normal flow and does not state which RPC or channel carries it.
+    `maxWorkspaceSealDurationSeconds`, after which the seal-timeout outcome the
+    [§7.1](07_session-lifecycle.md#71-normal-flow) **Seal-and-export invariant:** states applies. The
+    specification states the seal as a gateway-to-pod step of the normal flow and does not state which
+    RPC or channel carries it.
 
 13. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway`, `internal`. On the terminal transition the gateway drains the session's
