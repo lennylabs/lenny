@@ -36,11 +36,11 @@ func (hardFailSigner) KeyID() string { return "hard-fail" }
 // failure, so the value is 1 second).
 func TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2(t *testing.T) {
 	h := playground.New(playground.Config{
-		Enabled:        true,
-		AuthMode:       playground.AuthModeDev,
-		DevTenantID:    "acme",
-		BearerTTL:      900 * time.Second,
-		OIDCSessionTTL: time.Hour,
+		Enabled:            true,
+		AuthMode:           playground.AuthModeDev,
+		DevTenantID:        "acme",
+		CapabilityTokenTTL: 900 * time.Second,
+		OIDCSessionTTL:     time.Hour,
 	}, playground.Options{
 		Signer:   &jwt.BreakerSigner{Inner: hardFailSigner{}},
 		Verifier: devSigner(),

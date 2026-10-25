@@ -146,6 +146,29 @@ tests:
             name: metrics
             containerPort: 9090
 
+  # spec: §10.2 (Authentication) — the Token Service default lifetime for a
+  # request without expires_in comes from the same value the gateway's
+  # playground bearer lifetime reads.
+  - it: renders --capability-token-ttl-seconds from the shared lifetime value
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=900
+
+  - it: renders an operator-set capability token lifetime
+    set:
+      playground.bearerTtlSeconds: 1800
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=1800
+
   # spec: F-4.3.11 / F-17.5.2 — the Token Service receives its KMS
   # provider selector from kms.provider, defaulting to local for the
   # dev install. environment carries the production-rejection gate.

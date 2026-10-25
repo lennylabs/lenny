@@ -18,7 +18,7 @@ import (
 func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "tools:sessions:read"}}
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
 		Signer:   jwtsign.HMAC(devSigner()),
 		Verifier: devSigner(),
 		Sessions: store,

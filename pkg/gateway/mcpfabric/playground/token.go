@@ -213,6 +213,9 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Roles:      claims.Roles,
 		Groups:     claims.Groups,
 		Typ:        auth.TokenUserBearer,
+		// spec: §10.2 (Authentication) "JWT claims" expiry — the
+		// minted bearer's exp never passes the pasted subject's exp.
+		Expiry: claims.Expiry,
 	}
 	h.completeMint(w, r, subject, nil)
 }
@@ -255,7 +258,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		return
 	}
 	now := h.now().UTC()
-	exp := now.Add(h.cfg.BearerTTL)
+	exp := h.bearerExpiry(now, subject)
 	jti := newJTI(now)
 
 	// §27.3 / §10.2 invariant: scope is the intersection of the
@@ -315,7 +318,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	writeJSON(w, http.StatusOK, tokenResponse{
 		BearerToken:      signed,
 		TokenType:        "Bearer",
-		ExpiresInSeconds: int64(h.cfg.BearerTTL / time.Second),
+		ExpiresInSeconds: exp.Unix() - now.Unix(),
 		Reusable:         true,
 		IssuedAt:         now.Format(time.RFC3339),
 		// spec: §27.3.1 — EffectiveScope carries the same narrowed value
@@ -325,14 +328,32 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	})
 }
 
+// bearerExpiry returns the exp of a playground bearer minted at now:
+// now + auth.capabilityTokenTtlSeconds, clamped to the subject token's exp
+// when the subject carries one. The bearer is truncated to whole seconds
+// because exp is a Unix-seconds claim. The gateway applies no per-dialect
+// cap of its own to this mint, and every lenny-gateway cap exceeds the
+// 3600s upper bound of the lifetime.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry, §27.3.1.
+func (h *Handler) bearerExpiry(now time.Time, subject jwt.Claims) time.Time {
+	exp := now.Add(h.cfg.CapabilityTokenTTL).Truncate(time.Second)
+	if subject.Expiry > 0 {
+		if subjectExp := time.Unix(subject.Expiry, 0); subjectExp.Before(exp) {
+			exp = subjectExp
+		}
+	}
+	return exp
+}
+
 // maxTrackedJTIs returns the §27.3.1 bound on the number of bearer
 // jtis a session record tracks: ⌈oidcSessionTtlSeconds /
-// bearerTtlSeconds⌉ + 1.
+// auth.capabilityTokenTtlSeconds⌉ + 1.
 func (h *Handler) maxTrackedJTIs() int {
-	if h.cfg.BearerTTL <= 0 {
+	if h.cfg.CapabilityTokenTTL <= 0 {
 		return 2
 	}
-	n := int((h.cfg.OIDCSessionTTL + h.cfg.BearerTTL - 1) / h.cfg.BearerTTL)
+	n := int((h.cfg.OIDCSessionTTL + h.cfg.CapabilityTokenTTL - 1) / h.cfg.CapabilityTokenTTL)
 	return n + 1
 }
 

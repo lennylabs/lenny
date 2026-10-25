@@ -19,7 +19,7 @@ import (
 // bearer jti/exp". CurrentExp must equal the minted bearer's exp so the
 // §27.3.1 revokedMarkerTTL bounds the marker to the live bearer's
 // remaining lifetime rather than falling through to the conservative
-// BearerTTL+skew default. F-27.6.10.
+// CapabilityTokenTTL+skew default. F-27.6.10.
 func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	signer := devSigner()
 	store := NewMemorySessionStore()
@@ -29,7 +29,7 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 		Scope:    "tools:sessions:read",
 	}}
 	const bearerTTL = 900 * time.Second
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: bearerTTL}, Options{
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: bearerTTL}, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Sessions: store,

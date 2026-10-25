@@ -201,9 +201,10 @@ func newAuditTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return mustNewServer(t, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 	}), signer
 }
 
@@ -233,11 +234,12 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
 	srv := mustNewServer(t, Options{
-		Signer:       jwtsign.HMAC(signer),
-		Verifier:     signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -290,11 +292,12 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	auditor := &recordingAuditor{}
 	tx := &txStore{}
 	srv := mustNewServer(t, Options{
-		Signer:       jwtsign.HMAC(signer),
-		Verifier:     signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: tx,
-		Auditor:      auditor,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       tx,
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -331,10 +334,11 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	tx := &txStore{failAt: "audit"}
 	srv := mustNewServer(t, Options{
-		Signer:       jwtsign.HMAC(signer),
-		Verifier:     signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: tx,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       tx,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -365,10 +369,11 @@ func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	srv := mustNewServer(t, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Issuer:   "https://lenny.dev.test/token",
-		Auditor:  auditor,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -401,13 +406,14 @@ func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	metrics := &recordingMetrics{}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	srv := mustNewServer(t, Options{
-		Signer:    jwtsign.HMAC(signer),
-		Verifier:  signer,
-		Issuer:    "https://lenny.dev.test/token",
-		Auditor:   auditor,
-		Metrics:   metrics,
-		RateLimit: RateLimitOptions{CallerPerSecond: 1, SampleWindow: 10 * time.Second},
-		Now:       func() time.Time { return now },
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
+		Metrics:            metrics,
+		RateLimit:          RateLimitOptions{CallerPerSecond: 1, SampleWindow: 10 * time.Second},
+		Now:                func() time.Time { return now },
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,

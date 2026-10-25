@@ -52,9 +52,10 @@ func newKMSUnavailableFixture(t *testing.T, err error) *kmsUnavailableFixture {
 		Now:   func() time.Time { return now },
 	}
 	srv := mustNewServer(t, Options{
-		Signer:   breaker,
-		Verifier: hmac,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             breaker,
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
 	})
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 	caller, signErr := hmac.Sign(jwt.Claims{

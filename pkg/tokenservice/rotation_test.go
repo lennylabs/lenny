@@ -65,6 +65,7 @@ func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop 
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return mustNewServer(t, Options{
+		CapabilityTokenTTL:   15 * time.Minute,
 		Signer:               jwtsign.HMAC(signer),
 		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",

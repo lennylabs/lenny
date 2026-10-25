@@ -31,7 +31,8 @@ func (w *tokenServiceWiring) buildDriftMonitor() {
 }
 
 // buildServer constructs the §13.3 token-exchange Server from the signer,
-// the §10.2 key set as its verifier, the issuer, per-dialect caps,
+// the §10.2 key set as its verifier, the issuer, per-dialect caps, the
+// §10.2 capability token lifetime,
 // write-before-issue stores, metrics, rate limits, and the drift-degraded
 // gate.
 //
@@ -46,9 +47,12 @@ func (w *tokenServiceWiring) buildServer() {
 			"lenny-ops":     1 * time.Hour,
 			"llm-proxy":     1 * time.Hour,
 		},
-		IssuedTokens: w.issuedTokens,
-		Auditor:      w.auditor,
-		Metrics:      w.metricsEmitter,
+		// spec: §10.2 (Authentication) "JWT claims" expiry — the
+		// default lifetime of a token requested without expires_in.
+		CapabilityTokenTTL: time.Duration(*w.f.capabilityTokenTTL) * time.Second,
+		IssuedTokens:       w.issuedTokens,
+		Auditor:            w.auditor,
+		Metrics:            w.metricsEmitter,
 		RateLimit: tokenservice.RateLimitOptions{
 			CallerPerSecond: *w.f.rlCallerPerSec,
 			CallerPerMinute: *w.f.rlCallerPerMin,

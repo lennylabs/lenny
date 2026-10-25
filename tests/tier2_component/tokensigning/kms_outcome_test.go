@@ -240,10 +240,11 @@ func buildRotateTokenMint(t *testing.T, f *signingFixture) func(t *testing.T) mi
 
 func buildOAuthTokenMint(t *testing.T, f *signingFixture) func(t *testing.T) mintResult {
 	srv, err := tokenservice.NewServer(tokenservice.Options{
-		Signer:        f.signer,
-		Verifier:      f.keySet,
-		Issuer:        "https://lenny.dev.test/token",
-		PerDialectCap: map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             f.signer,
+		Verifier:           f.keySet,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap:      map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
 	})
 	if err != nil {
 		t.Fatalf("tokenservice.NewServer: %v", err)

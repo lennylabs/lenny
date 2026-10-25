@@ -40,9 +40,10 @@ func keySetServer(t *testing.T) (*Server, jwt.Signer) {
 		t.Fatalf("LoadSigning: %v", err)
 	}
 	return mustNewServer(t, Options{
-		Signer:   signer,
-		Verifier: ks,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             signer,
+		Verifier:           ks,
+		Issuer:             "https://lenny.dev.test/token",
 	}), signer
 }
 
@@ -96,7 +97,7 @@ func narrowRequest(subject string) Request {
 // falling back to the signer.
 func TestNewServerRefusesNilVerifier_spec_10_2(t *testing.T) {
 	_, signer := keySetServer(t)
-	srv, err := NewServer(Options{Signer: signer, Issuer: "https://lenny.dev.test/token"})
+	srv, err := NewServer(Options{Signer: signer, Issuer: "https://lenny.dev.test/token", CapabilityTokenTTL: 15 * time.Minute})
 	if !errors.Is(err, ErrNoVerifier) {
 		t.Fatalf("NewServer err = %v, want ErrNoVerifier", err)
 	}

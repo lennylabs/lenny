@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -23,6 +24,7 @@ func metricRevocationServer(t *testing.T, store IssuedTokenStore, prop func(cont
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	m := &recordingMetrics{}
 	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL:   15 * time.Minute,
 		Signer:               jwtsign.HMAC(signer),
 		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
@@ -134,6 +136,7 @@ func TestRotationRevocationObservesPropagation_SEC_TS_1(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
 	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL:   15 * time.Minute,
 		Signer:               jwtsign.HMAC(signer),
 		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",

@@ -28,7 +28,7 @@ func (signingErrorSigner) KeyID() string { return "fake" }
 // signer and returns the response status, Retry-After, and error code.
 func mintStatus(t *testing.T, signer jwt.Signer) (int, string, string) {
 	t.Helper()
-	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", BearerTTL: 900 * time.Second}, Options{
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", CapabilityTokenTTL: 900 * time.Second}, Options{
 		Signer:   signer,
 		Verifier: devSigner(),
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
@@ -81,7 +81,7 @@ func TestPlaygroundMintSigningErrorRetryAfter_spec_10_2(t *testing.T) {
 // Retry-After; every KMS_SIGNING_UNAVAILABLE response carries it, at
 // 1 second while no breaker is open.
 func TestPlaygroundMintNoSignerRetryAfter1_spec_10_2(t *testing.T) {
-	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", BearerTTL: 900 * time.Second}, Options{
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", CapabilityTokenTTL: 900 * time.Second}, Options{
 		Verifier: devSigner(),
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})

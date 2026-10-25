@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -117,8 +118,16 @@ type Server struct {
 	issuer       string
 	perDialect   map[string]time.Duration
 	issuedTokens IssuedTokenStore
-	auditor      Auditor
-	metrics      Metrics
+
+	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds
+	// default lifetime of a token requested without expires_in.
+	capabilityTokenTTL time.Duration
+
+	// now is Options.Now: the injected clock, nil in production.
+	now func() time.Time
+
+	auditor Auditor
+	metrics Metrics
 
 	rateLimiter *RateLimiter
 
@@ -151,6 +160,13 @@ type Options struct {
 	// by audience. Empty map means no cap (the validator falls
 	// through to min(requested, subject.exp, actor.exp)).
 	PerDialectCap map[string]time.Duration
+
+	// CapabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds
+	// value: the default lifetime of a JWT requested without expires_in,
+	// except an actor_token exchange, whose requested exp is left absent.
+	// It is required; NewServer returns ErrNoCapabilityTokenTTL when it
+	// is not positive.
+	CapabilityTokenTTL time.Duration
 
 	// IssuedTokens, when set, records every minted token before it is
 	// returned (§13.3 write-before-issue). When nil, no durable
@@ -205,8 +221,15 @@ type Options struct {
 // ErrNoVerifier is returned by NewServer when Options.Verifier is nil.
 var ErrNoVerifier = errors.New("tokenservice: Options.Verifier is required")
 
+// ErrNoCapabilityTokenTTL is returned by NewServer when
+// Options.CapabilityTokenTTL is not positive. A zero default would issue
+// every token without expires_in at the subject's exp instead of the §10.2
+// default lifetime.
+var ErrNoCapabilityTokenTTL = errors.New("tokenservice: Options.CapabilityTokenTTL is required")
+
 // NewServer returns a Server, or ErrNoVerifier when Options.Verifier is
-// nil. The verifier authenticates the caller, subject, and actor tokens;
+// nil, or ErrNoCapabilityTokenTTL when Options.CapabilityTokenTTL is not
+// positive. The verifier authenticates the caller, subject, and actor tokens;
 // in production it is the §10.2 key set. A remote signer holds no key
 // material that can verify, so the Server never falls back to its
 // signer as the verifier.
@@ -216,6 +239,9 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.Verifier == nil {
 		return nil, ErrNoVerifier
 	}
+	if opts.CapabilityTokenTTL <= 0 {
+		return nil, ErrNoCapabilityTokenTTL
+	}
 	if opts.PerDialectCap == nil {
 		opts.PerDialectCap = map[string]time.Duration{}
 	}
@@ -223,14 +249,17 @@ func NewServer(opts Options) (*Server, error) {
 		opts.Metrics = NoMetrics{}
 	}
 	s := &Server{
-		signer:        opts.Signer,
-		verifier:      opts.Verifier,
-		issuer:        opts.Issuer,
-		perDialect:    opts.PerDialectCap,
-		issuedTokens:  opts.IssuedTokens,
-		auditor:       opts.Auditor,
-		metrics:       opts.Metrics,
-		driftDegraded: opts.DriftDegraded,
+		signer:     opts.Signer,
+		verifier:   opts.Verifier,
+		issuer:     opts.Issuer,
+		perDialect: opts.PerDialectCap,
+
+		capabilityTokenTTL: opts.CapabilityTokenTTL,
+		now:                opts.Now,
+		issuedTokens:       opts.IssuedTokens,
+		auditor:            opts.Auditor,
+		metrics:            opts.Metrics,
+		driftDegraded:      opts.DriftDegraded,
 
 		revocationPropagator: opts.RevocationPropagator,
 	}
@@ -257,7 +286,11 @@ type Request struct {
 	RequestedTokenType string `json:"requested_token_type"`
 	Scope              string `json:"scope"`
 	Audience           string `json:"audience"`
-	ExpiresIn          int64  `json:"expires_in"`
+
+	// ExpiresIn is the optional requested lifetime in seconds. Nil means
+	// the request carried no expires_in, which selects the §10.2 default
+	// lifetime; a present value below minRequestedExpiresIn is rejected.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
 }
 
 // Response is the RFC 8693 successful response.
@@ -268,6 +301,10 @@ type Response struct {
 	ExpiresIn       int64  `json:"expires_in"`
 	Scope           string `json:"scope,omitempty"`
 }
+
+// minRequestedExpiresIn is the smallest expires_in, in seconds, a request
+// may carry. spec: §10.2 (Authentication) "JWT claims" expiry.
+const minRequestedExpiresIn = 60
 
 const (
 	grantTypeExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -485,6 +522,14 @@ func parseAndValidateRequest(w http.ResponseWriter, r *http.Request, finish func
 		finish("invalid_request")
 		return Request{}, false
 	}
+	// spec: §10.2 (Authentication) "JWT claims" expiry — a request
+	// that carries expires_in below 60 is rejected with invalid_request.
+	if req.ExpiresIn != nil && *req.ExpiresIn < minRequestedExpiresIn {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("expires_in must be at least %d seconds", minRequestedExpiresIn))
+		finish("invalid_request")
+		return Request{}, false
+	}
 	return req, true
 }
 
@@ -586,7 +631,7 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 			Scope:    splitScope(req.Scope),
 			Audience: splitSpace(req.Audience),
 		},
-		RequestedExp: now.Add(durationFromExpiresIn(req.ExpiresIn)),
+		RequestedExp: s.requestedExp(req, actorClaims != nil, now),
 		Now:          now,
 	}
 	if actorClaims != nil {
@@ -597,6 +642,26 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 		exchangeReq.PerDialectCap = dialectCap
 	}
 	return exchangeReq
+}
+
+// requestedExp returns the §10.2 requested_exp of an exchange: now +
+// expires_in when the request carries it, and now +
+// auth.capabilityTokenTtlSeconds when it does not. An actor_token exchange
+// without expires_in returns the zero time, which tokenexchange.Derive treats
+// as absent, so the child's exp is min(subject exp, actor exp, per-dialect
+// cap) and the capability default never applies to it.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry; §13.3 "exp
+// granularity and parent-expiry handling".
+func (s *Server) requestedExp(req Request, hasActor bool, now time.Time) time.Time {
+	switch {
+	case req.ExpiresIn != nil:
+		return now.Add(time.Duration(*req.ExpiresIn) * time.Second)
+	case hasActor:
+		return time.Time{}
+	default:
+		return now.Add(s.capabilityTokenTTL)
+	}
 }
 
 // resolveDialectCap returns the §13.3 per-dialect lifetime cap to apply.
@@ -1050,10 +1115,11 @@ func (s *Server) propagateRevocation(ctx context.Context, tenantID, jti string) 
 	return mode
 }
 
-// clockNow returns the configured clock or time.Now.
+// clockNow returns the Options.Now clock, or time.Now when none is
+// configured. The handler and the rate limiter read the same clock.
 func (s *Server) clockNow() time.Time {
-	if s.rateLimiter != nil {
-		return s.rateLimiter.Now()
+	if s.now != nil {
+		return s.now().UTC()
 	}
 	return time.Now().UTC()
 }
@@ -1070,6 +1136,10 @@ func parseRequest(r *http.Request) (Request, error) {
 		if err := r.ParseForm(); err != nil {
 			return Request{}, err
 		}
+		expiresIn, err := parseFormExpiresIn(r.PostForm)
+		if err != nil {
+			return Request{}, err
+		}
 		return Request{
 			GrantType:          r.PostForm.Get("grant_type"),
 			SubjectToken:       r.PostForm.Get("subject_token"),
@@ -1079,9 +1149,23 @@ func parseRequest(r *http.Request) (Request, error) {
 			RequestedTokenType: r.PostForm.Get("requested_token_type"),
 			Scope:              r.PostForm.Get("scope"),
 			Audience:           r.PostForm.Get("audience"),
-			ExpiresIn:          0,
+			ExpiresIn:          expiresIn,
 		}, nil
 	}
+}
+
+// parseFormExpiresIn returns the expires_in form field as a pointer, nil
+// when the form does not carry the field, or an error when the value is not
+// an integer.
+func parseFormExpiresIn(form url.Values) (*int64, error) {
+	if !form.Has("expires_in") {
+		return nil, nil
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(form.Get("expires_in")), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("expires_in is not an integer: %w", err)
+	}
+	return &n, nil
 }
 
 func toExchangeToken(c jwt.Claims) tokenexchange.Token {
@@ -1138,13 +1222,6 @@ func splitSpace(s string) []string {
 		return nil
 	}
 	return strings.Fields(s)
-}
-
-func durationFromExpiresIn(seconds int64) time.Duration {
-	if seconds <= 0 {
-		return time.Hour // sensible default per §13.3 dialect cap discipline
-	}
-	return time.Duration(seconds) * time.Second
 }
 
 func mapStatus(rfcCode string) int {

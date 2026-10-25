@@ -106,9 +106,6 @@ func NewRateLimiter(opts RateLimitOptions, now func() time.Time) *RateLimiter {
 	}
 }
 
-// Now returns the limiter's current wall-clock instant.
-func (l *RateLimiter) Now() time.Time { return l.now().UTC() }
-
 // Allow returns the decision for one request. The limiter increments
 // every applicable per-second / per-minute bucket on Allow; a denied
 // request still consumes a slot in the bucket that denied it so

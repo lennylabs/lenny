@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
@@ -325,7 +326,7 @@ type gatewayFlags struct {
 	playgroundMaxSessionMinutes                   *int
 	playgroundMaxIdleTimeSeconds                  *int
 	playgroundOIDCSessionTTL                      *int
-	playgroundBearerTTL                           *int
+	capabilityTokenTTL                            *int
 	playgroundGatewayHost                         *string
 	playgroundSessionLabels                       *string
 	maxSessionsPerReplica                         *int
@@ -1260,8 +1261,8 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§27.2 playground.maxIdleTimeSeconds: the hard idle-timeout override for playground-initiated sessions. Override via LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS.")
 	f.playgroundOIDCSessionTTL = flag.Int("playground-oidc-session-ttl-seconds", envInt("LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS", 3600),
 		"§27.2 playground.oidcSessionTtlSeconds: the lifetime of the server-side playground session record and cookie. Override via LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS.")
-	f.playgroundBearerTTL = flag.Int("playground-bearer-ttl-seconds", envInt("LENNY_PLAYGROUND_BEARER_TTL_SECONDS", 900),
-		"§27.2 playground.bearerTtlSeconds: the TTL of MCP bearer tokens minted by POST /v1/playground/token (bounded 60..3600). Override via LENNY_PLAYGROUND_BEARER_TTL_SECONDS.")
+	f.capabilityTokenTTL = flag.Int("capability-token-ttl-seconds", envInt("LENNY_CAPABILITY_TOKEN_TTL_SECONDS", int(jwt.DefaultCapabilityTokenTTL/time.Second)),
+		"§10.2 auth.capabilityTokenTtlSeconds: the default lifetime of the MCP bearer tokens minted by POST /v1/playground/token (bounded 120..3600; startup is fatal outside the bound). Override via LENNY_CAPABILITY_TOKEN_TTL_SECONDS.")
 	f.playgroundGatewayHost = flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	f.playgroundSessionLabels = flag.String("playground-session-labels", os.Getenv("LENNY_PLAYGROUND_SESSION_LABELS"),

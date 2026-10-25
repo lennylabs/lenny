@@ -51,7 +51,7 @@ func newRevokeHandler(t *testing.T, store SessionStore) (*Handler, *MemoryAuditE
 		}, []string{"reason"}),
 	}
 	audit := NewMemoryAuditEmitter()
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, BearerTTL: 15 * time.Minute, OIDCSessionTTL: time.Hour},
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, CapabilityTokenTTL: 15 * time.Minute, OIDCSessionTTL: time.Hour},
 		Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner(), Sessions: store, Metrics: m}).WithAuditEmitter(audit)
 	return h, audit, m
 }

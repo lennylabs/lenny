@@ -315,7 +315,7 @@ func (h *Handler) idleReclaimWindow() time.Duration {
 	if grace <= 0 {
 		grace = 300 * time.Second
 	}
-	return h.cfg.BearerTTL + grace
+	return h.cfg.CapabilityTokenTTL + grace
 }
 
 // SweepIdleSessions runs one §27.6 idle-timeout pass: it enumerates every
@@ -438,7 +438,7 @@ func (h *Handler) IsBearerRevoked(ctx context.Context, tenant, jti string) (bool
 // TTL.
 func (h *Handler) revokedMarkerTTL(rec SessionRecord) time.Duration {
 	if rec.CurrentExp == 0 {
-		return h.cfg.BearerTTL + 5*time.Second
+		return h.cfg.CapabilityTokenTTL + 5*time.Second
 	}
 	remaining := time.Unix(rec.CurrentExp, 0).Sub(h.now())
 	if remaining < 0 {

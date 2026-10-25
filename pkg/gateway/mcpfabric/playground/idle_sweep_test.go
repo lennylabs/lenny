@@ -116,7 +116,7 @@ func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.
 	ctx := context.Background()
 	now := h.now()
 
-	// idleReclaimWindow = BearerTTL(15m) + idle grace(300s) = 20m. A record
+	// idleReclaimWindow = CapabilityTokenTTL(15m) + idle grace(300s) = 20m. A record
 	// idle for an hour is well past it.
 	mustPut(t, store, "acme", "idle1", SessionRecord{
 		TenantID: "acme", IssuedAt: now.Add(-2 * time.Hour),
@@ -154,7 +154,7 @@ func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.
 
 // TestSweepIdleSessionsDoesNotReapBetweenMints: a session that minted a
 // bearer more than the idle grace (5m) ago but less than a full bearer
-// lifetime ago is NOT reaped — the window exceeds BearerTTL so an active
+// lifetime ago is NOT reaped — the window exceeds CapabilityTokenTTL so an active
 // user who has not yet re-minted is never disconnected. F-27.3.7.
 func TestSweepIdleSessionsDoesNotReapBetweenMints_spec_27_6_201(t *testing.T) {
 	store := NewMemorySessionStore()

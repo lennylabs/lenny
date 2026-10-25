@@ -113,7 +113,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		TenantID: "acme",
 		Scope:    "tools:sessions:read",
 	}}
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Sessions: store,
@@ -200,7 +200,7 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	}
-	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}
+	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}
 	replicaA := New(cfg, opts)
 	replicaB := New(cfg, opts)
 

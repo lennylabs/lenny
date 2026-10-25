@@ -56,7 +56,8 @@ func TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3(t *testing.T
 		t.Fatalf("LoadSigning: %v", err)
 	}
 	srv, err := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer, Verifier: ks, Issuer: "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             signer, Verifier: ks, Issuer: "https://lenny.dev.test/token",
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

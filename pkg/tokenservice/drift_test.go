@@ -21,10 +21,11 @@ func TestDriftDegradedReturns503(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	degraded := true
 	srv := mustNewServer(t, Options{
-		Signer:        jwtsign.HMAC(hmac),
-		Verifier:      hmac,
-		Issuer:        "https://lenny.dev.test/token",
-		DriftDegraded: func() bool { return degraded },
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
+		DriftDegraded:      func() bool { return degraded },
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
@@ -65,10 +66,11 @@ func TestDriftDegradedReturns503(t *testing.T) {
 func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, Options{
-		Signer:        jwtsign.HMAC(hmac),
-		Verifier:      hmac,
-		Issuer:        "https://lenny.dev.test/token",
-		DriftDegraded: func() bool { return false },
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
+		DriftDegraded:      func() bool { return false },
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
@@ -98,9 +100,10 @@ func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 func TestDriftNilOptionLeavesHandlerOpen(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, Options{
-		Signer:   jwtsign.HMAC(hmac),
-		Verifier: hmac,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()

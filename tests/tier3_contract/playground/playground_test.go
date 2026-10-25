@@ -55,11 +55,11 @@ func devSigner() *jwt.HMACSigner {
 func newPlayground(t *testing.T, mode playground.AuthMode) *playground.Handler {
 	t.Helper()
 	cfg := playground.Config{
-		Enabled:        true,
-		AuthMode:       mode,
-		DevTenantID:    "acme",
-		BearerTTL:      900 * time.Second,
-		OIDCSessionTTL: time.Hour,
+		Enabled:            true,
+		AuthMode:           mode,
+		DevTenantID:        "acme",
+		CapabilityTokenTTL: 900 * time.Second,
+		OIDCSessionTTL:     time.Hour,
 	}
 	return playground.New(cfg, playground.Options{
 		Signer:   jwtsign.HMAC(devSigner()),
@@ -248,7 +248,7 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	// the gateway shares one JWTSigner across both.
 	cfg := playground.Config{
 		Enabled: true, AuthMode: playground.AuthModeDev, DevTenantID: "acme",
-		BearerTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
+		CapabilityTokenTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
 	}
 	h := playground.New(cfg, playground.Options{
 		Signer:   jwtsign.HMAC(signer),
@@ -309,7 +309,7 @@ func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign capability token: %v", err)
 	}
-	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, BearerTTL: 900 * time.Second}
+	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, CapabilityTokenTTL: 900 * time.Second}
 	h := playground.New(cfg, playground.Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()

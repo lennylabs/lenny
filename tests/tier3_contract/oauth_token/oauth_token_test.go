@@ -40,9 +40,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, tokenservice.Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 		},
@@ -381,7 +382,7 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		Scope:            "sessions:read",
 		Audience:         "lenny-gateway",
-		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("cap rotation: want 200, got %d", resp.StatusCode)
@@ -402,9 +403,10 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, tokenservice.Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,
@@ -424,7 +426,7 @@ func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		Scope:            "sessions:read",
 		Audience:         "lenny-gateway lenny-ops",
-		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("multi-value cap rotation: want 200, got %d (body %v)", resp.StatusCode, body)

@@ -107,7 +107,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	playgroundSessionLabels := f.playgroundSessionLabels
 	playgroundMaxSessionMinutes := f.playgroundMaxSessionMinutes
 	playgroundMaxIdleTimeSeconds := f.playgroundMaxIdleTimeSeconds
-	playgroundBearerTTL := f.playgroundBearerTTL
+	capabilityTokenTTL := f.capabilityTokenTTL
 	playgroundGatewayHost := f.playgroundGatewayHost
 	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
 	mux := http.NewServeMux()
@@ -365,7 +365,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
 			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
 			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
-			BearerTTL:          time.Duration(*playgroundBearerTTL) * time.Second,
+			CapabilityTokenTTL: time.Duration(*capabilityTokenTTL) * time.Second,
 			MultiTenant:        *multiTenant,
 			GatewayHost:        *playgroundGatewayHost,
 			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),

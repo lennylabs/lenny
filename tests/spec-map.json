@@ -3376,7 +3376,23 @@
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
         "cmd/lenny-gateway/sign_metrics_test.go::TestGatewaySignMetricsPerOutcome_spec_16_1",
-        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1"
+        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1",
+        "pkg/auth/jwt/capabilityttl_test.go::TestValidateCapabilityTokenTTLBound_spec_10_2",
+        "cmd/lenny-gateway/capability_token_ttl_test.go::TestCapabilityTokenTTLFlagBound_spec_10_2",
+        "cmd/lenny-gateway/capability_token_ttl_test.go::TestCapabilityTokenTTLFlagReplacesPlaygroundBearerTTL_spec_10_2",
+        "cmd/lenny-token-service/flags_test.go::TestCapabilityTokenTTLFlagBound_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestNewServerRefusesZeroCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
+        "charts/lenny/tests/token-service-deployment_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
       "packages": [
         "pkg/auth",
@@ -4688,7 +4704,13 @@
         "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateUnionsLocalRevocations",
         "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateFailureKeepsSetAndDuringReadRevocations",
         "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeAppliesChecksToInScopeBearer",
-        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped"
+        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2"
       ],
       "packages": [
         "pkg/credential",
@@ -7060,14 +7082,14 @@
       "spec_file": "spec/27_web-playground.md",
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
-        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
+      "notes": "playground.enabled gating, authMode and devTenantId validation, auth.capabilityTokenTtlSeconds bounds."
     },
     "27.3": {
       "title": "Web Playground \u2014 Authentication",
@@ -7088,7 +7110,9 @@
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1",
         "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3",
         "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
-        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3"
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

@@ -77,26 +77,44 @@ func decodeJWTPayload(t *testing.T, token string) map[string]any {
 }
 
 func TestConfigValidateRejectsBadAuthMode(t *testing.T) {
-	cfg := Config{AuthMode: "saml", BearerTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
+	cfg := Config{AuthMode: "saml", CapabilityTokenTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted an unknown auth mode")
 	}
 }
 
-func TestConfigValidateRejectsBearerTTLOutOfBound(t *testing.T) {
-	cfg := Config{AuthMode: AuthModeOIDC, BearerTTL: 10 * time.Second, MaxIdleTimeSeconds: 300}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted a bearer TTL below the 60s lower bound")
-	}
-	cfg.BearerTTL = 2 * time.Hour
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted a bearer TTL above the 3600s upper bound")
+// spec: 10.2 (Authentication), 27.2 (Placement and Gating)
+//
+// TestConfigValidateCapabilityTokenTTLBound rejects a capability token
+// lifetime outside the auth.capabilityTokenTtlSeconds bound 120s..3600s and
+// accepts both edges. 119s was accepted under the former 60s floor.
+func TestConfigValidateCapabilityTokenTTLBound(t *testing.T) {
+	for _, tc := range []struct {
+		ttl time.Duration
+		ok  bool
+	}{
+		{119 * time.Second, false},
+		{120 * time.Second, true},
+		{3600 * time.Second, true},
+		{3601 * time.Second, false},
+	} {
+		cfg := Config{AuthMode: AuthModeOIDC, CapabilityTokenTTL: tc.ttl, MaxIdleTimeSeconds: 300}
+		err := cfg.Validate()
+		if (err == nil) != tc.ok {
+			t.Errorf("Validate(CapabilityTokenTTL=%s) = %v, want ok=%v", tc.ttl, err, tc.ok)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "LENNY_PLAYGROUND_CONFIG_INVALID") ||
+			!strings.Contains(err.Error(), "auth.capabilityTokenTtlSeconds") ||
+			!strings.Contains(err.Error(), "120s..3600s")) {
+			t.Errorf("Validate(CapabilityTokenTTL=%s) error %q does not name LENNY_PLAYGROUND_CONFIG_INVALID, auth.capabilityTokenTtlSeconds, and 120s..3600s", tc.ttl, err)
+		}
 	}
 }
 
 func TestConfigValidateDevTenantRules(t *testing.T) {
 	// dev mode with an empty devTenantId is rejected.
-	cfg := Config{AuthMode: AuthModeDev, DevTenantID: "", BearerTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
+	cfg := Config{AuthMode: AuthModeDev, DevTenantID: "", CapabilityTokenTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "LENNY_PLAYGROUND_DEV_TENANT_REQUIRED") {
 		t.Fatalf("empty devTenantId: want LENNY_PLAYGROUND_DEV_TENANT_REQUIRED, got %v", err)
 	}

@@ -35,10 +35,11 @@ func newKeySetTestServer(t *testing.T) (*httptest.Server, jwt.Signer) {
 		t.Fatalf("LoadSigning: %v", err)
 	}
 	srv := mustNewServer(t, tokenservice.Options{
-		Signer:        signer,
-		Verifier:      ks,
-		Issuer:        "https://lenny.dev.test/token",
-		PerDialectCap: map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             signer,
+		Verifier:           ks,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap:      map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

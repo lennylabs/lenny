@@ -60,6 +60,9 @@ func main() {
 	if err := f.kmsFinalize(); err != nil {
 		log.Fatalf("lenny-token-service: %v", err)
 	}
+	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
+		log.Fatalf("lenny-token-service: %v", err)
+	}
 	runTokenService(f)
 }
 

@@ -49,9 +49,10 @@ func newValidationTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return mustNewServer(t, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Issuer:   "https://lenny.dev.test/token",
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 	}), signer
 }
 

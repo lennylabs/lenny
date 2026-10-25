@@ -2943,7 +2943,7 @@ tests:
           content: --playground-auth-mode=dev
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --playground-bearer-ttl-seconds=900
+          content: --capability-token-ttl-seconds=900
 
   # spec: §27.2 — the chart's playground.sessionLabels map
   # renders as a comma-separated key=value flag value. F-27.2.1.

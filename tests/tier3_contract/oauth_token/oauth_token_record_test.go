@@ -47,11 +47,12 @@ func newServerWithRecorder(t *testing.T, rec tokenservice.IssuedTokenStore) (*ht
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, tokenservice.Options{
-		Signer:        jwtsign.HMAC(signer),
-		Verifier:      signer,
-		Issuer:        "https://lenny.dev.test/token",
-		PerDialectCap: map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
-		IssuedTokens:  rec,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap:      map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
+		IssuedTokens:       rec,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

@@ -42,10 +42,11 @@ func (hardFailSigner) KeyID() string { return "hard-fail" }
 func TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2(t *testing.T) {
 	verifier := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := mustNewServer(t, tokenservice.Options{
-		Signer:        &jwt.BreakerSigner{Inner: hardFailSigner{}},
-		Verifier:      verifier,
-		Issuer:        "https://lenny.dev.test/token",
-		PerDialectCap: map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             &jwt.BreakerSigner{Inner: hardFailSigner{}},
+		Verifier:           verifier,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap:      map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

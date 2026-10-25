@@ -111,12 +111,13 @@ func driveEventBusRevocation(t *testing.T, publishLatency time.Duration) *promem
 		{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true},
 	}}
 	srv, err := tokenservice.NewServer(tokenservice.Options{
-		Signer:       jwtsign.HMAC(signer),
-		Verifier:     signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Metrics:      emitter,
-		Now:          clk.now,
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Metrics:            emitter,
+		Now:                clk.now,
 		// A non-zero rate limit makes the Server's clockNow() read the
 		// injected clock, so the propagation timing reflects the clock
 		// the propagator advances. The high limit never rejects.
