@@ -331,6 +331,49 @@ t.section("R6. implement-proposal-build stopped part-way replays the steps befor
   }
 }
 
+t.section("R7. the step loop's lighter review and final-gate reuse replay");
+// Both add agent calls that run only when an earlier result qualifies: the
+// diff classifier on a fix round after an invariants pass, and the tree read
+// after a verify that covered the full set. The call order stays a function of
+// earlier results, so a resume stopped at either replays its prefix.
+{
+  const args = {
+    proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "d",
+    plan: { blastRadius: [], steps: [
+      { id: "S2", lane: "code", title: "c", work: "w", targets: ["pkg/a"], tiers: ["unit"], checklistStep: "S2", dependsOn: [] },
+    ] },
+  };
+  const stubs = () => {
+    let b = 0;
+    return {
+      "checklist-ticks": { ticked: [] }, baseline: { sha: "b" }, "build:S2:base": { sha: "b" },
+      "compile:*": { compiles: true, staticClean: true, errors: [] },
+      "lease-check:*": { leaseHeld: false },
+      "build:*": () => ({ implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a_test.go"], testsAddedOrModified: [] }),
+      "review:S2:conformance:r1": { findings: [{ title: "F", where: "pkg/a_test.go:1", divergence: "d", fix: "f" }] },
+      "review:*": { findings: [] },
+      "classify:*": { classes: ["test-only"] },
+      "verify:S2:r2": { green: true, tiersRun: ["0", "1"], fullSet: true, treeHash: "t1", failures: [] },
+      "verify:*": { green: true, tiersRun: ["unit"], failures: [] },
+      "tree:*": { treeHash: "t1", clean: true },
+      "tick:*": "DONE", "compile-guard:*": { clean: true, compiles: true },
+      "proposal-edit-audit": { edited: false, commits: [] }, default: {},
+    };
+  };
+  for (const [name, latency] of PROFILES) {
+    for (const stopLabel of ["classify:S2:r2", "tree:S2:r2", "tick:S2"]) {
+      const { first, divergence } = await interruptAndResume(
+        ".claude/workflows/implement-proposal-build.js", args, stubs,
+        { latency, stopAt: (c) => c.label === stopLabel },
+      );
+      t.check(name + ", stopped at " + stopLabel + ": the interrupted build reached the stop",
+        first.stopIndex > 0, String(first.stopIndex));
+      t.check(name + ", stopped at " + stopLabel + ": every call before the stop replays",
+        divergence === null, describe(divergence));
+    }
+  }
+}
+
 // ---- negative controls ------------------------------------------------------
 //
 // The model has to be able to fail. Each script below has one of the orderings

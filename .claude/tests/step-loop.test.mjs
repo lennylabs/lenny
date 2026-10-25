@@ -651,4 +651,248 @@ t.section("SO2. a spec-only stop still checks the lease it may be leaking");
   );
 }
 
+t.section("D1. a verify that covered the full tier set on the gated tree stands in for the final gate");
+// The final gate re-ran tiers a verify had just passed on the same commit. A
+// scoped verify that ran the whole set green, recorded the tree before and
+// after, and finds the same tree just before the gate is that gate. Every
+// missing or differing input runs the gate as before.
+{
+  const FULL = { green: true, tiersRun: ["0", "1", "unit", "component"], fullSet: true, treeHash: "t1", failures: [] };
+  // One conformance finding forces attempt 2, whose verify is scoped.
+  const reuse = (verifyR2, tree, stepOver) => {
+    let n = 0;
+    return runWorkflow(WF, stepOver ? ARGS({ plan: { blastRadius: [], steps: [{ ...STEP, ...stepOver }] } }) : ARGS(), base({
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) =>
+        label === "verify:S1:r2" ? verifyR2 : label.endsWith(":final") ? { green: true, tiersRun: ["unit", "component"], failures: [] } : { green: true, tiersRun: ["unit"], failures: [] },
+      "tree:*": tree,
+    }));
+  };
+  {
+    const { calls, logs, result } = await reuse(FULL, { treeHash: "t1", clean: true });
+    t.check("a matching tree hash skips the final gate", never(calls, "verify:S1:final"), labels(calls).join(","));
+    t.check("the tree is read after the verify and before the tick", ordered(calls, "verify:S1:r2", "tree:S1:r2") && ordered(calls, "tree:S1:r2", "tick:"));
+    t.check("the reuse is logged with the hash", logs.some((l) => /reusing its result instead of running the gate/.test(l) && /t1/.test(l)));
+    t.check("and the step ticks", result.status !== "step-stuck" && !never(calls, "tick:"), result.status);
+    const tree = calls.find((c) => c.label === "tree:S1:r2");
+    t.check("the tree read is a cheap mechanical agent", tree && tree.opts.model === "haiku" && /HEAD\^\{tree\}/.test(tree.prompt) && /git status --porcelain/.test(tree.prompt));
+  }
+  {
+    const { calls, logs } = await reuse(FULL, { treeHash: "t2", clean: true });
+    t.check("a mismatched tree hash runs the final gate", matching(calls, "verify:S1:final").length === 1, labels(calls).join(","));
+    t.check("and says why", logs.some((l) => /the tree now reads t2 against t1; running the final gate/.test(l)));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, treeHash: "" }, { treeHash: "t1", clean: true });
+    t.check("an unknown verify hash runs the final gate", matching(calls, "verify:S1:final").length === 1);
+    t.check("without reading the tree at all", never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse(FULL, null);
+    t.check("a dead tree read runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, { treeHash: "t1", clean: false });
+    t.check("an unclean working tree runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, {});
+    t.check("an empty tree answer runs the final gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse({ ...FULL, fullSet: false }, { treeHash: "t1", clean: true });
+    t.check("a verify that says it did not cover the set runs the gate", matching(calls, "verify:S1:final").length === 1 && never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, tiersRun: ["0", "1", "unit"] }, { treeHash: "t1", clean: true });
+    t.check("a verify missing one of the step's tiers runs the gate, whatever fullSet says", matching(calls, "verify:S1:final").length === 1 && never(calls, "tree:"));
+  }
+  {
+    const { calls } = await reuse({ ...FULL, skipped: [{ tier: "component", why: "no envtest subject" }] }, { treeHash: "t1", clean: true });
+    t.check("a verify that skipped a required tier runs the gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse({ ...FULL, green: false, failures: ["x"] }, { treeHash: "t1", clean: true });
+    t.check("a red verify never stands in for the gate", never(calls, "tree:S1:r2"));
+  }
+  {
+    // Spellings differ between a checklist and a verifier's report.
+    const { calls } = await reuse({ ...FULL, tiersRun: ["tier 0 (static)", "tier 1", "Tier 2"] }, { treeHash: "t1", clean: true });
+    t.check("tier names and numbers are compared on one key", never(calls, "verify:S1:final"), labels(calls).join(","));
+  }
+  {
+    // The gate itself skips a cloud-only tier, so a verifier that did is covered.
+    const { calls } = await reuse(
+      { green: true, tiersRun: ["0", "1"], skipped: [{ tier: "6", why: "needs a managed cluster" }], fullSet: true, treeHash: "t1", failures: [] },
+      { treeHash: "t1", clean: true }, { tiers: ["0", "1", "6"] },
+    );
+    t.check("a skipped cloud-only tier still counts as covered", never(calls, "verify:S1:final"), labels(calls).join(","));
+  }
+  {
+    // An unrecognised spelling matches only itself, so it fails closed.
+    const { calls } = await reuse({ ...FULL, tiersRun: ["0", "1", "unit", "the component one"] }, { treeHash: "t1", clean: true });
+    t.check("an unrecognised tier spelling runs the gate", matching(calls, "verify:S1:final").length === 1);
+  }
+  {
+    const { calls } = await reuse(FULL, { treeHash: "t1", clean: true });
+    const v = calls.find((c) => c.label === "verify:S1:r2");
+    t.check("the verifier is asked to record the tree before and after", v && /TREE RECORD/.test(v.prompt) && /HEAD\^\{tree\}/.test(v.prompt) && /After the last tier, run both again/.test(v.prompt));
+    const props = v && v.opts.schema.properties;
+    t.check("and has fields to return it in", !!(props && props.treeHash && props.fullSet));
+    const fg = calls.find((c) => c.label === "verify");
+    t.check("the proposal-wide Verify schema is unchanged", fg && !fg.opts.schema.properties.treeHash && !fg.opts.schema.properties.fullSet);
+  }
+  {
+    // After a failed gate, the next gate still scopes as before when no verify
+    // qualifies to stand in for it.
+    let n = 0;
+    let f = 0;
+    let b = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) => label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => label.endsWith(":final")
+        ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["gate failure 1"] } : { green: true, tiersRun: ["unit"], failures: [] })
+        : { green: true, tiersRun: ["unit"], failures: [] },
+    }));
+    const g = matching(calls, "verify:S1:final");
+    t.check("a gate after a failed one is still scoped", g.length === 2 && /Run ONLY what the fix warrants/.test(g[1].prompt), String(g.length));
+  }
+  {
+    // ... and a verify that does qualify after a failed gate stands in for the next one.
+    let n = 0;
+    let f = 0;
+    let r = 0;
+    const { calls } = await runWorkflow(WF, ARGS(), base({
+      "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+      "verify:*": ({ label }) => label.endsWith(":final")
+        ? (++f === 1 ? { green: false, tiersRun: ["unit"], failures: ["gate failure 1"] } : { green: true, tiersRun: ["unit"], failures: [] })
+        : (++r >= 2 ? FULL : { green: true, tiersRun: ["unit"], failures: [] }),
+      "tree:*": { treeHash: "t1", clean: true },
+    }));
+    t.check("one gate ran, then a qualifying verify stood in for the second", matching(calls, "verify:S1:final").length === 1 && !never(calls, "tick:"), labels(calls).join(","));
+  }
+}
+
+t.section("D2. the implementer runs a smoke check and leaves tier 2 and above to the verifier");
+{
+  let n = 0;
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+  }));
+  const first = calls.find((c) => c.label === "build:S1");
+  const fix = calls.find((c) => /^build:S1:fix/.test(c.label));
+  for (const [name, c] of [["the implementer", first], ["the fixer", fix]]) {
+    t.check(name + " still writes tests for every tier", c && /Write or update the tests for EVERY tier this step reaches/.test(c.prompt));
+    t.check(name + " runs tier 0 checks and tier 1 only", c && /Do NOT run tier 2 or above/.test(c.prompt) && /go test \.\/<changed-pkg>\/\.\.\./.test(c.prompt));
+    t.check(name + " runs the same static checks as the compile gate", c && /gofumpt -l/.test(c.prompt) && /validate-maps/.test(c.prompt));
+  }
+  t.check("the implementer no longer brings infrastructure up", first && !/lenny-test infra up/.test(first.prompt));
+  t.check("the fixer no longer picks higher tiers itself", fix && !/whose subject this fix actually changes/.test(fix.prompt));
+  const tiers = first && first.opts.schema.properties.tiersRun;
+  t.check("the schema says what tiersRun now holds", tiers && /never tier 2 or above/.test(tiers.description || ""));
+}
+
+t.section("D3. the compile gate runs the cheap tier 0 checks, and a failure goes back to the fixer");
+{
+  let c = 0;
+  const { calls, logs } = await runWorkflow(WF, ARGS(), base({
+    "compile:*": () => (++c === 1
+      ? { compiles: true, staticClean: false, errors: ["gofumpt: pkg/a.go", "validate-maps: tests/tier2_component/x_test.go not in change-graph"] }
+      : { compiles: true, staticClean: true, errors: [] }),
+  }));
+  const g = calls.find((x) => x.label === "compile:S1:r1");
+  t.check("formatting and import order on the changed Go files", g && /gofumpt -l <files>/.test(g.prompt) && /goimports -l -local github\.com\/lennylabs\/lenny <files>/.test(g.prompt));
+  t.check("go vet on the changed packages", g && /go vet \.\/<pkg>\/\.\.\./.test(g.prompt) && /-tags=contract/.test(g.prompt));
+  t.check("map completeness with tier 0's own command", g && /go run \.\/cmd\/lenny-test validate-maps/.test(g.prompt));
+  t.check("and not the expensive rest of tier 0", g && /no golangci-lint/.test(g.prompt));
+  t.check("the schema carries the static verdict", g && g.opts.schema.required.includes("staticClean"));
+  t.check("no reviewer sees a tree that fails them", firstIndex(calls, "review:S1") > firstIndex(calls, "compile:S1:r2"));
+  t.check("the failures reach the next fixer", calls.some((x) => /^build:S1:fix/.test(x.label) && /not in change-graph/.test(x.prompt) && /gofumpt: pkg\/a\.go/.test(x.prompt)));
+  t.check("the log names the static checks", logs.some((l) => /fails the compile gate's static checks/.test(l)));
+}
+{
+  const { calls } = await runWorkflow(WF, ARGS(), base({
+    "compile:*": { compiles: false, staticClean: false, errors: ["pkg/a.go:3: undefined x"] },
+  }));
+  t.check("a build failure still reads as a build failure", calls.some((x) => /^build:S1:fix/.test(x.label) && /do not compile/.test(x.prompt)));
+}
+
+t.section("D4. a mechanical fix round gets the conformance lens alone");
+{
+  const CONF = [{ title: "label leak", where: "pkg/a_test.go:1", divergence: "d", fix: "f" }];
+  // r1: conformance finds something, invariants is clean on c1.
+  const run = (classify, over = {}) => {
+    let b = 0;
+    return runWorkflow(WF, ARGS(), base({
+      "build:*": ({ label }) => label === "build:S1:base" ? { sha: "base0" } : { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c" + ++b, filesChanged: ["pkg/a_test.go"], testsAddedOrModified: [] },
+      "review:*": ({ label }) => (label === "review:S1:conformance:r1" ? { findings: CONF } : { findings: [] }),
+      "classify:*": classify,
+      ...over,
+    }));
+  };
+  {
+    const { calls, logs } = await run({ classes: ["test-only"] });
+    const r2 = calls.filter((c) => /^review:S1:.*:r2$/.test(c.label)).map((c) => c.label);
+    t.check("a test-only fix is reviewed by conformance alone", r2.length === 1 && r2[0] === "review:S1:conformance:r2", r2.join(","));
+    const cl = calls.find((c) => c.label === "classify:S1:r2");
+    t.check("the class comes from classify-diff.mjs over the range since the invariants pass", cl && cl.prompt.includes("classify-diff.mjs c1..HEAD"));
+    t.check("the classifier is a cheap mechanical agent", cl && cl.opts.model === "haiku");
+    t.check("the lighter review is logged", logs.some((l) => /only the conformance lens reviews/.test(l)));
+    t.check("and the step still ticks", !never(calls, "tick:"));
+  }
+  for (const cls of [["comment-only"], ["doc-only"]]) {
+    const { calls } = await run({ classes: cls });
+    t.check(cls[0] + " is mechanical too", never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run({ classes: [] });
+    t.check("a logic fix gets both lenses", !never(calls, "review:S1:invariants:r2") && !never(calls, "review:S1:conformance:r2"));
+  }
+  {
+    const { calls } = await run({ classes: ["empty"] });
+    t.check("an empty range gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run({ classes: ["doc-only-operator"] });
+    t.check("an operator doc change gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    const { calls } = await run(null);
+    t.check("a dead classifier gets both lenses", !never(calls, "review:S1:invariants:r2"));
+  }
+  {
+    // The invariants lens itself found something, so it must look again.
+    const { calls } = await run({ classes: ["test-only"] }, {
+      "review:*": ({ label }) => (/:r1$/.test(label) ? { findings: CONF } : { findings: [] }),
+    });
+    t.check("after an invariants finding both lenses run", !never(calls, "review:S1:invariants:r2"));
+    t.check("and nothing is classified", never(calls, "classify:S1:r2"));
+  }
+  {
+    // A dead invariants reviewer is not a pass.
+    const { calls } = await run({ classes: ["test-only"] }, {
+      "review:*": ({ label }) => (label === "review:S1:conformance:r1" ? { findings: CONF } : label === "review:S1:invariants:r1" ? null : { findings: [] }),
+    });
+    t.check("after a dead invariants reviewer both lenses run", !never(calls, "review:S1:invariants:r2") && never(calls, "classify:S1:r2"));
+  }
+  {
+    // r2 stops at the compile gate after a logic commit; r3's range must start
+    // at c1, the last commit the invariants lens passed, so the logic change is
+    // inside it.
+    let c = 0;
+    const { calls } = await run({ classes: [] }, {
+      "compile:*": () => (++c === 2 ? { compiles: false, errors: ["x"] } : { compiles: true, staticClean: true, errors: [] }),
+    });
+    const cl = calls.find((x) => x.label === "classify:S1:r3");
+    t.check("a round that skipped review stays inside the next range", cl && cl.prompt.includes("classify-diff.mjs c1..HEAD"), String(cl && cl.label));
+    t.check("so its logic change gets both lenses", !never(calls, "review:S1:invariants:r3"));
+  }
+  {
+    // A first implementation is never a fix round.
+    const { calls } = await runWorkflow(WF, ARGS(), base());
+    t.check("the first attempt is never classified", never(calls, "classify:"));
+  }
+}
+
 t.done();

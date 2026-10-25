@@ -105,7 +105,7 @@
     "label": "compile:S2:r1",
     "phase": "Build",
     "model": "opus",
-    "schema": "compiles+errors",
+    "schema": "compiles+errors+staticClean",
     "blocks": [
       "memory-safe"
     ]
@@ -134,7 +134,7 @@
     "label": "verify:S2:r1",
     "phase": "Build",
     "model": "opus",
-    "schema": "changedLineCoverage+classification+failures+green+notes+skipped+tiersRun",
+    "schema": "changedLineCoverage+classification+failures+fullSet+green+notes+skipped+tiersRun+treeHash",
     "blocks": [
       "preflight",
       "memory-safe",
