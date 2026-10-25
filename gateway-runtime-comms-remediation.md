@@ -2532,12 +2532,15 @@ tree, the owner has adjudicated each entry in the proposal's deviations file, th
 The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec steps land one after the
 other while their code proceeds in parallel.
 
-- [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out, scope
+- [x] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out, scope
   widened to every sidecar pod per section 10.3), approved, and implemented, after proposals P1 and P5 of
   the terminal-transition follow-ups below (owner decision, 2026-10-12). It defines `CH-SUPERVISE` as
   JSON Lines and adds no proto field, requires `command` on every sidecar Runtime including through the
   admin registration API, designs supervision for `preConnect` and service-mode runtimes, and carries the
   gVisor implementation conditions and the conformance check recorded in section 10.3.
+  Done: approved 2026-10-23 (`472896cf5`) and implemented 2026-10-24 (merge `8f0a31592`). The
+  implementation closed F-4.7.26, F-4.7.27, F-5.2.36, F-5.2.46, and F-6.1.28, accepted two deviations
+  (D5, D12), and recorded the rest as proposed in its deviations file.
   It also closes every finding of the adversarial security review of 2026-10-02
   (`scratchpad/supervisor-security-review/review.md` on the machine that ran it) that is not assigned to
   another step below:
