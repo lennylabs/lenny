@@ -29,8 +29,8 @@
 - [ ] **S13 · code** — CODE-6. Lands the startup gate, flag help, and chart gate edits.
       Tiers 0, 1. Depends on: S1, S6, S8
 - [ ] **S14 · code** — CODE-7. Lands every item.
-      Tiers 0, 1, 2, 7a. Depends on: S1, S3, S6, S7, S8, S10
+      Tiers 0, 1, 2, 7a, 8, 11. Depends on: S1, S3, S6, S7, S8, S10
 - [ ] **S15 · test** — TEST-1. Lands the tests listed under TEST-1.
-      Tiers 0, 1, 2, 7a, 8. Depends on: S8, S9, S10, S11, S12, S13, S14
-- [ ] **S16 · docs** — REC-1, DOC-1, DOC-2, and DOC-3. Lands every part.
-      Tiers 0, 11. Depends on: S1, S6, S15
+      Tiers 0, 1, 2, 4, 7a, 8. Depends on: S8, S9, S10, S11, S12, S13, S14
+- [ ] **S16 · docs** — REC-1, DOC-1, DOC-2, DOC-3, DOC-4, and DOC-5. Lands every part.
+      Tiers 0, 1, 2, 11. Depends on: S1, S2, S6, S15
