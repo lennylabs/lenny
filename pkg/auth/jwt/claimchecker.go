@@ -9,10 +9,10 @@ import "fmt"
 // does not match.
 //
 // spec: §10.2 — the standard auth chain validates
-// "signature, iss, aud, exp, nbf" together. The signer wrappers
-// (HMACSigner / KMSSigner / RotatingVerifier) validate signature / exp
-// / nbf; ClaimChecker layers iss and aud on top so the entire chain
-// matches the spec.
+// "signature, iss, aud, exp, nbf" together. The verifiers (KeySet for
+// Lenny-issued tokens, HMACSigner for the dev-only embedded OIDC trust
+// hook) validate signature, exp, and nbf; ClaimChecker layers iss and
+// aud on top so the entire chain matches the spec.
 type ExpectedClaims struct {
 	// Issuer is the canonical issuer string the gateway minted with.
 	// When empty, the iss check is skipped — a deployment without an

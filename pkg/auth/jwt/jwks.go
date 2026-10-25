@@ -48,18 +48,6 @@ type JWK struct {
 	Y string `json:"y,omitempty"`
 }
 
-// PublicJWK on an HMACSigner returns the metadata-only JWK for the
-// HS256 signing key. The shared secret is omitted, so the entry carries
-// only kty, use, alg, and kid.
-func (s *HMACSigner) PublicJWK() JWK {
-	return JWK{
-		Kty: "oct",
-		Use: "sig",
-		Alg: "HS256",
-		Kid: s.keyID,
-	}
-}
-
 // curveP256 is the RFC 7518 section 6.2.1.1 crv value of a P-256 key.
 const curveP256 = "P-256"
 

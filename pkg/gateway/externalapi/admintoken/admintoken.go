@@ -6,8 +6,8 @@
 //
 // The provisioning runs during the §17.6 bootstrap flow. The gateway is
 // the actor because it holds the three capabilities the credential needs:
-// the §10.2 JWT signer (mints a token the gateway's own verifier
-// accepts), the §15.1 user registry (creates the admin user row), and an
+// the §10.2 JWT signer (mints a token that verifies against the §10.2
+// key set on every gateway replica), the §15.1 user registry (creates the admin user row), and an
 // in-cluster Kubernetes client (writes the Secret). The §17.6
 // idempotence contract is enforced by reading the Secret first: a re-run
 // preserves the existing token rather than regenerating it, so existing

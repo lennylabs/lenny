@@ -217,26 +217,13 @@ func (s *BreakerSigner) notify(fn func(BreakerObserver)) {
 	}
 }
 
-// KeyID forwards the inner signer's key id so the JOSE header on
-// minted tokens matches the underlying KMS-wrapped key.
+// KeyID forwards the inner signer's key id, so the kid it reports is
+// the one stamped on the JOSE header of every minted token.
 func (s *BreakerSigner) KeyID() string {
 	if s.Inner == nil {
 		return ""
 	}
 	return s.Inner.KeyID()
-}
-
-// Verify forwards to the inner signer when it also satisfies Verifier
-// (both HMACSigner and KMSSigner do). The verify path does not consult
-// the breaker — verification is local memory and never reaches KMS.
-// Returns an error when the inner does not implement Verifier so a
-// caller cannot silently bypass token validation.
-func (s *BreakerSigner) Verify(token string) (Claims, error) {
-	v, ok := s.Inner.(Verifier)
-	if !ok {
-		return Claims{}, errors.New("jwt: BreakerSigner inner does not implement Verifier")
-	}
-	return v.Verify(token)
 }
 
 // State returns the breaker's current state as a stable string so

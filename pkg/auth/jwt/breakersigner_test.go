@@ -36,8 +36,7 @@ func (s *stubSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
 	return s.output, nil
 }
 
-func (s *stubSigner) KeyID() string                     { return "stub-kid" }
-func (s *stubSigner) Verify(string) (jwt.Claims, error) { return jwt.Claims{}, nil }
+func (s *stubSigner) KeyID() string { return "stub-kid" }
 
 // stubObserver records breaker callbacks.
 type stubObserver struct {
@@ -215,15 +214,6 @@ func TestErrSigningUnavailableIsExported(t *testing.T) {
 	}
 }
 
-// Verify delegates to inner. F-10.2.6.
-func TestBreakerSignerVerifyDelegatesToInner(t *testing.T) {
-	inner := &stubSigner{}
-	b := &jwt.BreakerSigner{Inner: inner}
-	if _, err := b.Verify("anything"); err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-}
-
 // ---------------------------------------------------------------------
 // Throttling backpressure, Retry-After, and the per-call outcome.
 // ---------------------------------------------------------------------
@@ -292,8 +282,7 @@ func (s *scriptedSigner) innerCalls() int {
 	return s.calls
 }
 
-func (s *scriptedSigner) KeyID() string                     { return "scripted" }
-func (s *scriptedSigner) Verify(string) (jwt.Claims, error) { return jwt.Claims{}, nil }
+func (s *scriptedSigner) KeyID() string { return "scripted" }
 
 // fakeClock is a mutex-guarded settable clock.
 type fakeClock struct {
