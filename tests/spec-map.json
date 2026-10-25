@@ -3326,6 +3326,7 @@
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerTripBoundaries_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenProbeReleasedByThrottleOrCancel_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenIgnoresNonProbeStraggler_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerCallTimeoutCountsAsFailure_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerAppliesDefaultCallTimeout_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerOpenRefusalCarriesRemainingCooldown_spec_10_2",

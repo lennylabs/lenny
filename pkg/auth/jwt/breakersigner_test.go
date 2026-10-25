@@ -309,7 +309,10 @@ func (c *fakeClock) Advance(d time.Duration) { c.mu.Lock(); c.cur = c.cur.Add(d)
 // breaker opens when more than three consecutive counted failures lie
 // inside the 30 s window; throttling and caller-ended errors are not
 // counted and do not break the run; a half-open breaker admits one
-// probe at a time and reopens only on a counted probe failure.
+// probe at a time, closes only on the probe's success, and reopens only
+// on a counted probe failure. A non-probe call completing while the
+// breaker is half-open or open leaves the state and the probe slot as
+// they are.
 type breakerModel struct {
 	state         string // closed | half_open | open
 	run           []time.Time
@@ -364,11 +367,10 @@ func (m *breakerModel) complete(kind string, probe, callerDone bool, now time.Ti
 	switch {
 	case kind == kindOK:
 		m.run = nil
-		if m.state == "half_open" {
-			m.state = "closed"
+		if probe && m.state == "half_open" {
+			m.state, m.probeInFlight = "closed", false
 			m.closes++
 		}
-		m.probeInFlight = false
 		return jwt.SignOutcomeOK, 0
 	case kind == kindThrottled || callerDone:
 		if probe && m.state == "half_open" {
@@ -388,10 +390,10 @@ func (m *breakerModel) complete(kind string, probe, callerDone bool, now time.Ti
 			}
 		}
 		m.run = kept
-		switch m.state {
-		case "half_open":
+		switch {
+		case m.state == "half_open" && probe:
 			m.trip(now)
-		case "closed":
+		case m.state == "closed":
 			m.run = append(m.run, now)
 			if len(m.run) > 3 {
 				m.trip(now)
@@ -724,6 +726,74 @@ func TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2(t *testing
 	if obs.reject != 1 {
 		t.Fatalf("OnRejected = %d, want 1", obs.reject)
 	}
+}
+
+// spec: §10.2 (KMS signing failure mode). A half-open breaker moves
+// only on its probe's result. A call admitted while the breaker was
+// closed and still in flight across the trip and the cooldown completes
+// after the probe is admitted; whether it fails or succeeds, the breaker
+// stays half-open with the probe in flight, so a further call is
+// refused, and the probe's own result then decides the transition.
+// Before the fix, the straggler's failure reopened the breaker and its
+// success closed it while the probe was still running.
+func TestBreakerSignerHalfOpenIgnoresNonProbeStraggler_spec_10_2(t *testing.T) {
+	for _, tc := range []struct {
+		straggler, probe, wantAfterProbe string
+	}{
+		{kindHard, kindOK, "closed"},
+		{kindOK, kindOK, "closed"},
+		{kindHard, kindHard, "open"},
+		{kindOK, kindHard, "open"},
+	} {
+		t.Run(tc.straggler+"-then-probe-"+tc.probe, func(t *testing.T) {
+			b, clock, obs := newBoundaryBreaker()
+			inner := b.Inner.(*scriptedSigner)
+			straggler := startHeld(b, inner, "straggler", tc.straggler)
+			tripOpen(t, b, clock)
+			probe := startHeld(b, inner, "probe", tc.probe)
+			if got := b.State(); got != "half_open" {
+				t.Fatalf("State with probe in flight = %q, want half_open", got)
+			}
+			close(straggler.gate)
+			<-straggler.done
+			if got := b.State(); got != "half_open" {
+				t.Fatalf("State after %s straggler = %q, want half_open", tc.straggler, got)
+			}
+			if obs.opened != 1 || obs.closed != 0 {
+				t.Fatalf("observer open/close after straggler = %d/%d, want 1/0", obs.opened, obs.closed)
+			}
+			before := inner.innerCalls()
+			if err := signKind(b, kindOK); !errors.Is(err, jwt.ErrSigningUnavailable) {
+				t.Fatalf("call while probe in flight = %v, want circuit-open refusal", err)
+			}
+			if inner.innerCalls() != before {
+				t.Fatal("refused call reached the inner signer")
+			}
+			close(probe.gate)
+			<-probe.done
+			if got := b.State(); got != tc.wantAfterProbe {
+				t.Fatalf("State after %s probe = %q, want %q", tc.probe, got, tc.wantAfterProbe)
+			}
+		})
+	}
+}
+
+// heldSign is a Sign call parked inside the scripted signer.
+type heldSign struct {
+	gate chan struct{}
+	done chan error
+}
+
+// startHeld starts a Sign call of the given kind and returns once the
+// call is inside the inner signer, parked on its gate.
+func startHeld(b *jwt.BreakerSigner, inner *scriptedSigner, id, kind string) heldSign {
+	h := heldSign{gate: inner.hold(id), done: make(chan error, 1)}
+	go func() {
+		_, err := b.Sign(context.Background(), jwt.Claims{Subject: kind, JWTID: id})
+		h.done <- err
+	}()
+	<-inner.entered
+	return h
 }
 
 // spec: §10.2 (KMS signing failure mode). An inner call that outlives

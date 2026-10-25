@@ -189,7 +189,7 @@ func (s *BreakerSigner) Sign(ctx context.Context, c Claims) (string, error) {
 	cancel()
 	switch {
 	case err == nil:
-		s.recordSuccess()
+		s.recordSuccess(adm.probe)
 		s.notify(func(o BreakerObserver) { o.OnOutcome(SignOutcomeOK) })
 		return out, nil
 	case errors.Is(err, kms.ErrThrottled):
@@ -204,7 +204,7 @@ func (s *BreakerSigner) Sign(ctx context.Context, c Claims) (string, error) {
 		s.notify(func(o BreakerObserver) { o.OnOutcome(SignOutcomeError) })
 		return "", &SigningError{RetryAfter: retry, Err: err}
 	default:
-		retry := s.recordFailure()
+		retry := s.recordFailure(adm.probe)
 		s.notify(func(o BreakerObserver) { o.OnSigningFailure(); o.OnOutcome(SignOutcomeError) })
 		return "", &SigningError{RetryAfter: retry, Err: err}
 	}
@@ -279,15 +279,24 @@ func (s *BreakerSigner) admit() admission {
 	}
 }
 
-func (s *BreakerSigner) recordSuccess() {
+// recordSuccess ends a call that succeeded. A success always clears
+// the closed-state failure run, so a straggler admitted while the
+// breaker was closed still resets it. Only the call holding the
+// half-open probe slot closes a half-open breaker and frees the slot: a
+// half-open breaker transitions on the probe's result alone, and a
+// non-probe call that completes while the breaker is half-open leaves
+// the state and the in-flight probe untouched.
+//
+// spec: §10.2 (KMS signing failure mode).
+func (s *BreakerSigner) recordSuccess(probe bool) {
 	s.mu.Lock()
 	s.failures = nil
 	closedNow := false
-	if s.state == breakerHalfOpen {
+	if probe && s.state == breakerHalfOpen {
 		closedNow = true
 		s.state = breakerClosed
+		s.probeInFlight = false
 	}
-	s.probeInFlight = false
 	s.mu.Unlock()
 	if closedNow {
 		s.notify(func(o BreakerObserver) { o.OnCircuitClosed() })
@@ -309,16 +318,23 @@ func (s *BreakerSigner) releaseUncounted(probe bool) time.Duration {
 
 // recordFailure counts one signing failure, trips the breaker when the
 // §10.2 predicate holds, and returns the Retry-After for the call's
-// error.
-func (s *BreakerSigner) recordFailure() time.Duration {
+// error. In closed state every counted failure extends the run. A
+// half-open breaker reopens only on its probe's failure; a non-probe
+// call admitted before the trip that fails while the breaker is
+// half-open or open changes neither the state nor the probe slot.
+//
+// spec: §10.2 (KMS signing failure mode).
+func (s *BreakerSigner) recordFailure(probe bool) time.Duration {
 	s.mu.Lock()
 	now := s.now()
 	s.evictExpired(now)
 	openedNow := false
 	switch s.state {
 	case breakerHalfOpen:
-		s.trip(now)
-		openedNow = true
+		if probe {
+			s.trip(now)
+			openedNow = true
+		}
 	case breakerClosed:
 		s.failures = append(s.failures, now)
 		if len(s.failures) > s.threshold() {
