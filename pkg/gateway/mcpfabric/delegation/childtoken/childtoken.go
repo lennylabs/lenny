@@ -24,8 +24,9 @@ import (
 
 // RevocationChecker reports whether a token `jti` has been revoked. The
 // gateway's *revocation.Cache satisfies it. The Minter consults it on
-// the actor (parent) token's `jti` inside the minting transaction so a
-// parent rotated or revoked mid-flight is caught.
+// the actor (parent) token's `jti` before validating and minting the
+// child token. The read is a gateway-side check against the cache: a
+// parent rotated or revoked after the read is not caught by it.
 //
 // spec: §8.2; §13.3 "Token rotation and revocation".
 type RevocationChecker interface {
@@ -49,12 +50,11 @@ type AuditLock interface {
 // RFC 8693 exchange.
 //
 // The Minter's actor-token revocation check reads the gateway's
-// revocation cache and is a gateway-side pre-check. The normative re-read
-// is the Token Service's §13.3 "Write-before-issue ordering" step (1a),
-// which reads issued_tokens.revoked_at for the subject and actor jtis
-// inside the advisory-locked issuance transaction and rejects a revoked
-// actor with invalid_grant reason actor_token_revoked. A parent rotated
-// after this pre-check passes is caught there.
+// revocation cache and is a gateway-side pre-check. The child mint runs
+// in process: it does not call the Token Service, so the §13.3
+// "Write-before-issue ordering" step (1a) re-read of
+// issued_tokens.revoked_at inside the advisory-locked issuance
+// transaction does not run on this path.
 //
 // spec: §8.2 (Delegation Mechanism: Actor-token freshness under concurrent
 // parent rotation/revocation), §13.3 (Credential Flow).
@@ -114,11 +114,11 @@ func NewMinter(opts Options) *Minter {
 	}
 }
 
-// MintChildToken runs the §8.2 exchange. The order matches the
-// spec's "inside the same advisory-locked transaction": acquire the
-// audit lock (contention → ErrAuditContention), read the actor `jti`
-// against the revocation cache (revoked → ErrParentRevoked), then
-// validate and issue the narrowed child token.
+// MintChildToken runs the §8.2 exchange in process: acquire the audit
+// lock (contention → ErrAuditContention), read the actor `jti` against
+// the revocation cache (revoked → ErrParentRevoked), then validate and
+// issue the narrowed child token. The cache read is a pre-check and is
+// not an in-transaction re-read of issued_tokens.
 //
 // spec: §8.2; §13.3.
 func (m *Minter) MintChildToken(ctx context.Context, p delegation.ChildTokenParams) (delegation.ChildToken, error) {
