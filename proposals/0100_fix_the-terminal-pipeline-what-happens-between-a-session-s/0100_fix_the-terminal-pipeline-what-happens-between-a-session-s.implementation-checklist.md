@@ -2,19 +2,19 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands parts (a) to (e): the §7.1 paragraphs, the §7.1 normal-flow and §29.4 reorder, the §28.5.1 `CH-ATTACH` **Timing.** clause, and the §12.8 **Lifecycle fence and drain.** clause.
+- [x] **S1 · spec** — SPEC-1. Lands parts (a) to (e): the §7.1 paragraphs, the §7.1 normal-flow and §29.4 reorder, the §28.5.1 `CH-ATTACH` **Timing.** clause, and the §12.8 **Lifecycle fence and drain.** clause.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands parts (a) to (c) in the §7.1 **Seal-and-export invariant:** and parts (d) to (f) in §16.1, §16.5, and §29.4.
+- [x] **S2 · spec** — SPEC-2. Lands parts (a) to (c) in the §7.1 **Seal-and-export invariant:** and parts (d) to (f) in §16.1, §16.5, and §29.4.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-3. Lands the §7.1 **Artifact retention:** and derive rule 1 edits and the §12.5 retention item.
+- [x] **S3 · spec** — SPEC-3. Lands the §7.1 **Artifact retention:** and derive rule 1 edits and the §12.5 retention item.
       Tiers 0, 11. Depends on: —
-- [ ] **S4 · spec** — SPEC-4. Lands the §10.1.7 paragraph, the §29.7 step edits, and the §7.1 **Seal-and-export invariant:** first-sentence pointer.
+- [x] **S4 · spec** — SPEC-4. Lands the §10.1.7 paragraph, the §29.7 step edits, and the §7.1 **Seal-and-export invariant:** first-sentence pointer.
       Tiers 0, 11. Depends on: S1
-- [ ] **S5 · spec** — SPEC-5. Lands the §12.3 durability-table row.
+- [x] **S5 · spec** — SPEC-5. Lands the §12.3 durability-table row.
       Tiers 0, 11. Depends on: S4
-- [ ] **S6 · spec** — SPEC-6. Lands parts (a) to (d): §5.2, §4.6.1, the §10.1.7 intent-row items, §4.4.2, §4.4.3, and the §28.5.1 and §28.8 `CH-CHECKPOINT` sites.
+- [x] **S6 · spec** — SPEC-6. Lands parts (a) to (d): §5.2, §4.6.1, the §10.1.7 intent-row items, §4.4.2, §4.4.3, and the §28.5.1 and §28.8 `CH-CHECKPOINT` sites.
       Tiers 0, 11. Depends on: S1
-- [ ] **S7 · spec** — SPEC-7. Lands the §7.2 enumeration and paragraph edits and the §6.2 bullet sentence.
+- [x] **S7 · spec** — SPEC-7. Lands the §7.2 enumeration and paragraph edits and the §6.2 bullet sentence.
       Tiers 0, 11. Depends on: —
 - [ ] **S8 · code** — CODE-1. Lands the bounded hook context, the detached gateway-decided writes, and the budget terminator claim.
       Tiers 0, 1, 7a. Depends on: S1
