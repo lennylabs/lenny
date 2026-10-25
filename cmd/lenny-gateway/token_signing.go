@@ -233,6 +233,10 @@ func (o *kmsBreakerObserver) OnRejected() {
 	}
 }
 
+// OnOutcome receives the per-call sign outcome. The gateway metrics
+// carry no sign-request counter yet, so the outcome is not recorded.
+func (o *kmsBreakerObserver) OnOutcome(string) {}
+
 func (o *kmsBreakerObserver) OnCircuitOpen() {
 	if m := o.metrics(); m != nil {
 		m.SetKMSSigningCircuitState(2)

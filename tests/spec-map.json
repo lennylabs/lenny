@@ -3321,7 +3321,17 @@
         "pkg/auth/jwt/keyset_test.go::TestKeySetRejectsForeignKey_spec_10_2",
         "pkg/auth/jwt/keyset_test.go::TestKeySetSignatureAndClaimChecks_spec_10_2",
         "pkg/auth/jwt/keyset_test.go::TestLoadKeySetLoadsNoVerifyKeyWhenUnmapped_spec_10_2",
-        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetFailsWhenAMappedAliasFails_spec_10_2"
+        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetFailsWhenAMappedAliasFails_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerRandomizedInterleavingsMatchSpecModel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerTripBoundaries_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenProbeReleasedByThrottleOrCancel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerCallTimeoutCountsAsFailure_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerAppliesDefaultCallTimeout_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerOpenRefusalCarriesRemainingCooldown_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorRetryAfterSecondsRoundsUpWithFloor_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorWrapsInner_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -5319,7 +5329,10 @@
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
         "pkg/adapter/slotsession_test.go",
         "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2",
-        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2"
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerRandomizedInterleavingsMatchSpecModel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2"
       ],
       "packages": [
         "pkg/observability/metrics",
