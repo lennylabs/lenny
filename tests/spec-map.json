@@ -6447,7 +6447,9 @@
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore",
-        "pkg/ops/opsservice"
+        "pkg/ops/opsservice",
+        "pkg/gateway/credentials/revocation",
+        "pkg/gateway/middleware/auth"
       ],
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
