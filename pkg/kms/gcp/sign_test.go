@@ -175,7 +175,8 @@ func realSDKClient(t *testing.T, srv *failingKMSServer) *cloudkms.KeyManagementC
 	kmspb.RegisterKeyManagementServiceServer(g, srv)
 	go func() { _ = g.Serve(lis) }()
 	t.Cleanup(g.Stop)
-	c, err := cloudkms.NewKeyManagementClient(context.Background(),
+	c, err := cloudkms.NewKeyManagementClient(
+		context.Background(),
 		option.WithEndpoint(lis.Addr().String()),
 		option.WithoutAuthentication(),
 		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
