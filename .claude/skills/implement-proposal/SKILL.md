@@ -50,20 +50,31 @@ For a non-spec step:
 
 ```
 0.  lease gate            assert no spec write lease is held, before anything else
-1.  implement, or fix what the last round left
-2.  compile gate          go build over the packages this step changed
+1.  implement, or fix what the last round left; smoke check only (tier 0 checks, tier 1)
+2.  compile gate          go build, gofumpt, goimports, go vet, validate-maps
+                          over what this step changed
 3.  conformance and invariants review of the step's diff       <- no tests run
+      after a mechanical fix: the conformance lens alone
 4.  findings? fix and return to 2
 5.  tests, scoped to what the fix warrants
 6.  failures? fix and return to 2, which re-checks conformance before re-testing
 7.  FINAL GATE: the full tier set the checklist names, over the finished tree
+      skipped when step 5 covered the full set green on the same tree hash
       not green -> record the miss, then back to the fix loop; the gate re-runs
 8.  tick the checklist box
 ```
 
 The review runs **before** the tests because most fixes in a step answer that review, and running the tier set after each of them ran the same suites over and over while they stayed green. The compile gate exists because a reviewer handed code that does not build produces confident nonsense. The lease gate is first because a code step that runs under a leaked spec lease has already written and committed with `spec/` writable by the time any later check could fire. The compile gate cannot be first: it needs the round's diff to build.
 
+**Each tier runs once per tree.** The implementer and the fixer write tests for every tier the step reaches and run only a smoke check: tier 0's formatting, vet, and map checks on what they changed, and tier 1 for the packages they changed. Tier 2 and above belong to the verifier and the final gate. When the implementer ran the step's tiers too, a measured step ran tiers 0, 1, and 6 in its implementer and again in its verifier on an unchanged tree.
+
+**The compile gate runs the cheap part of tier 0.** Beside `go build`, it runs `gofumpt -l` and `goimports -l -local github.com/lennylabs/lenny` on the changed Go files, `go vet` on the changed packages, and `go run ./cmd/lenny-test validate-maps`, which are the commands tier 0 runs, so the two agree. A failure goes back to the fixer before review, as a build error does. The rest of tier 0 (golangci-lint, buf, the lint scripts, and `tests/tier0_static`) costs minutes and stays with the verifier. Before this, a measured step failed its final gate once on a test file missing from the change graph and once on a gofumpt nit, and each failure cost a fix round and another full gate.
+
+**A mechanical fix gets one reviewer.** When every commit since the invariants lens last passed is `comment-only`, `doc-only`, or `test-only` by `classify-diff.mjs`, the conformance lens reviews alone. Conformance is the lens that catches a proposal-internal label leaking into a comment or a test name, which is what such a fix can introduce. The range starts at the invariants pass rather than at the previous round, so a logic change from a round that stopped at the compile gate is inside it and forces both lenses. A logic change, an empty range, an invariants finding, a dead reviewer, or no answer from the classifier runs both. No formatting-only class exists, because whitespace inside a Go raw string literal is behaviour and a text diff cannot tell it from formatting.
+
 **A step is never ticked on a gate that did not pass.** The full set runs against the exact tree being ticked, which is the guarantee every scoped run in between borrows against.
+
+**A verify that covered the full set stands in for the final gate.** A per-attempt verifier records `git rev-parse HEAD^{tree}` before its first tier and after its last, with an empty `git status --porcelain` both times, and says whether it covered the step's whole tier set. When it is green, says so, and lists every required tier as run (a cloud-only tier may be skipped, as the gate itself skips one), a cheap agent reads the tree hash just before the gate would run. A match reuses the verify result and logs it; anything else runs the gate exactly as before. Every input fails closed: an empty hash, an unclean status, a dead read, a skipped required tier, or an unrecognised tier spelling runs the gate. The first attempt's full verify already stood in for the gate, as it did before.
 
 **A step's first final gate runs the full set; a later one is scoped.** After a final gate fails and a fix round commits, the next final gate re-runs the tiers the previous gate failed, the tests it named, and the tiers the commits since that gate can reach, and carries the rest forward. It applies the same class table and widening rules as the Verify loop's re-runs, and it falls back to the full set when the previous gate's commit is unknown or is not an ancestor of HEAD. The proposal-wide Verify phase still runs every tier before anything merges. When resuming a run that started before this scoping existed, set `fullFinalPassesBeforeScoping` to the number of final gates its journal holds, so those gates replay from the cache with their original full-pass prompts.
 
