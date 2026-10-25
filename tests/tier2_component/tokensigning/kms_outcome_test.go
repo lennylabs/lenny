@@ -320,17 +320,21 @@ func TestHardSigningFailureReturns503RetryAfter1_spec_10_2(t *testing.T) {
 // spec: 10.2 (Authentication) "KMS signing failure mode", 15.1 (REST API)
 // diagnosis: after four hard failures inside 30 s opened the breaker, the
 // next mint either reached the KMS or did not carry Retry-After equal to
-// the remaining cooldown. The clock moves 10 s into the 30 s cooldown, so
-// the expected value is 20.
+// the remaining cooldown. The first three failures leave the breaker
+// closed, so each answers 1. The fourth trips it (more than three
+// consecutive failures), and the breaker is open when that response is
+// written, so it answers the full 30 s cooldown. The clock then moves 10 s
+// into the cooldown, so the next mint answers 20.
 func TestOpenBreakerMintRetryAfterIsRemainingCooldown_spec_10_2(t *testing.T) {
 	for _, p := range mintPaths {
 		t.Run(p.name, func(t *testing.T) {
 			f := newSigningFixture(t)
 			mint := p.build(t, f)
 			f.stub.SetSignError(errors.New("kms: internal failure"))
-			for i := 0; i < 4; i++ {
+			for i := 0; i < 3; i++ {
 				assertUnavailable(t, mint(t), "1")
 			}
+			assertUnavailable(t, mint(t), "30")
 			f.advance(10 * time.Second)
 			calls := f.stub.SignCalls()
 			assertUnavailable(t, mint(t), "20")
