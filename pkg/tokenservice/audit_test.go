@@ -152,6 +152,23 @@ type txStore struct {
 	// failErr, when set, is returned verbatim from RecordWithAudit so a
 	// test can inject a typed Postgres-unavailability error. F-13.3.4.
 	failErr error
+	// revoked lists source jtis the fake reports as revoked at the
+	// §13.3 step (1a) re-read, and sources records the list the handler
+	// passed on the last call.
+	revoked map[string]time.Time
+	sources []issuedtokenstore.SourceToken
+}
+
+// fakeRecheck mirrors the issuedtokenstore step (1a) re-read: it returns
+// a *SourceRevokedError for the first listed source whose jti is in
+// revoked, checking sources in list order.
+func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time.Time) error {
+	for _, src := range sources {
+		if at, ok := revoked[src.JTI]; ok && src.JTI != "" {
+			return &issuedtokenstore.SourceRevokedError{Role: src.Role, JTI: src.JTI, RevokedAt: at}
+		}
+	}
+	return nil
 }
 
 func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) error {
@@ -162,10 +179,14 @@ func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) er
 }
 
 func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	eventType string, payload json.RawMessage, at time.Time,
+	sources []issuedtokenstore.SourceToken, eventType string, payload json.RawMessage, at time.Time,
 ) (audit.Row, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
+	if err := fakeRecheck(sources, t.revoked); err != nil {
+		return audit.Row{}, err
+	}
 	if t.failErr != nil {
 		return audit.Row{}, t.failErr
 	}

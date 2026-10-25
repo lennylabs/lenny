@@ -103,7 +103,8 @@ func TestRotationWriteBeforeIssueCommitsUnderNextval(t *testing.T) {
 		Audience: "lenny-gateway", IssuedAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
 	}
 	payload := json.RawMessage(`{"policy_result":"accepted","jti":"jti-next"}`)
-	revokedSub, revoked, err := store.RecordWithRotationAudit(ctx, next, "jti-prev",
+	revokedSub, revoked, err := store.RecordWithRotationAudit(ctx, next,
+		[]issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "jti-prev"}}, "jti-prev",
 		"rotation_replaced", string(auditcatalog.EventTokenExchanged), payload, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("RecordWithRotationAudit: %v", err)

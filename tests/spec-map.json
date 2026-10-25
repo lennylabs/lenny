@@ -2560,13 +2560,23 @@
         "tests/tier9_security/credential_lookup_failclosed_test.go",
         "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
         "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
-        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3"
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
+        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
+        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3"
       ],
       "packages": [
         "pkg/delegation/cycle",
         "pkg/delegation/lease",
         "pkg/gateway/mcpfabric/mcptools",
-        "pkg/gateway/externalapi/errorclassify"
+        "pkg/gateway/externalapi/errorclassify",
+        "pkg/gateway/storage/issuedtokenstore",
+        "pkg/tokenservice",
+        "pkg/gateway/mcpfabric/delegation/childtoken"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the \u00a78.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the \u00a78.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the \u00a78.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the \u00a78.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
@@ -3879,7 +3889,9 @@
         "tests/tier9_security/audit_integrity_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3"
       ],
       "packages": [
         "pkg/audit",
@@ -4717,14 +4729,29 @@
         "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
-        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2"
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceJTIsDeduplicatesAndSkipsEmpty_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestRecheckSourcesEmptyListMakesNoQuery_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedRejectionAuditFailure_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerLiveSourcesPassReRead_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestSourceRevokedErrorReason_spec_13_3",
+        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAuditFailureIs500_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
+        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3"
       ],
       "packages": [
         "pkg/credential",
         "pkg/admission/credfsgroup",
         "pkg/tokenexchange",
         "pkg/gateway/storage/pubsub",
-        "pkg/gateway/credentials/revocation/propagator"
+        "pkg/gateway/credentials/revocation/propagator",
+        "pkg/gateway/storage/issuedtokenstore",
+        "pkg/tokenservice"
       ],
       "blocked_until_phase": "12a",
       "notes": "Phase 12a ships the \u00a713.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject \u2286), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the \u00a713.3 \u00b11s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."

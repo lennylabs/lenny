@@ -144,7 +144,7 @@ func (a storeAdminIssued) RecordWithExchangeAudit(ctx context.Context, rec admin
 		"policy_result": "accepted",
 		"timestamp":     rec.IssuedAt,
 	})
-	_, err := a.store.RecordWithAudit(ctx, a.issued(rec),
+	_, err := a.store.RecordWithAudit(ctx, a.issued(rec), nil,
 		string(auditcatalog.EventTokenExchanged), payload, rec.IssuedAt)
 	return err
 }

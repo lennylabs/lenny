@@ -47,6 +47,17 @@ type AuditLock interface {
 
 // Minter mints a delegated child's session token via the in-process
 // RFC 8693 exchange.
+//
+// The Minter's actor-token revocation check reads the gateway's
+// revocation cache and is a gateway-side pre-check. The normative re-read
+// is the Token Service's §13.3 "Write-before-issue ordering" step (1a),
+// which reads issued_tokens.revoked_at for the subject and actor jtis
+// inside the advisory-locked issuance transaction and rejects a revoked
+// actor with invalid_grant reason actor_token_revoked. A parent rotated
+// after this pre-check passes is caught there.
+//
+// spec: §8.2 (Delegation Mechanism: Actor-token freshness under concurrent
+// parent rotation/revocation), §13.3 (Credential Flow).
 type Minter struct {
 	revocations RevocationChecker
 	auditLock   AuditLock

@@ -174,7 +174,7 @@ type revocationPropagationObserver interface {
 // a Postgres pool. The production wiring passes *issuedtokenstore.Store.
 type adminIssuedTokenStore interface {
 	Record(ctx context.Context, tok issuedtokenstore.IssuedToken) error
-	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
+	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
 	RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReason, auditEventType string, auditPayload json.RawMessage, at time.Time) (audit.Row, error)
 	WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error
 }
@@ -266,7 +266,10 @@ func (a adminIssuedTokens) RecordWithExchangeAudit(ctx context.Context, rec admi
 	if err != nil {
 		return fmt.Errorf("marshal token.exchanged payload: %w", err)
 	}
-	_, err = a.store.RecordWithAudit(ctx, a.issuedToken(rec),
+	// The admin rotation presents no subject token to the store, so the
+	// §13.3 step (1a) re-read has nothing to re-read and the source list
+	// is empty. WithSubjectLock serializes concurrent admin rotations.
+	_, err = a.store.RecordWithAudit(ctx, a.issuedToken(rec), nil,
 		string(obsaudit.EventTokenExchanged), payload, rec.IssuedAt)
 	return err
 }
