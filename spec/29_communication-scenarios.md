@@ -1284,8 +1284,9 @@ leave a 30-second margin, with the per-tier value fixed in §17.8
     reconnect to another replica through the load balancer
     ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
-11. `gateway`, `internal`. When active streams have not drained by the grace-period deadline the process
-    receives SIGKILL and the remaining clients must reconnect. Together with the one-pod-at-a-time
+11. `gateway`, `internal`. After the preStop hook returns and the process receives SIGTERM, the process stops accepting requests and runs the shutdown wait of [§10.1](10_gateway-internals.md#101-horizontal-scaling) **Terminal pipelines at process exit.** before it closes its store connections.
+
+12. `gateway`, `internal`. When active streams or terminal pipelines have not finished by the grace-period deadline, the process receives SIGKILL, the remaining clients must reconnect, and a cut terminal pipeline is not resumed ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Together with the one-pod-at-a-time
     scale-down policy, this bounds the fleet to at most one replica draining at any moment
     ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
