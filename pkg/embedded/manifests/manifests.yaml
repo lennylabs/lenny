@@ -2132,8 +2132,17 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: The gateway JWTSigner circuit breaker has tripped open — new session creation is failing with KMS_SIGNING_UNAVAILABLE. Existing sessions are unaffected until JWT expiry.
-                summary: Gateway KMS signing circuit breaker tripped
+                description: A JWTSigner circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with KMS_SIGNING_UNAVAILABLE. Verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's job label names.
+                summary: A JWTSigner circuit breaker on the gateway or the Token Service tripped open
+            - alert: KMSSignQuotaApproaching
+              expr: sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                description: The fleet-wide rate of JWT sign requests that reach the KMS has exceeded 80% of kms.signQuotaPerSecond for more than 10 minutes. Raise the provider's asymmetric Sign quota and kms.signQuotaPerSecond together.
+                runbook_url: https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota
+                summary: Fleet-wide KMS sign request rate exceeds 80% of the configured quota
             - alert: GatewaySubsystemCircuitOpen
               expr: max by (subsystem) (lenny_gateway_subsystem_circuit_state) == 2
               for: 1m

@@ -5556,7 +5556,10 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5",
         "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
-        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewayEmitsKMSSignQuotaGauge_spec_16_5"
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewayEmitsKMSSignQuotaGauge_spec_16_5",
+        "pkg/alerting/rules/rules_test.go::TestKMSSignQuotaApproachingRule_spec_16_5",
+        "pkg/alerting/rules/rules_test.go::TestKMSSigningUnavailableNamesBothSigners_spec_16_5",
+        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions"
       ],
       "packages": [
         "pkg/alerting/rules",
@@ -6692,7 +6695,8 @@
         "tests/tier4_integration/runbook_discovery_test.go",
         "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
         "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet",
-        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7"
+        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7",
+        "pkg/alerting/rules/rules_test.go::TestRunbookSlugDropsSectionFragment"
       ],
       "packages": [
         "pkg/ops/runbooks",
@@ -6973,7 +6977,8 @@
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadSuggestedActionBody",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels",
-        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation"
+        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation",
+        "pkg/alerting/rules/rules_test.go::TestRunbookSlugDropsSectionFragment"
       ],
       "packages": [],
       "blocked_until_phase": "14",
