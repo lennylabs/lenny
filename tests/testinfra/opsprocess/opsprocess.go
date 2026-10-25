@@ -62,23 +62,9 @@ func SkipUnlessAvailable(t testing.TB) {
 // harness uses.
 func StartWith(t testing.TB, extraArgs ...string) *Process {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skipf("go not on PATH: %v", err)
-	}
-
-	tmp, err := os.MkdirTemp("", "lenny-ops-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-
-	binary := filepath.Join(tmp, "lenny-ops")
+	binary := Build(t)
+	tmp := filepath.Dir(binary)
 	root := schematest.RepoRoot(t)
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-ops")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-ops: %v\n%s", err, out)
-	}
 
 	port, err := freePort()
 	if err != nil {
@@ -120,6 +106,29 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		t.Fatalf("lenny-ops not ready: %v\nlogs:\n%s", err, b)
 	}
 	return p
+}
+
+// Build compiles cmd/lenny-ops into a temporary directory removed at test
+// cleanup and returns the binary path, for a test that runs the binary with
+// its own flags and environment, such as a startup refusal it expects the
+// process to exit on.
+func Build(t testing.TB) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go not on PATH: %v", err)
+	}
+	tmp, err := os.MkdirTemp("", "lenny-ops-it-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+	binary := filepath.Join(tmp, "lenny-ops")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-ops")
+	build.Dir = schematest.RepoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build lenny-ops: %v\n%s", err, out)
+	}
+	return binary
 }
 
 // BaseURL returns the http://host:port the lenny-ops surface listens on.

@@ -154,3 +154,38 @@ tests:
             ports:
               - protocol: TCP
                 port: 6380
+
+  # spec: §13.2 (Network Isolation), §25.4 (The lenny-ops Service) —
+  # lenny-ops reaches the external Postgres the gateway's postgres.dsn
+  # names through the same postgres.gatewayEgressCIDR peer
+  # allow-gateway-egress renders.
+  - it: renders a 5432 ipBlock peer for postgres.gatewayEgressCIDR when it is set
+    set:
+      postgres.gatewayEgressCIDR: 10.20.0.0/16
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: "10.20.0.0/16"
+            ports:
+              - protocol: TCP
+                port: 5432
+
+  # The PgBouncer rule is followed directly by the Redis rule when the
+  # CIDR is unset, so no ipBlock peer sits between them.
+  - it: renders no Postgres ipBlock peer when postgres.gatewayEgressCIDR is unset
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: pgbouncer
+      - equal:
+          path: spec.egress[2].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: redis

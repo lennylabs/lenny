@@ -560,13 +560,8 @@ tests:
   # spec: §25.5 cold-start — with redis.url empty (the §17.4 in-memory dev
   # posture) the read side runs on lenny-ops's own per-replica buffer, so
   # the Deployment wires no Redis env and only the two downward-API vars
-  # render. Postgres (postgres.dsn) is never wired on lenny-ops even when
-  # set, unlike controller-deployment.yaml and gateway-deployment.yaml;
-  # audit, backup, and upgrade state degrade gracefully when Postgres is
-  # absent (§25.4).
+  # render. With postgres.dsn unset no Postgres env renders either.
   - it: wires no Redis or Postgres env when redis.url is empty (§25.5 cold-start)
-    set:
-      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
     documentSelector:
       path: kind
       value: Deployment
@@ -595,7 +590,6 @@ tests:
   # ops:events:stream from the same redis.provider=external / redis.url the
   # gateway and controller use. The connection URL comes from the
   # lenny-datastore-conn Secret so no secret material lands in the pod spec.
-  # Postgres stays unwired on lenny-ops even with postgres.dsn set.
   - it: wires LENNY_REDIS_URL from the datastore Secret for the external topology
     set:
       postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
@@ -605,10 +599,6 @@ tests:
       path: kind
       value: Deployment
     asserts:
-      - notContains:
-          path: spec.template.spec.containers[0].env
-          content:
-            name: LENNY_POSTGRES_DSN
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -1017,3 +1007,115 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --webhook-domain-allowlist=hooks.acme.com,*.acme.com
+
+  # spec: §25.4 (The lenny-ops Service: Authentication) — lenny-ops reads
+  # its revocation set from Postgres every 30 s, so postgres.dsn renders
+  # LENNY_POSTGRES_DSN from the datastore Secret, as the gateway does.
+  - it: renders LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+
+  - it: renders no LENNY_POSTGRES_DSN when postgres.dsn is unset
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+          any: true
+
+  # spec: §25.4 (The lenny-ops Service: Authentication), §12.4 — lenny-ops
+  # subscribes to token.revoked on the Cache/Pub-Sub concern the gateway
+  # publishes on, so a split concern URL reaches lenny-ops too.
+  - it: renders LENNY_REDIS_CACHE_PUBSUB_URL when redis.concerns.cachePubSubUrl is set
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+      redis.concerns.cachePubSubUrl: "rediss://:pw@redis-cache:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CACHE_PUBSUB_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-cache-pubsub-url
+
+  - it: renders no LENNY_REDIS_CACHE_PUBSUB_URL when redis.concerns.cachePubSubUrl is unset
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CACHE_PUBSUB_URL
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails), §25.4 — a production lenny-ops
+  # refuses the dev embedded-OIDC trust hook, so ops.production: true
+  # renders neither the flag nor its key volume and mount.
+  - it: omits the dev trust hook flag, volume, and mount when ops.production is true
+    set:
+      ops.production: true
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  - it: renders the dev trust hook flag, volume, and mount when ops.production is false
+    set:
+      ops.production: false
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-bearer-trust-key
+          any: true

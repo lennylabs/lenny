@@ -32,8 +32,12 @@ lenny-datastore-conn Secret). Without Redis configured the read side runs
 on lenny-ops's own per-replica in-memory buffer (§25.5 cold-start), and
 the Redis-down gateway-buffer fallback is unreachable, so a stock render
 that leaves redis.url empty stays in that degraded single-process mode.
-Postgres (postgres.dsn) is not wired here, so audit, backup, and upgrade
-state degrade gracefully when Postgres is absent (§25.4).
+Postgres is wired from postgres.dsn when it is set (LENNY_POSTGRES_DSN,
+sourced from the lenny-datastore-conn Secret), and lenny-ops reads the
+§25.4 revocation set for Lenny-issued tokens from it. When postgres.dsn
+is unset, audit, backup, and upgrade state degrade gracefully (§25.4),
+and the revocation set is never read, so lenny-ops refuses every
+Lenny-issued token.
 */ -}}
 {{- /* §17.8.5: "Attempts to disable lenny-ops via Helm values
    are rejected at chart validation." The chart has no ops.enabled key;
@@ -65,6 +69,16 @@ state degrade gracefully when Postgres is absent (§25.4).
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
 {{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
+{{- /* §12.4 Cache/Pub-Sub concern: the gateway publishes token.revoked
+   there, so lenny-ops subscribes on the same instance (§25.4 revocation
+   set rule 2). §25.4: Postgres backs the revocation set's 30 s read. */ -}}
+{{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
+{{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- /* §17.4: the dev embedded-OIDC trust hook is refused by a production
+   lenny-ops, so it renders only when ops.production is false. */ -}}
+{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret (not .Values.ops.production) -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -228,7 +242,9 @@ spec:
             {{- if .Values.security.oidc.issuerUrl }}
             - --oidc-issuer-url={{ .Values.security.oidc.issuerUrl }}
             {{- end }}
-            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            {{- if $devTrust }}
+            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
+            # refuses it, so it renders only when ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             {{- end }}
             # §25.4 per-service-account rate limiting. F-25.4.5.
@@ -335,6 +351,24 @@ spec:
                    (url) mode reads the connection URL from the
                    lenny-datastore-conn Secret; the plaintext dev Redis is
                    acknowledged via --redis-allow-insecure above. */}}
+            {{- if $hasPg }}
+            # §25.4: Postgres backs audit, backup, and upgrade state and
+            # the revocation set's 30 s read of revoked issued_tokens rows.
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+            {{- end }}
+            {{- if $hasCacheRedis }}
+            # §12.4 / §25.4: the Cache/Pub-Sub Redis the gateway publishes
+            # token.revoked on.
+            - name: LENNY_REDIS_CACHE_PUBSUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-cache-pubsub-url
+            {{- end }}
             {{- if $hasRedis }}
             - name: LENNY_REDIS_URL
               valueFrom:
@@ -448,8 +482,8 @@ spec:
               mountPath: /etc/lenny/gateway-ca
               readOnly: true
             {{- end }}
-            {{- if .Values.security.oidc.bearerTrustKeySecret }}
-            # §25.4: the shared HMAC bearer-verify key. F-25.4.20.
+            {{- if $devTrust }}
+            # §17.4: the dev embedded-OIDC trust key. F-25.4.20.
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
@@ -501,7 +535,7 @@ spec:
               - key: ca.crt
                 path: ca.crt
         {{- end }}
-        {{- if .Values.security.oidc.bearerTrustKeySecret }}
+        {{- if $devTrust }}
         - name: oidc-bearer-trust-key
           secret:
             secretName: {{ .Values.security.oidc.bearerTrustKeySecret }}

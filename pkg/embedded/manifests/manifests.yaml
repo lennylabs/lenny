@@ -333,7 +333,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
-    # §25.4 — Postgres via PgBouncer (NET-061).
+    # §25.4 — Postgres via PgBouncer (NET-061). lenny-ops reads its
+    # revocation set and its audit, backup, and upgrade state there.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -879,6 +880,12 @@ spec:
         - podSelector:
             matchLabels:
               lenny.dev/component: controller
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+          podSelector:
+            matchLabels:
+              app: lenny-ops
       ports:
         - port: 5432
           protocol: TCP
@@ -4761,6 +4768,8 @@ spec:
             - --escalation-reconciliation-writes-per-second=20
             # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
+            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
+            # refuses it, so it renders only when ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps=20
@@ -4891,7 +4900,7 @@ spec:
             - name: gateway-sa-token
               mountPath: /var/run/secrets/lenny/gateway
               readOnly: true
-            # §25.4: the shared HMAC bearer-verify key. F-25.4.20.
+            # §17.4: the dev embedded-OIDC trust key. F-25.4.20.
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true

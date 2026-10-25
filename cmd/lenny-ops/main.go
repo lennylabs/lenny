@@ -59,7 +59,11 @@ var buildVersion = "dev"
 // spec: §4.1 — the composition root parses its inputs once and threads them
 // to each subsystem builder; §25.4 — the lenny-ops service body.
 func main() {
-	runOps(parseFlags())
+	f := parseFlags()
+	if err := f.kmsFinalize(); err != nil {
+		log.Fatalf("lenny-ops: %v", err)
+	}
+	runOps(f)
 }
 
 // configureStructuredLogging installs the §25.4 JSON logger as the
@@ -153,49 +157,108 @@ func durationOrDefault(seconds int, def time.Duration) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// buildAuthConfig assembles the §25.4 OIDC
-// authentication + role gate for the operability surface.
+// authInputs carries what buildAuthConfig needs: the §10.2 key set, the
+// revocation set, and the authentication flags.
+type authInputs struct {
+	keySet      *jwt.KeySet
+	revocations *opsRevocation
+	hmacKeyFile string
+	issuer      string
+	multiTenant bool
+	production  bool
+	rps         float64
+	burst       int
+}
+
+// errDevTrustInProduction refuses the dev embedded-OIDC trust hook under
+// --production.
+var errDevTrustInProduction = errors.New("§17.4: --bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused when --production is set")
+
+// checkDevTrustPosture refuses --bearer-trust-hmac-key-file under
+// --production. runOps calls it before the key set loads, so the refusal
+// does not wait on a KMS round trip, and buildAuthConfig repeats it.
 //
-// The v1 verify key is the shared HMAC signing key at hmacKeyFile (the
-// gateway Token Service / §17.4 embedded OIDC key). When an issuer is
-// supplied the verifier additionally asserts the iss claim. The per-
-// service-account rate limiter (§25.4) is always attached when
-// auth is enabled.
+// spec: §17.4 "Dev mode guard rails"; §25.4 (The lenny-ops Service:
+// Authentication).
+func checkDevTrustPosture(production bool, hmacKeyFile string) error {
+	if production && hmacKeyFile != "" {
+		return errDevTrustInProduction
+	}
+	return nil
+}
+
+// buildAuthConfig assembles the §25.4 authentication and role gate for
+// the operability surface.
 //
-// When no key file is configured the surface is unauthenticated: that is
-// admitted only outside production. In production it is a fatal
-// misconfiguration (serving the platform-admin remediation-lock / backup
-// / drift surface anonymously is the §25.4 security regression the gate
-// exists to close), reported as an error so the caller can refuse to
-// start.
-func buildAuthConfig(hmacKeyFile, issuer string, multiTenant, production bool, rps float64, burst int) (*opsserver.AuthConfig, error) {
-	if hmacKeyFile == "" {
-		if production {
-			return nil, errors.New("§25.4 requires authentication in production: set --bearer-trust-hmac-key-file (LENNY_BEARER_TRUST_HMAC_KEY_FILE)")
-		}
-		log.Printf("lenny-ops: §25.4 WARNING — no bearer verify key configured; the operability surface is UNAUTHENTICATED (dev only)")
+// It returns a config whenever --production or
+// --bearer-trust-hmac-key-file is set. The verifier is the §10.2 key set,
+// composed with the dev trust member through a MultiVerifier when the
+// key file is set; --oidc-issuer-url wraps only the dev trust member,
+// because Lenny-issued tokens are accepted whatever their issuer and
+// audience. The revocation set applies to tokens the key set verifies and
+// never to dev trust-hook tokens (§25.4 rule 6). The per-service-account
+// rate limiter is always attached.
+//
+// A non-production process without the key file serves the surface
+// unauthenticated. The key file under --production is an error the
+// caller treats as fatal.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication); §10.2
+// (Authentication) "Verifier key set and rotation"; §17.4.
+func buildAuthConfig(in authInputs) (*opsserver.AuthConfig, error) {
+	if err := checkDevTrustPosture(in.production, in.hmacKeyFile); err != nil {
+		return nil, err
+	}
+	if !in.production && in.hmacKeyFile == "" {
+		log.Printf("lenny-ops: §25.4 WARNING — no --production and no bearer trust key; the operability surface is UNAUTHENTICATED (dev only)")
 		return nil, nil
 	}
+	opts := authmw.Options{
+		Verifier:    in.keySet,
+		MultiTenant: in.multiTenant,
+		// Outside production the dev headers (X-Lenny-Tenant-ID /
+		// X-Lenny-User-ID / X-Lenny-Roles) remain a convenience
+		// transport; production anchors every claim to the bearer JWT.
+		AllowDevHeaders: !in.production,
+		AllowDevRoles:   !in.production,
+	}
+	if in.hmacKeyFile != "" {
+		dev, err := devTrustVerifier(in.hmacKeyFile, in.issuer)
+		if err != nil {
+			return nil, err
+		}
+		opts.Verifier = jwt.NewMultiVerifier(in.keySet, dev)
+		opts.RevocationScope = keySetScope(in.keySet)
+	}
+	in.revocations.apply(&opts)
+	return &opsserver.AuthConfig{
+		Options:     opts,
+		RateLimiter: opsserver.NewRateLimiter(in.rps, in.burst),
+	}, nil
+}
+
+// devTrustVerifier loads the §17.4 embedded OIDC provider's HMAC key and,
+// when issuer is set, pins the iss claim of tokens signed with it.
+func devTrustVerifier(hmacKeyFile, issuer string) (jwt.Verifier, error) {
 	signer, err := jwt.LoadHMACKeyFile(hmacKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load bearer trust key %s: %w", hmacKeyFile, err)
 	}
-	var verifier jwt.Verifier = signer
-	if issuer != "" {
-		verifier = jwt.NewClaimChecker(verifier, jwt.ExpectedClaims{Issuer: issuer})
+	if issuer == "" {
+		return signer, nil
 	}
-	return &opsserver.AuthConfig{
-		Options: authmw.Options{
-			Verifier:    verifier,
-			MultiTenant: multiTenant,
-			// Outside production the dev headers (X-Lenny-Tenant-ID /
-			// X-Lenny-User-ID / X-Lenny-Roles) remain a convenience
-			// transport; production anchors every claim to the bearer JWT.
-			AllowDevHeaders: !production,
-			AllowDevRoles:   !production,
-		},
-		RateLimiter: opsserver.NewRateLimiter(rps, burst),
-	}, nil
+	return jwt.NewClaimChecker(signer, jwt.ExpectedClaims{Issuer: issuer}), nil
+}
+
+// keySetScope reports whether the key set verifies a token, which is how
+// lenny-ops tells a Lenny-issued token from a dev trust-hook token when
+// both members are trusted. The second verification runs only on a
+// process that trusts the dev key, which is never a production process.
+func keySetScope(keySet *jwt.KeySet) func(string) bool {
+	return func(token string) bool {
+		_, err := keySet.Verify(token)
+		return err == nil
+	}
 }
 
 // envFloat parses the named environment variable as a float64, falling

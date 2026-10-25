@@ -3350,7 +3350,13 @@
         "pkg/tokenservice/caller_origin_test.go::TestNewServerRefusesNilVerifier_spec_10_2",
         "tests/tier2_component/tokensigning/tokenservice_keyset_startup_test.go::TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
         "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningBuildsSignerFromOneKeySetFetch_spec_10_2",
-        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningReturnsKeySetLoadError_spec_10_2"
+        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningReturnsKeySetLoadError_spec_10_2",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRequiresKey",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetResolveFailureIsFatal",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider"
       ],
       "packages": [
         "pkg/auth",
@@ -3998,7 +4004,10 @@
         "pkg/redisconn/scan_test.go",
         "pkg/redisconn/slotguard/hook_test.go",
         "pkg/gateway/storage/rediskeys/rediskeys_test.go::TestTenantPrefixIsHashTagged_spec_12_4",
-        "cmd/lenny-gateway/redis_concern_probes_test.go"
+        "cmd/lenny-gateway/redis_concern_probes_test.go",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetFollowsCachePubSubRedis",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL"
       ],
       "packages": [
         "pkg/store/lease",
@@ -4449,7 +4458,8 @@
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "charts/lenny/tests/ops-network-policies_test.yaml"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -4521,7 +4531,8 @@
       "spec_file": "spec/13_security-model.md",
       "tests": [
         "tests/tier9_security/network_policy_test.go",
-        "tests/tier5_e2e_kind/ingress_test.go"
+        "tests/tier5_e2e_kind/ingress_test.go",
+        "charts/lenny/tests/system-network-policies_test.yaml"
       ],
       "chart_templates": [
         "charts/lenny/templates/system-network-policies.yaml",
@@ -4652,7 +4663,16 @@
         "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
         "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
         "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
-        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3"
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule3MatchesGatewayRevokedResponse",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule4RefusesBeforeFirstRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationTenantsListsDeletedAndDefault",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateUnionsLocalRevocations",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateFailureKeepsSetAndDuringReadRevocations",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeAppliesChecksToInScopeBearer",
+        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped"
       ],
       "packages": [
         "pkg/credential",
@@ -5640,7 +5660,13 @@
         "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreSnapshotCarriesReservations_spec_12_8",
         "pkg/kms/local_signing_test.go::TestLocalSigningKeyDeterministicAcrossProvidersSharingSeed_spec_10_2",
         "pkg/kms/local_signing_internal_test.go::TestLocalSigningKeySeparatedFromKEKMaterial_spec_10_2",
-        "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2"
+        "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook"
       ],
       "packages": [
         "cmd/lenny-dev",
@@ -6385,7 +6411,33 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
         "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock",
         "tests/tier0_static/ops_rbac_test_yaml_citation_test.go::TestOpsRBACHelmTestCitesOnlyDurableSpecSections",
-        "charts/lenny/tests/ops-rbac_test.yaml"
+        "charts/lenny/tests/ops-rbac_test.yaml",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRequiresKey",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_DevWithoutKeyIsOpen",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_BadKeyFileErrors",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule3MatchesGatewayRevokedResponse",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule4RefusesBeforeFirstRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule7RefusesPlaygroundBearer",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetWithoutDSNRefusesKeySetTokens",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateUnionsLocalRevocations",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateFailureKeepsSetAndDuringReadRevocations",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeExcludesOutOfScopeBearer",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeAppliesChecksToInScopeBearer",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetFollowsCachePubSubRedis",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL",
+        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "charts/lenny/tests/ops-deployment_test.yaml",
+        "charts/lenny/tests/ops-network-policies_test.yaml"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -6803,7 +6855,8 @@
         "tests/tier8_chaos/ops_down_audit_survives_test.go::TestGatewayAuditSurvivesOpsOutage",
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
-        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage"
+        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage"
       ],
       "packages": [],
       "blocked_until_phase": "14",

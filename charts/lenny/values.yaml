@@ -1377,13 +1377,13 @@ postgres:
   # database endpoint; the broad default is bounded by the per-port
   # (5432) egress rule.
   cidr: "0.0.0.0/0"
-  # gatewayEgressCIDR is the destination CIDR the gateway and token-
-  # service NetworkPolicies admit for external Postgres egress.
-  # Empty disables the rule, so the default install only allows the
-  # in-cluster PgBouncer pod (matched by component label). Tier-7
+  # gatewayEgressCIDR is the destination CIDR the gateway, token-
+  # service, and lenny-ops NetworkPolicies admit for external Postgres
+  # egress. Empty disables the rule, so the default install only allows
+  # the in-cluster PgBouncer pod (matched by component label). Tier-7
   # cloud-load sets this to the managed-Postgres CIDR (or 0.0.0.0/0
-  # with the per-port bound) so the gateway can reach RDS, Azure
-  # Flexible Server, or Cloud SQL.
+  # with the per-port bound) so the gateway and lenny-ops can reach
+  # RDS, Azure Flexible Server, or Cloud SQL.
   gatewayEgressCIDR: ""
   # dsn is the Postgres connection string the gateway and controller
   # use to persist session, transcript, tenant, runtime, and §4.6.1

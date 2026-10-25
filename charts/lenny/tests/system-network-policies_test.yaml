@@ -595,3 +595,28 @@ tests:
       - equal:
           path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: tenant-x-filters
+
+  # spec: §13.2.4 (PgBouncer row), §25.4 (The lenny-ops Service) — lenny-ops
+  # reads its revocation set through PgBouncer, so allow-pgbouncer admits
+  # app: lenny-ops from the release namespace on 5432. lenny-ops carries the
+  # §13.2.3 selector exception label, so the peer pairs it with the
+  # release-namespace selector.
+  - it: admits lenny-ops from the release namespace to PgBouncer on 5432
+    documentSelector:
+      path: metadata.name
+      value: allow-pgbouncer
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: lenny-system
+            podSelector:
+              matchLabels:
+                app: lenny-ops
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 5432
+              protocol: TCP
