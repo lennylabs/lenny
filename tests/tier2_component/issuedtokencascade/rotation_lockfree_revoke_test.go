@@ -42,14 +42,21 @@ func TestRotationRefusesSubjectRevokedAfterReRead_spec_13_3(t *testing.T) {
 		t.Fatalf("Record subject: %v", err)
 	}
 
-	// The revoker runs the UPDATE Store.Revoke runs, without the §11.7
-	// lock, and holds it uncommitted so the rotation's re-read sees the
+	// The revoker runs the UPDATE Store.Revoke runs, in a tenant-scoped
+	// transaction without the §11.7 lock, and holds it uncommitted so the rotation's re-read sees the
 	// subject live and its revoke UPDATE blocks on the row lock.
 	revoker, err := pg.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin revoker: %v", err)
 	}
 	defer func() { _ = revoker.Rollback(context.Background()) }()
+	// The lenny_tenant_guard trigger refuses a write whose transaction
+	// has not set app.current_tenant; set_config(..., true) is the
+	// parameterized form of the SET LOCAL pgtenant.InTx issues.
+	if _, err := revoker.Exec(ctx,
+		`SELECT set_config('app.current_tenant', $1, true)`, tenant); err != nil {
+		t.Fatalf("revoker set tenant: %v", err)
+	}
 	if _, err := revoker.Exec(ctx,
 		`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = 'explicit_revoke'
 		 WHERE jti = $1 AND tenant_id = $2`, subj, tenant, now); err != nil {
