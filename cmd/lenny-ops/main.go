@@ -250,15 +250,18 @@ func devTrustVerifier(hmacKeyFile, issuer string) (jwt.Verifier, error) {
 	return jwt.NewClaimChecker(signer, jwt.ExpectedClaims{Issuer: issuer}), nil
 }
 
-// keySetScope reports whether the key set verifies a token, which is how
-// lenny-ops tells a Lenny-issued token from a dev trust-hook token when
-// both members are trusted. The second verification runs only on a
-// process that trusts the dev key, which is never a production process.
+// keySetScope reports whether a key in the key set signed a token, which
+// is how lenny-ops tells a Lenny-issued token from a dev trust-hook token
+// when both members are trusted. It reads the header and the signature
+// and never the exp or nbf claim, so a key-set token whose exp passes
+// between authmw's verification and this call stays in scope and still
+// meets the first-read gate and the revocation set.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+// rules 3, 4, and 6); §10.2 (Authentication) "Verifier key set and
+// rotation".
 func keySetScope(keySet *jwt.KeySet) func(string) bool {
-	return func(token string) bool {
-		_, err := keySet.Verify(token)
-		return err == nil
-	}
+	return keySet.Signed
 }
 
 // envFloat parses the named environment variable as a float64, falling

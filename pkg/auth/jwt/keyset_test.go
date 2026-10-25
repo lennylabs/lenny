@@ -470,3 +470,53 @@ func TestLoadKeySetFailsWhenAMappedAliasFails_spec_10_2(t *testing.T) {
 		t.Fatalf("unavailable KMS: err = %v, want ErrUnavailable", err)
 	}
 }
+
+// TestKeySetSignedIgnoresTimeClaims_spec_10_2 pins that Signed answers
+// from the header and the signature alone: an expired and a
+// not-yet-valid token the set signed are Signed although Verify refuses
+// them, while an HS256 token, a token with a kid outside the set, and a
+// token whose payload was altered after signing are not.
+//
+// spec: 10.2 (Authentication), 25.4 (The lenny-ops Service: Authentication)
+func TestKeySetSignedIgnoresTimeClaims_spec_10_2(t *testing.T) {
+	stub := kmsstub.New(t)
+	ks := loadStubKeySet(t, stub, nil)
+	provider := stub.AsProvider()
+
+	expired := ksClaims("alice@acme.com")
+	expired.Expiry = time.Now().Add(-time.Hour).Unix()
+	expiredTok := remoteSign(t, provider, ks, expired)
+	if _, err := ks.Verify(expiredTok); err == nil {
+		t.Fatal("Verify accepted an expired token")
+	}
+	notYet := ksClaims("bob@acme.com")
+	notYet.NotBefore = time.Now().Add(time.Hour).Unix()
+	notYetTok := remoteSign(t, provider, ks, notYet)
+
+	for name, tok := range map[string]string{
+		"valid":         remoteSign(t, provider, ks, ksClaims("carol@acme.com")),
+		"expired":       expiredTok,
+		"not yet valid": notYetTok,
+	} {
+		if !ks.Signed(tok) {
+			t.Errorf("%s token the set signed: Signed = false, want true", name)
+		}
+	}
+
+	kid := ks.Signing().KeyID
+	parts := strings.Split(expiredTok, ".")
+	tampered, err := json.Marshal(ksClaims("dave@acme.com"))
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	for name, tok := range map[string]string{
+		"HS256":        handToken(t, map[string]any{"alg": "HS256", "kid": kid}, ksClaims("alice@acme.com"), hs256([]byte("dev"))),
+		"unknown kid":  handToken(t, map[string]any{"alg": "ES256", "kid": "not-in-set"}, ksClaims("alice@acme.com"), func(string) []byte { return make([]byte, kms.SignatureSize) }),
+		"altered body": parts[0] + "." + b64(tampered) + "." + parts[2],
+		"malformed":    "a.b",
+	} {
+		if ks.Signed(tok) {
+			t.Errorf("%s token: Signed = true, want false", name)
+		}
+	}
+}

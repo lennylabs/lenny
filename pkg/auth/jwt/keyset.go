@@ -121,18 +121,44 @@ type keySetHeader struct {
 // spec: §10.2 (Authentication) "Session capability context",
 // "Verifier key set and rotation".
 func (k *KeySet) Verify(token string) (Claims, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("token has %d segments, want 3", len(parts))}
-	}
-	pub, err := k.selectKey(parts[0])
+	parts, err := k.checkSignature(token)
 	if err != nil {
 		return Claims{}, err
 	}
-	if err := verifyES256(pub, parts[0]+"."+parts[1], parts[2]); err != nil {
-		return Claims{}, err
-	}
 	return decodeClaims(parts[1], k.now())
+}
+
+// Signed reports whether a key in the set signed token: the header
+// carries alg ES256 and a kid in the set, and the signature verifies
+// under that key. It reads no claim and no clock, so its answer for a
+// token never changes over time. A caller that composes the key set with
+// another verifier uses it to tell which member accepted a token after
+// the composition verified it; a token another member accepted can never
+// satisfy it, because only the set's private keys produce such a
+// signature.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation"; §25.4
+// (The lenny-ops Service: Authentication).
+func (k *KeySet) Signed(token string) bool {
+	_, err := k.checkSignature(token)
+	return err == nil
+}
+
+// checkSignature splits token, applies the alg and kid rules, and checks
+// the ES256 signature, returning the three segments.
+func (k *KeySet) checkSignature(token string) ([]string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("token has %d segments, want 3", len(parts))}
+	}
+	pub, err := k.selectKey(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyES256(pub, parts[0]+"."+parts[1], parts[2]); err != nil {
+		return nil, err
+	}
+	return parts, nil
 }
 
 // selectKey applies the alg rule and returns the key the header's kid

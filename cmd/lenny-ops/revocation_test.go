@@ -106,6 +106,7 @@ type revHarness struct {
 	ctx     context.Context
 	rev     *opsRevocation
 	handler http.Handler
+	opts    authmw.Options
 	keySet  *jwt.KeySet
 	signer  jwt.Signer
 	src     *fakeRevocationSource
@@ -136,6 +137,7 @@ func newRevHarness(t *testing.T, production bool) *revHarness {
 	return &revHarness{
 		t: t, ctx: ctx, rev: rev, keySet: keySet, signer: signer, clock: clock,
 		handler: authmw.Wrap(okHandler(), cfg.Options),
+		opts:    cfg.Options,
 		src:     &fakeRevocationSource{rows: map[string][]string{}},
 		ticks:   make(chan time.Time),
 		reads:   make(chan error, 16),
@@ -415,6 +417,48 @@ func TestRevocationSetRule6ExcludesDevTrustTokens(t *testing.T) {
 	assertAdmitted(t, "dev trust-hook token whose jti is in the set", h.serve(h.devToken("jti-dev-revoked")))
 	if rr := h.serve(h.keySetToken("jti-ks", "")); rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("key-set token before the first read: status %d, want 503", rr.Code)
+	}
+}
+
+// verifiedBeforeExpiry stands in for lenny-ops's verifier composition at
+// a moment before a key-set token's exp: it accepts the token with the
+// claims it carries, as the composition did, although the key set's own
+// clock has since moved past exp.
+type verifiedBeforeExpiry struct{ claims jwt.Claims }
+
+func (v verifiedBeforeExpiry) Verify(string) (jwt.Claims, error) { return v.claims, nil }
+
+// TestRevocationSetRule6ScopeHoldsWhenExpPassesAfterVerification pins
+// that rule 6 follows which member signed a token rather than a second
+// time-dependent verification: a key-set token whose exp passes between
+// authmw's verification and the scope decision is still refused before
+// the first read and still refused when its jti is in the set. A scope
+// that re-verified the token through the key set would treat it as a
+// dev trust-hook token and admit it in both cases.
+//
+// spec: 25.4 (The lenny-ops Service: Authentication), 13.3 (Credential Flow)
+func TestRevocationSetRule6ScopeHoldsWhenExpPassesAfterVerification(t *testing.T) {
+	h := newRevHarness(t, false)
+	claims := opsClaims("jti-expiring", "", "")
+	claims.IssuedAt = time.Now().Add(-2 * time.Hour).Unix()
+	claims.Expiry = time.Now().Add(-time.Hour).Unix()
+	tok := mintKeySetToken(t, h.signer, claims)
+	if _, err := h.keySet.Verify(tok); err == nil {
+		t.Fatal("key set accepted a token past its exp; the case needs one it refuses")
+	}
+	opts := h.opts
+	opts.Verifier = verifiedBeforeExpiry{claims: claims}
+	handler := authmw.Wrap(okHandler(), opts)
+
+	if rr := serveThrough(handler, tok); rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("before the first read: status %d %s, want 503", rr.Code, rr.Body.String())
+	}
+	h.src.set(auth.DefaultTenantID, "jti-expiring")
+	if err := h.startReads(); err != nil {
+		t.Fatalf("startup read: %v", err)
+	}
+	if rr := serveThrough(handler, tok); rr.Code != http.StatusUnauthorized || !strings.Contains(rr.Body.String(), "TOKEN_REVOKED") {
+		t.Errorf("revoked jti: status %d %s, want 401 TOKEN_REVOKED", rr.Code, rr.Body.String())
 	}
 }
 
