@@ -13,7 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
@@ -88,7 +87,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 	adminSATokenAudience := f.adminSATokenAudience
 	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
-	jwksPublish := f.jwksPublish
 	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
 	adapterTLSCert := f.adapterTLSCert
 	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
@@ -290,29 +288,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 		log.Printf("lenny-gateway: §4.3 /v1/oauth/* reverse-proxied to %s", *tokenServiceHTTPURL)
 	}
 
-	// ----- §10.3 JWK Set publication -----
-	// The JWKS endpoint advertises the kid/alg of every key the
-	// §10.3 RotatingVerifier holds (the current key plus every
-	// retained previous key during the §10.3 24h overlap window).
-	// The endpoint is unauthenticated by design; the JWK Set carries
-	// only public metadata, never private key material. Suppress with
-	// --jwks-publish=false.
-	if *jwksPublish {
-		jwksHandler := jwt.NewJWKSHandler(w.rotatingVerifier)
-		mux.Handle("/.well-known/jwks.json", jwksHandler)
-		// spec: §10.2 / F-10.2.14. The v1 signer is HMAC; the
-		// published JWKS entries carry `kty: oct` with no `k` field, so
-		// the document advertises kid/alg only. Log a notice when the
-		// endpoint is mounted on top of an HMAC-only key set so
-		// operators understand that JWKS verification of the actual
-		// signature is not possible against the published document
-		// (the secret must be obtained out of band).
-		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
-			w.rotatingVerifier.CurrentKeyID())
-		if !jwksAdvertisesAsymmetric(jwksHandler.Document()) {
-			log.Printf("lenny-gateway: §10.2 / F-10.2.14: published JWKS contains only `kty: oct` entries (HMAC). The document advertises kid/alg only; verifiers cannot validate signatures against it.")
-		}
-	}
 	// §15 ExternalAdapterRegistry. Each built-in adapter registers
 	// through the registry and the registry mounts its HTTPHandler on
 	// the shared mux. The §15 admin-API runtime-registration path

@@ -65,7 +65,6 @@ type gatewayFlags struct {
 	bearerTrustHMACKeyFile                        *string
 	bearerExpectedIssuer                          *string
 	bearerExpectedAudiences                       *string
-	jwksPublish                                   *bool
 	runtimeBin                                    *string
 	agentRuntime                                  *string
 	postgresDSN                                   *string
@@ -432,8 +431,6 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§10.2 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
 	f.bearerExpectedAudiences = flag.String("bearer-expected-audiences", os.Getenv("LENNY_BEARER_EXPECTED_AUDIENCES"),
 		"§10.2 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
-	f.jwksPublish = flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
-		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
 	f.runtimeBin = flag.String("runtime-bin", os.Getenv("LENNY_AGENT_BINARY"),
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §28.5.3 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
 	f.agentRuntime = flag.String("agent-runtime", os.Getenv("LENNY_AGENT_RUNTIME"),

@@ -157,7 +157,7 @@ func TestAlgNoneForgeryRejected(t *testing.T) {
 func TestKeySubstitutionForgedKIDRejected(t *testing.T) {
 	ts, store, signer := newForgeryTestServer(t)
 	// The attacker knows the real gateway's current kid (kids are not
-	// secret — they are published on /.well-known/jwks.json) but does
+	// secret — every token carries its kid in the JOSE header) but does
 	// not hold the real gateway-secret-material HMAC key, so they sign
 	// with a key of their own choosing while spoofing the trusted kid.
 	forgedHeader := map[string]any{"alg": "HS256", "typ": "JWT", "kid": signer.KeyID()}
@@ -180,10 +180,9 @@ func TestKeySubstitutionForgedKIDRejected(t *testing.T) {
 // controlled `alg` header, rather than the algorithm bound to the
 // key it actually holds for the token's `kid`, is tricked into
 // mis-verifying. The forged header here also carries the real `kid`,
-// as an attacker who has fetched the public JWKS document (which
-// carries only `{kty, use, alg, kid}` for an "oct" key per the §10.3
-// JWKS publication contract — no secret material) would attempt,
-// hoping some published field can substitute for the actual secret.
+// as an attacker who has read the kid from any issued token would
+// attempt, hoping some public field can substitute for the actual
+// secret.
 // diagnosis: a 201 (or any non-401/non-TOKEN_INVALID) response means
 // the verifier picked its verification algorithm from the token's own
 // header instead of always re-deriving the expected signature from
@@ -202,8 +201,8 @@ func TestAlgorithmConfusionRS256HeaderRejected(t *testing.T) {
 	// The attacker has no real key material for the "RS256" they
 	// claim, so they sign with whatever public-looking bytes they can
 	// get their hands on (here, the published kid string itself,
-	// standing in for "public" material a real JWKS document would
-	// expose for an asymmetric key).
+	// standing in for public material an asymmetric key would
+	// expose).
 	tok := craftToken(t, confusedHeader, claims, []byte(signer.KeyID()))
 	assertForgeryRejected(t, ts, store, tok)
 }

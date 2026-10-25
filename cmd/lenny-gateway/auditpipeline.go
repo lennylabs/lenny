@@ -263,13 +263,6 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		auditAppender = policy.NewChainSetAppender(auditChains, nil)
 	}
 
-	// §10.3 JWT signing-key rotation audit. Each Rotate or
-	// RetireExpired call against the rotatingVerifier emits one
-	// `platform.jwt_signing_key_rotated` audit row through this
-	// observer; the observer shares the per-tenant chain backend
-	// chosen above and writes to the platform tenant.
-	w.rotatingVerifier.SetObserver(jwtaudit.NewObserver(auditAppender))
-
 	// spec: §11.7 item 4 + Wire Format — wire the OCSF translator and
 	// SIEM forwarder into the gateway binary. The translator drains the
 	// auditstore's ocsf_translation_state rows, serializes each to the

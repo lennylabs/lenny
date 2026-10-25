@@ -19,7 +19,6 @@ import (
 //   - The OpenAPI document is served "no authentication required" at
 //     /openapi.yaml and /openapi.json (§15.1). /v1/openapi.json and
 //     /v1/openapi.yaml serve the same document from the same handler.
-//   - /.well-known/jwks.json carries public key metadata only (§10.3).
 //   - /v1/oauth/ is the reverse proxy to the Token Service, which
 //     authenticates the subject and actor tokens itself (§4.3, §13.3).
 //   - /playground, /playground/, and /v1/playground/token are the §27.3
@@ -49,7 +48,6 @@ var publicRoutePatterns = []string{
 	"/openapi.json",
 	"/v1/openapi.json",
 	"/v1/openapi.yaml",
-	"/.well-known/jwks.json",
 	"/v1/oauth/",
 	"/playground",
 	"/playground/",

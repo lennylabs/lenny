@@ -387,7 +387,6 @@ func TestOpsClockSkewExceeded(t *testing.T) {
 
 // §10.3 certificate expiry — covered structurally by:
 //   - pkg/mtls/rotation.go (CA-rotation state machine; unit tests).
-//   - pkg/auth/jwt/jwks (rotating-verifier + JWKS publication).
 //   - pkg/clockinject (clock harness).
 //
 // Live expiry exercise pairs the clock harness with a deployed
@@ -395,7 +394,7 @@ func TestOpsClockSkewExceeded(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCertificateExpiryAdvance(t *testing.T) {
-	t.Logf("§12.8: pkg/mtls/rotation + pkg/auth/jwt/jwks + pkg/clockinject; live expiry exercise on the ops backlog.")
+	t.Logf("§12.8: pkg/mtls/rotation + pkg/clockinject; live expiry exercise on the ops backlog.")
 }
 
 // --- Configuration ---

@@ -154,8 +154,8 @@ func TestValidatorAllowsSystemWriteWithoutPrincipal_F1176(t *testing.T) {
 	inner := &recordingChain{}
 	v := auditscope.New(inner, nil)
 	// No authenticated principal on ctx: a gateway-internal write
-	// (background reconciler, key-rotation observer). It passes.
-	if _, err := v.Append(context.Background(), "acme", "platform.jwt_signing_key_rotated", json.RawMessage(`{}`), time.Time{}); err != nil {
+	// (background reconciler, CA-rotation observer). It passes.
+	if _, err := v.Append(context.Background(), "acme", "platform.ca_rotated", json.RawMessage(`{}`), time.Time{}); err != nil {
 		t.Fatalf("system write should pass: %v", err)
 	}
 	if len(inner.appends) != 1 || inner.appends[0].tenant != "acme" {

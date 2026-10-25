@@ -105,12 +105,9 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 
 	// ----- §10.3 RotatingVerifier -----
 	// Wrap the Token Service signer in a §10.3 RotatingVerifier so the
-	// JWKS publication endpoint, the rotation lifecycle audit event,
-	// and a future operator-driven Rotate call all converge on one
-	// canonical key holder. The rotating verifier starts with the
-	// boot-time KMS signer as its sole current key; until a Rotate
-	// lands, JWKSHandler advertises exactly that key and the bearer
-	// path verifies against it. The §13.3 24h overlap window is the
+	// bearer path verifies through one canonical key holder. The
+	// rotating verifier starts with the boot-time KMS signer as its
+	// sole current key, and the bearer path verifies against it. The §13.3 24h overlap window is the
 	// jwt.DefaultOverlapWindow default.
 	// Verifier uses kmsBackedSigner directly: verification is local
 	// memory and doesn't reach KMS, so it must not gate on the §10.2
