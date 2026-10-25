@@ -3222,6 +3222,53 @@ narrows to Kata.
     `metrics.go`, adds a tier-1 test that registers the §27.8 set through the metric label validator, runs
     the tier-4 playground-bearer refusal case, and closes F-27.8.1.
 
+**Defects filed from proposal unstaged-defect lists (2026-10-25).** Proposals 0097, 0098, and 0099 each list
+defects in the shipped tree that they do not stage. The ones no record yet tracked are filed in BUILD-GAPS and
+routed below. Already tracked before this pass: F-10.2.22, F-10.2.23, and F-10.2.24 (0097 and 0098), and
+F-12.4.31, F-12.4.32, and F-25.4.32 (0099's condition audit). 0098's stale tier-11 `secondHalfFilings` quote
+for F-10.2.22 was fixed at `5ae0355ce`, and tier 11 passes, so it is not filed. 0097's session-creation token
+renewal path is filed together with the session-creation mint as F-10.2.25.
+
+- Direct fixes after proposal 0097 lands, in this order. The first two are security fixes and lead the queue.
+  - [ ] **F-17.4.35** (High): `lenny-ops` admits the dev identity headers and an unauthenticated surface
+    whenever `--production` is false, and the chart defaults `ops.production` to false. Bind every relaxation
+    to `LENNY_DEV_MODE` per §17.4 "Dev mode guard rails" item 3 (0097 decision D26).
+  - [ ] **F-25.4.33** (Medium): `lenny-ops` sets no `PlatformRoles` resolver, so a platform-managed role
+    downgrade does not reach it until `exp`.
+  - [ ] **F-17.9.25** (High): the self-managed answer-file renders give no client a Postgres path under an
+    enforcing CNI (PgBouncer port 6432 against 5432 policies, no upstream database, no direct egress).
+  - [ ] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
+    only at the next 30-second read.
+  - [ ] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
+    or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set.
+  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
+    the mint through the Token Service exchange §8.2 names. Coordinate with F-10.2.25.
+  - [ ] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
+  - [ ] **F-12.4.35** (Low): the `--redis-cluster-addrs` help text names the retired per-instance migration.
+  - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
+    broadcast load first; a switch to sharded pub/sub is a direct fix.
+- New proposals, each after proposal 0097.
+  - [ ] **Impersonation revocation proposal** (not yet written), first after 0097: **F-13.3.20** (High).
+    Ending an impersonation session revokes nothing, the session store is replica-local, and a full revoke
+    misses the bearer. No section states revocation on end, so the specification needs the rule.
+  - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
+    §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
+    on every production gate.
+  - [ ] **Session capability token proposal** (not yet written), the follow-up 0097 names: **F-10.2.25**
+    (Medium), the session-creation mint and the gateway-to-pod renewal path.
+  - [ ] **Shared `uploadToken` key proposal** (not yet written): **F-7.1.31** (Medium), the per-process key
+    ring and consumed-token tracker. It may join the session capability token proposal.
+  - [ ] **Token audience and error-catalog proposal** (not yet written): **F-10.2.27** (Medium, no verifier
+    enforces `aud` by default), **F-15.1.56** (Low, no §15 rows for the revoked-token and
+    `token_validation_unavailable` responses), and **F-12.3.26** (Low, no `issued_tokens` row in the §12.3
+    write-IOPS table).
+  - [ ] **Redis and `lenny-ops` text-corrections proposal** (not yet written): **F-12.4.34** (Medium, the
+    §12.4 data-at-rest posture overclaims Redis recoverability), **F-12.4.36** (Low, the chart cannot run the
+    migration Cluster beside the Sentinel instance), **F-25.2.17** (Low, the envelope example's category),
+    **F-25.4.34** (Low, the probe YAML's `timeoutSeconds`), and **F-25.4.36** (Low, reconciliation step 2 and
+    the Cluster durability statement). It is independent of P2 to P4 and of the inter-replica carrier
+    proposal.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
