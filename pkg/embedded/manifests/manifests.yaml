@@ -4850,33 +4850,38 @@ spec:
             # the metrics endpoint on the rendered pod spec. F-16.9.10.
             - name: metrics
               containerPort: 8090
-          # §25.4 — the permissive /healthz covers
-          # startup and liveness so a transient Postgres or Kubernetes
-          # API blip does not restart an otherwise-healthy pod; the
-          # startup probe's 30×2s budget covers Postgres connection
-          # establishment.
+          # §25.4 — startup and liveness probe the permissive /healthz,
+          # which restarts a pod only when neither Postgres nor the
+          # Kubernetes API is reachable; the startup probe's 30×2s budget
+          # covers Postgres connection establishment. Every probe sets
+          # timeoutSeconds 3, above the 2s bound on each dependency probe,
+          # so kubelet's 1s default does not fail a probe before /healthz
+          # answers.
           startupProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 — readiness uses the strict gate so traffic
-          # is not routed to a replica that cannot reach both Postgres
-          # and the Kubernetes API. Strict readiness is gated on
-          # ops.production: the stock degraded single-process render
-          # (LENNY_POSTGRES_DSN unset) would never reach Ready under the
-          # strict gate, so it falls back to the graceful /readyz report.
+          # §25.4 — production readiness uses the permissive /healthz
+          # check, which passes when Postgres or the Kubernetes API is
+          # reachable, so a Postgres outage does not remove every replica
+          # from the Service and the §25.15 degraded mode stays reachable.
+          # The strict ?strict=true form is a diagnostic check no probe
+          # uses. The non-production render keeps the /readyz report.
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3

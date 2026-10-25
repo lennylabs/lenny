@@ -6197,7 +6197,8 @@
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/backup_test.go",
-        "tests/tier3_contract/ops_endpoints/helpers_test.go"
+        "tests/tier3_contract/ops_endpoints/helpers_test.go",
+        "tests/tier3_contract/ops_endpoints/healthz_readiness_test.go"
       ],
       "packages": [
         "cmd/lenny-ops",

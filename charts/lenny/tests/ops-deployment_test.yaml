@@ -255,6 +255,33 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
 
+  # spec: §25.4 — every probe in the non-production render sets
+  # timeoutSeconds 3, above the 2s dependency probe bound, and no probe
+  # uses the strict diagnostic check.
+  - it: sets a 3s timeout and no strict path on every probe outside production
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          pattern: strict=true
+
   # spec: §25.4 — F-25.4.10. The startup probe uses the
   # permissive /healthz with a 30×2s budget covering Postgres connection.
   - it: renders the §25.4 startup probe on the permissive /healthz
@@ -272,10 +299,11 @@ tests:
           path: spec.template.spec.containers[0].startupProbe.periodSeconds
           value: 2
 
-  # spec: §25.4 — F-25.4.10. In production the readiness probe
-  # uses the strict gate so traffic is not routed to a replica that
-  # cannot reach both Postgres and the Kubernetes API.
-  - it: uses the strict readiness gate when ops.production is true
+  # spec: §25.4 — in production the readiness probe uses the permissive
+  # /healthz, which passes when Postgres or the Kubernetes API is
+  # reachable, so a Postgres outage keeps replicas in the Service. Every
+  # probe sets timeoutSeconds 3 and none uses the strict diagnostic check.
+  - it: uses the either-dependency /healthz readiness check when ops.production is true
     set:
       ops:
         production: true
@@ -285,10 +313,28 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /healthz?strict=true
+          value: /healthz
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.failureThreshold
           value: 3
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          pattern: strict=true
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          pattern: strict=true
 
   # spec: §25.4 — F-25.4.10. A writable /tmp emptyDir backs the
   # read-only root filesystem posture.

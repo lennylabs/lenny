@@ -52,7 +52,7 @@ func SkipUnlessAvailable(t testing.TB) {
 
 // StartWith builds cmd/lenny-ops and spawns it on a random free port
 // with the supplied extra flags appended after the bind address. It
-// returns once /healthz is responsive. The subprocess runs with its
+// returns once /readyz answers. The subprocess runs with its
 // working directory at the repo root so the default --runbook-dir
 // (docs/runbooks) resolves; a missing dir is non-fatal.
 //
@@ -176,15 +176,24 @@ func (p *Process) stop(t testing.TB) {
 	})
 }
 
-// waitReady polls /healthz until the process responds (or the deadline
+// readyRequestTimeout bounds one /readyz request in waitReady. /readyz
+// runs the dependency probes bounded by the 2 s probe timeout of
+// pkg/ops/opsserver, so the bound exceeds it: a /readyz answer delayed
+// by a probe that hangs, rather than refuses, still ends the wait.
+const readyRequestTimeout = 3 * time.Second
+
+// waitReady polls /readyz until the process responds (or the deadline
 // expires). Any HTTP response means the listener is up; only a connection
-// error is treated as "not ready". /healthz is unauthenticated per §25.4.
+// error is treated as "not ready". The wait polls /readyz, which returns
+// 200 while the process serves, rather than /healthz, which returns 503
+// outside a cluster whenever Postgres is down. Both endpoints are
+// unauthenticated per §25.4.
 func (p *Process) waitReady(d time.Duration) error {
 	deadline := time.Now().Add(d)
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	client := &http.Client{Timeout: readyRequestTimeout}
 	var lastErr error
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, p.baseURL+"/healthz", nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, p.baseURL+"/readyz", nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
