@@ -23,6 +23,8 @@ type fakeKMS struct {
 	failEncrypt error
 	failDecrypt error
 	lastAAD     []byte
+	// signing holds the Sign and public-key behavior (sign_test.go).
+	signing signFake
 }
 
 func newFakeKMS() *fakeKMS {

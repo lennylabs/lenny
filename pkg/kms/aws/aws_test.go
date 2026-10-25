@@ -28,6 +28,8 @@ type fakeKMS struct {
 	// lastContext records the EncryptionContext from the most recent
 	// Encrypt / Decrypt call so a test can assert it.
 	lastContext map[string]string
+	// signing holds the Sign and public-key behavior (sign_test.go).
+	signing signFake
 }
 
 func newFakeKMS() *fakeKMS {

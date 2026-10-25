@@ -4,6 +4,7 @@ package tenantkms_test
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"testing"
 	"time"
@@ -44,6 +45,18 @@ func (f *fakeProvider) UnwrapDEK(_ context.Context, _ string, w kms.WrappedDEK) 
 }
 
 func (f *fakeProvider) CurrentKEKVersion(context.Context, string) (int, error) { return 1, nil }
+
+// errProbeFakeNoSigning is returned by the signing half of the fake: the
+// §12.5 probe exercises only the KEK operations.
+var errProbeFakeNoSigning = errors.New("probe fake: signing is not modelled")
+
+func (f *fakeProvider) Sign(context.Context, string, []byte) ([]byte, error) {
+	return nil, errProbeFakeNoSigning
+}
+
+func (f *fakeProvider) PublicKey(context.Context, string) (*ecdsa.PublicKey, error) {
+	return nil, errProbeFakeNoSigning
+}
 
 // spec: §12.5 — the ProviderProbeManager backs the
 // admin-time and continuous probe over the gateway's resolved
