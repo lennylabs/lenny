@@ -66,8 +66,9 @@ const (
 )
 
 // Signer mints a §10.2 JWT. The production wiring passes the gateway's
-// KMS-backed signer so the minted token verifies against the gateway's
-// own §10.3 RotatingVerifier without any external IdP round-trip.
+// breaker-wrapped remote signer over the platform:jwt-signing key, so the
+// minted token verifies against the §10.2 key set on every gateway
+// replica without any external IdP round-trip.
 type Signer interface {
 	Sign(context.Context, jwt.Claims) (string, error)
 }

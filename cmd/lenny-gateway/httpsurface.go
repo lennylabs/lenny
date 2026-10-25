@@ -421,10 +421,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 — Sign goes through the breaker so
 			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
-			// Verify uses the inner signer (verification is local memory
-			// and never reaches KMS). F-10.2.6.
+			// Verify uses the key set, which holds public keys only and
+			// never reaches KMS. F-10.2.6.
 			Signer:   w.jwtSigner,
-			Verifier: w.kmsBackedSigner,
+			Verifier: w.jwtKeySet,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
@@ -828,15 +828,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// applyAuthPostureOptions. F-10.2.21.
 	//
 	// The §10.2 Bearer path is verified with the bearer verifier built
-	// above: the in-process Token Service signer, so a token minted by
-	// POST /v1/oauth/token round-trips through the gateway, plus the
-	// embedded OIDC provider's key when --bearer-trust-hmac-key-file is
-	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
-	// verifier.
+	// above: the §10.2 key set, so a token minted by any gateway replica
+	// or by POST /v1/oauth/token on any Token Service replica verifies
+	// here, plus the embedded OIDC provider's key when
+	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode.
 	authOpts := authmw.Options{
 		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
 		// IdP-key members read the configured `auth.tenantIdClaim`
-		// (embeddedHMACVerifier) and the Token Service member keeps
+		// (embeddedHMACVerifier) and the key-set member keeps
 		// `tenant_id`. F-10.2.9.
 		Verifier:    w.bearerVerifier,
 		Revocations: revProp,

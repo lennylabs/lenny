@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"log"
 	"sync"
 
@@ -12,18 +13,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // buildTokenSigningStores constructs the §7.1 uploadToken key ring, issuer,
 // verifier, and rotator; the §4 / §17.5 KMS provider and its breaker
-// observer; the §10.3 rotating verifier; and the §10.2 bearer verifier and
-// JWT signer, recording each on the accumulator. It is an extracted
-// per-concern step of buildStores.
+// observer; the §10.2 JWT key set and the shared remote signer; and the
+// §10.2 bearer verifier, recording each on the accumulator. It is an
+// extracted per-concern step of buildStores.
 //
-// spec: §4.1 gateway subsystem seams; §7.1 uploadToken; §10.2 / §10.3
-// verifiers; §4 KMS provider.
+// spec: §4.1 gateway subsystem seams; §7.1 uploadToken; §10.2
+// (Authentication) verifiers and signing topology; §4 KMS provider.
 func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	f := w.f
 	devMode := f.devMode
@@ -59,11 +61,11 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	})
 
 	// ----- §4 KMS provider -----
-	// The §4 / §12.9 envelope-encryption KEK seam. The gateway wraps
-	// the §4.9 connector-credential DEKs through this provider; the
-	// signing-key concern moved to the Token Service binary in
-	// F-4.3.12. --kms-provider selects local | aws | gcp | azure;
-	// `local` is rejected when --environment=prod.
+	// The §4 / §12.9 envelope-encryption KEK seam and the §10.2 remote
+	// signing seam. The gateway wraps the §4.9 connector-credential DEKs
+	// through this provider and signs every Lenny-issued JWT it mints
+	// with its platform:jwt-signing key. --kms-provider selects local |
+	// aws | gcp | azure; `local` is rejected when --environment=prod.
 	// spec: F-4.3.11, F-10.2.11, F-17.5.2.
 	kmsProvider, err := providerflags.Resolve(context.Background(), *kmsOpts)
 	if err != nil {
@@ -80,62 +82,48 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		tps.SetSaltKMS(kmsProvider)
 	}
 
-	// ----- §13.3 Token Service -----
-	// §4 KMS-envelope-backed JWT signer: the HMAC-SHA256 signing key is
-	// sealed under a KMS KEK rather than being a plaintext per-process
-	// dev secret. The token-service handler mounted below serves POST
-	// /v1/oauth/token (RFC 8693).
-	kmsBackedSigner, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "boot")
-	if err != nil {
-		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
-	}
-	// spec: §10.2 — wrap the KMS-backed signer in the
-	// JWTSigner circuit breaker. More than 3 consecutive Sign failures
-	// inside a 30s window trips the breaker open; subsequent Sign calls
-	// short-circuit to ErrSigningUnavailable until the cooldown elapses.
-	// The Token Service handler maps the sentinel to 503
-	// KMS_SIGNING_UNAVAILABLE with retryable: true. The Observer is
-	// wired after gatewaymetrics.New() below so the breaker can push the
-	// signing-error counter and circuit-state gauge. F-10.2.6.
+	// ----- §10.2 Shared signer and key set -----
+	// spec: §10.2 (Authentication) "Signing topology", "Verifier key set
+	// and rotation"; §4.3 — the gateway mints the impersonation bearers,
+	// the §17.6 admin credential, and the playground bearers in process,
+	// with the same platform:jwt-signing key the Token Service signs with.
+	// The key set is loaded once at startup, and a process that cannot
+	// load it does not start.
+	//
+	// The signer goes through the §10.2 JWTSigner circuit breaker. More
+	// than 3 consecutive hard Sign failures inside a 30s window trip it
+	// open; later Sign calls short-circuit to ErrSigningUnavailable until
+	// the cooldown elapses, and each mint site maps the refusal to 503
+	// KMS_SIGNING_UNAVAILABLE. The observer is wired to gatewaymetrics
+	// after gatewaymetrics.New() so the breaker can push the
+	// signing-error counter and circuit-state gauge. Verification goes
+	// through the key set, which holds public keys only and never calls
+	// the KMS, so it does not gate on the breaker. F-10.2.6.
 	kmsBreakerObs := &kmsBreakerObserver{}
-	jwtSigner := &jwt.BreakerSigner{
-		Inner:    kmsBackedSigner,
-		Observer: kmsBreakerObs,
+	keySet, jwtSigner, err := buildJWTSigning(context.Background(), kmsProvider, kmsOpts.AliasToKey, kmsBreakerObs)
+	if err != nil {
+		log.Fatalf("lenny-gateway: §10.2 JWT key set: %v", err)
 	}
-
-	// ----- §10.3 RotatingVerifier -----
-	// Wrap the Token Service signer in a §10.3 RotatingVerifier so the
-	// bearer path verifies through one canonical key holder. The
-	// rotating verifier starts with the boot-time KMS signer as its
-	// sole current key, and the bearer path verifies against it. The §13.3 24h overlap window is the
-	// jwt.DefaultOverlapWindow default.
-	// Verifier uses kmsBackedSigner directly: verification is local
-	// memory and doesn't reach KMS, so it must not gate on the §10.2
-	// signing breaker. F-10.2.6.
-	rotatingVerifier := jwt.NewRotatingVerifier(kmsBackedSigner, jwt.DefaultOverlapWindow)
+	log.Printf("lenny-gateway: §10.2 JWT key set loaded (%d key(s), signing kid %s)",
+		keySet.Len(), keySet.Signing().KeyID)
 
 	// ----- §10.2 Bearer verifier -----
-	// The Token Service signer verifies tokens it minted itself. A
-	// production install runs with that single verifier. §17.4 Embedded
-	// Mode additionally trusts the embedded OIDC provider's HMAC key:
-	// when --bearer-trust-hmac-key-file points at a key file, the
-	// gateway loads it and accepts tokens signed with it alongside
-	// Token Service tokens through a jwt.MultiVerifier. The flag is
-	// unset in a production install, so the production posture is
-	// unchanged. The Token Service signer stays the primary verifier:
-	// its rejection reason is surfaced when neither verifier accepts a
-	// token. The verifier is the §10.3 RotatingVerifier; once a
-	// rotation lands, a token signed by the now-previous key keeps
-	// verifying through the overlap window without a code change here.
-	var bearerVerifier jwt.Verifier = rotatingVerifier
+	// The key set verifies every Lenny-issued token, whichever replica
+	// or Token Service replica signed it. A production install runs with
+	// that single verifier. §17.4 Embedded Mode additionally trusts the
+	// embedded OIDC provider's HMAC key: when --bearer-trust-hmac-key-file
+	// points at a key file, the gateway loads it and accepts tokens
+	// signed with it alongside Lenny-issued tokens through a
+	// jwt.MultiVerifier. The key set stays the primary member, so its
+	// rejection reason is surfaced when neither member accepts a token.
+	var bearerVerifier jwt.Verifier = keySet
 	if *bearerTrustHMACKeyFile != "" {
-		// spec: §10.2. The bare HMAC signer is the dev-mode
-		// backend; the spec is explicit that it "must never be used in
-		// production deployments". --bearer-trust-hmac-key-file is the
-		// §17.4 Embedded Mode hook that trusts the bundled OIDC
-		// provider's HMAC key; it has no production use case. Refuse
-		// to load it when --dev-mode is off so a misconfigured chart
-		// fails closed at startup instead of silently widening the
+		// spec: §10.2. The HMAC trust member is the dev-mode embedded
+		// OIDC hook; the spec is explicit that the dev HMAC backend
+		// "must never be used in production deployments".
+		// --bearer-trust-hmac-key-file has no production use case.
+		// Refuse to load it when --dev-mode is off so a misconfigured
+		// chart fails closed at startup instead of silently widening the
 		// trust set. F-10.2.13.
 		if !*devMode {
 			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file requires --dev-mode (§10.2: the dev HMAC backend must never be used in production)")
@@ -150,11 +138,10 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		// enforces the audience, but the gateway accepts the embedded key
 		// directly and would otherwise honor any aud claim signed under it.
 		// Wrap the embedded-key verifier in a ClaimChecker pinned to the
-		// embedded OIDC audience (dev.local) so a foreign-audience token —
-		// even one validly signed by the trusted key — is refused at the
-		// gateway. The Token Service path (rotatingVerifier) is unaffected.
-		// F-17.4.16.
-		bearerVerifier = embeddedBearerVerifier(rotatingVerifier, trusted, *tenantIDClaim)
+		// embedded OIDC audience (dev.local) so a foreign-audience token,
+		// even one validly signed by the trusted key, is refused at the
+		// gateway. The key-set member is unaffected. F-17.4.16.
+		bearerVerifier = embeddedBearerVerifier(keySet, trusted, *tenantIDClaim)
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s); embedded tokens must carry aud=dev.local",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
@@ -172,13 +159,6 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		log.Printf("lenny-gateway: §10.2 bearer iss/aud enforced iss=%q audiences=%v",
 			*bearerExpectedIssuer, expectedAuds)
 	}
-	// §13.3 canonical surface: the gateway does NOT mint tokens
-	// in-process. The /v1/oauth/* HTTP path is reverse-proxied to
-	// lenny-token-service per --token-service-http-url, so the
-	// Token Service is the only component holding the signing key
-	// and the only component writing token.exchanged audit rows.
-	// spec: §4.3 / F-4.3.12.
-
 	// spec: §4.1 — record the §7.1 uploadToken, §4 KMS, and §10.2 / §10.3
 	// signing and verification surfaces on the accumulator for the
 	// credential-assignment step and the run loop.
@@ -189,11 +169,30 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	w.uploadRotator = uploadRotator
 	w.kmsProvider = kmsProvider
 	w.kmsBreakerObs = kmsBreakerObs
-	w.kmsBackedSigner = kmsBackedSigner
+	w.jwtKeySet = keySet
 	w.jwtSigner = jwtSigner
-	w.rotatingVerifier = rotatingVerifier
 	w.bearerVerifier = bearerVerifier
 	w.expectedAuds = expectedAuds
+}
+
+// buildJWTSigning loads the §10.2 key set once and builds the gateway's
+// shared signer from its signing entry, so the signer's kid and the
+// verifier's kid come from one PublicKey fetch. The remote signer is
+// wrapped in a BreakerSigner reporting to obs. Any key-set load error is
+// returned, and the caller refuses to start.
+//
+// spec: §10.2 (Authentication) "Signing topology", "Verifier key set and
+// rotation".
+func buildJWTSigning(ctx context.Context, provider kms.Provider, aliasToKey map[string]string, obs jwt.BreakerObserver) (*jwt.KeySet, *jwt.BreakerSigner, error) {
+	keySet, err := jwt.LoadKeySet(ctx, provider, aliasToKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	remote, err := jwt.NewRemoteSigner(provider, keySet.Signing())
+	if err != nil {
+		return nil, nil, fmt.Errorf("build remote signer: %w", err)
+	}
+	return keySet, &jwt.BreakerSigner{Inner: remote, Observer: obs}, nil
 }
 
 // kmsBreakerObserver routes the §10.2 JWTSigner breaker
@@ -255,10 +254,10 @@ func (o *kmsBreakerObserver) OnCircuitClosed() {
 const embeddedOIDCAudience = "dev.local"
 
 // embeddedBearerVerifier composes the §17.4 Embedded Mode bearer
-// verifier: the Token Service member (primary) first, unwrapped, so a
-// gateway-issued token keeps its own `tenant_id`, then the embedded OIDC
-// member, which reads the configured tenant claim. The Token Service
-// member's rejection reason is surfaced when neither accepts a token.
+// verifier: the key-set member (primary) first, unwrapped, so a
+// Lenny-issued token keeps its own `tenant_id`, then the embedded OIDC
+// member, which reads the configured tenant claim. The key-set member's
+// rejection reason is surfaced when neither accepts a token.
 // spec: §10.2 (Authentication: `tenant_id` extraction), §17.4.
 func embeddedBearerVerifier(primary, trusted jwt.Verifier, tenantClaim string) jwt.Verifier {
 	return jwt.NewMultiVerifier(primary, embeddedHMACVerifier(trusted, tenantClaim))
@@ -273,9 +272,9 @@ func embeddedBearerVerifier(primary, trusted jwt.Verifier, tenantClaim string) j
 //
 // The embedded provider is an identity provider, so a token its key
 // verified takes its tenant from the configured tenant claim
-// (--tenant-id-claim) through jwt.TenantClaimVerifier. The Token
-// Service member of the bearer verifier is not wrapped: a gateway-issued
-// token resolves from its own `tenant_id`. spec: §10.2 (Authentication:
+// (--tenant-id-claim) through jwt.TenantClaimVerifier. The key-set
+// member of the bearer verifier is not wrapped: a Lenny-issued token
+// resolves from its own `tenant_id`. spec: §10.2 (Authentication:
 // `tenant_id` extraction).
 func embeddedHMACVerifier(trusted jwt.Verifier, tenantClaim string) jwt.Verifier {
 	return jwt.NewTenantClaimVerifier(jwt.NewClaimChecker(trusted, jwt.ExpectedClaims{

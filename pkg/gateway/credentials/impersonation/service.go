@@ -25,8 +25,8 @@ type AuditAppender interface {
 }
 
 // Signer mints the target-user bearer once the started audit commits.
-// pkg/auth/jwt.Signer (the KMS-backed / breaker-wrapped gateway signer)
-// satisfies it.
+// pkg/auth/jwt.Signer (the gateway's breaker-wrapped remote signer over
+// the §10.2 platform:jwt-signing key) satisfies it.
 type Signer interface {
 	Sign(ctx context.Context, c jwt.Claims) (string, error)
 }

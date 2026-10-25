@@ -65,23 +65,8 @@ func Start(t testing.TB) *Process {
 // can exercise the dev-header RBAC path.
 func StartWith(t testing.TB, extraArgs ...string) *Process {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skipf("go not on PATH: %v", err)
-	}
-
-	tmp, err := os.MkdirTemp("", "lenny-gateway-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-
-	binary := filepath.Join(tmp, "lenny-gateway")
-	root := schematest.RepoRoot(t)
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
-	}
+	binary := Build(t)
+	tmp := filepath.Dir(binary)
 
 	port, err := freePort()
 	if err != nil {
@@ -158,6 +143,31 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		t.Fatalf("gateway not ready: %v\nlogs:\n%s", err, b)
 	}
 	return p
+}
+
+// Build compiles cmd/lenny-gateway into a fresh temporary directory,
+// which t's cleanup removes, and returns the binary's path. A test that
+// runs the binary to exit with its own flags and environment, such as a
+// startup-refusal case, uses it directly; Start and StartWith use it
+// before they launch the process. It skips the test when go is not on
+// PATH.
+func Build(t testing.TB) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go not on PATH: %v", err)
+	}
+	tmp, err := os.MkdirTemp("", "lenny-gateway-it-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+	binary := filepath.Join(tmp, "lenny-gateway")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
+	build.Dir = schematest.RepoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
+	}
+	return binary
 }
 
 // stop signals the gateway with sig and waits for it to exit, force-killing

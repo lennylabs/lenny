@@ -339,14 +339,15 @@ type Handler struct {
 
 // Options configures New.
 type Options struct {
-	// Signer mints the playground session-capability JWTs. In
-	// production this is the KMS-backed gateway signer; the dev HMAC
-	// signer satisfies the same interface for the no-cloud path.
+	// Signer mints the playground session-capability JWTs. The gateway
+	// passes its breaker-wrapped remote signer over the §10.2
+	// platform:jwt-signing key.
 	Signer jwt.Signer
 
-	// Verifier validates pasted bearer tokens in apiKey mode. When nil
-	// and Signer also verifies (the HMAC and KMS signers both do), New
-	// uses the signer itself.
+	// Verifier validates pasted bearer tokens in apiKey mode. The gateway
+	// passes the §10.2 key set. When nil and Signer also verifies, New
+	// uses the signer itself; the remote signer does not verify, so the
+	// gateway always sets it.
 	Verifier jwt.Verifier
 
 	// Tenants resolves tenant existence for the §27.2 layer-4
