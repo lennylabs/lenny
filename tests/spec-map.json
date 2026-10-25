@@ -3307,7 +3307,21 @@
         "tests/testinfra/stubs/kms/signing_test.go::TestStubSignFaultInjection_spec_10_2",
         "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignAWS",
         "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignGCP",
-        "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignAzure"
+        "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignAzure",
+        "pkg/auth/jwt/remotesigner_test.go::TestRemoteSignerSendsSHA256DigestUnderSigningAlias_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestRemoteSignerPropagatesProviderFailures_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestNewRemoteSignerRequiresProviderAndSigningEntry_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestHMACSignerIsNotASigner_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestECPublicJWKThumbprintIsRFC7638_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestECPublicJWKAndThumbprintRejectNonP256_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetVerifiesRemoteES256Token_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetRejectsNonES256Alg_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetKidRejectionsMakeNoProviderCall_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetAcceptsVerifyKeyAcrossRotation_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetRejectsForeignKey_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetSignatureAndClaimChecks_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetLoadsNoVerifyKeyWhenUnmapped_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetFailsWhenAMappedAliasFails_spec_10_2"
       ],
       "packages": [
         "pkg/auth",

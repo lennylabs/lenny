@@ -7,12 +7,10 @@
 // with the configured Signer, and returns the RFC 8693 response
 // envelope.
 //
-// The Server signs with any jwt.Signer. §4 requires the production
-// Token Service to sign with KMS-backed material: jwt.KMSSigner holds
-// signing material whose durable form is KMS-envelope-encrypted, so
-// no plaintext signing key is persisted. The dev HMAC signer
-// (jwt.HMACSigner) satisfies the same interface for the no-cloud
-// development path. The Server keeps an in-memory issued-tokens store
+// The Server signs with any jwt.Signer. §10.2 requires every
+// Lenny-issued token to be ES256-signed through the KMS provider
+// (jwt.RemoteSigner behind a jwt.BreakerSigner). jwt.HMACSigner does not
+// satisfy jwt.Signer; tests adapt it through tests/testinfra/jwtsign. The Server keeps an in-memory issued-tokens store
 // and no Postgres advisory lock; a durable IssuedTokenStore makes the
 // §13.3 write-before-issue record durable.
 package tokenservice
@@ -137,10 +135,8 @@ type Server struct {
 
 // Options configures the Server.
 type Options struct {
-	// Signer mints the issued JWTs. §4 wants the production Token
-	// Service to use jwt.KMSSigner (KMS-envelope-backed signing
-	// material); jwt.HMACSigner is the development signer. Both
-	// satisfy jwt.Signer.
+	// Signer mints the issued JWTs. Sign receives the request context,
+	// which bounds the remote KMS Sign call (§10.2).
 	Signer jwt.Signer
 
 	Verifier jwt.Verifier
@@ -541,7 +537,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request, req Requ
 		return
 	}
 
-	jti, signed, ok := s.mintToken(w, issued, now, finish)
+	jti, signed, ok := s.mintToken(r.Context(), w, issued, now, finish)
 	if !ok {
 		return
 	}
@@ -669,7 +665,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 // primary key. spec: §4.3. An open JWTSigner circuit breaker fails with
 // 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2,
 // F-10.2.6).
-func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
+func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
 	jti, err := newJTI()
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
@@ -695,7 +691,7 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 		AuthorizedTools: issued.AuthorizedTools,
 		Typ:             auth.TokenType(issued.Typ),
 	}
-	signed, err := s.signer.Sign(out)
+	signed, err := s.signer.Sign(ctx, out)
 	if err != nil {
 		// spec: §10.2 — when the JWTSigner circuit breaker is
 		// open (or otherwise reports the KMS-backed signing material is

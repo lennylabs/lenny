@@ -15,6 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeTenants is an in-test TenantRegistry. registered names the
@@ -191,8 +192,9 @@ func TestEffectiveIdleAndDurationCaps(t *testing.T) {
 func TestDevModeMintStampsOriginClaim(t *testing.T) {
 	signer := devSigner()
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  signer,
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
@@ -227,8 +229,9 @@ func TestDevModeMintStampsOriginClaim(t *testing.T) {
 func TestDevModeReadyGateRejectsUnseededTenant(t *testing.T) {
 	signer := devSigner()
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  signer,
-		Tenants: fakeTenants{registered: map[string]bool{}}, // acme not seeded
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{}}, // acme not seeded
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
@@ -268,7 +271,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 		t.Fatalf("sign cap token: %v", err)
 	}
 	audit := NewMemoryAuditEmitter()
-	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer}).WithAuditEmitter(audit)
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer}).WithAuditEmitter(audit)
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -364,8 +367,9 @@ func TestAPIKeyModeTenantClaimRejectionsEmitMintRejected(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			audit := NewMemoryAuditEmitter()
 			h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey, MultiTenant: true}, Options{
-				Signer:  signer,
-				Tenants: tc.tenants,
+				Signer:   jwtsign.HMAC(signer),
+				Verifier: signer,
+				Tenants:  tc.tenants,
 			}).WithAuditEmitter(audit)
 			srv := httptest.NewServer(h.TokenRoutes())
 			defer srv.Close()
@@ -409,7 +413,7 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign subject token: %v", err)
 	}
-	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -517,9 +521,9 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 			var authHeader string
 			if tc.devMode {
 				h = New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"},
-					Options{Signer: signer})
+					Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 			} else {
-				h = New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+				h = New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 				authHeader = "Bearer " + mint(jwt.Claims{
 					Subject:  "bob",
 					TenantID: "acme",
@@ -568,7 +572,8 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 
 func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
 		Sessions: NewMemorySessionStore(),
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
@@ -597,8 +602,9 @@ func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 
 func TestSecurityHeadersAndCSP(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", GatewayHost: "gw.example.com"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -630,8 +636,9 @@ func TestSecurityHeadersAndCSP(t *testing.T) {
 
 func TestStaticAssetCacheHeaders(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -658,8 +665,9 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 // spec: §27.4 item 2 (workspace plan upload / drag-drop tarball).
 func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -702,8 +710,9 @@ func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 
 func TestConfigJSONCarriesDevBanner(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -725,7 +734,8 @@ func TestConfigJSONCarriesDevBanner(t *testing.T) {
 func TestOIDCLoginRedirectsAndSetsStateCookie(t *testing.T) {
 	oidc := &fakeOIDC{}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
 		Sessions: NewMemorySessionStore(),
 		OIDC:     oidc,
 	})

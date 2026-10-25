@@ -69,7 +69,7 @@ const (
 // KMS-backed signer so the minted token verifies against the gateway's
 // own §10.3 RotatingVerifier without any external IdP round-trip.
 type Signer interface {
-	Sign(jwt.Claims) (string, error)
+	Sign(context.Context, jwt.Claims) (string, error)
 }
 
 // SecretStore is the minimal Kubernetes Secret surface the provisioner
@@ -428,7 +428,7 @@ type mintedToken struct {
 // random jti so a later rotation can revoke it precisely. The caller then
 // records the token through Record (Provision) or RecordWithExchangeAudit
 // (Rotate).
-func (p *Provisioner) sign() (mintedToken, error) {
+func (p *Provisioner) sign(ctx context.Context) (mintedToken, error) {
 	now := p.now().UTC()
 	jti, err := randomJTI()
 	if err != nil {
@@ -446,7 +446,7 @@ func (p *Provisioner) sign() (mintedToken, error) {
 		Roles:     []auth.Role{auth.RolePlatformAdmin},
 		Typ:       auth.TokenUserBearer,
 	}
-	token, err := p.signer.Sign(claims)
+	token, err := p.signer.Sign(ctx, claims)
 	if err != nil {
 		return mintedToken{}, fmt.Errorf("admintoken: sign token: %w", err)
 	}
@@ -476,7 +476,7 @@ func (p *Provisioner) sign() (mintedToken, error) {
 //
 // spec: §13.3, §17.6.
 func (p *Provisioner) mintForProvision(ctx context.Context) (mintedToken, error) {
-	m, err := p.sign()
+	m, err := p.sign(ctx)
 	if err != nil {
 		return mintedToken{}, err
 	}
@@ -496,7 +496,7 @@ func (p *Provisioner) mintForProvision(ctx context.Context) (mintedToken, error)
 //
 // spec: §13.3, §16.7.
 func (p *Provisioner) mintForRotation(ctx context.Context) (mintedToken, error) {
-	m, err := p.sign()
+	m, err := p.sign(ctx)
 	if err != nil {
 		return mintedToken{}, err
 	}

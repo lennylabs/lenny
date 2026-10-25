@@ -283,7 +283,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		Typ:        auth.TokenSessionCapability,
 		Origin:     PlaygroundOrigin,
 	}
-	signed, err := h.signer.Sign(out)
+	signed, err := h.signer.Sign(r.Context(), out)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
 			"the playground JWT mint failed: "+err.Error(), nil)

@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // metricRevocationServer wires a recordingMetrics into the revocation
@@ -22,7 +23,8 @@ func metricRevocationServer(t *testing.T, store IssuedTokenStore, prop func(cont
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	m := &recordingMetrics{}
 	srv := NewServer(Options{
-		Signer:               signer,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              &recordingAuditor{},
@@ -132,7 +134,8 @@ func TestRotationRevocationObservesPropagation_SEC_TS_1(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
 	srv := NewServer(Options{
-		Signer:               signer,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              &recordingAuditor{},

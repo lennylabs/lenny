@@ -36,7 +36,7 @@ func TestKMSSignerSignVerifyRoundTrip(t *testing.T) {
 		Typ:      auth.TokenUserBearer,
 		Expiry:   time.Now().Add(time.Hour).Unix(),
 	}
-	token, err := signer.Sign(claims)
+	token, err := signer.Sign(context.Background(), claims)
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestKMSSignerReloadFromSealedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewKMSSigner: %v", err)
 	}
-	token, err := original.Sign(jwt.Claims{Subject: "bob@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
+	token, err := original.Sign(context.Background(), jwt.Claims{Subject: "bob@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestKMSSignerReloadFromSealedKey(t *testing.T) {
 		t.Errorf("verified subject: got %q, want bob@acme.com", got.Subject)
 	}
 	// The reconstructed replica also mints tokens the original verifies.
-	roundTrip, err := replica.Sign(jwt.Claims{Subject: "carol@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
+	roundTrip, err := replica.Sign(context.Background(), jwt.Claims{Subject: "carol@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
 	if err != nil {
 		t.Fatalf("replica Sign: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestKMSSignerTokenFormatMatchesHMAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewKMSSigner: %v", err)
 	}
-	token, err := signer.Sign(jwt.Claims{Subject: "dave@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
+	token, err := signer.Sign(context.Background(), jwt.Claims{Subject: "dave@acme.com", Expiry: time.Now().Add(time.Hour).Unix()})
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}

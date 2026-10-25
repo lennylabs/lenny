@@ -2,7 +2,7 @@
 
 //go:build e2e_cloud
 
-// Tier-6 live tests of the §10.2 ES256 signing seam against a real
+// Tier-6 live tests of the §10.2 ES256 signer and key set against a real
 // asymmetric P-256 key on each cloud provider. Each test names the key
 // through an environment variable that the deploy/terraform/cloud
 // modules do not yet emit, so without it the test skips as blocked on
@@ -17,8 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
-	"github.com/lennylabs/lenny/pkg/kms/kmstest"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
@@ -34,8 +35,10 @@ func requireSigningKey(t *testing.T, name string) string {
 }
 
 // assertSignVerifies resolves the provider through the binaries' flag
-// seam, signs a digest under platform:jwt-signing, and verifies the
-// signature against the public key the same provider returns.
+// seam, loads the key set the way every process does at startup, signs
+// tokens with the real P-256 key through the remote ES256 signer built
+// from the key set's signing entry, and verifies each through the key
+// set.
 func assertSignVerifies(t *testing.T, opts providerflags.Options) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -44,18 +47,32 @@ func assertSignVerifies(t *testing.T, opts providerflags.Options) {
 	if err != nil {
 		t.Fatalf("Resolve(%s): %v", opts.Provider, err)
 	}
-	pub, err := p.PublicKey(ctx, kms.AliasJWTSigning)
+	ks, err := jwt.LoadKeySet(ctx, p, opts.AliasToKey)
 	if err != nil {
-		t.Fatalf("PublicKey: %v", err)
+		t.Fatalf("LoadKeySet: %v", err)
 	}
-	for _, msg := range []string{"header.payload", "a.b", "lenny"} {
-		digest := kmstest.Digest(msg)
-		sig, err := p.Sign(ctx, kms.AliasJWTSigning, digest)
+	signer, err := jwt.NewRemoteSigner(p, ks.Signing())
+	if err != nil {
+		t.Fatalf("NewRemoteSigner: %v", err)
+	}
+	for _, subject := range []string{"alice@acme.com", "bob@acme.com", "carol@acme.com"} {
+		tok, err := signer.Sign(ctx, jwt.Claims{
+			Issuer:   "https://lenny.tier6.test/gateway",
+			Subject:  subject,
+			TenantID: "acme",
+			Expiry:   time.Now().Add(5 * time.Minute).Unix(),
+			IssuedAt: time.Now().Unix(),
+			Typ:      auth.TokenUserBearer,
+		})
 		if err != nil {
 			t.Fatalf("Sign: %v", err)
 		}
-		if !kmstest.VerifyRS(pub, digest, sig) {
-			t.Fatalf("the provider's signature of %q does not verify under its public key", msg)
+		claims, err := ks.Verify(tok)
+		if err != nil {
+			t.Fatalf("the token the provider signed for %q does not verify through the key set: %v", subject, err)
+		}
+		if claims.Subject != subject {
+			t.Fatalf("verified subject = %q, want %q", claims.Subject, subject)
 		}
 	}
 }

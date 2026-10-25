@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: MIT
 
-// Package jwt is the dev-mode HMAC-SHA256 JWT signer / verifier. It
-// is the §10.2 LENNY_DEV_MODE=true backend; production deploys swap
-// in a KMS-backed signer behind the same Signer / Verifier interface.
-// This implementation handles the §10.2 claim shape (typ, tenant_id,
-// sub, exp, iat) and the RFC 7519 whole-second exp requirement.
-//
-// The package intentionally does not depend on any third-party JWT
-// library — the dev mode wants minimal dependencies. Production
-// callers using a KMS signer wrap a real library behind the Signer
-// interface from this package.
+// Package jwt signs and verifies the §10.2 JWTs Lenny issues. Every
+// Lenny-issued token is ES256-signed through the KMS provider by
+// RemoteSigner and verified by the static KeySet loaded at startup. The
+// package also holds the HMAC signer behind the dev-only embedded OIDC
+// trust hook, the claim checker, and the multi-member verifier. It
+// handles the §10.2 claim structure (typ, tenant_id, sub, exp, iat) and
+// the RFC 7519 whole-second exp requirement, and it depends on no
+// third-party JWT library.
 package jwt
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -174,9 +173,14 @@ func (c Claims) ExpiryTime() time.Time {
 	return time.Unix(c.Expiry, 0).UTC()
 }
 
-// Signer signs Claims into a compact JWT string.
+// Signer signs Claims into a compact JWT string. Sign takes the
+// caller's request context because the production signer sends the
+// signing input's digest to the KMS Sign operation, which is a remote
+// call bounded by that context.
+//
+// spec: §10.2 (Authentication).
 type Signer interface {
-	Sign(c Claims) (string, error)
+	Sign(ctx context.Context, c Claims) (string, error)
 	KeyID() string
 }
 
@@ -185,14 +189,18 @@ type Verifier interface {
 	Verify(token string) (Claims, error)
 }
 
-// HMACSigner is the dev-mode HMAC-SHA256 Signer / Verifier. It is
-// safe for concurrent use; the secret is read-only after construction.
+// HMACSigner is the HMAC-SHA256 signer and verifier behind the dev-only
+// embedded OIDC trust hook and the tests that stand in for an external
+// IdP. Its Sign takes no context, so it does not satisfy Signer: no
+// Lenny-issued token is HMAC-signed (§10.2 "Development"), and no
+// production wiring can pass it where a Signer is expected. It is safe
+// for concurrent use; the secret is read-only after construction.
 type HMACSigner struct {
 	secret []byte
 	keyID  string
 }
 
-// NewHMACSigner returns a Signer + Verifier backed by secret. The
+// NewHMACSigner returns an HMAC signer and verifier backed by secret. The
 // keyID is stamped on every signed token's JOSE header so the
 // verifier can rotate keys later.
 func NewHMACSigner(keyID string, secret []byte) *HMACSigner {
@@ -244,7 +252,15 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if !hmac.Equal(expected, got) {
 		return Claims{}, &VerifyError{Reason: "signature_mismatch"}
 	}
-	payload, err := decode(parts[1])
+	return decodeClaims(parts[1], time.Now())
+}
+
+// decodeClaims decodes the base64url payload segment of a token whose
+// signature the caller has already checked, and applies the claim
+// checks every verifier in this package shares: the exp and nbf bounds
+// under the §13.3 skew allowance.
+func decodeClaims(payloadB64 string, now time.Time) (Claims, error) {
+	payload, err := decode(payloadB64)
 	if err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: "payload is not base64url"}
 	}
@@ -262,22 +278,27 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if err := json.Unmarshal(payload, &extras); err == nil {
 		claims.Extras = extras
 	}
-	now := time.Now().Unix()
-	if claims.Expiry > 0 {
-		// §13.3 ±JWTSkewAllowance skew allowance.
-		if claims.Expiry+int64(JWTSkewAllowance/time.Second) < now {
-			return Claims{}, &VerifyError{Reason: "expired"}
-		}
+	if err := checkTimeClaims(claims, now.Unix()); err != nil {
+		return Claims{}, err
+	}
+	return claims, nil
+}
+
+// checkTimeClaims rejects an expired or not-yet-valid token under the
+// ±JWTSkewAllowance window.
+func checkTimeClaims(claims Claims, now int64) error {
+	skew := int64(JWTSkewAllowance / time.Second)
+	// §13.3 ±JWTSkewAllowance skew allowance.
+	if claims.Expiry > 0 && claims.Expiry+skew < now {
+		return &VerifyError{Reason: "expired"}
 	}
 	// spec: §10.2 — the standard auth chain validates nbf
 	// alongside signature/exp. A token whose not-before lies in the
 	// future (beyond the ±skew window) is rejected as not-yet-valid.
-	if claims.NotBefore > 0 {
-		if claims.NotBefore-int64(JWTSkewAllowance/time.Second) > now {
-			return Claims{}, &VerifyError{Reason: "not_yet_valid"}
-		}
+	if claims.NotBefore > 0 && claims.NotBefore-skew > now {
+		return &VerifyError{Reason: "not_yet_valid"}
 	}
-	return claims, nil
+	return nil
 }
 
 // VerifyError captures every JWT verification failure.

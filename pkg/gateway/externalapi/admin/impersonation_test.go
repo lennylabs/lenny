@@ -37,7 +37,7 @@ func (a *stubImpAppender) Append(_ context.Context, _, eventType string, _ json.
 
 type stubImpSigner struct{}
 
-func (stubImpSigner) Sign(jwt.Claims) (string, error) { return "minted-bearer", nil }
+func (stubImpSigner) Sign(context.Context, jwt.Claims) (string, error) { return "minted-bearer", nil }
 
 // impRegionUnresolvable models the auditstore CMP-058 fail-closed error.
 type impRegionUnresolvable struct{}

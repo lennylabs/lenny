@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // spec: §27.3.1 — "On each successful POST /v1/playground/token
@@ -28,7 +30,8 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	}}
 	const bearerTTL = 900 * time.Second
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: bearerTTL}, Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},

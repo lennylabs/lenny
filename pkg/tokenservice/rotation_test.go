@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeRotationStore satisfies IssuedTokenRotationStore so the handler's
@@ -64,7 +65,8 @@ func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop 
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return NewServer(Options{
-		Signer:               signer,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              auditor,

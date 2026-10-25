@@ -3,6 +3,7 @@
 package jwt_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ type stubSigner struct {
 	output string
 }
 
-func (s *stubSigner) Sign(c jwt.Claims) (string, error) {
+func (s *stubSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
 	s.signs++
 	if s.errOn != nil {
 		if err := s.errOn(s.signs); err != nil {
@@ -63,7 +64,7 @@ func TestBreakerSignerTripsAfterMoreThanThresholdFailures(t *testing.T) {
 	// Threshold = 3 — the breaker trips on the 4th consecutive
 	// failure (count > 3).
 	for i := 0; i < 4; i++ {
-		_, err := b.Sign(jwt.Claims{})
+		_, err := b.Sign(context.Background(), jwt.Claims{})
 		if err == nil {
 			t.Fatalf("Sign #%d: expected error", i+1)
 		}
@@ -77,7 +78,7 @@ func TestBreakerSignerTripsAfterMoreThanThresholdFailures(t *testing.T) {
 	// Next Sign should short-circuit to ErrSigningUnavailable without
 	// calling the inner signer.
 	innerCalls := inner.signs
-	_, err := b.Sign(jwt.Claims{})
+	_, err := b.Sign(context.Background(), jwt.Claims{})
 	if !errors.Is(err, jwt.ErrSigningUnavailable) {
 		t.Fatalf("post-trip Sign: got %v, want ErrSigningUnavailable", err)
 	}
@@ -114,14 +115,14 @@ func TestBreakerSignerHalfOpenProbeSuccessCloses(t *testing.T) {
 	}
 	// Trip the breaker.
 	for i := 0; i < 4; i++ {
-		_, _ = b.Sign(jwt.Claims{})
+		_, _ = b.Sign(context.Background(), jwt.Claims{})
 	}
 	if b.State() != "open" {
 		t.Fatalf("setup: breaker not open after 4 failures")
 	}
 	// Cooldown elapses.
 	cur = now.Add(6 * time.Second)
-	out, err := b.Sign(jwt.Claims{})
+	out, err := b.Sign(context.Background(), jwt.Claims{})
 	if err != nil {
 		t.Fatalf("half-open probe: %v", err)
 	}
@@ -152,11 +153,11 @@ func TestBreakerSignerFailuresAgeOutWindow(t *testing.T) {
 	// 3 failures at t=0; the breaker trips on the 4th. Spread the
 	// failures across enough time that earlier ones age out.
 	for i := 0; i < 3; i++ {
-		_, _ = b.Sign(jwt.Claims{})
+		_, _ = b.Sign(context.Background(), jwt.Claims{})
 	}
 	// Sleep past window: the next failure starts a fresh count.
 	cur = cur.Add(2 * time.Second)
-	_, err := b.Sign(jwt.Claims{})
+	_, err := b.Sign(context.Background(), jwt.Claims{})
 	if err == nil {
 		t.Fatal("expected inner error")
 	}
@@ -188,7 +189,7 @@ func TestBreakerSignerSuccessResetsCount(t *testing.T) {
 	}
 	// 3 successes, 1 failure (zero), 3 more successes — never trip.
 	for i := 0; i < 7; i++ {
-		_, _ = b.Sign(jwt.Claims{})
+		_, _ = b.Sign(context.Background(), jwt.Claims{})
 	}
 	if b.State() != "closed" {
 		t.Errorf("State = %q, want closed; calls=%d", b.State(), calls)

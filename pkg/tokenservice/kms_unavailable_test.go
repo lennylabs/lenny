@@ -3,6 +3,7 @@
 package tokenservice
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,7 +23,7 @@ type breakerStubSigner struct {
 	fail  bool
 }
 
-func (s *breakerStubSigner) Sign(c jwt.Claims) (string, error) {
+func (s *breakerStubSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
 	if s.fail {
 		return "", errors.New("kms outage")
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeRevocationStore implements IssuedTokenStore + RevocationStore so
@@ -61,7 +62,8 @@ func revocationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, pro
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return NewServer(Options{
-		Signer:               signer,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              auditor,

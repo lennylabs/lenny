@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // memSecrets is an in-memory admintoken.SecretStore. The Secret plane is
@@ -184,7 +185,7 @@ func newAdminProvisioner(t *testing.T, store *issuedtokenstore.Store, tenant str
 	p, err := admintoken.New(admintoken.Config{
 		Namespace:   "lenny-system",
 		AdminTenant: tenant,
-	}, signer, userstore.NewMemory(), secrets,
+	}, jwtsign.HMAC(signer), userstore.NewMemory(), secrets,
 		storeAdminIssued{store: store, cache: cache}, time.Now)
 	if err != nil {
 		t.Fatalf("admintoken.New: %v", err)
@@ -559,7 +560,7 @@ func TestReclaimerRevokesOrphanedPredecessorAfterCrash(t *testing.T) {
 	secrets := &memSecrets{}
 	crash := &crashingIssued{inner: storeAdminIssued{store: store, cache: cache}}
 	p, err := admintoken.New(admintoken.Config{Namespace: "lenny-system", SecretName: admintoken.DefaultSecretName, AdminTenant: tenant},
-		signer, userstore.NewMemory(), secrets, crash, time.Now)
+		jwtsign.HMAC(signer), userstore.NewMemory(), secrets, crash, time.Now)
 	if err != nil {
 		t.Fatalf("admintoken.New: %v", err)
 	}
@@ -775,7 +776,7 @@ func TestReclaimerTwoCrashRetryRotationsRevokeBothPredecessors(t *testing.T) {
 	secrets := &memSecrets{}
 	crash := &crashingIssued{inner: storeAdminIssued{store: store, cache: cache}}
 	p, err := admintoken.New(admintoken.Config{Namespace: "lenny-system", SecretName: admintoken.DefaultSecretName, AdminTenant: tenant},
-		signer, userstore.NewMemory(), secrets, crash, time.Now)
+		jwtsign.HMAC(signer), userstore.NewMemory(), secrets, crash, time.Now)
 	if err != nil {
 		t.Fatalf("admintoken.New: %v", err)
 	}

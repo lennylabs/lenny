@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // spec: §13.3 — when this replica's NTP drift exceeds the 5s
@@ -20,7 +21,7 @@ func TestDriftDegradedReturns503(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	degraded := true
 	srv := NewServer(Options{
-		Signer:        hmac,
+		Signer:        jwtsign.HMAC(hmac),
 		Verifier:      hmac,
 		Issuer:        "https://lenny.dev.test/token",
 		DriftDegraded: func() bool { return degraded },
@@ -64,7 +65,7 @@ func TestDriftDegradedReturns503(t *testing.T) {
 func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := NewServer(Options{
-		Signer:        hmac,
+		Signer:        jwtsign.HMAC(hmac),
 		Verifier:      hmac,
 		Issuer:        "https://lenny.dev.test/token",
 		DriftDegraded: func() bool { return false },
@@ -97,7 +98,7 @@ func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 func TestDriftNilOptionLeavesHandlerOpen(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := NewServer(Options{
-		Signer:   hmac,
+		Signer:   jwtsign.HMAC(hmac),
 		Verifier: hmac,
 		Issuer:   "https://lenny.dev.test/token",
 	})

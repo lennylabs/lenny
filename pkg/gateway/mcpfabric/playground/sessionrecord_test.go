@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // TestSessionRecordCarriesLabelsThroughJSON exercises the §27.2 SessionRecord.Labels round-trip: an operator-supplied
@@ -112,7 +114,8 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		Scope:    "tools:sessions:read",
 	}}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
@@ -191,7 +194,8 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "tools:sessions:read"}}
 
 	opts := Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},

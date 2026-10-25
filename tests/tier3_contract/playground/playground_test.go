@@ -33,6 +33,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeTenants is the in-test playground.TenantRegistry and the
@@ -61,7 +62,7 @@ func newPlayground(t *testing.T, mode playground.AuthMode) *playground.Handler {
 		OIDCSessionTTL: time.Hour,
 	}
 	return playground.New(cfg, playground.Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
 		Verifier: devSigner(),
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 		Sessions: playground.NewMemorySessionStore(),
@@ -250,7 +251,7 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 		BearerTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
 	}
 	h := playground.New(cfg, playground.Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 		Sessions: playground.NewMemorySessionStore(),
@@ -309,7 +310,7 @@ func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 		t.Fatalf("sign capability token: %v", err)
 	}
 	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, BearerTTL: 900 * time.Second}
-	h := playground.New(cfg, playground.Options{Signer: signer, Verifier: signer})
+	h := playground.New(cfg, playground.Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 

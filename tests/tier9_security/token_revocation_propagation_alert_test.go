@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // The §16.5 SLO the TokenRevocationPropagationLag alert enforces: P99
@@ -110,7 +111,8 @@ func driveEventBusRevocation(t *testing.T, publishLatency time.Duration) *promem
 		{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true},
 	}}
 	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: store,
 		Metrics:      emitter,

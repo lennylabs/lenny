@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // spec: §13.3 — during a Postgres outage token issuance is
@@ -29,7 +30,8 @@ func TestHandlerPostgresOutageReturns503TokenStoreUnavailable_F1334(t *testing.T
 	// unreachable or in failover.
 	tx := &txStore{failErr: &pgconn.PgError{Code: "08006", Message: "connection failure"}}
 	srv := NewServer(Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: tx,
 		Metrics:      metrics,
@@ -76,7 +78,8 @@ func TestHandlerNonOutageStoreFailureReturns500_F1334(t *testing.T) {
 	metrics := &recordingMetrics{}
 	tx := &txStore{failErr: &txStoreErr{"constraint violation"}}
 	srv := NewServer(Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: tx,
 		Metrics:      metrics,
@@ -130,10 +133,11 @@ func TestHandlerRejectionAuditWriteFailureReturns500TokenExchangeFailed(t *testi
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
 	srv := NewServer(Options{
-		Signer:  signer,
-		Issuer:  "https://lenny.dev.test/token",
-		Auditor: &failingAuditor{err: &txStoreErr{"auditstore outage"}},
-		Metrics: metrics,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Issuer:   "https://lenny.dev.test/token",
+		Auditor:  &failingAuditor{err: &txStoreErr{"auditstore outage"}},
+		Metrics:  metrics,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,

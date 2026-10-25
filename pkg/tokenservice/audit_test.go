@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // recordingAuditor captures audit appends for assertion.
@@ -200,8 +201,9 @@ func newAuditTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	return NewServer(Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Issuer:   "https://lenny.dev.test/token",
 	}), signer
 }
 
@@ -231,7 +233,8 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
 	srv := NewServer(Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: store,
 		Auditor:      auditor,
@@ -287,7 +290,8 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	auditor := &recordingAuditor{}
 	tx := &txStore{}
 	srv := NewServer(Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: tx,
 		Auditor:      auditor,
@@ -327,7 +331,8 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	tx := &txStore{failAt: "audit"}
 	srv := NewServer(Options{
-		Signer:       signer,
+		Signer:       jwtsign.HMAC(signer),
+		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
 		IssuedTokens: tx,
 	})
@@ -360,9 +365,10 @@ func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	srv := NewServer(Options{
-		Signer:  signer,
-		Issuer:  "https://lenny.dev.test/token",
-		Auditor: auditor,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Issuer:   "https://lenny.dev.test/token",
+		Auditor:  auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -395,7 +401,8 @@ func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	metrics := &recordingMetrics{}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	srv := NewServer(Options{
-		Signer:    signer,
+		Signer:    jwtsign.HMAC(signer),
+		Verifier:  signer,
 		Issuer:    "https://lenny.dev.test/token",
 		Auditor:   auditor,
 		Metrics:   metrics,

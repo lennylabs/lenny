@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // spec: §27.3.1 / §27.6 — user.invalidated drives the
@@ -51,7 +52,7 @@ func newRevokeHandler(t *testing.T, store SessionStore) (*Handler, *MemoryAuditE
 	}
 	audit := NewMemoryAuditEmitter()
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, BearerTTL: 15 * time.Minute, OIDCSessionTTL: time.Hour},
-		Options{Signer: devSigner(), Sessions: store, Metrics: m}).WithAuditEmitter(audit)
+		Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner(), Sessions: store, Metrics: m}).WithAuditEmitter(audit)
 	return h, audit, m
 }
 
@@ -171,7 +172,7 @@ func TestRevokeSessionsForUserIdempotentAndNilStore_spec_27_6_204(t *testing.T) 
 		t.Fatalf("idempotent revoke = %d, %v; want 0, nil", n, err)
 	}
 	// A handler with no session store (apiKey/dev mode) is a no-op.
-	noStore := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{Signer: devSigner()})
+	noStore := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner()})
 	if n, err := noStore.RevokeSessionsForUser(ctx, "acme", "alice@acme.com"); n != 0 || err != nil {
 		t.Fatalf("nil-store revoke = %d, %v; want 0, nil", n, err)
 	}

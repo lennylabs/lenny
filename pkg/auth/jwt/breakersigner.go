@@ -3,6 +3,7 @@
 package jwt
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -99,14 +100,14 @@ const (
 // circuit-breaker admission gate. A closed breaker forwards every
 // call; an open breaker short-circuits to ErrSigningUnavailable until
 // the cooldown elapses; a half-open breaker admits exactly one probe.
-func (s *BreakerSigner) Sign(c Claims) (string, error) {
+func (s *BreakerSigner) Sign(ctx context.Context, c Claims) (string, error) {
 	if !s.allow() {
 		if s.Observer != nil {
 			s.Observer.OnRejected()
 		}
 		return "", ErrSigningUnavailable
 	}
-	out, err := s.Inner.Sign(c)
+	out, err := s.Inner.Sign(ctx, c)
 	if err != nil {
 		s.recordFailure()
 		if s.Observer != nil {

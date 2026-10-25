@@ -21,14 +21,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Issuer:   "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 		},
@@ -388,8 +390,9 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Issuer:   "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,
