@@ -32,5 +32,9 @@
       Tiers 0, 1, 2, 7a, 8, 11. Depends on: S1, S3, S6, S7, S8, S10
 - [ ] **S15 · test** — TEST-1. Lands the tests listed under TEST-1.
       Tiers 0, 1, 2, 4, 7a, 8. Depends on: S8, S9, S10, S11, S12, S13, S14
-- [ ] **S16 · docs** — REC-1, DOC-1, DOC-2, DOC-3, DOC-4, and DOC-5. Lands every part.
-      Tiers 0, 1, 2, 11. Depends on: S1, S2, S6, S15
+- [ ] **S16 · docs** — DOC-4. Lands the `docs/api/internal.md` Attach stream-end sentence.
+      Tiers 0, 11. Depends on: S1, S11
+- [ ] **S17 · docs** — DOC-1, DOC-2, DOC-3, and DOC-5. Lands every item, including the `rules.go` Description edit and the `make generate` outputs.
+      Tiers 0, 1, 2, 11. Depends on: S1, S2, S3, S4, S6, S11, S12, S13, S14
+- [ ] **S18 · docs** — REC-1. Lands the `BUILD-GAPS.md` resolutions, departures, and notes, the remediation-plan and claim-register owner moves, and the regenerated `tests/claim-map.json`.
+      Tiers 0, 11. Depends on: S8, S9, S10, S11, S12, S13, S14, S15
