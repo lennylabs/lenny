@@ -103,6 +103,17 @@ flags the controller's pod-spec renderer emits against the flags the runtime and
 rebuild and reload when a flag was added, removed, or renamed since the images were built. A flag rename is
 the common case, because it changes both sides and neither fails to compile.
 
+On Kind, re-running `tests/testinfra/kind/install.sh` from the tree under test is the fix. By default it tags
+each image with a content tag computed from the image's build inputs, rebuilds and reloads only the images
+whose inputs changed, and deploys the content tags, so the chart's Deployments roll onto the new images. A
+re-run with no change rebuilds nothing. The cluster still drifts from the tree when it was last installed from
+another worktree or revision, with `LENNY_IMAGE_TAG` set, or with `LENNY_SKIP_BUILD=1`, which deploys whatever
+the `e2e` alias tag names. To check, compare the tag a Deployment runs, for example
+`kubectl -n lenny-system get deploy -o jsonpath='{..image}'`, with the tags the tree computes, which
+`go run ./tests/testinfra/kind/imagetag/cmd/image-tags --install-script tests/testinfra/kind/install.sh`
+prints. The base images the Dockerfiles name are not hashed, so set `LENNY_FORCE_BUILD=1` after
+pulling a newer base image.
+
 **2. The cluster is not carrying wreckage from an earlier run.** Count the agent pods by phase before
 starting:
 
