@@ -28,7 +28,10 @@ func (w *tokenServiceWiring) buildKMSAndSigner() {
 	w.kmsProvider = kmsProvider
 	log.Printf("lenny-token-service: §4 KMS provider = %s (environment=%s)",
 		w.f.kmsOpts.Provider, w.f.kmsOpts.Environment)
-	keySet, signer, err := jwt.LoadSigning(ctx, kmsProvider, w.f.kmsOpts.AliasToKey, nil)
+	// spec: §16.1 — the breaker observer counts every sign request on
+	// lenny_jwt_sign_requests_total{component="token-service"} and every
+	// counted failure or refusal on lenny_gateway_kms_signing_errors_total.
+	keySet, signer, err := jwt.LoadSigning(ctx, kmsProvider, w.f.kmsOpts.AliasToKey, w.metricsEmitter.SigningObserver())
 	if err != nil {
 		fatalf("§10.2 JWT key set: %v", err)
 	}

@@ -251,8 +251,7 @@ type recordRef struct {
 // event, and writes the response.
 func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject jwt.Claims, ref *recordRef) {
 	if h.signer == nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT signer is not configured", nil)
+		writeSigningUnavailable(w, nil, "the playground JWT signer is not configured")
 		return
 	}
 	now := h.now().UTC()
@@ -285,8 +284,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	}
 	signed, err := h.signer.Sign(r.Context(), out)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT mint failed: "+err.Error(), nil)
+		writeSigningUnavailable(w, err, "the playground JWT mint failed: "+err.Error())
 		return
 	}
 

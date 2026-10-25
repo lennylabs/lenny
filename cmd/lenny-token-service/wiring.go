@@ -41,13 +41,16 @@ import (
 func runTokenService(f *tokenServiceFlags) {
 	w := &tokenServiceWiring{f: f}
 
+	// §16.1 metric vectors, built first so the signer's breaker observer
+	// feeds the §16.1 sign counters from the first sign request.
+	w.buildMetrics()
+
 	// §4 / §17.5 KMS provider, the §10.2 key set, and the shared
 	// circuit-broken remote signer.
 	w.buildKMSAndSigner()
 
-	// §16.1 metric vectors and the §13.3 durable write-before-issue
-	// IssuedTokenStore + Auditor (Postgres-backed or the dev in-memory chain).
-	w.buildMetrics()
+	// §13.3 durable write-before-issue IssuedTokenStore + Auditor
+	// (Postgres-backed or the dev in-memory chain).
 	w.buildStores()
 	if w.pgPool != nil {
 		defer w.pgPool.Close()

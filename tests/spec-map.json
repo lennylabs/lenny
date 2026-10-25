@@ -3361,7 +3361,22 @@
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetResolveFailureIsFatal",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
-        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider"
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestThrottledMintReturns503AndBreakerStaysClosed_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestHardSigningFailureReturns503RetryAfter1_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestOpenBreakerMintRetryAfterIsRemainingCooldown_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_kms_unavailable_test.go::TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/auth/jwt/signing_retryafter_test.go::TestSigningRetryAfterSeconds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_signing_error_test.go::TestPlaygroundMintSigningErrorRetryAfter_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_signing_error_test.go::TestPlaygroundMintNoSignerRetryAfter1_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceThrottledSignReturns503AndKeepsBreakerClosed_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceOpenBreakerRetryAfterIsRemainingCooldown_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewaySignMetricsPerOutcome_spec_16_1",
+        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1"
       ],
       "packages": [
         "pkg/auth",
@@ -4966,7 +4981,14 @@
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestSuspendDrainOvertakenByResume_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
-        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestThrottledMintReturns503AndBreakerStaysClosed_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestHardSigningFailureReturns503RetryAfter1_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestOpenBreakerMintRetryAfterIsRemainingCooldown_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_kms_unavailable_test.go::TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5365,12 +5387,15 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerRandomizedInterleavingsMatchSpecModel_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
-        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2"
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewaySignMetricsPerOutcome_spec_16_1",
+        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1"
       ],
       "packages": [
         "pkg/observability/metrics",
         "pkg/gateway/metrics/gatewaymetrics",
-        "pkg/controller/ssaretry"
+        "pkg/controller/ssaretry",
+        "pkg/tokenservice/promemit"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
@@ -5472,7 +5497,8 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertFires_SEC_TS_1",
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5",
-        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go"
+        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewayEmitsKMSSignQuotaGauge_spec_16_5"
       ],
       "packages": [
         "pkg/alerting/rules",
@@ -5708,7 +5734,9 @@
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
-        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenNonSigningErrorStays500_spec_17_6",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2"
       ],
       "packages": [
         "charts/lenny",

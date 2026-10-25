@@ -207,9 +207,14 @@ func (o *kmsBreakerObserver) OnRejected() {
 	}
 }
 
-// OnOutcome receives the per-call sign outcome. The gateway metrics
-// carry no sign-request counter yet, so the outcome is not recorded.
-func (o *kmsBreakerObserver) OnOutcome(string) {}
+// OnOutcome counts the sign request on
+// lenny_jwt_sign_requests_total{component="gateway",outcome}.
+// spec: §16.1 (JWT sign requests).
+func (o *kmsBreakerObserver) OnOutcome(outcome string) {
+	if m := o.metrics(); m != nil {
+		m.RecordJWTSignRequest(outcome)
+	}
+}
 
 func (o *kmsBreakerObserver) OnCircuitOpen() {
 	if m := o.metrics(); m != nil {

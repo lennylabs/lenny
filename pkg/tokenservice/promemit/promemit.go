@@ -35,6 +35,7 @@ type Emitter struct {
 	fivexx                *prometheus.CounterVec
 	timeDrift             prometheus.Gauge
 	revocationPropagation *prometheus.HistogramVec
+	signing               signingCounters
 }
 
 // New constructs and registers the Token Service metric set against a
@@ -117,8 +118,14 @@ func New() (*Emitter, error) {
 		return nil, err
 	}
 
-	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, fivexx, timeDriftGauge, revocationPropagation)
+	signing, err := newSigningCounters()
+	if err != nil {
+		return nil, err
+	}
+	reg.MustRegister(requestDuration, errs, secretReloads, rateLimited, rateLimitedSampled, fivexx, timeDriftGauge, revocationPropagation,
+		signing.signRequests, signing.signingErrors)
 	return &Emitter{
+		signing:               signing,
 		reg:                   reg,
 		requestDuration:       requestDuration,
 		errors:                errs,

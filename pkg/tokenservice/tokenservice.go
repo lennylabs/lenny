@@ -681,9 +681,10 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 // freshly minted jti, the signed token, and true on success. The jti is
 // a crypto/rand-derived 128-bit identifier so two replicas minting at
 // the same wall-clock instant do not collide on the issued_tokens
-// primary key. spec: §4.3. An open JWTSigner circuit breaker fails with
-// 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2,
-// F-10.2.6).
+// primary key. spec: §4.3. Every Sign failure, including an open
+// JWTSigner circuit breaker and provider throttling, fails with 503
+// KMS_SIGNING_UNAVAILABLE, `retryable: true`, and the breaker's
+// `Retry-After` (§10.2, F-10.2.6).
 func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
 	jti, err := newJTI()
 	if err != nil {
@@ -712,18 +713,14 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 	}
 	signed, err := s.signer.Sign(ctx, out)
 	if err != nil {
-		// spec: §10.2 — when the JWTSigner circuit breaker is
-		// open (or otherwise reports the KMS-backed signing material is
-		// unreachable), the mint fails with 503 KMS_SIGNING_UNAVAILABLE
-		// and `retryable: true`. The §16.5 KMSSigningUnavailable alert
-		// reads `lenny_gateway_kms_signing_errors_total`. F-10.2.6.
-		if errors.Is(err, jwt.ErrSigningUnavailable) {
-			writeKMSUnavailable(w, err.Error())
-			finish("kms_signing_unavailable")
-			return "", "", false
-		}
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
-		finish("server_error")
+		// spec: §10.2 "KMS signing failure mode" — a mint whose
+		// signature cannot be obtained, whether the breaker refused it,
+		// the KMS throttled it, or the KMS failed, fails with 503
+		// KMS_SIGNING_UNAVAILABLE, `retryable: true`, and the breaker's
+		// `Retry-After`. The §16.5 KMSSigningUnavailable alert reads
+		// `lenny_gateway_kms_signing_errors_total`. F-10.2.6.
+		writeKMSUnavailable(w, err.Error(), jwt.SigningRetryAfterSeconds(err))
+		finish("kms_signing_unavailable")
 		return "", "", false
 	}
 	return jti, signed, true
@@ -1208,15 +1205,15 @@ func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error)
 }
 
 // writeKMSUnavailable writes the §10.2 / §15.1
-// KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` so
-// the client retries the mint after the circuit-breaker cooldown
-// elapses. The body uses the Lenny error envelope (rather than the
+// KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` and
+// `Retry-After: retryAfterSeconds`, the breaker's remaining cooldown
+// when it is open and 1 second otherwise. The body uses the Lenny error envelope (rather than the
 // OAuth envelope) because §15.1's catalog row carries the code and
 // transient classification, and a client matching on the catalog
 // expects the lenny shape.
-func writeKMSUnavailable(w http.ResponseWriter, description string) {
+func writeKMSUnavailable(w http.ResponseWriter, description string, retryAfterSeconds int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Retry-After", "30")
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{

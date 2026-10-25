@@ -13,77 +13,69 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/kms"
 )
 
-// breakerStubSigner wraps an HMACSigner so we can inject failure
-// behavior while keeping the verifier path real (used to verify the
-// caller token).
+// breakerStubSigner wraps an HMACSigner so a test injects a Sign
+// failure while the verifier path stays real (it verifies the caller
+// token).
 type breakerStubSigner struct {
 	inner *jwt.HMACSigner
-	fail  bool
+	err   error
 }
 
 func (s *breakerStubSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
-	if s.fail {
-		return "", errors.New("kms outage")
+	if s.err != nil {
+		return "", s.err
 	}
 	return s.inner.Sign(c)
 }
 
-func (s *breakerStubSigner) KeyID() string                       { return s.inner.KeyID() }
-func (s *breakerStubSigner) Verify(t string) (jwt.Claims, error) { return s.inner.Verify(t) }
+func (s *breakerStubSigner) KeyID() string { return s.inner.KeyID() }
 
-// spec: §10.2 — when the JWTSigner breaker has tripped open,
-// /v1/oauth/token returns 503 KMS_SIGNING_UNAVAILABLE with
-// retryable: true. F-10.2.6.
-func TestTokenServiceReturnsKMSUnavailableWhenBreakerOpen(t *testing.T) {
+// kmsUnavailableFixture is a Token Service whose signer is a
+// BreakerSigner with a fixed clock over a breakerStubSigner.
+type kmsUnavailableFixture struct {
+	srv     *Server
+	stub    *breakerStubSigner
+	breaker *jwt.BreakerSigner
+	caller  string
+}
+
+func newKMSUnavailableFixture(t *testing.T, err error) *kmsUnavailableFixture {
+	t.Helper()
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	stub := &breakerStubSigner{inner: hmac, fail: true}
+	stub := &breakerStubSigner{inner: hmac, err: err}
 	now := time.Unix(5_000_000, 0)
 	breaker := &jwt.BreakerSigner{
-		Inner:     stub,
-		Threshold: 3,
-		Window:    jwt.SigningBreakerWindow,
-		Cooldown:  jwt.SigningBreakerCooldown,
-		Now:       func() time.Time { return now },
+		Inner: stub,
+		Now:   func() time.Time { return now },
 	}
 	srv := mustNewServer(t, Options{
 		Signer:   breaker,
-		Verifier: hmac, // verify caller via the real signer
+		Verifier: hmac,
 		Issuer:   "https://lenny.dev.test/token",
 	})
-
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	callerTok, err := hmac.Sign(jwt.Claims{
+	caller, signErr := hmac.Sign(jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
 		Audience: []string{"lenny-gateway"}, Expiry: farFuture,
 	})
-	if err != nil {
-		t.Fatalf("mint caller: %v", err)
+	if signErr != nil {
+		t.Fatalf("mint caller: %v", signErr)
 	}
+	return &kmsUnavailableFixture{srv: srv, stub: stub, breaker: breaker, caller: caller}
+}
 
-	// Drive the breaker through 4 failures so it trips open.
-	for i := 0; i < 4; i++ {
-		resp := doExchange(t, srv, callerTok, Request{
-			GrantType: grantTypeExchange, SubjectToken: callerTok,
-			Audience: "lenny-gateway",
-		})
-		resp.Body.Close()
-	}
-	// Next call: the breaker short-circuits to ErrSigningUnavailable
-	// before reaching the (still-failing) stub. The handler maps it to
-	// 503 KMS_SIGNING_UNAVAILABLE.
-	resp := doExchange(t, srv, callerTok, Request{
-		GrantType: grantTypeExchange, SubjectToken: callerTok,
+// exchange runs one exchange and returns the status, Retry-After, and
+// the decoded Lenny error envelope.
+func (f *kmsUnavailableFixture) exchange(t *testing.T) (int, string, string, bool) {
+	t.Helper()
+	resp := doExchange(t, f.srv, f.caller, Request{
+		GrantType: grantTypeExchange, SubjectToken: f.caller,
 		Audience: "lenny-gateway",
 	})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d, want 503", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Retry-After"); got == "" {
-		t.Errorf("Retry-After header missing")
-	}
 	body, _ := io.ReadAll(resp.Body)
 	var env struct {
 		Error struct {
@@ -91,13 +83,67 @@ func TestTokenServiceReturnsKMSUnavailableWhenBreakerOpen(t *testing.T) {
 			Retryable bool   `json:"retryable"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		t.Fatalf("decode body: %v (%s)", err, body)
+	_ = json.Unmarshal(body, &env)
+	return resp.StatusCode, resp.Header.Get("Retry-After"), env.Error.Code, env.Error.Retryable
+}
+
+func assertKMSUnavailable(t *testing.T, status int, retryAfter, code string, retryable bool, wantRetryAfter string) {
+	t.Helper()
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", status)
 	}
-	if env.Error.Code != "KMS_SIGNING_UNAVAILABLE" {
-		t.Errorf("error.code=%q, want KMS_SIGNING_UNAVAILABLE", env.Error.Code)
+	if code != "KMS_SIGNING_UNAVAILABLE" {
+		t.Errorf("error.code = %q, want KMS_SIGNING_UNAVAILABLE", code)
 	}
-	if !env.Error.Retryable {
-		t.Errorf("error.retryable=false, want true")
+	if !retryable {
+		t.Errorf("error.retryable = false, want true")
 	}
+	if retryAfter != wantRetryAfter {
+		t.Errorf("Retry-After = %q, want %q", retryAfter, wantRetryAfter)
+	}
+}
+
+// spec: 10.2 (Authentication) "KMS signing failure mode"
+// diagnosis: a hard signing failure with the breaker closed did not
+// return 503 KMS_SIGNING_UNAVAILABLE with Retry-After: 1. Before every
+// Sign error mapped to the signing-failure response, the Token Service
+// answered it with 500 server_error.
+func TestTokenServiceHardSigningErrorReturns503RetryAfter1_spec_10_2(t *testing.T) {
+	f := newKMSUnavailableFixture(t, errors.New("kms outage"))
+	status, retryAfter, code, retryable := f.exchange(t)
+	assertKMSUnavailable(t, status, retryAfter, code, retryable, "1")
+}
+
+// spec: 10.2 (Authentication) "KMS signing failure mode"
+// diagnosis: a throttled sign did not return 503 KMS_SIGNING_UNAVAILABLE
+// with Retry-After: 1, or throttling counted toward the breaker trip.
+// Throttling is backpressure, so any number of throttled signs leaves
+// the breaker closed and the next unthrottled sign succeeds.
+func TestTokenServiceThrottledSignReturns503AndKeepsBreakerClosed_spec_10_2(t *testing.T) {
+	f := newKMSUnavailableFixture(t, kms.ErrThrottled)
+	for i := 0; i < 6; i++ {
+		status, retryAfter, code, retryable := f.exchange(t)
+		assertKMSUnavailable(t, status, retryAfter, code, retryable, "1")
+	}
+	f.stub.err = nil
+	if status, _, _, _ := f.exchange(t); status != http.StatusOK {
+		t.Fatalf("status after throttling cleared = %d, want 200 (breaker must stay closed)", status)
+	}
+}
+
+// spec: 10.2 (Authentication) "KMS signing failure mode"
+// diagnosis: once four hard failures opened the breaker, the refusal did
+// not carry Retry-After equal to the remaining cooldown. The Token
+// Service wrote a fixed Retry-After: 30 before it read the breaker's
+// value; this case moves the clock 12 s into the cooldown, so the fixed
+// value and the breaker's value differ.
+func TestTokenServiceOpenBreakerRetryAfterIsRemainingCooldown_spec_10_2(t *testing.T) {
+	f := newKMSUnavailableFixture(t, errors.New("kms outage"))
+	for i := 0; i < 4; i++ {
+		f.exchange(t)
+	}
+	opened := f.breaker.Now()
+	f.breaker.Now = func() time.Time { return opened.Add(12 * time.Second) }
+	status, retryAfter, code, retryable := f.exchange(t)
+	assertKMSUnavailable(t, status, retryAfter, code, retryable, "18")
 }

@@ -331,6 +331,7 @@ type gatewayFlags struct {
 	maxSessionsPerReplica                         *int
 	minReplicas                                   *int
 	streamCeiling                                 *int
+	kmsSignQuotaPerSecond                         *int
 	gatewayNamespace                              *string
 	gatewayPDBName                                *string
 	gatewayServiceName                            *string
@@ -1276,6 +1277,10 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
 	f.streamCeiling = flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
 		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
+	// spec: §16.5 KMSSignQuotaApproaching; §17.8.2 "KMS Sign rate" —
+	// the configured provider asymmetric Sign quota (kms.signQuotaPerSecond).
+	f.kmsSignQuotaPerSecond = flag.Int("kms-sign-quota-per-second", envInt("LENNY_KMS_SIGN_QUOTA_PER_SECOND", 0),
+		"§16.5 / §17.8.2 provider asymmetric KMS Sign quota per second (kms.signQuotaPerSecond). Emitted at startup on the lenny_kms_sign_quota_per_second gauge so the KMSSignQuotaApproaching alert can evaluate via scalar(...). 0 means unset, which keeps the alert silent. Override via LENNY_KMS_SIGN_QUOTA_PER_SECOND.")
 	// spec: §10.4 / §16.5 PDBBlockedEvictions — the §10.4 PDB
 	// status poller addresses the gateway's PodDisruptionBudget object
 	// by namespace+name. The chart sets --gateway-namespace from the

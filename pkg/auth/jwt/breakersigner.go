@@ -63,6 +63,30 @@ func (e *SigningError) RetryAfterSeconds() int {
 	return secs
 }
 
+// SigningRetryAfterSeconds returns the §10.2 `Retry-After` value, in
+// whole seconds, for an error a mint path's Sign call returned: the
+// *SigningError's RetryAfterSeconds when err carries one, and 1 (the
+// value for a signing error while the breaker is not open) otherwise.
+// Every KMS_SIGNING_UNAVAILABLE writer sets the header from it.
+//
+// spec: §10.2 (KMS signing failure mode).
+func SigningRetryAfterSeconds(err error) int {
+	var serr *SigningError
+	if errors.As(err, &serr) {
+		return serr.RetryAfterSeconds()
+	}
+	return int(signingRetryAfter / time.Second)
+}
+
+// Signer component values, the `component` label of the §16.1 JWT sign
+// requests counter. Each signer process stamps its own value.
+//
+// spec: §16.1 (JWT sign requests).
+const (
+	SignComponentGateway      = "gateway"
+	SignComponentTokenService = "token-service"
+)
+
 // BreakerObserver receives signing notifications. It is the seam the
 // gateway uses to increment `lenny_gateway_kms_signing_errors_total`,
 // count sign requests by outcome, and flip the §16.5
