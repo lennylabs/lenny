@@ -86,7 +86,7 @@ func (w *opsWiring) buildSelfHealthAndLocks() {
 
 	// The §25.4 tiered remediation-lock service: the Postgres Tier 1 store
 	// (ops_remediation_locks, migration 0121) and the Redis Tier 2 store
-	// (ops:lock:{scope}) over the always-present in-memory Tier 3 store,
+	// (ops:{lock}:scope:<scope>) over the always-present in-memory Tier 3 store,
 	// with outage-epoch reconciliation and deterministic split-brain
 	// resolution. The gate enforces ops.locks.memoryTier on the Tier 3
 	// fall-through; the §25.4 lock metrics and audit events are emitted from

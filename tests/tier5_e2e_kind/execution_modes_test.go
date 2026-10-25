@@ -204,9 +204,10 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 
 // requireRuntimeContainerKept asserts that the pod's runtime container is
 // the one the kubelet started with the pod: it has never restarted and is
-// still running. The runtime process lives as long as the pod (§4.7.10), so
-// session B on a recycled pod is served by the runtime process that served
-// session A rather than by a restarted container.
+// still running. The task-mode pool sets recycle.runtimeProcess: keep, and a
+// keep pod keeps its runtime process across sessions (§5.2, Runtime-process
+// lifetime), so session B on a recycled pod is served by the runtime process
+// that served session A rather than by a restarted container.
 func requireRuntimeContainerKept(t *testing.T, c *kind.Cluster, pod string) {
 	t.Helper()
 	restarts := podField(t, c, pod, `{.status.containerStatuses[?(@.name=="runtime")].restartCount}`)

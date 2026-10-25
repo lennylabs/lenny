@@ -255,7 +255,7 @@ The unit of content delivery in Lenny sessions. MessageParts support multiple ty
 ### Occupancy Episode
 {: #occupancy-episode }
 
-The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions, or when a release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)). See [State Machines](state-machines).
+The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)). See [State Machines](state-machines).
 
 ## P
 
@@ -299,7 +299,7 @@ Kubernetes-defined security profiles (Privileged, Baseline, Restricted). Lenny u
 ### Recycle
 {: #recycle }
 
-A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions, because the pod keeps one runtime process across its sessions. See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
+A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions. `recycle.runtimeProcess` selects whether a reused pod keeps its runtime process across sessions (`keep`) or ends it in each scrub and launches a new one for the next session (`restart`). See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
 
 ### RLS (Row-Level Security)
 {: #rls }
@@ -315,6 +315,11 @@ The standard OCI container runtime. Used as the `standard` isolation profile. Pr
 {: #runtime }
 
 A named, versioned agent binary configuration registered in the platform. Defines the container image, execution mode, capabilities, supported providers, SDK-warm settings, and delegation policy. Runtimes are the primary extension point for the platform. See [Runtime Author Guide](../runtime-author-guide/).
+
+### Runtime supervisor
+{: #runtime-supervisor }
+
+The first process of the runtime container on every sidecar pod of a `type: agent` runtime. A platform binary from its own digest-pinned image, it launches the runtime's configured `command` and ends the runtime process when the adapter asks it to, and on a `restart` pod it ends and sweeps the runtime container at each whole-pod scrub. See [Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor).
 
 ### RuntimeClass
 {: #runtimeclass }

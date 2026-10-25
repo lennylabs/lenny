@@ -79,7 +79,9 @@ jobs:
   # Build, push, sign, and SBOM-attest every image. The matrix lists
   # each platform binary (cmd/<name>) and each reference runtime
   # (cmd/runtimes/<name>); the Dockerfile selects the package via the
-  # BINARY build-arg. linux/amd64 + linux/arm64 in one buildx run.
+  # BINARY build-arg. The runtime supervisor image builds from
+  # Dockerfile.supervisor, named by the matrix entry's `file`.
+  # linux/amd64 + linux/arm64 in one buildx run.
   images:
     name: image ${{ matrix.image }}
     runs-on: ubuntu-latest
@@ -104,6 +106,10 @@ jobs:
           - { image: lenny-preflight,     binary: lenny-preflight }
           - { image: lenny-backup,        binary: lenny-backup }
           - { image: lenny-ctl,           binary: lenny-ctl }
+          # §4.7.10 runtime supervisor — a freestanding C binary built
+          # from supervisor/ by its own FROM scratch Dockerfile; it takes
+          # no BINARY build-arg.
+          - { image: lenny-supervisor,    binary: "", file: ./Dockerfile.supervisor }
           # Reference runtime images — cmd/runtimes/<name>.
           - { image: runtime-echo,            binary: runtimes/echo }
           - { image: runtime-echo-embedded,   binary: runtimes/echo-embedded }
@@ -134,7 +140,7 @@ jobs:
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85  # v6.7.0
         with:
           context: .
-          file: ./Dockerfile
+          file: ${{ matrix.file || './Dockerfile' }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             BINARY=${{ matrix.binary }}

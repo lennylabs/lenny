@@ -765,14 +765,18 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 			}
 		})
 
-		t.Run("SDK-warm: only the DemoteSDK teardown's own session_end is written", func(t *testing.T) {
+		// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting) — while
+		// a session is registered the exit path does not demote, so the
+		// session's runtime process and slot tree survive the start of the
+		// drain for the preStop eviction checkpoint.
+		t.Run("SDK-warm with a session registered: the exit writes no session_end and does not demote", func(t *testing.T) {
 			rt := &sdkWarmFrameRuntime{}
 			s := sdkWarmServer(t, rt, false)
 			if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
 				t.Fatalf("ConfigureWorkspace: %v", err)
 			}
 			s.ExitOnSignal(time.Second, &recordingStopper{})
-			expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "session_end@running", "demote")
+			expectLog(t, &rt.frameRuntime, "configure", "session_start@idle")
 		})
 
 		t.Run("embedded model: the loop reads only the session_start", func(t *testing.T) {

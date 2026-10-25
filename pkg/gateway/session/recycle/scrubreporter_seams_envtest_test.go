@@ -581,6 +581,7 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 			"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 				Enabled: true, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			}),
 		}},
 		Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt": {Name: "rt"}}},
@@ -647,7 +648,8 @@ func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
 				Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 					"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
 						Enabled: true, MaxSessionsPerPod: 50,
-						ScrubProfile: tc.profile,
+						ScrubProfile:   tc.profile,
+						RuntimeProcess: runtimestore.RuntimeProcessKeep,
 					}),
 				}},
 				Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt": {Name: "rt"}}},
@@ -793,6 +795,7 @@ func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testin
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 			"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 				Enabled: true, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			}),
 		}},
 		Runtimes: fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{"rt": {Name: "rt"}}},
@@ -850,7 +853,7 @@ func boundaryPoolReader(pool string, cleanupTimeoutSeconds int) fakePoolReader {
 			ExecutionMode: runtimestore.ExecutionModeSession,
 			SessionPolicy: &runtimestore.SessionPolicy{
 				CleanupTimeoutSeconds: cleanupTimeoutSeconds,
-				Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+				Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 			},
 		},
 	}}

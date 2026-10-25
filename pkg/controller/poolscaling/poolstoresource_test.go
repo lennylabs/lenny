@@ -129,6 +129,7 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 				AllowCrossTenantReuse:           true,
 				ScrubProfile:                    runtimestore.MicrovmScrubInPlace,
 				AcknowledgeMicrovmResidualState: true,
+				RuntimeProcess:                  runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -209,6 +210,7 @@ func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          12,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})

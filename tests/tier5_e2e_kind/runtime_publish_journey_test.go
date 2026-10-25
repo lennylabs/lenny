@@ -172,6 +172,10 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// The image field carries the tag-stripped `<repo>@sha256:<id>`
 	// form to match pinImageOnNodes' local pin exactly (see its doc
 	// comment on the tag+digest normalization the kubelet performs).
+	// The command is the absolute path the scaffold's Dockerfile installs
+	// the binary at, /usr/local/bin/<runtime name>, because the runtime
+	// supervisor execs the Runtime command rather than the image
+	// entrypoint (§4.7.10 Deployment model, **Runtime supervisor.**).
 	runtimeCR := fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -179,6 +183,7 @@ metadata:
 spec:
   type: agent
   image: %s
+  command: ["/usr/local/bin/%s"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -187,7 +192,7 @@ spec:
     injection:
       supported: true
       modes: [immediate]
-`, name, stripTag(registeredImage))
+`, name, stripTag(registeredImage), name)
 	if out, err := c.ApplyStdin(t, runtimeCR); err != nil {
 		t.Fatalf("kubectl apply Runtime %s: %v\n%s", name, err, out)
 	}

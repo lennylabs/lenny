@@ -3897,6 +3897,7 @@ spec:
             # renders the same value (§5.2 Slot assignment atomicity).
             - --claim-orphan-timeout=900s
             - --adapter-image=ghcr.io/lennylabs/lenny-adapter:0.1.0
+            - --supervisor-image=ghcr.io/lennylabs/lenny-supervisor:0.1.0
             - --gateway-grpc-addr=lenny-gateway.default.svc:50051
             - --agent-namespaces=lenny-agents
             - --dev-mode
@@ -4937,6 +4938,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-claude-code-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5031,6 +5034,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-gemini-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-gemini-cli-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5101,6 +5106,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-codex-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5171,6 +5178,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-cursor-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-cursor-cli-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5240,6 +5249,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-chat-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5278,6 +5289,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-langgraph@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-langgraph-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5316,6 +5329,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-mastra-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5353,6 +5368,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-openai-assistants-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed
@@ -5386,6 +5403,8 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/runtime-crewai@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command:
+    - /usr/local/bin/lenny-crewai-adapter
   integrationLevel: full
   executionMode: session
   isolationProfile: sandboxed

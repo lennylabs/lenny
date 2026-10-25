@@ -22,13 +22,15 @@ type ResumeRequest struct {
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
-	// KeepsRuntime is true when the pool the session server resolved lets a
-	// pod serve a later session in its kept runtime process
-	// (poolstore.KeepsRuntimeAcrossSessions). The claim copies it into
-	// podclaim.ClaimRequest; the zero value refuses every pod that has served
-	// a session. spec: §5.2 (Deployer acknowledgment (runtime process kept
-	// across sessions)).
-	KeepsRuntime bool
+	// ReusesPods is true when the pool the session server resolved lets a
+	// pod serve a later session (poolstore.ReusesPods), and
+	// RequiresProcessAcknowledgment is true when that pool requires the
+	// runtime-process acknowledgment (poolstore.RequiresProcessAcknowledgment).
+	// The claim copies both into podclaim.ClaimRequest; the zero values
+	// refuse every pod that has served a session. spec: §5.2 (Deployer
+	// acknowledgment (runtime process kept across sessions)).
+	ReusesPods                    bool
+	RequiresProcessAcknowledgment bool
 	// Runtime is the runtime name passed to the adapter's Resume.
 	Runtime string
 	// CheckpointID is the §4.4 checkpoint the workspace is restored
@@ -181,7 +183,8 @@ type ResumeResult struct {
 // spec: §7.3 (Retry and Resume); §5.2 (atomic slot reservation).
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
 	sandboxName, err := b.claimPod(ctx, podclaim.ClaimRequest{
-		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: req.KeepsRuntime,
+		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
+		ReusesPods: req.ReusesPods, RequiresProcessAcknowledgment: req.RequiresProcessAcknowledgment,
 	})
 	if err != nil {
 		return ResumeResult{}, err

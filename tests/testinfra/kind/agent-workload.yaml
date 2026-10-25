@@ -54,6 +54,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -123,6 +126,9 @@ metadata:
 spec:
   type: agent
   image: __CRED_SHELL_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -141,6 +147,9 @@ metadata:
 spec:
   type: agent
   image: __ELICITATION_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: standard
   executionMode: session
   isolationProfile: standard
@@ -164,6 +173,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: sandboxed
@@ -187,6 +199,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -211,6 +226,9 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -236,6 +254,9 @@ metadata:
 spec:
   type: agent
   image: __HEARTBEAT_SILENCE_ECHO_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -257,6 +278,9 @@ metadata:
 spec:
   type: agent
   image: __HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/heartbeat-silence", "/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -266,3 +290,149 @@ spec:
     injection:
       supported: true
       modes: [immediate, queued]
+---
+# Test-only supervise-probe runtimes (tests/testinfra/superviseprobe) for the
+# runtime supervisor's cluster tiers. Each backs one supervised probe pool in
+# install.sh's bootstrap overlay. The probe image sets PROBE_IMAGE_ENV with
+# ENV, which no env list below sets, so a test can assert that the
+# supervisor's launch environment carries the Runtime's env and the
+# platform's variables and drops the image ENV (§4.7.10 Runtime supervisor,
+# Environment). The restart pool's Runtime is not applied while gateway pool
+# admission refuses recycle.runtimeProcess: restart (proposal 0084 removes
+# that refusal). spec: §5.1 (command; env), §4.7.10.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-keep
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    # Asynchronous preemption off frees SIGURG from the Go runtime, so the
+    # probe counts it and the tier-9 signal case observes a forwarded copy.
+    - name: GODEBUG
+      value: asyncpreemptoff=1
+  # The Runtime controller mirrors this CR into the runtime registry over the
+  # bootstrap row, so the CR carries the same argv-only setup-command policy
+  # the bootstrap overlay seeds: the distroless adapter image has no /bin/sh
+  # for a shell-mode setup command. spec: §7.5.
+  setupCommandPolicy:
+    shell: false
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Keep probe runtime of supervise-probe-idle-pool, which warms one idle pod
+# so a test can make a used pod the pool's only idle pod and place the next
+# session start on it (§4.7.10 Runtime supervisor, Liveness).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-idle
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Sidecar preConnect probe runtime. PROBE_DIAL_DELAY delays the warm-up
+# launch's CH-MSGSOCK dial by 30s: longer than the rendered
+# --supervise-ping-interval plus --supervise-ping-timeout (2s + 2s in
+# e2e-values.yaml), so a supervisor stopped during the delay misses a ping
+# before the probe connects, and shorter than the rendered --warm-up-timeout
+# (2m by default), so an undisturbed pod connects before the warm-up wait
+# ends. Only the pod's first launch, the warm-up launch, takes the delay:
+# the probe marks the pod's /tmp volume, so the startup step 7 launch that
+# serves a session after DemoteSDK dials at once, inside the launching
+# start's deadline.
+# spec: §4.7.10 (Runtime supervisor, Launch; SDK-warm), §28.5.3
+# (CH-SUPERVISE, Timing).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-preconnect
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    - name: PROBE_DIAL_DELAY
+      value: 30s
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Sidecar preConnect probe runtime whose pool is seeded with the SDK-warm
+# circuit breaker forced open, so its pods launch at startup step 7
+# (--launch-mode=preconnect-pod-warm). spec: §6.1 (Circuit-breaker for
+# SDK-warm pools).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-podwarm
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    preConnect: true
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# Supervised service-mode probe runtime, with the same dial delay as the
+# preConnect probe. spec: §4.7.10 (Runtime supervisor, Launch; Liveness).
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: supervise-probe-service
+spec:
+  type: agent
+  image: __SUPERVISE_PROBE_IMAGE__
+  command: ["/usr/local/bin/lenny"]
+  env:
+    - name: PROBE_RUNTIME_ENV
+      value: from-runtime-env
+    - name: PROBE_DIAL_DELAY
+      value: 30s
+  integrationLevel: standard
+  executionMode: service
+  isolationProfile: standard
+  deploymentModel: sidecar

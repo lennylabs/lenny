@@ -45,6 +45,13 @@ const SeccompRuntimeDefault = "RuntimeDefault"
 // (non-ephemeral) containers the lenny-pod-security webhook validates.
 const CredMountPathPrefix = "/run/lenny"
 
+// SupervisorStageContainerName is the init container that copies the runtime
+// supervisor into the supervisor volume. §13.1 (Runtime supervisor volume)
+// admits a read-write mount of that volume on this init container alone,
+// and only while it is not a restartable (`restartPolicy: Always`) init
+// container. The pod builder names the container with this constant.
+const SupervisorStageContainerName = "lenny-supervisor-stage"
+
 // PodSpec is the subset of a Kubernetes pod spec the §13.1 validator
 // consults. Fields not in §13.1 are intentionally omitted.
 type PodSpec struct {
@@ -114,6 +121,13 @@ type PodSpec struct {
 	// container whose runAsUser equals it is rejected.
 	AdapterUID int64
 
+	// SupervisorVolumeName is the name of the runtime supervisor volume.
+	// §13.1 (Runtime supervisor volume): no container other than the init
+	// container lenny-supervisor-stage mounts it read-write, so the runtime
+	// container executes a supervisor binary no running container can
+	// rewrite. Empty disables the rule.
+	SupervisorVolumeName string
+
 	// AgentUID is the runtime container's UID, carried by the chart
 	// value security.podUIDs.agent. §13.1 (Container identity) reserves it
 	// for the regular container named runtime, which is what lets the
@@ -130,6 +144,14 @@ type PodSpec struct {
 // §13.1 validator consults.
 type ContainerSpec struct {
 	Name string
+
+	// Init reports an entry of the pod's initContainers list.
+	// RestartPolicyAlways reports an init container whose restartPolicy is
+	// Always (a restartable, or sidecar, init container), which runs for
+	// the pod's life. §13.1 (Runtime supervisor volume) admits a read-write
+	// supervisor volume mount only on a non-restartable init container.
+	Init                bool
+	RestartPolicyAlways bool
 
 	// SecurityContext fields enforced by §13.1.
 	AllowPrivilegeEscalation *bool
@@ -182,6 +204,9 @@ type ContainerSpec struct {
 type VolumeMount struct {
 	Name      string
 	MountPath string
+	// ReadOnly is the mount's readOnly field. An unset readOnly is a
+	// read-write mount.
+	ReadOnly bool
 }
 
 // RuntimeClassPolicy maps the cluster's RuntimeClass names onto the
@@ -346,6 +371,7 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 			))
 		}
 		violations = append(violations, identityViolations(c, spec, credentialContainer)...)
+		violations = append(violations, supervisorVolumeViolations(c, spec.SupervisorVolumeName)...)
 		// §13.1: the operative credential-read surface is the
 		// volume mount, not the group membership. The pod-level fsGroup
 		// grants every container lenny-cred-readers membership regardless
@@ -422,6 +448,33 @@ func identityViolations(c ContainerSpec, spec PodSpec, credentialContainer map[s
 	}
 	if uid == spec.AgentUID && !owns(runtimeContainerName) {
 		out = append(out, reservedUIDViolation(c.Name, uid, runtimeContainerName))
+	}
+	return out
+}
+
+// supervisorVolumeViolations applies the §13.1 Runtime supervisor volume
+// mount rule to c: a read-write mount of the supervisor volume is refused on
+// every container except an init container named lenny-supervisor-stage
+// whose restartPolicy is not Always. A restartable init container runs for
+// the pod's life, so admitting one by name would keep a writer on the
+// volume the runtime container executes the supervisor from. A regular or
+// ephemeral container that borrows the stage name holds no exemption.
+//
+// spec: §13.1 (Runtime supervisor volume)
+func supervisorVolumeViolations(c ContainerSpec, volume string) []string {
+	if volume == "" {
+		return nil
+	}
+	stageWriter := c.Init && !c.RestartPolicyAlways && c.Name == SupervisorStageContainerName
+	var out []string
+	for _, m := range c.VolumeMounts {
+		if m.Name != volume || m.ReadOnly || stageWriter {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"container %q mounts the runtime supervisor volume %q read-write; only the non-restartable init container %q may (§13.1 Runtime supervisor volume)",
+			c.Name, volume, SupervisorStageContainerName,
+		))
 	}
 	return out
 }

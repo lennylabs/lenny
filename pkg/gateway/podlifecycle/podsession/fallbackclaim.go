@@ -164,8 +164,11 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest, r
 func (b *Binder) claimIdleRow(ctx context.Context, req podclaim.ClaimRequest, refused []string, maxLagSeconds float64) (agentpodstate.PodState, bool, error) {
 	boundCtx, cancel := context.WithTimeout(ctx, time.Duration(maxLagSeconds*float64(time.Second)))
 	defer cancel()
+	// The fallback claim reads pod state from its mirror and stamps no drain
+	// request (§5.2), so it ignores AdmitTenantPin's drain report.
 	admit := func(ctx context.Context, podID string) (bool, error) {
-		return podclaim.AdmitTenantPin(ctx, b.Client, b.Namespace, podID, req)
+		admitted, _, err := podclaim.AdmitTenantPin(ctx, b.Client, b.Namespace, podID, req)
+		return admitted, err
 	}
 	return b.Fallback.ClaimIdle(boundCtx, req.Pool, req.SessionID, req.TenantID, refused, admit)
 }

@@ -58,21 +58,23 @@ func TestSessionEndReferenceListsTheHoldTimeoutTerminationAsWritingNone(t *testi
 	})
 }
 
-// spec: 4.7.10 (Runtime process lifetime)
+// spec: 4.7.10 (Runtime process lifetime, Runtime supervisor)
 // diagnosis: the Runtime Process Lifetime section of
 //
 //	docs/runtime-author-guide/lifecycle.md no longer states that the adapter
 //	closes the connection when the coordinator hold times out with no new
-//	coordinator, or that a runtime process that stops, or whose connection the
-//	hold timeout closed, is not reconnected and the pod is retired. A runtime
-//	author then has no account of a connection that ends with every session on
-//	it and no `session_end`.
+//	coordinator, or that a runtime process that exits without a request from
+//	the platform, or whose connection the hold timeout closed, is never
+//	relaunched or reconnected and the pod is retired. A runtime author then
+//	has no account of a connection that ends with every session on it and no
+//	`session_end`, or expects the runtime supervisor to relaunch a process
+//	that exited at a session's end.
 func TestRuntimeProcessLifetimeNamesTheAdapterClosesOfTheConnection(t *testing.T) {
 	page := readDocPage(t, filepath.Join(repoRoot(t), "docs", "runtime-author-guide", "lifecycle.md"))
 	requirePhrases(t, "lifecycle.md Runtime Process Lifetime", section(page, "Runtime Process Lifetime"), []string{
 		"The adapter closes the connection when the pod terminates",
 		"when the coordinator hold times out with no new coordinator",
-		"A runtime process that stops, or whose connection the hold timeout closed, is not re-created or reconnected inside the pod",
+		"A runtime process that exits without a request from the platform, or whose connection the hold timeout closed, is never relaunched or reconnected",
 		"the pod is retired",
 	})
 }

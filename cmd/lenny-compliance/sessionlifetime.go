@@ -47,7 +47,7 @@ func lifetimeMessage(sessionID, id, text string) string {
 // answers every message with a response for the message's session,
 // answers a heartbeat written after each session_end, and neither exits
 // nor closes stdout before the harness closes stdin. A runtime that ends
-// its process at a session boundary fails, because the platform keeps one
+// its process at a session boundary fails, because a keep pod keeps one
 // runtime process across sessions.
 //
 // spec: §15.4.6 (Conformance Test Suite, Basic session lifetime), §4.7.10

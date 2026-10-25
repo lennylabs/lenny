@@ -18,8 +18,8 @@ import (
 // runtime acknowledges at a safe stop point. Otherwise, and for a hard
 // interrupt, the handler calls Runtime.Interrupt, whose effect is the
 // transport's: the developer-loop executor signals its process, and the
-// sidecar transport sends no signal because the runtime process lives as
-// long as the pod. The request's deadline_ms grace window is tracked by
+// sidecar transport sends no signal because no interrupt ends the runtime
+// process. The request's deadline_ms grace window is tracked by
 // the gateway. spec: §4.7; §15.4.3; §4.7.10 (Runtime process lifetime).
 func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest) (*adapterv1.InterruptResponse, error) {
 	sessionID := req.GetSessionId().GetValue()

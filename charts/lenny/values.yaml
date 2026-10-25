@@ -51,6 +51,16 @@ controller:
   # reconciler stamps into every agent pod. Empty by default; operators
   # set it to the adapter image matching the release.
   adapterImage: ""
+  # supervisorImage is the digest-pinned lenny-supervisor image (§4.7.10
+  # Runtime supervisor). The lenny-supervisor-stage init container of every
+  # sidecar pod of a type: agent runtime runs it to copy the runtime
+  # supervisor onto the read-only volume the runtime container runs it from
+  # (§13.1 Runtime supervisor volume). The controller refuses to build such
+  # a pod while it is empty, so a sidecar type: agent pool warms no pod
+  # until it is set. Pin it by digest from the release registry: the
+  # lenny-cosign-verify webhook verifies its signature like every other
+  # agent-pod image under imageVerification.cosign.verifiedRegistries.
+  supervisorImage: ""
   # egressCaptureImage is the tier-9 lenny-egress-capture
   # sidecar image. Empty by default; tier-9 credential-leakage
   # test overlays set it to enable the sidecar on Sandboxes whose
@@ -82,6 +92,14 @@ controller:
     # workqueueMaxDepth: 500         # --workqueue-max-depth
     # statusUpdateDedupWindow: 500ms # --status-update-dedup-window
     # initialFillGracePeriod: 60s    # --initial-fill-grace-period
+    # The §28.5.3 CH-SUPERVISE timing bounds (§17.8.1). Each renders the
+    # controller flag of the same name, which the pod builder renders as
+    # the adapter flag on every supervised pod; an unset key keeps the
+    # controller default, and the controller refuses a non-positive value.
+    # supervisePingInterval: 5s      # --supervise-ping-interval
+    # supervisePingTimeout: 5s       # --supervise-ping-timeout
+    # superviseWaitTimeout: 5m       # --supervise-wait-timeout (covers a cold runtime image pull)
+    # warmUpTimeout: 2m              # --warm-up-timeout
   # resourceClasses overrides the §5.2 small/medium/large resource
   # classes the controller stamps onto agent-pod containers. Each entry
   # sets the container CPU/memory requests and limits; the memory limit
@@ -559,11 +577,11 @@ redis:
   deployResources: {}
   # cluster.addrs is a comma-separated list of §12.4 Redis Cluster seed
   # nodes (host:port). When set the gateway base Redis client is a
-  # CLUSTER KEYSLOT-aware ClusterClient — the Tier 2→3 migration topology
-  # for the high-write Quota/Rate Limiting instance. It takes precedence
-  # over url and the Sentinel fields. Empty keeps the single-instance
-  # topology. The addresses are not secret, so they render as a plain env
-  # var (LENNY_REDIS_CLUSTER_ADDRS).
+  # CLUSTER KEYSLOT-aware ClusterClient, the topology a deployment moves
+  # to at the §12.4 whole-deployment `redis.provider` cutover. It takes
+  # precedence over url and the Sentinel fields. Empty keeps the
+  # single-instance topology. The addresses are not secret, so they render
+  # as a plain env var (LENNY_REDIS_CLUSTER_ADDRS).
   cluster:
     addrs: ""
     # nodes is the deployed Redis Cluster size (provider=cluster +
@@ -2503,9 +2521,9 @@ gateway:
   # pod's occupancy reaches zero the gateway patches the per-pod
   # SandboxClaim to `reserved` and holds it for this many seconds so a
   # back-to-back same-tenant session rebinds (reserved → bound) with no
-  # acquisition round trip. On a pool whose configuration keeps no
-  # runtime process across sessions, the gateway's next acquisition
-  # deletes the claim instead (§5.2). On expiry the holder deletes the
+  # acquisition round trip. When an acquisition refuses the reserved pod
+  # under the runtime-process acknowledgment, it ends the hold by deleting
+  # the claim instead (§5.2). On expiry the holder deletes the
   # claim and the pod returns to idle. A reserved pod is counted as occupied for
   # inventory and scaling (§4.6.2), so a high value depresses apparent
   # idle inventory and delays retirement-limit evaluation; the gateway
@@ -2978,6 +2996,10 @@ referenceRuntimes:
     # F-26.3.3.
     - name: claude-code
       image: ghcr.io/lennylabs/runtime-claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-claude-code-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [anthropic_direct, aws_bedrock, gcp_vertex_anthropic]
@@ -3042,6 +3064,10 @@ referenceRuntimes:
     # coding-agent capabilities and declares proxyDialect: [google].
     - name: gemini-cli
       image: ghcr.io/lennylabs/runtime-gemini-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-gemini-cli-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [gcp_vertex_gemini, google_ai_studio]
@@ -3077,6 +3103,10 @@ referenceRuntimes:
     # coding-agent capabilities and declares proxyDialect: [openai].
     - name: codex
       image: ghcr.io/lennylabs/runtime-codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-codex-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [openai_direct, azure_openai]
@@ -3113,6 +3143,10 @@ referenceRuntimes:
     # the v1 runtimeOptionsSchema URL. F-26.6.1 / F-26.6.2.
     - name: cursor-cli
       image: ghcr.io/lennylabs/runtime-cursor-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-cursor-cli-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small, medium, large]
       supportedProviders: [cursor_direct]
@@ -3151,6 +3185,10 @@ referenceRuntimes:
     # battery the chat runtime implements. F-26.7.1 (supersedes F-26.1.1).
     - name: chat
       image: ghcr.io/lennylabs/runtime-chat@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-chat-adapter"]
       integrationLevel: full
       allowedResourceClasses: [small]
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
@@ -3171,6 +3209,10 @@ referenceRuntimes:
     # injection. F-26.9.2 pattern.
     - name: langgraph
       image: ghcr.io/lennylabs/runtime-langgraph@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-langgraph-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini, azure_openai]
       capabilities:
@@ -3187,6 +3229,10 @@ referenceRuntimes:
     # injection. F-26.9.2.
     - name: mastra
       image: ghcr.io/lennylabs/runtime-mastra@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-mastra-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
       capabilities:
@@ -3208,6 +3254,10 @@ referenceRuntimes:
     # runtimeOptionsSchema URL. F-26.10.2.
     - name: openai-assistants
       image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-openai-assistants-adapter"]
       integrationLevel: full
       supportedProviders: [openai_direct, azure_openai]
       capabilities:
@@ -3225,6 +3275,10 @@ referenceRuntimes:
     # to the crewai-default DelegationPolicy. F-26.11.2.
     - name: crewai
       image: ghcr.io/lennylabs/runtime-crewai@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # spec: §26.1 — every reference runtime is a sidecar runtime whose
+      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
+      # supervisor launches as the runtime process.
+      command: ["/usr/local/bin/lenny-crewai-adapter"]
       integrationLevel: full
       supportedProviders: [anthropic_direct, openai_direct]
       capabilities:
@@ -3656,12 +3710,10 @@ capacityPlanning:
   # active-session pod demand.
   tier: tier1
   # §17.8.2 singleTenantRedisTopology documents the operator's
-  # Redis topology intent at Tier 3. At Tier 3 single-tenant scale the
-  # total Redis ops/s is well below the single-threaded-primary ceiling,
-  # so a 3-4 node Sentinel topology is sufficient and simpler than Redis
-  # Cluster. Set this to "sentinel" to record that intent and suppress the
-  # gateway's "[WARN] RedisClusterRecommended" startup log, which
-  # otherwise fires at Tier 3 when the gateway runs a Sentinel topology.
+  # Redis topology intent at Tier 3. Set this to "sentinel" to record
+  # that intent and suppress the gateway's "[WARN] RedisClusterRecommended"
+  # startup log, which otherwise fires at Tier 3 when the gateway runs a
+  # Sentinel topology.
   # Empty (the default) leaves the warning enabled. The value renders as
   # LENNY_SINGLE_TENANT_REDIS_TOPOLOGY on the gateway. F-17.8.7.
   singleTenantRedisTopology: ""

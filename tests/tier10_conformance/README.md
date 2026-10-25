@@ -12,7 +12,12 @@ The suite is implemented. `scaffolds_test.go` builds `cmd/lenny-compliance` and 
 - `TestThirdPartyRegistration` exercises `pkg/compliance.RegisterAdapterUnderTest`, the same entry point a downstream runtime project imports from its own test code, against the bundled echo runtime.
 - `TestFidelityMatrix` asserts the documented per-`MessagePart` fidelity table against the OpenAI Chat Completions and Open Responses translators in `pkg/gateway/externalapi/outputpartfidelity`.
 
-Every test in the tier gates on the Go toolchain being on `PATH` (needed to build the harness and the runtimes); that is the one skip in the suite, and it is a genuine external-dependency skip rather than a missing deliverable. No test in the tier is currently blocked on an undelivered dependency.
+Every test in the tier gates on the Go toolchain being on `PATH` (needed to build the harness and the runtimes); that is a genuine external-dependency skip rather than a missing deliverable. The following tests in `supervised_recycle_conformance_test.go` are blocked on an undelivered dependency and skip with a `blocked:` reason.
+
+| Test | Blocked on |
+|:--|:--|
+| `TestRecyclePropertyOnASupervisedRestartPod_spec_5_2` | A pool under `recycle.runtimeProcess: restart`, which pool admission refuses until proposal 0084 rebinds the intra-pod MCP servers per runtime generation. |
+| `TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6` | The adapter's write of the `shutdown` frame at pod drain, which lands with R16. Until then the tier-1 runtime-exit cases cover the `shutdown` row's classification. |
 
 ## Build tag and invocation
 

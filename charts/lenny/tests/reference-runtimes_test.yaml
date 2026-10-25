@@ -450,6 +450,7 @@ tests:
       referenceRuntimes.catalog:
         - name: kata-coder
           image: ghcr.io/lennylabs/runtime-kata-coder@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["/usr/local/bin/lenny-kata-coder-adapter"]
           integrationLevel: full
           isolationProfile: microvm
           supportedProviders: [anthropic_direct]
@@ -469,3 +470,48 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "§17.9.1: isolationProfile must be one of baseline, sandboxed, hypervisor, got \"bogus\""
+
+  # spec: §5.1 (command), §26.1 — every reference runtime is a sidecar
+  # agent runtime, so the Runtime CRD requires command on each one; the
+  # assertion runs over every rendered document.
+  - it: renders spec.command on every reference runtime per §5.1 and §26.1
+    asserts:
+      - exists:
+          path: spec.command
+      - lengthEqual:
+          path: spec.command
+          count: 1
+      - matchRegex:
+          path: spec.command[0]
+          pattern: "^/usr/local/bin/lenny-[a-z-]+-adapter$"
+
+  - it: renders the lenny-<name>-adapter command for claude-code per §26.1
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.command
+          value: ["/usr/local/bin/lenny-claude-code-adapter"]
+
+  - it: renders the lenny-<name>-adapter command for crewai per §26.1
+    documentSelector:
+      path: metadata.name
+      value: crewai
+    asserts:
+      - equal:
+          path: spec.command
+          value: ["/usr/local/bin/lenny-crewai-adapter"]
+
+  # A catalog entry without command fails the render, because the Runtime
+  # CRD would reject the applied object. spec: §5.1 (command).
+  - it: fails the render for a catalog entry without command per §5.1
+    set:
+      referenceRuntimes.catalog:
+        - name: no-command
+          image: ghcr.io/lennylabs/runtime-no-command@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          integrationLevel: basic
+          supportedProviders: [anthropic_direct]
+    asserts:
+      - failedTemplate:
+          errorMessage: "referenceRuntimes.catalog[no-command].command is required (§5.1)"

@@ -854,6 +854,7 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          5,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -1022,6 +1023,7 @@ func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 				MaxScrubFailures:                3,
 				MaxSessionsPerPod:               50,
 				MaxPodUptimeSeconds:             86400,
+				RuntimeProcess:                  runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -1107,7 +1109,7 @@ func TestUpdatePoolClearsSessionPolicy_spec_5_2(t *testing.T) {
 		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
 			AcknowledgeProcessLevelIsolation: true,
-			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
+			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -1134,7 +1136,7 @@ func TestUpdatePoolMutexClearAndSetSessionPolicy_spec_5_2(t *testing.T) {
 		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
 			AcknowledgeProcessLevelIsolation: true,
-			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
+			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -1144,7 +1146,7 @@ func TestUpdatePoolMutexClearAndSetSessionPolicy_spec_5_2(t *testing.T) {
 		admin.UpdatePoolRequest{
 			ClearSessionPolicy: true,
 			SessionPolicy: &runtimestore.SessionPolicy{
-				Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 6},
+				Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 6, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 			},
 		})
 	if rr.Code != http.StatusBadRequest {
@@ -1190,6 +1192,7 @@ func TestCreateSessionPoolPersistsRecycleMaxPodUptime_spec_5_2(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          50,
 				MaxPodUptimeSeconds:        3600,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 		ResourceClass: "small",
@@ -1213,6 +1216,7 @@ func TestCreateSessionPoolPersistsRecycleMaxPodUptime_spec_5_2(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          50,
 				MaxPodUptimeSeconds:        7200,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})

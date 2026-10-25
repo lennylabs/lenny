@@ -39,16 +39,17 @@ type Config struct {
 
 	// ClusterAddrs is the list of `host:port` seed nodes for a Redis
 	// Cluster topology. When non-empty, NewUniversalClient builds a
-	// go-redis ClusterClient — the `CLUSTER KEYSLOT`-aware client the
-	// §12.4 Tier 2→3 migration pre-plan requires for the Quota/Rate
-	// Limiting instance. Cluster mode takes precedence over the URL and
+	// go-redis ClusterClient, the client for the single Redis Cluster
+	// that serves every concern at Tier 3 after the §12.4 Tier 2→3
+	// migration moves the deployment's Redis from Sentinel to Redis
+	// Cluster. Cluster mode takes precedence over the URL and
 	// Sentinel fields; NewClient (which returns a concrete *redis.Client)
 	// ignores it, so a caller that needs cluster support must use
 	// NewUniversalClient.
 	//
-	// spec: §12.4 — "The QuotaStore and rate limiter
-	// implementations must use CLUSTER KEYSLOT-aware client libraries
-	// (e.g., go-redis/v9 with cluster mode)".
+	// spec: §12.4 — Shared Redis topology: "One Redis deployment may
+	// serve every concern: a single Sentinel instance at Tiers 1 and 2,
+	// and a single Redis Cluster at Tier 3."
 	ClusterAddrs []string
 
 	// MasterName is the Sentinel monitor name (e.g., `lenny-master`).
@@ -196,9 +197,10 @@ func pinTLSFloor(c *tls.Config) {
 // When ClusterAddrs is set it builds a §12.4 Redis Cluster client;
 // otherwise it delegates to NewClient for the direct-URL / Sentinel
 // paths. The returned client is closed by the caller. Cluster mode is
-// the only path that produces a CLUSTER KEYSLOT-aware client, so the
-// §12.4 Tier 2→3 migration of the Quota/Rate Limiting instance must
-// route through here rather than NewClient.
+// the only path that produces a Redis Cluster client, so a component
+// that connects to Redis after the §12.4 Tier 2→3 migration switches
+// the deployment's Redis to Redis Cluster must route through here
+// rather than NewClient.
 //
 // spec: §12.4 — Redis Cluster migration pre-plan.
 func NewUniversalClient(cfg Config) (redis.UniversalClient, error) {

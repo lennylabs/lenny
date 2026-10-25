@@ -373,6 +373,12 @@ type Server struct {
 	// names the arming that is live rather than the last one written to
 	// the pod's one manifest file. spec: §15.4.3.
 	mcpArmedNonce string
+	// mcpWarmUpArmed records that the warm-up launch's preparation bound
+	// the pod's platform MCP server and no session claim has taken it yet.
+	// The first claim takes that binding as the pod's one platform start
+	// instead of restarting the server. spec: §4.7.6 (mcpNonce row);
+	// §15.4.3.
+	mcpWarmUpArmed bool
 	// connectorCancels stops the §9.3 per-connector MCP servers, one
 	// cancel per connector socket. Reset to nil after every server is
 	// stopped. F-9.1.2.
@@ -381,14 +387,21 @@ type Server struct {
 	// pod's one shared runtime process and not yet finished closing.
 	// spec: §15.4.3.
 	runtimeLive map[string]struct{}
-	// runtimeCohort counts the sessions handed to that process for the
-	// pod's life. It never resets, because the process lives as long as
-	// the pod (§4.7.10). soleSession reports a session only while it is
-	// one and that session is still live.
+	// runtimeCohort counts the sessions handed to the current runtime
+	// generation's process. It resets only when the runtime's generation
+	// changes, at a supervised launch (§4.7.10, Runtime supervisor,
+	// Generation); a runtime without generations has one process for the
+	// pod's life. soleSession reports a session only while it is one and
+	// that session is still live.
 	runtimeCohort int
 	// cohortSession is the identifier of the first session the process
 	// was given.
 	cohortSession string
+	// cohortGen is the runtime generation the cohort counts. A start that
+	// finds the runtime at another generation resets the cohort, because
+	// each launch starts a new process. spec: §4.7.10 (Runtime supervisor,
+	// Generation).
+	cohortGen uint64
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
 	// the slot identifier, which for a session-mode slot is the session's
 	// own identifier. Populated on the adapter's first reference to a slot

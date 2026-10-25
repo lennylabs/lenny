@@ -4,6 +4,7 @@ package tier0_static
 
 import (
 	"os"
+	"slices"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -279,6 +280,13 @@ func TestDevProfileTagBasedImagesAndAdapter(t *testing.T) {
 	if !hasArg(args, "--adapter-image") {
 		t.Errorf("dev profile must wire the controller --adapter-image flag for sidecar-model pods")
 	}
+	// spec: §4.7.10 (Runtime supervisor) — every sidecar pod of a type:
+	// agent runtime runs the supervisor, and the pod builder refuses such a
+	// pod without the supervisor image, so the dev profile renders it at the
+	// bundled tag.
+	if !slices.Contains(args, "--supervisor-image=ghcr.io/lennylabs/lenny-supervisor:0.1.0") {
+		t.Errorf("dev profile controller args %v lack --supervisor-image at the bundled tag", args)
+	}
 }
 
 // TestDevProfileNoStorePods asserts the dev profile deploys no store
@@ -332,7 +340,8 @@ func TestDevProfileFileValues(t *testing.T) {
 			} `yaml:"oidc"`
 		} `yaml:"security"`
 		Controller struct {
-			AdapterImage string `yaml:"adapterImage"`
+			AdapterImage    string `yaml:"adapterImage"`
+			SupervisorImage string `yaml:"supervisorImage"`
 		} `yaml:"controller"`
 	}
 	if err := yaml.Unmarshal(raw, &v); err != nil {
@@ -353,6 +362,9 @@ func TestDevProfileFileValues(t *testing.T) {
 	}
 	if v.Controller.AdapterImage == "" {
 		t.Errorf("dev profile must set controller.adapterImage to the imported lenny-adapter tag")
+	}
+	if v.Controller.SupervisorImage == "" {
+		t.Errorf("dev profile must set controller.supervisorImage to the imported lenny-supervisor tag")
 	}
 }
 

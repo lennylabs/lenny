@@ -34,8 +34,9 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 //
 //   - Inherited / Prohibited fields (image, type, executionMode,
 //     isolationProfile, integrationLevel, capabilities,
-//     allowedResourceClasses, workspaceTier, requireSoPeercred) are always
-//     taken from the base; a derived runtime may not set them.
+//     allowedResourceClasses, workspaceTier, requireSoPeercred,
+//     restartable) are always taken from the base; a derived runtime may
+//     not set them.
 //   - Override fields (description, delegationPolicyRef, agentInterface,
 //     sessionPolicy, capabilityInferenceMode, toolCapabilityOverrides,
 //     minPlatformVersion, supportedProviders, credentialCapabilities,
@@ -75,6 +76,10 @@ func Merge(base, derived Runtime) Runtime {
 	// resolved against a nonce-only base inherits that posture; cb was
 	// deep-copied by cloneRuntime, so the pointer is not shared with base.
 	eff.RequireSoPeercred = cb.RequireSoPeercred
+	// §5.1 (command): restartable is derived from the base's command,
+	// executionMode, and capabilities.preConnect, which a derived runtime
+	// inherits, so the derived runtime takes the base's flag.
+	eff.Restartable = cb.Restartable
 	eff.Capabilities = cb.Capabilities
 	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
 	// §5.1: sdkWarmBlockingPaths is the companion of the

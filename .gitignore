@@ -31,6 +31,9 @@ tmp/
 # Makefile `build` target output directory.
 /bin/
 
+# The runtime supervisor's default build output (supervisor/Makefile OUT).
+/supervisor/bin/
+
 tests/results/
 
 # Terraform working state — never committed. Operators applying the

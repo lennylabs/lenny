@@ -31,6 +31,13 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // bound. spec: §4.7.10 (Runtime process lifetime); §5.2 (Runtime not live).
 var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 
+// errRuntimeConnectTimeout is the error Start returns when its accept bound
+// elapses before the runtime connects. A caller tells it apart from a
+// cancelled start with errors.Is, because only a wait that ran out its bound
+// means the runtime did not connect in time.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
+var errRuntimeConnectTimeout = errors.New("adapter: runtime did not connect within the accept bound")
+
 // SocketRuntimeProcess is the §4.7 sidecar-model RuntimeProcess: the
 // adapter listens on an abstract Unix socket and the runtime — running
 // in a separate pod container — dials it and exchanges §28.5.3 JSONL
@@ -42,9 +49,12 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // separate containers of the same pod. The containers share a network
 // namespace, so an abstract Unix socket the adapter binds is reachable
 // from the runtime container with no shared filesystem path. The
-// adapter never spawns the runtime in this model — the kubelet starts
-// the runtime container — so SocketRuntimeProcess binds the socket at
-// construction time and waits for the runtime to connect on Start.
+// adapter never spawns the runtime in this model: the runtime supervisor
+// in the runtime container launches it when the adapter asks on
+// CH-SUPERVISE (§4.7.10, Runtime supervisor), and SupervisedRuntime
+// composes one SocketRuntimeProcess per launched process. SocketRuntimeProcess
+// therefore binds the socket at construction time and waits for the
+// runtime to connect on Start.
 //
 // For tests, SpawnPath may be set: Start then execs that binary with
 // LENNY_ADAPTER_SOCKET pointing at the bound socket, so one host can
@@ -61,13 +71,17 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // subscriber receives every frame the runtime emits; the Attach handler
 // demultiplexes by sessionId.
 //
-// The transport lives as long as the pod. The connection is accepted at the
-// pod's first session start and serves every later session the pod serves,
-// across occupancy zero, multiplexed by sessionId. Close and Interrupt end
-// nothing: no session teardown, interrupt, or heartbeat escalation closes
-// the connection or signals the process. The pod-scope teardown,
-// CloseListener, is the transport's only close. The adapter runs it at
-// process exit and at the coordinator hold timeout.
+// A SocketRuntimeProcess serves one launched runtime process. Its connection
+// is accepted at the first session start after the launch and serves every
+// session that starts while that process is live, multiplexed by sessionId.
+// Close and Interrupt end nothing: no session teardown, interrupt, or
+// heartbeat escalation closes the connection or signals the process.
+// CloseListener is the transport's only close. On a supervised pod
+// SupervisedRuntime runs it after each attested end of the process and binds
+// a new SocketRuntimeProcess at the rebind. On a keep pod the process, and so
+// the transport, outlives every session; on a restart pod the process ends in
+// each whole-pod scrub. The adapter also runs CloseListener at process exit
+// and at the coordinator hold timeout.
 //
 // When the runtime closes its end, the fan-out reader records a sticky
 // ended state, and every later Start and Output fails at once with
@@ -86,7 +100,8 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // no protocol response, and the accept loop waits for the next connection,
 // so a foreign or unauthenticated process neither becomes the runtime
 // connection nor consumes the accept the runtime's own dial is owed.
-// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §4.7.11 (Separate UIDs
+// spec: §4.7.9, §4.7.10 (Runtime process lifetime; Runtime supervisor, End),
+// §5.2 (Runtime-process lifetime), §4.7.11 (Separate UIDs
 // and connection authentication, Runtime connection handshake), §5.2
 // (Runtime not live), §28.5.3 (CH-MSGSOCK).
 type SocketRuntimeProcess struct {
@@ -145,6 +160,14 @@ type SocketRuntimeProcess struct {
 	// the accept loop installs while no Start waits gets its reader at the
 	// next Start, so every reader start is a Start's. Guarded by mu.
 	reading bool
+	// onEnded, when set, runs once when the installed connection ends for a
+	// reason other than CloseListener: the runtime closed its end, or the
+	// reader stopped at the line limit. A supervised
+	// runtime sets it to hand the end to the adapter's Runtime exits
+	// handling; CloseListener, the adapter's exit and rebind close, calls no
+	// end handler. Written before the first Start. spec: §4.7.10 (Runtime
+	// supervisor, Runtime exits).
+	onEnded func()
 
 	// acceptOnce starts the single accept loop at the first Start. The loop
 	// outlives a Start that times out or is cancelled, so a runtime that
@@ -231,12 +254,8 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 		return nil
 	}
 	spawn := p.SpawnPath
-	timeout := p.AcceptTimeout
+	timeout := p.acceptBoundLocked()
 	p.mu.Unlock()
-
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 
 	if spawn != "" {
 		if err := p.spawn(spawn); err != nil {
@@ -251,6 +270,33 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 	return nil
 }
 
+// defaultAcceptTimeout is the accept bound of a transport whose
+// AcceptTimeout is zero.
+const defaultAcceptTimeout = 30 * time.Second
+
+// acceptBound returns how long Start waits for the runtime to connect.
+func (p *SocketRuntimeProcess) acceptBound() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.acceptBoundLocked()
+}
+
+// acceptBoundLocked is acceptBound for a caller that holds mu.
+func (p *SocketRuntimeProcess) acceptBoundLocked() time.Duration {
+	if p.AcceptTimeout <= 0 {
+		return defaultAcceptTimeout
+	}
+	return p.AcceptTimeout
+}
+
+// hasConnected reports whether the accept loop installed the runtime's
+// connection, whether or not it has since ended.
+func (p *SocketRuntimeProcess) hasConnected() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.connected
+}
+
 // awaitConnection waits for the accept loop to install the runtime's
 // connection, bounded by timeout and ctx, and starts the fan-out reader on
 // it. Returning on the timeout or ctx leaves the loop running.
@@ -263,7 +309,7 @@ func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time
 	case <-p.acceptDone:
 		return fmt.Errorf("adapter: accept runtime connection: %w", p.acceptErr)
 	case <-timer.C:
-		return fmt.Errorf("adapter: runtime did not connect within %s", timeout)
+		return fmt.Errorf("%w (%s)", errRuntimeConnectTimeout, timeout)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -283,7 +329,8 @@ func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time
 // again, so a runtime refused for a replaced nonce is installed when it
 // redials. The first connection that passes is installed, with its reader,
 // as the runtime's connection, and the loop returns, so the listener installs
-// one connection for the pod's life and a later dial stays unaccepted. A
+// one connection for the launched process it serves and a later dial stays
+// unaccepted. A
 // connection that passes after the pod-scope teardown has run is closed here,
 // because no Start can claim it. The loop ends when the listener closes.
 // spec: §4.7.10 (Runtime process lifetime), §4.7.11 (Runtime connection
@@ -381,7 +428,15 @@ func (p *SocketRuntimeProcess) startReaderLocked() {
 func (p *SocketRuntimeProcess) markEnded() {
 	p.mu.Lock()
 	p.ended = true
+	notify := p.onEnded
+	if p.tornDown {
+		notify = nil
+	}
+	p.onEnded = nil
 	p.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
 }
 
 // spawn execs the runtime binary for the developer loop, pointing it at
@@ -458,19 +513,19 @@ func (p *SocketRuntimeProcess) ServesNextSession() bool {
 	return p.connected && !p.ended
 }
 
-// Interrupt returns nil. The transport lives as long as the pod and the
-// pod-scope teardown, CloseListener, is its only close, so no interrupt,
-// clean or hard, and no heartbeat escalation closes the connection or
-// signals the runtime process. spec: §4.7.10 (Runtime process lifetime).
+// Interrupt returns nil. CloseListener is the transport's only close, so no
+// interrupt, clean or hard, and no heartbeat escalation closes the
+// connection or signals the runtime process; only an attested end of the
+// process, or the adapter's own teardown, closes it. spec: §4.7.10 (Runtime
+// process lifetime; Runtime supervisor, End).
 func (p *SocketRuntimeProcess) Interrupt(context.Context, string, bool) error {
 	return nil
 }
 
-// Close returns nil. The transport lives as long as the pod and the
-// pod-scope teardown, CloseListener, is its only close, so a session's
-// teardown, including the last one before occupancy zero, leaves the
-// connection up for the pod's later sessions. spec: §4.7.10 (Runtime process
-// lifetime).
+// Close returns nil. CloseListener is the transport's only close, so a
+// session's teardown, including the last one before occupancy zero, leaves
+// the connection up for the later sessions the same process serves.
+// spec: §4.7.10 (Runtime process lifetime).
 func (p *SocketRuntimeProcess) Close(context.Context, string) error {
 	return nil
 }

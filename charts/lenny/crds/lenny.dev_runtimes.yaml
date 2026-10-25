@@ -61,6 +61,12 @@ spec:
               RuntimeSpec is the desired state of a registered agent Runtime
               (§5.1). The gateway mirrors the registered runtimes into its
               runtime_definitions registry; the CRD is the declarative source.
+
+              The CEL rules enforce the §5.1 `command` and `env` placement rules at the
+              API server: `command` is required on a `type: agent` runtime whose
+              deploymentModel is sidecar (an empty deploymentModel defaults to sidecar)
+              and forbidden on every other runtime, and `env` is forbidden wherever
+              `command` is. spec: §5.1 (command), §5.1 (env).
             x-kubernetes-preserve-unknown-fields: true
             properties:
               agentInterface:
@@ -212,10 +218,31 @@ spec:
                   preConnect:
                     description: |-
                       PreConnect is the §5.1 capabilities.preConnect flag: when true the
-                      §6.1 warm-pool controller pre-connects the agent SDK process during
-                      the warm phase. Default false.
+                      pod's adapter starts the agent SDK process during warm-up, before the
+                      pod becomes idle, so the pool's pods are SDK-warm. In the sidecar
+                      model the adapter does so through the runtime supervisor. Default
+                      false. spec: §6.1.
                     type: boolean
                 type: object
+              command:
+                description: |-
+                  Command is the §5.1 argv of the runtime process. The runtime
+                  supervisor launches it as the runtime process (§4.7.10 Runtime
+                  supervisor), ignoring the image's ENTRYPOINT and CMD. Required on a
+                  `type: agent` sidecar runtime and forbidden on every other runtime
+                  (the RuntimeSpec CEL rules); its first element is an absolute path in
+                  the runtime image. It is settable only on the Runtime CRD: the
+                  RuntimeReconciler mirrors only the derived restartable flag into the
+                  gateway registry, and the pod builder reads the argv from the live
+                  CRD. spec: §5.1 (command).
+                items:
+                  minLength: 1
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: the first element of command must be an absolute path
+                  rule: self[0].startsWith('/')
               credentialCapabilities:
                 description: |-
                   CredentialCapabilities declares the runtime's §4.9 credential
@@ -280,6 +307,45 @@ spec:
                 - sidecar
                 - embedded
                 type: string
+              env:
+                description: |-
+                  Env is the §5.1 list of variables the runtime supervisor gives the
+                  runtime process, which starts from an empty environment rather than
+                  the image's ENV (§4.7.10 Runtime supervisor). Forbidden wherever
+                  Command is (the RuntimeSpec CEL rules). Names are unique (the map
+                  list key), match the POSIX variable-name pattern, and never begin
+                  with the platform-reserved LENNY_ prefix. Values are readable by the
+                  runtime, so the field carries no Secret or ConfigMap reference;
+                  secrets reach the runtime through its credential file. The field is
+                  not mirrored into the gateway registry. spec: §5.1 (env).
+                items:
+                  description: |-
+                    RuntimeEnvVar is one §5.1 `env` pair the runtime supervisor sets in the
+                    runtime process's environment. spec: §5.1 (env).
+                  properties:
+                    name:
+                      description: |-
+                        Name is the variable name: a non-empty POSIX variable name that does
+                        not begin with LENNY_, which the platform reserves for its own
+                        variables.
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: env names beginning with LENNY_ are reserved for
+                          the platform
+                        rule: '!self.startsWith(''LENNY_'')'
+                    value:
+                      description: |-
+                        Value is the variable value. An empty value sets the variable to the
+                        empty string.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
@@ -545,6 +611,15 @@ spec:
             - integrationLevel
             - type
             type: object
+            x-kubernetes-validations:
+            - message: 'command is required on a type: agent runtime whose deploymentModel
+                is sidecar and forbidden on every other runtime'
+              rule: (self.type == 'agent' && (!has(self.deploymentModel) || self.deploymentModel
+                == 'sidecar')) == has(self.command)
+            - message: 'env is forbidden on a runtime that is not a type: agent sidecar
+                runtime'
+              rule: '!has(self.env) || (self.type == ''agent'' && (!has(self.deploymentModel)
+                || self.deploymentModel == ''sidecar''))'
           status:
             description: RuntimeStatus is the observed state of a Runtime.
             x-kubernetes-preserve-unknown-fields: true

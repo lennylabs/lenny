@@ -42,6 +42,10 @@ const psFreeUID int64 = 1000
 // membership-boundary check keys on (POD_SPEC_CRED_GROUP_OVERBROAD).
 const psCredVolumeName = "credentials"
 
+// psSupervisorVolumeName is the runtime supervisor volume name the decider
+// is wired with, matching podspec.SupervisorVolumeName.
+const psSupervisorVolumeName = "lenny-supervisor"
+
 // hardenedContainer returns a container that satisfies every §13.1
 // per-container invariant, running at uid with its primary GID equal to
 // uid as the pod builder renders it. It sets no seccomp profile of its
@@ -93,7 +97,7 @@ func psPodRaw(t *testing.T, pod corev1.Pod) runtime.RawExtension {
 
 func psDecide(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -124,7 +128,7 @@ func TestPodSecurityRejectsHostSharing(t *testing.T) {
 // derives from the pod's runtimeClassName.
 func psDecideWithPolicy(t *testing.T, pod corev1.Pod, rc podsecurity.RuntimeClassPolicy) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -255,7 +259,7 @@ func TestPodSecurityValidatesEphemeralContainers_spec_13_1(t *testing.T) {
 			},
 		},
 	}}
-	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:         "ps-eph",
 			Operation:   admissionv1.Update,
@@ -294,7 +298,7 @@ func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *tes
 			VolumeMounts: []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/peek"}},
 		},
 	}}
-	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:         "ps-eph-mount",
 			Operation:   admissionv1.Update,
@@ -330,7 +334,7 @@ func TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1(t *testing.T) {
 }
 
 func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
-	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, psSupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "ps-bad",
 			Operation: admissionv1.Create,

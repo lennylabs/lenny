@@ -41,6 +41,9 @@ import (
 // spec: §24.2; §15.1; §10.5.
 // F-24.2.1 / F-17.6.6 / F-24.2.4 / F-24.2.7 / F-10.5.4.
 func cmdPreflight(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "supervisor" {
+		return cmdPreflightSupervisor(ctx, args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "", "path to the Helm values.yaml (Postgres/Redis/MinIO connection fallback)")
@@ -83,7 +86,9 @@ func cmdPreflight(ctx context.Context, c *ctl.Client, args []string, stdout, std
 }
 
 // preflightValues mirrors the subset of the Helm values file the §24.2
-// standalone preflight reads. Both the spec-named keys
+// preflight commands read: the standalone preflight reads the connection
+// keys, and `lenny-ctl preflight supervisor` reads the agent namespaces, the
+// pod identities, and the supervisor image. Both the spec-named keys
 // (postgres.connectionString, redis.connectionString) and the chart's
 // keys (postgres.dsn, redis.url) are accepted; the spec-named key wins
 // when both are present. Unknown values keys are ignored (the file is a
@@ -104,6 +109,32 @@ type preflightValues struct {
 		Bucket    string `json:"bucket"`
 		UseSSL    *bool  `json:"useSSL"`
 	} `json:"minio"`
+	AgentNamespaces []struct {
+		Name string `json:"name"`
+	} `json:"agentNamespaces"`
+	Security struct {
+		PodUIDs struct {
+			Adapter        int64 `json:"adapter"`
+			Agent          int64 `json:"agent"`
+			CredReadersGID int64 `json:"credReadersGID"`
+		} `json:"podUIDs"`
+	} `json:"security"`
+	Controller struct {
+		SupervisorImage string `json:"supervisorImage"`
+	} `json:"controller"`
+}
+
+// readPreflightValues decodes the --config values file. spec: §24.2.
+func readPreflightValues(path string) (preflightValues, error) {
+	var v preflightValues
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return v, err
+	}
+	if err := yaml.Unmarshal(raw, &v); err != nil {
+		return v, fmt.Errorf("not a valid values file: %w", err)
+	}
+	return v, nil
 }
 
 // loadPreflightValues reads the --config values file into an infra.Config
@@ -114,13 +145,9 @@ func loadPreflightValues(path string) (infra.Config, bool, error) {
 	if path == "" {
 		return infra.Config{}, true, nil
 	}
-	raw, err := os.ReadFile(path)
+	v, err := readPreflightValues(path)
 	if err != nil {
 		return infra.Config{}, true, err
-	}
-	var v preflightValues
-	if err := yaml.Unmarshal(raw, &v); err != nil {
-		return infra.Config{}, true, fmt.Errorf("not a valid values file: %w", err)
 	}
 	cfg := infra.Config{
 		PostgresDSN:    firstNonEmpty(v.Postgres.ConnectionString, v.Postgres.DSN),

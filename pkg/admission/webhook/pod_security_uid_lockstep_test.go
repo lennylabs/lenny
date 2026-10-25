@@ -81,7 +81,7 @@ func decidePodSecurity(t *testing.T, pod corev1.Pod, adapterUID, agentUID, gid i
 	if err != nil {
 		t.Fatalf("marshal pod: %v", err)
 	}
-	return webhook.PodSecurity(adapterUID, agentUID, gid, podspec.CredVolumeName, podsecurity.RuntimeClassPolicy{})(
+	return webhook.PodSecurity(adapterUID, agentUID, gid, podspec.CredVolumeName, podspec.SupervisorVolumeName, podsecurity.RuntimeClassPolicy{})(
 		context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "lockstep",

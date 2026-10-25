@@ -25,6 +25,17 @@ import (
 // process of its own. Every session is bound to a slot on every pod,
 // whatever the pool's concurrency. spec: §5.2; §6.4; §6.1.
 type slotState struct {
+	// runtimeGen is the runtime generation whose process the rule-8 record
+	// of this entry's start gave the session to. Zero until the record. A
+	// crash of that generation fails the session. Guarded by s.mu.
+	// spec: §4.7.10 (Runtime supervisor, Crash; Runtime supervisor,
+	// Generation).
+	runtimeGen uint64
+	// crash is closed when the runtime process the session runs in crashed
+	// while it held the session; the session's Attach stream then ends with
+	// runtime_crash. Created lazily under s.mu. spec: §4.7.10 (Runtime
+	// supervisor, Crash).
+	crash chan struct{}
 	// sessionID is the session assigned to this slot. A session-mode
 	// slot's identifier is its session's identifier (§5.2), so the
 	// registry key and this value are the same string once the slot is

@@ -32,6 +32,11 @@ func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *b
 	rt := runtimeCR()
 	rt.Spec.DeploymentModel = deploymentModel
 	rt.Spec.RequireSoPeercred = requireSoPeercred
+	// spec: §5.1 (command) — command is required on a sidecar agent runtime
+	// and forbidden on an embedded one.
+	if deploymentModel == "embedded" {
+		rt.Spec.Command = nil
+	}
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
 		Spec: lennyv1.SandboxTemplateSpec{
@@ -235,7 +240,7 @@ func TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4(t *testing.T) {
 		err:    errors.New("apiserver hiccup on carrier write"),
 		fail:   &fail,
 	}
-	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
 
 	// First reconcile: the carrier write fails before the pod is created.
@@ -314,7 +319,7 @@ func TestReconcileClearsStaleCarrierAfterRevert_spec_4_5(t *testing.T) {
 
 	fail := true
 	wrapped := &podCreateFailClient{Client: c, fail: &fail}
-	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
 
 	// First reconcile: the carrier write succeeds, then the pod Create fails.
@@ -398,7 +403,7 @@ func TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5(t *testing.T) {
 		err:    errors.New("apiserver hiccup on carrier clear"),
 		fail:   &fail,
 	}
-	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
 
 	// First reconcile: the carrier-clear apply fails before the pod is created.

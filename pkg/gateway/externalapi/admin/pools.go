@@ -626,6 +626,15 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
 	}
+	// spec: §5.2 (Runtime-process lifetime) — refuse
+	// recycle.runtimeProcess: restart on a runtime that is not restartable
+	// before storage (and before the store's own recycle checks), on the
+	// persisted create and the dry run alike.
+	if err := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), body.RuntimeRef), pl); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"runtimeRef": body.RuntimeRef})
+		return
+	}
 	// spec: §5.2 — reject cross-tenant reuse on a pool whose
 	// runtime is T4 before storage, so a misconfigured pool never enters
 	// the registry.
@@ -1681,7 +1690,51 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 			}
 		}
 	}
+	return r.validateUpdateRuntimeProcess(w, req, name, body)
+}
+
+// validateUpdateRuntimeProcess refuses a PUT (persisted or dry run) that
+// would leave the pool under recycle.runtimeProcess: restart on a runtime
+// that is not restartable. It evaluates the merged effective pool (the
+// stored row with the body applied), so a runtimeRef swap to a
+// non-restartable runtime and a sessionPolicy that newly selects `restart`
+// are both caught. An unresolved runtime, including one read while no
+// runtime store is wired, reads as not restartable. A missing pool is left
+// to the persist and preview stages, which resolve the 404; any other read
+// failure refuses the request with 500, so the refusal fails closed rather
+// than admitting a pool it could not evaluate. It writes the failure to w
+// and returns false. spec: §5.2 (Runtime-process lifetime).
+func (r *Router) validateUpdateRuntimeProcess(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) bool {
+	current, err := r.pools.Get(req.Context(), name)
+	if errors.Is(err, poolstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"read pool for the recycle.runtimeProcess check: "+err.Error(), nil)
+		return false
+	}
+	applyPoolUpdateMerge(&current, body)
+	if verr := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), current.RuntimeRef), current); verr != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(),
+			map[string]any{"runtimeRef": current.RuntimeRef})
+		return false
+	}
 	return true
+}
+
+// runtimeRestartable reports the §5.1 restartable flag of the effective
+// runtime named ref, as runtimestore.Resolve returns it: a derived runtime
+// takes the flag from its base. It fails closed: no runtime store, an empty
+// ref, or a failed resolution (including a derived runtime whose base is
+// missing) reads as not restartable.
+// spec: §5.2 (Runtime-process lifetime), §5.1 (derived runtime merge).
+func (r *Router) runtimeRestartable(ctx context.Context, ref string) bool {
+	if r.runtimes == nil || ref == "" {
+		return false
+	}
+	rt, err := runtimestore.Resolve(ctx, r.runtimes, ref)
+	return err == nil && rt.Restartable
 }
 
 // previewPoolUpdate renders the §15.1 dryRun preview: it merges the body

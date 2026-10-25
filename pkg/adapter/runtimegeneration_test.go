@@ -12,8 +12,9 @@ import (
 // spec: 28 (CH-MCP-PLATFORM exclusivity), 15.4.3 (runtime integration
 // levels), 4.7.10 (Runtime process lifetime)
 //
-// The runtime process lives as long as the pod, so the generation counts
-// every session the process has been given and never resets. alice is sole
+// No session teardown ends the runtime process, so the generation counts
+// every session the process has been given and resets only at the
+// supervised launch of a new process, which this case never takes. alice is sole
 // while she is the only session the process has been given and is live in
 // it. Once she closes, no session is sole, and bob, who starts on the same
 // process after occupancy zero, is not sole either.

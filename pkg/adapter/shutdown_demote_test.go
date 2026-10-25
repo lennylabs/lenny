@@ -178,3 +178,30 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 		t.Errorf("ConfigureWorkspace after ForceTerminate: %v", err)
 	}
 }
+
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting), §4.6.1 — while
+// a session is registered on an embedded preConnect pod, the SIGTERM path
+// does not demote: the session's runtime and its registry entry survive the
+// start of the drain, which the preStop eviction checkpoint reads. Before
+// the correction the SIGTERM path demoted the registered session.
+func TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	if err := s.PreConnect(context.Background()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
+		t.Fatalf("ConfigureWorkspace: %v", err)
+	}
+	s.ShutdownDemoteSDK(time.Second)
+	if rt.demoted != 0 {
+		t.Fatalf("runtime demoted %d times with a session registered, want 0", rt.demoted)
+	}
+	if !s.SDKWarmReady() {
+		t.Fatal("the SDK-warm process was torn down with a session registered")
+	}
+	// The entry stands: an idempotent repeat of the start for the same
+	// session still resolves it.
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
+		t.Fatalf("the registered session's entry was removed: %v", err)
+	}
+}

@@ -114,6 +114,22 @@ jobs:
           path: tests/results/latest.json
           retention-days: 30
 
+  # §4.7.10 runtime supervisor image: the release workflow builds, pushes,
+  # signs, and attests it; the PR gate builds it from Dockerfile.supervisor
+  # without pushing, so a change that breaks the FROM scratch build fails
+  # before release.
+  supervisor-image:
+    name: runtime supervisor image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [pr-fast]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Build the lenny-supervisor image
+        run: docker build -f Dockerfile.supervisor -t ghcr.io/lennylabs/lenny-supervisor:ci .
+      - name: Run the property self-test in the built image
+        run: docker run --rm --user 1001 ghcr.io/lennylabs/lenny-supervisor:ci selftest
+
   unit:
     name: tier 1 — unit
     runs-on: ubuntu-latest

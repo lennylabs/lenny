@@ -25,6 +25,7 @@ func runtimeCR(name string, providers []string) *lennyv1.Runtime {
 		Spec: lennyv1.RuntimeSpec{
 			Type:               "agent",
 			Image:              "registry.example.com/agent@sha256:" + digest64,
+			Command:            []string{"/usr/local/bin/lenny"},
 			IntegrationLevel:   "basic",
 			ExecutionMode:      "session",
 			SupportedProviders: providers,

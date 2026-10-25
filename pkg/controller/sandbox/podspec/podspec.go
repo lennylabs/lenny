@@ -277,6 +277,43 @@ type Inputs struct {
 	AdapterUID     int64
 	AgentUID       int64
 	CredReadersGID int64
+
+	// RuntimeCommand is the Runtime's `command` (§5.1), the argv the
+	// runtime supervisor launches. A set value makes the pod a supervised
+	// pod: Build applies applySupervisor, which makes the supervisor the
+	// runtime container's first process. The reconciler sets it only for a
+	// sidecar `type: agent` runtime; an embedded pod with a set value is
+	// refused. spec: §4.7.10 (Runtime supervisor).
+	RuntimeCommand []string
+	// RuntimeEnv is the Runtime's `env` (§5.1). The supervisor clears its
+	// environment and gives each launched process these pairs before the
+	// platform variables. Read only on a supervised pod. spec: §4.7.10
+	// (Runtime supervisor, Environment).
+	RuntimeEnv []EnvPair
+	// RuntimeProcess is the pool's recycle.runtimeProcess at pod creation.
+	// It is rendered into the lenny.dev/runtime-process label on every pod,
+	// as `restart` when it is `restart` and `keep` otherwise, and into the
+	// adapter's --runtime-process flag on a supervised pod. spec: §5.2
+	// (Runtime-process lifetime).
+	RuntimeProcess string
+	// LaunchMode is the supervised pod's launch mode (one of the Launch*
+	// constants), which the reconciler fixes at pod creation from the
+	// pool's execution mode, the runtime's preConnect capability, and the
+	// pool's SDK-warm circuit breaker. Read only on a supervised pod.
+	// spec: §4.7.10 (Runtime supervisor, Launch; Runtime supervisor,
+	// SDK-warm).
+	LaunchMode string
+	// SupervisorImage is the digest-pinned runtime supervisor image the
+	// lenny-supervisor-stage init container runs, from the controller's
+	// --supervisor-image flag. Build refuses a supervised pod without it.
+	// spec: §4.7.10 (Runtime supervisor); §13.1 (Runtime supervisor volume).
+	SupervisorImage string
+	// SuperviseTiming carries the operator-tunable CH-SUPERVISE bounds the
+	// specification leaves unvalued. Each positive value renders as its
+	// adapter flag on a supervised pod; a zero value renders no flag, which
+	// leaves the adapter's compiled default in force. spec: §28.5.3
+	// (CH-SUPERVISE, Timing); §17.8.1.
+	SuperviseTiming SuperviseTiming
 }
 
 // adapterUID, agentUID, and credReadersGID resolve the pod's non-root
@@ -315,6 +352,14 @@ func Build(in Inputs) (*corev1.Pod, error) {
 	if in.RuntimeImage == "" {
 		return nil, errors.New("podspec: runtime image is required")
 	}
+	if err := validateRuntimeProcess(in.RuntimeProcess); err != nil {
+		return nil, err
+	}
+	// spec: §4.7.10 (Runtime supervisor) — a supervised pod cannot run
+	// without the image its stage init container copies the supervisor from.
+	if len(in.RuntimeCommand) > 0 && in.SupervisorImage == "" {
+		return nil, errors.New("podspec: a runtime command requires the supervisor image")
+	}
 	runtimeClass, ok := isolation.ResolveRuntimeClassName(isolation.Profile(in.IsolationProfile), in.RuntimeClassNameOverrides)
 	if !ok {
 		return nil, fmt.Errorf("podspec: unknown isolation profile %q", in.IsolationProfile)
@@ -329,6 +374,11 @@ func Build(in Inputs) (*corev1.Pod, error) {
 	case DeploymentSidecar:
 		return buildSidecar(in, runtimeClass)
 	case DeploymentEmbedded:
+		// spec: §4.7.10 (Runtime supervisor) — the embedded model has no
+		// runtime container and no supervisor.
+		if len(in.RuntimeCommand) > 0 {
+			return nil, errors.New("podspec: the embedded deployment model runs no runtime supervisor; a runtime command is refused")
+		}
 		return buildEmbedded(in, runtimeClass)
 	default:
 		return nil, fmt.Errorf("podspec: unknown deployment model %q", in.DeploymentModel)

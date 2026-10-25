@@ -1,0 +1,22 @@
+# The runtime supervisor image (§4.7.10 Runtime supervisor; §4.7.11 item
+# 8; §13.1 Runtime supervisor volume). The supervisor is a freestanding
+# static C program, so the final image is FROM scratch and holds the
+# single binary at /lenny-supervisor. The lenny-supervisor-stage init
+# container runs its `stage` mode to copy it into the pod's supervisor
+# volume:
+#
+#	docker build -f Dockerfile.supervisor -t lenny-supervisor .
+#
+# The build stage reuses the Go toolchain image the platform Dockerfile
+# builds from, because it carries the C compiler and make the
+# supervisor's Makefile needs.
+ARG GO_VERSION=1.25
+
+FROM golang:${GO_VERSION} AS build
+WORKDIR /src
+COPY supervisor/ ./supervisor/
+RUN make -C supervisor OUT=/out /out/lenny-supervisor
+
+FROM scratch
+COPY --from=build /out/lenny-supervisor /lenny-supervisor
+ENTRYPOINT ["/lenny-supervisor"]

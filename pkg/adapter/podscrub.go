@@ -47,7 +47,6 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 		// gateway→adapter connection is closed right after Shutdown returns;
 		// the report travels the independent GatewayControl link, and the
 		// gateway missing-report timeout bounds the whole operation.
-		ctx := context.Background()
 		if s.ScrubOps == nil {
 			// Fail-closed on a wiring gap. Without host operations the scrub
 			// cannot run: scrub.Run would return a nil-Ops error the driver
@@ -65,11 +64,17 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 			return
 		}
 		cfg, enumErr := s.scrubConfig(rc)
+		// spec: §28.5.3 (CH-SUPERVISE, Timing) — the scrub's supervisor
+		// requests run under a deadline, which every request's own bound
+		// fits inside.
+		ctx, cancel := context.WithTimeout(context.Background(), scrubDeadline(cfg.CleanupTimeout))
+		defer cancel()
 		rep, err := scrub.Run(ctx, s.ScrubOps, cfg)
-		// A slots container the adapter could not read fails the scrub's
-		// outcome even when every enumerated step succeeded: the steps ran
-		// over a set that may be missing every leaked session's residue.
-		// spec: §5.2 (whole-pod scrub outcome).
+		// A workspace slots container the adapter could not read fails the
+		// scrub's outcome even when every enumerated step succeeded: the
+		// steps ran over a set that may be missing every leaked session's
+		// residue. An unreadable credentials container already failed step
+		// 0 inside scrub.Run. spec: §5.2 (whole-pod scrub outcome).
 		outcome, detail := scrubOutcome(rep, errors.Join(err, enumErr))
 		// The liveness sample is taken below, after the scrub has run:
 		// step 4 clears the /tmp and /dev/shm mounts the runtime container
@@ -155,10 +160,13 @@ func (s *Server) SetScrubDoneHook(f func()) {
 // default because the pool configuration carries no cleanup shell field, so
 // cleanup commands run in the default argv mode.
 //
-// An enumeration failure is returned beside the config rather than folded
-// into an empty set, because an empty set is what the scrub reads as "this
-// pod held no slot" and a container the adapter cannot read may hold every
-// leaked session's workspace and credential lease. The caller runs the
+// An enumeration failure is never folded into an empty set, because an
+// empty set is what the scrub reads as "this pod held no slot" and a
+// container the adapter cannot read may hold every leaked session's
+// workspace and credential lease. A credential enumeration failure rides in
+// the config as a step-0 error, so scrub.Run skips cleanupCommands while a
+// credential file may still be on disk and fails the scrub. A workspace
+// enumeration failure is returned beside the config: the caller runs the
 // scrub with what was enumerated and fails its outcome on the error, so the
 // pod is retired rather than recycled with unverified residue.
 //
@@ -166,13 +174,50 @@ func (s *Server) SetScrubDoneHook(f func()) {
 func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) (scrub.Config, error) {
 	creds, credErr := s.slotCredentialFiles()
 	trees, treeErr := s.slotWorkspaceTrees()
-	return scrub.Config{
-		CredentialFiles: creds,
-		WorkspaceDirs:   trees,
-		CleanupDir:      s.WorkspaceBase,
-		CleanupCommands: rc.GetCleanupCommands(),
-		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
-	}, errors.Join(credErr, treeErr)
+	cfg := scrub.Config{
+		CredentialFiles:   creds,
+		CredentialEnumErr: credErr,
+		WorkspaceDirs:     trees,
+		CleanupDir:        s.WorkspaceBase,
+		CleanupCommands:   rc.GetCleanupCommands(),
+		CleanupTimeout:    time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
+	}
+	s.applySupervisedScrub(&cfg)
+	return cfg, treeErr
+}
+
+// applySupervisedScrub adds the supervised steps on a pod that runs the
+// runtime supervisor: on every such pod the supervisor runs cleanupCommands
+// at the agent UID in the runtime container, and on a restart pod the first
+// and second end and sweep and the listener rebind run around them. A keep
+// pod keeps its runtime process across the boundary.
+// spec: §5.2 (Supervised scrub sequence); §4.7.10 (Runtime supervisor,
+// Cleanup; Runtime supervisor, End; Runtime supervisor, Sweep).
+func (s *Server) applySupervisedScrub(cfg *scrub.Config) {
+	rt := s.supervisedRuntime()
+	if rt == nil {
+		return
+	}
+	cfg.CleanupRunner = rt
+	if rt.Lifetime() != LifetimeRestart {
+		return
+	}
+	cfg.EndRuntime = rt.EndAndSweep
+	cfg.EndRuntimeAgain = rt.EndAndSweep
+	cfg.RebindListeners = rt.RebindListeners
+}
+
+// scrubDeadline is the deadline of one whole-pod scrub's supervisor
+// requests: two ends and two sweeps at their bounds, the cleanup request's
+// bound, and a margin. It is the adapter's choice, because the specification
+// bounds each request without stating a value; it exceeds the cleanup
+// request's bound, which exceeds the cleanupTimeoutSeconds deadline.
+// spec: §28.5.3 (CH-SUPERVISE, Timing).
+func scrubDeadline(cleanupTimeout time.Duration) time.Duration {
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = scrub.DefaultCleanupTimeout
+	}
+	return 2*(superviseEndBound+superviseSweepBound) + cleanupTimeout + superviseCleanupSlack + time.Minute
 }
 
 // slotCredentialFiles enumerates the §6.1 per-session credential files the
@@ -252,7 +297,7 @@ func scrubOutcome(rep *scrub.Report, err error) (gatewaycontrol.PodScrubOutcome,
 // scrub sets Failed only when a step errored or verification found a dirty path).
 func scrubFailureDetail(rep *scrub.Report) string {
 	for _, st := range rep.Steps {
-		if !st.Skipped && st.Err != nil {
+		if !st.Skipped && st.Err != nil && !errors.Is(st.Err, scrub.ErrNotLive) {
 			return fmt.Sprintf("scrub step %s failed: %v", st.Step, st.Err)
 		}
 	}

@@ -19,7 +19,7 @@ import (
 // keptRuntimeRecycle is a recycling block that keeps the pod's runtime
 // process across sessions (maxSessionsPerPod above 1, standard scrub).
 func keptRuntimeRecycle() *runtimestore.RecyclePolicy {
-	return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5}
+	return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5, RuntimeProcess: runtimestore.RuntimeProcessKeep}
 }
 
 // putPoolQuery issues a PUT on path (which may carry a query string) with
@@ -88,6 +88,7 @@ func TestUpdatePoolRefusesRemovingRuntimeReuseAcknowledgment_spec_5_2(t *testing
 
 	oneSession := keptRuntimeRecycle()
 	oneSession.MaxSessionsPerPod = 1
+	oneSession.RuntimeProcess = ""
 	rr = putPoolQuery(t, router.Handler(), "reuse", "", admin.UpdatePoolRequest{
 		SessionPolicy: &runtimestore.SessionPolicy{Recycle: oneSession},
 	})

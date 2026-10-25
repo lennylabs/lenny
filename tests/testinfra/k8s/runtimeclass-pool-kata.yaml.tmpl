@@ -16,6 +16,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_PRECONNECT_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: microvm

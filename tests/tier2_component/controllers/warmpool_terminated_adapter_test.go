@@ -65,6 +65,7 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 		Spec: lennyv1.RuntimeSpec{
 			Type:             "agent",
 			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "full",
 		},
 	})
@@ -79,7 +80,7 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 	return &terminatedAdapterEnv{
 		t: t, ctx: ctx, c: c,
 		pool: &warmpool.Reconciler{Client: c, Scheme: scheme},
-		sb:   &sandbox.Reconciler{Client: c, Scheme: scheme, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"},
+		sb:   &sandbox.Reconciler{Client: c, Scheme: scheme, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"},
 	}
 }
 

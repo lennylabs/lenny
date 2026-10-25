@@ -407,3 +407,49 @@ func TestMergeOverridesLimitsSetupCommandPolicyAndPoolConfig(t *testing.T) {
 		t.Errorf("derived defaultPoolConfig must fully replace base: %+v", override.DefaultPoolConfig)
 	}
 }
+
+// TestMergeInheritsRestartable_spec_5_1 verifies that a derived runtime
+// takes the §5.1 restartable flag from its base, whatever the derived
+// record carries: the flag derives from the base's command, executionMode,
+// and capabilities.preConnect, all of which a derived runtime inherits.
+// Pool admission reads the merged flag, so a derived runtime of a
+// restartable base admits recycle.runtimeProcess: restart and one of a
+// non-restartable base refuses it.
+//
+// spec: §5.1 (command), §5.2 (recycle.runtimeProcess).
+func TestMergeInheritsRestartable_spec_5_1(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		base, derive bool
+	}{
+		{"restartable base, derived false", true, false},
+		{"restartable base, derived true", true, true},
+		{"non-restartable base, derived true", false, true},
+		{"non-restartable base, derived false", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base := runtimestore.Runtime{Name: "base", Type: runtimestore.TypeAgent, Image: "lenny/base@sha256:abc", Restartable: c.base}
+			derived := runtimestore.Runtime{Name: "derived", BaseRuntime: "base", Restartable: c.derive}
+			if got := runtimestore.Merge(base, derived).Restartable; got != c.base {
+				t.Errorf("Merge(...).Restartable = %v, want the base value %v", got, c.base)
+			}
+		})
+	}
+
+	// Resolve applies the same rule through the store.
+	ctx := context.Background()
+	s := runtimestore.NewMemory()
+	if err := s.Create(ctx, runtimestore.Runtime{Name: "rbase", Type: runtimestore.TypeAgent, Image: "lenny/base@sha256:abc", Restartable: true}); err != nil {
+		t.Fatalf("create base: %v", err)
+	}
+	if err := s.Create(ctx, runtimestore.Runtime{Name: "rderived", BaseRuntime: "rbase"}); err != nil {
+		t.Fatalf("create derived: %v", err)
+	}
+	eff, err := runtimestore.Resolve(ctx, s, "rderived")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !eff.Restartable {
+		t.Error("a derived runtime resolved against a restartable base must be restartable")
+	}
+}

@@ -4,6 +4,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -58,6 +59,8 @@ type controllerFlags struct {
 	adapterUID              int64
 	agentUID                int64
 	credReadersGID          int64
+	supervisorImage         string
+	superviseTiming         podspec.SuperviseTiming
 
 	zapOpts zap.Options
 }
@@ -76,6 +79,7 @@ func parseFlags() *controllerFlags {
 	registerRateLimitFlags(f)
 	registerLifecycleFlags(f)
 	registerCertFlags(f)
+	registerSupervisorFlags(f)
 
 	// The zap development flags are bound on the shared command line so the
 	// controller-runtime logger honors --zap-* overrides; they are read after
@@ -195,4 +199,45 @@ func registerCertFlags(f *controllerFlags) {
 		"§10.3 cert-issuance grace. A pre-idle pod that has not presented a valid lenny.dev/cert-not-after annotation within this window of its creation is treated as a cert-issuance failure and replaced. Active only with --require-cert-issuance.")
 	flag.BoolVar(&f.requireCertIssuance, "require-cert-issuance", false,
 		"§10.3 cert-issuance enforcement. When true, a pre-idle pod without a valid certificate after --cert-issuance-grace is drained for replacement. Default false because the check keys on the lenny.dev/cert-not-after annotation a per-pod cert producer stamps; enable it only when that producer is wired, otherwise every pre-idle pod is replaced.")
+}
+
+// Defaults of the CH-SUPERVISE bounds the specification leaves unvalued
+// (§17.8.1 lists them as "the controller's default"). The supervisor wait
+// covers a cold pull of the runtime image, which the kubelet runs while the
+// adapter waits for the supervisor's ready.
+const (
+	defaultSupervisePingInterval = 5 * time.Second
+	defaultSupervisePingTimeout  = 5 * time.Second
+	defaultSuperviseWaitTimeout  = 5 * time.Minute
+	defaultWarmUpTimeout         = 2 * time.Minute
+)
+
+// registerSupervisorFlags binds the runtime supervisor image and the
+// operator-tunable CH-SUPERVISE timing bounds the pod builder renders as
+// adapter flags on every supervised pod. The chart renders each timing flag
+// only when its controller.tuning key is set, so a stock install uses these
+// defaults. spec: §4.7.10 (Runtime supervisor); §28.5.3 (CH-SUPERVISE,
+// Timing); §17.8.1.
+func registerSupervisorFlags(f *controllerFlags) {
+	flag.StringVar(&f.supervisorImage, "supervisor-image", "",
+		"§4.7.10 digest-pinned lenny-supervisor image the lenny-supervisor-stage init container of every supervised agent pod runs. Empty leaves every sidecar type: agent pool without pods, because the pod builder refuses a supervised pod without it.")
+	flag.DurationVar(&f.superviseTiming.PingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
+		"§28.5.3 interval at which a supervised pod's adapter pings the runtime supervisor (controller.tuning.supervisePingInterval). Must be positive.")
+	flag.DurationVar(&f.superviseTiming.PingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
+		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure (controller.tuning.supervisePingTimeout). Must be positive.")
+	flag.DurationVar(&f.superviseTiming.WaitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
+		"§28.5.3 bound on the adapter's wait before READY for the supervisor's connection and ready; it covers a cold pull of the runtime image (controller.tuning.superviseWaitTimeout). Must be positive.")
+	flag.DurationVar(&f.superviseTiming.WarmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
+		"§4.7.10 bound on a warm-up launch's CH-MSGSOCK connection before READY (controller.tuning.warmUpTimeout). Must be positive.")
+}
+
+// validateFlags refuses a flag value the controller must not start with: a
+// zero or negative CH-SUPERVISE timing bound, which the adapter of every
+// supervised pod would refuse at startup. spec: §28.5.3 (CH-SUPERVISE,
+// Timing); §17.8.1.
+func validateFlags(f *controllerFlags) error {
+	if err := f.superviseTiming.Validate(); err != nil {
+		return fmt.Errorf("supervise timing: %w", err)
+	}
+	return nil
 }

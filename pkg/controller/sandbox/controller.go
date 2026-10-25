@@ -138,6 +138,17 @@ type Reconciler struct {
 	// depth-instrumented reconciliation work queue (--workqueue-max-depth).
 	// A nil factory uses the controller-runtime default queue.
 	QueueFactory controllermetrics.QueueFactory
+	// SupervisorImage is the digest-pinned runtime supervisor image the
+	// lenny-supervisor-stage init container of every supervised pod runs
+	// (--supervisor-image, chart value controller.supervisorImage). The pod
+	// builder refuses a supervised pod when it is empty, so a sidecar
+	// `type: agent` pool creates no pod until it is set. spec: §4.7.10
+	// (Runtime supervisor); §13.1 (Runtime supervisor volume).
+	SupervisorImage string
+	// SuperviseTiming carries the operator-tunable CH-SUPERVISE bounds
+	// (the controller.tuning supervise keys) rendered as adapter flags on
+	// every supervised pod. spec: §28.5.3 (CH-SUPERVISE, Timing); §17.8.1.
+	SuperviseTiming podspec.SuperviseTiming
 }
 
 // EgressCaptureUpstreamAnnotation is the TESTING.md §12.9.8 opt-in annotation an
@@ -470,6 +481,13 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	// the flag off, so the adapter default of true (enforce SO_PEERCRED)
 	// governs.
 	nonceOnly := r.resolveNonceOnly(ctx, sb, &rt)
+	// spec: §5.2 (Runtime-process lifetime); §4.7.10 (Runtime supervisor) —
+	// fix the pod's lifetime and, on a sidecar `type: agent` pod, the
+	// supervisor inputs; a refused combination creates no pod.
+	sup, err := r.resolveSupervision(ctx, sb, &rt)
+	if err != nil {
+		return fmt.Errorf("resolve runtime supervision for sandbox %s: %w", sb.Name, err)
+	}
 	pod, err := podspec.Build(podspec.Inputs{
 		Name:         sb.Name,
 		Namespace:    sb.Namespace,
@@ -549,6 +567,14 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		AdapterUID:     r.AdapterUID,
 		AgentUID:       r.AgentUID,
 		CredReadersGID: r.CredReadersGID,
+		// spec: §4.7.10 (Runtime supervisor); §5.2 (Runtime-process
+		// lifetime) — the supervisor inputs and the pod's lifetime.
+		RuntimeCommand:  sup.command,
+		RuntimeEnv:      sup.env,
+		RuntimeProcess:  sup.runtimeProcess,
+		LaunchMode:      sup.launchMode,
+		SupervisorImage: r.SupervisorImage,
+		SuperviseTiming: r.SuperviseTiming,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

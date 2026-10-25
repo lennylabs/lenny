@@ -123,6 +123,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 			Enabled: true, AcknowledgeBestEffortScrub: true,
 			OnScrubFailure:   runtimestore.CleanupFailureWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}},
 	}); err != nil {
 		t.Fatalf("create pool: %v", err)
@@ -237,6 +238,7 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled: true, AcknowledgeBestEffortScrub: true,
 				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -345,6 +347,7 @@ func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testin
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled: true, AcknowledgeBestEffortScrub: true,
 				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {

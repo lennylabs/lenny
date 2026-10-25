@@ -272,6 +272,7 @@ func newRecycleCoordinator(t *testing.T, c client.Client) *recycle.RecycleBounda
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          25,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -1167,6 +1168,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 				AcknowledgeBestEffortScrub: true,
 				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				MaxSessionsPerPod:          3,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {

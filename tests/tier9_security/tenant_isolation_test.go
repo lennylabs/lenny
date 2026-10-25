@@ -243,7 +243,7 @@ type keptRuntimeHarness struct {
 // keptRuntimeRecyclePolicy is the acknowledged recycling sessionPolicy the
 // harness pool starts with.
 const keptRuntimeRecyclePolicy = `{"acknowledgeProcessLevelIsolation":true,` +
-	`"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,"maxSessionsPerPod":5},` +
+	`"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,"maxSessionsPerPod":5,"runtimeProcess":"keep"},` +
 	`"cleanupTimeoutSeconds":30}`
 
 // newKeptRuntimeHarness registers a runtime cloned from the task-mode echo
@@ -336,6 +336,7 @@ spec:
   deploymentModel: sidecar
   executionMode: session
   image: %s
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   isolationProfile: standard
   type: agent

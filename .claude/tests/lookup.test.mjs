@@ -31,7 +31,7 @@ try {
   mkdirSync(join(root, "spec"));
   mkdirSync(join(root, "pkg", "gw"), { recursive: true });
   writeFileSync(
-    join(root, "spec", "07_sessions.md"),
+    join(root, "spec", "sessions.md"),
     [
       "# 7. Sessions",
       "",
@@ -70,13 +70,13 @@ try {
   let r = run({ exact: ["maxIdle"] });
   check("exact search exits 0", r.status === 0, r.stderr);
   check("it counts every occurrence", /4 occurrence\(s\) in 4 passage\(s\), 1 file\(s\)/.test(r.stdout), r.stdout);
-  check("a paragraph hit prints under its heading", r.stdout.includes("spec/07_sessions.md:5  [7.1 Limits]"));
+  check("a paragraph hit prints under its heading", r.stdout.includes("spec/sessions.md:5  [7.1 Limits]"));
   check("a table row prints with its header row", r.stdout.includes("| Setting | Default |\n| `maxIdle` | 900s |"));
   check("a list is split so only the matching item prints", r.stdout.includes("- Second item mentions") && !r.stdout.includes("- First item mentions"));
   check("a fenced line starting with # is not read as a heading", r.stdout.includes("[7.3 Other]") && !r.stdout.includes("[not a heading"));
 
   r = run({ exact: [{ pattern: "max(idle|age)", regex: true, ignoreCase: true }], scope: ["spec", "pkg"] });
-  check("regex search spans scopes in the order given", r.stdout.indexOf("spec/07_sessions.md") < r.stdout.indexOf("pkg/gw/limits.go"), r.stdout);
+  check("regex search spans scopes in the order given", r.stdout.indexOf("spec/sessions.md") < r.stdout.indexOf("pkg/gw/limits.go"), r.stdout);
   check("a code hit prints a line window", r.stdout.includes("const MaxIdle = 900"));
 
   r = run({ exact: ["absentTerm"] });
@@ -93,8 +93,8 @@ try {
   r = run({ exact: ["MaxIdle"], paths: ["pkg/gw/limits.go"] });
   check("paths reaches a single file outside the named scopes", /2 occurrence\(s\)/.test(r.stdout) && r.stdout.includes("pkg/gw/limits.go"), r.stdout);
 
-  r = run({ lines: ["spec/07_sessions.md:16-17", "pkg/gw/limits.go:4", "spec/none.md:1-2", "garbage"] });
-  check("lines returns a range verbatim under its heading", r.stdout.includes("## lines spec/07_sessions.md:16-17  [7.2 Resume]") && r.stdout.includes("Resume is unrelated text."), r.stdout);
+  r = run({ lines: ["spec/sessions.md:16-17", "pkg/gw/limits.go:4", "spec/none.md:1-2", "garbage"] });
+  check("lines returns a range verbatim under its heading", r.stdout.includes("## lines spec/sessions.md:16-17  [7.2 Resume]") && r.stdout.includes("Resume is unrelated text."), r.stdout);
   check("lines reads a file outside the scope", r.stdout.includes("const MaxIdle = 900"));
   check("lines reports a missing file and a malformed entry", r.stdout.includes("no such file") && r.stdout.includes('expected "path:from-to"'));
 

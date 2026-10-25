@@ -708,3 +708,52 @@ func TestValidateContainerIdentityViolationsPerContainer_spec_13_1(t *testing.T)
 		t.Errorf("expected exactly the unset and reserved violations, got %v", pe.Violations)
 	}
 }
+
+// TestSupervisorVolumeAdmitsOnlyTheStageInitContainerAsWriter pins the §13.1
+// Runtime supervisor volume rule: a read-write mount of the volume is
+// refused on every container except the non-restartable init container
+// lenny-supervisor-stage, a read-only mount is admitted anywhere, and an
+// empty volume name disables the rule.
+//
+// spec: 13.1 (Runtime supervisor volume)
+func TestSupervisorVolumeAdmitsOnlyTheStageInitContainerAsWriter_spec_13_1(t *testing.T) {
+	const volume = "lenny-supervisor"
+	rw := []VolumeMount{{Name: volume, MountPath: "/lenny-supervisor"}}
+	ro := []VolumeMount{{Name: volume, MountPath: "/lenny-supervisor", ReadOnly: true}}
+	other := []VolumeMount{{Name: "workspace", MountPath: "/workspace"}}
+	for _, tc := range []struct {
+		name   string
+		c      ContainerSpec
+		volume string
+		refuse bool
+	}{
+		{"stage init container writes", ContainerSpec{Name: SupervisorStageContainerName, Init: true, VolumeMounts: rw}, volume, false},
+		{"restartable stage init container writes", ContainerSpec{Name: SupervisorStageContainerName, Init: true, RestartPolicyAlways: true, VolumeMounts: rw}, volume, true},
+		{"regular container borrowing the stage name writes", ContainerSpec{Name: SupervisorStageContainerName, VolumeMounts: rw}, volume, true},
+		{"other init container writes", ContainerSpec{Name: "setup", Init: true, VolumeMounts: rw}, volume, true},
+		{"runtime container writes", ContainerSpec{Name: "runtime", VolumeMounts: rw}, volume, true},
+		{"runtime container reads", ContainerSpec{Name: "runtime", VolumeMounts: ro}, volume, false},
+		{"unrelated volume", ContainerSpec{Name: "runtime", VolumeMounts: other}, volume, false},
+		{"rule disabled", ContainerSpec{Name: "runtime", VolumeMounts: rw}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := supervisorVolumeViolations(tc.c, tc.volume)
+			if (len(got) != 0) != tc.refuse {
+				t.Fatalf("violations = %v, want refused %t", got, tc.refuse)
+			}
+		})
+	}
+
+	spec := wellFormedSpec()
+	spec.SupervisorVolumeName = volume
+	spec.Containers[1].VolumeMounts = rw
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) || !pe.HasViolation("runtime supervisor volume") {
+		t.Fatalf("a regular container writing the supervisor volume was admitted: %v", err)
+	}
+	spec.Containers[1].VolumeMounts = ro
+	if err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{}); err != nil {
+		t.Fatalf("a read-only supervisor volume mount was refused: %v", err)
+	}
+}

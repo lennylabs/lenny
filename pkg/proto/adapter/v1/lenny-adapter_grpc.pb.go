@@ -241,8 +241,9 @@ type AdapterClient interface {
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
 	// Shutdown ends the named session's use of the pod's runtime process,
-	// which stays alive for the pod's life (§4.7.10), and releases the
-	// session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// which outlives the session on a keep pod and, on a restart pod, ends in
+	// the next whole-pod scrub or when the pod retires (§4.7.10, Runtime
+	// process lifetime), and releases the session's slot. The adapter forwards a JSONL `shutdown` to the agent
 	// with the supplied deadline. Returns without waiting for the runtime
 	// process to exit.
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
@@ -737,8 +738,9 @@ type AdapterServer interface {
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
 	// Shutdown ends the named session's use of the pod's runtime process,
-	// which stays alive for the pod's life (§4.7.10), and releases the
-	// session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// which outlives the session on a keep pod and, on a restart pod, ends in
+	// the next whole-pod scrub or when the pod retires (§4.7.10, Runtime
+	// process lifetime), and releases the session's slot. The adapter forwards a JSONL `shutdown` to the agent
 	// with the supplied deadline. Returns without waiting for the runtime
 	// process to exit.
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)

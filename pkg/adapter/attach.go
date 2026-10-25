@@ -83,6 +83,9 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// stream, and every later stream for the entry, ends. hbHung is nil when
 	// the entry has no monitor.
 	hbHung := s.entryHeartbeatHung(sessionID)
+	// spec: §4.7.10 (Runtime supervisor, Crash) — a crash of the runtime
+	// process that holds the session ends the stream with runtime_crash.
+	crashed := s.entryRuntimeCrash(sessionID)
 
 	// The receive loop forwards client envelopes to the runtime's
 	// stdin; it runs concurrently with the send loop below. recvErr is
@@ -97,7 +100,12 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		select {
 		case line, ok := <-out:
 			if !ok {
-				// The runtime's output ended; the session is done.
+				// The runtime's output ended. A crash is handled before the
+				// output closes, so a crashed session reports runtime_crash
+				// and any other end is the session's clean end.
+				if isClosed(crashed) {
+					return errRuntimeCrash
+				}
 				return nil
 			}
 			// spec: §28.5.3 — heartbeat_ack is protocol-level
@@ -164,9 +172,24 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// than a clean close, and makes no second Interrupt call.
 			// spec: §4.7.10 (Runtime process lifetime).
 			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; session stream ended (§28.5.3)")
+		case <-crashed:
+			return errRuntimeCrash
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+// isClosed reports whether ch is closed; a nil channel is not.
+func isClosed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
 	}
 }
 

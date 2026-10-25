@@ -268,11 +268,18 @@ func (s *Server) entryHeartbeatHung(sessionID string) <-chan struct{} {
 // escalation. The session's heartbeat monitor calls it once, after its hung
 // channel closes; an open Attach stream for the session then ends.
 // Interrupt signals a process only on the developer-loop executor; the
-// sidecar transport ends nothing, because the runtime process lives as long
-// as the pod.
+// sidecar transport ends nothing, because no heartbeat escalation signals
+// the runtime process.
 // spec: §28.5.3; §4.7.10 (Runtime process lifetime).
+//
+// On a supervised pod the escalation is the hang cause of the not-live
+// state, on every pod kind, so no later start joins the hung process.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
 func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string, rt RuntimeProcess) {
 	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; ending the session's stream (§28.5.3)", sessionID)
+	if sr := s.supervisedRuntime(); sr != nil {
+		sr.MarkNotLive(CauseHang)
+	}
 	if err := rt.Interrupt(ctx, sessionID, false); err != nil {
 		log.Printf("lenny-adapter: interrupt of hung runtime for session %s failed: %v", sessionID, err)
 	}

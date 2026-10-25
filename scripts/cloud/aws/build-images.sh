@@ -8,7 +8,8 @@
 #   1. Ensures the ECR repository exists (creating it if absent).
 #   2. Logs the local Docker into ECR using the operator's AWS
 #      session.
-#   3. Builds the image from the root Dockerfile with BINARY=<name>.
+#   3. Builds the image from the root Dockerfile with BINARY=<name>, or
+#      from the Dockerfile an entry names (the runtime supervisor).
 #   4. Pushes the image with the configured TAG (the chart's
 #      appVersion by default).
 #
@@ -32,7 +33,9 @@ PLATFORMS="${PLATFORMS:-linux/amd64}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
-# IMAGES is the list of (image name, BINARY build-arg) pairs. The
+# IMAGES is the list of (image name, BINARY build-arg[, Dockerfile])
+# entries; an entry that names a Dockerfile builds from it with no
+# BINARY build-arg. The
 # 10 platform binaries share the convention image-name == cmd path;
 # the runtime echo image points at cmd/runtimes/echo via an explicit
 # BINARY=runtimes/echo. Tier-7 cloud-load references the runtime
@@ -54,6 +57,9 @@ IMAGES=(
   # §6.1 SDK-warm reference runtime; the §6.3 startup-latency benchmark's
   # SDK-warm pools run it.
   "lenny-runtime-preconnect-echo:runtimes/preconnect-echo"
+  # §4.7.10 runtime supervisor: a freestanding C binary in a FROM scratch
+  # image built from its own Dockerfile.
+  "lenny-supervisor::Dockerfile.supervisor"
 )
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
@@ -69,8 +75,8 @@ cd "${REPO_ROOT}"
 built=0
 skipped=0
 for entry in "${IMAGES[@]}"; do
-  name="${entry%:*}"
-  binary="${entry#*:}"
+  IFS=':' read -r name binary dockerfile <<<"${entry}"
+  dockerfile="${dockerfile:-Dockerfile}"
   ref="${ECR_REGISTRY}/${name}:${TAG}"
 
   # Ensure the ECR repo exists. DescribeRepositories surfaces a
@@ -95,17 +101,21 @@ for entry in "${IMAGES[@]}"; do
     continue
   fi
 
-  echo "build-images.sh: building ${name} (BINARY=${binary})" >&2
+  echo "build-images.sh: building ${name} (BINARY=${binary}, ${dockerfile})" >&2
+  build_args=()
+  if [[ -n "${binary}" ]]; then
+    build_args=(--build-arg "BINARY=${binary}")
+  fi
   # Build with buildx so cross-arch works the same way the release
   # workflow does. For a single platform a local docker build would
   # work too; buildx makes the script forward-compatible with
   # multi-arch.
   docker buildx build \
     --platform "${PLATFORMS}" \
-    --build-arg "BINARY=${binary}" \
+    "${build_args[@]}" \
     --tag "${ref}" \
     --push \
-    --file "${REPO_ROOT}/Dockerfile" \
+    --file "${REPO_ROOT}/${dockerfile}" \
     "${REPO_ROOT}"
   built=$((built + 1))
 done

@@ -22,7 +22,7 @@ import (
 // resourceclass.DefaultRegistry).
 func reconcileResources(t *testing.T, c client.Client, s *runtime.Scheme) {
 	t.Helper()
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
 	}); err != nil {

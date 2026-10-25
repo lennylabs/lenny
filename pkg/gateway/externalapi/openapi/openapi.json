@@ -383,7 +383,7 @@
             "description": "§5.2 session-mode pod-reuse, concurrency, and workspace-cleanup policy. The former task and concurrent modes are presets of this block: recycle.enabled is sequential pod reuse and maxConcurrentSessions > 1 is the concurrent-slot configuration.",
             "properties": {
               "maxConcurrentSessions":            { "type": "integer", "description": "§5.2 simultaneous-session bound per pod. > 1 requires acknowledgeProcessLevelIsolation." },
-              "acknowledgeProcessLevelIsolation": { "type": "boolean", "description": "§5.2 deployer acknowledgment of shared process namespace, /tmp, cgroup memory, network stack, and credential group-read across concurrent slots. Required when maxConcurrentSessions > 1, and when recycle.enabled with recycle.maxSessionsPerPod > 1 and a scrubProfile other than vm-restart, because the pod then keeps one runtime process across its sessions." },
+              "acknowledgeProcessLevelIsolation": { "type": "boolean", "description": "§5.2 deployer acknowledgment of shared process namespace, /tmp, cgroup memory, network stack, and credential group-read across concurrent slots. Required when maxConcurrentSessions > 1, and on a reusing recycling pool (recycle.enabled with recycle.maxSessionsPerPod > 1 and a scrubProfile other than vm-restart) under recycle.runtimeProcess: keep. A sequential pool under recycle.runtimeProcess: restart does not require it." },
               "recycle": {
                 "type": "object",
                 "description": "§5.2 sequential pod-reuse and whole-pod scrub policy.",
@@ -396,7 +396,8 @@
                   "onScrubFailure":                  { "type": "string", "enum": ["warn","fail"], "description": "§5.2 disposition when the whole-pod scrub fails." },
                   "maxScrubFailures":                { "type": "integer", "description": "§5.2 cumulative scrub-failure retirement bound (default 3)." },
                   "maxSessionsPerPod":               { "type": "integer", "description": "§5.2 per-pod served-session retirement bound. Required when enabled." },
-                  "maxPodUptimeSeconds":             { "type": "integer", "description": "§5.2 optional uptime retirement bound." }
+                  "maxPodUptimeSeconds":             { "type": "integer", "description": "§5.2 optional uptime retirement bound." },
+                  "runtimeProcess":                  { "type": "string", "enum": ["keep", "restart"], "description": "§5.2 runtime-process lifetime of the pods the pool creates: a keep pod keeps its runtime process across the recycle boundary, and a restart pod launches a new runtime process for the first session after each reused boundary. Required with no default on a reusing recycling pool (enabled, maxSessionsPerPod > 1, and a scrubProfile other than vm-restart) and rejected on every other pool. restart requires a restartable runtime." }
                 }
               },
               "cleanupCommands":                  { "type": "array", "items": { "type": "string" }, "description": "§5.2 deployer cleanup executed before the whole-pod scrub." },

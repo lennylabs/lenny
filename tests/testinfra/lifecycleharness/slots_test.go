@@ -210,9 +210,9 @@ func TestConcurrentPoolStoreRegistersBothPoolKinds_spec_5_2(t *testing.T) {
 // spec: §5.2 (Deployer acknowledgment (runtime process kept across
 // sessions)), §4.6.1 (within-hold rebind)
 //
-// The exclusive recycling pool a KeepRuntime harness registers keeps its
-// runtime across sessions, so an acquisition rebinds a reserved pod rather
-// than ending its hold, and stays an exclusive pool.
+// The exclusive recycling pool a KeepRuntime harness registers reuses pods,
+// so an acquisition rebinds a reserved pod rather than ending its hold, and
+// stays an exclusive pool.
 func TestPoolPolicyStoreRegistersAnExclusivePoolThatKeepsItsRuntime_spec_5_2(t *testing.T) {
 	pools, err := poolPolicyStore(1, true)
 	if err != nil {
@@ -222,8 +222,8 @@ func TestPoolPolicyStoreRegistersAnExclusivePoolThatKeepsItsRuntime_spec_5_2(t *
 	if err != nil {
 		t.Fatalf("read the pool: %v", err)
 	}
-	if !poolstore.KeepsRuntimeAcrossSessions(p.SessionPolicy) {
-		t.Error("the exclusive recycling pool does not keep its runtime across sessions")
+	if !poolstore.ReusesPods(p.SessionPolicy) {
+		t.Error("the exclusive recycling pool does not reuse pods, so a reserved pod's hold ends instead of rebinding")
 	}
 	if h := (&Harness{maxConcurrent: 1}); h.Concurrent() {
 		t.Error("a pool with one slot per pod reads as a concurrent-workspace pool")

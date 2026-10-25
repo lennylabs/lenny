@@ -63,6 +63,36 @@ const (
 	Failed
 )
 
+// ErrNotLive marks a step error whose outcome is the adapter's not-live state
+// rather than a failed scrub: an end, sweep, or listener rebind that failed,
+// and a CH-SUPERVISE link failure during any supervisor request. A step error
+// that wraps it is recorded and does not fail the scrub; the runtime reports
+// itself as unable to serve the next session instead.
+// spec: §5.2 (Supervised scrub sequence); §4.7.10 (Runtime supervisor,
+// Liveness).
+var ErrNotLive = errors.New("runtime not live")
+
+// CleanupRequest is one cleanupCommands run through a CleanupRunner.
+type CleanupRequest struct {
+	// Commands are the pool's cleanupCommands.
+	Commands []string
+	// Timeout is the cleanupTimeoutSeconds deadline.
+	Timeout time.Duration
+	// PrevProvider and PrevLeaseID are the step-0 cleanup metadata.
+	PrevProvider string
+	PrevLeaseID  string
+}
+
+// CleanupRunner runs cleanupCommands somewhere other than the adapter's own
+// container. On a pod that runs the runtime supervisor it is the supervised
+// runtime, which runs them at the agent UID in the runtime container. An
+// error that wraps ErrNotLive is a link failure; any other error is a cleanup
+// failure, which fails the scrub. spec: §4.7.10 (Runtime supervisor,
+// Cleanup).
+type CleanupRunner interface {
+	RunCleanup(ctx context.Context, req CleanupRequest) error
+}
+
 // DefaultCleanupTimeout is the §5.2 sessionPolicy.cleanupTimeoutSeconds
 // default applied when Config.CleanupTimeout is unset. The example pool in
 // spec §5.2 uses 30s.
@@ -116,6 +146,13 @@ type Config struct {
 	// scrub if any member is left present. spec: §5.2; §6.1.
 	CredentialFiles []string
 
+	// CredentialEnumErr is the failure to enumerate CredentialFiles, when
+	// the adapter could not read the per-slot credentials container. It is
+	// a step-0 error: the adapter cannot confirm every credential file is
+	// purged, so the cleanupCommands row is skipped and the scrub fails, on
+	// every pod. spec: §5.2 (Supervised scrub sequence, Step 0).
+	CredentialEnumErr error
+
 	// PrevProvider and PrevLeaseID are the sanitized metadata for the task
 	// whose credentials were just purged. They seed the
 	// LENNY_PREV_CREDENTIAL_PROVIDER and LENNY_PREV_LEASE_ID cleanup-env
@@ -167,6 +204,23 @@ type Config struct {
 	// records the step as skipped; a non-nil callback that errors fails the
 	// scrub.
 	TruncateLogs func() error
+
+	// CleanupRunner, when set, runs cleanupCommands instead of the adapter's
+	// own workspace.RunSetup. spec: §4.7.10 (Runtime supervisor, Cleanup).
+	CleanupRunner CleanupRunner
+
+	// EndRuntime, set on a restart pod, is the first end and sweep of the
+	// runtime process, between step 0 and cleanupCommands. Nil skips it.
+	// spec: §5.2 (Supervised scrub sequence).
+	EndRuntime func(ctx context.Context) error
+
+	// EndRuntimeAgain, set on a restart pod, is the second end and sweep,
+	// between cleanupCommands and the listener rebind. Nil skips it.
+	EndRuntimeAgain func(ctx context.Context) error
+
+	// RebindListeners, set on a restart pod, closes and rebinds the runtime
+	// listeners before steps 1 to 6. Nil skips it.
+	RebindListeners func() error
 }
 
 // StepName labels one scrub step in a Report for observability and tests.
@@ -174,7 +228,10 @@ type StepName string
 
 const (
 	StepCredentialPurge StepName = "credential_purge" // step 0
+	StepEndRuntime      StepName = "end_runtime"
 	StepCleanupCommands StepName = "cleanup_commands"
+	StepEndRuntimeAgain StepName = "end_runtime_again"
+	StepRebindListeners StepName = "rebind_listeners"
 	StepKillProcesses   StepName = "kill_processes"   // step 1
 	StepPurgeIPCShm     StepName = "purge_ipc_shm"    // step 1b
 	StepRemoveWorkspace StepName = "remove_workspace" // step 2
@@ -214,10 +271,13 @@ type Report struct {
 	VerifyDirty []string
 }
 
-// failed reports whether any non-skipped step recorded an error.
+// failed reports whether any non-skipped step recorded an error that fails
+// the scrub. An error that wraps ErrNotLive affects the runtime's liveness
+// and leaves the scrub's outcome alone. spec: §5.2 (Supervised scrub
+// sequence).
 func (r *Report) failed() bool {
 	for _, s := range r.Steps {
-		if !s.Skipped && s.Err != nil {
+		if !s.Skipped && s.Err != nil && !errors.Is(s.Err, ErrNotLive) {
 			return true
 		}
 	}
@@ -245,17 +305,32 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	rep := &Report{Result: Succeeded}
 
 	// Step 0 (pre-cleanup): purge the credential file before any deployer
-	// code runs. spec line 424.
-	if len(cfg.CredentialFiles) > 0 {
-		rep.record(StepCredentialPurge, false, removeAll(ops, cfg.CredentialFiles))
+	// code runs.
+	step0Err := purgeCredentials(ops, cfg)
+	rep.record(StepCredentialPurge, len(cfg.CredentialFiles) == 0 && step0Err == nil, step0Err)
+
+	// spec: §5.2 (Supervised scrub sequence) — on a restart pod the first
+	// end and sweep run between step 0 and cleanupCommands.
+	rep.runContextStep(ctx, StepEndRuntime, cfg.EndRuntime)
+
+	// cleanupCommands: deployer code, after the credential purge. A step-0
+	// error skips them on every pod, so no deployer code runs while a
+	// credential file may still be on disk. The aggregate cap is
+	// cleanupTimeoutSeconds; a cap-exceed under the warn sentinel is still a
+	// cleanup failure for scrub purposes. spec: §5.2 (Supervised scrub
+	// sequence, Step 0).
+	if step0Err != nil {
+		rep.record(StepCleanupCommands, true, nil)
 	} else {
-		rep.record(StepCredentialPurge, true, nil)
+		rep.runCleanup(ctx, cfg)
 	}
 
-	// cleanupCommands: deployer code, after the credential purge. spec line
-	// 415. The aggregate cap is cleanupTimeoutSeconds; a cap-exceed under
-	// the warn sentinel is still a cleanup failure for scrub purposes.
-	rep.runCleanup(ctx, cfg)
+	// spec: §5.2 (Supervised scrub sequence) — the second end and sweep run
+	// whether or not cleanupCommands failed, and the listener rebind follows.
+	rep.runContextStep(ctx, StepEndRuntimeAgain, cfg.EndRuntimeAgain)
+	if cfg.RebindListeners != nil {
+		rep.record(StepRebindListeners, false, cfg.RebindListeners())
+	}
 
 	// Steps 1-6 run regardless of a cleanup failure so the workspace is
 	// scrubbed even when deployer code misbehaves.
@@ -283,6 +358,18 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	return rep, nil
 }
 
+// purgeCredentials runs step 0 and returns its error: the enumeration
+// failure, if any, joined with the removal failure of the files that were
+// enumerated. A non-nil result gates the cleanupCommands row in Run.
+// spec: §5.2 (Supervised scrub sequence, Step 0).
+func purgeCredentials(ops Ops, cfg Config) error {
+	var removeErr error
+	if len(cfg.CredentialFiles) > 0 {
+		removeErr = removeAll(ops, cfg.CredentialFiles)
+	}
+	return errors.Join(cfg.CredentialEnumErr, removeErr)
+}
+
 // record appends a StepRecord. A nil err on a non-skipped step is success.
 func (r *Report) record(step StepName, skipped bool, err error) {
 	r.Steps = append(r.Steps, StepRecord{Step: step, Skipped: skipped, Err: err})
@@ -298,6 +385,15 @@ func (r *Report) runCallback(step StepName, fn func() error) {
 	r.record(step, false, fn())
 }
 
+// runContextStep runs a supervised step. A step that is not configured (an
+// unsupervised pod, or a keep pod) is not part of the pod's sequence and is
+// not recorded.
+func (r *Report) runContextStep(ctx context.Context, step StepName, fn func(context.Context) error) {
+	if fn != nil {
+		r.record(step, false, fn(ctx))
+	}
+}
+
 // runCleanup runs the deployer cleanupCommands with the §5.2 cleanup env
 // (the baseline setup env plus LENNY_PREV_CREDENTIAL_PROVIDER /
 // LENNY_PREV_LEASE_ID). It reuses the §7.5 bounded-execution machinery so
@@ -310,6 +406,13 @@ func (r *Report) runCleanup(ctx context.Context, cfg Config) {
 	timeout := cfg.CleanupTimeout
 	if timeout <= 0 {
 		timeout = DefaultCleanupTimeout
+	}
+	if cfg.CleanupRunner != nil {
+		r.record(StepCleanupCommands, false, cfg.CleanupRunner.RunCleanup(ctx, CleanupRequest{
+			Commands: cfg.CleanupCommands, Timeout: timeout,
+			PrevProvider: cfg.PrevProvider, PrevLeaseID: cfg.PrevLeaseID,
+		}))
+		return
 	}
 	cmds := make([]*adapterv1.SetupCommand, 0, len(cfg.CleanupCommands))
 	for _, c := range cfg.CleanupCommands {

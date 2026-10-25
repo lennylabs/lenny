@@ -124,6 +124,7 @@ func TestReconcileThreadsSAToken_spec_10_3(t *testing.T) {
 		Client:                  c,
 		Scheme:                  s,
 		AdapterImage:            "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage:         "ghcr.io/lennylabs/lenny-supervisor:v1",
 		SATokenAudience:         "lenny-gateway-acme",
 		AgentServiceAccountName: "lenny-agent",
 	}

@@ -309,6 +309,8 @@ Gateway commands:
                                         Apply a seed file (tenants/runtimes/users); --wait-timeout defaults to 120s (§17.6)
   install [--answers <f>]               Run the installation wizard (§17.6)
   preflight [--config <values.yaml>]    Assert installed CRD schema-version currency before helm upgrade (§10.5)
+  preflight supervisor --runtime-class <name> --config <values.yaml> [--wait-timeout <d>]
+                                        Run the runtime supervisor property self-test in a one-off pod (§24.2)
   values validate --config <values.yaml>  Validate a values.yaml against the chart's values.schema.json (§17.6, §24.20)
   runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
   runtime validate [<path>] [--binary <adapter>] [--report <f>]

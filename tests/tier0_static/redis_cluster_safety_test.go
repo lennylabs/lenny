@@ -43,13 +43,7 @@ const redisScanHome = "pkg/redisconn"
 // redisSlotGuardExempt lists packages that issue multi-key operations but
 // whose tests cannot install the slot hook yet, each with the finding that
 // tracks the fix. An entry is removed when that finding closes.
-var redisSlotGuardExempt = map[string]string{
-	// The lenny-ops remediation-lock scripts and transaction span
-	// ops:lock:<scope> and ops:lockidx:<id>, which hash to different slots.
-	// Renaming them under one hash tag needs a §25.4 change, which P6 of
-	// gateway-runtime-comms-remediation.md §10.2 owns (F-12.4.28 class B/C).
-	"pkg/ops/coordination/redisstore": "F-12.4.28 class B/C (P6)",
-}
+var redisSlotGuardExempt = map[string]string{}
 
 // multiKeyMethods are go-redis methods that always issue a script, a
 // transaction, or a command over several keys.

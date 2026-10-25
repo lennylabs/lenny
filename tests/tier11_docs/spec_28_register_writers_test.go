@@ -102,8 +102,8 @@ const (
 		"cleanup-outcome report (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
 
 	claimOwnershipRowSentence = "Created by the gateway at pod acquisition; binding state written via the status " +
-		"subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool " +
-		"outside the runtime-process acknowledgment rule " +
+		"subresource; deleted by the gateway at hold expiry, when an acquisition refuses the reserved pod under the " +
+		"runtime-process acknowledgment " +
 		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a " +
 		"release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the " +
 		"occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to " +
@@ -133,8 +133,8 @@ const (
 // WarmPoolController maintains the mirror and exactly `sessions_served`
 // and `scrub_failure_count` are gateway-written), and §4.6.3 assigns the
 // create, the status-subresource writes, the hold-expiry delete, and the
-// delete when an acquisition ends the hold on a pool outside the
-// runtime-process acknowledgment rule, and the delete by a release that
+// delete when an acquisition refuses a reserved pod under the
+// runtime-process acknowledgment, and the delete by a release that
 // ends the occupancy without reuse, to the gateway and only the
 // pod-termination and orphan-GC deletes to the
 // WarmPoolController leader; an unattributed name check cannot tell either

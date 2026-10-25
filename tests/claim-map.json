@@ -80,6 +80,33 @@
       "deferral_id": "R16"
     },
     {
+      "claim": "CH-SUPERVISE launch and end of the runtime process",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.Start`, `SupervisedRuntime.EndProcess`, `pkg/adapter/supervisewiring.go` `Server.UseSupervisedRuntime`, `cmd/lenny-adapter/main.go` `main`",
+      "note": "the adapter launches each runtime process through the supervisor under the launch permit and ends it with end; the adapter reaches the path when the pod builder renders --supervise-socket"
+    },
+    {
+      "claim": "CH-SUPERVISE ping while no other request is outstanding",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervise.go` `SupervisorLink.RunPing`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+      "note": "a missed pong is a link failure, which sets the adapter's not-live state"
+    },
+    {
+      "claim": "CH-SUPERVISE single accept before READY",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervise.go` `AwaitSupervisor`, `pkg/adapter/preready.go` `RunPreReady`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+      "note": "the adapter accepts one connection through the agent-UID check, closes its listener, and reads ready before it binds the gRPC listener"
+    },
+    {
+      "claim": "CH-SUPERVISE sweep after each boundary end on a restart pod",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.EndAndSweep`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`"
+    },
+    {
       "claim": "Checkpoint restore onto a concurrent pod",
       "status": "WIRED",
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
@@ -498,6 +525,12 @@
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
       "surface": "no registry or counter anywhere in `pkg/adapter/attach.go`",
       "deferral_id": "R20"
+    },
+    {
+      "claim": "Supervised cleanupCommands at the agent UID in the runtime container",
+      "status": "WIRED",
+      "spec_anchor": "#2853-intra-pod",
+      "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.RunCleanup`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`"
     },
     {
       "claim": "Suspended-session lifetime expiry",

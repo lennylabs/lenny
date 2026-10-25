@@ -69,7 +69,7 @@ func builtPod(t *testing.T, injectedUID int64) corev1.Pod {
 func postReview(t *testing.T, pod corev1.Pod) admissionv1.AdmissionReview {
 	t.Helper()
 	srv := httptest.NewServer(webhook.Handler(webhook.PodSecurity(
-		adapterUID, agentUID, podspec.CredReadersGID, podspec.CredVolumeName, podsecurity.RuntimeClassPolicy{},
+		adapterUID, agentUID, podspec.CredReadersGID, podspec.CredVolumeName, podspec.SupervisorVolumeName, podsecurity.RuntimeClassPolicy{},
 	)))
 	t.Cleanup(srv.Close)
 

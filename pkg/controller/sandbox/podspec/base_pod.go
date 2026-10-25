@@ -8,6 +8,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 const (
@@ -39,7 +40,7 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      in.Name,
 			Namespace: in.Namespace,
-			Labels:    in.Labels,
+			Labels:    podLabels(in),
 		},
 		Spec: corev1.PodSpec{
 			RuntimeClassName:              &runtimeClass,
@@ -111,4 +112,20 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 	}
 	applyDedicatedDNS(in, pod)
 	return pod
+}
+
+// podLabels copies the caller's labels, so the builder never writes into the
+// Sandbox's own map, and adds the lenny.dev/runtime-process label every agent
+// pod carries, embedded pods included: `restart` when the pool's
+// recycle.runtimeProcess is `restart`, otherwise `keep`. The label is
+// immutable after creation (the lenny-label-immutability webhook), so it
+// fixes the pod's lifetime for its whole life. spec: §5.2 (Runtime-process
+// lifetime); §17.2 (item 5).
+func podLabels(in Inputs) map[string]string {
+	labels := make(map[string]string, len(in.Labels)+1)
+	for k, v := range in.Labels {
+		labels[k] = v
+	}
+	labels[state.LabelRuntimeProcess] = state.RuntimeProcessLifetime(in.RuntimeProcess)
+	return labels
 }
