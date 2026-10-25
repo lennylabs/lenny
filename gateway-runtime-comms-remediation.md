@@ -3272,7 +3272,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
 **Defects filed from proposal 0100's unstaged-defect list (2026-10-25).** Proposal 0100 (P2a) lists
 defects in the shipped tree that it does not stage. These were already tracked and are not refiled: F-11.2.31
 (P4), F-7.2.35 (P2b), F-10.1.33 and F-12.8.43 (the inter-replica carrier proposal, proposal 0101, drafting),
-and the terminal-writer half of F-4.9.33 (P2 pending owner confirmation, as the P1 entry records, with the choice of P2a or P2b left to the owner). The §12.9 T1
+and the terminal-writer half of F-4.9.33 (P2; the owner's delegate assigned it to P2b on 2026-10-25, because P2a, proposal 0100, is approved and its scope is closed). The §12.9 T1
 retention entry is not filed, because no session can carry the T1 tier: `ValidWorkspaceTier` admits only the
 empty tier, T3, and T4 for tenants and environments, so the T1 branch of `retentionForTier` is unreachable.
 The rest are filed in BUILD-GAPS and routed below.
