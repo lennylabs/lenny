@@ -71,9 +71,15 @@ func TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3(t *testing.T) {
 			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
 		}
 	}
-	sources := []issuedtokenstore.SourceToken{
-		{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj"},
-		{Role: issuedtokenstore.SourceActorToken, JTI: "actor"},
+	// issued_tokens.jti is a global primary key and the container is shared
+	// across subtests, so each subtest's source JTIs carry its tenant.
+	subjJTI := func(tenant string) string { return "subj-" + tenant }
+	actorJTI := func(tenant string) string { return "actor-" + tenant }
+	sources := func(tenant string) []issuedtokenstore.SourceToken {
+		return []issuedtokenstore.SourceToken{
+			{Role: issuedtokenstore.SourceSubjectToken, JTI: subjJTI(tenant)},
+			{Role: issuedtokenstore.SourceActorToken, JTI: actorJTI(tenant)},
+		}
 	}
 
 	cases := []struct {
@@ -94,12 +100,12 @@ func TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tenant := freshTenant(t, ctx, pg)
 			if tc.seedSubject {
-				seed(t, tenant, "subj", tc.subjRevoked)
+				seed(t, tenant, subjJTI(tenant), tc.subjRevoked)
 			}
-			seed(t, tenant, "actor", tc.actorRevoked)
+			seed(t, tenant, actorJTI(tenant), tc.actorRevoked)
 			issuedBefore, _ := tenantRowCounts(t, ctx, pg, tenant)
 
-			_, err := store.RecordWithAudit(ctx, child(tenant), sources,
+			_, err := store.RecordWithAudit(ctx, child(tenant), sources(tenant),
 				"token.exchanged", []byte(`{"policy_result":"accepted"}`), time.Now().UTC())
 			issuedAfter, exchanged := tenantRowCounts(t, ctx, pg, tenant)
 			if tc.wantCommitted {
@@ -129,8 +135,8 @@ func TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3(t *testing.T) {
 
 	t.Run("rotation of a revoked subject commits nothing", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		seed(t, tenant, "subj", true)
-		_, revoked, err := store.RecordWithRotationAudit(ctx, child(tenant), subjectSource("subj"), "subj",
+		seed(t, tenant, subjJTI(tenant), true)
+		_, revoked, err := store.RecordWithRotationAudit(ctx, child(tenant), subjectSource(subjJTI(tenant)), subjJTI(tenant),
 			"rotation_replaced", "token.exchanged", []byte(`{"policy_result":"accepted"}`), time.Now().UTC())
 		var revokedErr *issuedtokenstore.SourceRevokedError
 		if !errors.As(err, &revokedErr) || revokedErr.Role != issuedtokenstore.SourceSubjectToken {
