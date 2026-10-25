@@ -3269,6 +3269,31 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     the Cluster durability statement). It is independent of P2 to P4 and of the inter-replica carrier
     proposal.
 
+**Defects filed from proposal 0100's unstaged-defect list (2026-10-25).** Proposal 0100 (P2a) lists
+defects in the shipped tree that it does not stage. These were already tracked and are not refiled: F-11.2.31
+(P4), F-7.2.35 (P2b), F-10.1.33 and F-12.8.43 (the inter-replica carrier proposal, proposal 0101, drafting),
+and the terminal-writer half of F-4.9.33 (P2 pending owner confirmation, as the P1 entry records, with the choice of P2a or P2b left to the owner). The §12.9 T1
+retention entry is not filed, because no session can carry the T1 tier: `ValidWorkspaceTier` admits only the
+empty tier, T3, and T4 for tenants and environments, so the T1 branch of `retentionForTier` is unreachable.
+The rest are filed in BUILD-GAPS and routed below.
+
+- Proposal routing.
+  - [ ] **F-12.8.60** (Medium), with **P2b**: the session-log close, the billing `Append` with the raw user
+    ID, and a chunk upload on a late presigned grant can land after user erasure. It needs a later release
+    record on the hook path or a second sweep after the grant TTL, after 0100's release record lands.
+  - [ ] **F-5.2.57** (Low), with **P3**: §5.2 says pool admission refuses a pool that misses the
+    `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. P3's
+    deadline edits name the field or strike the clause.
+  - [ ] **F-29.3.3** (Low), with the **inter-replica carrier proposal** (proposal 0101, drafting): the §29.3
+    off-holder rows for terminate and DELETE omit `resuming`.
+  - [ ] **Postgres HA review proposal** (not yet written): **F-12.3.27** (Medium). §12.3 states RPO 0 for
+    committed writes, while a write whose standby acknowledgement wait is interrupted is visible on the
+    primary and can be lost at failover.
+  - [ ] **Admin session investigation proposal** (not yet written): **F-17.7.13** (Medium, the
+    `workspace-seal-stuck` runbook queries a session listing and a `sealing` state that do not exist) and
+    **F-24.11.4** (Low, the §24.11 force-terminate row omits the already-terminal case). It is independent
+    of P2 to P4 and of the inter-replica carrier proposal.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
