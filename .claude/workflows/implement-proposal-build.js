@@ -619,6 +619,10 @@ const CRITIQUE = {
   },
 };
 
+// The implementer's own test run is a smoke check: tier 0 static checks and
+// tier 1 for the packages it changed. Tier 2 and above belong to the verifier
+// and the final gate, which ran them again on the same tree when the
+// implementer ran them too.
 const STEP = {
   type: "object",
   required: ["implemented", "testsPassed", "tiersRun"],
@@ -626,8 +630,12 @@ const STEP = {
     implemented: { type: "boolean" },
     filesChanged: { type: "array", items: { type: "string" } },
     testsAddedOrModified: { type: "array", items: { type: "string" } },
-    tiersRun: { type: "array", items: { type: "string" } },
-    testsPassed: { type: "boolean" },
+    tiersRun: {
+      type: "array",
+      items: { type: "string" },
+      description: "the tiers you ran yourself as a smoke check: tier 0 static checks and tier 1 for the packages you changed, never tier 2 or above",
+    },
+    testsPassed: { type: "boolean", description: "whether your tier 0 and tier 1 smoke check passed" },
     commit: { type: "string" },
     deviations: {
       type: "array",
@@ -669,6 +677,45 @@ const VERIFY = {
       },
     },
     notes: { type: "string" },
+  },
+};
+
+// The per-attempt verifier's schema. A verify that covered the step's whole
+// tier set on a tree nothing has changed since stands in for the final gate,
+// and these two fields are what lets the run decide that; either absent means
+// the gate runs. Kept off VERIFY so the final gate and the proposal-wide Verify
+// phase are unchanged.
+const STEP_VERIFY = {
+  ...VERIFY,
+  properties: {
+    ...VERIFY.properties,
+    treeHash: {
+      type: "string",
+      description: "`git rev-parse HEAD^{tree}`, identical before the first tier and after the last with a clean status both times; empty otherwise",
+    },
+    fullSet: {
+      type: "boolean",
+      description: "true only when tier 0 and tier 1 ran over every package the step changed and every one of the step's tiers ran, none skipped except a cloud-only tier",
+    },
+  },
+};
+
+// The tree the final gate would test, read just before it would run.
+const TREE = {
+  type: "object",
+  required: ["treeHash", "clean"],
+  properties: {
+    treeHash: { type: "string", description: "`git rev-parse HEAD^{tree}`" },
+    clean: { type: "boolean", description: "the status command printed nothing" },
+  },
+};
+
+// classify-diff.mjs's verdict over a range, relayed verbatim.
+const CLASSES = {
+  type: "object",
+  required: ["classes"],
+  properties: {
+    classes: { type: "array", items: { type: "string" }, description: "the `classes` array the tool printed, verbatim" },
   },
 };
 
@@ -779,12 +826,16 @@ const STUCK_VERDICT = {
 };
 
 // The cheap gate that runs before the conformance review: a reviewer handed
-// code that does not compile produces confident nonsense.
+// code that does not compile produces confident nonsense. It also runs the
+// tier 0 checks that cost seconds on the changed files (formatting, vet, and
+// map completeness), which otherwise failed only at the final gate and cost a
+// fix round plus another full gate each.
 const COMPILE = {
   type: "object",
-  required: ["compiles"],
+  required: ["compiles", "staticClean"],
   properties: {
     compiles: { type: "boolean" },
+    staticClean: { type: "boolean", description: "gofumpt, goimports, go vet, and validate-maps all passed or had nothing to check" },
     errors: { type: "array", items: { type: "string" } },
   },
 };
@@ -1003,6 +1054,28 @@ const MEMORY_SAFE_NOTE =
   "`-p 1` and `KUBEBUILDER_ASSETS` set, then reap strays with `pkill -f kubebuilder-envtest` before the " +
   "next one. Let output stream rather than piping it through `tail` or `head`.";
 
+// Which tiers the implementer and fixer run themselves. They write the tests
+// for every tier the step reaches and run only a smoke check, because the
+// independent verifier runs the step's tiers next and the final gate after it:
+// one measured step ran tiers 0, 1, and 6 in its implementer and again in its
+// verifier on an unchanged tree. The RULES block's per-step verification text
+// is shared with the Verify and Review phase fixers, which do run the higher
+// tiers, so this note states the narrower rule for the build agents instead of
+// editing that block.
+const BUILD_SMOKE_NOTE =
+  "\n\nWHICH TIERS YOU RUN YOURSELF. Write or update the tests for EVERY tier this step reaches, as the header " +
+  "and the test-coverage rule say: that has not changed. RUN only a smoke check: build the changed packages, " +
+  "run the tier 0 static checks on what you changed (`gofumpt -l` and `goimports -l -local " +
+  "github.com/lennylabs/lenny` on the changed Go files, `go vet` on the changed packages, and `go run " +
+  "./cmd/lenny-test validate-maps`), and run tier 1 (`go test ./<changed-pkg>/... -count=1 -p 2`) for the " +
+  "packages you changed. Do NOT run tier 2 or above, do not bring infrastructure up, and do not run a " +
+  "higher-tier test file by hand: an independent verifier runs the step's tiers on your commit next, and the " +
+  "final gate runs them again before the step is ticked. Where the rules below speak of running an envtest " +
+  "package or a long-silent tier, that is the verifier's work. `go vet` compiles the test files of every " +
+  "package it is given, so include the higher-tier test packages you wrote or changed (with `-tags=contract` " +
+  "under tests/tier3_contract): a higher-tier test must at least vet before it reaches the verifier. Report the tiers you ran in `tiersRun` and " +
+  "set `testsPassed` from the smoke check.";
+
 // How a fix's test scope is decided.
 //
 // "Be smarter about which tiers to run" has to be made mechanical or it
@@ -1065,11 +1138,92 @@ function SCOPING_BLOCK(step) {
     "to the ledger file above (create it and its directory if absent; it is a JSON object keyed `tier|package` " +
     "holding `{medianSeconds, runs, lastRun}`). Do not spawn a separate step for that: you just ran the tier " +
     "and you know the number.\n\n" +
-    "This is NOT the final gate. The whole set runs again once the design review is clean, before the step " +
-    "is marked done, so a tier skipped here is re-run before anything is certified — and if that gate then " +
-    "fails, your skip is recorded as the miss that caused it."
+    "A run that skips a tier is NOT the final gate. The whole set runs again once the design review is clean, " +
+    "before the step is marked done, so a tier skipped here is re-run before anything is certified — and if " +
+    "that gate then fails, your skip is recorded as the miss that caused it. Only a run that covered the whole " +
+    "set, green, on an unchanged tree stands in for that gate."
   );
 }
+
+// ---- Reusing a per-attempt verify as the final gate ----------------------
+//
+// The final gate exists because a step that reached its state through scoped
+// runs has had no full pass over the tree being ticked. A per-attempt verify
+// that happened to cover the whole set, green, on the tree the gate would test
+// already is that pass, and re-running it measured nothing new: one measured
+// step re-ran tiers 0 and 1 on the commit its verify had just passed them on.
+// The reuse is fail-closed on every input. The verifier must record the tree
+// hash before and after its run with a clean status, say it covered the full
+// set, and list every required tier as run; a separate read of the tree just
+// before the gate must print the same hash with a clean status. Anything
+// missing or different runs the gate exactly as before.
+//
+// The pathspec leaves out the directories no tier reads and the run itself
+// writes outside a commit: the workflow state, the proposal (ticks and
+// deviations), and the git-ignored scratchpad.
+const TREE_PATHSPEC = "-- . ':(exclude).claude' ':(exclude)proposals' ':(exclude)scratchpad'";
+
+function TREE_RECORD_NOTE(step, stepRef) {
+  return (
+    " TREE RECORD. Before you run the first tier, run `git rev-parse HEAD^{tree}` and `git status --porcelain " +
+    TREE_PATHSPEC + "` in " + repo + ". After the last tier, run both again. Return the hash as `treeHash` " +
+    "only when both runs printed the same hash and the status printed nothing both times; otherwise return an " +
+    "empty string. Set `fullSet` true only when this run covered the step's whole tier set: tier 0 and tier 1 " +
+    "over every package changed since " + stepRef + ", and every one of the step's tiers (" +
+    ((step.tiers || []).join(", ") || "none beyond tier 0/1") + "), none skipped except a tier that needs a " +
+    "cloud-only resource. A run that skipped any other tier sets it false. A green run with both fields set " +
+    "stands in for the step's final gate, so report them exactly rather than generously."
+  );
+}
+
+// Tier spellings differ between checklists ("0", "tier 2", "unit",
+// "e2e (Kind)"), so coverage is compared on a canonical key: the tier number
+// from the test-coverage rule's tier model. An unrecognised spelling keeps its
+// own cleaned form, which only matches itself, so it fails closed.
+const TIER_NUMBERS = {
+  static: "0", unit: "1", component: "2", contract: "3", integration: "4",
+  e2e_kind: "5", kind: "5", e2e_cloud: "6", load_local: "7a", load_kind: "7b",
+  chaos: "8", security: "9", conformance: "10", docs: "11", documentation: "11", load_cloud: "12",
+};
+// The final gate itself skips a tier that needs a cloud-only resource, so a
+// verifier that skipped one covered what the gate would have run.
+const CLOUD_TIERS = ["6", "12"];
+
+function tierKey(t) {
+  const s = String(t || "").toLowerCase().trim();
+  const num = /(?:^|tier\s*)(\d+[ab]?)\b/.exec(s);
+  if (num) return num[1];
+  const name = s.replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  return TIER_NUMBERS[name] || name;
+}
+
+function requiredTierKeys(step) {
+  return Array.from(new Set(["0", "1"].concat((step.tiers || []).map(tierKey)))).filter(Boolean);
+}
+
+// Whether a verify result covered the step's full tier set, green, on a
+// recorded tree. Every condition is required; a missing field is a false.
+function coversStepTiers(step, v) {
+  if (!v || v.green !== true || v.fullSet !== true || !String(v.treeHash || "").trim()) return false;
+  const ran = new Set((v.tiersRun || []).map(tierKey));
+  const skipped = new Set((v.skipped || []).map((s) => tierKey(s && s.tier)));
+  return requiredTierKeys(step).every((k) =>
+    CLOUD_TIERS.includes(k) ? ran.has(k) || skipped.has(k) : ran.has(k) && !skipped.has(k),
+  );
+}
+
+// ---- A lighter review after a mechanical fix -----------------------------
+//
+// A fix round that touched only comments, docs, or tests cannot change what
+// the code enforces, so re-running the invariants lens over it re-reads code
+// it already passed. The conformance lens still runs, because it is the one
+// that catches a proposal-internal label leaking into a comment or a test
+// name, which is what such a fix can introduce. The class comes from
+// classify-diff.mjs only, never from an agent's reading, and the range starts
+// at the commit the invariants lens last passed, so a logic change that never
+// reached that lens (a round that stopped at the compile gate) is inside the
+// range and forces both lenses.
+const MECHANICAL_CLASSES = ["comment-only", "doc-only", "test-only"];
 
 const STEP_REVIEW_LENSES = [
   {
@@ -1365,9 +1519,9 @@ function dropAdjudicated(findings, step) {
   return kept;
 }
 
-async function reviewStep(step, ref, tag) {
+async function reviewStep(step, ref, tag, lenses = STEP_REVIEW_LENSES) {
   return await parallel(
-      STEP_REVIEW_LENSES.map((l) => () =>
+      lenses.map((l) => () =>
         agentTry(
           (ref
             ? "Adversarially review ONE just-implemented build step against the proposal's design.\n\n"
@@ -1783,6 +1937,9 @@ for (let i = 0; i < plan.steps.length; i++) {
   // The step's previous final gate: the commit it covered and its result. A
   // later final gate scopes against it.
   let lastFinal = null;
+  // The commit the step's invariants lens last reviewed clean, from which a
+  // fix round's diff is classified for the lighter review.
+  let invariantsCleanAt = null;
   let lastPhase = null;
   // A fired detector RE-ARMS rather than re-firing: without that, oscillation
   // six, seven and eight each cost a three-judge panel, and the machinery meant
@@ -1984,9 +2141,10 @@ for (let i = 0; i < plan.steps.length; i++) {
             ". Its spec edits are already in spec/; read the relevant sections.\n\n" +
             stepHeader +
             priorContext +
-            "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). If this step CORRECTS existing behavior, add a regression test that asserts the corrected outcome and would fail against the pre-fix code (see RULES below) — not merely a test that line-covers the changed lines. Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
+            "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and run the smoke check below. If this step CORRECTS existing behavior, add a regression test that asserts the corrected outcome and would fail against the pre-fix code (see RULES below) — not merely a test that line-covers the changed lines. Fix the code until the smoke check passes. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`)." +
+            BUILD_SMOKE_NOTE + " " +
             RULES_FULL +
-            "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run."
+            "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA."
         : "Continue one build step of an applied spec proposal that is not yet green-and-conformant.\n\n" +
             "HARD CONSTRAINT: work only on this step. Do not start later steps. Do not edit spec/. Work in " +
             repo +
@@ -1999,15 +2157,12 @@ for (let i = 0; i < plan.steps.length; i++) {
             issues +
             "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code " +
             "to match the proposal's design where the issue is a divergence), then commit on the current " +
-            "branch.\n\nTESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX. Run tier 0 and tier 1 for the packages " +
-            "this fix touches, plus only those of the step's tiers (" +
+            "branch.\n\nTESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX. Run the smoke check below over the " +
+            "packages this fix touches. The verifier decides which of the step's tiers (" +
             ((step.tiers || []).join(", ") || "none beyond tier 0/1") +
-            ") whose subject this fix actually changes. Skip a tier this fix cannot affect and name the ones " +
-            "you skipped: a comment, a rename, or a doc line does not need an envtest or an integration tier " +
-            "re-run, and those cost tens of minutes each. Err toward running one tier too many rather than " +
-            "skipping one that mattered. This is not the final gate — the whole set runs again once the " +
-            "design review comes back clean, so a tier skipped here is re-run before the step is marked " +
-            "done. " +
+            ") this fix warrants once the design review is clean, and the final gate runs the whole set " +
+            "before the step is marked done." +
+            BUILD_SMOKE_NOTE + " " +
             RULES_FULL +
             "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
       { schema: STEP, label: "build:" + step.id + (attempt > 1 ? ":fix" + attempt : ""), phase: "Build" },
@@ -2055,32 +2210,89 @@ for (let i = 0; i < plan.steps.length; i++) {
     // while they stayed green. But a reviewer handed code that does not compile
     // produces confident nonsense, so a build of the changed packages comes
     // first. It costs seconds and removes the failure mode.
+    //
+    // The same agent runs the tier 0 checks that cost seconds on the changed
+    // files, with the commands tier 0 itself runs (cmd/lenny-test's static
+    // tier), so the two agree. One measured step failed its final gate twice,
+    // once on a test file missing from the change graph and once on a gofumpt
+    // nit, and each failure cost a fix round and another full gate. The rest of
+    // tier 0 (golangci-lint, buf, the lint scripts, tests/tier0_static) stays
+    // with the verifier, because it costs minutes rather than seconds.
     const compiles = await agentTry(
-      "Report whether the changed packages compile. Work in " + repo + ". Do not edit anything.\n\n" +
-        "Run `git diff --name-only " + stepRef + "..HEAD` to see what changed, then `go build` over the " +
-        "Go packages among them (`go build ./<pkg>/...`). Nothing else: no tests, no linters, no " +
-        "whole-repo build. If the change touches no Go package, report compiles true." +
+      "Report whether the changed packages compile and pass the cheap static checks. Work in " + repo +
+        ". Do not edit anything.\n\n" +
+        "Run `git diff --name-only --diff-filter=d " + stepRef + "..HEAD` to see what changed. Then:\n" +
+        "1. `go build ./<pkg>/...` over the Go packages among them. Set `compiles` from this alone.\n" +
+        "2. `gofumpt -l <files>` and `goimports -l -local github.com/lennylabs/lenny <files>` over the changed " +
+        "`.go` files, leaving out any under a testdata/ directory. Use the binary on PATH, else the one in " +
+        "`$(go env GOPATH)/bin`; when neither exists, skip that check and say so in errors, as tier 0 does. " +
+        "Any file either tool prints is a failure.\n" +
+        "3. `go vet ./<pkg>/...` over the changed Go packages, adding `-tags=contract` for a package under " +
+        "tests/tier3_contract.\n" +
+        "4. `go run ./cmd/lenny-test validate-maps`, which checks that tests/spec-map.json and " +
+        "tests/change-graph.json cover the tree.\n" +
+        "Skip steps 2 to 4 when step 1 fails. Set `staticClean` false when any of steps 2 to 4 failed, and put " +
+        "each failure in `errors` with the check's name and the file or message it printed. Nothing else: no " +
+        "tests, no golangci-lint, no whole-repo build or vet. If the change touches no Go package, report " +
+        "compiles true and still run step 4." +
         MEMORY_SAFE_NOTE,
       { schema: COMPILE, label: "compile:" + step.id + ":r" + attempt, phase: "Build" },
     );
-    if (compiles && compiles.compiles === false) {
+    const staticFailed = !!compiles && compiles.compiles !== false && compiles.staticClean === false;
+    if (compiles && (compiles.compiles === false || staticFailed)) {
       stepGreen = false;
       stepReviewClean = false;
-      issues =
-        "The changed packages do not compile, so nothing can review or test them yet. Fix the build " +
-        "first:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n");
-      log("Step " + step.id + " attempt " + attempt + ": does not compile");
+      issues = staticFailed
+        ? "The changed packages compile but fail the cheap tier 0 checks (formatting, import order, go vet, " +
+          "or spec-map and change-graph completeness). Tier 0 runs the same checks, so fix them before " +
+          "anything is reviewed or tested:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n")
+        : "The changed packages do not compile, so nothing can review or test them yet. Fix the build " +
+          "first:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n");
+      log("Step " + step.id + " attempt " + attempt + ": " + (staticFailed ? "fails the compile gate's static checks" : "does not compile"));
       stepRounds.push({ attempt, phase: "compile", fix: true, commit: res.commit || "", green: false, findingTitles: [] });
       continue;
     }
 
     // ---- Conformance and invariants, BEFORE any test runs ------------------
-    const reviewResults = await reviewStep(step, stepRef, "r" + attempt);
+    //
+    // A fix round whose every commit since the invariants lens last passed is
+    // comment-only, doc-only, or test-only gets the conformance lens alone (see
+    // MECHANICAL_CLASSES). Without a recorded pass, or with any other class, or
+    // with no answer from the classifier, both lenses run.
+    let lenses = STEP_REVIEW_LENSES;
+    if ((attempt > 1 || firstAttemptWasFix) && invariantsCleanAt) {
+      const cls = await agentTry(
+        "Classify a commit range with the repository's diff classifier. Work in " + repo + ". " + READ_ONLY_NOTE +
+          "\n\nRun `node " + repo + "/.claude/tools/classify-diff.mjs " + invariantsCleanAt + "..HEAD --json` " +
+          "and return the `classes` array it prints, verbatim. Do not add, drop, or interpret a class. If the " +
+          "command fails, return an empty array.",
+        { schema: CLASSES, label: "classify:" + step.id + ":r" + attempt, model: "haiku", effort: "high", phase: "Build" },
+      );
+      const mechanical = ((cls && cls.classes) || []).filter((c) => MECHANICAL_CLASSES.includes(c));
+      if (mechanical.length > 0) {
+        lenses = STEP_REVIEW_LENSES.filter((l) => l.key === "conformance");
+        log(
+          "Step " + step.id + " attempt " + attempt + ": the changes since " + invariantsCleanAt + " are " +
+            mechanical.join(", ") + "; the invariants lens passed that commit, so only the conformance lens reviews",
+        );
+      }
+    }
+    const reviewResults = await reviewStep(step, stepRef, "r" + attempt, lenses);
     // Fail closed: a reviewer that died (null) is not evidence of conformance.
     const liveReviews = reviewResults.filter(Boolean);
-    const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
+    const allReviewersRan = liveReviews.length === lenses.length;
     stepFindings = dropAdjudicated(liveReviews.flatMap((r) => r.findings), step);
     stepReviewClean = stepFindings.length === 0 && allReviewersRan;
+    // Where the invariants lens ran, record whether it passed this commit. A
+    // finding, a dead reviewer, or no recorded commit clears the record, so the
+    // next round runs both lenses. A round that ran conformance alone leaves it
+    // as it was: the range the next round classifies still starts there.
+    const invIdx = lenses.findIndex((l) => l.key === "invariants");
+    if (invIdx >= 0) {
+      const inv = reviewResults[invIdx];
+      invariantsCleanAt =
+        inv && Array.isArray(inv.findings) && inv.findings.length === 0 && res.commit ? res.commit : null;
+    }
 
     if (!stepReviewClean) {
       stepGreen = false;
@@ -2156,8 +2368,9 @@ for (let i = 0; i < plan.steps.length; i++) {
             ((step.tiers || []).join(", ") || "(none beyond tier 0/1)")
           : SCOPING_BLOCK(step)
         ) +
-        ". " + PREFLIGHT_NOTE + " MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
-      { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
+        ". " + PREFLIGHT_NOTE + " MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch)." +
+        TREE_RECORD_NOTE(step, stepRef),
+      { schema: STEP_VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
     // Captured here rather than at the gate: a gate failure is evidence about
     // the class table only if it names the class and the skip that let it
@@ -2204,6 +2417,33 @@ for (let i = 0; i < plan.steps.length; i++) {
     // Conformance is clean by construction here: a review that found anything
     // continued at the top of the loop, so the only way past it is clean. The
     // remaining question is whether a FULL tier pass has covered this tree.
+    //
+    // A scoped verify that covered the full set green stands in for the gate
+    // when the tree the gate would test is the one it recorded. The read of
+    // the tree runs only when the verify result qualifies, so the call order
+    // stays a function of earlier results and a resumed run replays it.
+    if (!fullVerifyCurrent && coversStepTiers(step, sv)) {
+      const verifiedTree = String(sv.treeHash).trim();
+      const tree = await agentTry(
+        "Report the tree the next test run would see. Work in " + repo + ". " + READ_ONLY_NOTE + "\n\n" +
+          "Run `git rev-parse HEAD^{tree}` and return its output as treeHash. Run `git status --porcelain " +
+          TREE_PATHSPEC + "` and set clean true only when it printed nothing.",
+        { schema: TREE, label: "tree:" + step.id + ":r" + attempt, model: "haiku", effort: "high", phase: "Build" },
+      );
+      const current = tree && tree.clean === true ? String(tree.treeHash || "").trim() : "";
+      if (current && current === verifiedTree) {
+        fullVerifyCurrent = true;
+        log(
+          "Step " + step.id + ": verify r" + attempt + " ran the full tier set green on tree " + verifiedTree +
+            ", which is the tree the final gate would test; reusing its result instead of running the gate",
+        );
+      } else {
+        log(
+          "Step " + step.id + ": verify r" + attempt + " covered the full tier set, but the tree now reads " +
+            (current || "unknown or not clean") + " against " + verifiedTree + "; running the final gate",
+        );
+      }
+    }
     if (!fullVerifyCurrent) {
       log("Step " + step.id + ": review clean after scoped runs; full tier pass as the final gate");
       finalPassesIssued++;
