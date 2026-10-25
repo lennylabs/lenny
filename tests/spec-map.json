@@ -3383,6 +3383,7 @@
         "cmd/lenny-token-service/flags_test.go::TestCapabilityTokenTTLFlagBound_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
@@ -7118,7 +7119,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
         "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3",
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
-        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2"
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

@@ -125,13 +125,18 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// §27.3.1: the subject is the validated OIDC principal backing the
-	// session record, normalized to typ = user_bearer.
+	// session record, normalized to typ = user_bearer. Its Expiry is the
+	// record's fixed expiry (IssuedAt + oidcSessionTtlSeconds, the instant
+	// completeMint keeps as the record TTL), so bearerExpiry clamps the
+	// bearer to it and the bearer cannot outlive its session record.
+	// spec: §10.2 (Authentication) "JWT claims" expiry.
 	subject := jwt.Claims{
 		Subject:    rec.UserID,
 		TenantID:   rec.TenantID,
 		CallerType: rec.CallerType,
 		Scope:      rec.Scope,
 		Typ:        auth.TokenUserBearer,
+		Expiry:     h.sessionRecordExpiry(rec).Unix(),
 	}
 	h.completeMint(w, r, subject, &recordRef{tenant: tenant, id: id, rec: rec})
 }
@@ -302,7 +307,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		// activity heartbeat; refresh the idle clock so the sweep does not
 		// reclaim a session the user is actively re-minting against.
 		updated.LastActivityAt = h.now()
-		ttl := time.Unix(updated.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0).Sub(h.now())
+		ttl := h.sessionRecordExpiry(updated).Sub(h.now())
 		if ttl < 0 {
 			ttl = 0
 		}
@@ -344,6 +349,13 @@ func (h *Handler) bearerExpiry(now time.Time, subject jwt.Claims) time.Time {
 		}
 	}
 	return exp
+}
+
+// sessionRecordExpiry returns the fixed expiry of an oidc-mode session
+// record, IssuedAt + oidcSessionTtlSeconds truncated to whole seconds. A
+// mint does not reset it. spec: §27.3.1.
+func (h *Handler) sessionRecordExpiry(rec SessionRecord) time.Time {
+	return time.Unix(rec.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0)
 }
 
 // maxTrackedJTIs returns the §27.3.1 bound on the number of bearer
