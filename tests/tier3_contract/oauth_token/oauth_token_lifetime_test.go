@@ -122,3 +122,35 @@ func TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2(t *testing.T) {
 		t.Errorf("form expires_in 59: status %d error %v, want 400 invalid_request", status, formBody["error"])
 	}
 }
+
+// spec: 10.2 (Authentication), 13.3 (Credential Flow)
+// diagnosis: an oversized expires_in did not return expires_in 86400 (the
+// lenny-gateway cap). A short value such as 60 means the seconds-to-duration
+// conversion wrapped to a small positive value; a 400 invalid_request means
+// it wrapped to a past requested_exp. The Token Service must saturate the
+// value so the §13.3 min() clamps it to the per-dialect cap.
+func TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	ts, signer := newLifetimeServer(t, now)
+	subject := mint(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Expiry: now.Add(48 * time.Hour).Unix(),
+	})
+	for _, expiresIn := range []int64{18446744134, 1 << 62} {
+		resp, body := exchange(t, ts, subject, tokenservice.Request{
+			GrantType:    tokenExchangeGrant,
+			SubjectToken: subject,
+			Scope:        "sessions:read",
+			Audience:     "lenny-gateway",
+			ExpiresIn:    expiresInPtr(expiresIn),
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expires_in %d: status %d (body %v), want 200", expiresIn, resp.StatusCode, body)
+			continue
+		}
+		if got, _ := body["expires_in"].(float64); got != 86400 {
+			t.Errorf("expires_in %d: response expires_in = %v, want 86400", expiresIn, body["expires_in"])
+		}
+	}
+}

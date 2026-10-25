@@ -3386,10 +3386,13 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExpiresInDurationSaturates_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestNewServerRefusesZeroCapabilityTokenTTL_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
         "charts/lenny/tests/token-service-deployment_test.yaml",
         "charts/lenny/tests/gateway-deployment_test.yaml"
@@ -4707,9 +4710,12 @@
         "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExpiresInDurationSaturates_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
         "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2"
       ],
       "packages": [

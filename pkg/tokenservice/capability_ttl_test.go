@@ -5,9 +5,11 @@ package tokenservice
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +157,79 @@ func TestExchangeRequestedExpiresInAndDialectCap_spec_10_2(t *testing.T) {
 	}))
 	if got.status != http.StatusOK || got.expiresIn != 60 {
 		t.Errorf("form expires_in=60: status %d expires_in %d, want 200 and 60", got.status, got.expiresIn)
+	}
+}
+
+// spec: 10.2 (Authentication), 13.3 (Credential Flow)
+//
+// TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2 pins that an
+// expires_in too large for a time.Duration is clamped to the per-dialect
+// cap by the §13.3 min() rather than overflowing. Before the fix the
+// seconds-to-nanoseconds conversion wrapped: 18446744134 wrapped to about
+// now + 60 s, giving a one-minute token, and 1<<62 wrapped to a past
+// requested_exp, which the exchange rejected as exp_in_past. Both the JSON
+// and the form branches are exercised.
+func TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2(t *testing.T) {
+	srv, signer := lifetimeServer(t)
+	tok := lifetimeToken(t, signer, "tok-1", lifetimeNow.Add(48*time.Hour))
+	const gatewayCap = int64(24 * 60 * 60)
+
+	for _, tc := range []struct {
+		name      string
+		expiresIn int64
+		want      int64
+	}{
+		{"wraps to a short positive duration", 18446744134, gatewayCap},
+		{"wraps negative", 1 << 62, gatewayCap},
+		{"largest int64", math.MaxInt64, gatewayCap},
+		{"largest representable duration", maxExpiresInSeconds, gatewayCap},
+		{"lenny-ops cap applies", 1 << 62, 3600},
+	} {
+		aud := "lenny-gateway"
+		if tc.want == 3600 {
+			aud = "lenny-ops"
+		}
+		got := decodeLifetime(t, doExchange(t, srv, tok, Request{
+			GrantType: grantTypeExchange, SubjectToken: tok,
+			Scope: "sessions:read", Audience: aud, ExpiresIn: int64Ptr(tc.expiresIn),
+		}))
+		if got.status != http.StatusOK || got.expiresIn != tc.want {
+			t.Errorf("json %s: status %d error %q expires_in %d, want 200 and %d",
+				tc.name, got.status, got.errCode, got.expiresIn, tc.want)
+		}
+		got = decodeLifetime(t, formExchange(t, srv, tok, url.Values{
+			"grant_type": {grantTypeExchange}, "subject_token": {tok},
+			"scope": {"sessions:read"}, "audience": {aud},
+			"expires_in": {strconv.FormatInt(tc.expiresIn, 10)},
+		}))
+		if got.status != http.StatusOK || got.expiresIn != tc.want {
+			t.Errorf("form %s: status %d error %q expires_in %d, want 200 and %d",
+				tc.name, got.status, got.errCode, got.expiresIn, tc.want)
+		}
+	}
+}
+
+// spec: 10.2 (Authentication), 13.3 (Credential Flow)
+//
+// TestExpiresInDurationSaturates_spec_10_2 pins the conversion boundary:
+// values up to maxExpiresInSeconds convert exactly, and every larger value
+// saturates to the largest whole-second duration instead of wrapping.
+func TestExpiresInDurationSaturates_spec_10_2(t *testing.T) {
+	maxDur := time.Duration(maxExpiresInSeconds) * time.Second
+	for _, tc := range []struct {
+		in   int64
+		want time.Duration
+	}{
+		{60, time.Minute},
+		{maxExpiresInSeconds, maxDur},
+		{maxExpiresInSeconds + 1, maxDur},
+		{18446744134, maxDur},
+		{1 << 62, maxDur},
+		{math.MaxInt64, maxDur},
+	} {
+		if got := expiresInDuration(tc.in); got != tc.want || got <= 0 {
+			t.Errorf("expiresInDuration(%d) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }
 

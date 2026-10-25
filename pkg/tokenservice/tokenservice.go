@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -656,12 +657,33 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 func (s *Server) requestedExp(req Request, hasActor bool, now time.Time) time.Time {
 	switch {
 	case req.ExpiresIn != nil:
-		return now.Add(time.Duration(*req.ExpiresIn) * time.Second)
+		return now.Add(expiresInDuration(*req.ExpiresIn))
 	case hasActor:
 		return time.Time{}
 	default:
 		return now.Add(s.capabilityTokenTTL)
 	}
+}
+
+// maxExpiresInSeconds is the largest expires_in, in seconds, that converts
+// to a time.Duration without overflowing int64 nanoseconds (about 292
+// years).
+const maxExpiresInSeconds = int64(math.MaxInt64 / int64(time.Second))
+
+// expiresInDuration converts a request's expires_in to a duration,
+// saturating a value above maxExpiresInSeconds. §10.2 places no upper bound
+// on expires_in and the §13.3 min(requested_exp, subject_token.exp,
+// per-dialect cap) clamps it, so an oversized value must stay far in the
+// future rather than wrap to a past or short-lived requested_exp. Values
+// below the 60 s minimum are rejected before this conversion.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry; §13.3 "exp
+// granularity and parent-expiry handling".
+func expiresInDuration(seconds int64) time.Duration {
+	if seconds > maxExpiresInSeconds {
+		seconds = maxExpiresInSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // resolveDialectCap returns the §13.3 per-dialect lifetime cap to apply.
