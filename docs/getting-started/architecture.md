@@ -204,7 +204,7 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 - **Workspace checkpoint snapshots:** Periodic tars of the session's `/workspace/slots/{sessionId}/current` that enable session recovery after pod failure.
 - **Session file snapshots:** Copies of the session's own `/sessions/{sessionId}` contents at checkpoint time; a checkpoint captures no co-tenant's session files.
 - **Checkpoint metadata:** Generation counters, timestamps, and pod state at checkpoint time.
-- **Session logs and runtime stderr:** Durable log storage for debugging and audit.
+- **Session logs:** Durable log storage for debugging and audit.
 - **Resume metadata:** Information needed to restore a session on a new pod.
 
 **Checkpoint atomicity:** A checkpoint is all-or-nothing. The metadata record in Postgres references both the workspace snapshot and session file snapshot in MinIO. The metadata record is written only after both artifacts are successfully uploaded. If either upload fails, the entire checkpoint is discarded.
@@ -229,7 +229,7 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 | `SandboxTemplate` | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy |
 | `SandboxWarmPool` | Manages warm pod inventory with configurable `minWarm`/`maxWarm` |
 | `Sandbox` | Represents a managed agent pod. Status subresource carries the coarse occupancy phase, projected from the claim. |
-| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions, or when a release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
+| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). |
 
 **Key responsibilities:**
 
@@ -242,7 +242,7 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 
 **Leader election:** Runs as a multi-replica Deployment with Kubernetes Lease-based leader election. During failover (up to 25 seconds on crash), existing sessions continue unaffected; only new pod creation and pool reconciliation pause.
 
-**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
+**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. When the pool's current configuration no longer admits the pod for reuse, the next acquisition ends the hold instead of rebinding it. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
 
 ---
 
@@ -263,7 +263,7 @@ Manages desired pool configuration, scaling intelligence, and variant pool sizin
 
 ### Agent Pods
 
-Each agent pod contains two processes:
+Each agent pod of a sidecar runtime contains two containers:
 
 **Runtime adapter (sidecar container).** The standardized bridge between the Lenny platform and the agent binary. It:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
@@ -272,7 +272,7 @@ Each agent pod contains two processes:
 - Manages the CH-RUNTIMEOPS (`@lenny-runtime-ops`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
-**Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
+**Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The container's first process is the runtime supervisor, a platform binary that launches the agent binary's configured `command` when the adapter asks it to and ends the process when the adapter asks it to. The agent binary:
 - Reads messages from stdin (Basic integration level) or connects to MCP servers and the CH-RUNTIMEOPS (Standard or Full integration level).
 - Reads the adapter manifest to discover available tools, and reads each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) for that session's credential file path.
 - Operates on files in `/workspace/slots/{sessionId}/current`.

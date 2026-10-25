@@ -38,6 +38,9 @@ images: ## Build container images for the deployable platform binaries
 		echo "  image $$b"; \
 		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
 	done
+	@# §4.7.10 runtime supervisor: a freestanding C binary in a FROM scratch image.
+	@echo "  image lenny-supervisor"
+	@docker build -f Dockerfile.supervisor -t ghcr.io/lennylabs/lenny-supervisor:dev .
 
 .PHONY: runtime-images
 runtime-images: ## Build container images for the §4.7 reference runtimes
@@ -217,13 +220,13 @@ sidecar-runtime-tarball: ## Build the runtime-echo sidecar-model image and docke
 PLATFORM_BUNDLE ?= $(CURDIR)/bin/lenny-platform-images.tar
 # The tag the dev profile pins the bundled platform images at. It MUST match the
 # image.tag values in charts/lenny/presets/dev.yaml (gateway, controller, ops)
-# and controller.adapterImage, so the imported images satisfy the IfNotPresent
+# and controller.adapterImage and controller.supervisorImage, so the imported images satisfy the IfNotPresent
 # references the embedded render carries.
 PLATFORM_BUNDLE_TAG ?= 0.1.0
-PLATFORM_BUNDLE_IMAGES := lenny-gateway lenny-controller lenny-ops lenny-adapter
+PLATFORM_BUNDLE_IMAGES := lenny-gateway lenny-controller lenny-ops lenny-adapter lenny-supervisor
 
 .PHONY: platform-bundle
-platform-bundle: images ## Build and docker-save the §17.4 platform image bundle (bin/lenny-platform-images.tar): the gateway, controller, lenny-ops, and lenny-adapter images retagged to the dev-profile tag, which the Embedded Mode bring-up imports into the embedded containerd (resolvePlatformBundle / LENNY_PLATFORM_BUNDLE).
+platform-bundle: images ## Build and docker-save the §17.4 platform image bundle (bin/lenny-platform-images.tar): the gateway, controller, lenny-ops, lenny-adapter, and lenny-supervisor images retagged to the dev-profile tag, which the Embedded Mode bring-up imports into the embedded containerd (resolvePlatformBundle / LENNY_PLATFORM_BUNDLE).
 	@mkdir -p bin
 	@for b in $(PLATFORM_BUNDLE_IMAGES); do \
 		echo "  retag ghcr.io/lennylabs/$$b:dev → :$(PLATFORM_BUNDLE_TAG)"; \

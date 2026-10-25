@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // buildSidecar assembles the §4.7 sidecar-model pod: an adapter
@@ -85,6 +86,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			// podId and the recycle Shutdown carries it only inside RecycleScrub.
 			Env:             []corev1.EnvVar{podNameEnv()},
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
+			ReadinessProbe:  adapterReadinessProbe(),
 			VolumeMounts:    adapterMounts,
 			SecurityContext: containerSecurityContext(in.adapterUID()),
 			// spec: §4.6.1 "Disruption protection for agent pods" — the
@@ -108,6 +110,11 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
+	if len(in.RuntimeCommand) > 0 {
+		if err := applySupervisor(in, pod); err != nil {
+			return nil, err
+		}
+	}
 	// spec: §6.4 — stamp the resolved §5.2 resource class on both
 	// Lenny containers before the test-only egress sidecar is injected.
 	applyResources(in, pod)
@@ -119,4 +126,19 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 	injectObjectStoreCAVolume(in, pod, []int{0})
 	injectEgressCaptureSidecar(in, pod, []int{1})
 	return pod, nil
+}
+
+// adapterReadinessProbe is the tcpSocket probe on the adapter's gRPC port that
+// every sidecar pod carries, supervised or not and `type: mcp` included. The
+// adapter binds that listener only after its last pre-READY gate (the
+// supervisor's ready, the property gate, and any warm-up launch), so the
+// bind is READY, and the sandbox-ready readiness gate, which keys on
+// ContainersReady, keeps the pod out of `idle` until then. The runtime
+// container carries no probe. spec: §4.7.9 (step 4); §6.2.
+func adapterReadinessProbe() *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("grpc")},
+		},
+	}
 }

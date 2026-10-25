@@ -16,8 +16,8 @@
 // stderr collection is out of scope for this package; the store
 // surface takes a byte slice the caller has already buffered.
 //
-// spec: §4.4 — "Session logs and runtime stderr" among the
-// Event/Checkpoint Store contents.
+// spec: §4.4 — "Session logs" among the Event/Checkpoint Store
+// contents.
 package sessionlogstore
 
 import (

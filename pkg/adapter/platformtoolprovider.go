@@ -44,6 +44,10 @@ type platformToolProvider struct {
 	server    *Server
 }
 
+// List forwards one tools/list under the calling session, and refuses it
+// when the pod's shared runtime process has not been given exactly one
+// session, including when it has been given none. spec: §9.1; §15.4.3;
+// §4.7.11 item 7.
 func (p *platformToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
 	sessionID, err := p.server.callingSession()
 	if err != nil {
@@ -65,6 +69,11 @@ func (p *platformToolProvider) Call(ctx context.Context, name string, arguments 
 	return p.forwarder.CallPlatformTool(ctx, sessionID, name, arguments)
 }
 
+// errAmbiguousCallingSession refuses an intra-pod MCP call the adapter
+// cannot attribute to exactly one session.
+var errAmbiguousCallingSession = status.Error(codes.FailedPrecondition,
+	"the pod's shared runtime process is serving more than one session; the intra-pod MCP surface cannot name the calling session")
+
 // callingSession names the session an intra-pod MCP call may be forwarded
 // under. It is soleSession, refused with FailedPrecondition when empty: a
 // non-empty result is the statement that the pod's one shared runtime
@@ -74,8 +83,7 @@ func (p *platformToolProvider) Call(ctx context.Context, name string, arguments 
 func (s *Server) callingSession() (string, error) {
 	sessionID := s.soleSession()
 	if sessionID == "" {
-		return "", status.Error(codes.FailedPrecondition,
-			"the pod's shared runtime process is serving more than one session; the intra-pod MCP surface cannot name the calling session")
+		return "", errAmbiguousCallingSession
 	}
 	return sessionID, nil
 }

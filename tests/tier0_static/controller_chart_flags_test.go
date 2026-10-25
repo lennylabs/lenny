@@ -78,6 +78,11 @@ var chartFlagRenders = []struct {
 		"controller.tuning.workqueueMaxDepth=2000",
 		"controller.tuning.statusUpdateDedupWindow=1s",
 		"controller.tuning.initialFillGracePeriod=3m",
+		"controller.supervisorImage=lenny-supervisor:acme",
+		"controller.tuning.supervisePingInterval=3s",
+		"controller.tuning.supervisePingTimeout=4s",
+		"controller.tuning.superviseWaitTimeout=6m",
+		"controller.tuning.warmUpTimeout=90s",
 	}},
 }
 
@@ -320,5 +325,39 @@ func TestChartControllerArgsGateReportsARenamedFlag(t *testing.T) {
 				t.Errorf("parse admitted %v; the gate must report it", args)
 			}
 		})
+	}
+}
+
+// spec: 4.7.10 (Runtime supervisor), 28.5.3 (CH-SUPERVISE, Timing), 17.8.1
+//
+// TestChartRendersSupervisorImageAndTimingOnlyWhenSet pins the controller argv
+// the chart renders for the runtime supervisor: --supervisor-image and each
+// controller.tuning supervise key render their flag with the set value, and a
+// stock render carries none of them, so the controller uses its defaults.
+func TestChartRendersSupervisorImageAndTimingOnlyWhenSet(t *testing.T) {
+	want := map[string]string{
+		"--supervisor-image=":        "lenny-supervisor:acme",
+		"--supervise-ping-interval=": "3s",
+		"--supervise-ping-timeout=":  "4s",
+		"--supervise-wait-timeout=":  "6m",
+		"--warm-up-timeout=":         "90s",
+	}
+	stock := namedContainerArgv(containerSpec(t, renderForFlags(t, chartFlagRenders[0].Set), "lenny-controller", "controller"))
+	set := namedContainerArgv(containerSpec(t, renderForFlags(t, chartFlagRenders[1].Set), "lenny-controller", "controller"))
+	for prefix, value := range want {
+		for _, a := range stock {
+			if strings.HasPrefix(a, prefix) {
+				t.Errorf("stock render carries %s; the controller default must govern", a)
+			}
+		}
+		found := false
+		for _, a := range set {
+			if a == prefix+value {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("render with the value set lacks %s%s in %v", prefix, value, set)
+		}
 	}
 }

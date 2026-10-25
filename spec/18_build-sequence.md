@@ -124,6 +124,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - `make run` local dev mode launching the gateway against an in-memory store and the `echo` runtime.
 - `pkg/common/registry/resolver.go` (`ImageResolver` with override > url > default precedence and digest enforcement).
 - Adapter `SO_PEERCRED` startup self-test per [§4.7](04_system-components.md#47-runtime-adapter) (runs on every pod start before the READY signal; ships with `lenny_adapter_sopeercred_selftest_failed_total` and the adapter binary's `--require-so-peercred` process flag, default `true`).
+- Runtime supervisor per [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.**: the static binary in its digest-pinned image, the `lenny-supervisor-stage` init container and its volume per [§13.1](13_security-model.md#131-pod-security), and the adapter's `CH-SUPERVISE` listener per [§28.5.3](28_communication-channels.md#2853-intra-pod).
 - Per-connection HMAC challenge-response (nonce handshake) for the adapter↔agent socket per [§4.7](04_system-components.md#47-runtime-adapter), plus the `lenny_adapter_sopeercred_disabled_total` counter for the nonce-only fallback path.
 - Startup-latency benchmark harness in `tests/tier7b_load_kind/scenarios/startup_latency` with a first baseline committed under `tests/tier7b_load_kind/baselines/startup_latency.json`.
 - SQLite-dev-mode schema for `make run` use.
@@ -528,7 +529,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- Pod recycling across whole sessions (`sessionPolicy.recycle`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the per-session slot cleanup and whole-pod scrub split, the reserved-hold claim window, and the retirement limits (`maxSessionsPerPod`, `maxPodUptimeSeconds`, and `maxScrubFailures`).
+- Pod recycling across whole sessions (`sessionPolicy.recycle`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the per-session slot cleanup and whole-pod scrub split, the reserved-hold claim window, and the retirement limits (`maxSessionsPerPod`, `maxPodUptimeSeconds`, and `maxScrubFailures`), and the runtime-process lifetime `recycle.runtimeProcess` with the supervised recycle boundary and `lenny-ctl preflight supervisor` ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)).
 - Concurrent session slots (`sessionPolicy.maxConcurrentSessions > 1`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the Redis slot-counter capacity gate and the `acknowledgeProcessLevelIsolation` requirement.
 - Service execution mode (`executionMode: service`) per [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): claimless tenant-affinity routing over the per-pod `maxConcurrent` slot bound, the `sessionIsolationLevel.conversationContinuity` contract field, and the registration-time warning for `multi_turn` runtimes on service-mode pools.
 - Pod-level isolation enforcement for multiplexed pods (`maxConcurrentSessions > 1` and service-mode pools).

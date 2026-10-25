@@ -212,11 +212,11 @@ const (
 	// ReasonRuntimeNotLive: the adapter reported that its runtime process
 	// cannot serve the pod's next session, or omitted that fact, so the
 	// recycle disposition retires the pod instead of reserving or re-warming
-	// it for a session whose start would fail. The runtime process lives as
-	// long as the pod and nothing inside the pod starts it again, so the
-	// retire and a fresh replacement are the only recovery. This is a
-	// liveness retire rather than one of the three retirement-limit
-	// triggers, so it is NOT a member of the
+	// it for a session whose start would fail. The pod may not launch a
+	// runtime process for that session (§4.7.10, Runtime supervisor,
+	// Liveness), so the retire and a fresh replacement are the only
+	// recovery. This is a liveness retire rather than one of the three
+	// retirement-limit triggers, so it is NOT a member of the
 	// lenny_gateway_pod_retirement_total{reason} vocabulary and
 	// CountsOnRetirementTotal reports false for it; the disposition still
 	// drives the drain and records the reason in the audit trail and the
@@ -449,11 +449,13 @@ func Decide(in Inputs) Disposition {
 		}
 	}
 
-	// spec: §5.2 (Pod retirement policy, Runtime not live). The runtime
-	// process lives as long as the pod, and nothing inside the pod starts
-	// it again, so a pod whose runtime cannot serve the next session would
-	// fail that session's start. The branch replaces a reuse, so it runs
-	// after every retirement that would retire the pod anyway: a pod at
+	// spec: §5.2 (Pod retirement policy, Runtime not live). The adapter
+	// reports the runtime not live when no runtime process can serve the
+	// next session and the pod may not launch one, which on a supervised
+	// pod is the not-live state (§4.7.10, Runtime supervisor, Liveness).
+	// Such a pod would fail the next session's start. The branch replaces a
+	// reuse, so it runs after every retirement that would retire the pod
+	// anyway: a pod at
 	// maxSessionsPerPod or maxPodUptimeSeconds keeps its counting limit
 	// reason, a vm-restart pod keeps vm_restart_reprovision, and the
 	// fail-policy and scrub-exhaustion branches keep their terminal and

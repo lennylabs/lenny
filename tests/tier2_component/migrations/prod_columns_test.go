@@ -627,6 +627,12 @@ var prodMigrationSchema = []struct {
 	// index, and grant are asserted directly in
 	// TestSessionReservationsMigration_spec_12_8. spec: §12.8.
 	{migration: "0187", table: "session_reservations", create: true},
+	// 0189 adds the §5.1 restartable runtime-registry mirror of the flag
+	// the RuntimeReconciler derives from Runtime.spec.command,
+	// executionMode, and capabilities.preConnect, which gateway pool
+	// admission reads before admitting recycle.runtimeProcess: restart.
+	// spec: §5.1, §5.2.
+	{migration: "0189", table: "runtime_definitions", columns: []string{"restartable"}},
 }
 
 // spec: 12.2, 18.5

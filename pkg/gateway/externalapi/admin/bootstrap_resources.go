@@ -61,6 +61,14 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §5.2 (Runtime-process lifetime) — the bootstrap seed holds
+		// the same refusal of `restart` on a runtime that is not restartable
+		// as the POST and PUT handlers; an unresolved runtime reads as not
+		// restartable.
+		if err := poolstore.ValidateRuntimeProcessRestartable(r.runtimeRestartable(req.Context(), p.RuntimeRef), pl); err != nil {
+			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
 		// spec: §5.2 — cross-tenant reuse is rejected on a pool
 		// whose runtime is T4.
 		if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {

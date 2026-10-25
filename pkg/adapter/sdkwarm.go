@@ -67,6 +67,12 @@ func DemoteTimeoutFromEnv() time.Duration {
 // pre-connected, so a SIGTERM handler may call it unconditionally before
 // GracefulStop. A non-positive timeout falls back to DefaultDemoteTimeout.
 // spec: §6.1.
+//
+// While a session is registered it returns without demoting, so the
+// session's runtime process and slot tree survive the start of the drain for
+// the preStop eviction checkpoint; it demotes only an empty registry, through
+// demoteIdleSDK. The rule is the same in the sidecar and the embedded model.
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting); §4.6.1.
 func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	sw, ok := s.sdkWarmRuntime()
 	if !ok {
@@ -74,9 +80,10 @@ func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	}
 	s.mu.Lock()
 	connected := s.sdkConnected
+	registered := len(s.slots) > 0
 	s.mu.Unlock()
-	if !connected {
-		return // SDK-warm but never pre-connected or already demoted.
+	if !connected || registered {
+		return // never pre-connected, already demoted, or a session is registered.
 	}
 	if timeout <= 0 {
 		timeout = DefaultDemoteTimeout
@@ -86,8 +93,8 @@ func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// DemoteSDK clears sdkConnected and releases the session on success.
-		_, _ = s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{})
+		// demoteIdleSDK clears sdkConnected on success.
+		_, _ = s.demoteIdleSDK(ctx, sw)
 	}()
 	select {
 	case <-done:
@@ -247,7 +254,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 		}
 		if s.RuntimeKind != RuntimeKindMCP && startMCP {
-			if err := s.startPlatformMCP(nonce); err != nil {
+			if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
 				s.releaseClaimedSlot(ctx, sessionID, claim)
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
@@ -332,9 +339,13 @@ func (s *Server) refuseUnconfirmedSDKWarmStart(ctx context.Context, sw SDKWarmRu
 // admits preConnect only at maxConcurrentSessions: 1. With an entry
 // standing, the handler takes the slot's per-slot guard, the §5.2 slot
 // serialization, before it decides anything, and decides the session_end
-// write on the rule-8 record under that guard while the entry stands.
-// DemoteSDK does not end the runtime process (§4.7.10), so the session is
-// released on the runtime with session_end before the SDK is torn down.
+// write on the rule-8 record under that guard while the entry stands. The
+// session_end is written under that guard before the runtime's DemoteSDK
+// runs, because that call takes the session's process away. On a supervised
+// pod it ends the live process through CH-SUPERVISE end with the endDemote
+// disposition and rebinds the listeners, so the session's next start
+// launches a new process (§4.7.10, Runtime supervisor, SDK-warm; Runtime
+// supervisor, End). On the embedded model it closes the in-process runtime.
 //
 // The handler fails closed when the guard is not acquired before the
 // request's deadline: it writes no session_end, tears nothing down, leaves
@@ -390,11 +401,11 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
 	}
 	// Return the pod to pod-warm: the SDK is no longer connected, so clear
-	// the warm-readiness flag. The demotion takes the session off the
-	// pod's shared runtime process (DemoteSDK is r.InProcessRuntime.Close),
-	// so the generation state moves with it before the release evaluates
-	// the pod-surface gate. The release runs under the guard this handler
-	// already holds.
+	// the warm-readiness flag. The demotion took the session's process away
+	// (on a supervised pod an end with the endDemote disposition, on the
+	// embedded model a close of the in-process runtime), so the generation
+	// state moves with it before the release evaluates the pod-surface
+	// gate. The release runs under the guard this handler already holds.
 	s.mu.Lock()
 	s.sdkConnected = false
 	s.mu.Unlock()
@@ -406,14 +417,24 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 // demoteIdleSDK is DemoteSDK on a registry that holds no entry: no session
 // is running, so no session_end is owed and no slot is released. It tears
 // the pre-connected SDK down, clears sdkConnected, and stops a pod-wide
-// MCP surface no session uses. spec: §4.7; §6.1; §28.5.3 (CH-MSGSOCK,
-// Session frame writes).
+// MCP surface no session uses.
+//
+// The demotion ends the warm-up process, so the platform MCP server the
+// warm-up preparation bound on the warm-up manifest's nonce serves no live
+// process. The warm-up binding is released before the idle cancellation,
+// which then stops that server; the next session's claim starts the server
+// on the nonce in the final manifest its step-7 process reads.
+//
+// spec: §4.7; §6.1; §4.7.10 (Runtime supervisor, SDK-warm; Runtime
+// supervisor, Launch); §4.7.6 (mcpNonce row); §15.4.3; §28.5.3
+// (CH-MSGSOCK, Session frame writes).
 func (s *Server) demoteIdleSDK(ctx context.Context, sw SDKWarmRuntime) (*adapterv1.DemoteSDKResponse, error) {
 	if err := sw.DemoteSDK(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "demote SDK: %v", err)
 	}
 	s.mu.Lock()
 	s.sdkConnected = false
+	s.releaseWarmUpPlatformMCPLocked()
 	s.mu.Unlock()
 	s.cancelPodMCPIfRuntimeIdle()
 	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil

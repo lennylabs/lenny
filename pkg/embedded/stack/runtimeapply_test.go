@@ -39,6 +39,7 @@ metadata:
   name: my-agent
 spec:
   image: `+testRuntimeImage+`
+  command: ["/usr/local/bin/my-agent"]
   integrationLevel: basic
   deploymentModel: sidecar
 `)
@@ -57,6 +58,11 @@ spec:
 	}
 	if rt.Spec.DeploymentModel != "sidecar" {
 		t.Errorf("deploymentModel = %q, want sidecar", rt.Spec.DeploymentModel)
+	}
+	// spec: §5.1 (command) — the loader carries the file's command through
+	// to the applied Runtime, which the CRD requires on a sidecar agent.
+	if len(rt.Spec.Command) != 1 || rt.Spec.Command[0] != "/usr/local/bin/my-agent" {
+		t.Errorf("command = %q, want [/usr/local/bin/my-agent]", rt.Spec.Command)
 	}
 }
 

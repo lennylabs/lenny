@@ -759,38 +759,41 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 }
 
 // spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
-// diagnosis: the resolved pool match drops the process-reuse flag, so the
-// claim refuses a pod its tenant may reuse, or reports a pool with no mirror
-// row or no reader as one that keeps its runtime process.
-func TestResolvePoolCopiesKeepsRuntime_spec_5_2(t *testing.T) {
+// diagnosis: the resolved pool match drops or crosses the predicate pair, so
+// the claim refuses a pod its tenant may reuse, admits a used `keep` pod on a
+// pool that does not require the acknowledgment, or reports a pool with no
+// mirror row or no reader as one that reuses pods.
+func TestResolvePoolCopiesReuseAndAcknowledgmentPredicates_spec_5_2(t *testing.T) {
 	tmpl := sandboxTemplate("keep-tmpl", "keep-runtime", "sandboxed")
 	c := k8sClient(t, warmPool("keep-pool", "keep-tmpl"), tmpl)
 
-	withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
-		"keep-pool": {KeepsRuntime: true},
-	}}
-	got, err := podsession.ResolvePool(context.Background(), c, withMirror, testNS, "keep-runtime", "sandboxed", "")
-	if err != nil {
-		t.Fatalf("ResolvePool (mirror): %v", err)
-	}
-	if !got.KeepsRuntime {
-		t.Error("KeepsRuntime = false, want true from the mirror")
+	for _, tc := range []struct{ reuse, ack bool }{{true, true}, {true, false}, {false, false}} {
+		withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+			"keep-pool": {ReusesPods: tc.reuse, RequiresProcessAcknowledgment: tc.ack},
+		}}
+		got, err := podsession.ResolvePool(context.Background(), c, withMirror, testNS, "keep-runtime", "sandboxed", "")
+		if err != nil {
+			t.Fatalf("ResolvePool (mirror %+v): %v", tc, err)
+		}
+		if got.ReusesPods != tc.reuse || got.RequiresProcessAcknowledgment != tc.ack {
+			t.Errorf("mirror %+v: match = (%v, %v)", tc, got.ReusesPods, got.RequiresProcessAcknowledgment)
+		}
 	}
 
 	noRow := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
-	got, err = podsession.ResolvePool(context.Background(), c, noRow, testNS, "keep-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, noRow, testNS, "keep-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool (no mirror row): %v", err)
 	}
-	if got.KeepsRuntime {
-		t.Error("KeepsRuntime = true with no mirror row, want false")
+	if got.ReusesPods || got.RequiresProcessAcknowledgment {
+		t.Error("a pool with no mirror row reads a predicate true, want both false")
 	}
 
 	got, err = podsession.ResolvePool(context.Background(), c, nil, testNS, "keep-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool (no reader): %v", err)
 	}
-	if got.KeepsRuntime {
-		t.Error("KeepsRuntime = true with no reader, want false")
+	if got.ReusesPods || got.RequiresProcessAcknowledgment {
+		t.Error("a resolution with no reader reads a predicate true, want both false")
 	}
 }

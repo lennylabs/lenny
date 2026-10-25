@@ -72,6 +72,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 			Spec: lennyv1.RuntimeSpec{
 				Type:               "agent",
 				Image:              "registry.example.com/langgraph@sha256:" + digest64,
+				Command:            []string{"/usr/local/bin/lenny"},
 				IntegrationLevel:   "full",
 				SupportedProviders: []string{"anthropic_direct"},
 			},
@@ -91,6 +92,11 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		if got.Labels["team"] != "platform" {
 			t.Errorf("labels = %v, want team=platform", got.Labels)
 		}
+		// spec: §5.1 (command) — a sidecar session runtime carrying command
+		// and no preConnect mirrors the derived restartable flag as true.
+		if !got.Restartable {
+			t.Error("restartable = false, want true for a sidecar session runtime with command")
+		}
 
 		var live lennyv1.Runtime
 		if err := c.Get(ctx, client.ObjectKey{Name: name}, &live); err != nil {
@@ -109,7 +115,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		const name = "scanner"
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 		// Simulate an admin-API layer adding a field the CRD does not model.
@@ -146,7 +152,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		const name = "ephemeral"
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 
@@ -223,6 +229,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 			Spec: lennyv1.RuntimeSpec{
 				Type:              "agent",
 				Image:             "img@sha256:" + digest64,
+				Command:           []string{"/usr/local/bin/lenny"},
 				IntegrationLevel:  "basic",
 				DeploymentModel:   "sidecar",
 				RequireSoPeercred: &falseVal,
@@ -257,6 +264,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 			Spec: lennyv1.RuntimeSpec{
 				Type:             "agent",
 				Image:            "img@sha256:" + digest64,
+				Command:          []string{"/usr/local/bin/lenny"},
 				IntegrationLevel: "basic",
 				DeploymentModel:  "sidecar",
 			},
@@ -278,7 +286,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		const name = "bad.name"
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 

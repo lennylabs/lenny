@@ -62,7 +62,8 @@ type ClaimResult struct {
 func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
 	sandboxName, err := b.claimPod(ctx, podclaim.ClaimRequest{
-		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: req.KeepsRuntime,
+		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
+		ReusesPods: req.ReusesPods, RequiresProcessAcknowledgment: req.RequiresProcessAcknowledgment,
 	})
 	if err != nil {
 		return nil, err

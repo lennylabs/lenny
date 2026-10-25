@@ -415,10 +415,10 @@ The `sessionIsolationLevel` object in the create response describes how the assi
 | `isolationProfile` | `runc`, `gvisor`, or `microvm` |
 | `podReuse` | `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode |
 | `scrubPolicy` | Present only when `podReuse: true`; `best-effort`, `vm-restart`, `best-effort-in-place`, `best-effort-per-slot`, or `none` |
-| `residualStateWarning` | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests. On a recycling pool a session may run in a runtime process that served an earlier session of the same tenant. |
+| `residualStateWarning` | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests. On a recycling pool whose pod keeps its runtime process across sessions, a session may run in a runtime process that served an earlier session of the same tenant. |
 | `conversationContinuity` | `platform` for session mode; `none` for service mode |
 
-When `residualStateWarning: true`, the session runs on a pool configured to reuse pods (`recycle.enabled: true`, `maxConcurrentSessions > 1`, or service mode). On a recycling pool a session may run in a runtime process that served an earlier session of the same tenant. Reject the session if your use case cannot tolerate residual state (DNS cache, TCP `TIME_WAIT`, page cache, or shared process state).
+When `residualStateWarning: true`, the session runs on a pool configured to reuse pods (`recycle.enabled: true`, `maxConcurrentSessions > 1`, or service mode). On a recycling pool whose pod keeps its runtime process across sessions, a session may run in a runtime process that served an earlier session of the same tenant. Reject the session if your use case cannot tolerate residual state (DNS cache, TCP `TIME_WAIT`, page cache, or shared process state).
 
 ### Session mode with recycling
 

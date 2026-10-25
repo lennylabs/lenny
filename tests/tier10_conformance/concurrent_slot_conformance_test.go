@@ -434,7 +434,7 @@ func heartbeatAlive(t *testing.T, rt *sessionRuntime) {
 //	session's reply named the first session or its experiment variant, a
 //	session_start was not answered with a session_started naming its
 //	session, or the process exited at the first session's session_end. A
-//	recycling pool keeps the runtime process across sessions, so such a
+//	keep pod keeps its runtime process across sessions, so such a
 //	runtime serves every later session under a stale context.
 func TestRuntimeSDKEchoServesSequentialSessionsOnOneProcess_spec_4_7_10(t *testing.T) {
 	for _, sdk := range sdkEchoRuntimes {

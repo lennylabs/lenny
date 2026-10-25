@@ -114,6 +114,12 @@ entries:
     reason: |-
       a static checker over the agent workflow drivers, which no test tier is selected from
   - member: |-
+      .claude/tests/lookup.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over the agent search tool, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/migrate-proposal.test.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -185,6 +191,24 @@ entries:
     disposition: excluded
     reason: |-
       the change-proposal decisions state store the workflow agents invoke with node, rather than selected by a test tier
+  - member: |-
+      .claude/tools/lookup-embed.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the embedding helper the agent search tool spawns, run by that tool rather than selected by a test tier
+  - member: |-
+      .claude/tools/lookup-mcp.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the MCP server that exposes the agent search tool to agents, invoked with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/lookup.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the agent search tool over the tree, invoked by agents with node rather than selected by a test tier
   - member: |-
       .claude/tools/proposal-status.mjs
     class: change-graph-coverage

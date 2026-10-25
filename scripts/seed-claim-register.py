@@ -531,6 +531,43 @@ EXPLICIT = [
                 "BUILD-GAPS.md F-12.8.43 records the residual, owned by P2 (terminal pipeline "
                 "completeness)",
     },
+    # The adapter's CH-SUPERVISE client and the supervised runtime: the launch
+    # and end of each runtime process through the runtime supervisor, the one
+    # accept before READY, the ping, the boundary sweep on a restart pod, and
+    # cleanupCommands run at the agent UID in the runtime container.
+    {
+        "claim": "CH-SUPERVISE launch and end of the runtime process",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.Start`, `SupervisedRuntime.EndProcess`, `pkg/adapter/supervisewiring.go` `Server.UseSupervisedRuntime`, `cmd/lenny-adapter/main.go` `main`",
+        "note": "the adapter launches each runtime process through the supervisor under the launch permit and ends it with end; the adapter reaches the path when the pod builder renders --supervise-socket",
+    },
+    {
+        "claim": "CH-SUPERVISE ping while no other request is outstanding",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervise.go` `SupervisorLink.RunPing`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+        "note": "a missed pong is a link failure, which sets the adapter's not-live state",
+    },
+    {
+        "claim": "CH-SUPERVISE single accept before READY",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervise.go` `AwaitSupervisor`, `pkg/adapter/preready.go` `RunPreReady`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+        "note": "the adapter accepts one connection through the agent-UID check, closes its listener, and reads ready before it binds the gRPC listener",
+    },
+    {
+        "claim": "CH-SUPERVISE sweep after each boundary end on a restart pod",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.EndAndSweep`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`",
+    },
+    {
+        "claim": "Supervised cleanupCommands at the agent UID in the runtime container",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.RunCleanup`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`",
+    },
 ]
 
 # One row per request-message field the specification adds, each naming the step

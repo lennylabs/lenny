@@ -262,8 +262,8 @@ func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing
 // spec: §5.2, §4.7.10 (Runtime process lifetime) — a per-slot Close on one
 // slot while a sibling slot is still active must not tear the shared runtime
 // connection down: the sibling keeps writing and reading over it. The last
-// slot's Close leaves it up too, because the connection lives as long as the
-// pod.
+// slot's Close leaves it up too, because no session's close ends the
+// process's connection.
 //
 // diagnosis: a failure here means a normal completion of one slot destroys
 // the shared connection siblings or later sessions are still using, so
@@ -339,7 +339,7 @@ func requireRuntimeReadsFrame(t *testing.T, sp *adapter.SocketRuntimeProcess, ru
 // spec: §5.2, §4.7.10 (Runtime process lifetime) — a clean Interrupt (the
 // §28.5.3 heartbeat-hung interrupt) on one slot while a sibling is active
 // must not close the shared connection, and neither does the last active
-// slot's Interrupt, because the connection lives as long as the pod.
+// slot's Interrupt, because no interrupt closes the process's connection.
 //
 // diagnosis: a failure here means one slot's heartbeat timeout kills the
 // shared connection every sibling and later session depends on, regressing

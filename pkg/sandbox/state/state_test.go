@@ -289,3 +289,25 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestRuntimeProcessLifetimeMapsThePoolValue pins the pod label value the
+// WarmPoolController records: restart only for a pool whose
+// recycle.runtimeProcess is restart, and keep for keep, for a pool carrying
+// no value, and for any other value.
+//
+// spec: 5.2 (Runtime-process lifetime), 17.2 item 5
+func TestRuntimeProcessLifetimeMapsThePoolValue_spec_5_2(t *testing.T) {
+	for _, tc := range []struct{ pool, want string }{
+		{state.RuntimeProcessRestart, state.RuntimeProcessRestart},
+		{state.RuntimeProcessKeep, state.RuntimeProcessKeep},
+		{"", state.RuntimeProcessKeep},
+		{"Restart", state.RuntimeProcessKeep},
+	} {
+		if got := state.RuntimeProcessLifetime(tc.pool); got != tc.want {
+			t.Errorf("RuntimeProcessLifetime(%q) = %q, want %q", tc.pool, got, tc.want)
+		}
+	}
+	if state.LabelRuntimeProcess != "lenny.dev/runtime-process" {
+		t.Errorf("LabelRuntimeProcess = %q, want lenny.dev/runtime-process", state.LabelRuntimeProcess)
+	}
+}

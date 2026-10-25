@@ -198,7 +198,7 @@ func (l *SlotLog) Removals(pod, member string) int {
 // process-level isolation acknowledgment, and, on a recycling harness, the
 // recycle block with a reuse limit above 1. maxConcurrent above 1 makes the
 // pool a concurrent-workspace pool; an exclusive recycling pool registered
-// here keeps its runtime across sessions.
+// here reuses pods under recycle.runtimeProcess: keep.
 //
 // spec: §5.2 (sessionPolicy block, gateway-enforced subset; Deployer
 // acknowledgment (runtime process kept across sessions))
@@ -210,7 +210,7 @@ func poolPolicyStore(maxConcurrent int32, recycling bool) (*poolstore.Memory, er
 	if recycling {
 		// §5.2 requires an explicit reuse limit on a recycling pool; the
 		// harness pool never reaches it within a scenario.
-		sp.Recycle = &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 100}
+		sp.Recycle = &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 100, RuntimeProcess: runtimestore.RuntimeProcessKeep}
 	}
 	pools := poolstore.NewMemory()
 	if err := pools.Create(context.Background(), poolstore.Pool{

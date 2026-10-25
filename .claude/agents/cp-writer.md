@@ -17,7 +17,7 @@ cd /path/to/the/task/repository && node .claude/tools/lookup.mjs <<'REQ'
 {"exact": ["maxSessionRetries", {"pattern": "idle[- ]terminat", "regex": true, "ignoreCase": true}],
  "meaning": [{"query": "a session with no client activity past the idle bound is terminated"}],
  "sections": ["7.3"],
- "lines": ["spec/06_warm-pod-model.md:260-292"],
+ "lines": ["spec/NN_file-name.md:260-292"],
  "scope": ["spec", "pkg"],
  "context": "sites a change from idle termination to idle suspension has to edit"}
 REQ

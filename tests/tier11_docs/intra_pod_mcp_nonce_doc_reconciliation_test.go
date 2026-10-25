@@ -314,7 +314,7 @@ func intraPodNonceSites() []nonceStatementSite {
 		{
 			label:  "docs/reference/adapter-contract.md Adapter Manifest lead",
 			path:   []string{"docs", "reference", "adapter-contract.md"},
-			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
+			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before the runtime supervisor launches your binary.",
 			// The reader-facing mirror states the nonce arming rule as well as
 			// the manifest's pod-scoped contents, so a runtime author reading
 			// only this page presents the value that bound the server it

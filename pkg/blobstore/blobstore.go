@@ -165,7 +165,7 @@ const (
 	// ObjectTypeExport — exported file subsets for delegation per
 	// §4.5 ll. 303, §8.7.
 	ObjectTypeExport ObjectType = "export"
-	// ObjectTypeSessionLog — runtime stderr session logs at
+	// ObjectTypeSessionLog — session logs at
 	// `/{tenant_id}/sessions/{session_id}/stderr.log` per §4.4.
 	ObjectTypeSessionLog ObjectType = "sessions"
 )

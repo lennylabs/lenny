@@ -95,7 +95,7 @@ func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket 
 		return adapter.SocketPeerAuth{ExpectedUID: runtimeUID, NonceOnly: true}, nil
 	}
 	if runtimeUID == 0 && bindsAgentSocket {
-		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket, --runtime-ops-socket, and --mcp-socket require the agent UID " +
+		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket, --runtime-ops-socket, --mcp-socket, and --supervise-socket require the agent UID " +
 			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED peer check")
 	}
 	return adapter.SocketPeerAuth{ExpectedUID: runtimeUID}, nil
@@ -108,12 +108,15 @@ func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket 
 // the scrub. Leaving ScrubOps nil would make the driver report PodScrubFailed
 // on every recycle, which the default warn policy treats as a reuse: the
 // gateway would hand the pod to the next session with no scrub having run (a
-// between-session isolation regression). SandboxUser is left empty, so scrub
-// step 1 (`kill -9 -1`) runs as the adapter's own user and signals the
-// adapter container's processes only. In the sidecar model the runtime
-// container has its own process namespace and UID, and its process is kept for
-// the pod's life. spec: §5.2 (whole-pod scrub, steps 0-6); §5.2 ("What the
-// scrub reaches").
+// between-session isolation regression). DefaultOps makes the step-1
+// kill(-1, SIGKILL) and the System V IPC_RMID removals as direct syscalls,
+// with no exec, as the adapter's own user, so they reach the adapter
+// container's processes and IPC objects only. In the sidecar model the
+// runtime container has its own process namespace and UID: its process
+// outlives sessions on a keep pod and ends in each whole-pod scrub on a
+// restart pod, through the runtime supervisor. spec: §5.2 (whole-pod scrub,
+// steps 0-6; "What the scrub reaches"; Runtime-process lifetime); §4.7.10
+// (Runtime supervisor, End).
 func newScrubOps() scrub.DefaultOps {
 	return scrub.DefaultOps{}
 }
@@ -143,6 +146,14 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
 		os.Exit(prestop.Run(os.Args[2:], log.Printf))
 	}
+
+	// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting) — the
+	// signal handler's channel is registered before anything else, so a
+	// SIGTERM or SIGINT that arrives while the server is built, or during
+	// the supervisor gate and the warm-up launch, waits here for the
+	// handler RunPreReady starts rather than ending the adapter by default.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
 	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the adapter server certificate")
@@ -234,10 +245,33 @@ func main() {
 	objectStoreCABundle := flag.String("objectstore-ca-bundle",
 		os.Getenv("LENNY_OBJECTSTORE_CA_BUNDLE"),
 		"§13.2 path to the CA bundle the adapter trusts when it PUTs checkpoint chunks and GETs restore chunks against the object store over TLS; empty uses the system roots.")
+	supFlags := &superviseFlags{}
+	flag.StringVar(&supFlags.socket, "supervise-socket", "",
+		"§28.5.3 abstract Unix socket (leading @) the adapter listens on for the runtime supervisor's CH-SUPERVISE connection; empty means the pod runs no supervisor")
+	flag.StringVar(&supFlags.runtimeProcess, "runtime-process", "",
+		"§5.2 runtime-process lifetime of a supervised pod: keep or restart")
+	flag.StringVar(&supFlags.launchMode, "launch-mode", "",
+		"§4.7.10 launch mode of a supervised pod: session, service, preconnect-sdk-warm, or preconnect-pod-warm")
+	flag.DurationVar(&supFlags.pingInterval, "supervise-ping-interval", defaultSupervisePingInterval,
+		"§28.5.3 interval at which the adapter pings the runtime supervisor while no other request is outstanding")
+	flag.DurationVar(&supFlags.pingTimeout, "supervise-ping-timeout", defaultSupervisePingTimeout,
+		"§28.5.3 deadline for the supervisor's pong; a missed pong is a link failure")
+	flag.DurationVar(&supFlags.waitTimeout, "supervise-wait-timeout", defaultSuperviseWaitTimeout,
+		"§28.5.3 bound on the wait before READY for the supervisor's connection and its ready")
+	flag.DurationVar(&supFlags.warmUpTimeout, "warm-up-timeout", defaultWarmUpTimeout,
+		"§4.7.10 bound on the warm-up launch's CH-MSGSOCK connection before READY")
 	flag.Parse()
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 
 	if *runtimeBin != "" && *runtimeSocket != "" {
 		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
+	}
+	// spec: §4.7.10 (Runtime supervisor) — the adapter inputs of a
+	// supervised pod are validated before anything is launched or bound.
+	supIn, err := parseSuperviseInputs(supFlags, setFlags, *runtimeSocket)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
 	}
 
 	// spec: §16.3 — install the process-wide TracerProvider and
@@ -339,7 +373,8 @@ func main() {
 	// spec: §28.5.3 — production sidecar probes runtime liveness with
 	// heartbeats and ends the session's stream when the runtime misses the
 	// ack window. Runtime.Interrupt then ends nothing on the sidecar
-	// transport, whose runtime process lives as long as the pod (§4.7.10).
+	// transport; on a supervised pod the escalation sets the not-live
+	// state's hang cause instead (§4.7.10, Runtime supervisor, Liveness).
 	// A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
@@ -365,7 +400,7 @@ func main() {
 	// nonce-only mode the MCP servers add the per-connection
 	// challenge-response to the static nonce.
 	peerAuth, err := agentSocketPeerAuth(resolveRuntimeUID(*runtimeUID), *requireSoPeercred,
-		*runtimeSocket != "" || *mcpSocket != "" || *lifecycleSocket != "")
+		*runtimeSocket != "" || *mcpSocket != "" || *lifecycleSocket != "" || supIn.Supervised())
 	if err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
@@ -402,7 +437,27 @@ func main() {
 	// runtime at the deployment's OTLP collector.
 	adapterSrv.OTLPEndpoint = *otlpEndpoint
 	adapterSrv.OTLPTLSDisabled = *otlpTLSDisabled
+	// §15.4.6: when a lifecycle socket is configured, the adapter listens
+	// on it for the Full-level runtime's lifecycle connection and
+	// advertises it in the session manifest.
+	lifecycle, err := attachLifecycle(adapterSrv, *lifecycleSocket, peerAuth, runtimeNonce)
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+
 	switch {
+	case supIn.Supervised():
+		// spec: §4.7.10 (Runtime supervisor) — the runtime process is
+		// launched through the runtime supervisor, and one CH-MSGSOCK
+		// transport is composed per launched process; the first listener is
+		// bound here, before READY.
+		rt, err := newSupervisedRuntime(supIn, *runtimeSocket, peerAuth, runtimeNonce, lifecycle)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		adapterSrv.UseSupervisedRuntime(rt)
+		defer closeRuntimeListener(rt.CloseListener, log.Printf)
+		log.Printf("lenny-adapter: §4.7.10 supervised runtime on socket %s, supervisor on %s", *runtimeSocket, supIn.Socket)
 	case *runtimeSocket != "":
 		// §4.7 sidecar model: bind the abstract socket the runtime
 		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
@@ -424,18 +479,6 @@ func main() {
 		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
 			BinPath: *runtimeBin,
 		})
-	}
-
-	// §15.4.6: when a lifecycle socket is configured, the adapter listens
-	// on it for the Full-level runtime's lifecycle connection and
-	// advertises it in the session manifest.
-	var lifecycle *adapter.RuntimeOps
-	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth, runtimeNonce)
-		if err != nil {
-			log.Fatalf("lenny-adapter: %v", err)
-		}
-		adapterSrv.Lifecycle = lifecycle
 	}
 
 	// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage) — install the
@@ -465,27 +508,75 @@ func main() {
 
 	srv := adapter.NewGRPCServer(adapterSrv, opts...)
 
-	lis, err := net.Listen("tcp", *addr)
-	if err != nil {
-		log.Fatalf("lenny-adapter: listen on %s: %v", *addr, err)
+	// spec: §4.7.9 (step 4); §4.7.10 (Runtime supervisor, Launch) — the
+	// supervisor gate and the warm-up launch run before the gRPC listener is
+	// bound, because the pod's readiness probe reads the bind as READY.
+	pingCtx, stopPing := context.WithCancel(context.Background())
+	defer stopPing()
+	adapter.RunPreReady(context.Background(), preReadyConfig(adapterSrv, srv, supIn, peerAuth, *addr, signals, pingCtx))
+}
+
+// preReadyConfig assembles RunPreReady's dependencies for this adapter.
+func preReadyConfig(adapterSrv *adapter.Server, srv *grpc.Server, supIn superviseInputs,
+	peerAuth adapter.SocketPeerAuth, addr string, signals <-chan os.Signal, pingCtx context.Context,
+) adapter.PreReadyConfig {
+	cfg := adapter.PreReadyConfig{
+		Signals: signals,
+		OnSignal: func() {
+			// §6.1: SIGTERM during sdk_connecting tears the pre-connected SDK
+			// down within LENNY_DEMOTE_TIMEOUT_SECONDS, and on a supervised
+			// pod the launch mode's branch ends a launched process. The exit
+			// path then closes CH-RUNTIMEOPS and stops the server, writing no
+			// session frame of its own (§28.5.3).
+			adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
+		},
+		Listen: func() (net.Listener, error) {
+			lis, err := net.Listen("tcp", addr)
+			if err == nil {
+				log.Printf("lenny-adapter: serving the adapter on %s", addr)
+			}
+			return lis, err
+		},
+		Serve: srv.Serve,
+		Stop:  srv.Stop,
+		Exit: func(code int) {
+			if code != 0 {
+				os.Exit(code)
+			}
+		},
 	}
+	rt := adapterSrv.SupervisedRuntimeOrNil()
+	if rt == nil {
+		return cfg
+	}
+	cfg.ServiceMode = supIn.Mode == adapter.LaunchService
+	cfg.Liveness = rt.SetOnNotLive
+	cfg.AwaitSupervisor = func(ctx context.Context) error {
+		link, err := adapter.AwaitSupervisor(ctx, adapter.AwaitSupervisorConfig{
+			Socket: supIn.Socket, Auth: peerAuth, Lifetime: supIn.Lifetime, Timeout: supIn.WaitTimeout,
+		})
+		if err != nil {
+			return err
+		}
+		rt.AttachLink(link)
+		go link.RunPing(pingCtx, supIn.PingInterval, supIn.PingTimeout)
+		return nil
+	}
+	switch supIn.Mode {
+	case adapter.LaunchService:
+		cfg.WarmUp = boundedWarmUp(supIn.WarmUpTimeout, rt.WarmUp)
+	case adapter.LaunchPreconnectSDKWarm:
+		cfg.WarmUp = boundedWarmUp(supIn.WarmUpTimeout, adapterSrv.PreConnect)
+	}
+	return cfg
+}
 
-	go func() {
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-		<-stop
-		// §6.1 — SIGTERM during sdk_connecting tears the pre-connected
-		// SDK down within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s),
-		// force-terminating it on overrun, so it is not abandoned
-		// mid-connection and cannot leak credentials or hold provider
-		// connections open. The exit path then closes CH-RUNTIMEOPS and
-		// stops the server, writing no session frame of its own (§28.5.3).
-		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
-	}()
-
-	log.Printf("lenny-adapter: serving the adapter on %s (tls=%t)", *addr, tlsOpt != nil)
-	if err := srv.Serve(lis); err != nil {
-		log.Fatalf("lenny-adapter: serve: %v", err)
+// boundedWarmUp bounds a warm-up launch by --warm-up-timeout.
+func boundedWarmUp(timeout time.Duration, warm func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return warm(ctx)
 	}
 }
 

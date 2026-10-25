@@ -1337,9 +1337,10 @@ func (*ReportSessionScrubResponse) Descriptor() ([]byte, []int) {
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
 // for the audit trail on a FAILED outcome. runtime_live states whether the
-// adapter's runtime process can serve the pod's next session, sampled after
-// the whole-pod scrub finishes; a sidecar runtime whose connection is open
-// is reported live whether or not it answers heartbeats. The field is
+// adapter's runtime can serve the pod's next session, sampled after the
+// whole-pod scrub finishes; in the sidecar model it is false whenever the
+// adapter's not-live state is set (§4.7.10, Runtime supervisor, Liveness).
+// The field is
 // positive so that an absent value reads as not live, and the gateway
 // retires the pod with the non-counting runtime_not_live reason when it is
 // false. spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
@@ -2526,8 +2527,9 @@ func (x *WorkspacePlanWarning) GetLosingSourceIndex() int32 {
 // adapter's pod-level setup-completion state is implicit (no second
 // RunSetup means no second execution). Per-session setup belongs in the
 // runtime's handling of the session's first message rather than in
-// setupCommands, because a runtime process kept across sessions
-// initializes once per pod.
+// setupCommands, because setup commands run once per pod while the runtime
+// process of a `keep` pod serves several sessions (§5.2, Runtime-process
+// lifetime).
 type RunSetupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`

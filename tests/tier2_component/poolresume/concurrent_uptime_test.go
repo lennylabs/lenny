@@ -45,6 +45,7 @@ func TestRecycleMaxPodUptimeRoundTrip_spec_5_2(t *testing.T) {
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          50,
 				MaxPodUptimeSeconds:        3600,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 		WarmCount: 1,

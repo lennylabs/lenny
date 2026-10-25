@@ -16,7 +16,7 @@ import (
 // spec: 5.2 (Tenant pinning), 5.2 (Deployer acknowledgment (runtime process kept across sessions))
 // diagnosis: an idle pod pinned to one tenant can be admitted for another
 // tenant, a pod pinned `unassigned` is admitted, a pinned pod is admitted on a
-// pool that keeps no runtime process, or AdmitTenantPin writes to the Pod or
+// pool that reuses no pod, or AdmitTenantPin writes to the Pod or
 // reads a SandboxClaim.
 func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
 	const pool = "pin-decide"
@@ -47,8 +47,8 @@ func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
 		{"pd-unassigned", false, false},
 	}
 	for _, tc := range cases {
-		got, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, tc.pod,
-			podclaim.ClaimRequest{Pool: pool, SessionID: "s", TenantID: "acme", KeepsRuntime: tc.keeps})
+		got, _, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, tc.pod,
+			podclaim.ClaimRequest{Pool: pool, SessionID: "s", TenantID: "acme", ReusesPods: tc.keeps, RequiresProcessAcknowledgment: tc.keeps})
 		if err != nil {
 			t.Fatalf("AdmitTenantPin(%s, keeps=%v): %v", tc.pod, tc.keeps, err)
 		}
@@ -83,7 +83,7 @@ func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2(t *testing.T) {
 		rec.reset()
 		claimer := &podclaim.Claimer{Client: c, Namespace: testNS}
 		_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-			Pool: testPool, SessionID: "s", TenantID: "acme", KeepsRuntime: keeps,
+			Pool: testPool, SessionID: "s", TenantID: "acme", ReusesPods: keeps, RequiresProcessAcknowledgment: keeps,
 		})
 		if err == nil || !errors.Is(err, injected) {
 			t.Fatalf("keeps=%v: Claim error = %v, want one wrapping the injected read failure", keeps, err)
@@ -172,7 +172,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 
 // spec: 5.2 (Tenant pinning)
 // diagnosis: the concurrent-slot idle pass places a slot on a pod pinned to
-// another tenant, refuses a pod pinned to the request's own tenant, or
+// another tenant, refuses a `keep` pod pinned to the request's own tenant, or
 // drains a pod it refused.
 func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 	claimer, c, _ := slotClaimerFor(
@@ -180,7 +180,7 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 		sandboxIn(testPool, "a-other", "idle"),
 		sandboxIn(testPool, "b-own", "idle"),
 		pinnedPod(testPool, "a-other", "globex"),
-		pinnedPod(testPool, "b-own", "acme"),
+		lifetimePod(testPool, "b-own", "acme", "keep"),
 	)
 	res, err := claimer.ClaimSlot(context.Background(), slotReq("s-1", "acme", 4))
 	if err != nil {
@@ -195,13 +195,13 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 	if hasDrainRequest(t, c, "a-other") || hasDrainRequest(t, c, "b-own") {
 		t.Error("the slot pass wrote a drain request")
 	}
-	// The slot path always passes KeepsRuntime; under the zero value both
-	// pods would be refused.
+	// The slot path always passes both predicates true; under the zero
+	// values both pods would be refused.
 	for _, pod := range []string{"a-other", "b-own"} {
-		ok, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, pod,
+		ok, _, err := podclaim.AdmitTenantPin(context.Background(), c, testNS, pod,
 			podclaim.ClaimRequest{Pool: testPool, TenantID: "acme"})
 		if err != nil || ok {
-			t.Errorf("AdmitTenantPin(%s, zero KeepsRuntime) = %v, %v; want refused", pod, ok, err)
+			t.Errorf("AdmitTenantPin(%s, zero predicates) = %v, %v; want refused", pod, ok, err)
 		}
 	}
 }
@@ -228,7 +228,7 @@ func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
 	claimer := &podclaim.Claimer{Client: rec.wrap(base), Namespace: testNS}
 
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: "kr-only", SessionID: "s1", TenantID: "acme", KeepsRuntime: true,
+		Pool: "kr-only", SessionID: "s1", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Fatalf("Claim over pods pinned elsewhere = %v, want ErrNoIdlePod", err)
@@ -239,7 +239,7 @@ func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
 
 	rec.reset()
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: "kr-mixed", SessionID: "s2", TenantID: "acme", KeepsRuntime: true,
+		Pool: "kr-mixed", SessionID: "s2", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -268,7 +268,7 @@ func TestIdleScanNoIdlePodResultNamesRefusedPods_spec_5_2(t *testing.T) {
 	createBareClaim(t, base, "n-taken", "acme")
 	claimer := &podclaim.Claimer{Client: base, Namespace: testNS}
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "s", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "s", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Fatalf("Claim = %v, want ErrNoIdlePod", err)

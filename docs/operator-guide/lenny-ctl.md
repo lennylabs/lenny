@@ -128,6 +128,7 @@ Validate infrastructure prerequisites before or after installation.
 | Command | Description | Min Role |
 |---|---|---|
 | `lenny-ctl preflight --config <values.yaml>` | Run all preflight checks | `platform-admin` (API) / none (standalone) |
+| `lenny-ctl preflight supervisor --runtime-class <name> --config <values.yaml>` | Create a one-off pod from the runtime supervisor image under the named RuntimeClass, run the supervisor's property self-test, report each property, and delete the pod. Exits non-zero when a property that gates a `restart` pod fails. Runs in standalone mode only, through the current `kubeconfig` context. Run it again when the container runtime version changes. | Kubernetes permission to create, get, and delete pods and to get `pods/log` in the agent namespace |
 
 ### Execution Modes
 

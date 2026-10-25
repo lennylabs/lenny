@@ -1334,3 +1334,43 @@ func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) 
 		}
 	}
 }
+
+// TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness pins
+// the change-graph keys of the runtime supervisor's C sources and image:
+// the path validator accepts both, and the committed graph routes an edit
+// under supervisor/ to the tier-0 binary check and the tier-1 C harness
+// driver, and an edit to Dockerfile.supervisor to the binary check. A
+// validator that rejected the keys would force their removal, and a C
+// change would then select no test under --changed.
+//
+// spec: 4.7.11 (Adapter-Agent Security Boundary), 4.7.10 (Deployment Model)
+func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testing.T) {
+	for _, key := range []string{"supervisor/", "Dockerfile.supervisor"} {
+		if res := validateChangeGraphPathsOverKey(t, key); !res.ok {
+			t.Errorf("a change graph keyed on %s fails the path validator: %s", key, res.detail)
+		}
+	}
+	globs := mustReadChangeGraphGlobs(t)
+	want := map[string]map[string]string{
+		"supervisor/": {
+			"static": "tests/tier0_static/supervisor_binary_test.go",
+			"unit":   "tests/tier1_unit/supervisor/...",
+		},
+		"Dockerfile.supervisor": {
+			"static": "tests/tier0_static/supervisor_binary_test.go",
+		},
+	}
+	for key, tiers := range want {
+		for tier, target := range tiers {
+			found := false
+			for _, got := range globs[key][tier] {
+				if got == target {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the change graph's %s key does not select %s at tier %s: %v", key, target, tier, globs[key])
+			}
+		}
+	}
+}

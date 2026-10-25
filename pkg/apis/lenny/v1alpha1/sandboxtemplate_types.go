@@ -67,6 +67,19 @@ type RecyclePolicy struct {
 	// (Kata/microvm scrub variant).
 	// +optional
 	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
+
+	// RuntimeProcess is the runtime-process lifetime of the pods the pool
+	// creates: a `keep` pod keeps its runtime process across the recycle
+	// boundary, and a `restart` pod ends it in each whole-pod scrub and
+	// launches a new process for the next session. The WarmPoolController
+	// reads it when it creates a pod and records it in the immutable pod
+	// label `lenny.dev/runtime-process`; an absent value creates a `keep`
+	// pod. Gateway pool admission requires it on a reusing recycling pool
+	// and rejects it on every other pool. spec: §5.2 (Runtime-process
+	// lifetime).
+	// +kubebuilder:validation:Enum=keep;restart
+	// +optional
+	RuntimeProcess string `json:"runtimeProcess,omitempty"`
 }
 
 // SandboxTemplateSpec is the desired state of a SandboxTemplate — the

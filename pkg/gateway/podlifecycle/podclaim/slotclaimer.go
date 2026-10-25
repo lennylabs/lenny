@@ -529,12 +529,14 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			continue
 		}
 		// §5.2 tenant pinning: read the pin before the fresh acquisition. Every
-		// pool routed to the slot path keeps its runtime process across
-		// sessions, so the request admits a pod pinned to its own tenant and
-		// refuses one pinned elsewhere; this pass never drains a refused pod. A
-		// failed pin read ends the claim as a failed claim read does.
-		admitted, err := AdmitTenantPin(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
-			Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: true,
+		// pool routed to the slot path is concurrent, so it reuses pods and
+		// requires the runtime-process acknowledgment; the request admits a pod
+		// pinned to its own tenant and refuses one pinned elsewhere. This pass
+		// ignores the drain report and never drains a refused pod. A failed pin
+		// read ends the claim as a failed claim read does.
+		admitted, _, err := AdmitTenantPin(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
+			Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
+			ReusesPods: true, RequiresProcessAcknowledgment: true,
 		})
 		if err != nil {
 			return nil, err

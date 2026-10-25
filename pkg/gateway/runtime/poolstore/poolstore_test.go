@@ -459,7 +459,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 			pool: poolstore.Pool{
 				ExecutionMode: runtimestore.ExecutionModeSession,
 				SessionPolicy: &runtimestore.SessionPolicy{
-					Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 10},
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 10, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 				},
 			},
 			wantSub: "recycle.acknowledgeBestEffortScrub: true",
@@ -486,6 +486,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 						MaxSessionsPerPod:          10,
 						AllowCrossTenantReuse:      true,
 						ScrubProfile:               runtimestore.MicrovmScrubInPlace,
+						RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -502,6 +503,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 						AcknowledgeBestEffortScrub: true,
 						MaxSessionsPerPod:          10,
 						AllowCrossTenantReuse:      true,
+						RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -520,6 +522,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 						AcknowledgeBestEffortScrub: true,
 						MaxSessionsPerPod:          10,
 						AllowCrossTenantReuse:      true,
+						RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -537,6 +540,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 						MaxSessionsPerPod:          10,
 						AllowCrossTenantReuse:      true,
 						ScrubProfile:               runtimestore.MicrovmScrubStandard,
+						RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -565,7 +569,8 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 				SessionPolicy: &runtimestore.SessionPolicy{
 					Recycle: &runtimestore.RecyclePolicy{
 						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
-						ScrubProfile: "wipe",
+						ScrubProfile:   "wipe",
+						RuntimeProcess: runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -579,6 +584,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 					Recycle: &runtimestore.RecyclePolicy{
 						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
 						OnScrubFailure: "boom",
+						RuntimeProcess: runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -597,7 +603,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 			pool: poolstore.Pool{
 				ExecutionMode: runtimestore.ExecutionModeSession,
 				SessionPolicy: &runtimestore.SessionPolicy{
-					Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 				},
 			},
 			wantSub: "acknowledgeProcessLevelIsolation=true",
@@ -610,6 +616,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 					Recycle: &runtimestore.RecyclePolicy{
 						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
 						ScrubProfile: runtimestore.MicrovmScrubInPlace, AcknowledgeMicrovmResidualState: true,
+						RuntimeProcess: runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -621,7 +628,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 				ExecutionMode: runtimestore.ExecutionModeSession,
 				SessionPolicy: &runtimestore.SessionPolicy{
 					AcknowledgeProcessLevelIsolation: true,
-					Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+					Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 				},
 			},
 		},
@@ -661,7 +668,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 				ExecutionMode: runtimestore.ExecutionModeSession,
 				SessionPolicy: &runtimestore.SessionPolicy{
 					MaxConcurrentSessions: 4,
-					Recycle:               &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+					Recycle:               &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 				},
 			},
 			wantSub: "maxConcurrentSessions > 1 requires acknowledgeProcessLevelIsolation",
@@ -688,6 +695,7 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 						MaxScrubFailures:                3,
 						MaxSessionsPerPod:               50,
 						MaxPodUptimeSeconds:             3600,
+						RuntimeProcess:                  runtimestore.RuntimeProcessKeep,
 					},
 				},
 			},
@@ -730,6 +738,7 @@ func TestCreatePersistsSessionPolicy(t *testing.T) {
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          20,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -821,32 +830,70 @@ func crossTenantPool(crossTenant bool) poolstore.Pool {
 	}
 }
 
-// spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
-func TestKeepsRuntimeAcrossSessions_spec_5_2(t *testing.T) {
-	recycle := func(maxSessions int, profile runtimestore.MicrovmScrubMode) *runtimestore.RecyclePolicy {
-		return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: maxSessions, ScrubProfile: profile}
+// predicateCase is one pool configuration of the split runtime-process
+// predicates, with the value each predicate must return.
+type predicateCase struct {
+	name       string
+	sp         *runtimestore.SessionPolicy
+	requireAck bool
+	reusesPods bool
+}
+
+// predicateCases enumerates every pool configuration the split predicates
+// distinguish: concurrency, each recycle reuse condition, each scrub
+// profile, and each runtime-process lifetime.
+func predicateCases() []predicateCase {
+	recycle := func(maxSessions int, profile runtimestore.MicrovmScrubMode, lifetime runtimestore.RuntimeProcessLifetime) *runtimestore.RecyclePolicy {
+		return &runtimestore.RecyclePolicy{
+			Enabled: true, AcknowledgeBestEffortScrub: true,
+			MaxSessionsPerPod: maxSessions, ScrubProfile: profile, RuntimeProcess: lifetime,
+		}
 	}
-	crossTenant := recycle(5, runtimestore.MicrovmScrubInPlace)
+	keep, restart := runtimestore.RuntimeProcessKeep, runtimestore.RuntimeProcessRestart
+	crossTenant := recycle(5, runtimestore.MicrovmScrubInPlace, keep)
 	crossTenant.AllowCrossTenantReuse = true
-	cases := []struct {
-		name string
-		sp   *runtimestore.SessionPolicy
-		want bool
-	}{
-		{"concurrent without recycle", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4}, true},
-		{"concurrent with recycle", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, "")}, true},
-		{"concurrent with vm-restart", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart)}, true},
-		{"recycling standard", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubStandard)}, true},
-		{"recycling in-place", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubInPlace)}, true},
-		{"recycling in-place with cross-tenant reuse", &runtimestore.SessionPolicy{Recycle: crossTenant}, true},
-		{"nil policy", nil, false},
-		{"vm-restart recycling", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart)}, false},
-		{"one session per pod", &runtimestore.SessionPolicy{Recycle: recycle(1, "")}, false},
-		{"recycling disabled", &runtimestore.SessionPolicy{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5}}, false},
+	return []predicateCase{
+		{"concurrent without recycle", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4}, true, true},
+		{"concurrent recycling keep", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, "", keep)}, true, true},
+		{"concurrent recycling restart", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, "", restart)}, true, true},
+		{"concurrent with vm-restart", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart, "")}, true, true},
+		{"sequential recycling default profile keep", &runtimestore.SessionPolicy{Recycle: recycle(5, "", keep)}, true, true},
+		{"sequential recycling standard keep", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubStandard, keep)}, true, true},
+		{"sequential recycling in-place keep", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubInPlace, keep)}, true, true},
+		{"sequential recycling in-place keep with cross-tenant reuse", &runtimestore.SessionPolicy{Recycle: crossTenant}, true, true},
+		{"sequential recycling standard restart", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubStandard, restart)}, false, true},
+		{"sequential recycling in-place restart", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubInPlace, restart)}, false, true},
+		{"sequential recycling with lifetime unset", &runtimestore.SessionPolicy{Recycle: recycle(5, "", "")}, false, true},
+		{"nil policy", nil, false, false},
+		{"no recycle block", &runtimestore.SessionPolicy{MaxConcurrentSessions: 1}, false, false},
+		{"vm-restart recycling", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart, "")}, false, false},
+		{"one session per pod", &runtimestore.SessionPolicy{Recycle: recycle(1, "", "")}, false, false},
+		{"recycling disabled", &runtimestore.SessionPolicy{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5}}, false, false},
 	}
-	for _, tc := range cases {
-		if got := poolstore.KeepsRuntimeAcrossSessions(tc.sp); got != tc.want {
-			t.Errorf("%s: KeepsRuntimeAcrossSessions = %v, want %v", tc.name, got, tc.want)
+}
+
+// TestRequiresProcessAcknowledgment_spec_5_2 pins the acknowledgment
+// predicate: a concurrent pool under either lifetime, or a reusing recycling
+// pool under `keep`. A sequential pool under `restart` does not require it.
+//
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across sessions))
+func TestRequiresProcessAcknowledgment_spec_5_2(t *testing.T) {
+	for _, tc := range predicateCases() {
+		if got := poolstore.RequiresProcessAcknowledgment(tc.sp); got != tc.requireAck {
+			t.Errorf("%s: RequiresProcessAcknowledgment = %v, want %v", tc.name, got, tc.requireAck)
+		}
+	}
+}
+
+// TestReusesPods_spec_5_2 pins the pod-reuse predicate the acquisition path
+// reads: a concurrent pool, or a reusing recycling pool, independent of
+// recycle.runtimeProcess.
+//
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across sessions)), §4.6.1 (Reserved hold)
+func TestReusesPods_spec_5_2(t *testing.T) {
+	for _, tc := range predicateCases() {
+		if got := poolstore.ReusesPods(tc.sp); got != tc.reusesPods {
+			t.Errorf("%s: ReusesPods = %v, want %v", tc.name, got, tc.reusesPods)
 		}
 	}
 }

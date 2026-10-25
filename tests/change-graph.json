@@ -2,6 +2,53 @@
   "version": 1,
   "description": "Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. The lenny-test harness walks this graph when invoked with --changed to determine the minimal test set. CI runs `lenny-test validate-maps` on every PR.",
   "globs": {
+    "supervisor/": {
+      "static": ["tests/tier0_static/supervisor_binary_test.go"],
+      "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"]
+    },
+    "Dockerfile.supervisor": {
+      "static": ["tests/tier0_static/supervisor_binary_test.go"]
+    },
+    "pkg/ctlcli/preflight_supervisor.go": {
+      "unit": ["pkg/ctlcli/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"]
+    },
+    "pkg/ctlcli/preflight_supervisor_pod.go": {
+      "unit": ["pkg/ctlcli/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"]
+    },
+    "tests/testinfra/supervisorbuild": {
+      "static": ["tests/tier0_static/supervisor_binary_test.go"],
+      "unit": ["tests/testinfra/supervisorbuild/...", "tests/tier1_unit/supervisor/..."]
+    },
+    "tests/tier1_unit/supervisor": {
+      "unit": ["tests/tier1_unit/supervisor/..."]
+    },
+    "cmd/runtimes/supervise-probe/": {
+      "unit": ["tests/testinfra/superviseprobe/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
+    },
+    "tests/testinfra/superviseprobe": {
+      "unit": ["tests/testinfra/superviseprobe/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
+    },
+    "tests/testinfra/supervisedpod": {
+      "unit": ["tests/testinfra/supervisedpod/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/runtime_supervisor_test.go"],
+      "e2e_cloud": ["tests/tier6_e2e_cloud/runtime_supervisor_isolation_test.go"],
+      "chaos": ["tests/tier8_chaos/runtime_supervisor_chaos_test.go"],
+      "security": ["tests/tier9_security/runtime_supervisor_security_test.go"],
+      "conformance": ["tests/tier10_conformance/supervised_recycle_conformance_test.go"]
+    },
     "pkg/store/session": {
       "unit": ["pkg/store/session/..."],
       "component": ["tests/tier2_component/stores/session_store_test.go"],
@@ -74,12 +121,12 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
-      "contract": ["tests/tier3_contract/gateway_ops/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/..."],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_pools/runtime_process_wire_test.go"]
     },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
@@ -96,11 +143,56 @@
       "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
     },
     "pkg/controller/sandbox": {
+      "static": [
+        "tests/tier0_static/deployment_boundary_test.go",
+        "tests/tier0_static/deployment_boundary_render_test.go"
+      ],
       "unit": ["pkg/controller/sandbox/..."],
       "component": [
         "tests/tier2_component/controllers/warmpool_terminated_adapter_test.go",
-        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go"
+        "tests/tier2_component/controllers/warmpool_deleted_pod_test.go",
+        "tests/tier2_component/admission/supervised_pod_webhooks_test.go"
+      ],
+      "contract": ["tests/tier3_contract/adapter_supervise/rendered_argv_test.go"]
+    },
+    "pkg/admission/webhook": {
+      "unit": ["pkg/admission/webhook/..."],
+      "component": ["tests/tier2_component/admission/supervised_pod_webhooks_test.go"]
+    },
+    "cmd/lenny-controller": {
+      "static": [
+        "tests/tier0_static/controller_chart_flags_test.go",
+        "tests/tier0_static/dev_profile_render_test.go"
+      ],
+      "unit": ["cmd/lenny-controller/..."]
+    },
+    "pkg/apis/lenny/": {
+      "unit": ["pkg/apis/lenny/..."],
+      "component": ["tests/tier2_component/controllers/runtime_command_env_validation_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
+      "contract": ["tests/tier3_contract/crd_schema/..."]
+    },
+    "pkg/controller/runtime": {
+      "unit": ["pkg/controller/runtime/..."],
+      "component": [
+        "tests/tier2_component/controllers/runtime_test.go",
+        "tests/tier2_component/controllers/runtime_command_env_validation_test.go"
       ]
+    },
+    "pkg/gateway/runtime/runtimestore": {
+      "unit": ["pkg/gateway/runtime/runtimestore/..."],
+      "component": ["tests/tier2_component/stores/runtimestore_test.go"]
+    },
+    "pkg/gateway/runtime/poolstore": {
+      "unit": ["pkg/gateway/runtime/poolstore/..."],
+      "component": ["tests/tier2_component/stores/poolstore_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
+      "contract": ["tests/tier3_contract/rest_pools/..."],
+      "integration": ["tests/tier4_integration/recycle_restart_pod_test.go", "tests/tier4_integration/recycle_scrub_path_test.go"],
+      "security": ["tests/tier9_security/pool_admission_isolation_test.go"]
+    },
+    "pkg/gateway/podlifecycle": {
+      "unit": ["pkg/gateway/podlifecycle/..."],
+      "integration": ["tests/tier4_integration/recycle_restart_pod_test.go"],
+      "security": ["tests/tier9_security/tenant_isolation_test.go"]
     },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
@@ -117,7 +209,7 @@
     },
     "pkg/controller/poolscaling": {
       "unit": ["pkg/controller/poolscaling/..."],
-      "component": ["tests/tier2_component/controllers/poolscaling_test.go"],
+      "component": ["tests/tier2_component/controllers/poolscaling_test.go", "tests/tier2_component/controllers/poolscaling_runtime_process_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/pool_upgrade_test.go"]
     },
     "pkg/controller/poolscaling/strategy": {
@@ -225,7 +317,8 @@
       "integration": ["tests/tier4_integration/experiment_routing_test.go"]
     },
     "pkg/podsecurity": {
-      "unit": ["pkg/podsecurity/..."],
+      "unit": ["pkg/podsecurity/...", "pkg/admission/webhook/..."],
+      "component": ["tests/tier2_component/admission/supervised_pod_webhooks_test.go"],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go"
@@ -447,6 +540,41 @@
         "tests/tier4_integration/credential_lifecycle_test.go"
       ],
       "conformance": ["tests/tier10_conformance/..."]
+    },
+    "pkg/adapter": {
+      "unit": [
+        "pkg/adapter/...",
+        "cmd/lenny-adapter/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ],
+      "load_local": [
+        "pkg/adapter/supervise_race_load_test.go",
+        "pkg/adapter/supervise_failorder_load_test.go"
+      ]
+    },
+    "pkg/supervisorselftest": {
+      "unit": [
+        "pkg/supervisorselftest/...",
+        "pkg/adapter/...",
+        "pkg/ctlcli/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ]
+    },
+    "cmd/lenny-adapter": {
+      "unit": [
+        "cmd/lenny-adapter/..."
+      ],
+      "contract": [
+        "tests/tier3_contract/adapter_supervise/..."
+      ],
+      "load_local": [
+        "pkg/adapter/supervise_race_load_test.go",
+        "pkg/adapter/supervise_failorder_load_test.go"
+      ]
     },
     "pkg/adapter/linefanout": {
       "unit": [

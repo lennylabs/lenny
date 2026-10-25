@@ -105,7 +105,7 @@ func main() {
 		// Parse the inbound message.
 		var msg InboundMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			// Log parse errors to stderr (captured by adapter for diagnostics).
+			// Log parse errors to stderr, which goes to the container's log.
 			fmt.Fprintf(os.Stderr, "echo-runtime: failed to parse message: %v\n", err)
 			continue
 		}
@@ -275,7 +275,7 @@ When the pod starts, the adapter:
 3. Signals readiness to the gateway (pod enters the warm pool).
 4. Waits for session assignment.
 5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
-6. Accepts the connection your binary dials. The kubelet starts your binary through the runtime image's entrypoint when the pod starts, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process.
+6. Asks the runtime supervisor to launch your binary when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, after the manifest is written, and accepts the connection your binary dials. A session that starts while a process is live reaches that process.
 7. Writes the session's `session_start` frame on stdin, before the session's first message.
 8. Delivers the first `message` on stdin.
 9. Relays your `response` from stdout to the gateway.

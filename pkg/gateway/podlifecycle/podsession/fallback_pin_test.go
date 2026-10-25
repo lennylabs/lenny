@@ -184,7 +184,7 @@ func fallbackFixture(t *testing.T, idle []string, objs ...client.Object) (*podse
 
 func bindAcme(binder *podsession.Binder, keeps bool) (*podsession.BindResult, error) {
 	return binder.Bind(context.Background(), podsession.BindRequest{
-		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code", KeepsRuntime: keeps,
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code", ReusesPods: keeps, RequiresProcessAcknowledgment: keeps,
 	})
 }
 
@@ -331,7 +331,7 @@ func TestFallbackSkipsScanRefusals_spec_5_2(t *testing.T) {
 		idleSandbox("sr-pinned", "10.0.0.1"), unlabeledSandbox("sr-free", "10.0.0.2"),
 		agentPodFor("sr-pinned", "globex"), agentPodFor("sr-free", ""))
 	res, err := binder.Claim(context.Background(), podsession.BindRequest{
-		Pool: testPool, SessionID: "sess-1", TenantID: "acme", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -370,7 +370,7 @@ func TestFallbackPinReadIsBounded_spec_4_6_1(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	_, err := binder.Bind(ctx, podsession.BindRequest{
-		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code", KeepsRuntime: true,
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("Bind took %v, want the pin read bounded well under 5s", elapsed)
@@ -465,7 +465,7 @@ func TestOutsideRuleScanDrainsAndFallbackAddsNoStamp_spec_5_2(t *testing.T) {
 		claimed := false
 		_, _ = binder.Resume(context.Background(), podsession.ResumeRequest{
 			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
-			CheckpointID: "ckpt-1", KeepsRuntime: true,
+			CheckpointID: "ckpt-1", ReusesPods: true, RequiresProcessAcknowledgment: true,
 			OnClaimed: func(context.Context) error {
 				claimed = claimExists(t, base, "or-pod")
 				return nil

@@ -30,7 +30,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
 | **Advance deadline warning** | No advance notice of a session's expiry | No advance notice; same as Basic | `deadline_approaching`, addressed to the session by `sessionId`, before that session's expiry; the runtime keeps running |
 | **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | No drain coordination at pod exit |
-| **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no CH-RUNTIMEOPS exchange; reuse requires a runtime that serves sequential sessions | Yes | Yes |
+| **Pod recycling (`recycle.enabled`)** | Yes -- platform-executed, no CH-RUNTIMEOPS exchange; reuse requires a runtime that serves sequential sessions | Yes | Yes |
 
 ---
 

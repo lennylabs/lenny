@@ -18,7 +18,6 @@
 kind: exception-register
 version: 1
 entries:
-  # 0087
   # R23
   # R17
   - subject: lenny-adapter --runtime-ops-socket

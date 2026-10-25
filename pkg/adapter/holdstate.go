@@ -160,9 +160,10 @@ func (s *Server) exitHoldState() {
 // coordinatorHoldTimeoutSeconds. It lowers the gauge, ends the sidecar
 // runtime through the pod-scope teardown, and self-terminates every session
 // the adapter has started on this pod, so no agent process is left running
-// with live provider credentials and no coordinator. The runtime process
-// lives as long as the pod and a per-session close no longer ends it, so
-// the pod-scope teardown is what ends it here; the pod then serves no later
+// with live provider credentials and no coordinator. No per-session close
+// ends the runtime process, which on a keep pod lives as long as the pod
+// and on a restart pod lives until the next whole-pod scrub, so the
+// pod-scope teardown is what ends it here; the pod then serves no later
 // session and is retired.
 //
 // The teardown runs after the hold is cleared and before pass 1, with no
@@ -233,12 +234,23 @@ type podScopeRuntime interface {
 }
 
 // endRuntimeForHoldTimeout runs the runtime's pod-scope teardown at the
-// coordinator hold timeout. The sidecar runtime process lives as long as the
-// pod and no per-session close ends it, so without this teardown it would go
+// coordinator hold timeout. No per-session close ends the sidecar runtime
+// process, so without this teardown it would go
 // on holding the terminated sessions' credentials with no coordinator. A
 // teardown error is logged and does not stop the termination.
 // spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
+//
+// On a supervised pod the close sets the holdTimeout disposition and hands
+// the current generation's end to the Runtime exits handling before it
+// returns, so the end takes the holdTimeout row: no session fails with
+// runtime_crash, and the not-live state is set with the no-connection cause,
+// also when no generation is live, before pass 1 reads the registry.
+// spec: §4.7.10 (Runtime supervisor, Runtime exits).
 func (s *Server) endRuntimeForHoldTimeout() {
+	if sr := s.supervisedRuntime(); sr != nil {
+		sr.CloseForHoldTimeout()
+		return
+	}
 	rt, ok := s.Runtime.(podScopeRuntime)
 	if !ok {
 		return

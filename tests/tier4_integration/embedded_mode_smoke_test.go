@@ -576,6 +576,7 @@ func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
 		"  name: " + customRuntimeName + "\n" +
 		"spec:\n" +
 		"  image: " + embedded.SidecarRuntimeImage + "\n" +
+		"  command: [\"/usr/local/bin/lenny\"]\n" +
 		"  integrationLevel: basic\n" +
 		"  deploymentModel: sidecar\n"
 	if err := os.WriteFile(crdFile, []byte(body), 0o600); err != nil {

@@ -63,7 +63,7 @@ const TOOL = {
       lines: {
         type: "array",
         items: { type: "string" },
-        description: 'Line ranges to return verbatim, such as "spec/07_session-lifecycle.md:430-446". Use in place of sed.',
+        description: 'Line ranges to return verbatim, such as "spec/NN_file-name.md:430-446". Use in place of sed.',
       },
       related: {
         type: "array",
@@ -74,7 +74,7 @@ const TOOL = {
           properties: {
             text: { type: "string", description: "The passage being changed, verbatim, or the new text being written." },
             change: { type: "string", description: "What the edit does. Recall falls by about half without it." },
-            at: { type: "string", description: 'Location of the passage, such as "spec/07_session-lifecycle.md:430", so the whole passage is used and excluded from results.' },
+            at: { type: "string", description: 'Location of the passage, such as "spec/NN_file-name.md:430", so the whole passage is used and excluded from results.' },
             also: {
               anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
               description: "The new wording, or a list of short queries naming each fact the edit changes. Each is searched on its own.",

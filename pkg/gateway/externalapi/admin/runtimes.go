@@ -399,7 +399,7 @@ func (r *Router) derivedRuntimesInvalidatedBy(ctx context.Context, baseName stri
 }
 
 // validateSessionPolicy checks a §5.1 sessionPolicy: known scrub-profile,
-// scrub-failure, and pool-exhaustion enums and non-negative numeric fields.
+// scrub-failure, runtime-process, and pool-exhaustion enums and non-negative numeric fields.
 // The §5.2 cross-field rules — recycle.allowCrossTenantReuse requires
 // microvm isolation and in-place scrub requires the residual-state
 // acknowledgment — are enforced by the pool controller against the
@@ -427,6 +427,9 @@ func validateSessionPolicy(p *runtimestore.SessionPolicy) error {
 		}
 		if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
 			return errors.New("sessionPolicy.recycle.onScrubFailure must be warn or fail")
+		}
+		if r.RuntimeProcess != "" && !r.RuntimeProcess.IsValid() {
+			return errors.New("sessionPolicy.recycle.runtimeProcess must be keep or restart")
 		}
 		if r.MaxScrubFailures < 0 || r.MaxSessionsPerPod < 0 || r.MaxPodUptimeSeconds < 0 {
 			return errors.New("sessionPolicy.recycle numeric fields must not be negative")

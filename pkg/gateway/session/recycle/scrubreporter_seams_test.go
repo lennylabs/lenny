@@ -180,6 +180,7 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 		"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 			Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 50, MaxPodUptimeSeconds: 3600,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}}
 	runtimes := fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
@@ -247,7 +248,8 @@ func TestInspectForRecycleVMRestartProfileSetsSignal_spec_5_2(t *testing.T) {
 				"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
 					Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
 					MaxScrubFailures: 3, MaxSessionsPerPod: 50,
-					ScrubProfile: tc.profile,
+					ScrubProfile:   tc.profile,
+					RuntimeProcess: runtimestore.RuntimeProcessKeep,
 				}),
 			}}
 			runtimes := fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
@@ -286,6 +288,7 @@ func TestInspectForRecycleRuntimeDefaultProfile_spec_16_1(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pool := recyclingPool("agents", "rt", "", &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
+		RuntimeProcess: runtimestore.RuntimeProcessKeep,
 	})
 	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
@@ -320,6 +323,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pool := recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
+		RuntimeProcess: runtimestore.RuntimeProcessKeep,
 	})
 	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
@@ -357,6 +361,7 @@ func TestInspectForRecycleAbsentHostScheduleLabelFailsSafe_spec_6_39(t *testing.
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
 			Enabled: true, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
 	policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
@@ -402,6 +407,7 @@ func TestInspectForRecycleClaimGonePodPresentIsNoOp_spec_4_7(t *testing.T) {
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
 			Enabled: true, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
 	_, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
@@ -480,7 +486,7 @@ func concurrentPool(name string, maxConcurrent int) poolstore.Pool {
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
 			MaxConcurrentSessions: maxConcurrent,
-			Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+			Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	}
 }
@@ -642,7 +648,7 @@ func TestDrainLedgerUnsetMaxConcurrentDefaultsToOne_spec_5_2(t *testing.T) {
 		Name:          "agents",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	}
 	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": pool})

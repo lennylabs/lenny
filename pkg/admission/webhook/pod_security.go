@@ -51,14 +51,19 @@ import (
 // carrying the per-session credential files under /run/lenny/slots/. The §13.1 membership boundary
 // (POD_SPEC_CRED_GROUP_OVERBROAD) rejects a non-adapter, non-agent
 // container that mounts it; the binary passes podspec.CredVolumeName.
-func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
+//
+// supervisorVolumeName is the name of the runtime supervisor volume. The
+// §13.1 Runtime supervisor volume rule refuses a read-write mount of it on
+// every container except the non-restartable init container
+// lenny-supervisor-stage; the binary passes podspec.SupervisorVolumeName.
+func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName, supervisorVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		var pod corev1.Pod
 		if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return Deny(http.StatusBadRequest, "decode Pod object: "+err.Error())
 		}
 
-		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, adapterUID, agentUID, credVolumeName), credReadersGID, rcPolicy); err != nil {
+		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, adapterUID, agentUID, credVolumeName, supervisorVolumeName), credReadersGID, rcPolicy); err != nil {
 			return Deny(http.StatusForbidden, err.Error())
 		}
 		return Allow()
@@ -90,7 +95,7 @@ const (
 // containers are never treated as credential containers, so an ephemeral
 // container that mounts the credential volume trips the §13.1 membership
 // boundary here in addition to the cred-guard.
-func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeName string) podsecurity.PodSpec {
+func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeName, supervisorVolumeName string) podsecurity.PodSpec {
 	spec := podsecurity.PodSpec{
 		ShareProcessNamespace: derefBool(pod.Spec.ShareProcessNamespace),
 		HostPID:               pod.Spec.HostPID,
@@ -98,6 +103,7 @@ func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeNam
 		HostIPC:               pod.Spec.HostIPC,
 		RuntimeClassName:      derefString(pod.Spec.RuntimeClassName),
 		CredVolumeName:        credVolumeName,
+		SupervisorVolumeName:  supervisorVolumeName,
 		AdapterUID:            adapterUID,
 		AgentUID:              agentUID,
 	}
@@ -109,8 +115,15 @@ func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeNam
 		spec.SeccompProfileType = seccompType(sc.SeccompProfile)
 	}
 
+	// spec: §13.1 (Runtime supervisor volume) — an init container is
+	// marked as one, with whether it is restartable, because the read-write
+	// supervisor volume mount is admitted only on a non-restartable init
+	// container named lenny-supervisor-stage.
 	for _, c := range pod.Spec.InitContainers {
-		spec.Containers = append(spec.Containers, translateContainer(c))
+		ic := translateContainer(c)
+		ic.Init = true
+		ic.RestartPolicyAlways = c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
+		spec.Containers = append(spec.Containers, ic)
 	}
 	for _, c := range pod.Spec.Containers {
 		spec.Containers = append(spec.Containers, translateContainer(c))
@@ -152,7 +165,7 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 	// non-adapter, non-agent container that mounts the credential volume
 	// or the /run/lenny path prefix.
 	for _, m := range c.VolumeMounts {
-		out.VolumeMounts = append(out.VolumeMounts, podsecurity.VolumeMount{Name: m.Name, MountPath: m.MountPath})
+		out.VolumeMounts = append(out.VolumeMounts, podsecurity.VolumeMount{Name: m.Name, MountPath: m.MountPath, ReadOnly: m.ReadOnly})
 	}
 	return out
 }

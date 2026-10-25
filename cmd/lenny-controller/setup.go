@@ -32,6 +32,12 @@ import (
 func (w *controllerWiring) buildManagerSetup() {
 	f := w.f
 
+	// spec: §28.5.3 (CH-SUPERVISE, Timing) — refuse a non-positive
+	// supervise timing bound before any pod renders it.
+	if err := validateFlags(f); err != nil {
+		log.Fatalf("lenny-controller: %v", err)
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&f.zapOpts)))
 
 	// spec: §5.3 — log the dev-mode isolation warning once at

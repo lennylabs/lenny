@@ -43,7 +43,7 @@ This approach preserves the same security properties (non-root UID, all capabili
 2. **RuntimeClass-specific relaxed enforcement for gVisor and Kata pods** (see the split-enforcement rationale above).
 3. **Host-sharing validation policy** that rejects pods in agent namespaces with any of `shareProcessNamespace: true`, `hostPID: true`, `hostNetwork: true`, or `hostIPC: true` (see [Section 13.1](13_security-model.md#131-pod-security)). Rejections carry the rejection label `POD_SPEC_HOST_SHARING_FORBIDDEN` (see **Rejection labels.** below).
 4. **Label-based namespace targeting** via `.Values.agentNamespaces` (ensures the above policies scope to Lenny-managed agent namespaces only).
-5. **`lenny-label-immutability`** `ValidatingAdmissionWebhook` — enforces immutability of the `lenny.dev/managed: "true"`, `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods, plus the `lenny.dev/tenant-id` transition rules (see NET-003 in [Section 13.2](13_security-model.md#132-network-isolation) and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+5. **`lenny-label-immutability`** `ValidatingAdmissionWebhook` — enforces immutability of the `lenny.dev/managed: "true"`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process` labels on agent pods, plus the `lenny.dev/tenant-id` transition rules (see NET-003 in [Section 13.2](13_security-model.md#132-network-isolation) and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 6. **`lenny-direct-mode-isolation`** `ValidatingAdmissionWebhook` — rejects pools/pods whose configuration combines either (a) `deliveryMode: direct` with `isolationProfile: standard`, or (b) `deliveryMode: proxy` with `spiffeBinding: disabled`, when `tenancy.mode: multi` is set (see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine), [Section 13.2](13_security-model.md#132-network-isolation), and [Section 4.9](04_system-components.md#49-credential-leasing-service) SPIFFE-binding deployment note).
 7. **`lenny-sandboxclaim-guard`** `ValidatingAdmissionWebhook` — per-pod claim uniqueness at `SandboxClaim` `CREATE` (double-claim prevention); it admits `PATCH` and `PUT` without inspection (see [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
 8. **`lenny-data-residency-validator`** `ValidatingAdmissionWebhook` — enforces `dataResidencyRegion` constraints on tenant-scoped CRDs (see [Section 12.8](12_storage-architecture.md#128-compliance-interfaces)).
@@ -338,6 +338,7 @@ spec:
   image: my-agent:dev
   integrationLevel: basic
   deploymentModel: sidecar
+  command: ["/usr/local/bin/my-agent"]
 EOF
 lenny runtime apply --file runtime-crds.yaml   # Applies the Runtime/SandboxTemplate/SandboxWarmPool
                                                # CRD set against the embedded kubeconfig
@@ -951,6 +952,7 @@ All tunable defaults collected in one place for operator convenience.
 | EventBus retranscribe max attempts before terminal failure (`eventBus.maxRetryAttempts`) | 20                                                  | [§12.6](12_storage-architecture.md#126-interface-design), [§16.5](16_observability.md#165-alerting-rules-and-slos) |
 | T4 KMS continuous probe interval (`storage.t4KmsProbeInterval`; min floor 60 s enforced at Helm-validate) | 300 s (5 min) | [§12.5](12_storage-architecture.md#125-artifact-store), [§16.5](16_observability.md#165-alerting-rules-and-slos) |
 | T4 KMS continuous probe rate limit (`storage.t4KmsProbeRateLimit`) | 10 probes/s | [§12.5](12_storage-architecture.md#125-artifact-store) |
+| Runtime supervisor timing: ping interval (`controller.tuning.supervisePingInterval`), ping timeout (`controller.tuning.supervisePingTimeout`), supervisor wait timeout (`controller.tuning.superviseWaitTimeout`), and warm-up timeout (`controller.tuning.warmUpTimeout`) | The controller's default; the specification states no value | [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE` **Timing.**, [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** |
 
 All values are overridable via Helm values or the corresponding CRD field. See each referenced section for detailed semantics. For per-tier recommended values, see [Section 17.8.2](#1782-capacity-tier-reference).
 
@@ -1165,6 +1167,8 @@ After 48–72 hours of production traffic, the PoolScalingController will have s
 | etcd defrag schedule                                      | Daily off-peak | Daily off-peak                          | Every 12h off-peak                       |
 | etcd quota-backend-bytes                                  | 4 GB           | 8 GB                                    | 8 GB (dedicated cluster recommended)     |
 | etcd monitoring                                           | Standard       | Enhanced (write latency + quota alerts) | Dedicated etcd cluster with full metrics |
+
+The runtime supervisor timing settings in [Section 17.8.1](#1781-operational-defaults--quick-reference) are controller settings with no per-tier value. The WarmPoolController renders each, as an adapter flag, on every pod it creates that runs the runtime supervisor.
 
 **Postgres and connection pooling** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-answer-files)):
 

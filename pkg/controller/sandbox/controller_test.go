@@ -180,6 +180,7 @@ func runtimeCR() *lennyv1.Runtime {
 			// envtest enforces the @sha256:<64-hex> Pattern, so the test
 			// helper uses a digest reference rather than a tag.
 			Image:            "ghcr.io/acme/claude-code@sha256:" + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "full",
 		},
 	}
@@ -206,7 +207,7 @@ func podCR(phase corev1.PodPhase, ready bool) *corev1.Pod {
 
 func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) error {
 	t.Helper()
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
 	})
@@ -233,7 +234,7 @@ func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 	sb.Spec.IsolationProfile = "" // exercise the controller default fallback
 	c := newClient(t, s, sb, runtimeCR())
 
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", DevMode: true}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1", DevMode: true}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
 	}); err != nil {
@@ -364,6 +365,8 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 	s := newScheme(t)
 	rt := runtimeCR()
 	rt.Spec.DeploymentModel = "embedded"
+	// spec: §5.1 (command) — command is forbidden on an embedded runtime.
+	rt.Spec.Command = nil
 	c := newClient(t, s, sandboxCR(""), rt)
 
 	if err := reconcile(t, c, s); err != nil {

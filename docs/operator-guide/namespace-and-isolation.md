@@ -93,7 +93,7 @@ The chart deploys the following admission policies:
 
 4. **Label-based namespace targeting** -- Policies target namespaces listed in `.Values.agentNamespaces`.
 
-5. **`lenny-label-immutability` webhook** -- Enforces immutability of security-critical labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`). Only the warm pool controller ServiceAccount can set these at pod creation.
+5. **`lenny-label-immutability` webhook** -- Enforces immutability of security-critical labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process`). Only the warm pool controller ServiceAccount can set these at pod creation.
 
 6. **`lenny-tenant-label-immutability` webhook** -- Prevents mutation of the `lenny.dev/tenant-id` label to a different non-empty value on existing pods.
 
@@ -258,7 +258,7 @@ A pod that can serve more than one session is pinned to a single tenant. Pinning
 - **Concurrent sessions** (`maxConcurrentSessions > 1`): the tenant is pinned on first slot assignment.
 - **Service mode:** the tenant-affinity routing layer pins each pod on first request and rejects a mismatched `tenantId`.
 
-A pod is never reused across tenants, because a recycled pod keeps the runtime process that served its pinned tenant. `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation, and a pod on such a pool also stays pinned to its tenant.
+A pod is never reused across tenants, because a recycled pod keeps state the scrub does not reach and the tenant pin applies on every pool. `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation, and a pod on such a pool also stays pinned to its tenant.
 
 ### Tenant Label Immutability
 

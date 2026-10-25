@@ -44,6 +44,16 @@ func pinnedPod(pool, name, tenant string) *corev1.Pod {
 	return p
 }
 
+// lifetimePod builds a pinnedPod that carries the runtime-process lifetime
+// label lifetime; an empty lifetime leaves the label absent.
+func lifetimePod(pool, name, tenant, lifetime string) *corev1.Pod {
+	p := pinnedPod(pool, name, tenant)
+	if lifetime != "" {
+		p.Labels[podclaim.LabelRuntimeProcess] = lifetime
+	}
+	return p
+}
+
 // reservedIn builds a Sandbox in pool projecting the §6.2 `reserved` phase
 // for tenant.
 func reservedIn(pool, name, tenant string) *lennyv1.Sandbox {

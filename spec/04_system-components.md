@@ -236,7 +236,7 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 **Stores:**
 
 - Event cursors / stream offsets
-- Session logs and runtime stderr
+- Session logs
 - Workspace checkpoint references
 - Agent session file snapshots
 - Resume metadata
@@ -392,7 +392,7 @@ This indirection means a breaking upstream change or a decision to replace agent
 | `SandboxTemplate` | `AgentPool`                  | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy, `executionMode`                                                                                                                                                 |
 | `SandboxWarmPool` | (part of WarmPoolController) | Upstream warm pool management with configurable `minWarm`/`maxWarm`                                                                                                                                                                                            |
 | `Sandbox`         | `AgentPod`                   | Represents a managed agent pod. Status subresource carries the authoritative state machine. Enables GC, structured claim semantics, and warm-pool PDB targeting.                                                                                               |
-| `SandboxClaim`    | `AgentSession`               | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod and deleted when the reserved hold expires, when the acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), when a gateway release ends the occupancy without reuse ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)), or when the pod terminates; its spec carries `sandboxRef` and `tenantId`, and its status carries the binding state ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). The session-to-pod binding lives on the Postgres session row's `pod_assignment` column. The claim deliberately omits an `ownerReference`: deletion is an explicit step of the claim lifecycle (hold expiry, a hold the acquisition path ends, a release that ends the occupancy without reuse, orphan GC, or pod termination) rather than a cascade from pod deletion. |
+| `SandboxClaim`    | `AgentSession`               | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod and deleted when the reserved hold expires, when an acquisition refuses the reserved pod under the runtime-process acknowledgment ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), when a gateway release ends the occupancy without reuse ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)), or when the pod terminates; its spec carries `sandboxRef` and `tenantId`, and its status carries the binding state ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). The session-to-pod binding lives on the Postgres session row's `pod_assignment` column. The claim deliberately omits an `ownerReference`: deletion is an explicit step of the claim lifecycle (hold expiry, a hold the acquisition path ends, a release that ends the occupancy without reuse, orphan GC, or pod termination) rather than a cascade from pod deletion. |
 
 **ADR-007: `SandboxClaim` optimistic-locking and failover fencing verification — Phase 1 blocking prerequisite.** Before Phase 1 implementation begins, verify that `SandboxClaim`'s optimistic-locking semantics match Lenny's claim approach and that the Kubernetes API server's `resourceVersion`-guarded update provides sufficient fencing during the 25s crash-case failover window. Document the result as ADR-007. If the semantics diverge or fencing proves insufficient, the `PodLifecycleManager.ClaimPod` implementation must compensate (e.g., by wrapping claims in a compare-and-swap loop at the gateway level). **Verification approach — two required tests:**
 
@@ -417,7 +417,7 @@ This indirection means a breaking upstream change or a decision to replace agent
 
 Uptime drains derive from the pod `CreationTimestamp` against `recycle.maxPodUptimeSeconds`, and the unhealthy-threshold drain derives from the gateway-stamped `lenny.dev/drain-request` Pod annotation; both transitions are WarmPoolController-written.
 
-**Reserved hold (claim retention across same-tenant sessions):** When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)), the gateway patches the claim's binding state to `recycling`, coordinates the whole-pod scrub and, on preConnect pools, the SDK re-warm, and then patches the binding state to `reserved` rather than deleting the claim; a pod that reaches `reserved` is always scrubbed and SDK-warm. This reserved hold applies to `standard` and `in-place` pools; a `vm-restart` pool retires at the occupancy-zero boundary rather than entering `reserved` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). At the `reserved` patch the gateway stamps `holdExpiresAt` (the reservation time plus the hold TTL) on the claim status. The hold TTL is a deployment-level gateway configuration value (`gateway.claimHoldTTLSeconds`, default: 10 seconds); configuration validation warns when it is set high, because a long hold delays the pod's return to the pinned tenant's claimable idle inventory and delays retirement-limit evaluation at the next disposition. A new session of the same tenant arriving within the hold window is dispatched onto the pod with a `reserved → bound` status patch and no acquisition round trip; any gateway replica may rebind. If the TTL expires first, the holder deletes the claim and the pod returns to `idle` with no second re-warm. On a pool whose configuration keeps no runtime process across sessions, the acquisition path ends the hold with the same precondition-guarded `DELETE` instead of rebinding it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer acknowledgment (runtime process kept across sessions)"). Every hold-expiry `DELETE` (the gateway TTL holder and the WarmPoolController orphan GC alike) carries Kubernetes preconditions: the claim UID and the `resourceVersion` observed when the claim entered `reserved`. A rebind patch that lands first changes the `resourceVersion`, so the `DELETE` fails its precondition and the expiry aborts; the rebinding replica re-reads the claim after its patch before dispatching. A reserved pod is excluded from idle inventory entirely: the candidate scan skips it and the per-pod `CREATE` guard blocks acquisition by another replica. [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the `lenny.dev/tenant-id` pin rule for a recycled idle pod, including its claim and inventory accounting.
+**Reserved hold (claim retention across same-tenant sessions):** When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)), the gateway patches the claim's binding state to `recycling`, coordinates the whole-pod scrub and, on preConnect pools, the SDK re-warm, and then patches the binding state to `reserved` rather than deleting the claim; a pod that reaches `reserved` is always scrubbed and SDK-warm. This reserved hold applies to `standard` and `in-place` pools; a `vm-restart` pool retires at the occupancy-zero boundary rather than entering `reserved` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). At the `reserved` patch the gateway stamps `holdExpiresAt` (the reservation time plus the hold TTL) on the claim status. The hold TTL is a deployment-level gateway configuration value (`gateway.claimHoldTTLSeconds`, default: 10 seconds); configuration validation warns when it is set high, because a long hold delays the pod's return to the pinned tenant's claimable idle inventory and delays retirement-limit evaluation at the next disposition. A new session of the same tenant arriving within the hold window is dispatched onto the pod with a `reserved → bound` status patch and no acquisition round trip; any gateway replica may rebind. If the TTL expires first, the holder deletes the claim and the pod returns to `idle` with no second re-warm. When an acquisition refuses the pod under the runtime-process acknowledgment, it ends the hold with the same precondition-guarded `DELETE` instead of rebinding it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer acknowledgment (runtime process kept across sessions)"). Every hold-expiry `DELETE` (the gateway TTL holder and the WarmPoolController orphan GC alike) carries Kubernetes preconditions: the claim UID and the `resourceVersion` observed when the claim entered `reserved`. A rebind patch that lands first changes the `resourceVersion`, so the `DELETE` fails its precondition and the expiry aborts; the rebinding replica re-reads the claim after its patch before dispatching. A reserved pod is excluded from idle inventory entirely: the candidate scan skips it and the per-pod `CREATE` guard blocks acquisition by another replica. [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the `lenny.dev/tenant-id` pin rule for a recycled idle pod, including its claim and inventory accounting.
 
 **Leader election:** The WarmPoolController runs as a Deployment with 2+ replicas using Kubernetes Lease-based leader election with lease name `lenny-warm-pool-controller` (lease duration: 15s, renew deadline: 10s, retry period: 2s). The PoolScalingController uses a separate lease (`lenny-pool-scaling-controller`); see [Section 4.6.2](#462-poolscalingcontroller-pool-configuration). During failover, existing sessions continue unaffected; only new pod creation and pool scaling pause. **Failover duration depends on the trigger:** on clean shutdown (rolling update, voluntary termination), the outgoing leader releases its lease via `LeaderCallbacks.OnStoppedLeading`, reducing the gap to near-zero. On crash (process kill, node failure), the worst-case failover window is `leaseDuration + renewDeadline = 25s` — the new leader cannot acquire the lease until the old lease expires after its full duration plus the renew deadline elapses without renewal. All `minWarm` formulas and capacity planning use the 25s crash-case as the sizing basis (see below and [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)).
 
@@ -520,7 +520,7 @@ The warm pool controller can optionally create a PDB **per `SandboxTemplate`** f
 
 The metric `lenny_orphaned_claims_total` (counter, labeled by pool) is incremented for each orphaned claim reclaimed. A `SandboxClaimOrphanRateHigh` warning alert fires when `lenny_orphaned_claims_total` exceeds 10 in a 15-minute window, indicating potential gateway instability (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)).
 
-**Host-node schedulability labeling (`lenny.dev/host-schedulable`):** The WarmPoolController is the sole evaluator of per-pod host-node schedulability and surfaces the result as a pod label the gateway can read without any direct Node API access. On every pod reconciliation, the leader reads the target Node (addressed by the pod's `spec.nodeName`) from its Node informer cache and sets the pod label `lenny.dev/host-schedulable` to `"true"` when the Node's `.spec.unschedulable` is `false` and no `node.kubernetes.io/unschedulable` taint is present, or `"false"` otherwise. This label is WPC-owned (field manager `lenny-warm-pool-controller`) and is **not** in the immutable set enforced by the `lenny-label-immutability` webhook ([Section 17.2](17_deployment-topology.md#172-namespace-layout) item 5) — the webhook's immutability list covers `lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/tenant-id` only; `lenny.dev/host-schedulable` is explicitly omitted so that WPC can flip the value on every cordon/uncordon event. Node state changes (cordon, uncordon, autoscaler drain) surface on the Node informer and trigger re-reconciliation of every pod whose `spec.nodeName` matches the Node; the controller re-labels each affected pod within a single reconcile cycle (typically < 1 s per batch at Tier 3 concurrency). The gateway consumes this label via its existing `get` access on the `Pods` resource in agent namespaces (the same access it uses to read pod metadata during claim and release) — no additional Pod verbs, no Node verbs on the Gateway ServiceAccount, and no Node informer in the gateway process are required. The normative consumer is [§6.2](06_warm-pod-model.md#62-pod-state-machine) "Host-node schedulability precondition". The Node verbs required for the evaluation itself — `get`/`list`/`watch` on `Nodes` — are granted to the WarmPoolController ServiceAccount (see RBAC enforcement paragraph in [§4.6.3](#463-crd-field-ownership-and-write-boundaries), which extends the existing CIDR-drift-detection grants with `watch` for informer support); no cluster-scoped Node grants are added to the Gateway ServiceAccount. Pods newly created by WPC carry `lenny.dev/host-schedulable: "true"` by default (WPC applies the label at creation time after the scheduler binds the pod to a node); pods whose `spec.nodeName` is not yet set — i.e., still `Pending` at the scheduler — are not eligible for the `claimed → sdk_connecting` recycle re-warm edge (the preConnect occupancy-zero whole-pod scrub and SDK re-warm under a `recycling` claim, [Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), so the absence of the label on an unscheduled pod is never encountered by the gateway's precondition check.
+**Host-node schedulability labeling (`lenny.dev/host-schedulable`):** The WarmPoolController is the sole evaluator of per-pod host-node schedulability and surfaces the result as a pod label the gateway can read without any direct Node API access. On every pod reconciliation, the leader reads the target Node (addressed by the pod's `spec.nodeName`) from its Node informer cache and sets the pod label `lenny.dev/host-schedulable` to `"true"` when the Node's `.spec.unschedulable` is `false` and no `node.kubernetes.io/unschedulable` taint is present, or `"false"` otherwise. This label is WPC-owned (field manager `lenny-warm-pool-controller`) and is **not** in the immutable set enforced by the `lenny-label-immutability` webhook ([Section 17.2](17_deployment-topology.md#172-namespace-layout) item 5) — it is omitted so that WPC can flip the value on every cordon/uncordon event. Node state changes (cordon, uncordon, autoscaler drain) surface on the Node informer and trigger re-reconciliation of every pod whose `spec.nodeName` matches the Node; the controller re-labels each affected pod within a single reconcile cycle (typically < 1 s per batch at Tier 3 concurrency). The gateway consumes this label via its existing `get` access on the `Pods` resource in agent namespaces (the same access it uses to read pod metadata during claim and release) — no additional Pod verbs, no Node verbs on the Gateway ServiceAccount, and no Node informer in the gateway process are required. The normative consumer is [§6.2](06_warm-pod-model.md#62-pod-state-machine) "Host-node schedulability precondition". The Node verbs required for the evaluation itself — `get`/`list`/`watch` on `Nodes` — are granted to the WarmPoolController ServiceAccount (see RBAC enforcement paragraph in [§4.6.3](#463-crd-field-ownership-and-write-boundaries), which extends the existing CIDR-drift-detection grants with `watch` for informer support); no cluster-scoped Node grants are added to the Gateway ServiceAccount. Pods newly created by WPC carry `lenny.dev/host-schedulable: "true"` by default (WPC applies the label at creation time after the scheduler binds the pod to a node); pods whose `spec.nodeName` is not yet set — i.e., still `Pending` at the scheduler — are not eligible for the `claimed → sdk_connecting` recycle re-warm edge (the preConnect occupancy-zero whole-pod scrub and SDK re-warm under a `recycling` claim, [Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), so the absence of the label on an unscheduled pod is never encountered by the gateway's precondition check.
 
 **Dependency pinning and upgrade policy:** Lenny pins `kubernetes-sigs/agent-sandbox` to a specific tagged release (initially the latest stable tag at implementation start). Because agent-sandbox is a v0.x project, minor-version releases may contain breaking API changes. The one-release-delay cadence (upgrade to release N only after release N+1 is published) is insufficient on its own for a v0.x dependency: it confirms API surface stability across two releases but does not gate against rapid successive breaking changes. Therefore the upgrade policy is augmented as follows: (1) **CI gate** — all CRD schema changes require the integration test suite to pass before merge; (2) **breaking-change hold** — if upstream introduces a breaking CRD API change in release N, Lenny does not upgrade until the next release (N+1) demonstrates that the N API surface has stabilized (i.e., no further structural changes to the same fields); (3) **API stability monitoring** — the engineering team subscribes to upstream release notes and the `kubernetes-sigs/agent-sandbox` issue tracker; any field removal, rename, or semantic change to `SandboxClaim`, `Sandbox`, `SandboxTemplate`, or `SandboxWarmPool` triggers an immediate impact assessment before the next Lenny release cycle.
 
@@ -616,7 +616,7 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 | `SandboxWarmPool` | `status.*` (excluding `status.sdkWarmCircuitBreaker.*`) | WarmPoolController         | Current warm count, ready count, conditions     |
 | `Sandbox`         | `spec.*`                                           | WarmPoolController         | Pod creation and configuration                  |
 | `Sandbox`         | `status.*`                                         | WarmPoolController         | Sole writer of phase and conditions; the occupancy phase is a level-triggered projection of `SandboxClaim` state ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) |
-| `SandboxClaim`    | `spec.*`, `status.*`                               | Gateway (not a controller) | Created by the gateway at pod acquisition; binding state written via the status subresource; deleted by the gateway at hold expiry, when its acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A release ends the occupancy without reuse when the pool does not recycle, when no gateway replica published the session's binding to the pod, the gateway step that follows the pod's acceptance of the session's start or resume and from which the session's message delivery and its release reach the pod ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), or, on a pool with `maxConcurrentSessions: 1`, when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the WarmPoolController at pod termination and orphan GC |
+| `SandboxClaim`    | `spec.*`, `status.*`                               | Gateway (not a controller) | Created by the gateway at pod acquisition; binding state written via the status subresource; deleted by the gateway at hold expiry, when an acquisition refuses the reserved pod under the runtime-process acknowledgment ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when a release ends the occupancy without reuse. Every release on a pool with `maxConcurrentSessions: 1` ends the occupancy, and on a pool with `maxConcurrentSessions` above 1 the release that brings the slot occupancy to zero ends it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A release ends the occupancy without reuse when the pool does not recycle, when no gateway replica published the session's binding to the pod, the gateway step that follows the pod's acceptance of the session's start or resume and from which the session's message delivery and its release reach the pod ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), or, on a pool with `maxConcurrentSessions: 1`, when the session failed or crashed. A slot reservation withdrawn after its claim `CREATE` fails ([Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)) ends no occupancy; deleted by the WarmPoolController at pod termination and orphan GC |
 
 **Server-Side Apply (SSA) enforcement:** Field ownership is enforced via Kubernetes Server-Side Apply with named field managers. Each controller applies only its owned fields using a distinct field manager name (`lenny-warm-pool-controller` and `lenny-pool-scaling-controller`). If a controller attempts to update a field owned by another manager, the API server returns a conflict error (HTTP 409) without applying the update. This is the primary enforcement mechanism — it is enforced by the API server itself, without any additional controller logic.
 
@@ -685,14 +685,14 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `ExtendCredentialLease`        | Re-arm a still-valid direct-mode credential lease's expiry timer to a later deadline without delivering credential material (§4.9 Token Service unavailability guard) |
 | `Resume`             | Restore from checkpoint on a replacement pod                                                                                                           |
 | `ReportUsage`        | Report LLM token counts extracted from provider responses; gateway increments quota counters and persists to Postgres on the next sync interval (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)) |
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the request removes an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than when the slot reaches `running` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)), so a start still in flight is torn down rather than skipped. It flushes the session's final usage report, writes the session's `session_end` on `CH-MSGSOCK` when the session reached `running` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame writes.**), and then ends the session's use of the pod's runtime process, which stays alive for the pod's life ([Section 4.7.10](#4710-deployment-model)). The teardown writes no `CH-RUNTIMEOPS` frame ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). Every request states which teardown it asks for, by carrying either a non-empty `bind_attempt` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)) or `unconditional_teardown`, and the response reports which entry the request was addressed to and what became of it. [Section 4.7.1](#471-role-and-gateway-rpc-contract) states the named rules that decide both, and states what each of `reclaimed`, `superseded`, and `absent` means; this row restates neither. The request carries the recycle disposition beside that teardown rather than selecting a scope. On the **recycle disposition** (occupancy zero on a recycling pod unless the release ends the occupancy without reuse, [Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the request removes an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than when the slot reaches `running` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)), so a start still in flight is torn down rather than skipped. It flushes the session's final usage report, writes the session's `session_end` on `CH-MSGSOCK` when the session reached `running` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame writes.**), and then ends the session's use of the pod's runtime process ([Section 4.7.10](#4710-deployment-model)). The teardown writes no `CH-RUNTIMEOPS` frame ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). Every request states which teardown it asks for, by carrying either a non-empty `bind_attempt` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)) or `unconditional_teardown`, and the response reports which entry the request was addressed to and what became of it. [Section 4.7.1](#471-role-and-gateway-rpc-contract) states the named rules that decide both, and states what each of `reclaimed`, `superseded`, and `absent` means; this row restates neither. The request carries the recycle disposition beside that teardown rather than selecting a scope. On the **recycle disposition** (occupancy zero on a recycling pod unless the release ends the occupancy without reuse, [Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter keeps its own process alive across the recycle boundary, keeps the runtime process alive on a `keep` pod, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
 
 *Adapter → Gateway RPCs:*
 
 | RPC              | Description                                                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ReportSessionScrub` | Report a per-slot cleanup's outcome (`released` or `leaked`) on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states. The gateway increments `sessionsServed` on the pod's `agent_pod_state` row on each such report, and `leaked` outcomes feed the unhealthy-threshold ledger behind the `lenny.dev/drain-request` annotation ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). The request is session-scoped: it is addressed by the identifier of the released session and names no slot. |
-| `ReportPodScrub` | Report the binary outcome of the whole-pod scrub that runs when occupancy reaches zero on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The request also states whether the adapter's runtime process can serve the next session, sampled after the scrub finishes; a sidecar runtime process whose connection is open is reported as able to, whether or not it answers heartbeats. On failure the gateway increments `scrubFailureCount` on the pod's `agent_pod_state` row and computes the disposition against `sessionPolicy` ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). On success on a `standard` or `in-place` pool: on a preConnect pool the gateway records the `rewarmStartedAt` stamp on `SandboxClaim.status` and coordinates the SDK re-warm; on a non-preConnect pool it patches the claim directly to `reserved`. A `vm-restart` pool instead takes the terminal retire (draining → released) after a successful scrub report rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A pod retired under the Pod retirement policy's "Runtime not live" condition takes the same terminal retire ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A missing report is bounded by a gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period), after which the pod is retired. The request is pod-scoped. |
+| `ReportPodScrub` | Report the binary outcome of the whole-pod scrub that runs when occupancy reaches zero on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The request also states whether the adapter's runtime can serve the next session, sampled after the scrub finishes, as [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.** states in the sidecar model. On failure the gateway increments `scrubFailureCount` on the pod's `agent_pod_state` row and computes the disposition against `sessionPolicy` ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). On success on a `standard` or `in-place` pool: on a preConnect pool the gateway records the `rewarmStartedAt` stamp on `SandboxClaim.status` and coordinates the SDK re-warm; on a non-preConnect pool it patches the claim directly to `reserved`. A `vm-restart` pool instead takes the terminal retire (draining → released) after a successful scrub report rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A pod retired under the Pod retirement policy's "Runtime not live" condition takes the same terminal retire ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A missing report is bounded by a gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period), after which the pod is retired. The request is pod-scoped. |
 
 **Registry entries.** The adapter's slot registry holds at most one **registry entry** per slot identifier, and a registry entry is the adapter's per-slot record of a session on the pod. An entry is created only as rule 4 below states, and a deregistration removes it. An entry is **bound** once a session is bound to it: `AssignCredentials` binds the entry it resolves, and a request that starts a session binds the entry when `AssignCredentials` has not, so an entry that `PrepareWorkspace`, `FinalizeWorkspace`, or `RunSetup` created is unbound until one of those two binds it. A bound entry has not thereby started, and whether an entry's session has started is the separate condition rule 6 reads.
 
@@ -736,7 +736,7 @@ A [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload is 
 
 **The stamp-once rule.** The adapter stamps once, and rule 4 below is the only rule that writes an entry's `bind_attempt`. The adapter never writes that field again, in either direction: an entry's token does not change while the entry lives, and a request that resolves an entry the adapter already holds writes nothing. The first attempt to create an entry therefore owns it until the entry is removed, and no later request takes that ownership away.
 
-**The registry critical section.** One lock guards the adapter's slot registry, and the adapter performs each of the following as one indivisible step under it. On a request rules 1 through 9 govern, the step is the resolve or the creation of the entry, the stamp on an entry it creates, and the application of rules 2 through 7, the token comparison included. On a request that starts a session, the step is the resolve, the confirmation and the record that rule 8 states; the record is the adapter's recording of the pod's shared runtime process as holding the session, and the slot reaches [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `running` at that record. On a `Shutdown`, the step is the decision of rules 11 through 14 and the deregistration that decision selects. On every release, a `Shutdown` or otherwise, the step is the deregistration of the entry and the opening of the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold. Performing the members of one step as separable steps does not conform even when each is correct on its own: an adapter that resolved an entry, released the lock, and then stamped admits a second attempt onto that entry, one that confirmed a start, released the lock, and then recorded it records a session a reclaim has already released, one that deregistered before it opened the hold admits a successor onto an identifier its cleanup is about to destroy, and one that decided a `Shutdown` outside the lock removes and restores an entry it refuses to release. This paragraph is the only statement of that atomicity.
+**The registry critical section.** One lock guards the adapter's slot registry, and the adapter performs each of the following as one indivisible step under it. On a request rules 1 through 9 govern, the step is the resolve or the creation of the entry, the stamp on an entry it creates, and the application of rules 2 through 7, the token comparison included. On a request that starts a session, the step is the resolve, the confirmation and the record that rule 8 states; the record is the adapter's recording of the pod's shared runtime process as holding the session, and the slot reaches [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) `running` at that record. On a `Shutdown`, the step is the decision of rules 11 through 14 and the deregistration that decision selects. On every release, a `Shutdown` or otherwise, the step is the deregistration of the entry and the opening of the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold. In the sidecar model, on an `exited` report or an `ended` reply from the runtime supervisor and on the end of a runtime process's `CH-MSGSOCK` connection, the step is the choice of the row of the [Section 4.7.10](#4710-deployment-model) **Runtime supervisor.** **Runtime exits.** table that the adapter's end disposition selects and the application of that row's outcome, which can set the not-live state and fail the sessions the process holds. Performing the members of one step as separable steps does not conform even when each is correct on its own: an adapter that resolved an entry, released the lock, and then stamped admits a second attempt onto that entry, one that confirmed a start, released the lock, and then recorded it records a session a reclaim has already released, one that deregistered before it opened the hold admits a successor onto an identifier its cleanup is about to destroy, and one that decided a `Shutdown` outside the lock removes and restores an entry it refuses to release. This paragraph is the only statement of that atomicity.
 
 **Admission.** The rules below are numbered and named, and every other statement of this contract refers to a rule by its number and name rather than restating it. Each rule states, or cites, its own condition, on the request's fields, on the registry entry it resolves, and, where the rule names an RPC, on that RPC, and it reaches every request meeting that condition. Rules 1 through 9 govern every request on this contract that can create a slot registry entry: `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `StartSession`, `Resume`, and `ConfigureWorkspace`. A `Shutdown` is governed by rules 10 through 15 in place of them. Every other RPC on this contract resolves an entry the session already holds, creates none, and is outside these rules.
 
@@ -793,7 +793,7 @@ The intra-pod channel contracts this section previously stated are owned by [Sec
 
 #### 4.7.5 Adapter Manifest
 
-**Adapter manifest:** One pod-global file written to `/run/lenny/adapter-manifest.json` on the manifest volume (read-only to the agent container) **before the runtime binary is spawned** — complete and authoritative when the binary starts. The adapter rewrites it before each session's runtime start, including each session on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The manifest carries only pod-scoped fields. A session's own identifier, credential path, experiment and tracing context, and LLM configuration reach the runtime in that session's `session_start` frame on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), so a later start's rewrite changes none of them for an earlier session. On a pod holding more than one bound session, a later start replaces the manifest's `mcpNonce` while an earlier session's runtime is still processing ([Section 4.7.6](#476-adapter-manifest-field-reference), `mcpNonce` row).
+**Adapter manifest:** One pod-global file written to `/run/lenny/adapter-manifest.json` on the manifest volume (read-only to the agent container) **before the runtime process is launched** — complete and authoritative when the binary starts. The adapter rewrites it before each session's runtime start, including each session on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The manifest carries only pod-scoped fields. A session's own identifier, credential path, experiment and tracing context, and LLM configuration reach the runtime in that session's `session_start` frame on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), so a later start's rewrite changes none of them for an earlier session. On a pod holding more than one bound session, a later start replaces the manifest's `mcpNonce` while an earlier session's runtime is still processing ([Section 4.7.6](#476-adapter-manifest-field-reference), `mcpNonce` row).
 
 ```json
 {
@@ -850,7 +850,7 @@ The intra-pod channel contracts this section previously stated are owned by [Sec
 | `connectorServers[].id`     | `string`           | Yes      | Connector identifier.                                                                                                                                                                                                                                                                       | Standard, Full            |
 | `connectorServers[].socket` | `string`           | Yes      | Abstract Unix socket name for this connector.                                                                                                                                                                                                                                               | Standard, Full            |
 | `runtimeMcpServers`         | `array`            | Yes      | Reserved for `type:mcp` runtimes. Empty array `[]` in v1.                                                                                                                                                                                                                                   | — (future)                |
-| `adapterLocalTools`         | `array`            | Yes      | Adapter-local tools available to the runtime ([Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). Each entry contains `name` (string), `description` (string), and `inputSchema` (JSON Schema object). Populated by the adapter before spawning the runtime; fixed for the lifetime of the pod. Includes the four built-in tools (`read_file`, `write_file`, `list_dir`, `delete_file`) plus any custom adapter-local tools. | All (if reading manifest) |
+| `adapterLocalTools`         | `array`            | Yes      | Adapter-local tools available to the runtime ([Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). Each entry contains `name` (string), `description` (string), and `inputSchema` (JSON Schema object). Populated by the adapter before the runtime process is launched; fixed for the lifetime of the pod. Includes the four built-in tools (`read_file`, `write_file`, `list_dir`, `delete_file`) plus any custom adapter-local tools. | All (if reading manifest) |
 | `agentInterface`            | `object` or `null` | Yes      | Summary of the runtime's declared `agentInterface` from the Runtime definition ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)). `null` if not declared. Contains `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, `skills`, `examples` — same schema as the Runtime definition's `agentInterface` field. | Informational (all levels) |
 | `mcpNonce`                  | `string`           | Yes      | Random 256-bit hex nonce written with each manifest. It authenticates a connection to the pod's intra-pod MCP servers (platform MCP and all connector MCP servers), which are pod-wide and started at most once per pod. The nonce a server validates against is the one the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. The nonce must be presented as the first message of the MCP `initialize` handshake on every intra-pod MCP connection, and the adapter rejects connections that do not present a valid nonce. It also authenticates the `CH-MSGSOCK` and `CH-RUNTIMEOPS` connections, checked once when each is accepted ([§4.7.11](#4711-adapter-agent-security-boundary) item 1, **Runtime connection handshake.**).        | All (socket `CH-MSGSOCK`); Standard, Full (MCP) |
 | `minPlatformVersion`        | `string`           | No       | Minimum Lenny gateway version required by this runtime, in semver format (e.g., `"1.4.0"`). Written by the gateway from the Runtime definition's `minPlatformVersion` field. Runtimes may read this to confirm they are operating against a compatible gateway version; the gateway enforces the constraint at registration time — it rejects runtime definitions whose `minPlatformVersion` exceeds the running gateway version with `422 PLATFORM_VERSION_TOO_LOW`. Omitted if the Runtime definition specifies no minimum. | Informational (all levels) |
@@ -907,21 +907,17 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 1. Pod created by Kubernetes
 2. Adapter opens gRPC connection to gateway (mTLS)
 3. Adapter writes placeholder manifest (connector servers unknown yet)
-4. Adapter signals READY to gateway — pod enters warm pool
+4. Adapter signals READY to gateway — pod enters warm pool. In the sidecar model the adapter signals READY only after the runtime supervisor has connected on `CH-SUPERVISE` and sent `ready`, after the property self-test gate of [§4.7.11](#4711-adapter-agent-security-boundary) item 8, and after the warm-up launch, on a pod that has one, that [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`. A stage that fails takes the failure branch stated in [Section 7.1](07_session-lifecycle.md#71-normal-flow).
 6. Adapter writes **final manifest** (connector servers now known from leases; all provider credentials available)
-7. The runtime process becomes live for the pod's first session. In the sidecar
-   deployment model ([§4.7.10](#4710-deployment-model)) the kubelet started the
-   runtime container when the pod started; the runtime dials the adapter on
-   `CH-MSGSOCK` ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and
-   the adapter accepts that connection here. The adapter does not spawn a
-   process in the runtime container: the two containers share no process namespace
-   ([§13.1](13_security-model.md#131-pod-security)) and the runtime binary exists
-   only in the runtime container's image. A later session on the same pod skips
-   this step and steps 8 and 9, uses the `CH-MSGSOCK` and `CH-RUNTIMEOPS`
-   connections the runtime opened on the pod's first session, and takes step 10.
-   In the embedded deployment model the adapter runs
-   the runtime loop in its own process for each session.
+7. The runtime process becomes live. In the sidecar deployment model
+   ([§4.7.10](#4710-deployment-model)) the adapter has the runtime supervisor
+   launch the runtime's `command` here, after step 6 wrote the final manifest,
+   when **Runtime supervisor.** **Launch.** permits a launch, and accepts that
+   process's `CH-MSGSOCK` connection. A session that uses an existing process under
+   **Runtime supervisor.** **Launch.** skips this step and steps 8 and 9 and takes step 10.
+   In the embedded deployment model the
+   adapter runs the runtime loop in its own process for each session.
 8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens CH-RUNTIMEOPS (Full)
 9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
 10. The adapter writes the session's `session_start` on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), and then waits for the runtime's `session_started` for the session before it treats the session as started when `CH-MSGSOCK` **Outbound: `session_started`** rule 3 requires the wait. This step runs for every session on the pod.
@@ -942,15 +938,23 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 | Language support       | Any language (stdin/stdout)                              | Go only (or language with gRPC support)    |
 | Isolation              | Process isolation; abstract sockets + read-only manifest | Single process, shared memory              |
 | Recommended for        | Third-party runtimes, community adapters                 | First-party runtimes where latency matters |
-| Runtime process lifetime | The pod's lifetime; one connection serves every session, each opened by `session_start` and released by `session_end` or by the end of the connection | The pod's lifetime (the adapter process); one loop per session, opened by `session_start` and released by `session_end` or by the end of the loop |
+| Runtime process lifetime | From its launch by the runtime supervisor to its end (**Runtime process lifetime.** below); one connection per process serves its sessions, each opened by `session_start` and released by `session_end` or by the end of the connection | The pod's lifetime (the adapter process); one loop per session, opened by `session_start` and released by `session_end` or by the end of the loop |
 
 > **Note:** Third-party authors should always use the sidecar model. The embedded model is for first-party runtimes where the adapter and agent binary are developed together.
 
-**Runtime process lifetime.** The runtime process lives as long as the pod. In
-the sidecar model it is the process the kubelet started in the runtime
-container, and its `CH-MSGSOCK` connection, accepted once, serves every session
+**Runtime process lifetime.** On a `keep` pod
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+"Runtime-process lifetime"), the runtime process lives as long as the pod
+unless `DemoteSDK` ends it (**Runtime supervisor.**, **SDK-warm.** below). On a
+`restart` pod each runtime process lives from its launch to the next
+whole-pod scrub, which ends it
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Lenny scrub procedure.**).
+The sentences of this paragraph about one process or one `CH-MSGSOCK`
+connection for the pod's life apply to each process. In
+the sidecar model it is the process the runtime supervisor launched in the
+runtime container (**Runtime supervisor.** below), and its `CH-MSGSOCK` connection, accepted once, serves every session
 the pod serves, multiplexed by `sessionId`. No session's teardown, interrupt,
-or heartbeat escalation, and no occupancy-zero boundary, closes that connection
+or heartbeat escalation, and, on a `keep` pod, no occupancy-zero boundary, closes that connection
 or sends the process a signal. The adapter closes the connection when the pod
 terminates, and when the coordinator hold times out with no new coordinator and
 the adapter terminates every session it started on the pod
@@ -959,14 +963,10 @@ termination ends the process. In the
 embedded model the runtime process is the adapter process, which also lives as
 long as the pod, and the adapter runs one runtime loop per session inside it. On a pool whose runtime declares `preConnect`, the SDK process, which
 [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) calls
-the agent process and which `DemoteSDK` tears down and the SDK re-warm restarts, is
-distinct from the runtime process, and neither ends the runtime process. A
-runtime process that stops, or whose connection the hold timeout closed, is not
-re-created or reconnected inside the pod: the adapter
-reports it at the next recycle boundary and refuses the next session's start,
-and the pod is retired
-([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
-A recycling pool whose pods serve more than one session in the kept process
+the agent process, is in the sidecar model the runtime process, which `DemoteSDK`
+ends (**Runtime supervisor.**, **SDK-warm.** below); in the embedded model it is distinct from
+the runtime process, and neither `DemoteSDK` nor the SDK re-warm ends the runtime process.
+A recycling pool whose pods serve more than one session in a kept process
 requires a deployer acknowledgment
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 "Deployer acknowledgment (runtime process kept across sessions)").
@@ -983,19 +983,327 @@ covers `type: agent` runtimes in both deployment models. A `type: mcp` runtime
 is driven over MCP by the adapter and exchanges no `CH-MSGSOCK` frame, so the
 contract does not apply to it.
 
+**Runtime supervisor.** On every sidecar pod of a `type: agent` runtime the
+runtime container's first process, and the init of its process namespace, is
+the runtime supervisor, a platform binary from its own digest-pinned image that
+an init container copies onto a read-only mount
+([§13.1](13_security-model.md#131-pod-security)). The
+supervisor launches the runtime's `command`
+([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)) when the adapter asks
+it to on `CH-SUPERVISE` ([§28.5.3](28_communication-channels.md#2853-intra-pod)),
+and launches nothing otherwise. In the embedded model there is no runtime
+container and no supervisor.
+
+- **Environment.** Each launch starts from an empty environment to which the
+  supervisor adds a fixed `PATH`, the runtime's `env`
+  ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), whose `PATH`
+  pair replaces the fixed one, and the platform's runtime variables. The image's `ENTRYPOINT`, `CMD`, and `ENV` are
+  not used. The supervisor reads no file from the runtime image's filesystem.
+- **Launch.** The adapter asks for a launch only when the pod has launched no
+  runtime process since its creation or its last attested end, after the
+  manifest the process reads exists, after every adapter listener the
+  runtime dials is bound, and while the not-live state (**Liveness.**) is
+  clear. A session that starts while a process is live, or while a launch is
+  in flight, uses that process, unless **Liveness.** refuses the start. On a
+  service-mode pod, and on a pod of a `preConnect` runtime when
+  **SDK-warm.** says so, the runtime process is launched at pod warm-up, and the adapter signals
+  READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes) step 4) only
+  after that process has connected on `CH-MSGSOCK`; a warm-up launch that
+  fails, or whose process does not connect within the adapter's bounded wait,
+  is a cause under **Liveness.** Every
+  other launch is at startup step 7
+  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)). On a
+  `restart` pod no launch follows an occupancy-zero boundary before that
+  boundary's whole-pod scrub has run
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  **Lenny scrub procedure.**). A session that finds no live process when this
+  bullet permits no launch fails its start
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  "Runtime not live").
+- **End.** The supervisor ends a runtime process by sending SIGTERM and then
+  SIGKILL to every other process in the runtime container, and attests the end
+  only after two consecutive passes find no other process. On a `restart` pod
+  the end runs, with no SIGTERM grace, at the rows of the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Supervised scrub sequence.** table, which states the outcome of each result.
+  The end is also the `DemoteSDK` teardown (**SDK-warm.**) and the
+  deadline action of a `shutdown`
+  ([§28.5.3](28_communication-channels.md#2853-intra-pod)). Between an attested
+  end and the next launch the adapter closes and rebinds its `CH-MSGSOCK`
+  listener and, when bound, its `CH-RUNTIMEOPS` listener, so no connection the
+  ended process opened or left pending reaches the next process.
+- **Sweep.** On a `restart` pod, after each end at the rows of the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Supervised scrub sequence.** table, a worker the supervisor forks, which holds
+  no `CH-SUPERVISE` descriptor, removes the agent UID's System V shared memory
+  segments, message queues, and semaphore sets, matched on the creating or the
+  owning UID, the agent UID's POSIX message queues, and every entry the agent
+  UID owns, symbolic links included, in the runtime container's writable
+  volumes, which are `/sessions`, `/artifacts`, `/tmp`, `/dev/shm`, and the
+  workspace base other than its `slots/` directory. The sweep leaves `slots/` to scrub
+  step 2. The worker follows no symbolic link and bounds its walk. The supervisor then
+  ends every other process again as **End.** states before it answers. The
+  §5.2 **Supervised scrub sequence.** table states the outcome of each result,
+  including a walk that reaches its bound.
+- **Cleanup.** At every recycle boundary the supervisor runs the deployer's
+  `cleanupCommands` at the agent UID in a worker it forks, with the workspace
+  base as working directory and the launch environment plus the step-0
+  cleanup metadata
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+  The `cleanupTimeoutSeconds` deadline falls when the commands together have
+  run for `cleanupTimeoutSeconds`, and at that deadline the worker sends
+  SIGKILL to the running command's process group, which the worker starts
+  each command in as a new session. **Children.** states what the
+  worker and each command report when they exit, and the §5.2 **Supervised
+  scrub sequence.** table states the outcome of each result. A process that a
+  command moves out of that process group, with `setsid` or otherwise, is
+  outside the deadline SIGKILL: on a `restart` pod the second end ends it,
+  and on a `keep` pod it persists, as the runtime process does. On a `keep` pod the live runtime process
+  can stop or signal the worker, and stop, signal, read, or trace the commands,
+  at the same UID;
+  the effect is confined to its own tenant-pinned pod, and a cleanup it
+  disrupts fails the scrub.
+- **SDK-warm.** On a `preConnect` runtime
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)) the SDK
+  process is the runtime process. Whether a pod launches it at warm-up is fixed
+  when the WarmPoolController creates the pod: the pod launches it when the
+  pool's SDK-warm circuit breaker is closed at that moment
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like),
+  **Circuit-breaker for SDK-warm pools.**), and otherwise warms pod-warm with no
+  process. `ConfigureWorkspace` gives the session to the live process, and when
+  no process is live it launches one, as **Launch.** permits, at startup step 7
+  ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)) after it writes the
+  final manifest. `DemoteSDK` ends the live process (**End.**) with a SIGTERM
+  grace that ends within the request's deadline, and the session's start then
+  launches a new process at step 7. A `DemoteSDK` whose wait for the slot
+  serialization outlasts its deadline sends no `end` and tears nothing down
+  ([§28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame
+  writes.**). A `DemoteSDK` whose `end` fails returns an error, and the
+  failed `end` is a cause under **Liveness.** A `preConnect` runtime is never
+  `restartable` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime),
+  **`command`**), so each of its pods is a `keep` pod, which keeps its live
+  process across each recycle boundary, and the adapter launches nothing on the `claimed → sdk_connecting`
+  re-warm edge ([§6.2](06_warm-pod-model.md#62-pod-state-machine)): the kept
+  process, whichever launch started it, is the pod's SDK-warm process.
+- **Generation.** Each launch starts a new runtime generation. The rule that
+  counts the sessions the pod's shared runtime process has been given
+  ([§28.6](28_communication-channels.md#286-exclusivity-and-concurrency-model))
+  counts from the generation's launch.
+- **Crash.** A crash is an end of a runtime process or of its `CH-MSGSOCK`
+  connection whose row in the **Runtime exits.** table has *Crash* yes. Each
+  session the ended process holds when the adapter handles the end fails with
+  `runtime_crash` ([§7.3](07_session-lifecycle.md#73-retry-and-resume)). A
+  process holds a session from the
+  [§4.7.1](#471-role-and-gateway-rpc-contract) rule-8 record of the session's
+  start until the deregistration of the session's registry entry. The adapter
+  handles the end as [§4.7.1](#471-role-and-gateway-rpc-contract)
+  **The registry critical section.** states.
+- **Runtime exits.** The table below states the outcome of the end of a
+  runtime process, which the adapter learns of from an `exited` report
+  (**Children.**), from an `ended` reply, or from the end of the process's
+  `CH-MSGSOCK` connection. The adapter holds one end disposition for the
+  current generation, and each row of the table is one value of it. Before
+  each act by which it ends a generation, the adapter sets the value whose
+  row names that act in the *Set before* column. Each launch sets the value
+  to `none`.
+  Precedence is the order of the rows: other than at a launch, a set to a
+  value that comes after the current value leaves the current value in
+  place. The adapter handles each generation's end once: the first of these
+  events it handles for a generation selects the row by the value then held,
+  and a later event for the same generation changes nothing.
+
+  A close of the `CH-MSGSOCK` connection that the adapter makes as it exits,
+  for any cause, a fault or the end of the pod's termination included, and
+  its close of an ended generation's connection and listener for the rebind
+  (**End.**), are not ends of a runtime process and select no row. The
+  adapter's exit is stated by
+  [§6.2](06_warm-pod-model.md#62-pod-state-machine) **Pod crash during an
+  active session.** and by **Liveness.** The adapter writes `shutdown` only
+  in its `DRAINING` state
+  ([§15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine)),
+  which leads only to `TERMINATED`, so no session starts on a pod after it. A
+  heartbeat escalation, a launched process that does not connect within the
+  deadline of the session start that launched it, a `CH-SUPERVISE` link
+  failure while the supervisor runs, and a connection that the runtime
+  connection handshake refuses
+  ([§4.7.11](#4711-adapter-agent-security-boundary) item 1) end neither a
+  runtime process nor its accepted connection. The first three are causes
+  under **Liveness.**, which states their outcome and how a pod on which the
+  not-live state is set retires.
+
+| Disposition | Set before | Crash | Sessions the ended process holds | Not-live state | Adapter exits |
+|:--|:--|:--|:--|:--|:--|
+| `endDemote` | The `end` a `DemoteSDK` sends (**SDK-warm.**); the process exits inside that `end` (**Children.**) | No | None fails; the `DemoteSDK` that sent the `end` decides its session (**SDK-warm.**) | Not set by the end; an `ended` that carries an error is the *reply error* cause | No |
+| `endScrub` | The first or the second `end` of a `restart` pod's whole-pod scrub ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Supervised scrub sequence.**) | No | None: the scrub runs after the release of the last session | Not set by the end; the §5.2 table states the outcome of each reply | No |
+| `shutdown` | The adapter's `shutdown` write ([§28.5.3](28_communication-channels.md#2853-intra-pod), **Inbound: `shutdown`**); the process exits by itself or is ended by the deadline `end` (`CH-MSGSOCK` **Timing.**) | No | None fails; the exit status has the meaning [§28.5.3](28_communication-channels.md#2853-intra-pod) **Exit Codes** states | Not set: the exit was requested | No; the adapter continues its drain, on a service-mode pod included |
+| `holdTimeout` | The adapter's close of the process's `CH-MSGSOCK` connection at the coordinator hold timeout ([§10.1](10_gateway-internals.md#101-horizontal-scaling), **Hold state timeout:**) | No | None fails with `runtime_crash`; [§10.1](10_gateway-internals.md#101-horizontal-scaling) **Hold state timeout:** terminates each with `coordinator_lost` | Set: the *no connection* cause | As **Liveness.** states for a cause |
+| `deleting` | The arrival of the pod's termination at the adapter through its preStop hook or its stop signal ([§4.6.1](#461-warm-pool-controller-pod-lifecycle), **Disruption protection for agent pods**); the process then exits, or its connection ends, such as at the adapter's `end` during the drain | Yes | Each fails with `runtime_crash` (**Crash.**) | Not set | No; the adapter continues its termination |
+| `none` | No act: the supervisor reports `exited`; the process's connection ends from the runtime's side; the runtime writes a line longer than the adapter's line limit and the adapter stops reading the connection; or the supervisor ends (**Signals.**), which ends every process in the runtime container and is also a *link failure* | Yes | Each fails with `runtime_crash` (**Crash.**); a process that holds none fails none | Set: the *runtime exit* cause | As **Liveness.** states for a cause: before READY, and on a service-mode pod |
+
+- **Liveness.** The adapter holds one not-live state for the pod. It sets
+  the state on each cause below, and nothing clears it, because the pod
+  retires. While the state is set the adapter refuses every session start,
+  including one that would use a live runtime process, and sends no `launch`;
+  each refused start fails
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  "Runtime not live"). The adapter's next `ReportPodScrub` reports the
+  runtime as not able to serve. A cause before the adapter
+  signals READY ([§4.7.9](#479-startup-sequence-for-type-agent-runtimes)
+  step 4), and any cause on a service-mode pod, which has no claim and no
+  recycle boundary, make the adapter exit non-zero instead. The
+  table below is the one statement of how a pod on which the state is set, or whose
+  adapter exited for a cause, retires. The causes, on every pod unless a
+  cause names one kind of pod, are:
+  - *reply error*: a `launched`, `ended`, or `swept` reply carries an error,
+    a sweep walk that reached its bound included, or the listener rebind
+    (**End.**) fails;
+  - *link failure*: a `CH-SUPERVISE` link failure
+    ([§28.5.3](28_communication-channels.md#2853-intra-pod));
+  - *runtime exit*: an end of a runtime process or of its `CH-MSGSOCK`
+    connection whose **Runtime exits.** row names this cause;
+  - *no connection*: a launched process does not connect on `CH-MSGSOCK`
+    within the deadline of the session start that launched it, or the hold
+    timeout closes its connection
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+    **Hold state timeout:**);
+  - *hang*: a heartbeat escalates a session as hung;
+  - *warm-up failure*: before READY, a warm-up launch fails or its process
+    does not connect within the adapter's bounded wait (**Launch.**);
+  - *gating property*: before READY, on a `restart` pod, the supervisor's
+    `ready` reports a failed gating property
+    ([§4.7.11](#4711-adapter-agent-security-boundary) item 8
+    **Property self-test.**).
+
+  Before READY the adapter also exits non-zero when no supervisor connects
+  and sends `ready` within its wait
+  ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and the pod
+  retires as the table states for a cause before READY. Each row of the
+  table is a `Sandbox` phase
+  ([§6.2](06_warm-pod-model.md#62-pod-state-machine)), and each column is a
+  kind of sidecar pod: a service-mode pod; a session-mode `keep` pod of a
+  runtime that does not declare `capabilities.preConnect: true`; a
+  `restart` pod; and a pod of a `preConnect` runtime, which is a `keep` pod
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  "Runtime-process lifetime"). A cell names the causes that can arise in it
+  and, after the arrow, the one channel through which the pod retires before
+  it serves another session. Another path, such as a failed session, the
+  uptime limit, or an SDK-warm watchdog, can retire the pod first, which
+  changes nothing a cell states. The channels are:
+  - **Exit**: the adapter exits non-zero, and the WarmPoolController observes
+    a pod whose `adapter` or `runtime` container has terminated, and that is
+    not being deleted, as failed: a `warming` pod takes `warming ──→ failed`,
+    an `sdk_connecting` pod on the warm-fill or the recycle re-warm edge takes
+    `sdk_connecting ──→ failed`, and an `idle` pod takes `idle ──→ draining`
+    ([§6.2](06_warm-pod-model.md#62-pod-state-machine)). A `failed` pod takes
+    `failed ──→ draining` once no `SandboxClaim` holds it. Deleting the pod
+    ends the runtime container, a stopped supervisor included. The `runtime`
+    container terminates only when the supervisor ends (**Signals.**), and the
+    WarmPoolController observes that termination whatever the adapter does,
+    so in `warming`, `sdk_connecting`, and `idle` it retires the pod through
+    **Exit** even in a cell that names **Start**, which it preempts. On a
+    `reserved` or `claimed` pod the WarmPoolController takes no action on a
+    terminated container, and the cell's channel applies.
+  - **Start**: the adapter keeps running, and the pod keeps its phase until
+    a session start reaches it. That start fails, because the adapter refuses
+    every start while the state is set, and **Claim** retires the pod through
+    the start's release. On an `idle` pod the start follows the gateway's next
+    claim of the pod. On a `reserved` pod it is a rebind, or, once the hold
+    ends and returns the pod to `idle`, the start that follows the next claim.
+    A pod on the recycle re-warm edge leaves it by an edge
+    [§6.2](06_warm-pod-model.md#62-pod-state-machine) states, and a pod that
+    reaches `reserved` retires as a `reserved` pod does. No session runs on
+    the pod, and the uptime limit can retire it before a start reaches it.
+  - **Claim**: the release that ends the pod's occupancy retires the pod
+    when it ends the occupancy without reuse
+    ([§4.6.3](#463-crd-field-ownership-and-write-boundaries)). Otherwise the
+    whole-pod scrub runs, and **Report** retires the pod. On a pod with
+    `maxConcurrentSessions` above 1 a refused start also counts as
+    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+    **Runtime not live:** states.
+  - **Report**: at the end of the whole-pod scrub the adapter's
+    `ReportPodScrub` reports the runtime as not able to serve, and the
+    recycle disposition retires the pod under "Runtime not live" whatever
+    `onScrubFailure` states
+    ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+  - **None**: the pod is already being deleted. The adapter's exit during the
+    pod's termination is not **Exit**, and the `Sandbox` takes the edge
+    [§6.2](06_warm-pod-model.md#62-pod-state-machine) states for the
+    deletion, such as `draining ──→ terminated`, or
+    `sdk_connecting ──→ terminated` when the adapter receives SIGTERM during
+    `sdk_connecting`.
+
+| `Sandbox` phase | Service-mode pod | `keep` pod | `restart` pod | `preConnect` pod |
+|:--|:--|:--|:--|:--|
+| `warming` | Any cause → **Exit** | Link failure → **Exit** | Link failure, gating property → **Exit** | Any cause → **Exit** |
+| `sdk_connecting`, warm-fill edge | Not reached | Not reached | Not reached | Any cause → **Exit** |
+| `idle` | Any cause → **Exit** | Link failure, runtime exit → **Start** | Link failure → **Start** | Link failure, runtime exit → **Start** |
+| `reserved` | Not reached: no claim | Link failure, runtime exit → **Start** | Link failure → **Start** | Link failure, runtime exit → **Start** |
+| `claimed`, claim `bound`, `maxConcurrentSessions: 1` | Not reached: no claim | Reply error, link failure, runtime exit, no connection, hang → **Claim** | Reply error, link failure, runtime exit, no connection, hang → **Claim** | Reply error, link failure, runtime exit, no connection, hang → **Claim** |
+| `claimed`, claim `bound`, `maxConcurrentSessions` above 1 | Not reached: no claim | Reply error, link failure, runtime exit, no connection, hang → **Claim** | Reply error, link failure, runtime exit, no connection, hang → **Claim** | Not reached: `preConnect` requires `maxConcurrentSessions: 1` |
+| `claimed`, claim `recycling`, while the whole-pod scrub runs | Not reached: no claim | Link failure, runtime exit → **Report** | Reply error, link failure, runtime exit → **Report** | Link failure, runtime exit → **Report** |
+| `sdk_connecting`, recycle re-warm edge, after the scrub report | Not reached | Not reached | Not reached: `restart` is refused on a `preConnect` runtime | Link failure, runtime exit → **Start** |
+| `draining`, or any phase once the pod is being deleted | Any cause → **None** | Any cause → **None** | Any cause → **None** | Any cause → **None** |
+
+- **Signals.** The supervisor installs a handler for every catchable signal,
+  real-time signals included, other than SIGSEGV, SIGBUS, SIGFPE, and SIGILL,
+  which it keeps at their default action and blocked. Each child that calls
+  `execve` unblocks every signal first. A blocked fault signal that a process
+  sends never takes effect, while the kernel delivers a synchronous fault in
+  the supervisor through the block, so SIGKILL and SIGSTOP are the only
+  signals a sender can make take effect. The table below is the one statement
+  of the supervisor's action for each signal source, and its rows for the
+  adapter's requests cite **End.** and **Cleanup.**, which state the signals
+  the supervisor sends. No action in the table depends on which process sent
+  a signal.
+
+| Signal source | Signal | Supervisor action | Outcome |
+|:--|:--|:--|:--|
+| The kubelet, through the container runtime, when the pod terminates | The container's stop signal, which is SIGTERM or the runtime image's `STOPSIGNAL`, when it is catchable | None; the supervisor keeps serving `CH-SUPERVISE` and sends the runtime process no signal | The runtime process runs on through the adapter's preStop drain ([§4.6.1](#461-warm-pool-controller-pod-lifecycle), **Disruption protection for agent pods**) until the adapter ends it with `end` (**End.**) or the connection closes, on which the supervisor exits, and its exit as the namespace init ends every remaining process in the runtime container |
+| A sender outside the runtime container's process namespace, such as the kubelet at the end of the termination grace period or a stop signal that is SIGKILL | SIGKILL | None is possible; the supervisor ends | Every process in the runtime container ends; while the adapter runs, the closed connection is a link failure (**Liveness.**) |
+| A sender outside the runtime container's process namespace | SIGSTOP | None is possible; the supervisor stops | The missed `pong` deadline is a link failure (**Liveness.**) |
+| A runtime process or any process it started | SIGKILL or SIGSTOP | None is possible; where the namespace init is immune to the signal, the kernel discards it ([§4.7.11](#4711-adapter-agent-security-boundary) item 8 **Property self-test.**) | Where the signal reaches the supervisor, the outcome of the SIGKILL or SIGSTOP row above |
+| Any sender | Any catchable signal other than SIGCHLD, SIGSEGV, SIGBUS, SIGFPE, and SIGILL | None | None |
+| Any sender | SIGSEGV, SIGBUS, SIGFPE, or SIGILL | None; the signal is blocked, so it stays pending or is discarded, and its default action never runs | None |
+| Any sender, and the kernel when a child of the supervisor exits | SIGCHLD | Reaps as **Children.** states, which collects nothing when no child exited | **Children.** |
+| The kernel on a synchronous fault in the supervisor | SIGSEGV, SIGBUS, SIGFPE, or SIGILL | None; the kernel delivers the signal through the block with its default action, and the supervisor ends | Every process in the runtime container ends, and the closed connection is a link failure (**Liveness.**) |
+| The kernel on a write to a closed `CH-SUPERVISE` connection | SIGPIPE | None; the failed write is a closed connection, on which the supervisor exits | As for a closed connection |
+| The adapter's `end` request on `CH-SUPERVISE` | None | Sends SIGTERM and, after the request's grace, SIGKILL to every other process in the runtime container (**End.**) | **End.** |
+| The `cleanupTimeoutSeconds` deadline | None | Its worker sends SIGKILL to the running command's process group (**Cleanup.**) | The §5.2 **Supervised scrub sequence.** table |
+
+- **Children.** The supervisor collects the exit status of every child it
+  starts, and of every process reparented to it as the namespace init, with
+  one reaper, which runs on SIGCHLD and collects without blocking until no
+  exited child is left. The reaper hands the status of the launched runtime
+  process, a sweep worker, and the cleanup worker to the step that waits for
+  that child, and the cleanup worker collects the status of each command it
+  runs. The step reports a
+  failure for a status that does not reach it. The table below is the one statement of what the
+  supervisor reports when each kind of child exits, and the
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
+  **Supervised scrub sequence.** table states the outcome of each report
+  during a whole-pod scrub.
+
+| Child | Exits with status 0 | Exits non-zero | Ended by a signal | Its status does not reach the step that waits for it | Its exit races a request |
+|:--|:--|:--|:--|:--|:--|
+| The launched runtime process | Outside an `end`, `exited` with the status (**Runtime exits.**) | As for status 0 | As for status 0, with `exited` carrying the signal; a signal an `end` sent is part of that end, which `ended` reports | Not applicable: the reaper is the step that reports it | An exit reaped while an `end` is in progress is part of the end, and no `exited` is sent; an exit reaped before `launched` is written is reported by `launched` and then `exited`; under any other request, or none, `exited` is sent when the exit is reaped |
+| A sweep worker (**Sweep.**) | `swept` with no error, after the supervisor's own end pass | `swept` with an error: the bound error when the worker's status reports that its walk reached its bound, and otherwise the sweep failure error | `swept` with the sweep failure error | `swept` with the sweep failure error | Not applicable: the worker exists only while its `sweep` is outstanding, and the adapter sends no other request then |
+| The cleanup worker (**Cleanup.**) | `cleaned` with no error | `cleaned` with an error: the deadline error when the worker's status reports the `cleanupTimeoutSeconds` deadline, and otherwise the cleanup failure error | `cleaned` with the cleanup failure error | `cleaned` with the cleanup failure error | Not applicable, as for a sweep worker |
+| A cleanup command, a child of the cleanup worker | The worker runs the next command, and exits with status 0 after the last | The worker runs no further command and exits with its failure status; a command whose `execve` failed exits non-zero | As non-zero, except a command that the worker's deadline SIGKILL ended, for which the worker exits with its deadline status | As non-zero | A command that exits as the `cleanupTimeoutSeconds` deadline falls: the deadline status prevails |
+| A process reparented to the supervisor, such as a runtime process's descendant, a command's descendant, or a command whose cleanup worker ended | Collected, and nothing is reported | Collected, and nothing is reported | Collected, and nothing is reported | Not applicable: no step waits for it | Collected as any exit is, including during an `end` or a sweep's end pass, and nothing is reported |
+
 **Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
 
 #### 4.7.11 Adapter-Agent Security Boundary
 
 The boundary between the adapter and the agent binary is **untrusted**. A compromised or misbehaving agent binary must not be able to escalate privileges, extract credentials, or manipulate the adapter. The following controls enforce this:
 
-1. **Separate UIDs and connection authentication:** The adapter runs as a different UID than the agent binary (e.g., adapter as UID 1000, agent as UID 1001). Abstract Unix sockets use `SO_PEERCRED` for peer UID verification — the adapter accepts connections only from the expected agent UID. The expected UID is the UID within the pod's user namespace (matching the `runAsUser` in the pod spec), not a host UID — both sidecar containers share the same user namespace, so `SO_PEERCRED` reports consistent UIDs. As a defense-in-depth measure, the adapter also performs a manifest-nonce handshake on connection: the adapter writes a random nonce to the manifest file (read-only to the agent container) before spawning the agent, and the agent must present this nonce as the first message on the socket. This ensures the connecting process has legitimate access to the manifest, independent of UID verification. gVisor `SO_PEERCRED` semantics must be validated in Phase 3.5 security integration tests; if behavior diverges from the host kernel, the nonce handshake serves as the primary authentication control. The manifest volume is mounted read-only into the agent container, preventing tampering. Filesystem-level isolation prevents the agent from reading adapter config or memory.
+1. **Separate UIDs and connection authentication:** The adapter runs as a different UID than the agent binary (e.g., adapter as UID 1000, agent as UID 1001). Abstract Unix sockets use `SO_PEERCRED` for peer UID verification — the adapter accepts connections only from the expected agent UID. The expected UID is the UID within the pod's user namespace (matching the `runAsUser` in the pod spec), not a host UID — both sidecar containers share the same user namespace, so `SO_PEERCRED` reports consistent UIDs. As a defense-in-depth measure, the adapter also performs a manifest-nonce handshake on connection: the adapter writes a random nonce to the manifest file (read-only to the agent container) before the agent process is launched, and the agent must present this nonce as the first message on the socket. This ensures the connecting process has legitimate access to the manifest, independent of UID verification. gVisor `SO_PEERCRED` semantics must be validated in Phase 3.5 security integration tests; if behavior diverges from the host kernel, the nonce handshake serves as the primary authentication control. The manifest volume is mounted read-only into the agent container, preventing tampering. Filesystem-level isolation prevents the agent from reading adapter config or memory.
 
    **Mandatory `SO_PEERCRED` startup self-test (adapter prerequisite).** Before the adapter marks itself READY to the gateway (step 4 of the Startup Sequence above), it MUST execute a loopback self-test that verifies `SO_PEERCRED` is functional in the current pod environment:
    1. The adapter opens a temporary abstract Unix socket (`@lenny-sopeercred-selftest`).
    2. A goroutine connects to the socket from the same process (loopback connection).
    3. The adapter calls `getsockopt(SO_PEERCRED)` on the accepted connection and asserts that the returned `uid` matches `os.Getuid()` (the adapter's own UID).
-   4. If the call fails (error) or the returned UID does not match, the adapter logs `"FATAL: SO_PEERCRED self-test failed — UID mismatch or syscall error; adapter security boundary cannot be enforced"`, emits the `lenny_adapter_sopeercred_selftest_failed_total` counter increment, and exits non-zero. The pod enters `CrashLoopBackOff`, preventing session assignment.
+   4. If the call fails (error) or the returned UID does not match, the adapter logs `"FATAL: SO_PEERCRED self-test failed — UID mismatch or syscall error; adapter security boundary cannot be enforced"`, emits the `lenny_adapter_sopeercred_selftest_failed_total` counter increment, and exits non-zero. The pod is never marked `idle`.
    5. If the self-test passes, the adapter closes the temporary socket and proceeds to the READY signal.
 
    This self-test ensures that environments where `SO_PEERCRED` is silently non-functional (e.g., some container runtimes with non-standard user namespace configurations) are caught before any agent process is spawned. The self-test runs on every pod start, not only in CI. If gVisor's `SO_PEERCRED` semantics diverge (Phase 3.5 validation), the self-test result determines whether UID verification is available; the nonce handshake remains active as the primary control in that case, and the self-test failure path is suppressed (configurable via `Runtime.spec.requireSoPeercred`, default `true`; set to `false` only when gVisor divergence is confirmed and nonce-only mode is explicitly accepted).
@@ -1069,6 +1377,54 @@ The boundary between the adapter and the agent binary is **untrusted**. A compro
 6. **Credential-sensitive RPC logging exclusion:** `AssignCredentials` and `RotateCredentials` RPCs carry credential material in their payloads. These RPCs must be excluded from gRPC access log payload capture, OpenTelemetry span attributes, and any request/response logging middleware. Only the RPC name, lease ID, provider type, and success/failure status should be logged — never the `materializedConfig` contents.
 
 7. **MCP server security:** The local MCP servers never expose gateway credentials, mTLS certificates, other sessions, internal Lenny state, or anything about other tenants. The pod sandbox (gVisor/Kata) and network policy are the security boundary, not the protocol. The adapter never advertises the `sampling` MCP capability to the local server. A manifest-nonce handshake is required on all intra-pod MCP connections (platform MCP server and each connector MCP server), which are pod-wide and started at most once per pod: the connecting process must present as `params._lennyNonce` in the MCP `initialize` request (see [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) nonce wire format) the nonce the manifest carried at the start that bound the server it connects to, before any tools are dispatched. A later session's manifest write does not re-arm a running server. The adapter rejects any MCP connection that does not present a valid nonce. The manifest nonce authenticates a connection to the pod's intra-pod MCP servers rather than scoping it to a session: the servers resolve the calling session at call time and refuse the call unless the pod's shared runtime process has been given exactly one session and that session is the caller. This prevents a compromised child process from calling privileged platform tools (e.g., `lenny/delegate_task`, `lenny/memory_write`, `lenny/request_elicitation`) by directly connecting to the MCP socket without manifest access.
+
+8. **Runtime supervisor:**
+   - **Where it runs.** The runtime supervisor
+     ([§4.7.10](#4710-deployment-model), **Runtime supervisor.**) runs at the
+     agent UID on the untrusted side of this boundary. The adapter sends every
+     request on `CH-SUPERVISE`, the supervisor sends only its `ready` report,
+     replies, and exit reports, and no author-controlled byte crosses the
+     channel, so item 2 and item 3 hold.
+   - **Why each end trusts the other.** Each end checks the other's UID as
+     the [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-SUPERVISE`
+     card states. The connection is made before any author code exists in the pod: the
+     supervisor is the runtime container's first process, it launches nothing
+     before `launch`, and [§13.1](13_security-model.md#131-pod-security)
+     **Container identity.** gives the agent and adapter UIDs to one container
+     each. In nonce-only mode that ordering alone identifies both ends.
+   - **Protection from author code.** The supervisor is a static binary with no
+     program interpreter that loads no library, clears its environment before
+     anything else, and opens only `/proc` and platform volumes without
+     following symbolic links. It marks itself non-dumpable, so code at the
+     agent UID with every capability dropped cannot attach to it or read its
+     memory or descriptors. Work that reads author-controlled data, and every
+     `cleanupCommands` command, runs in a forked worker that holds no
+     `CH-SUPERVISE` descriptor. Its binary is on a read-only mount.
+   - **What rests on it.** The adapter's decision to give a later session a
+     new runtime process on a `restart` pod rests on the supervisor's attested
+     end and sweep. Tenant isolation does not: the tenant pin applies on every
+     pool ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+     A killed, frozen, or failed supervisor retires the pod
+     ([§4.7.10](#4710-deployment-model), **Runtime supervisor.** **Signals.**
+     and **Liveness.**).
+   - **Property self-test.** At startup, before it dials, the supervisor
+     tests that its non-dumpable mark resists same-UID inspection and that its
+     kill reaches a double-forked descendant, and it tests whether it is
+     immune as PID-namespace init to SIGKILL and SIGSTOP. It reports each
+     result in its `ready` message on `CH-SUPERVISE`
+     ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and the
+     adapter logs each failed property. The non-dumpable mark and kill reach
+     gate a `restart` pod
+     ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+     "Runtime-process lifetime"): a failed one is a cause under
+     [§4.7.10](#4710-deployment-model) **Runtime supervisor.** **Liveness.**,
+     which states the outcome. On a `keep` pod no property gates.
+     PID-namespace init immunity gates no pod, because its failure retires
+     only the pod whose runtime exploits it.
+     `lenny-ctl preflight supervisor`
+     ([§24.2](24_lenny-ctl-command-reference.md#242-preflight)) runs the
+     same self-test on a named RuntimeClass, and it is re-run when the
+     container runtime version changes, as item 1 requires for `SO_PEERCRED`.
 
 ### 4.8 Gateway Policy Engine
 

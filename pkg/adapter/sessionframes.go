@@ -191,9 +191,13 @@ func (s *Server) nextStartID() string {
 //     SessionStartAckTimeout. When the wait ends without the frame, or the
 //     frame carries error, it fails the gate, writes session_end, and
 //     fails the start.
-//  4. Confirms again and takes the record through noteRuntimeStarted.
+//  4. Confirms again and takes the record through confirmRuntimeStart,
+//     which on a supervised pod also refuses while the not-live state is
+//     set or once the generation the start was given to has ended.
 //  5. When that second confirmation is refused, writes session_end and
-//     refuses.
+//     refuses. A refusal for a runtime that is not live returns an error,
+//     because the entry still stands and the caller's failure arm releases
+//     the claim, as it does for a start the runtime refused.
 //
 // Every return other than a taken record fails the entry's gate, unless a
 // removal already released it, so a session-scoped CH-RUNTIMEOPS sender
@@ -248,11 +252,18 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 	if err := s.writeStartFrame(ctx, sessionID, startID, claim.entry, in, awaiting); err != nil {
 		return false, err
 	}
-	if s.noteRuntimeStarted(sessionID, claim.entry) {
+	recorded, notLive := s.confirmRuntimeStart(sessionID, claim.entry)
+	if recorded {
 		return true, nil
 	}
 	s.markSessionStartWritten(sessionID, claim.entry, false)
 	s.writeSessionEnd(sessionID, claim.entry)
+	if notLive != nil {
+		// spec: §4.7.10 (Runtime supervisor, Liveness) — the entry still
+		// stands, so the start fails as a not-live start does, and the
+		// caller's failure arm releases the claim it holds.
+		return false, fmt.Errorf("record session %s: %w", sessionID, notLive)
+	}
 	return false, nil
 }
 

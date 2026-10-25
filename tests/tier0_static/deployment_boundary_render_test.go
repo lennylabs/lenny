@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -77,9 +78,24 @@ func renderCases() []renderCase {
 		in.CredReadersGID = 2003
 		return in
 	}
+	// supervised is a sidecar pod that runs the runtime supervisor: base plus
+	// one assignment per supervisor field in Inputs declaration order. The
+	// existing sidecar cases stay unsupervised.
+	supervised := func(base podspec.Inputs, process, mode string) podspec.Inputs {
+		in := base
+		in.RuntimeCommand = []string{"/usr/local/bin/agent", "--serve"}
+		in.RuntimeEnv = []podspec.EnvPair{{Name: "VIRTUAL_ENV", Value: "/opt/venv"}, {Name: "PATH", Value: "/opt/venv/bin:/usr/bin"}}
+		in.RuntimeProcess = process
+		in.LaunchMode = mode
+		in.SupervisorImage = "supervisor@sha256:" + strings.Repeat("4", 64)
+		in.SuperviseTiming = podspec.SuperviseTiming{PingInterval: 3 * time.Second, PingTimeout: 4 * time.Second, WaitTimeout: 6 * time.Minute, WarmUpTimeout: 90 * time.Second}
+		return in
+	}
 	return []renderCase{
 		{Name: "sidecar-minimal", In: minimal(podspec.DeploymentSidecar)},
 		{Name: "sidecar-maximal", In: maximal(podspec.DeploymentSidecar)},
+		{Name: "sidecar-supervised-maximal", In: supervised(maximal(podspec.DeploymentSidecar), "keep", podspec.LaunchPreconnectSDKWarm)},
+		{Name: "sidecar-supervised-restart", In: supervised(minimal(podspec.DeploymentSidecar), "restart", podspec.LaunchSession)},
 		{Name: "embedded-minimal", In: minimal(podspec.DeploymentEmbedded)},
 		{Name: "embedded-maximal", In: maximal(podspec.DeploymentEmbedded)},
 	}
@@ -92,6 +108,10 @@ type builtCase struct {
 	Name    string
 	Sidecar bool
 	Pod     *corev1.Pod
+	// RuntimeEnvNames are the names of the case's Runtime env pairs, which
+	// the deployer defines and the supervised runtime's --env pairs carry
+	// before the platform variables.
+	RuntimeEnvNames map[string]bool
 }
 
 // buildCases builds every case. A Build error fails the gate, because a case
@@ -104,7 +124,11 @@ func buildCases(cases []renderCase) ([]builtCase, error) {
 			return nil, fmt.Errorf("render case %s: podspec.Build: %w", c.Name, err)
 		}
 		model := podspec.DeploymentModel(c.In.DeploymentModel)
-		out = append(out, builtCase{Name: c.Name, Sidecar: model == "" || model == podspec.DeploymentSidecar, Pod: pod})
+		names := map[string]bool{}
+		for _, e := range c.In.RuntimeEnv {
+			names[e.Name] = true
+		}
+		out = append(out, builtCase{Name: c.Name, Sidecar: model == "" || model == podspec.DeploymentSidecar, Pod: pod, RuntimeEnvNames: names})
 	}
 	return out, nil
 }
@@ -113,7 +137,7 @@ func buildCases(cases []renderCase) ([]builtCase, error) {
 func copyCases(cases []builtCase) []builtCase {
 	out := make([]builtCase, len(cases))
 	for i, c := range cases {
-		out[i] = builtCase{Name: c.Name, Sidecar: c.Sidecar, Pod: c.Pod.DeepCopy()}
+		out[i] = builtCase{Name: c.Name, Sidecar: c.Sidecar, Pod: c.Pod.DeepCopy(), RuntimeEnvNames: c.RuntimeEnvNames}
 	}
 	return out
 }
@@ -148,6 +172,12 @@ var embeddedRuntimeBinaries = []string{"echo-embedded", "preconnect-echo"}
 //	sidecar  adapter                  preStop   token 1 is prestop: lenny-adapter, prestop set
 //	embedded runtime                  preStop   token 1 is prestop: each embedded runtime binary, prestop set
 //	sidecar  runtime                  env       the runtime SDK socket variable only
+//	sidecar  runtime                  command   the supervisor argv: each --env pair not
+//	                                            named in the case's Runtime env is the
+//	                                            runtime SDK's, as the env row; the argv
+//	                                            itself is pinned by the tier-3 supervisor test
+//	sidecar  lenny-supervisor-stage   args      the supervisor's stage mode, pinned by the
+//	                                  (init)    tier-3 supervisor test
 //	embedded runtime                  args      each embedded runtime binary, main set
 //	embedded runtime                  env       each embedded runtime binary
 //	any      egress-capture           args      lenny-egress-capture, main set
@@ -171,6 +201,20 @@ func attribute(c builtCase) ([]argvUse, []envUse, []string) {
 	visit := func(kind string, ctr corev1.Container) {
 		prefix := fmt.Sprintf("%s[%s]", kind, ctr.Name)
 		argsMapped, envMapped := false, false
+		commandMapped := false
+		if kind == "initContainers" && c.Sidecar && ctr.Name == podspec.SupervisorStageContainerName {
+			// The supervisor has no Go flag set to parse against; its argv
+			// is pinned by the tier-3 supervisor test.
+			argsMapped = true
+		}
+		if kind == "containers" && c.Sidecar && ctr.Name == "runtime" && len(ctr.Command) > 0 && ctr.Command[0] == supervisorBinaryPath {
+			for _, name := range supervisorEnvNames(ctr.Command) {
+				if !c.RuntimeEnvNames[name] {
+					env = append(env, envUse{Case: c.Name, Site: prefix + ".command --env", Binary: runtimeSDKBinary, Name: name})
+				}
+			}
+			commandMapped = true
+		}
 		if kind == "containers" {
 			switch {
 			case c.Sidecar && ctr.Name == "adapter":
@@ -189,7 +233,7 @@ func attribute(c builtCase) ([]argvUse, []envUse, []string) {
 				argsMapped = true
 			}
 		}
-		if len(ctr.Command) > 0 {
+		if len(ctr.Command) > 0 && !commandMapped {
 			unmap(prefix + ".command")
 		}
 		if len(ctr.Args) > 0 && !argsMapped {
@@ -411,3 +455,24 @@ func renderedInputs(argv []argvUse, env []envUse, inputs map[string]binaryInputs
 // sdkSocketVariable is the one variable the sidecar runtime container may
 // carry.
 const sdkSocketVariable = runtimekit.SocketEnvVar
+
+// supervisorBinaryPath is the runtime supervisor binary the supervised
+// runtime container's Command runs from the read-only supervisor volume.
+const supervisorBinaryPath = "/lenny-supervisor/lenny-supervisor"
+
+// supervisorEnvNames returns the variable name of each --env pair in a
+// supervisor `run` argv before the `--` that ends its options.
+func supervisorEnvNames(cmd []string) []string {
+	var names []string
+	for i := 1; i < len(cmd); i++ {
+		if cmd[i] == "--" {
+			break
+		}
+		if cmd[i] == "--env" && i+1 < len(cmd) {
+			name, _, _ := strings.Cut(cmd[i+1], "=")
+			names = append(names, name)
+			i++
+		}
+	}
+	return names
+}

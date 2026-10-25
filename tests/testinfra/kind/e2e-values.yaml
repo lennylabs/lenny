@@ -63,6 +63,22 @@ controller:
   # The Sandbox reconciler stamps this adapter image into every agent
   # pod. install.sh builds and kind-loads lenny-adapter:e2e.
   adapterImage: lenny-adapter:e2e
+  # The runtime supervisor image every sidecar pod of a type: agent runtime
+  # stages into its read-only supervisor volume through the
+  # lenny-supervisor-stage init container (§4.7.10 Runtime supervisor; §13.1
+  # Runtime supervisor volume). install.sh builds it from
+  # Dockerfile.supervisor and kind-loads lenny-supervisor:e2e. Without it the
+  # controller creates no pod for any sidecar type: agent pool.
+  supervisorImage: lenny-supervisor:e2e
+  # The §28.5.3 CH-SUPERVISE ping bounds, shortened from the 5s defaults so
+  # a stopped supervisor is detected (interval plus timeout, 4s) inside the
+  # §4.6.1 reserved hold (claimHoldTTLSeconds, 10s), which the tier-8 case
+  # that stops a reserved pod's supervisor needs. The probe Runtimes' 30s
+  # CH-MSGSOCK dial delay stays above interval plus timeout and below the
+  # default 2m warm-up timeout (tests/testinfra/kind/agent-workload.yaml).
+  tuning:
+    supervisePingInterval: 2s
+    supervisePingTimeout: 2s
   # TESTING.md §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
   # into every Sandbox whose template carries the
   # `lenny.dev/test-egress-capture-upstream` annotation (today, only
