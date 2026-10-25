@@ -716,7 +716,7 @@ spec:
             - --playground-max-session-minutes={{ .Values.playground.maxSessionMinutes }}
             - --playground-max-idle-time-seconds={{ .Values.playground.maxIdleTimeSeconds }}
             - --playground-oidc-session-ttl-seconds={{ .Values.playground.oidcSessionTtlSeconds }}
-            - --capability-token-ttl-seconds={{ .Values.playground.bearerTtlSeconds }}
+            - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
             {{- with .Values.playground.gatewayHost }}
             - --playground-gateway-host={{ . }}
             {{- end }}

@@ -3406,7 +3406,10 @@
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
         "charts/lenny/tests/token-service-deployment_test.yaml",
-        "charts/lenny/tests/gateway-deployment_test.yaml"
+        "charts/lenny/tests/gateway-deployment_test.yaml",
+        "pkg/chart/values/schema_test.go::TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2",
+        "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
+        "charts/lenny/tests/kms-guard_test.yaml"
       ],
       "packages": [
         "pkg/auth",
@@ -5841,7 +5844,10 @@
     "17.8.2": {
       "title": "Capacity Tier Reference",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
+        "charts/lenny/tests/kms-guard_test.yaml"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
       "notes": "Per-tier resource bounds for nano / micro / small / medium / large. Phase 14 lands the chart presets that encode them."
@@ -7111,7 +7117,8 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
-        "tests/tier3_contract/playground/playground_test.go"
+        "tests/tier3_contract/playground/playground_test.go",
+        "pkg/chart/values/schema_test.go::TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

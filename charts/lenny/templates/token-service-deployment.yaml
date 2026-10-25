@@ -105,7 +105,7 @@ spec:
             # a POST /v1/oauth/token JWT requested without expires_in. It
             # reads the same value as the gateway's playground bearer
             # lifetime, so both binaries take one operator-set default.
-            - --capability-token-ttl-seconds={{ .Values.playground.bearerTtlSeconds }}
+            - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
             # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
             # dev default; cloud installs set kms.provider to
             # aws | gcp | azure and supply the matching aliases.

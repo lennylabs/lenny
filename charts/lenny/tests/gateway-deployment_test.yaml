@@ -2945,6 +2945,22 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --capability-token-ttl-seconds=900
 
+  # spec: §10.2 (Authentication), §27 — the playground bearer lifetime
+  # renders from auth.capabilityTokenTtlSeconds, the value the Token
+  # Service flag reads, rather than from a playground-scoped key.
+  - it: renders --capability-token-ttl-seconds from auth.capabilityTokenTtlSeconds
+    set:
+      playground.enabled: true
+      playground.authMode: dev
+      auth.capabilityTokenTtlSeconds: 1200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=1200
+
   # spec: §27.2 — the chart's playground.sessionLabels map
   # renders as a comma-separated key=value flag value. F-27.2.1.
   - it: renders the playground.sessionLabels default {origin=playground}

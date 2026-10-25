@@ -147,8 +147,8 @@ tests:
             containerPort: 9090
 
   # spec: §10.2 (Authentication) — the Token Service default lifetime for a
-  # request without expires_in comes from the same value the gateway's
-  # playground bearer lifetime reads.
+  # request without expires_in comes from auth.capabilityTokenTtlSeconds,
+  # the same value the gateway's playground bearer lifetime reads.
   - it: renders --capability-token-ttl-seconds from the shared lifetime value
     documentSelector:
       path: kind
@@ -160,7 +160,7 @@ tests:
 
   - it: renders an operator-set capability token lifetime
     set:
-      playground.bearerTtlSeconds: 1800
+      auth.capabilityTokenTtlSeconds: 1800
     documentSelector:
       path: kind
       value: Deployment
@@ -168,6 +168,34 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --capability-token-ttl-seconds=1800
+
+  # spec: §10.2 (Authentication), §27 — the values schema bounds
+  # auth.capabilityTokenTtlSeconds to 120..3600, so 119 fails the install
+  # before either binary sees it, and the retired playground key is gone.
+  - it: rejects auth.capabilityTokenTtlSeconds of 119 at schema validation
+    set:
+      auth.capabilityTokenTtlSeconds: 119
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/capabilityTokenTtlSeconds.: minimum: got 119, want 120"
+
+  - it: accepts auth.capabilityTokenTtlSeconds at the 120 floor
+    set:
+      auth.capabilityTokenTtlSeconds: 120
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=120
+
+  - it: rejects the retired playground.bearerTtlSeconds key
+    set:
+      playground.bearerTtlSeconds: 900
+    asserts:
+      - failedTemplate:
+          errorPattern: "bearerTtlSeconds"
 
   # spec: F-4.3.11 / F-17.5.2 — the Token Service receives its KMS
   # provider selector from kms.provider, defaulting to local for the
@@ -188,7 +216,8 @@ tests:
     set:
       kms.provider: aws
       kms.awsRegion: us-east-1
-      kms.aliases: "platform:token-service-signing=alias/lenny/token-service"
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       environment: prod
     documentSelector:
       path: kind
@@ -202,7 +231,7 @@ tests:
           content: --kms-aws-region=us-east-1
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --kms-alias=platform:token-service-signing=alias/lenny/token-service
+          content: --kms-alias=platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
       - contains:
           path: spec.template.spec.containers[0].args
           content: --environment=prod
