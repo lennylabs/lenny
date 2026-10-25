@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -105,12 +106,16 @@ func (r *opsRevocation) runEvents(ctx context.Context, bus *pubsub.Bus) {
 	propagator.New(r.cache, bus).Run(ctx)
 }
 
-// logRevocationRead logs a failed rule-1 read at error level. The set
-// stays as it was, and before the first success every Lenny-issued token
-// is refused, so the log line is how an operator sees a set left behind.
+// logRevocationRead logs a failed rule-1 read through slog at error
+// level, so a query filtering on the record's level sees it. The set stays
+// as it was, and before the first success every Lenny-issued token is
+// refused, so the record is how an operator sees a set left behind. The
+// read loop keeps running after it.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set rule 1).
 func logRevocationRead(err error) {
 	if err != nil {
-		log.Printf("ERROR lenny-ops: §25.4 %v; the revocation set keeps its previous contents", err)
+		slog.Error("lenny-ops: §25.4 revocation set read failed; the revocation set keeps its previous contents", "err", err)
 	}
 }
 

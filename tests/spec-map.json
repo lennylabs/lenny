@@ -6420,6 +6420,7 @@
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule3MatchesGatewayRevokedResponse",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule4RefusesBeforeFirstRead",
@@ -6858,7 +6859,8 @@
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage",
-        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage"
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel"
       ],
       "packages": [],
       "blocked_until_phase": "14",

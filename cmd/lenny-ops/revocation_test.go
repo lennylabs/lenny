@@ -3,10 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +27,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 )
 
 const devSecret = "ops-dev-secret"
@@ -482,4 +488,95 @@ func (l listOnlyTenants) List(context.Context, tenantstore.ListFilter) ([]tenant
 		out = append(out, tenantstore.Tenant{ID: id})
 	}
 	return out, nil
+}
+
+// TestRevocationSetRule1FailedReadLogsAtErrorLevel pins the operator
+// signal for a failed rule-1 read: under the lenny-ops structured logger,
+// a failed read, including the startup read, emits a record whose level
+// field is ERROR, and the read loop keeps running so the next read opens
+// the gate. A record routed through the stdlib-log bridge carries level
+// INFO, which a query filtering on level=ERROR does not see.
+//
+// spec: 25.4 (The lenny-ops Service: Authentication), 25.15 (Failure Mode Analysis)
+func TestRevocationSetRule1FailedReadLogsAtErrorLevel(t *testing.T) {
+	var buf syncBuffer
+	prevLogger := slog.Default()
+	prevFlags, prevOut := log.Flags(), log.Writer()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetFlags(prevFlags)
+		log.SetOutput(prevOut)
+	})
+	opsLogging.Setup(&buf, "lenny-ops")
+
+	h := newRevHarness(t, true)
+	h.src.setFail(true)
+	go h.rev.runReads(h.ctx, h.src, h.src, h.ticks, func(err error) {
+		logRevocationRead(err)
+		h.reads <- err
+	})
+	if err := h.awaitRead(); err == nil {
+		t.Fatal("startup read over a failing source returned nil")
+	}
+
+	records := buf.records(t)
+	if len(records) != 1 {
+		t.Fatalf("got %d log records after the failed startup read, want 1: %v", len(records), records)
+	}
+	rec := records[0]
+	if rec["level"] != "ERROR" {
+		t.Errorf("level = %v, want ERROR", rec["level"])
+	}
+	if msg, _ := rec["msg"].(string); strings.HasPrefix(msg, "ERROR") || !strings.Contains(msg, "revocation set read failed") {
+		t.Errorf("msg = %q, want the read-failure message without a textual level prefix", msg)
+	}
+	if e, _ := rec["err"].(string); e == "" {
+		t.Errorf("record carries no err field: %v", rec)
+	}
+	if rec["component"] != "lenny-ops" {
+		t.Errorf("component = %v, want lenny-ops", rec["component"])
+	}
+
+	h.src.setFail(false)
+	if err := h.tick(); err != nil {
+		t.Fatalf("read after the failed startup read: %v", err)
+	}
+	if h.rev.Stale() {
+		t.Fatal("the loop stopped after the failed startup read; the next read did not open the gate")
+	}
+	if n := len(buf.records(t)); n != 1 {
+		t.Errorf("a successful read logged %d more records, want none", n-1)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the read loop's goroutine to
+// write while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// records decodes every JSON log line written so far.
+func (b *syncBuffer) records(t *testing.T) []map[string]any {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(b.buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not JSON: %v\nline: %s", err, line)
+		}
+		out = append(out, rec)
+	}
+	return out
 }
