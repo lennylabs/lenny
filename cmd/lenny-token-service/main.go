@@ -5,18 +5,19 @@
 //
 //   - HTTP `POST /v1/oauth/token` (RFC 8693 token exchange) for the
 //     external dialect-issuing path. The gateway reverse-proxies
-//     `/v1/oauth/*` here so the Token Service is the actual minter
-//     for every Lenny bearer token.
+//     `/v1/oauth/*` here, so the Token Service mints every token that
+//     §4.3 item 3 assigns to it.
 //   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3
 //     credential-assignment trust boundary the gateway calls over mTLS
 //     to materialize, rotate, and revoke credential leases.
 //
-// Both surfaces sign with the §4 KMS-envelope-backed signer: the HMAC-
-// SHA256 signing key is sealed under a KMS key-encryption-key rather
-// than being a plaintext per-process secret. The KMS provider is
-// pluggable: --kms-provider selects local | aws | gcp | azure; local
-// is the no-cloud development KEK and is rejected when
-// --environment=prod.
+// The HTTP surface signs through the §10.2 shared remote ES256 signer
+// over the KMS key named by the platform:jwt-signing alias, the same key
+// the gateway signs with, and verifies through the key set loaded once
+// at startup. No private signing key exists in the process on a cloud
+// provider. The KMS provider is pluggable: --kms-provider selects
+// local | aws | gcp | azure; local derives the key from the mounted
+// master key and is rejected when --environment=prod.
 package main
 
 import (

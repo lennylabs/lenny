@@ -24,10 +24,22 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
+// mustNewServer builds a Token Service handler through
+// tokenservice.NewServer and fails the test when NewServer refuses the
+// options.
+func mustNewServer(t *testing.T, opts tokenservice.Options) *tokenservice.Server {
+	t.Helper()
+	srv, err := tokenservice.NewServer(opts)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv
+}
+
 func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
+	srv := mustNewServer(t, tokenservice.Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",
@@ -389,7 +401,7 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 // must cap at 1h.
 func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
+	srv := mustNewServer(t, tokenservice.Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",

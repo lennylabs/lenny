@@ -64,7 +64,7 @@ func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issue
 func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop func(context.Context, string, string) error) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
+	return mustNewServer(t, Options{
 		Signer:               jwtsign.HMAC(signer),
 		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",

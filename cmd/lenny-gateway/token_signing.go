@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"log"
 	"sync"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -100,7 +98,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	// through the key set, which holds public keys only and never calls
 	// the KMS, so it does not gate on the breaker. F-10.2.6.
 	kmsBreakerObs := &kmsBreakerObserver{}
-	keySet, jwtSigner, err := buildJWTSigning(context.Background(), kmsProvider, kmsOpts.AliasToKey, kmsBreakerObs)
+	keySet, jwtSigner, err := jwt.LoadSigning(context.Background(), kmsProvider, kmsOpts.AliasToKey, kmsBreakerObs)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §10.2 JWT key set: %v", err)
 	}
@@ -173,26 +171,6 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	w.jwtSigner = jwtSigner
 	w.bearerVerifier = bearerVerifier
 	w.expectedAuds = expectedAuds
-}
-
-// buildJWTSigning loads the §10.2 key set once and builds the gateway's
-// shared signer from its signing entry, so the signer's kid and the
-// verifier's kid come from one PublicKey fetch. The remote signer is
-// wrapped in a BreakerSigner reporting to obs. Any key-set load error is
-// returned, and the caller refuses to start.
-//
-// spec: §10.2 (Authentication) "Signing topology", "Verifier key set and
-// rotation".
-func buildJWTSigning(ctx context.Context, provider kms.Provider, aliasToKey map[string]string, obs jwt.BreakerObserver) (*jwt.KeySet, *jwt.BreakerSigner, error) {
-	keySet, err := jwt.LoadKeySet(ctx, provider, aliasToKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	remote, err := jwt.NewRemoteSigner(provider, keySet.Signing())
-	if err != nil {
-		return nil, nil, fmt.Errorf("build remote signer: %w", err)
-	}
-	return keySet, &jwt.BreakerSigner{Inner: remote, Observer: obs}, nil
 }
 
 // kmsBreakerObserver routes the §10.2 JWTSigner breaker

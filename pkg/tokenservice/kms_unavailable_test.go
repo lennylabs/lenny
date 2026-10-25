@@ -47,7 +47,7 @@ func TestTokenServiceReturnsKMSUnavailableWhenBreakerOpen(t *testing.T) {
 		Cooldown:  jwt.SigningBreakerCooldown,
 		Now:       func() time.Time { return now },
 	}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:   breaker,
 		Verifier: hmac, // verify caller via the real signer
 		Issuer:   "https://lenny.dev.test/token",

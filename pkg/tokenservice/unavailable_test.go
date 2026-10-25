@@ -29,7 +29,7 @@ func TestHandlerPostgresOutageReturns503TokenStoreUnavailable_F1334(t *testing.T
 	// A connection-exception PgError stands in for a primary that is
 	// unreachable or in failover.
 	tx := &txStore{failErr: &pgconn.PgError{Code: "08006", Message: "connection failure"}}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -77,7 +77,7 @@ func TestHandlerNonOutageStoreFailureReturns500_F1334(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
 	tx := &txStore{failErr: &txStoreErr{"constraint violation"}}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -132,7 +132,7 @@ func (f *failingAuditor) Append(context.Context, string, string, json.RawMessage
 func TestHandlerRejectionAuditWriteFailureReturns500TokenExchangeFailed(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",

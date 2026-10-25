@@ -42,7 +42,7 @@ func TestExchangedRowCarriesExchangeType_Rotation_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -93,7 +93,7 @@ func TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7(t *testing.T) 
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -128,7 +128,7 @@ func TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -192,7 +192,7 @@ func TestClassifyExchangeType_spec_16_7(t *testing.T) {
 func TestRejectedExchangeCarriesExchangeType_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",

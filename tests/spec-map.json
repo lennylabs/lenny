@@ -224,7 +224,8 @@
         "tests/tier3_contract/tokenservice_release/release_contract_test.go",
         "pkg/gateway/credentials/credassign/client_classify_internal_test.go",
         "pkg/gateway/credentials/credassign/client_release_breaker_test.go",
-        "tests/tier0_static/token_service_tenant_render_test.go"
+        "tests/tier0_static/token_service_tenant_render_test.go",
+        "tests/tier2_component/tokensigning/tokenservice_keyset_startup_test.go::TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2"
       ],
       "packages": [
         "pkg/token",
@@ -2557,7 +2558,9 @@
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
-        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery"
+        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3"
       ],
       "packages": [
         "pkg/delegation/cycle",
@@ -3343,7 +3346,11 @@
         "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerOpenRefusalCarriesRemainingCooldown_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorRetryAfterSecondsRoundsUpWithFloor_spec_10_2",
         "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorWrapsInner_spec_10_2",
-        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2"
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2",
+        "pkg/tokenservice/caller_origin_test.go::TestNewServerRefusesNilVerifier_spec_10_2",
+        "tests/tier2_component/tokensigning/tokenservice_keyset_startup_test.go::TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
+        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningBuildsSignerFromOneKeySetFetch_spec_10_2",
+        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningReturnsKeySetLoadError_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -4639,7 +4646,13 @@
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockAllowsDistinctSubjects",
         "tests/tier9_security/write_before_issue_failclosed_test.go::TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3",
         "tests/tier9_security/write_before_issue_failclosed_test.go::TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3",
-        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRevokeWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3"
+        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRevokeWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3",
+        "pkg/tokenservice/caller_origin_test.go::TestNewServerRefusesNilVerifier_spec_10_2",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3"
       ],
       "packages": [
         "pkg/credential",
@@ -6984,7 +6997,10 @@
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

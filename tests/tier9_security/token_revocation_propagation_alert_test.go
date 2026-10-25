@@ -110,7 +110,7 @@ func driveEventBusRevocation(t *testing.T, publishLatency time.Duration) *promem
 	store := &revStore{revoked: []issuedtokenstore.RevokedToken{
 		{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true},
 	}}
-	srv := tokenservice.NewServer(tokenservice.Options{
+	srv, err := tokenservice.NewServer(tokenservice.Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -128,6 +128,9 @@ func driveEventBusRevocation(t *testing.T, publishLatency time.Duration) *promem
 			return nil
 		},
 	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	caller := mintCaller(t, signer, "alice@acme.com", "acme", "")
 	subject := mintCaller(t, signer, "alice@acme.com", "acme", "root-jti")

@@ -9,10 +9,13 @@
 //
 // The Server signs with any jwt.Signer. §10.2 requires every
 // Lenny-issued token to be ES256-signed through the KMS provider
-// (jwt.RemoteSigner behind a jwt.BreakerSigner). jwt.HMACSigner does not
-// satisfy jwt.Signer; tests adapt it through tests/testinfra/jwtsign. The Server keeps an in-memory issued-tokens store
-// and no Postgres advisory lock; a durable IssuedTokenStore makes the
-// §13.3 write-before-issue record durable.
+// (jwt.RemoteSigner behind a jwt.BreakerSigner), and every verifier to
+// check it against the §10.2 key set, which the Server takes as its
+// required Verifier. jwt.HMACSigner does not satisfy jwt.Signer; tests
+// adapt it through tests/testinfra/jwtsign. Without an IssuedTokenStore
+// the Server keeps no durable record and takes no Postgres advisory
+// lock; a durable IssuedTokenStore makes the §13.3 write-before-issue
+// record durable.
 package tokenservice
 
 import (
@@ -139,6 +142,8 @@ type Options struct {
 	// which bounds the remote KMS Sign call (§10.2).
 	Signer jwt.Signer
 
+	// Verifier authenticates the caller, subject, and actor tokens. It
+	// is required; production passes the §10.2 key set.
 	Verifier jwt.Verifier
 	Issuer   string
 
@@ -197,15 +202,19 @@ type Options struct {
 	RevocationPropagator func(ctx context.Context, tenantID, jti string) error
 }
 
-// NewServer returns a Server. When Options.Verifier is nil and the
-// configured Signer also verifies (both jwt.HMACSigner and
-// jwt.KMSSigner do), the Server verifies caller, subject, and actor
-// tokens with the signer itself.
-func NewServer(opts Options) *Server {
+// ErrNoVerifier is returned by NewServer when Options.Verifier is nil.
+var ErrNoVerifier = errors.New("tokenservice: Options.Verifier is required")
+
+// NewServer returns a Server, or ErrNoVerifier when Options.Verifier is
+// nil. The verifier authenticates the caller, subject, and actor tokens;
+// in production it is the §10.2 key set. A remote signer holds no key
+// material that can verify, so the Server never falls back to its
+// signer as the verifier.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation", §4.3.
+func NewServer(opts Options) (*Server, error) {
 	if opts.Verifier == nil {
-		if v, ok := opts.Signer.(jwt.Verifier); ok {
-			opts.Verifier = v
-		}
+		return nil, ErrNoVerifier
 	}
 	if opts.PerDialectCap == nil {
 		opts.PerDialectCap = map[string]time.Duration{}
@@ -228,7 +237,7 @@ func NewServer(opts Options) *Server {
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
 	}
-	return s
+	return s, nil
 }
 
 // Handler returns the http.Handler that routes POST /v1/oauth/token.
@@ -438,6 +447,16 @@ func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, fini
 	callerClaims, err := s.verifier.Verify(callerToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+		finish("invalid_client")
+		return jwt.Claims{}, false
+	}
+	// spec: §13.3 "Client authentication on /v1/oauth/token" — a token
+	// carrying origin: "playground" is not a caller credential. Only the
+	// caller token is checked: §8.2 makes a playground bearer the
+	// subject_token of a delegation from a playground session, so the
+	// subject_token and actor_token take no origin check.
+	if callerClaims.Origin == jwt.OriginPlayground {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "a playground-origin token is not a caller credential")
 		finish("invalid_client")
 		return jwt.Claims{}, false
 	}

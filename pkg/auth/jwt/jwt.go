@@ -37,6 +37,10 @@ const (
 	JWTSkewAllowance    = 1 * time.Second
 )
 
+// OriginPlayground is the value of the §27.3 `origin` claim on every
+// token minted for a /playground/* request.
+const OriginPlayground = "playground"
+
 // Claims are the §10.2 JWT payload claims this package recognises.
 // Unknown claims are preserved through Marshal so callers can carry
 // additional values.

@@ -5,6 +5,8 @@ package tokenservice
 import (
 	"sync"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
 // TestNewJTICollisionSafeAcrossInvocations confirms that the
@@ -116,10 +118,11 @@ func TestServerHasNoInProcessJTICache(t *testing.T) {
 	// shape) must be inaccessible. A successful build of this test
 	// file confirms the fields are gone — if either is reintroduced,
 	// the package must drop the corresponding line below.
-	s := NewServer(Options{})
-	// signer is the only required field guaranteed to be populated
-	// after NewServer; everything else is optional. Dereference
-	// nothing about the removed fields here — the test exists to
-	// catch their reintroduction at the type level, not at runtime.
+	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+	s := mustNewServer(t, Options{Verifier: signer})
+	// The verifier is the only required option; everything else is
+	// optional. Dereference nothing about the removed fields here: the
+	// test exists to catch their reintroduction at the type level, not
+	// at runtime.
 	_ = s
 }

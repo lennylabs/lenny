@@ -35,9 +35,9 @@ func localSigningProvider(t *testing.T, seed byte, ref string) *kms.Local {
 // through the production construction.
 func gatewaySigning(t *testing.T, provider kms.Provider) (*jwt.KeySet, *jwt.BreakerSigner) {
 	t.Helper()
-	ks, signer, err := buildJWTSigning(context.Background(), provider, map[string]string{kms.AliasJWTSigning: "local-key-1"}, &kmsBreakerObserver{})
+	ks, signer, err := jwt.LoadSigning(context.Background(), provider, map[string]string{kms.AliasJWTSigning: "local-key-1"}, &kmsBreakerObserver{})
 	if err != nil {
-		t.Fatalf("buildJWTSigning: %v", err)
+		t.Fatalf("LoadSigning: %v", err)
 	}
 	return ks, signer
 }
@@ -99,9 +99,9 @@ func TestGatewayKeySetVerifiesPeerReplicaTokens_spec_10_2(t *testing.T) {
 func TestGatewaySignerBuiltFromOneKeySetFetch_spec_10_2(t *testing.T) {
 	stub := kmsstub.New(t)
 	obs := &kmsBreakerObserver{}
-	ks, signer, err := buildJWTSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, obs)
+	ks, signer, err := jwt.LoadSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, obs)
 	if err != nil {
-		t.Fatalf("buildJWTSigning: %v", err)
+		t.Fatalf("LoadSigning: %v", err)
 	}
 	if got := stub.PublicKeyCalls(); got != 1 {
 		t.Errorf("PublicKey calls = %d, want 1", got)
@@ -132,7 +132,7 @@ func TestGatewaySigningFailsWhenKeySetCannotLoad_spec_10_2(t *testing.T) {
 	stub := kmsstub.New(t)
 	boom := errors.New("kms endpoint refused the connection")
 	stub.SetPublicKeyError(boom)
-	ks, signer, err := buildJWTSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, &kmsBreakerObserver{})
+	ks, signer, err := jwt.LoadSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, &kmsBreakerObserver{})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap the provider error", err)
 	}
@@ -142,7 +142,7 @@ func TestGatewaySigningFailsWhenKeySetCannotLoad_spec_10_2(t *testing.T) {
 	if ks != nil || signer != nil {
 		t.Errorf("key set %v and signer %v returned on failure, want nil", ks, signer)
 	}
-	if _, _, err := buildJWTSigning(context.Background(), nil, nil, &kmsBreakerObserver{}); err == nil {
+	if _, _, err := jwt.LoadSigning(context.Background(), nil, nil, &kmsBreakerObserver{}); err == nil {
 		t.Error("nil provider accepted, want an error")
 	}
 }

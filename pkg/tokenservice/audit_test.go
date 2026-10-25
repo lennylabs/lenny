@@ -200,7 +200,7 @@ func (e *txStoreErr) Error() string { return e.msg }
 func newAuditTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
+	return mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",
@@ -232,7 +232,7 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -289,7 +289,7 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	tx := &txStore{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -330,7 +330,7 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	tx := &txStore{failAt: "audit"}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:       jwtsign.HMAC(signer),
 		Verifier:     signer,
 		Issuer:       "https://lenny.dev.test/token",
@@ -364,7 +364,7 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",
@@ -400,7 +400,7 @@ func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	auditor := &recordingAuditor{}
 	metrics := &recordingMetrics{}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:    jwtsign.HMAC(signer),
 		Verifier:  signer,
 		Issuer:    "https://lenny.dev.test/token",

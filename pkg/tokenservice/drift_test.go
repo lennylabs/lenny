@@ -20,7 +20,7 @@ import (
 func TestDriftDegradedReturns503(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	degraded := true
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:        jwtsign.HMAC(hmac),
 		Verifier:      hmac,
 		Issuer:        "https://lenny.dev.test/token",
@@ -64,7 +64,7 @@ func TestDriftDegradedReturns503(t *testing.T) {
 // the exchange proceeds normally. F-13.3.5.
 func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:        jwtsign.HMAC(hmac),
 		Verifier:      hmac,
 		Issuer:        "https://lenny.dev.test/token",
@@ -97,7 +97,7 @@ func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 // proceeds (the option is opt-in). F-13.3.5.
 func TestDriftNilOptionLeavesHandlerOpen(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := NewServer(Options{
+	srv := mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(hmac),
 		Verifier: hmac,
 		Issuer:   "https://lenny.dev.test/token",

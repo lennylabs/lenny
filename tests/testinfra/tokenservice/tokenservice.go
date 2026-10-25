@@ -2,8 +2,9 @@
 
 // Package tokenservice is the testinfra helper that boots
 // cmd/lenny-token-service as a subprocess for tier-4 integration
-// tests. Builds the binary into a temp dir on first call, then
-// launches it bound to a random free gRPC port. Provides GRPCAddr()
+// tests. Start builds the binary into a temp dir, then launches it
+// bound to a random free gRPC port; Build returns the built binary for
+// a test that runs it with its own flags. Provides GRPCAddr()
 // so tests can pass it to the gateway harness as the
 // --token-service-grpc-addr flag value.
 package tokenservice
@@ -46,23 +47,8 @@ func SkipUnlessAvailable(t testing.TB) {
 // Skips the test when go is not on PATH (CI environments without Go).
 func Start(t testing.TB) *Process {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skipf("go not on PATH: %v", err)
-	}
-
-	tmp, err := os.MkdirTemp("", "lenny-token-service-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-
-	binary := filepath.Join(tmp, "lenny-token-service")
-	root := schematest.RepoRoot(t)
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-token-service")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-token-service: %v\n%s", err, out)
-	}
+	binary := Build(t)
+	tmp := filepath.Dir(binary)
 
 	grpcPort, err := freePort()
 	if err != nil {
@@ -120,6 +106,30 @@ func Start(t testing.TB) *Process {
 		t.Fatalf("token-service not ready: %v\nlogs:\n%s", err, b)
 	}
 	return p
+}
+
+// Build compiles cmd/lenny-token-service into a fresh temporary
+// directory, which t's cleanup removes, and returns the binary's path. A
+// test that runs the binary to exit with its own flags and environment,
+// such as a startup-refusal case, uses it directly; Start uses it before
+// it launches the process. It skips the test when go is not on PATH.
+func Build(t testing.TB) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go not on PATH: %v", err)
+	}
+	tmp, err := os.MkdirTemp("", "lenny-token-service-it-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+	binary := filepath.Join(tmp, "lenny-token-service")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-token-service")
+	build.Dir = schematest.RepoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build lenny-token-service: %v\n%s", err, out)
+	}
+	return binary
 }
 
 // GRPCAddr returns the host:port the gRPC TokenService listens on.

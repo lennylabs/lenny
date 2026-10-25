@@ -45,9 +45,10 @@ func rawExchange(t *testing.T, srv *Server, authHeader *string, contentType stri
 	return resp.StatusCode, env
 }
 
-func newValidationTestServer() (*Server, *jwt.HMACSigner) {
+func newValidationTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
+	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
+	return mustNewServer(t, Options{
 		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Issuer:   "https://lenny.dev.test/token",
@@ -57,7 +58,7 @@ func newValidationTestServer() (*Server, *jwt.HMACSigner) {
 // spec: §13.3 — a request with no Authorization: Bearer caller token is
 // rejected with 401 invalid_client before any token work runs.
 func TestHandlerMissingCallerTokenReturns401(t *testing.T) {
-	srv, _ := newValidationTestServer()
+	srv, _ := newValidationTestServer(t)
 	b, _ := json.Marshal(Request{GrantType: grantTypeExchange, SubjectToken: "x"})
 
 	status, env := rawExchange(t, srv, nil, "application/json", b)
@@ -72,7 +73,7 @@ func TestHandlerMissingCallerTokenReturns401(t *testing.T) {
 // spec: §13.3 — a request whose caller token fails verification is
 // rejected with 401 invalid_client.
 func TestHandlerInvalidCallerTokenReturns401(t *testing.T) {
-	srv, _ := newValidationTestServer()
+	srv, _ := newValidationTestServer(t)
 	bad := "Bearer not-a-real-jwt"
 	b, _ := json.Marshal(Request{GrantType: grantTypeExchange, SubjectToken: "x"})
 
@@ -88,7 +89,7 @@ func TestHandlerInvalidCallerTokenReturns401(t *testing.T) {
 // spec: §13.3 — a malformed JSON body is rejected with 400
 // invalid_request after the caller token is verified.
 func TestHandlerMalformedBodyReturns400InvalidRequest(t *testing.T) {
-	srv, signer := newValidationTestServer()
+	srv, signer := newValidationTestServer(t)
 	callerTok := mintValidationCaller(t, signer)
 	auth := "Bearer " + callerTok
 
@@ -104,7 +105,7 @@ func TestHandlerMalformedBodyReturns400InvalidRequest(t *testing.T) {
 // spec: §13.3 — a grant_type other than the token-exchange grant is
 // rejected with 400 unsupported_grant_type.
 func TestHandlerWrongGrantTypeReturns400(t *testing.T) {
-	srv, signer := newValidationTestServer()
+	srv, signer := newValidationTestServer(t)
 	callerTok := mintValidationCaller(t, signer)
 
 	resp := doExchange(t, srv, callerTok, Request{
@@ -125,7 +126,7 @@ func TestHandlerWrongGrantTypeReturns400(t *testing.T) {
 // spec: §13.3 — a request with the right grant but no subject_token is
 // rejected with 400 invalid_request.
 func TestHandlerMissingSubjectTokenReturns400(t *testing.T) {
-	srv, signer := newValidationTestServer()
+	srv, signer := newValidationTestServer(t)
 	callerTok := mintValidationCaller(t, signer)
 
 	resp := doExchange(t, srv, callerTok, Request{
@@ -146,7 +147,7 @@ func TestHandlerMissingSubjectTokenReturns400(t *testing.T) {
 // spec: §13.3 — a subject_token that fails verification is rejected with
 // 400 invalid_grant.
 func TestHandlerUnverifiableSubjectTokenReturns400InvalidGrant(t *testing.T) {
-	srv, signer := newValidationTestServer()
+	srv, signer := newValidationTestServer(t)
 	callerTok := mintValidationCaller(t, signer)
 
 	resp := doExchange(t, srv, callerTok, Request{
@@ -167,7 +168,7 @@ func TestHandlerUnverifiableSubjectTokenReturns400InvalidGrant(t *testing.T) {
 // spec: §13.3 — an actor_token that fails verification is rejected with
 // 400 invalid_grant (the optional actor branch of verifyExchangeTokens).
 func TestHandlerUnverifiableActorTokenReturns400InvalidGrant(t *testing.T) {
-	srv, signer := newValidationTestServer()
+	srv, signer := newValidationTestServer(t)
 	callerTok := mintValidationCaller(t, signer)
 
 	resp := doExchange(t, srv, callerTok, Request{

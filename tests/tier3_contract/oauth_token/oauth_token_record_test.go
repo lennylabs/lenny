@@ -46,7 +46,7 @@ func (f *fakeRecorder) Record(_ context.Context, tok issuedtokenstore.IssuedToke
 func newServerWithRecorder(t *testing.T, rec tokenservice.IssuedTokenStore) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
+	srv := mustNewServer(t, tokenservice.Options{
 		Signer:        jwtsign.HMAC(signer),
 		Verifier:      signer,
 		Issuer:        "https://lenny.dev.test/token",

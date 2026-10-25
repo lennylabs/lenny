@@ -31,14 +31,16 @@ func (w *tokenServiceWiring) buildDriftMonitor() {
 }
 
 // buildServer constructs the §13.3 token-exchange Server from the signer,
-// issuer, per-dialect caps, write-before-issue stores, metrics, rate limits,
-// and the drift-degraded gate.
+// the §10.2 key set as its verifier, the issuer, per-dialect caps,
+// write-before-issue stores, metrics, rate limits, and the drift-degraded
+// gate.
 //
-// spec: §13.3.
+// spec: §13.3; §10.2 (Authentication) "Verifier key set and rotation".
 func (w *tokenServiceWiring) buildServer() {
-	w.srv = tokenservice.NewServer(tokenservice.Options{
-		Signer: w.signer,
-		Issuer: *w.f.issuer,
+	srv, err := tokenservice.NewServer(tokenservice.Options{
+		Signer:   w.signer,
+		Verifier: w.keySet,
+		Issuer:   *w.f.issuer,
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,
@@ -55,6 +57,10 @@ func (w *tokenServiceWiring) buildServer() {
 		},
 		DriftDegraded: w.driftMonitor.Degraded,
 	})
+	if err != nil {
+		fatalf("token-exchange server: %v", err)
+	}
+	w.srv = srv
 }
 
 // buildEventEmitterAndCache wires the §4.0 EventEmitter and, when --redis-url
