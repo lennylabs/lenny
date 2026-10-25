@@ -12,7 +12,7 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S5 · spec** — SPEC-5. Lands the §12.3 durability-table row.
       Tiers 0, 11. Depends on: —
-- [ ] **S6 · spec** — SPEC-6. Lands the §5.2 claimOrphanTimeout sentence edit.
+- [ ] **S6 · spec** — SPEC-6. Lands every part.
       Tiers 0, 11. Depends on: S1
 - [ ] **S7 · spec** — SPEC-7. Lands the §7.2 enumeration and paragraph edits and the §6.2 bullet sentence.
       Tiers 0, 11. Depends on: —
@@ -22,15 +22,15 @@
       Tiers 0, 1, 7a. Depends on: S4, S8
 - [ ] **S10 · code** — CODE-3. Lands the commit-status check in `pgstore.Store.Update`.
       Tiers 0, 1, 2, 8. Depends on: S5
-- [ ] **S11 · code** — CODE-4. Lands the seal outcome fixes and the closing gate.
-      Tiers 0, 1, 7a. Depends on: S1, S2
+- [ ] **S11 · code** — CODE-4. Lands every item.
+      Tiers 0, 1, 2, 7a. Depends on: S1, S2, S6
 - [ ] **S12 · code** — CODE-5. Lands the primary-read row check and the Checkpointer binding release.
       Tiers 0, 1, 7a. Depends on: S2, S11
 - [ ] **S13 · code** — CODE-6. Lands the startup gate, flag help, and chart gate edits.
       Tiers 0, 1. Depends on: S1, S6
-- [ ] **S14 · code** — CODE-7. Lands the retention settle, resume-cleanup scope, fenced derive-failure insert, and terminate precondition.
-      Tiers 0, 1, 2, 7a. Depends on: S3, S7, S8
+- [ ] **S14 · code** — CODE-7. Lands every item.
+      Tiers 0, 1, 2, 7a. Depends on: S3, S6, S7, S8
 - [ ] **S15 · test** — TEST-1. Lands the tests listed under TEST-1.
       Tiers 0, 1, 2, 7a, 8. Depends on: S8, S9, S10, S11, S12, S13, S14
-- [ ] **S16 · docs** — REC-1. Lands the `BUILD-GAPS.md` resolutions, departures, and notes.
+- [ ] **S16 · docs** — REC-1 and DOC-1. Lands the `BUILD-GAPS.md` resolutions, departures, and notes, and the troubleshooting-page edit.
       Tiers 0, 11. Depends on: S15
