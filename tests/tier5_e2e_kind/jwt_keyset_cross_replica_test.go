@@ -124,6 +124,28 @@ func mintKeySetImpersonation(t *testing.T, base string) string {
 	return tok
 }
 
+// requireSameIdentityOnBothReplicas presents bearer to GET /v1/admin/me on
+// both gateway pods and requires each to answer 200 with subject sub and
+// the same tenant. The tenant is compared across replicas rather than
+// against the impersonation target, because the e2e install runs
+// single-tenant and every verifier resolves the request to the built-in
+// default tenant regardless of the token's tenant claim.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation", §10.2 (Authentication) single-tenant mode.
+func requireSameIdentityOnBothReplicas(t *testing.T, pods []string, baseA, baseB, bearer, sub string) {
+	t.Helper()
+	codeA, bodyA := keySetCall(t, http.MethodGet, baseA+"/v1/admin/me", bearer, nil, nil)
+	if codeA != http.StatusOK || bodyA["subject"] != sub {
+		t.Errorf("bearer minted on %s, presented to the same pod: status %d body %v, want 200 as %s", pods[0], codeA, bodyA, sub)
+		return
+	}
+	codeB, bodyB := keySetCall(t, http.MethodGet, baseB+"/v1/admin/me", bearer, nil, nil)
+	if codeB != http.StatusOK || bodyB["subject"] != sub || bodyB["tenantId"] != bodyA["tenantId"] {
+		t.Errorf("bearer minted on %s, presented to %s: status %d body %v, want 200 as %s in tenant %v",
+			pods[0], pods[1], codeB, bodyB, sub, bodyA["tenantId"])
+	}
+}
+
 // opsPodSelector selects the lenny-ops pods. lenny-ops pods carry
 // app=lenny-ops rather than the lenny.dev/component label (§13.2.3).
 const opsPodSelector = "app=lenny-ops"
@@ -244,9 +266,7 @@ func TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2(t *testing.T) {
 	defer stopB()
 
 	minted := mintKeySetImpersonation(t, baseA)
-	if code, body := keySetCall(t, http.MethodGet, baseB+"/v1/admin/me", minted, nil, nil); code != http.StatusOK || body["tenantId"] != "acme" {
-		t.Errorf("bearer minted on %s, presented to %s: status %d body %v, want 200 as acme", pods[0], pods[1], code, body)
-	}
+	requireSameIdentityOnBothReplicas(t, pods, baseA, baseB, minted, "alice@acme.com")
 	admin := readAdminBearerSecret(t, c)
 	for i, base := range []string{baseA, baseB} {
 		if code, body := keySetCall(t, http.MethodGet, base+"/v1/admin/me", admin, nil, nil); code != http.StatusOK {

@@ -152,7 +152,7 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("arn:aws:kms:us-east-1:000000000000:key/k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]string{
 		"tenant:acme":                    "arn:aws:kms:us-east-1:000000000000:key/k-acme",
-		"platform:token-service-signing": "arn:aws:kms:us-east-1:000000000000:key/k-platform",
+		"platform:jwt-signing": "arn:aws:kms:us-east-1:000000000000:key/k-platform",
 	})
 	return p, f
 }
@@ -205,7 +205,7 @@ func TestUnwrapDEKRejectsCrossAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapDEK: %v", err)
 	}
-	_, err = p.UnwrapDEK(context.Background(), "platform:token-service-signing", wrapped)
+	_, err = p.UnwrapDEK(context.Background(), "platform:jwt-signing", wrapped)
 	if err == nil {
 		t.Error("UnwrapDEK under a different alias should fail")
 	}

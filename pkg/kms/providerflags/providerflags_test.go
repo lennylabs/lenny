@@ -37,7 +37,7 @@ func TestResolveRejectsLocalInProduction(t *testing.T) {
 func TestResolveLocalWithMasterKeyFilePersists_spec_17_4_163(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kms", "master.key")
 	ctx := context.Background()
-	const alias = "platform:token-service-signing"
+	const alias = "platform:jwt-signing"
 
 	p1, err := Resolve(ctx, Options{Provider: ProviderLocal, MasterKeyFile: path})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestBindRegistersFlags(t *testing.T) {
 		"--kms-provider=aws",
 		"--kms-aws-region=us-east-1",
 		"--kms-master-key-file=/var/lib/lenny/master.key",
-		"--kms-alias=platform:token-service-signing=alias/lenny/token-service",
+		"--kms-alias=platform:jwt-signing=alias/lenny/jwt-signing",
 	}); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestBindRegistersFlags(t *testing.T) {
 	if opts.AWSRegion != "us-east-1" {
 		t.Errorf("AWSRegion=%q, want us-east-1", opts.AWSRegion)
 	}
-	if got := opts.AliasToKey["platform:token-service-signing"]; got != "alias/lenny/token-service" {
+	if got := opts.AliasToKey["platform:jwt-signing"]; got != "alias/lenny/jwt-signing" {
 		t.Errorf("AliasToKey=%v, want one entry", opts.AliasToKey)
 	}
 }

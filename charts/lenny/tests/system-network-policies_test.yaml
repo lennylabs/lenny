@@ -459,6 +459,42 @@ tests:
             port: 8080
             protocol: TCP
 
+  # spec: §4.3; §13.2 — the gateway reverse-proxies /v1/oauth/* to the
+  # Token Service's HTTP listener, so the gateway egress rule to the
+  # token-service pods admits the HTTP port alongside the gRPC port,
+  # mirroring the ingress side of allow-token-service.
+  - it: allows gateway egress to the token-service gRPC and HTTP ports
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: token-service
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 50052
+            protocol: TCP
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 8081
+            protocol: TCP
+
+  - it: follows a custom tokenService.httpPort on the gateway egress rule
+    set:
+      tokenService.httpPort: 9181
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 9181
+            protocol: TCP
+
   - it: allows ops egress to CoreDNS for name resolution
     documentSelector:
       path: metadata.name

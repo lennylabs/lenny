@@ -170,7 +170,7 @@ const DEKSize = 32
 //     from the cloud KMS.
 //
 // The cloud provider maps a Lenny alias (for example "tenant:acme" or
-// "platform:token-service-signing") to the cloud KMS resource through
+// "platform:jwt-signing") to the cloud KMS resource through
 // deployment configuration. Until a cloud provider is wired, Local is
 // the implemented Provider; it is the no-cloud development KEK and the
 // test KEK, and it satisfies the same Provider contract a cloud

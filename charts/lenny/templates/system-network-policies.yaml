@@ -569,6 +569,11 @@ spec:
       ports:
         - port: {{ .Values.tokenService.grpcPort }}
           protocol: TCP
+        # §4.3 canonical token endpoint: the gateway reverse-proxies
+        # /v1/oauth/* to the Token Service's HTTP listener, the egress
+        # counterpart of the HTTP port allow-token-service admits.
+        - port: {{ .Values.tokenService.httpPort }}
+          protocol: TCP
     - to:
         - podSelector:
             matchLabels:
