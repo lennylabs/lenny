@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
@@ -211,51 +210,7 @@ func (w *gatewayWiring) runServers() {
 
 	<-stopCh
 	log.Printf("lenny-gateway: shutting down")
-	ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
-	defer cancel()
-	// Flush buffered spans before the process exits (§16.3 batch processor).
-	_ = w.traceShutdown(ctx)
-	_ = w.httpSrv.Shutdown(ctx)
-	// spec: §7.3 (Resume driver) — end the session server's lifetime
-	// context so in-flight resume attempts, commit tails, takeover
-	// deliveries, and terminal binding releases stop at their next check.
-	if w.sessionSrv != nil {
-		w.sessionSrv.Close()
-	}
-	if w.llmProxySrv != nil {
-		_ = w.llmProxySrv.Shutdown(ctx)
-	}
-	if w.gatewayCtrlSrv != nil {
-		w.gatewayCtrlSrv.GracefulStop()
-	}
-	if w.pgPool != nil {
-		w.pgPool.Close()
-	}
-	// spec: §12.3, §15.1 — release the CREATE-privileged DDL pools opened for
-	// per-tenant sequence provisioning. primaryDDLPool aliases billingAuditDDLPool
-	// in the single-instance topology, so closeDDLPools closes each distinct
-	// pool once. F-11.2.10.
-	closeDDLPools(w.billingAuditDDLPool, w.primaryDDLPool)
-	// spec: §17.4 — stop the Source-Mode SQLite flush loop and
-	// snapshot the session/metadata stores one final time so a clean
-	// shutdown (the documented Ctrl-C flow) loses no writes, then close
-	// the database. F-17.4.2.
-	if w.sqliteDB != nil {
-		if w.sqliteFlushCancel != nil {
-			w.sqliteFlushCancel()
-		}
-		if err := w.sqliteDB.Close(ctx); err != nil {
-			log.Printf("lenny-gateway: §17.4 sqlite close: %v", err)
-		}
-	}
-	if w.redisClient != nil {
-		_ = w.redisClient.Close()
-	}
-	// §12.4: close the per-concern split clients (no-op when no split is
-	// configured; the base client closed above is left untouched).
-	_ = w.concernRedis.Close()
-	// §10.7: release the vendor OpenFeature SDK background connections.
-	w.experimentProviders.Close()
+	w.shutdownSequence(*shutdownTimeout).run()
 }
 
 // breakerRegistry is the breaker-store surface the gateway wires: the

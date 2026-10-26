@@ -1898,6 +1898,42 @@ func (s *Server) Close() {
 	}
 }
 
+// terminalWorkPollInterval is how often WaitTerminalWork reads the terminal
+// claim record.
+const terminalWorkPollInterval = 100 * time.Millisecond
+
+// WaitTerminalWork blocks until s.terminalClaims is empty, or ctx ends. It
+// reads the record every terminalWorkPollInterval, returns nil once the
+// record holds no entry, and returns ctx.Err() when ctx ends first. The
+// record counts each open terminal-writer claim, which spans the
+// post-terminal hook, and each terminal binding release in progress, so an
+// empty record means no terminal pipeline runs on this replica. A claim that
+// a background loop opens during the wait extends it, up to ctx's bound.
+//
+// The gateway calls it on shutdown before Close, because the hook's release
+// and the terminal binding release take the slot-accounting lock on the
+// server-lifetime context and skip the release once Close cancels it.
+//
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) WaitTerminalWork(ctx context.Context) error {
+	ticker := time.NewTicker(terminalWorkPollInterval)
+	defer ticker.Stop()
+	for s.terminalClaims.size() != 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return nil
+}
+
+// OpenTerminalWork reports the number of sessions with an open terminal
+// claim or a terminal binding release in progress, which the shutdown
+// sequence logs when the wait reaches its bound.
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) OpenTerminalWork() int { return s.terminalClaims.size() }
+
 // lifetime returns the server-lifetime context, or context.Background() on
 // a Server built without New.
 func (s *Server) lifetime() context.Context {

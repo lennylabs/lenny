@@ -4,13 +4,16 @@ package sessionserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -236,4 +239,165 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 
 func containsState(data string, st session.State) bool {
 	return strings.Contains(data, `"state":"`+string(st)+`"`)
+}
+
+// waitTerminalWorkAsync runs WaitTerminalWork on a context bounded by bound
+// and delivers its result on the returned channel.
+func waitTerminalWorkAsync(srv *Server, bound time.Duration) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), bound)
+		defer cancel()
+		done <- srv.WaitTerminalWork(ctx)
+	}()
+	return done
+}
+
+// requireStillWaiting fails the test when the wait has already returned.
+func requireStillWaiting(t *testing.T, done <-chan error, why string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Fatalf("WaitTerminalWork returned %v while %s", err, why)
+	default:
+	}
+}
+
+// receiveWait returns the wait's result, failing after limit.
+func receiveWait(t *testing.T, done <-chan error, limit time.Duration) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(limit):
+		t.Fatalf("WaitTerminalWork did not return within %v", limit)
+		return nil
+	}
+}
+
+// TestWaitTerminalWorkWaitsOnTheTerminalClaimRecord_spec_10_1_7 asserts the
+// shutdown wait on the terminal claim record: it returns nil at once when no
+// claim is open, returns ctx.Err() at its bound while a claim stays open,
+// and treats a claim opened during the wait as extending it until that
+// claim closes or the bound ends. Background loops open claims during the
+// wait, so a claim opened mid-wait is part of the terminal work the wait
+// covers rather than a hang.
+//
+// spec: 10.1.7 (preStop Hook Drain), 10.1.7 (Terminal pipelines at process
+// exit.)
+func TestWaitTerminalWorkWaitsOnTheTerminalClaimRecord_spec_10_1_7(t *testing.T) {
+	t.Run("empty record returns nil at once", func(t *testing.T) {
+		srv := New(memstore.New(), Options{})
+		defer srv.Close()
+		start := time.Now()
+		if err := receiveWait(t, waitTerminalWorkAsync(srv, 5*time.Second), 5*time.Second); err != nil {
+			t.Fatalf("WaitTerminalWork = %v, want nil", err)
+		}
+		if waited := time.Since(start); waited >= terminalWorkPollInterval {
+			t.Errorf("waited %v on an empty record, want no poll interval", waited)
+		}
+	})
+	t.Run("open claim at the bound returns ctx.Err", func(t *testing.T) {
+		srv := New(memstore.New(), Options{})
+		defer srv.Close()
+		end := srv.BeginTerminal("s")
+		defer end()
+		err := receiveWait(t, waitTerminalWorkAsync(srv, 250*time.Millisecond), 5*time.Second)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("WaitTerminalWork = %v, want context.DeadlineExceeded", err)
+		}
+		if got := srv.OpenTerminalWork(); got != 1 {
+			t.Errorf("OpenTerminalWork = %d, want 1", got)
+		}
+	})
+	t.Run("cancelled context returns context.Canceled", func(t *testing.T) {
+		srv := New(memstore.New(), Options{})
+		defer srv.Close()
+		end := srv.BeginTerminal("s")
+		defer end()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := srv.WaitTerminalWork(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("WaitTerminalWork = %v, want context.Canceled", err)
+		}
+	})
+	t.Run("claim opened mid-wait extends the wait until it closes", func(t *testing.T) {
+		srv := New(memstore.New(), Options{})
+		defer srv.Close()
+		endFirst := srv.BeginTerminal("first")
+		done := waitTerminalWorkAsync(srv, 10*time.Second)
+		time.Sleep(50 * time.Millisecond)
+		endSecond := srv.BeginTerminal("second")
+		endFirst()
+		time.Sleep(3 * terminalWorkPollInterval)
+		requireStillWaiting(t, done, "a claim opened during the wait is still open")
+		endSecond()
+		if err := receiveWait(t, done, 5*time.Second); err != nil {
+			t.Fatalf("WaitTerminalWork = %v, want nil once every claim closed", err)
+		}
+	})
+	t.Run("claim opened mid-wait that stays open ends at the bound", func(t *testing.T) {
+		srv := New(memstore.New(), Options{})
+		defer srv.Close()
+		endFirst := srv.BeginTerminal("first")
+		done := waitTerminalWorkAsync(srv, 400*time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
+		endSecond := srv.BeginTerminal("second")
+		defer endSecond()
+		endFirst()
+		if err := receiveWait(t, done, 5*time.Second); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("WaitTerminalWork = %v, want context.DeadlineExceeded", err)
+		}
+	})
+	t.Run("terminal binding release in progress is waited on", func(t *testing.T) {
+		f := newFunnelFixture(t, funnelOpts{})
+		row, _ := bindAt(t, f, "s", session.StateCancelled, 3, 3)
+		unlock, err := f.srv.slotAccountLocks.Lock(context.Background(), "s")
+		if err != nil {
+			t.Fatalf("lock: %v", err)
+		}
+		f.srv.ReleaseTerminalBinding(row)
+		done := waitTerminalWorkAsync(f.srv, 10*time.Second)
+		time.Sleep(2 * terminalWorkPollInterval)
+		requireStillWaiting(t, done, "a terminal binding release waits on the slot-accounting lock")
+		unlock()
+		if err := receiveWait(t, done, 5*time.Second); err != nil {
+			t.Fatalf("WaitTerminalWork = %v, want nil once the release ended", err)
+		}
+		f.srv.Close()
+		if calls := f.exec.callList(); len(calls) != 1 || calls[0] != executor.DispositionCancelled {
+			t.Errorf("releases = %v, want one cancelled release before Close", calls)
+		}
+	})
+}
+
+// TestShutdownCloseBeforeTheWaitSkipsAPendingRelease_spec_10_1_7 pins why
+// the shutdown wait precedes Close: a terminal binding release waiting on
+// the slot-accounting lock acquires it on the server-lifetime context, so a
+// Close that runs first ends the wait for the lock and the release is
+// skipped, leaving the binding held. Run in the stated order, the same
+// release completes its lock acquisition and releases the binding.
+//
+// spec: 10.1.7 (Terminal pipelines at process exit.), 7.2 (Interactive
+// Session Model)
+func TestShutdownCloseBeforeTheWaitSkipsAPendingRelease_spec_10_1_7(t *testing.T) {
+	f := newFunnelFixture(t, funnelOpts{})
+	row, _ := bindAt(t, f, "s", session.StateCancelled, 3, 3)
+	unlock, err := f.srv.slotAccountLocks.Lock(context.Background(), "s")
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	f.srv.ReleaseTerminalBinding(row)
+	time.Sleep(20 * time.Millisecond)
+	f.srv.Close()
+	if err := receiveWait(t, waitTerminalWorkAsync(f.srv, 5*time.Second), 6*time.Second); err != nil {
+		t.Fatalf("WaitTerminalWork = %v, want nil once the cancelled release ended", err)
+	}
+	unlock()
+	if calls := f.exec.callList(); len(calls) != 0 {
+		t.Errorf("releases = %v, want none: Close ended the release's lock wait", calls)
+	}
+	if _, ok := f.registry.Get("s"); !ok {
+		t.Error("the binding was released although Close preceded the lock acquisition")
+	}
 }
