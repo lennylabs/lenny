@@ -3141,7 +3141,7 @@ Proposals, third wave:
 
 Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
 
-- [ ] **Inter-replica carrier proposal** (not yet written). §29.3 names no inter-replica conversation for
+- [x] **Inter-replica carrier proposal** (done as a proposal; implementation pending). §29.3 names no inter-replica conversation for
   the interrupt, terminate, delete, resume, interaction-resolution, upload, and message rows, and §28.5.4
   states no replica address. The proposal adds the §28.3 channel row and the §28.5.4 card for a general
   request-forwarding service, defines the replica address (`resolveReplicaID` returns a hostname with a
@@ -3150,6 +3150,11 @@ Proposals the R-steps need (added 2026-10-21 by the R7 to R25 re-derivation):
   store-and-wake (R10), and specifies the cross-replica release request that R21 carries. It precedes
   R13's residue, R18, R19, and R21, and it settles F-29.3.1's carrier. P2's off-holder terminate and
   delete forward rides the same carrier.
+  - **Outcome.** Proposal 0101 (`proposals/0101_new_gateway-replicas-have-no-way-to-ask-the-replica/`)
+    was approved 2026-10-26 (merge `2aa5cc84c`). It adds `CH-HOLDERFORWARD` with the replica address in the
+    `REG-COORDLEASE` value, and the drain publish on `CH-BINDRELEASE`. Its implementation, which carries plan
+    steps R18, R19, and R21 and closes F-29.3.1, F-29.3.2, F-10.1.33, F-7.2.38, and F-12.8.43 as its REC-1
+    states, is pending. Its unstaged defects are filed below.
 - [ ] **Adapter shutdown and eviction proposal** (not yet written). It defines the adapter shutdown budget
   and fallback that F-4.6.31 lacks, the eviction signal on `CH-ADAPTEREVENTS` (the specification states no
   message name since revert `54292da1b`), and the best-effort eviction snapshot. It is sequenced against
@@ -3271,7 +3276,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
 
 **Defects filed from proposal 0100's unstaged-defect list (2026-10-25).** Proposal 0100 (P2a) lists
 defects in the shipped tree that it does not stage. These were already tracked and are not refiled: F-11.2.31
-(P4), F-7.2.35 (P2b), F-10.1.33 and F-12.8.43 (the inter-replica carrier proposal, proposal 0101, drafting),
+(P4), F-7.2.35 (P2b), F-10.1.33 and F-12.8.43 (the inter-replica carrier proposal, proposal 0101, approved 2026-10-26),
 and the terminal-writer half of F-4.9.33 (P2; the owner's delegate assigned it to P2b on 2026-10-25, because P2a, proposal 0100, is approved and its scope is closed). The §12.9 T1
 retention entry is not filed, because no session can carry the T1 tier: `ValidWorkspaceTier` admits only the
 empty tier, T3, and T4 for tenants and environments, so the T1 branch of `retentionForTier` is unreachable.
@@ -3284,7 +3289,7 @@ The rest are filed in BUILD-GAPS and routed below.
   - [ ] **F-5.2.57** (Low), with **P3**: §5.2 says pool admission refuses a pool that misses the
     `claimOrphanTimeout` bound, while no pool field enters the bound and no admission check exists. P3's
     deadline edits name the field or strike the clause.
-  - [ ] **F-29.3.3** (Low), with the **inter-replica carrier proposal** (proposal 0101, drafting): the §29.3
+  - [ ] **F-29.3.3** (Low), with the **inter-replica carrier proposal** (proposal 0101, approved 2026-10-26): the §29.3
     off-holder rows for terminate and DELETE omit `resuming`.
   - [ ] **Postgres HA review proposal** (not yet written): **F-12.3.27** (Medium). §12.3 states RPO 0 for
     committed writes, while a write whose standby acknowledgement wait is interrupted is visible on the
@@ -3293,6 +3298,39 @@ The rest are filed in BUILD-GAPS and routed below.
     `workspace-seal-stuck` runbook queries a session listing and a `sealing` state that do not exist) and
     **F-24.11.4** (Low, the §24.11 force-terminate row omits the already-terminal case). It is independent
     of P2 to P4 and of the inter-replica carrier proposal.
+
+**Defects filed from proposal 0101's unstaged-defect list (2026-10-26).** Proposal 0101 (the inter-replica
+carrier proposal) lists defects in the shipped tree that it does not stage. The NET-070 internal TLS
+listener, whose chart default port 8443 collides with `llmProxyPort`, is already tracked as TEST-GAPS
+T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS and routed below.
+
+- Proposal routing.
+  - [ ] **Gateway request deadline proposal** (not yet written): **F-11.3.44** (Medium, no gateway code
+    enforces the §11.3 Request timeout or Upload timeout, and neither value exists as a flag or chart value)
+    and **F-7.2.44** (Medium, `PodExecutor.Send` answers a REST message only after the agent turn's
+    `response`, while §7.2 path 2 answers on stdin consumption within the delivery timeout). The proposal
+    states the routes each timeout bounds and a stdin-consumption acknowledgement on `CH-ATTACH`. Both
+    defects apply to a request served on the coordinator and to a request 0101 forwards to it, so the
+    proposal follows 0101's implementation.
+  - [ ] **Coordination contract proposal** (not yet written): **F-10.1.40** (Low, the coordination
+    Sweeper's terminal binding release has no specification basis) and **F-10.1.41** (Low, §10.1.1 and
+    the `CH-ATTACH` card state a `SELECT ... FOR UPDATE SKIP LOCKED` fallback, while §12.2, §12.4, and the
+    code use a transaction advisory lock on `session_leases`). Both are §10.1.1 edits, so the proposal can
+    join R16's §10.1.1 edit for F-10.1.39.
+  - [ ] **F-12.8.61** (Medium), with the **admin session investigation proposal** (not yet written, with
+    F-17.7.13 and F-24.11.4): the lifecycle drain and admin force-terminate write the terminal state on
+    the replica that runs them, and the binding replica's release runs no seal. The proposal states
+    whether the forced transition runs on the holder through `CH-HOLDERFORWARD`, so it follows 0101's
+    implementation.
+  - [ ] **F-15.1.58** (Low), with the **token audience and error-catalog proposal** (not yet written, with
+    F-10.2.27 and F-15.1.56): `TOKEN_EXPIRED` and `TOKEN_INVALID` have no §15.1 catalog row and no
+    `errorclassify` entry, so both classify as TRANSIENT and retryable.
+  - [ ] **Upload route proposal** (not yet written): **F-15.1.57** (Low). §15.1 and the §29.3 matrix name
+    `POST /v1/sessions/{id}/upload` for the mid-session upload, while the code serves it on
+    `/upload-to-session`.
+  - [ ] **Channel register completeness proposal** (not yet written): **F-28.3.1** (Low). The credential
+    revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
+    register.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
