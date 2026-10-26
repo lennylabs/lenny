@@ -136,6 +136,17 @@ spec:
             # reads the same value as the gateway's playground bearer
             # lifetime, so both binaries take one operator-set default.
             - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
+            # §13.3 "Client authentication on /v1/oauth/token": the upstream
+            # IdP's ID token is the bootstrap caller credential. The Token
+            # Service verifies it against the issuer's JWK Set with the
+            # audience and tenant claim the gateway uses. F-13.3.21.
+            {{- with .Values.auth.oidc.issuerUrl }}
+            - --oidc-issuer-url={{ . }}
+            {{- end }}
+            {{- with .Values.auth.oidc.clientId }}
+            - --oidc-client-id={{ . }}
+            {{- end }}
+            - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
             # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
             # dev default; cloud installs set kms.provider to
             # aws | gcp | azure and supply the matching aliases.
