@@ -3257,8 +3257,9 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
     `user_bearer`; T-10.2.1 is closed with it.
-  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
-    the mint through the Token Service exchange §8.2 names. Coordinate with F-10.2.25.
+  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
+    out of this queue on 2026-10-26: it needs a proposal, and it joins F-10.2.25 in the **session capability
+    and delegation child token proposal** below.
   - [x] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
     Fixed in `0ae8a114e`: `Reconcile` returns an error naming each failed Redis write and retries both on the
     next pass, a failed removal before the Redis locks are read.
@@ -3279,8 +3280,19 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
     §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
     on every production gate.
-  - [ ] **Session capability token proposal** (not yet written), the follow-up 0097 names: **F-10.2.25**
-    (Medium), the session-creation mint and the gateway-to-pod renewal path.
+  - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
+    names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
+    **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
+    joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
+    `actor_token`. §8.2 names the exchange and its parameters, and the proposal settles the points it
+    leaves open:
+    - the `actor_token` source for a root parent, whose session-creation token is never minted today;
+    - the `subject_token` source at delegation time, because §8.2 sets it to the authenticated user's JWT
+      and the gateway holds no user bearer while serving `lenny/delegate_task` from the parent pod;
+    - which process signs the child token and writes its `issued_tokens` and `token.exchanged` rows, since
+      §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
+      Deployment, and how the gateway authenticates as that internal caller;
+    - how the child token is delivered to the child pod.
   - [ ] **Shared `uploadToken` key proposal** (not yet written): **F-7.1.31** (Medium), the per-process key
     ring and consumed-token tracker. It may join the session capability token proposal.
   - [ ] **Token audience and error-catalog proposal** (not yet written): **F-10.2.27** (Medium, no verifier
@@ -3425,6 +3437,24 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     The §17.7 Postgres failover and PgBouncer pool saturation entries and their runbooks connect on port
     6432 as a `pgbouncer` admin user the chart does not configure, set pool-size values the chart does not
     have, and name a `postgres-credentials` Secret the chart does not create.
+
+**Defects filed from the direct fix of F-10.2.26 (2026-10-26).** The F-10.2.26 resolution names three
+residual defects in the IdP-token paths that no record tracked. Each is filed in BUILD-GAPS and routed
+below. §27.3, §27.3.1, and §13.3 already state the behaviour, so each is a direct fix that reuses the
+F-10.2.26 `jwt.OIDCVerifier`.
+
+- Direct-fix queue, after the direct-fix queue of F-25.4.33, F-17.9.25, and F-13.3.19 above.
+  - [ ] **F-27.3.14** (Medium): the playground `apiKey` mint verifies the pasted bearer with the Lenny key
+    set alone (`playground.Options.Verifier` is `w.jwtKeySet`), so it refuses the OIDC ID token §27.3 names.
+    Pass the playground the composed bearer verifier the auth middleware uses.
+  - [ ] **F-27.3.15** (Medium): no gateway code calls `playground.NewHTTPOIDCExchanger`, so the default
+    `oidc` mode's login and callback answer `503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE`. Wire the exchanger from
+    `--oidc-issuer-url`, `--oidc-client-id`, and the issuer's discovery document, and validate the returned
+    ID token with the F-10.2.26 verifier.
+  - [ ] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
+    key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
+    Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
+    from `auth.oidc.*`.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
