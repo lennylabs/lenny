@@ -676,17 +676,45 @@ func (h *Harness) WatchReleaseMarker(fail bool) {
 // AwaitReleaseMarkerWrite waits until a replica has made the release-marker
 // write for the session since WatchReleaseMarker, whether the write applied
 // or failed, and fails the test after ten seconds.
+//
+// When the terminal write landed on a replica other than the one that binds
+// the session, the binding replica releases the pod from its coordination
+// Sweeper's terminal binding release and makes the marker write there. The
+// harness runs no Sweeper loop, so the wait runs a sweep on every surviving
+// replica between polls. The sweep leaves the harness clock where it is, so
+// the wait does not move the session toward its post-terminal cap.
+//
+// spec: §7.1 (Post-terminal window), §10.1.1 (Stateless Replicas and
+// Per-Session Coordination)
 func (h *Harness) AwaitReleaseMarkerWrite(t testing.TB, id string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, e := range h.Trace.Entries() {
-			if e.Call == "Update" && e.SessionID == id && strings.Contains(e.Site, releaseMarkerSite) {
-				h.Settle()
-				return
-			}
+		if h.releaseMarkerWritten(id) {
+			h.Settle()
+			return
 		}
-		time.Sleep(time.Millisecond)
+		h.sweepSurviving(context.Background())
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("no replica made the release-marker write for %s", id)
+}
+
+// releaseMarkerWritten reports whether the trace holds a release-marker
+// write for the session.
+func (h *Harness) releaseMarkerWritten(id string) bool {
+	for _, e := range h.Trace.Entries() {
+		if e.Call == "Update" && e.SessionID == id && strings.Contains(e.Site, releaseMarkerSite) {
+			return true
+		}
+	}
+	return false
+}
+
+// sweepSurviving runs one coordination sweep on every surviving replica
+// without advancing the harness clock.
+func (h *Harness) sweepSurviving(ctx context.Context) {
+	for _, r := range h.Surviving() {
+		_, _ = r.Sweeper.Sweep(ctx)
+	}
 }

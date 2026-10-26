@@ -20,6 +20,7 @@ package tier4_integration_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -402,4 +403,37 @@ func TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1(t *testing.T
 	admitted := requireAdmittedOnPod(t, h, b, pod)
 	requireMembers(t, h, pod, append(slices.Clone(ids[1:]), admitted)...)
 	h.Check(t)
+}
+
+// spec: §7.1 (Post-terminal window), §10.1.1 (Stateless Replicas and
+// Per-Session Coordination), §5.2 (Post-recovery rehydration atomicity)
+// diagnosis: replica B made the terminal write of a session replica A binds,
+// so A's coordination Sweeper released the binding through its terminal
+// binding release and made the release-marker write there. A failure means
+// A's terminal binding release recorded no marker (or recorded one despite
+// the fault), or the reseed after a set loss counted the session against
+// the marker: a recorded release must free the slot and a failed marker
+// write must keep the session counted in its post-terminal window.
+func TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1(t *testing.T) {
+	for _, st := range postTerminalStores {
+		for _, failMarker := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/marker-fails-%v", st.name, failMarker), func(t *testing.T) {
+				h := st.new(t)
+				a, b := h.Replicas[0], h.Replicas[1]
+				pod, ids := h.FillPod(t, a)
+				h.EndWithRelease(t, b, pod, ids[0], failMarker)
+				loseSet(t, h, pod)
+				if failMarker {
+					if id, code, body := h.TryStartSession(a); code == http.StatusCreated {
+						t.Fatalf("start %s on %s after the reseed = %d %v, want a refusal at maxConcurrentSessions", id, a.ID, code, body)
+					}
+					requireMembers(t, h, pod, ids...)
+				} else {
+					admitted := requireAdmittedOnPod(t, h, a, pod)
+					requireMembers(t, h, pod, append(slices.Clone(ids[1:]), admitted)...)
+				}
+				h.Check(t)
+			})
+		}
+	}
 }

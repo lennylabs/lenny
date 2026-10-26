@@ -550,6 +550,7 @@
         "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
         "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
       "packages": [
@@ -1813,6 +1814,7 @@
         "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
@@ -2274,6 +2276,7 @@
         "tests/testinfra/lifecycleharness/slots_test.go::TestDefaultStoreTakesTheReplicasTerminalPipelineBudget_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
         "tests/tier7a_load_local/derive_failure_fence_race_test.go"
