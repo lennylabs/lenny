@@ -1468,21 +1468,27 @@ metadata:
     app.kubernetes.io/component: pgbouncer
     lenny.dev/component: pgbouncer
 data:
-  # pgbouncer.ini fragment carrying the §4.2 connect_query sentinel
-  # and the §12.3 transaction-mode setting. Operators mount this at
-  # the PgBouncer pod's /etc/pgbouncer/pgbouncer.ini path (or
-  # equivalent) so every fresh server connection runs the
-  # connect_query before being handed to a client transaction.
+  # The §12.3 pgbouncer.ini. The deployed PgBouncer copies it into its
+  # writable config directory; operators who run their own PgBouncer
+  # mount it at /etc/pgbouncer/pgbouncer.ini.
   pgbouncer.ini: |
-    [pgbouncer]
-    pool_mode = transaction
-    # spec: §4.2 — fresh server connections begin with the
+    [databases]
+    # spec: §4.2 — every fresh server connection begins with the
     # SET sentinel so an unclaimed pooled connection is rejected by
     # the lenny_tenant_guard trigger and by RLS before tenant data
-    # could leak. The pgbouncer.ini INI parser wraps the value in
-    # single quotes and doubles any embedded single quote, so we
-    # transform `'` -> `''` from the values.yaml literal here.
-    connect_query = 'SET app.current_tenant = ''__unset__'''
+    # could leak. The connection-string parser takes a single-quoted
+    # value and a doubled embedded single quote, so `'` becomes `''`
+    # from the values.yaml literal here.
+    ; * = host=<postgres-host> port=5432 connect_query='SET app.current_tenant = ''__unset__'''
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 5432
+    unix_socket_dir =
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = transaction
+    ignore_startup_parameters = extra_float_digits
 
 ---
 # Source: lenny/templates/prometheusrule.yaml

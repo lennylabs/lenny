@@ -773,8 +773,10 @@
         "tests/tier0_static/airgap_registry_render_test.go",
         "tests/tier0_static/upgrade_channel_key_render_test.go",
         "tests/tier0_static/ops_rbac_spec_sync_test.go",
-        "tests/tier0_static/gateway_multi_tenant_render_test.go"
+        "tests/tier0_static/gateway_multi_tenant_render_test.go",
+        "tests/tier0_static/self_managed_postgres_path_render_test.go"
       ],
+      "component": ["tests/tier2_component/pgbouncerchart/..."],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/admission_inventory_test.go",

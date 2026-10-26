@@ -642,3 +642,36 @@ spec: §17.4 (the local provider is keyed by a master key Secret).
       - key: master-key
         path: master-key
 {{- end -}}
+
+{{/*
+lenny.pgbouncer.upstreamHost resolves the Postgres host the PgBouncer
+[databases] entry routes to: pgbouncer.upstream.host when set, the
+CloudNativePG lenny-postgres-rw Service when postgres.deploy is true, and
+empty otherwise.
+spec: §12.3, §17.9.5.
+*/}}
+{{- define "lenny.pgbouncer.upstreamHost" -}}
+{{- $up := (.Values.pgbouncer.upstream | default dict) -}}
+{{- if $up.host -}}
+{{- $up.host -}}
+{{- else if .Values.postgres.deploy -}}
+lenny-postgres-rw
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.pgbouncer.databaseURLRef resolves the Secret and key the PgBouncer
+DATABASE_URL reads, as "<secret>/<key>": pgbouncer.databaseURLSecret and
+pgbouncer.databaseURLKey when the secret is set, the CloudNativePG app
+Secret (lenny-postgres-app, key uri) when postgres.deploy is true, and
+empty otherwise.
+spec: §12.3, §17.9.5.
+*/}}
+{{- define "lenny.pgbouncer.databaseURLRef" -}}
+{{- $pb := .Values.pgbouncer -}}
+{{- if $pb.databaseURLSecret -}}
+{{- printf "%s/%s" $pb.databaseURLSecret $pb.databaseURLKey -}}
+{{- else if .Values.postgres.deploy -}}
+lenny-postgres-app/uri
+{{- end -}}
+{{- end -}}
