@@ -13,7 +13,6 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
-	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
 )
@@ -94,16 +93,20 @@ func (w *tokenServiceWiring) buildServer() {
 	w.srv = srv
 }
 
-// buildEventEmitterAndCache wires the §4.0 EventEmitter and, when --redis-url
-// is set, the §25.5 Redis event stream and the §4.3 Redis-backed encrypted
-// access-token cache. The §4.0 spec requires every process hosting subsystems
-// that may emit §16.6 operational events to construct an EventEmitter so a
-// future emit site does not have to re-thread the dependency through the
-// binary. The buffer is constructed unconditionally so a Redis outage degrades
-// to local-only delivery rather than dropping events. The Redis client close
-// is recorded on the accumulator so runTokenService can defer it.
+// buildEventEmitterAndCache wires the §4.0 EventEmitter and, when a Redis
+// topology flag is set, the §25.5 Redis event stream, the §4.3
+// Redis-backed encrypted access-token cache, and the §13.3 revocation bus.
+// The §4.0 spec requires every process hosting subsystems that may emit
+// §16.6 operational events to construct an EventEmitter so a future emit
+// site does not have to re-thread the dependency through the binary. The
+// buffer is constructed unconditionally so a Redis outage degrades to
+// local-only delivery rather than dropping events. The event stream and
+// the cache use the base client; the revocation bus uses the §12.4
+// Cache/Pub-Sub concern client, the one the gateway replicas and lenny-ops
+// subscribe on. The Redis client close is recorded on the accumulator so
+// runTokenService can defer it.
 //
-// spec: §4.0, §25.5, §4.3.
+// spec: §4.0, §25.5, §4.3, §13.3, §12.4.
 func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	w.replicaID = os.Getenv("HOSTNAME")
 	if w.replicaID == "" {
@@ -111,25 +114,25 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	}
 	opsEventBuffer := eventbuffer.NewEventBuffer(0)
 	w.opsEmitter = eventbuffer.NewEmitter(opsEventBuffer, w.replicaID)
-	// §4.3 Redis-backed encrypted access-token cache. Wired
-	// only when --redis-url is set; the cache short-circuits Postgres
-	// revocation lookups on the validation hot path. With no Redis,
-	// the validator falls back to the authoritative Postgres lookup.
-	if *w.f.redisURL != "" {
-		redisClient, err := redisconn.NewClient(redisconn.Config{URL: *w.f.redisURL, Password: *w.f.redisPassword})
-		if err != nil {
-			fatalf("redis client: %v", err)
-		}
-		w.redisCleanup = func() { _ = redisClient.Close() }
-		w.revocationBus = pubsub.New(redisClient)
+	rd, err := newTokenServiceRedis(w.f)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	if rd != nil {
+		w.redisCleanup = rd.Close
+		w.revocationBus = pubsub.New(rd.cachePubSub())
 		w.opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
-			Client:    redisClient,
+			Client:    rd.base,
 			Buffer:    opsEventBuffer,
 			Source:    "//lenny.dev/token-service/" + w.replicaID,
 			ReplicaID: w.replicaID,
 		})
 		log.Printf("lenny-token-service: §25.5 operational events streaming to Redis %s", eventbuffer.DefaultStreamKey)
-		accessCache, err := tokencache.New(redisClient, w.kmsProvider)
+		// §4.3 Redis-backed encrypted access-token cache; the cache
+		// short-circuits Postgres revocation lookups on the validation hot
+		// path. With no Redis, the validator falls back to the
+		// authoritative Postgres lookup.
+		accessCache, err := tokencache.New(rd.base, w.kmsProvider)
 		if err != nil {
 			fatalf("access-token cache: %v", err)
 		}
@@ -141,6 +144,6 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	// subsystem in this binary takes it as a constructor dependency. A
 	// future credential-rotation event emit will replace this no-op log.
 	log.Printf("lenny-token-service: §4.0 EventEmitter ready (replica=%s, redis=%t)",
-		w.replicaID, *w.f.redisURL != "")
+		w.replicaID, w.redisCleanup != nil)
 	_ = w.opsEmitter
 }

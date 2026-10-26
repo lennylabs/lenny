@@ -757,11 +757,11 @@
     "cmd/lenny-token-service": {
       "unit": ["cmd/lenny-token-service/..."],
       "contract": ["tests/tier3_contract/oauth_token/..."],
-      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go"]
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
     },
     "tests/testinfra/tlsredis/": {
       "unit": ["cmd/lenny-token-service/..."],
-      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go"]
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
     },
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
@@ -788,6 +788,7 @@
         "tests/tier0_static/self_managed_postgres_path_render_test.go"
       ],
       "component": ["tests/tier2_component/pgbouncerchart/..."],
+      "integration": ["tests/tier4_integration/token_service_chart_datastores_test.go"],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/admission_inventory_test.go",

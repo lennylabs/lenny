@@ -209,6 +209,8 @@
         "pkg/credential/...",
         "pkg/gateway/credentials/credassign/token_service_degraded_modes_test.go::TestTokenServiceOutageDifferentiatedDegradation",
         "cmd/lenny-token-service/mtls_test.go::TestTokenServiceGRPCRequiresClientMTLS",
+        "tests/tier4_integration/token_service_chart_datastores_test.go::TestChartConfiguredTokenServiceWritesIssuedTokensAndPublishesRevocations_spec_4_3",
+        "cmd/lenny-token-service/redis_topology_test.go::TestTokenServiceRedisTopologySelection_spec_12_4",
         "cmd/lenny-token-service/spiffe_test.go::TestSPIFFEAuditInterceptorAttributesPerReplicaIdentity",
         "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheEncryptedAtRestOnRealRedis",
         "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheTTLExpiryOnRealRedis",
@@ -4711,6 +4713,7 @@
       "tests": [
         "tests/tier4_integration/token_service_revocation_publish_test.go::TestTokenServiceRotationReachesPeersOverRedis_spec_13_3",
         "cmd/lenny-token-service/revocation_publish_test.go::TestTokenServiceRevocationPublisher_spec_13_3",
+        "cmd/lenny-token-service/redis_topology_test.go::TestTokenServicePublishesRevocationsOnTheCachePubSubConcern_spec_13_3",
         "pkg/gateway/credentials/revocation/propagator/publish_test.go::TestPublishReachesPeerPropagator_spec_13_3",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3",
         "tests/tier2_component/stores/issuedtokenstore_retention_test.go",

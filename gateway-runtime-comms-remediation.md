@@ -3006,6 +3006,7 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
     | `cmd/lenny-controller` | met | met | n/a | n/a | n/a | n/a: a direct-address client for the §25.5 stream emitter, and the chart wires no Redis to the controller |
     | `cmd/lenny-gateway` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): each per-concern URL passes through `redistopology.Build` |
     | `cmd/lenny-ops` | met | met | n/a | n/a | n/a | n/a: `lenny-ops` connects through its own `--redis-url`, `--redis-sentinel-addrs`, and `--redis-cluster-addrs` flags |
+    | `cmd/lenny-token-service` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): the Cache/Pub-Sub concern URL that carries the revocation publish passes through `redistopology.Build` (added by the F-4.3.21 direct fix, 2026-10-26) |
     | `pkg/connectoroauth` | met | met | met: the single-use OAuth `state` context has no coordination role | met: a `Consume` error returns 400 `CONNECTOR_OAUTH_STATE_UNKNOWN`, and the flow restarts (§9.3) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/billing/billingstore/failover/redisstream` | met | met | met: staged billing entries replay idempotently into Postgres and have no coordination role | met: a Redis error moves the event to the bounded in-memory buffer, and a full buffer returns `ErrBufferFull`, which maps to 503 (§11.2.1) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/eventbuffer` | met | met | met: the §25.5 event stream has no coordination role | met: an `XADD` error keeps the event in the local buffer (§25.5) | n/a | unmet (F-12.4.32) |
@@ -3250,9 +3251,11 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [x] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
     only at the next 30-second read. Fixed in `d3ef3232e`: with `--redis-url` the Token Service publishes the
     revoked `jti` on the `token:revocations` channel the gateway replicas and `lenny-ops` apply.
-  - [ ] **F-4.3.21** (High), next: the chart passes the Token Service neither `--postgres-dsn` nor
+  - [x] **F-4.3.21** (High): the chart passes the Token Service neither `--postgres-dsn` nor
     `--redis-url`, so in a chart install the F-13.3.19 publish and issued-token rotation do nothing. Filed
     2026-10-26 and routed in the block on the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 below.
+    Fixed in `9141366c4`: the chart renders the Postgres DSN and the gateway's Redis connection into the Token
+    Service, which publishes revocations on the Cache/Pub-Sub concern.
   - [x] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
@@ -3406,12 +3409,14 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
 
 - Direct-fix queue, in this order. F-4.3.21 also stands next in the post-0097 direct-fix queue above, ahead
   of F-10.2.26, because without it rotation and revocation publishing do nothing in a chart install.
-  - [ ] **F-4.3.21** (High): `token-service-deployment.yaml` passes neither `--postgres-dsn` nor
+  - [x] **F-4.3.21** (High): `token-service-deployment.yaml` passes neither `--postgres-dsn` nor
     `--redis-url` and renders no `env` block. The Token Service therefore issues tokens with no
     `issued_tokens` row or durable audit row, accepts a revoked source token, performs no issued-token
     rotation, and records `postgres_only` for every revocation. Render the DSN from `lenny-datastore-conn`
     and the Redis connection of the gateway's Cache/Pub-Sub concern, and give the binary the Sentinel,
     Cluster, or concern-URL options the chart topologies need.
+    Fixed in `9141366c4`; the Cluster topology's missing Redis password and TLS setting, shared with the
+    gateway and `lenny-ops`, is filed as F-12.4.37 and queued after T-17.4.19.
   - [ ] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
     rather than the PgBouncer admin console, and `pgbouncer.ini` names no `stats_users`, so
     `PgBouncerPoolSaturated` cannot fire.
@@ -3426,6 +3431,9 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
     `--tier` with a discovery selector runs that selection restricted to the one tier, and the scoped unit
     run takes about 3 minutes.
+  - [ ] **F-12.4.37** (Medium), filed from the F-4.3.21 fix: on the Cluster topology the chart renders no
+    `LENNY_REDIS_PASSWORD` or `LENNY_REDIS_TLS` for the gateway, `lenny-ops`, or the Token Service, so each
+    refuses to start outside dev mode. Render both, and the Secret's `redis-password` key, on that topology.
 - New proposals.
   - [ ] **Transaction-pooler compatibility proposal** (not yet written): **F-12.3.28** (Medium, the gateway's
     `LISTEN/NOTIFY` deny-list fallback connects through the transaction-mode PgBouncer and receives no
