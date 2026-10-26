@@ -3216,6 +3216,13 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier4_integration/oidc_auth_test.go::TestLiveGatewayAuthenticatesUpstreamOIDCBearer_spec_10_2",
+        "tests/tier3_contract/rest_auth/oidc_bearer_test.go::TestOIDCBearerAuthenticatesThroughDiscoveredJWKS_spec_10_2",
+        "cmd/lenny-gateway/idp_verifier_test.go::TestBuildTokenSigningStoresTrustsTheUpstreamIdP_spec_10_2",
+        "pkg/auth/jwt/oidc_test.go::TestOIDCVerifierAcceptsIdPTokenAcrossAlgorithms_spec_10_2",
+        "pkg/auth/jwt/oidc_test.go::TestOIDCVerifierRejectsInvalidTokens_spec_10_2",
+        "pkg/auth/jwt/oidc_test.go::TestOIDCVerifierFollowsIdPKeyRotation_spec_10_2",
+        "pkg/auth/jwt/oidc_test.go::TestOIDCVerifierIdPOutage_spec_10_2",
         "cmd/lenny-ops/platformroles_test.go::TestOpsRoleGateAppliesStoredAssignment_spec_10_2",
         "cmd/lenny-ops/platformroles_test.go::TestOpsPlatformRoles_KeepsClaimWhenPostgresUnreachable_spec_25_4",
         "pkg/gateway/environment/userstore/platformroles_test.go::TestPlatformRoles_ResolvesStoredAssignment_spec_10_2",

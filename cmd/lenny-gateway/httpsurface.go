@@ -832,11 +832,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// above: the §10.2 key set, so a token minted by any gateway replica
 	// or by POST /v1/oauth/token on any Token Service replica verifies
 	// here, plus the embedded OIDC provider's key when
-	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode.
+	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode, plus
+	// the deployer's upstream IdP, through its discovered JWK Set, when
+	// --oidc-issuer-url and --oidc-client-id are set (buildIdPVerifier).
 	authOpts := authmw.Options{
 		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
 		// IdP-key members read the configured `auth.tenantIdClaim`
-		// (embeddedHMACVerifier) and the key-set member keeps
+		// (embeddedHMACVerifier, composeBearerVerifier) and the key-set member keeps
 		// `tenant_id`. F-10.2.9.
 		Verifier:    w.bearerVerifier,
 		Revocations: revProp,

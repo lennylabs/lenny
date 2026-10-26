@@ -26,6 +26,7 @@
 package oidc
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -118,7 +119,9 @@ func (s *Stub) MintToken(opts MintOptions) string {
 	pb, _ := json.Marshal(payload)
 	hp := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
 	sum := sha256.Sum256([]byte(hp))
-	sig, _ := rsa.SignPKCS1v15(nil, s.key, 0, sum[:])
+	// RS256 is RSASSA-PKCS1-v1_5 over SHA-256 (RFC 7518 section 3.3),
+	// whose signature input carries the SHA-256 DigestInfo prefix.
+	sig, _ := rsa.SignPKCS1v15(nil, s.key, crypto.SHA256, sum[:])
 	return hp + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 

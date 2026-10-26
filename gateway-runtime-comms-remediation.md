@@ -3253,8 +3253,10 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [ ] **F-4.3.21** (High), next: the chart passes the Token Service neither `--postgres-dsn` nor
     `--redis-url`, so in a chart install the F-13.3.19 publish and issued-token rotation do nothing. Filed
     2026-10-26 and routed in the block on the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 below.
-  - [ ] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
-    or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set.
+  - [x] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
+    or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
+    gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
+    `user_bearer`; T-10.2.1 is closed with it.
   - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
     the mint through the Token Service exchange §8.2 names. Coordinate with F-10.2.25.
   - [ ] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
