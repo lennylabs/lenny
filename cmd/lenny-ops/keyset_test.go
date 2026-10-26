@@ -97,3 +97,33 @@ func TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal(t *testing.T) {
 			opsKeySet.Signing().KeyID, gatewayKeySet.Signing().KeyID)
 	}
 }
+
+// TestBuildKeySetRecordsTheStartupKeySet pins that the startup step
+// loads the §10.2 key set from the parsed KMS flags and records it on the
+// wiring, so the authentication gate built after it verifies against the
+// same key set a gateway sharing the master key file signs with.
+//
+// spec: 10.2 (Authentication) "Verifier key set and rotation", 25.4 (The lenny-ops Service: Startup and Readiness)
+func TestBuildKeySetRecordsTheStartupKeySet(t *testing.T) {
+	opts := providerflags.Options{
+		Provider:      providerflags.ProviderLocal,
+		MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
+		AliasToKey:    map[string]string{kms.AliasJWTSigning: "local-key-1"},
+	}
+	production := false
+	w := &opsWiring{
+		f:               &opsFlags{production: &production, bearerTrustHMACKeyFile: strPtr(""), kmsOpts: &opts},
+		opsWiringFields: opsWiringFields{ctx: context.Background()},
+	}
+	w.buildKeySet()
+	if w.jwtKeySet == nil {
+		t.Fatal("buildKeySet recorded no key set")
+	}
+	want, err := loadOpsKeySet(context.Background(), opts, false, providerflags.Resolve)
+	if err != nil {
+		t.Fatalf("loadOpsKeySet: %v", err)
+	}
+	if got := w.jwtKeySet.Signing().KeyID; got != want.Signing().KeyID {
+		t.Errorf("recorded signing kid %s, want %s from the shared master key file", got, want.Signing().KeyID)
+	}
+}

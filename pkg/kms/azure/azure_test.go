@@ -127,7 +127,7 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("k-acme", []byte("0123456789abcdef0123456789abcdef"))
 	f.seed("k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]KeyRef{
-		"tenant:acme":                    {Name: "k-acme"},
+		"tenant:acme":          {Name: "k-acme"},
 		"platform:jwt-signing": {Name: "k-platform"},
 	})
 	return p, f

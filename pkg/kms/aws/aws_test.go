@@ -151,7 +151,7 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("arn:aws:kms:us-east-1:000000000000:key/k-acme", []byte("0123456789abcdef0123456789abcdef"))
 	f.seed("arn:aws:kms:us-east-1:000000000000:key/k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]string{
-		"tenant:acme":                    "arn:aws:kms:us-east-1:000000000000:key/k-acme",
+		"tenant:acme":          "arn:aws:kms:us-east-1:000000000000:key/k-acme",
 		"platform:jwt-signing": "arn:aws:kms:us-east-1:000000000000:key/k-platform",
 	})
 	return p, f

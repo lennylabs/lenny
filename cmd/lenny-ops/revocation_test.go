@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/auth"
@@ -623,4 +624,56 @@ func (b *syncBuffer) records(t *testing.T) []map[string]any {
 		out = append(out, rec)
 	}
 	return out
+}
+
+// TestStartRevocationSetWiresTheEventSubscriptionAndKeepsTheGateClosed
+// pins the startRevocationSet composition: with Redis wired, a
+// token.revoked event published on the cache/pub-sub concern reaches the
+// set (rule 2), and with Postgres wired but unreachable no rule-1 read
+// succeeds, so the gate stays closed and every Lenny-issued token keeps
+// the rule-4 refusal. Without Redis the subscription is never started.
+//
+// spec: 25.4 (The lenny-ops Service: Authentication), 12.4 (Redis HA and Failure Modes)
+func TestStartRevocationSetWiresTheEventSubscriptionAndKeepsTheGateClosed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	pool, err := pgxpool.New(ctx, "postgres://lenny@127.0.0.1:1/lenny?connect_timeout=1")
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	w := &opsWiring{
+		f: &opsFlags{
+			redisCachePubSubURL: strPtr(""),
+			redisPassword:       strPtr(""),
+			redisAllowInsecure:  boolPtr(true),
+		},
+		opsWiringFields: opsWiringFields{ctx: ctx, pgPool: pool, redisClient: client},
+	}
+	rev := newOpsRevocation()
+	w.startRevocationSet(rev)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !rev.IsRevoked("jti-wired") {
+		if time.Now().After(deadline) {
+			t.Fatal("a token.revoked event published on the cache/pub-sub concern never reached the set")
+		}
+		if err := client.Publish(ctx, propagator.Channel, "jti-wired").Err(); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !rev.Stale() {
+		t.Error("the gate opened although every rule-1 read against an unreachable Postgres fails")
+	}
+
+	bare := newOpsRevocation()
+	(&opsWiring{opsWiringFields: opsWiringFields{ctx: ctx}}).startRevocationSet(bare)
+	if !bare.Stale() || bare.IsRevoked("jti-wired") {
+		t.Error("without Postgres or Redis the set must stay empty with its gate closed")
+	}
 }

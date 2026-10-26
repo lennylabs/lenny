@@ -125,7 +125,7 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("projects/p/locations/us/keyRings/r/cryptoKeys/k-acme", []byte("0123456789abcdef0123456789abcdef"))
 	f.seed("projects/p/locations/us/keyRings/r/cryptoKeys/k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]string{
-		"tenant:acme":                    "projects/p/locations/us/keyRings/r/cryptoKeys/k-acme",
+		"tenant:acme":          "projects/p/locations/us/keyRings/r/cryptoKeys/k-acme",
 		"platform:jwt-signing": "projects/p/locations/us/keyRings/r/cryptoKeys/k-platform",
 	})
 	return p, f
