@@ -69,7 +69,7 @@
 
 ## Open decisions for human to make
 
-None at drafting. The review loops add entries here.
+None. The spec and non-spec review loops left no decision open for the human.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -78,6 +78,7 @@ None at drafting. The review loops add entries here.
 - **§25.4 lenny-ops readiness probe path depends on production in the chart.** `charts/lenny/templates/ops-deployment.yaml` sets the lenny-ops readinessProbe path to `/healthz` when `ops.production` is set and to `/readyz` otherwise, while §25.4 gives `/healthz` unconditionally. CHART-1 re-keys the switch to `environment: prod` (D8) and leaves the disagreement with §25.4 in place. It needs its own finding.
 - **lenny-ops production-keyed dev-mode gates have no spec statement.** lenny-ops refuses the dev trust hook in production (`errDevTrustInProduction` in `cmd/lenny-ops/main.go`) and suppresses its dev relaxations in production (`devRelaxed = devMode && !production`). §17.4 "Dev mode guard rails" item 3 names only the gateway's hook and keys it on `LENNY_DEV_MODE`. CODE-4 re-keys both gates to `--environment` and leaves their behavior unchanged. Stating them in the spec needs its own finding.
 - **§17.6 installer question omits `staging`.** The "Target environment" question lists `local | dev | prod`. The omission predates this proposal and does not cause the defect.
+- **lenny-ops `--platform-tier` is unvalidated.** `cmd/lenny-ops/flags.go:543` registers it as a free string with default `""`, and `charts/lenny/values.schema.json:110-113` types `global.deploymentTier` as a plain string with no enum. CODE-4's `idempotencyKeyRequired()` reads an empty or off-set value as Tier 1, so the §25.4 required `Idempotency-Key` is not enforced for that install. CHART-1 renders the value with `| default "tier1"` and every preset sets a valid tier, so only an operator-typed off-set value reaches the fallback. Tier validation is outside the production-mode spelling defect, and it needs its own finding.
 
 ## Impacts on other proposals
 
@@ -85,7 +86,7 @@ None at drafting. The review loops add entries here.
 |:--|:--|:--|:--|
 | 0097 (Lenny-issued bearer tokens verify on every process) | Implemented | 0097 recorded the production-mode spelling drift as an unstaged pre-existing defect; 0103 fixes it | Nothing. 0097 is not edited |
 | 0100 (terminal pipeline) | Approved | 0100 edits `cmd/lenny-gateway/stores.go` wiring and a different §16.5 row; 0103 edits the `integrity.Verify` fatal in the same file and the `AuditSIEMNotConfigured` and `AuditRetentionLow` rows. The anchors are disjoint | Whichever lands second re-reads `stores.go` and the §16.5 table and applies its edits by quoted anchor with no change to content |
-| 0101 (off-holder request forwarding) | Approved | 0101 edits `cmd/lenny-gateway/metricsbackfill.go` (the coordination fencer); 0103 edits the `SetEnvProduction` and `auditBatchingNoSIEM` calls in the same file. The anchors are disjoint | Whichever lands second re-reads `metricsbackfill.go` and confirms both changes are present |
+| 0101 (off-holder request forwarding) | Approved (2026-10-26) | 0101 edits `cmd/lenny-gateway/metricsbackfill.go` (the coordination fencer) and adds a `tests/testinfra/gatewaypki` key to `tests/change-graph.json`. 0103 edits the `SetEnvProduction` and `auditBatchingNoSIEM` calls in `metricsbackfill.go` and adds a `"pkg/deployenv"` key to `tests/change-graph.json`. The anchors and keys are disjoint, so no 0101 deliverable loses its subject | Whichever lands second re-reads `metricsbackfill.go` and `tests/change-graph.json` and confirms that both changes are present. 0101's approval stands and needs no human re-review |
 | 0102 (platform-admin impersonation revocation) | Approved | 0102 SPEC-7 edits a §11.7 item and the §16.5 `PlatformAuditResidencyViolation` row; 0103 edits other §11.7 bullets and other §16.5 rows. The anchors are disjoint | Whichever lands second applies its edits by quoted anchor with no change to content |
 
 ## Deliverable index
