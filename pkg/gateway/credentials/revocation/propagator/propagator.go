@@ -85,9 +85,20 @@ func (p *Propagator) Revoke(jti string) {
 		return
 	}
 	p.local.Revoke(jti)
-	if err := p.bus.Publish(context.Background(), Channel, []byte(jti)); err != nil && p.onError != nil {
+	if err := Publish(context.Background(), p.bus, jti); err != nil && p.onError != nil {
 		p.onError(err)
 	}
+}
+
+// Publish sends a revoked jti on Channel over bus, the message every
+// Propagator.Run and the lenny-ops revocation set apply. A process that
+// revokes a token without holding a local revocation cache, such as the
+// Token Service on a rotation, publishes through it. A nil bus publishes
+// nothing and returns nil.
+//
+// spec: §13.3 (Credential Flow) "Token rotation and revocation".
+func Publish(ctx context.Context, bus *pubsub.Bus, jti string) error {
+	return bus.Publish(ctx, Channel, []byte(jti))
 }
 
 // IsRevoked delegates to the wrapped cache so a Propagator is a drop-in

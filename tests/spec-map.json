@@ -4701,6 +4701,9 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier4_integration/token_service_revocation_publish_test.go::TestTokenServiceRotationReachesPeersOverRedis_spec_13_3",
+        "cmd/lenny-token-service/revocation_publish_test.go::TestTokenServiceRevocationPublisher_spec_13_3",
+        "pkg/gateway/credentials/revocation/propagator/publish_test.go::TestPublishReachesPeerPropagator_spec_13_3",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3",
         "tests/tier2_component/stores/issuedtokenstore_retention_test.go",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",

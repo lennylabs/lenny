@@ -3,13 +3,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
+	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
@@ -30,11 +33,31 @@ func (w *tokenServiceWiring) buildDriftMonitor() {
 	go w.driftMonitor.Start(ctx, 30*time.Second)
 }
 
+// revocationPublisher returns the tokenservice RevocationPropagator that
+// publishes a revoked jti on bus, the channel every gateway replica's
+// revocation propagator and the lenny-ops revocation set (§25.4 rule 2)
+// apply, so a peer refuses a rotated or revoked token within pub/sub
+// latency rather than at its next 30-second read. A nil bus returns a
+// nil propagator: the Server then records propagation_mode postgres_only
+// rather than claiming an eventbus delivery that a no-op publish did not
+// make.
+//
+// spec: §13.3 (Credential Flow) "Token rotation and revocation";
+// §16.7 (token.revoked propagation_mode).
+func revocationPublisher(bus *pubsub.Bus) func(ctx context.Context, tenantID, jti string) error {
+	if bus == nil {
+		return nil
+	}
+	return func(ctx context.Context, _, jti string) error {
+		return revocationprop.Publish(ctx, bus, jti)
+	}
+}
+
 // buildServer constructs the §13.3 token-exchange Server from the signer,
 // the §10.2 key set as its verifier, the issuer, per-dialect caps, the
 // §10.2 capability token lifetime,
-// write-before-issue stores, metrics, rate limits, and the drift-degraded
-// gate.
+// write-before-issue stores, metrics, rate limits, the drift-degraded
+// gate, and the revocation publisher.
 //
 // spec: §13.3; §10.2 (Authentication) "Verifier key set and rotation".
 func (w *tokenServiceWiring) buildServer() {
@@ -60,6 +83,10 @@ func (w *tokenServiceWiring) buildServer() {
 			SampleWindow:    *w.f.rlSampleWindow,
 		},
 		DriftDegraded: w.driftMonitor.Degraded,
+		// spec: §13.3 — a committed revocation is published on the
+		// revocation bus every gateway replica and lenny-ops subscribe
+		// to. Nil without Redis, which records postgres_only.
+		RevocationPropagator: revocationPublisher(w.revocationBus),
 	})
 	if err != nil {
 		fatalf("token-exchange server: %v", err)
@@ -94,6 +121,7 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 			fatalf("redis client: %v", err)
 		}
 		w.redisCleanup = func() { _ = redisClient.Close() }
+		w.revocationBus = pubsub.New(redisClient)
 		w.opsEmitter = eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
 			Client:    redisClient,
 			Buffer:    opsEventBuffer,
