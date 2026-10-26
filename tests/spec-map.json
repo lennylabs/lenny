@@ -7261,6 +7261,8 @@
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
+        "tests/tier3_contract/playground/playground_apikey_idp_test.go::TestAPIKeyModeMintsFromIdPTokenAndUserBearer_spec_27_3",
+        "tests/tier4_integration/playground_apikey_idp_test.go::TestLivePlaygroundAPIKeyMintAdmitsIdPToken_spec_27_3",
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1",
