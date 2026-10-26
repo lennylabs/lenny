@@ -3409,7 +3409,10 @@
         "charts/lenny/tests/gateway-deployment_test.yaml",
         "pkg/chart/values/schema_test.go::TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2",
         "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
-        "charts/lenny/tests/kms-guard_test.yaml"
+        "charts/lenny/tests/kms-guard_test.yaml",
+        "pkg/embedded/stack/bringup_envtest_test.go::TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4",
+        "charts/lenny/tests/kms-master-key-secret_test.yaml",
+        "charts/lenny/tests/ops-deployment_test.yaml"
       ],
       "packages": [
         "pkg/auth",
@@ -5757,7 +5760,14 @@
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
-        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook"
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "pkg/embedded/stack/bringup_envtest_test.go::TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4",
+        "pkg/embedded/stack/bringup_test.go::TestUpMasterKeySecretFailureStopsBeforeDeployments_spec_17_4",
+        "pkg/embedded/stack/bringup_test.go::TestEmbeddedManifestsMountDevMasterKeySecret_spec_17_4",
+        "charts/lenny/tests/kms-master-key-secret_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml",
+        "charts/lenny/tests/token-service-deployment_test.yaml",
+        "charts/lenny/tests/ops-deployment_test.yaml"
       ],
       "packages": [
         "cmd/lenny-dev",

@@ -79,6 +79,10 @@ Lenny-issued token.
 {{- /* §17.4: the dev embedded-OIDC trust hook is refused by a production
    lenny-ops, so it renders only when ops.production is false. */ -}}
 {{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret (not .Values.ops.production) -}}
+{{- /* §17.4: under kms.provider=local lenny-ops mounts the master key Secret
+   the gateway and the Token Service share, so its key set holds the same
+   ES256 public key they sign with. */ -}}
+{{- $localKMS := include "lenny.kmsLocal" . -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -86,6 +90,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
+  {{- /* §10.2 "Signing topology": binds the ServiceAccount to the provider
+     identity that holds the KMS GetPublicKey permission. */}}
+  {{- with .Values.ops.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -188,6 +198,10 @@ spec:
             - --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
             {{- end }}
             - --production={{ .Values.ops.production }}
+            # §10.2 "Verifier key set and rotation": lenny-ops loads its key
+            # set from the same KMS provider, aliases, and environment the
+            # gateway and the Token Service sign with.
+            {{- include "lenny.kmsArgs" . | nindent 12 }}
             {{- if .Values.global.devMode }}
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
@@ -493,6 +507,11 @@ spec:
               mountPath: /etc/lenny/oidc
               readOnly: true
             {{- end }}
+            {{- if $localKMS }}
+            # §17.4: the local provider's master key, read through
+            # --kms-master-key-file.
+            {{- include "lenny.kmsMasterKeyVolumeMount" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             - name: release-channel-signing-key
               mountPath: /etc/lenny/release-channel
@@ -547,6 +566,11 @@ spec:
             items:
               - key: key
                 path: key
+        {{- end }}
+        {{- if $localKMS }}
+        # §17.4: the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-token-service.
+        {{- include "lenny.kmsMasterKeyVolume" . | nindent 8 }}
         {{- end }}
         {{- if .Values.platform.releaseChannel.publisher.enabled }}
         - name: release-channel-signing-key

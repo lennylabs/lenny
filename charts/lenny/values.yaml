@@ -430,6 +430,12 @@ tokenService:
   # ImagePullBackOff under imagePullPolicy: IfNotPresent).
   enabled: true
   replicas: 2
+  # serviceAccount.annotations are stamped onto the lenny-token-service
+  # ServiceAccount, so it can be bound to the provider identity that holds
+  # the KMS Sign and GetPublicKey permissions (§10.2 "Signing topology"),
+  # for example eks.amazonaws.com/role-arn. Empty by default.
+  serviceAccount:
+    annotations: {}
   # rollingUpdate configures the §10.5 / §17.1 Deployment.spec.strategy
   # block on the Token Service. maxUnavailable: 0 keeps full
   # token-minting capacity through a rollout because the Token Service
@@ -930,6 +936,15 @@ kms:
   # provider is not local the value is required and the chart refuses to
   # render without it; it must be at least 1.
   # signQuotaPerSecond: 50
+  # masterKeySecret names the Secret that holds the local provider's master
+  # key under data key master-key (at least 32 bytes). It applies only when
+  # provider is local: lenny-gateway, lenny-token-service, and lenny-ops each
+  # mount it and pass --kms-master-key-file, so every process derives the
+  # same KEKs and the same ES256 JWT signing key (§17.4). Empty renders the
+  # lenny-kms-master-key Secret with a random key generated on first install
+  # and preserved across upgrades through lookup. Under a cloud provider
+  # neither the Secret nor the flag renders.
+  masterKeySecret: ""
   # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint
   # (§13.2). Operators should tighten this to the provider's range;
   # the broad default is bounded by the per-port (443) egress rule.
@@ -937,9 +952,8 @@ kms:
 
 # environment is the §17.9.1 composition dimension naming the target
 # deployment environment (local | dev | staging | prod). The chart
-# renders it into --environment on both binaries; production refuses to
-# start with kms.provider=local because the in-process random KEK cannot
-# survive a restart. The value also drives gateway log verbosity through
+# renders it into --environment on lenny-gateway, lenny-token-service, and
+# lenny-ops; production refuses to start with kms.provider=local. The value also drives gateway log verbosity through
 # the lenny.gatewayLogLevel helper: local and dev render
 # LENNY_LOG_LEVEL=debug, staging and prod render info. spec: §17.9.1, F-4.3.11 / F-17.5.2 / F-17.9.9.
 environment: "dev"
@@ -3351,6 +3365,12 @@ ops:
   # --addr flag). The lenny-ops Service exposes it; the Ingress and the
   # §13.2 NET-051 ingress NetworkPolicy reference it.
   httpPort: 8090
+  # serviceAccount.annotations are stamped onto the lenny-ops-sa
+  # ServiceAccount, so it can be bound to the provider identity that holds
+  # the KMS GetPublicKey permission (§10.2 "Signing topology"). Empty by
+  # default.
+  serviceAccount:
+    annotations: {}
   # metricsPort is the port lenny-ops serves Prometheus metrics on; the
   # §13.2 NET-045 monitoring-scrape NetworkPolicy and podmonitor.yaml
   # admit and scrape it. The binary serves /metrics on the same

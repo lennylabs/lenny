@@ -1165,3 +1165,132 @@ tests:
           content:
             name: oidc-bearer-trust-key
           any: true
+
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # lenny-ops mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §10.2 "Verifier key set and rotation" — lenny-ops loads its key set
+  # from the same KMS provider flags the Token Service receives.
+  - it: renders the aws KMS flags the Token Service receives
+    set:
+      kms.provider: aws
+      kms.awsRegion: us-east-1
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-provider=aws
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-aws-region=us-east-1
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-alias=platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=prod
+
+  - it: renders the azure vault URL flag
+    set:
+      kms.provider: azure
+      kms.azureVaultURL: https://acme.vault.azure.net
+      kms.signQuotaPerSecond: 50
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-azure-vault-url=https://acme.vault.azure.net
+
+  # spec: §10.2 "Signing topology" — the ServiceAccount binds to the provider
+  # identity holding the KMS GetPublicKey permission.
+  - it: renders ops.serviceAccount.annotations on lenny-ops-sa
+    set:
+      ops.serviceAccount.annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/lenny-ops
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - equal:
+          path: metadata.annotations["eks.amazonaws.com/role-arn"]
+          value: arn:aws:iam::111122223333:role/lenny-ops
+
+  - it: renders no annotations on lenny-ops-sa by default
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - notExists:
+          path: metadata.annotations

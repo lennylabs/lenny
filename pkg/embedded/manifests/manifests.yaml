@@ -4041,6 +4041,14 @@ spec:
             items:
               - key: key
                 path: key
+        # spec: §17.4 — the local provider's master key Secret, shared with
+        # lenny-token-service and lenny-ops (lenny.kmsMasterKeyVolume).
+        - name: kms-master-key
+          secret:
+            secretName: lenny-embedded-dev-kms-master-key
+            items:
+              - key: master-key
+                path: master-key
       containers:
         - name: gateway
           image: "ghcr.io/lennylabs/lenny-gateway:0.1.0"
@@ -4107,9 +4115,11 @@ spec:
             # this fallback for dev mode) for §4.9 leases and the §4.3
             # /v1/oauth/* proxy, so the absent Service is never dialed.
             # §4 KMS provider (F-4.3.11). The gateway wraps the §4.9
-            # connector-credential DEKs through this provider.
+            # connector-credential DEKs and signs Lenny-issued JWTs through
+            # this provider (§10.2 "Signing key and algorithm").
             - --kms-provider=local
             - --environment=dev
+            - --kms-master-key-file=/etc/lenny/kms/master-key
             # §17.9.3 object-storage backend selector (F-17.5.1). The
             # gateway resolves the matching blobstore.Store adapter
             # (minio | s3 | gcs | azure) from these flags. The shared
@@ -4620,6 +4630,11 @@ spec:
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
+            # spec: §17.4 — the local provider's master key, read through
+            # --kms-master-key-file.
+            - name: kms-master-key
+              mountPath: /etc/lenny/kms
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -4742,6 +4757,12 @@ spec:
             - --gateway-token-refresh-before-expiry=300s
             - --gateway-token-min-ttl=600s
             - --production=false
+            # §10.2 "Verifier key set and rotation": lenny-ops loads its key
+            # set from the same KMS provider, aliases, and environment the
+            # gateway and the Token Service sign with.
+            - --kms-provider=local
+            - --environment=dev
+            - --kms-master-key-file=/etc/lenny/kms/master-key
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -4918,6 +4939,11 @@ spec:
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
+            # §17.4: the local provider's master key, read through
+            # --kms-master-key-file.
+            - name: kms-master-key
+              mountPath: /etc/lenny/kms
+              readOnly: true
           resources:
             limits:
               cpu: 250m
@@ -4943,6 +4969,14 @@ spec:
             items:
               - key: key
                 path: key
+        # §17.4: the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-token-service.
+        - name: kms-master-key
+          secret:
+            secretName: lenny-embedded-dev-kms-master-key
+            items:
+              - key: master-key
+                path: master-key
 ---
 # Source: lenny/templates/reference-runtimes.yaml
 apiVersion: lenny.dev/v1alpha1

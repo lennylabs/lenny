@@ -236,6 +236,96 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --environment=prod
 
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # the Token Service mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §10.2 "Signing topology" — the ServiceAccount binds to the provider
+  # identity holding the KMS Sign and GetPublicKey permissions.
+  - it: renders tokenService.serviceAccount.annotations on lenny-token-service
+    set:
+      tokenService.serviceAccount.annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/lenny-token-service
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - equal:
+          path: metadata.annotations["eks.amazonaws.com/role-arn"]
+          value: arn:aws:iam::111122223333:role/lenny-token-service
+
+  - it: renders no annotations on lenny-token-service by default
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
   - it: protects the token-service with a PodDisruptionBudget
     documentSelector:
       path: kind
@@ -326,10 +416,16 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --tls-cert=/etc/lenny/mtls/tls.crt
-      - isNull:
+      - notContains:
           path: spec.template.spec.volumes
-      - isNull:
+          content:
+            name: lenny-token-service-tls
+          any: true
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-token-service-tls
+          any: true
 
   # spec: §10.5 /
   # §17.1 — the Token Service declares an explicit RollingUpdate
