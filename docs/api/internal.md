@@ -189,7 +189,7 @@ message AttachMessage {
 
 **Streaming semantics:**
 
-- The gateway opens a session's Attach stream when it first delivers a message to the session, and holds that one stream until it releases the session's binding to the pod. The end of the client request that delivered a message does not end the stream.
+- The gateway opens a session's Attach stream when it first delivers a message to the session, and holds that one stream until it releases the session's binding to the pod. After a session ends, the gateway ends the stream when it starts exporting the session's final workspace. The end of the client request that delivered a message does not end the stream.
 - Messages flow in both directions concurrently.
 - The gateway sends `MessageEnvelope` objects containing `MessagePart` arrays as input.
 - The pod sends `AgentOutput` objects containing `MessagePart` arrays as streaming output.
