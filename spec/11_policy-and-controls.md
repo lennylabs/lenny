@@ -265,13 +265,13 @@ Three levels:
 | Hard disable | Also block new delegated tasks; reject pending delegation approvals for the user |
 | Full revoke  | Terminate active sessions, invalidate cached auth, deny reconnects               |
 
-**Full revoke propagation mechanism:**
+**Full revoke propagation mechanism:** The gateway commits the user's invalidation level to the user's row before step 1 begins.
 
 1. The gateway lists every session the user has, reading the Postgres primary so a session committed before the lookup is included (via SessionStore), and the listing includes terminal sessions. Before it writes any cancel in step 2, the gateway returns every credential lease those sessions hold to its pool, which revokes the lease ([Section 4.9](04_system-components.md#49-credential-leasing-service)). The step writes no credential deny-list entry.
 2. The gateway marks each listed session that is not terminal `cancelled` in the SessionStore. After the write that cancels a session, the gateway releases the session's pod binding on the replica that holds it, which sends the pod the [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` RPC.
 3. The pod's runtime adapter tears down the session ([Section 4.7](04_system-components.md#47-runtime-adapter), `Shutdown`).
 4. For a cancelled session that never started and whose pod binding the handling gateway replica does not hold, the gateway reclaims the pod or the slot that the session claimed, before that replica's step-2 releases.
-5. The user's issued tokens are revoked in the durable Postgres issued-token index (the authoritative revocation store; see [§13.3](13_security-model.md#133-credential-flow)), each revoked token id is pushed into the gateway's in-memory revocation cache, and the revocations are fanned out to peer replicas so every replica's cache rejects the tokens within seconds.
+5. The user's issued tokens are revoked in the durable Postgres issued-token index (the authoritative revocation store; see [§13.3](13_security-model.md#133-credential-flow)), each revoked token id is pushed into the gateway's in-memory revocation cache, and the revocations are fanned out to peer replicas so every replica's cache rejects the tokens within seconds. Step 5 also revokes the impersonation bearers the user started, under the conditions of [§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 6, and pushes and fans out those token ids the same way. A failure of that revocation does not stop the revocation or cache push of the user's own issued tokens.
 6. Step 1 returns the credential leases held by the listed sessions.
 7. Pending elicitations for the user are dismissed.
 
