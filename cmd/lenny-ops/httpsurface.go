@@ -80,15 +80,16 @@ func (w *opsWiring) buildHTTPSurface() {
 	// authenticates (§17.4 "Dev mode guard rails").
 	revocations := newOpsRevocation()
 	authCfg, err := buildAuthConfig(authInputs{
-		keySet:      w.jwtKeySet,
-		revocations: revocations,
-		hmacKeyFile: *w.f.bearerTrustHMACKeyFile,
-		issuer:      *w.f.oidcIssuerURL,
-		multiTenant: *w.f.authMultiTenant,
-		devMode:     *w.f.devMode,
-		production:  *w.f.production,
-		rps:         *w.f.rateLimitRPS,
-		burst:       *w.f.rateLimitBurst,
+		keySet:        w.jwtKeySet,
+		revocations:   revocations,
+		platformRoles: opsPlatformRoles(w.pgPool),
+		hmacKeyFile:   *w.f.bearerTrustHMACKeyFile,
+		issuer:        *w.f.oidcIssuerURL,
+		multiTenant:   *w.f.authMultiTenant,
+		devMode:       *w.f.devMode,
+		production:    *w.f.production,
+		rps:           *w.f.rateLimitRPS,
+		burst:         *w.f.rateLimitBurst,
 	})
 	if err != nil {
 		log.Fatalf("lenny-ops: %v", err)

@@ -756,7 +756,8 @@
       "unit": ["cmd/lenny-ops/..."],
       "component": ["cmd/lenny-ops/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],
-      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"],
+      "security": ["tests/tier9_security/ops_platform_role_downgrade_test.go"]
     },
     "cmd/lenny-backup": {
       "unit": ["cmd/lenny-backup/..."],
@@ -855,6 +856,10 @@
     },
     "PROPOSAL-QUEUE.md": {
       "docs": ["tests/tier11_docs/..."]
+    },
+    "pkg/gateway/environment/userstore": {
+      "unit": ["pkg/gateway/environment/userstore/...", "cmd/lenny-gateway/...", "cmd/lenny-ops/..."],
+      "security": ["tests/tier9_security/ops_platform_role_downgrade_test.go"]
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],

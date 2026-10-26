@@ -24,6 +24,7 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -853,7 +854,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// overrides OIDC-derived roles. The userstore-backed adapter
 		// returns the user's stored Roles when the row exists; missing
 		// rows fall through to the JWT claim. F-10.2.3.
-		PlatformRoles: userstorePlatformRoles{store: w.users},
+		PlatformRoles: userstore.PlatformRoles{Store: w.users},
 		// spec: §10.6 — real-time group check. The introspection
 		// verifier reads each tenant's identityProvider record; a tenant
 		// that leaves introspectionEnabled off pays nothing beyond a cached

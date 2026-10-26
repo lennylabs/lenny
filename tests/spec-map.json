@@ -3216,6 +3216,11 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "cmd/lenny-ops/platformroles_test.go::TestOpsRoleGateAppliesStoredAssignment_spec_10_2",
+        "cmd/lenny-ops/platformroles_test.go::TestOpsPlatformRoles_FailsClosedOnLookupError_spec_10_2",
+        "pkg/gateway/environment/userstore/platformroles_test.go::TestPlatformRoles_ResolvesStoredAssignment_spec_10_2",
+        "pkg/gateway/environment/userstore/platformroles_test.go::TestPlatformRoles_ReturnsACopy_spec_10_2",
+        "tests/tier9_security/ops_platform_role_downgrade_test.go::TestOpsAppliesPlatformRoleDowngrade_spec_10_2",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateSharedES256SigningKey_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsCloseThePerProcessKeyFinding_spec_10_2",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsNoteSupersededFindings_spec_10_2",
@@ -6461,6 +6466,9 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "cmd/lenny-ops/platformroles_test.go::TestOpsRoleGateAppliesStoredAssignment_spec_10_2",
+        "cmd/lenny-ops/platformroles_test.go::TestOpsPlatformRoles_FailsClosedOnLookupError_spec_10_2",
+        "tests/tier9_security/ops_platform_role_downgrade_test.go::TestOpsAppliesPlatformRoleDowngrade_spec_10_2",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestOperabilityDocsStateRevocationSetDuringPostgresOutage_spec_25_4",
         "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestRedisKeyPrefixRegistryCompleteness_0032",
