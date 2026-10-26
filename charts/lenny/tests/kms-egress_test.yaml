@@ -1,0 +1,188 @@
+suite: Gateway and lenny-ops KMS endpoint egress (§13.2.4)
+# spec: §13.2.4 (`lenny-system` Namespace NetworkPolicies, Gateway row and
+# lenny-ops row), §25.4 (lenny-ops-egress). allow-gateway-egress and
+# lenny-ops-egress carry one TCP 443 peer at kms.endpointCIDR whenever
+# kms.provider is not local, and none under local. Under a cloud provider
+# the chart refuses to render while kms.endpointCIDR is 0.0.0.0/0 or ::/0,
+# because an unrestricted peer cancels the external HTTPS excepts (NET-057).
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - system-network-policies.yaml
+  - ops-network-policies.yaml
+tests:
+  # spec: §13.2.4 Gateway row — the stock 0.0.0.0/0 default fails a
+  # cloud render rather than rendering an unrestricted KMS peer.
+  - it: refuses an aws render while kms.endpointCIDR is the 0.0.0.0/0 default
+    template: system-network-policies.yaml
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"0.0.0.0/0\" while kms.provider is \"aws\""
+
+  - it: refuses a gcp render with kms.endpointCIDR ::/0
+    template: system-network-policies.yaml
+    set:
+      kms.provider: gcp
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: "::/0"
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"::/0\" while kms.provider is \"gcp\""
+
+  - it: refuses an azure render with kms.endpointCIDR 0.0.0.0/0 padded with spaces
+    template: system-network-policies.yaml
+    set:
+      kms.provider: azure
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: " 0.0.0.0/0 "
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"0.0.0.0/0\" while kms.provider is \"azure\""
+
+  - it: refuses a cloud render with an empty kms.endpointCIDR
+    template: system-network-policies.yaml
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"\" while kms.provider is \"aws\""
+
+  # spec: §13.2.4 Gateway row — with a narrower CIDR the gateway carries
+  # exactly one KMS peer, on TCP 443, in addition to its local-provider
+  # rules.
+  - it: renders one KMS peer in allow-gateway-egress on a cloud provider with a narrower CIDR
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: 10.20.0.0/24
+    asserts:
+      - contains:
+          path: spec.egress
+          count: 1
+          content:
+            to:
+              - ipBlock:
+                  cidr: 10.20.0.0/24
+            ports:
+              - port: 443
+                protocol: TCP
+      - lengthEqual:
+          path: spec.egress
+          count: 8
+
+  # spec: §13.2.4 lenny-ops row, §25.4 lenny-ops-egress — lenny-ops reaches
+  # the KMS endpoint for GetPublicKey under the Gateway row condition.
+  - it: renders one KMS peer in lenny-ops-egress on a cloud provider with a narrower CIDR
+    template: ops-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    set:
+      kms.provider: gcp
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: 10.30.4.0/28
+    asserts:
+      - contains:
+          path: spec.egress
+          count: 1
+          content:
+            to:
+              - ipBlock:
+                  cidr: 10.30.4.0/28
+            ports:
+              - port: 443
+                protocol: TCP
+      - lengthEqual:
+          path: spec.egress
+          count: 10
+
+  # spec: §13.2.4 — an IPv6 private endpoint subnet renders as given.
+  - it: renders an IPv6 KMS peer in allow-gateway-egress on azure
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    set:
+      kms.provider: azure
+      kms.signQuotaPerSecond: 50
+      kms.endpointCIDR: fd12:3456::/64
+    asserts:
+      - contains:
+          path: spec.egress
+          count: 1
+          content:
+            to:
+              - ipBlock:
+                  cidr: fd12:3456::/64
+            ports:
+              - port: 443
+                protocol: TCP
+
+  # spec: §13.2.4 Gateway row — the local provider makes no KMS call, so
+  # neither policy carries a KMS peer, and the 0.0.0.0/0 default does not
+  # reach either policy.
+  - it: renders no KMS peer in allow-gateway-egress under the local provider
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - notContains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+            ports:
+              - port: 443
+                protocol: TCP
+      - lengthEqual:
+          path: spec.egress
+          count: 7
+
+  - it: renders no KMS peer in lenny-ops-egress under the local provider
+    template: ops-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - notContains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+            ports:
+              - port: 443
+                protocol: TCP
+      - lengthEqual:
+          path: spec.egress
+          count: 9
+
+  # spec: §13.2.4 Gateway row — the local provider ignores
+  # kms.endpointCIDR entirely, so a set value adds no peer either.
+  - it: renders no KMS peer under the local provider even with a narrow CIDR set
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    set:
+      kms.endpointCIDR: 10.20.0.0/24
+    asserts:
+      - notContains:
+          path: spec.egress
+          any: true
+          content:
+            to:
+              - ipBlock:
+                  cidr: 10.20.0.0/24

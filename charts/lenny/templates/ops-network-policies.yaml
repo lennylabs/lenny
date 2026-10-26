@@ -147,6 +147,12 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # §13.2.4 lenny-ops row — KMS endpoint for GetPublicKey on the
+    # §10.2 JWT signing keys, rendered only when kms.provider is not
+    # local, under the same kms.endpointCIDR refusal as the gateway.
+    {{- with include "lenny.kmsEgressRule" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
     # §25.4 — DNS with the canonical CoreDNS podSelector
     # (NET-067). Both UDP/53 and TCP/53.
     - to:

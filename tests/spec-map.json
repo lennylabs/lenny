@@ -4586,7 +4586,13 @@
       "tests": [
         "tests/tier9_security/network_policy_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
-        "charts/lenny/tests/system-network-policies_test.yaml"
+        "charts/lenny/tests/system-network-policies_test.yaml",
+        "charts/lenny/tests/kms-egress_test.yaml",
+        "charts/lenny/tests/ops-network-policies_test.yaml",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRefusesUnrestrictedCIDROnCloudProvider_spec_13_2_4",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRendersOneNarrowPeerPerPolicy_spec_13_2_4",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressAbsentUnderLocalProvider_spec_13_2_4",
+        "tests/tier5_e2e_kind/kms_egress_test.go::TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4"
       ],
       "chart_templates": [
         "charts/lenny/templates/system-network-policies.yaml",

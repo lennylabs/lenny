@@ -945,9 +945,18 @@ kms:
   # and preserved across upgrades through lookup. Under a cloud provider
   # neither the Secret nor the flag renders.
   masterKeySecret: ""
-  # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint
-  # (§13.2). Operators should tighten this to the provider's range;
-  # the broad default is bounded by the per-port (443) egress rule.
+  # endpointCIDR is the destination CIDR of the KMS HTTPS endpoint
+  # (TCP 443, §13.2.4). The Token Service egress policy always carries
+  # it, and allow-gateway-egress and lenny-ops-egress carry it whenever
+  # provider is not local. Under a cloud provider (aws, gcp, or azure)
+  # the chart refuses to render while the value is 0.0.0.0/0 or ::/0,
+  # because NetworkPolicy allows are additive and an unrestricted peer
+  # cancels the private-range and IMDS excepts of the external HTTPS
+  # rules. A cloud deployment therefore sets it to the subnet of the
+  # provider's private KMS endpoint (an AWS KMS interface VPC endpoint,
+  # a GCP Private Service Connect endpoint, or an Azure Key Vault
+  # private endpoint). The 0.0.0.0/0 default applies only to the local
+  # provider, which makes no KMS call.
   endpointCIDR: "0.0.0.0/0"
 
 # environment is the §17.9.1 composition dimension naming the target

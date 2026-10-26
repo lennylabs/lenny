@@ -189,3 +189,14 @@ tests:
       - equal:
           path: spec.egress[2].to[0].podSelector.matchLabels["lenny.dev/component"]
           value: redis
+
+  # spec: §13.2.4 lenny-ops row — lenny-ops-egress carries the KMS peer
+  # under the Gateway row condition, so it refuses the same render.
+  - it: refuses an aws render of lenny-ops-egress while kms.endpointCIDR is 0.0.0.0/0
+    template: ops-network-policies.yaml
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"0.0.0.0/0\" while kms.provider is \"aws\""

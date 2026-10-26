@@ -591,6 +591,34 @@ rotation", §17.4.
 {{- end -}}
 
 {{/*
+lenny.kmsEgressRule renders the KMS endpoint egress rule (TCP 443 to
+kms.endpointCIDR) that allow-gateway-egress and lenny-ops-egress carry
+whenever kms.provider is not local, and nothing under the local provider,
+which makes no KMS call. The gateway signs and both processes call
+GetPublicKey for the JWT verifier key set. Under a cloud provider the
+helper refuses to render while kms.endpointCIDR is 0.0.0.0/0 or ::/0:
+NetworkPolicy allows are additive, so an unrestricted 443 peer would
+cancel the private-range and IMDS excepts of the external HTTPS rules
+(NET-057). Include it with nindent at the egress list indentation.
+spec: §13.2.4 (Gateway row, lenny-ops row), §25.4 lenny-ops-egress.
+*/}}
+{{- define "lenny.kmsEgressRule" -}}
+{{- if not (include "lenny.kmsLocal" .) -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- $cidr := trim ($kms.endpointCIDR | default "" | toString) -}}
+{{- if has $cidr (list "" "0.0.0.0/0" "::/0") -}}
+{{- fail (printf "kms.endpointCIDR is %q while kms.provider is %q: set it to the subnet of the provider's private KMS endpoint, because an unrestricted KMS egress peer cancels the external HTTPS excepts (§13.2.4)" $cidr $kms.provider) -}}
+{{- end -}}
+- to:
+    - ipBlock:
+        cidr: {{ $cidr | quote }}
+  ports:
+    - port: 443
+      protocol: TCP
+{{- end -}}
+{{- end -}}
+
+{{/*
 lenny.kmsMasterKeyVolumeMount and lenny.kmsMasterKeyVolume render the
 read-only mount of the local provider's master key Secret at
 /etc/lenny/kms. The volume is never optional: a pod whose master key Secret

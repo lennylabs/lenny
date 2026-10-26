@@ -535,7 +535,8 @@ spec:
 allow-gateway-egress re-admits the gateway's in-cluster egress the
 §13.2.3 default-deny otherwise blocks (§13.2): the agent-pod
 adapters, the Token Service, PgBouncer, Redis, MinIO, the
-kube-apiserver, and kube-system CoreDNS. The external-HTTPS egress
+kube-apiserver, kube-system CoreDNS, and, when kms.provider is not
+local, the KMS endpoint at kms.endpointCIDR (§13.2.4 Gateway row). The external-HTTPS egress
 with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
 rendered with the LLM proxy.
 */}}
@@ -613,6 +614,11 @@ spec:
         - port: {{ . }}
           protocol: TCP
         {{- end }}
+    {{- /* §13.2.4 Gateway row: KMS endpoint for Sign and GetPublicKey,
+    rendered only when kms.provider is not local. */}}
+    {{- with include "lenny.kmsEgressRule" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:
