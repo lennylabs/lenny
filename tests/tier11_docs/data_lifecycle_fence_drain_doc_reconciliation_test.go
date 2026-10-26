@@ -84,7 +84,7 @@ func TestTenantDeletionPhaseTwoRowDescribesDrainAndRetry(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Force-terminate every active session in the tenant.",
-		"The phase completes when no active session remains.",
+		"The phase completes when no session of the tenant is active and the gateway has released the pod of every session of the tenant that has ended, which takes at most the largest `maxWorkspaceSealDurationSeconds` of any pool plus the gateway's release allowance (default 30 s) after each session ends.",
 		"the phase stays incomplete and the controller retries it on its next pass",
 	} {
 		if !strings.Contains(row, want) {
