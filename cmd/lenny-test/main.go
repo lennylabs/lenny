@@ -55,6 +55,12 @@ func main() {
 		args = []string{"--help"}
 	}
 
+	// Keep every temp directory the run's processes create out of /tmp.
+	// A failure leaves the inherited environment in place.
+	if _, err := applyTestTempEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test: warning: test temp root: %v\n", err)
+	}
+
 	// Subcommands. Anything that does not match a known subcommand falls
 	// through to the run command (so `lenny-test --group pr` works without
 	// requiring `lenny-test run --group pr`).

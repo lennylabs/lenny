@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
 var (
@@ -29,7 +31,10 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(complianceStubEnv); mode != "" {
 		os.Exit(runComplianceStub(mode))
 	}
-	tmp, err := os.MkdirTemp("", "compliance-standard-test-*")
+	// The fixture binaries live under the harness temp root rather than
+	// /tmp, which a host cleanup can empty while the battery runs
+	// (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("compliance-standard-test-*")
 	if err != nil {
 		panic("standard battery TestMain: mkdtemp: " + err.Error())
 	}
@@ -40,6 +45,7 @@ func TestMain(m *testing.M) {
 		bin := filepath.Join(tmp, name)
 		cmd := exec.Command("go", "build", "-o", bin, pkg)
 		cmd.Dir = root
+		cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			panic("standard battery TestMain: build " + pkg + ": " + err.Error())

@@ -447,6 +447,10 @@ lenny-test --verdict-file tests/results/<name>.json
 5. Execute. Stop after the first failing tier unless `--continue-on-failure` is set.
 6. Emit the verdict to `tests/results/latest.json` and, if `--verdict-file` is set, to that path.
 
+### Test temp root
+
+Every process the harness starts inherits a temp root outside `/tmp`, because a host cleanup of `/tmp` during a run removes the fixture binaries a `TestMain` builds once and the socket directories a package reuses, and every later test in the package then fails with `fork/exec ... no such file or directory`. The harness exports the root as `TMPDIR` and `LENNY_TEST_TMPDIR`, and as `GOTMPDIR` unless the operator already set `GOTMPDIR` outside `/tmp`. The root is `$LENNY_TEST_TMPDIR` when set, otherwise the operator's `TMPDIR` when it is outside `/tmp`, otherwise `$HOME/.lenny-tmp`. A test creates a build-once fixture with `testtmp.MkdirTemp` (`tests/testinfra/testtmp`) and a Unix socket directory with `testtmp.ShortDir`, so a plain `go test` resolves the same root. The tier-0 check `TestBuildOnceFixturesStayOutOfTmp_spec_17_10` refuses an `os.MkdirTemp` call in the default temp directory inside a `TestMain` or a `sync.Once`, and any literal `/tmp` parent.
+
 ### Container caching daemon
 
 The harness ships a long-lived helper, `lenny-test-cached`, that holds testcontainers running between invocations. On first run it provisions Postgres, Redis, MinIO, an OIDC stub, a KMS stub, and an OTLP collector. On subsequent runs it reuses the same containers and applies migrations on demand. Without this daemon, each component-tier run pays a five-to-ten-second container-startup tax.

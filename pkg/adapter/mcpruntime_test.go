@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -21,7 +23,9 @@ import (
 var mcpReferenceBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "mcp-reference-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("mcp-reference-*")
 	if err != nil {
 		panic("adapter TestMain: mkdtemp: " + err.Error())
 	}
@@ -30,6 +34,7 @@ func TestMain(m *testing.M) {
 	mcpReferenceBinary = filepath.Join(tmp, "mcp-reference")
 	cmd := exec.Command("go", "build", "-o", mcpReferenceBinary, "./cmd/runtimes/mcp-reference")
 	cmd.Dir = repoRootForTest()
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("adapter TestMain: build mcp-reference: " + err.Error())
