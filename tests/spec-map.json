@@ -332,7 +332,8 @@
         "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
         "pkg/checkpoint/checkpoint_test.go::TestCheckpointTimeoutIs60s",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
-        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles",
+        "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go"
       ],
       "packages": [
         "pkg/checkpoint"
@@ -2253,7 +2254,13 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5",
         "tests/tier7a_load_local/terminal_seal_closing_race_test.go::TestSealClosingGateRacesSendsEvictionAndRelease_spec_7_1",
         "tests/tier7a_load_local/checkpoint_gone_row_release_race_test.go::TestCheckpointGoneRowReleaseRacesSweepsAndEvictions_spec_7_1",
-        "tests/tier2_component/stores/partialmanifeststore_deadline_test.go::TestIntentRowDeadlineHoldsOffTheBackstop"
+        "tests/tier2_component/stores/partialmanifeststore_deadline_test.go::TestIntentRowDeadlineHoldsOffTheBackstop",
+        "cmd/lenny-gateway/slot_reaper_test.go",
+        "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
+        "pkg/gateway/storage/slotcounter/slotcounter_test.go",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1"
       ],
       "packages": [
         "pkg/session"
@@ -7337,7 +7344,10 @@
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
         "pkg/adapter/runtimegeneration_test.go",
         "pkg/adapter/holdstate_test.go",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1"
       ],
       "packages": [],
       "blocked_until_phase": "0",
