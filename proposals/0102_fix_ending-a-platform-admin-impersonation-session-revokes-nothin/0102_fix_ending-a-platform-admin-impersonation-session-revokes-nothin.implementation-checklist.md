@@ -19,7 +19,7 @@
 - [ ] **S8 · code** — CODE-1. Lands CODE-1.
       Tiers 0, 1, 2. Depends on: S3
 - [ ] **S9 · code** — CODE-2. Lands CODE-2.
-      Tiers 0, 1, 2. Depends on: S1, S2, S3, S5, S6, S8
+      Tiers 0, 1, 2, 3. Depends on: S1, S2, S3, S5, S6, S8
 - [ ] **S10 · code** — CODE-3 and CODE-4. Lands CODE-3 and CODE-4.
       Tiers 0, 1, 2, 3, 4, 5, 8, 9. Depends on: S1, S4, S6, S7, S9
 - [ ] **S11 · code** — CODE-5. Lands CODE-5.
