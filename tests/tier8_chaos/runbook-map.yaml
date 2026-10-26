@@ -54,6 +54,10 @@ runbooks:
     test: TestKMSKeyProbeStale
     severity: P1
     coverage: extended
+  jwt-key-rotation:
+    test: TestJWTSigningKMSOutageBreakerAndRecovery
+    severity: P2
+    coverage: extended
   dual-store-unavailable:
     test: TestDualStoreUnavailable
     severity: P0
