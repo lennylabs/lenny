@@ -3216,6 +3216,8 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestBearerTenantClaimFollowsVerifyingKey_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
@@ -5559,6 +5561,7 @@
       "title": "Alerting Rules and SLOs",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestKMSSignQuotaApproachingResolvesToRunbookSection_spec_16_5",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateAcceptsWellFormed",
@@ -5847,6 +5850,7 @@
       "title": "Operational Runbooks",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go",
         "tests/tier11_docs/runbooks_test.go"
       ],
       "packages": [

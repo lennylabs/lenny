@@ -2,23 +2,31 @@
 layout: default
 title: "jwt-key-rotation"
 parent: "Runbooks"
-triggers: []
+triggers:
+  - alert: KMSSignQuotaApproaching
+    severity: warning
 components:
   - gateway
   - tokenService
+  - ops
 symptoms:
   - "scheduled rotation of the JWT signing key is due"
-  - "the Token Service signing key may be compromised and must be replaced"
-  - "a key-management policy update requires a new kid before the previous one expires"
+  - "the JWT signing key may be compromised and must be replaced"
+  - "a key-management policy requires a new signing key version"
+  - "the fleet-wide KMS sign request rate approaches the configured Sign quota"
+  - "token mints return 503 KMS_SIGNING_UNAVAILABLE while the KMS throttles sign requests"
 tags:
   - jwt
   - signing-key
   - kms
   - token-service
+  - lenny-ops
   - key-rotation
+  - quota
 requires:
   - cluster-access
   - kms-access
+  - admin-api
 related:
   - ca-rotation
   - credential-revocation
@@ -27,153 +35,263 @@ related:
 
 # jwt-key-rotation
 
-Procedure to rotate the gateway's JWT signing key on the §10.3 / §13.3 overlap-window schedule. The Token Service mints session-capability JWTs using an HMAC-SHA256 key sealed under the platform KMS key-encryption key (`KMSSigner`, `pkg/auth/jwt/kmssigner.go`). The gateway holds the unwrapped key in process memory only; the durable form is the envelope-encrypted blob the chart loads into the Token Service.
+This runbook covers two operator tasks for the key that signs every Lenny-issued JWT: rotating the key, and responding to the `KMSSignQuotaApproaching` alert. The reader is a platform operator with cluster access, Helm access to the Lenny release, and permission to create keys and grant permissions in the deployment's KMS.
 
-Each replica wraps the signer in a `RotatingVerifier` (`pkg/auth/jwt/rotating.go`) that holds a current key plus zero or more previous keys, each addressable by its JOSE `kid`. A token signed under the current key always verifies. A token signed under a previous key verifies for the 24-hour overlap window the §10.3 default sets; past the window, the verifier rejects with reason `key_retired`. The JWK Set published at `/.well-known/jwks.json` carries the current key plus every retained previous key during the overlap window.
+## How Lenny signs and verifies tokens
 
-This is a planned operator procedure. Run it on the rotation schedule the deployment's key-management policy sets, or immediately when the current key is suspected compromised.
+Every Lenny-issued JWT is signed with ES256 (ECDSA over P-256 with SHA-256). The gateway and the Token Service both sign with one key, which the reserved KMS alias `platform:jwt-signing` names in the chart's `kms.aliases` value. On AWS KMS, GCP Cloud KMS, and Azure Key Vault the private key stays in the KMS: each signer sends a digest to the KMS `Sign` operation and receives the signature. With `kms.provider: local`, which is for development only, every process derives the key from the shared local master key.
+
+The optional alias `platform:jwt-verify` names a second key that verifies tokens and never signs them. It is mapped only while a rotation is in progress.
+
+Each gateway replica, each Token Service replica, and `lenny-ops` fetch the public key of every mapped alias once at startup, with the KMS `GetPublicKey` operation, and hold those keys as a key set for the life of the process. Each token header carries a `kid`, which is the RFC 7638 thumbprint of the public key that signed it. A token whose `kid` is absent is rejected with reason `missing_kid`, and a token whose `kid` is not in the key set is rejected with reason `unknown_kid`. Verification never calls the KMS. A process reads new alias values only when it restarts, so every change in this runbook is a Helm rollout of the gateway, the Token Service, and `lenny-ops`.
+
+On a cloud provider, each alias must name an immutable key version:
+
+| Provider | Accepted reference | Refused reference |
+|:--|:--|:--|
+| AWS KMS | A key ID or key ARN | An alias name or alias ARN |
+| GCP Cloud KMS | A CryptoKeyVersion name ending in `/cryptoKeyVersions/<n>` | A CryptoKey name without a version |
+| Azure Key Vault | A key identifier with a non-empty `@<version>` suffix | A key identifier without a version |
+
+A process refuses to start when either alias names a refused reference.
 
 ## Trigger
 
-- A scheduled key-rotation interval defined by the deployment's key-management policy has elapsed.
-- The current signing key is suspected compromised (KMS audit anomaly, replica memory dump, backup leak).
-- A new kid has been pre-staged in the gateway's `--bearer-trust-hmac-key-file` and the existing kid must be retired before the overlap window closes.
+Run the rotation procedure in these cases:
+
+- A rotation interval that the deployment's key-management policy defines has elapsed.
+- The signing key is suspected compromised, for example through a KMS audit anomaly or a leaked credential that holds the `Sign` permission. Read the compromise entry under [Escalation](#escalation) before starting.
+
+Run the [KMS Sign quota](#kms-sign-quota) procedure when the `KMSSignQuotaApproaching` warning alert fires.
 
 ## Diagnosis
 
-### Step 1 — Read the active JWK Set
+The steps below establish the starting state before a rotation. Each rotation step later reuses the alias-value check in Step 2.
 
-<!-- access: kubectl requires=cluster-access -->
+### Step 1: Read the current alias mapping
+
+<!-- access: cluster requires=helm-cli -->
 ```bash
-curl -fsS https://lenny-gateway.lenny-system.svc/.well-known/jwks.json | jq
+helm -n lenny-system get values lenny -o json | jq -r '.kms.aliases' | tr ',' '\n' | grep '^platform:jwt-'
 ```
 
-The response is a JWK Set whose `keys[0].kid` names the current signing key and whose `keys[1..]` name every retained previous key. A single-entry response means there is no rotation in flight; a multi-entry response means a previous rotation is still inside its overlap window.
+A deployment with no rotation in progress prints one line, `platform:jwt-signing=<reference>`. A second line naming `platform:jwt-verify` means an earlier rotation has not finished. Determine which rotation step that deployment reached before starting a new rotation: when `platform:jwt-verify` names the key that signed before the current one, the earlier rotation is waiting for its step 3.
 
-### Step 2 — Confirm every gateway replica advertises the same set
+### Step 2: Confirm every pod runs the same alias values
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-for pod in $(kubectl -n lenny-system get pod -l lenny.dev/component=gateway -o name); do
-  kubectl -n lenny-system exec "$pod" -- \
-    curl -fsS http://localhost:8080/.well-known/jwks.json | jq '.keys[].kid'
+for d in lenny-gateway lenny-token-service lenny-ops; do
+  kubectl -n lenny-system rollout status "deploy/$d" --timeout=15m
+done
+for d in lenny-gateway lenny-token-service lenny-ops; do
+  sel=$(kubectl -n lenny-system get deploy "$d" -o json |
+    jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')
+  kubectl -n lenny-system get pods -l "$sel" -o json |
+    jq -r --arg d "$d" '.items[] | "\($d)\t\(.metadata.name)\t\([.spec.containers[].args[]? | select(startswith("--kms-alias="))] | join(" "))"'
 done
 ```
 
-Every replica must report the same kid list. A divergent reply means a replica has rotated independently or has not yet seen the new key; resolve that before rotating, because clients balancing across replicas will see inconsistent verification outcomes.
+Each `rollout status` call returns success, and every printed line carries the same `--kms-alias` value, which matches the Helm value from Step 1. A pod with a different value is still running an earlier revision. Wait for its rollout to finish, or investigate a rollout that does not progress, before continuing. A rotation step that starts while any pod holds a different key set leaves some processes unable to verify tokens that others accept.
 
-### Step 3 — Confirm the audit pipeline can record a rotation
+### Step 3: Confirm the processes can reach the KMS
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl -n lenny-system logs deploy/lenny-gateway | grep platform.jwt_signing_key_rotated | tail -n 5
+kubectl -n lenny-system get pods -o wide | grep -E '^lenny-(gateway|token-service|ops)-'
 ```
 
-A rotation lifecycle transition writes a `platform.jwt_signing_key_rotated` row on the platform tenant audit chain. The grep returns prior rotation rows if any. A missing audit backend (Postgres outage) does not block a rotation but does lose the audit trail; run the `audit-pipeline-degraded` runbook first if the chain backend is degraded.
+Every listed pod is `Running` and ready, with a restart count that is not climbing. A pod in `CrashLoopBackOff` whose log reports a JWT key set error could not fetch a public key at startup. Resolve KMS reachability or permissions before rotating, as [KMS outage during a rotation](#kms-outage-during-a-rotation) describes.
 
 ## Remediation
 
-The rotation is a three-stage transition on the rotating verifier. Each stage is the input to the verifier's `Rotate` or `RetireExpired` call; the audit pipeline records one `platform.jwt_signing_key_rotated` row per stage.
+Rotation is three Helm rollouts of the gateway, the Token Service, and `lenny-ops`. Each rollout begins only after the previous one has completed on every gateway, Token Service, and `lenny-ops` pod, as Diagnosis Step 2 confirms.
 
-### Step 1 — Generate the new key
+Edit `kms.aliases` in the release's values file rather than passing it with `--set`, because the value is a comma-separated list and `--set` splits it at each comma. Keep every other alias in the list unchanged.
 
-The Token Service signing key is HMAC-SHA256. Generate a fresh 32-byte secret:
+### Step 1: Create the new key and grant access
 
-<!-- access: kubectl requires=cluster-access -->
-```bash
-head -c 32 /dev/urandom | base64
+Create a P-256 signing key in the deployment's KMS:
+
+- AWS KMS: key spec `ECC_NIST_P256`, key usage `SIGN_VERIFY`. Reference the key by its key ID or key ARN.
+- GCP Cloud KMS: purpose `ASYMMETRIC_SIGN`, algorithm `EC_SIGN_P256_SHA256`. Reference the CryptoKeyVersion, ending in `/cryptoKeyVersions/<n>`.
+- Azure Key Vault: key type `EC`, curve `P-256`. Reference the key with its `@<version>` suffix.
+
+Grant the permissions below on the new key before any rollout maps it. Every key that `platform:jwt-signing` or `platform:jwt-verify` names needs the same grants.
+
+| ServiceAccount | Component | KMS permissions |
+|:--|:--|:--|
+| `lenny-gateway` | Gateway | `Sign` and `GetPublicKey` |
+| `lenny-token-service` | Token Service | `Sign` and `GetPublicKey` |
+| `lenny-ops-sa` | `lenny-ops` | `GetPublicKey` only |
+
+On AWS these are `kms:Sign` and `kms:GetPublicKey`. On GCP they are `cloudkms.cryptoKeyVersions.useToSign` and `cloudkms.cryptoKeyVersions.viewPublicKey`. On Azure Key Vault they are the key `sign` and `get` operations. A pod that starts without `GetPublicKey` on a mapped key exits, so a missing grant appears as a crashlooping rollout.
+
+With `kms.provider: local`, no key is created and no grant applies. The local provider derives a key from the master key and the reference string, so a new, unused reference string, such as `jwt-2026-11`, names a new key.
+
+### Step 2: First rollout, map the new key for verification
+
+Add `platform:jwt-verify` with the new key's reference and leave `platform:jwt-signing` on the current key:
+
+```yaml
+kms:
+  aliases: "platform:jwt-signing=<current-key-reference>,platform:jwt-verify=<new-key-reference>,<other aliases>"
 ```
 
-Wrap it under the platform KMS KEK named by `jwt.TokenServiceKEKAlias` (`platform:token-service-signing`). The wrapping step depends on the deployment's KMS provider; the result is an envelope-sealed blob the chart's `tokenService.signingKeySealed` value carries. Generate a kid that names the rotation epoch (e.g., `ts-2026-05-19`); the kid must not match the current or any retained previous kid.
-
-### Step 2 — Promote the new key
-
-Once the wrapped key reaches every Token Service replica, signal the rotation. The chart wires the new wrapped key under `tokenService.signingKeySealed` and `tokenService.signingKid`; a `helm upgrade` rolls the replicas under the new key:
-
-<!-- access: kubectl requires=cluster-access -->
+<!-- access: cluster requires=helm-cli -->
 ```bash
-helm upgrade lenny lennylabs/lenny -f values.yaml \
-  --set tokenService.signingKid=ts-2026-05-19 \
-  --set-file tokenService.signingKeySealed=new-key.sealed
+helm upgrade lenny lennylabs/lenny -n lenny-system -f values.yaml --wait --timeout 15m
 ```
 
-On startup each replica reads the wrapped key, constructs the `RotatingVerifier` with it as the current key, and inherits the previously seen current key as the now-previous entry from the durable `signing_keys` table. The verifier emits a `platform.jwt_signing_key_rotated` audit row with `transition=promote_current`, `from_key_id=<old kid>`, and `to_key_id=<new kid>`. Tokens signed under the old kid continue to verify for the 24-hour overlap window; tokens signed under the new kid verify immediately.
+Run Diagnosis Step 2. After this rollout, every process verifies tokens signed by either key and signs with the current key.
 
-### Step 3 — Wait for the overlap window to close
+### Step 3: Second rollout, sign with the new key
 
-The overlap default is 24 hours. During this window the gateway accepts a token signed under either kid, the JWK Set publishes both, and every client caching the document picks up the new key on its next refresh.
+Swap the two mappings, so that `platform:jwt-signing` names the new key and `platform:jwt-verify` names the previous key:
 
-Confirm the rotation has propagated:
-
-<!-- access: kubectl requires=cluster-access -->
-```bash
-curl -fsS https://lenny-gateway.lenny-system.svc/.well-known/jwks.json | \
-  jq '.keys[].kid'
+```yaml
+kms:
+  aliases: "platform:jwt-signing=<new-key-reference>,platform:jwt-verify=<previous-key-reference>,<other aliases>"
 ```
 
-The response lists the new kid first (current) and the old kid second (previous). Both verifying paths are active.
-
-### Step 4 — Retire the old key
-
-After the overlap window closes (24 hours after Step 2), the gateway's housekeeping sweep prunes the previous kid. The sweep runs on a fixed cadence in process; an operator who needs to force the retire ahead of the cadence drops the previous-kid record from the durable `signing_keys` table:
-
-<!-- access: kubectl requires=cluster-access -->
+<!-- access: cluster requires=helm-cli -->
 ```bash
-psql "$LENNY_POSTGRES_DSN" \
-  -c "DELETE FROM signing_keys WHERE kid='ts-2026-05-18' AND retired_at IS NOT NULL"
+helm upgrade lenny lennylabs/lenny -n lenny-system -f values.yaml --wait --timeout 15m
 ```
 
-On the next sweep each replica calls `RotatingVerifier.RetireExpired()`, the previous-kid entry leaves the key set, and the verifier emits a second `platform.jwt_signing_key_rotated` audit row with `transition=retire_previous` and `from_key_id=<old kid>` (no successor — `to_key_id` is empty). The JWK Set drops the old kid from its `keys` array immediately.
+Run Diagnosis Step 2. Every new token is now signed with the new key, and tokens signed with the previous key keep verifying.
 
-A token still signed under the retired kid now fails verification with reason `key_retired`. Long-lived sessions that survived the overlap window receive `401 token_expired_or_revoked` and the client refreshes against `/v1/oauth/token` to obtain a new-key token.
+Record the time this rollout completed. The wait in Step 5 starts at that time.
+
+### Step 4: Rotate the bootstrap admin credential
+
+Rotate the bootstrap admin credential after the second rollout completes:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin users rotate-token --user lenny-admin
+```
+
+The gateway mints a new admin token with the new key, writes it to the `lenny-admin-token` Secret, and revokes the previous token immediately. Update every system that holds the admin token to read the new value from the Secret, as [Initial Admin Credential](../operator-guide/installation.html#initial-admin-credential) describes. The admin token's lifetime is longer than the wait in Step 5, so an admin token signed with the previous key would stop verifying at the third rollout.
+
+### Step 5: Third rollout, remove the previous key
+
+Wait at least 24 hours after the second rollout completed. That wait equals the lifetime cap for tokens issued for the gateway, which bounds every token the previous key signed other than the bootstrap admin credential. Gateway-minted impersonation and playground bearers have shorter caps, so every token the previous key signed has expired by the end of the wait.
+
+Remove `platform:jwt-verify` from the list:
+
+```yaml
+kms:
+  aliases: "platform:jwt-signing=<new-key-reference>,<other aliases>"
+```
+
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm upgrade lenny lennylabs/lenny -n lenny-system -f values.yaml --wait --timeout 15m
+```
+
+Run Diagnosis Step 2. A token signed with the previous key now fails verification with reason `unknown_kid`. Clients that renew their tokens before expiry are unaffected, because their current tokens were signed with the new key.
+
+Remove the previous key's grants, and disable or schedule deletion of the previous key according to the deployment's key-management policy, only after this rollout completes.
+
+## KMS outage during a rotation
+
+A process loads its key set only at startup. A gateway, Token Service, or `lenny-ops` process that cannot fetch the public key of a mapped alias at startup exits, and its pod enters `CrashLoopBackOff` until the KMS becomes reachable. The process makes no further KMS call to verify tokens, so pods that are already running keep verifying every token in their key set through a KMS outage.
+
+During an outage, the gateway and the Token Service cannot sign. Every mint, such as a `POST /v1/oauth/token` exchange or a playground bearer, fails with a retryable `503 KMS_SIGNING_UNAVAILABLE` response, and tokens issued before the outage keep verifying until they expire. The `KMSSigningUnavailable` alert fires when a signer's circuit breaker trips.
+
+Do not start a rotation rollout while the KMS is unreachable. The new pods of a rolling update fail to start, so the rollout stops, `helm upgrade --wait` times out, and the old pods the rollout has not yet replaced keep serving. A Deployment whose rolling update allows an unavailable pod, such as the gateway, runs with one fewer ready replica until the rollout is reverted or completes. Roll back with `helm rollback lenny -n lenny-system` or wait for the KMS to recover, and then run Diagnosis Step 2 before continuing. Avoid deleting or restarting healthy pods during the outage, because a restarted pod cannot start until the KMS returns.
 
 ## Verification
 
-### Step 1 — Confirm the JWK Set carries only the new kid
+### Step 1: Confirm the final alias values on every pod
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-curl -fsS https://lenny-gateway.lenny-system.svc/.well-known/jwks.json | \
-  jq '.keys | length'
+helm -n lenny-system get values lenny -o json | jq -r '.kms.aliases' | tr ',' '\n' | grep '^platform:jwt-'
 ```
 
-The result is `1` once the previous kid is retired. A higher count means either the retire step did not run on every replica, or another rotation has since started.
+The output is one line, `platform:jwt-signing=<new-key-reference>`. Run Diagnosis Step 2 and confirm every gateway, Token Service, and `lenny-ops` pod carries the same `--kms-alias` value.
 
-### Step 2 — Confirm token verification under the new key
+### Step 2: Confirm the admin token is signed with the new key
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-TOKEN=$(curl -fsS -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
-  -d 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange&...' \
-  https://lenny-gateway.lenny-system.svc/v1/oauth/token | jq -r .access_token)
-echo "$TOKEN" | cut -d. -f1 | base64 -d | jq '.kid'
+TOKEN=$(kubectl -n lenny-system get secret lenny-admin-token -o jsonpath='{.data.token}' | base64 -d)
+hdr=$(printf '%s' "$TOKEN" | cut -d. -f1 | tr '_-' '/+')
+while [ $(( ${#hdr} % 4 )) -ne 0 ]; do hdr="${hdr}="; done
+printf '%s' "$hdr" | base64 -d | jq '{alg, kid}'
 ```
 
-The decoded JOSE header's `kid` field equals the new kid. A different value means the local `lenny-ctl` cache is stale; refresh it and retry.
+The header shows `alg` `ES256` and a `kid` that differs from the `kid` of an admin token taken before the rotation.
 
-### Step 3 — Confirm the audit rows landed
+### Step 3: Confirm the admin token is accepted
 
-<!-- access: kubectl requires=cluster-access -->
+<!-- access: api method=GET path=/v1/admin/health -->
+```
+GET /v1/admin/health
+Authorization: Bearer <token from the lenny-admin-token Secret>
+```
+
+The gateway returns `200`. A `401` response means the token was signed with a key outside the running key set: check that Step 4 of the remediation ran after the second rollout, and that every system reads the token from the Secret.
+
+## KMS Sign quota
+
+Every Lenny-issued JWT costs one KMS `Sign` call. The chart value `kms.signQuotaPerSecond`, required when `kms.provider` is a cloud provider, records the provider's asymmetric `Sign` quota for the account and region. Each gateway replica publishes that value as the `lenny_kms_sign_quota_per_second` gauge.
+
+The `KMSSignQuotaApproaching` warning alert fires when the fleet-wide rate of sign requests that reach the KMS stays above 80% of `kms.signQuotaPerSecond` for more than 10 minutes. The rate counts `lenny_jwt_sign_requests_total` across the gateway and the Token Service, excluding requests the signer's circuit breaker refused before calling the KMS. The alert never fires when no quota is configured, which is the case with `kms.provider: local`.
+
+When the sign rate exceeds the provider quota, the KMS throttles sign requests. A throttled mint returns a retryable `503 KMS_SIGNING_UNAVAILABLE` response with `Retry-After: 1`. Throttling does not count toward the signer's circuit breaker, so the breaker stays closed and requests below the quota keep succeeding. Tokens already issued keep verifying, because verification makes no KMS call.
+
+### Step 1: Read the sign rate by component and outcome
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_jwt_sign_requests_total&groupBy=component,outcome&window=30m
+GET /v1/admin/metrics?q=lenny_kms_sign_quota_per_second&window=30m
+```
+
+The `component` label is `gateway` or `token-service`, and the `outcome` label is `ok`, `throttled`, `circuit_open`, or `error`. A non-zero `throttled` rate means the provider is already throttling and clients are receiving `503` responses. A rate that rose suddenly on one component points at its traffic, such as a burst of session creation on the gateway or of `POST /v1/oauth/token` exchanges on the Token Service.
+
+### Step 2: Confirm the configured quota matches the provider
+
+<!-- access: cluster requires=helm-cli -->
 ```bash
-psql "$LENNY_POSTGRES_DSN" -c "
-  SELECT seq, event_type, payload->>'transition' AS transition, payload->>'from_key_id' AS from_kid
-  FROM audit_log
-  WHERE tenant_id='platform' AND event_type='platform.jwt_signing_key_rotated'
-  ORDER BY seq DESC LIMIT 5"
+helm -n lenny-system get values lenny -o json | jq '.kms.signQuotaPerSecond'
 ```
 
-Two rows correspond to this rotation: one with `transition=promote_current` and one with `transition=retire_previous`. The platform audit chain stays `verified` per the §11.7 verifier; an `audit verify` job that reports a break against these rows indicates a wider audit-pipeline incident, not a rotation-specific fault.
+Compare the value with the asymmetric `Sign` quota the provider reports for the account and region in its quota console. A configured value below the provider quota makes the alert fire early. A configured value above it makes the alert fire late or not at all, while clients already receive throttled `503` responses.
+
+### Step 3: Raise the provider quota and the chart value together
+
+Request an increase of the provider's asymmetric `Sign` quota for the account and region through the provider's quota process. Size the request to at least the deployment's peak sign rate, which is the sum of the session creation rate, the delegation rate, the token renewal rate of every holder that renews before expiry, and infrequent operator mints.
+
+After the provider applies the increase, set `kms.signQuotaPerSecond` to the new quota and roll out:
+
+<!-- access: cluster requires=helm-cli -->
+```bash
+helm upgrade lenny lennylabs/lenny -n lenny-system -f values.yaml \
+  --set kms.signQuotaPerSecond=<new-provider-quota> --wait --timeout 15m
+```
+
+Raise both values together. Raising only the chart value silences the alert while the provider keeps throttling.
+
+When the provider cannot raise the quota, lower the renewal rate instead. `auth.capabilityTokenTtlSeconds` sets the default lifetime of playground bearers and of `POST /v1/oauth/token` tokens requested without `expires_in`, and holders of those tokens renew once per lifetime. A longer lifetime lowers the renewal rate and extends the time a leaked token stays usable.
+
+### Step 4: Confirm the rate is below the threshold
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_jwt_sign_requests_total&groupBy=outcome&window=15m
+```
+
+The `throttled` rate returns to zero, and the alert resolves once the fleet rate stays below 80% of the new `kms.signQuotaPerSecond`.
 
 ## Escalation
 
 Escalate to the platform on-call rotation when:
 
-- A `Rotate` call returns an error other than the expected `rotation_invalid` cases (nil next, empty kid, kid collision). The verifier's key set is unchanged; investigate the wrapping path or the KMS provider before retrying.
-- A retired-kid token continues to verify past the overlap window. The verifier or the deployed binary may be ahead of the published key set; cross-reference the replica's `--jwks-publish` log line and confirm `RetireExpired` reports the expected count.
-- A `key_retired` rejection arrives at the gateway while the overlap window is open. The verifier clock or the durable rotation record may be out of sync with the wall clock; check `lenny_time_drift_seconds` and the §13.3 NTP posture.
-
-## Spec references
-
-- §10.3 mTLS PKI (key-overlap window default 24h).
-- §13.3 Credential Flow (JWK Set publication, `platform.jwt_signing_key_rotated` audit event).
-- §11.7 audit hash chain (`platform.*` events land on OCSF apiActivity 6003).
+- A rotation rollout does not complete because new pods exit at startup, and the KMS is reachable. Check the permissions in Remediation Step 1 and the key-version reference format before retrying.
+- A token signed with the new key fails on some pods after Diagnosis Step 2 reports one alias value everywhere. A pod may be running an image or chart revision that does not match the rest of the release.
+- The signing key is suspected compromised. The previous key keeps verifying tokens until the third rollout. Involve the security on-call before starting, so that the response to the compromise covers the tokens the previous key signed.
+- The `throttled` outcome rate stays above zero after the provider quota increase, or the provider declines the increase.
