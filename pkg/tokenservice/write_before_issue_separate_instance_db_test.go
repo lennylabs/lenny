@@ -188,7 +188,7 @@ func TestStandaloneTokenServiceResolvesGatewayProvisionedAuditSequence_spec_13_3
 		TokenHash: []byte("h"), Scope: []string{"sessions:read"},
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
-	row, err := store.RecordWithAudit(ctx, tok, string(auditcatalog.EventTokenExchanged),
+	row, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(`{"policy_result":"accepted","jti":"jti-ts-1"}`), now)
 	if err != nil {
 		t.Fatalf("RecordWithAudit against gateway-provisioned sequence: %v", err)

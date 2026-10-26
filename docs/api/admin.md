@@ -837,6 +837,8 @@ Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across
 
 For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For delegation child-token minting, additionally supply `actor_token=<parent_session_token>` and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
 
+The caller token (the `Authorization` bearer, which authenticates the client) must not be a web playground bearer, which carries the `origin: "playground"` claim. The Token Service refuses a playground bearer as the caller token with `401 invalid_client`; the playground obtains new bearers through `POST /v1/playground/token` instead. A playground bearer may still appear as the `subject_token`, as it does when a playground session delegates.
+
 See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through the dedicated route below rather than this endpoint.
 
 ### POST /v1/admin/users/{userId}/rotate-token

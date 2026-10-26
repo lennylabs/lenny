@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeRecorder is an in-memory tokenservice.IssuedTokenStore.
@@ -45,11 +46,13 @@ func (f *fakeRecorder) Record(_ context.Context, tok issuedtokenstore.IssuedToke
 func newServerWithRecorder(t *testing.T, rec tokenservice.IssuedTokenStore) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer:        signer,
-		Issuer:        "https://lenny.dev.test/token",
-		PerDialectCap: map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
-		IssuedTokens:  rec,
+	srv := mustNewServer(t, tokenservice.Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		PerDialectCap:      map[string]time.Duration{"lenny-gateway": 24 * time.Hour},
+		IssuedTokens:       rec,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

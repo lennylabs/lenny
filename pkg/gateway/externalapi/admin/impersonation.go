@@ -250,9 +250,14 @@ type auditRegionUnresolvable interface {
 }
 
 // writeImpersonationError maps an issuer error to the canonical admin
-// envelope. A CMP-058 fail-closed surfaces as PLATFORM_AUDIT_REGION_UNRESOLVABLE
-// (HTTP 422); a duration error as 400; everything else as 500.
+// envelope. A bearer the KMS could not sign surfaces as
+// KMS_SIGNING_UNAVAILABLE (HTTP 503 with Retry-After, §10.2); a CMP-058
+// fail-closed as PLATFORM_AUDIT_REGION_UNRESOLVABLE (HTTP 422); a
+// duration error as 400; everything else as 500.
 func (r *Router) writeImpersonationError(w http.ResponseWriter, err error) {
+	if writeSigningUnavailable(w, err) {
+		return
+	}
 	var unresolvable auditRegionUnresolvable
 	switch {
 	case errors.As(err, &unresolvable):

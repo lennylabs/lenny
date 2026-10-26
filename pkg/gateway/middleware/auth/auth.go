@@ -219,6 +219,16 @@ type Options struct {
 	// spec: §27.6 / §27.3.1. F-27.6.3 / F-27.3.1.
 	PlaygroundRevocations PlaygroundRevocationChecker
 
+	// RevocationScope, when set, limits the RevocationFreshness,
+	// Revocations, and PlaygroundRevocations checks to a verified bearer
+	// for which it returns true. lenny-ops sets it when its verifier also
+	// trusts the dev embedded-OIDC key, so the revocation set and its
+	// first-read gate apply only to Lenny-issued tokens the key set
+	// verified. nil applies the checks to every verified bearer.
+	// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+	// rule 6).
+	RevocationScope func(token string) bool
+
 	// AuthFailureSink, when set, receives §4.2
 	// audit events for every tenant-claim rejection
 	// (TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, TENANT_CLAIM_INVALID_FORMAT).
@@ -484,7 +494,8 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	// during the outage. The freshness check fires for every Bearer
 	// before the in-memory revocation lookup so a token absent from the
 	// stale set is not accepted. F-13.3.4.
-	if m.opts.RevocationFreshness != nil && m.opts.RevocationFreshness.Stale() {
+	inScope := m.opts.RevocationScope == nil || m.opts.RevocationScope(token)
+	if inScope && m.opts.RevocationFreshness != nil && m.opts.RevocationFreshness.Stale() {
 		writeError(w, http.StatusServiceUnavailable, "token_validation_unavailable",
 			"the revocation store is unreachable; the token cannot be validated",
 			map[string]any{"retryable": true})
@@ -492,7 +503,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	}
 	// §13.3 revocation: a signature- and expiry-valid token is still
 	// rejected when its jti has been revoked.
-	if m.opts.Revocations != nil && m.opts.Revocations.IsRevoked(claims.JWTID) {
+	if inScope && m.opts.Revocations != nil && m.opts.Revocations.IsRevoked(claims.JWTID) {
 		writeError(w, http.StatusUnauthorized, "TOKEN_REVOKED",
 			"the presented token has been revoked", nil)
 		return
@@ -522,7 +533,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	// details.reason=bearer_revoked; a store-unreachable error fails
 	// closed (503 REDIS_UNAVAILABLE). Non-playground bearers carry no
 	// origin claim and skip the check entirely. F-27.6.3 / F-27.3.1.
-	if m.opts.PlaygroundRevocations != nil && claims.Origin == playgroundOriginClaim {
+	if inScope && m.opts.PlaygroundRevocations != nil && claims.Origin == playgroundOriginClaim {
 		revoked, rerr := m.opts.PlaygroundRevocations.IsBearerRevoked(r.Context(), tenant.TenantID, claims.JWTID)
 		if rerr != nil {
 			writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",

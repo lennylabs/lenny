@@ -4,6 +4,7 @@ package stack
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/lennylabs/lenny/pkg/embedded/devauth"
+	"github.com/lennylabs/lenny/pkg/kms"
 )
 
 // controlPlaneNamespace is the namespace the chart renders the §17.4
@@ -63,6 +65,19 @@ const devBearerTrustSecretName = "lenny-embedded-dev-bearer-key"
 // points at. spec: §10.2 / §17.4 (dev bearer trust).
 const devBearerTrustSecretKey = "key"
 
+// devKMSMasterKeySecretName is the fixed name the development profile sets
+// for the local KMS master key Secret (kms.masterKeySecret). The gateway and
+// lenny-ops mount it and pass --kms-master-key-file, so both derive the same
+// KEKs and the same ES256 JWT signing key from it. Naming it in the profile
+// keeps key material out of the pre-rendered embedded manifests.
+// spec: §17.4 (the local provider is keyed by a master key Secret that lenny
+// up generates when the embedded cluster has none).
+const devKMSMasterKeySecretName = "lenny-embedded-dev-kms-master-key"
+
+// kmsMasterKeySecretKey is the Secret data key the chart's master key mount
+// reads (/etc/lenny/kms/master-key). spec: §17.4.
+const kmsMasterKeySecretKey = "master-key"
+
 // defaultPlatformBundleName is the file name of the deduplicated platform
 // image bundle shipped alongside the lenny binary. The bundle is a single
 // docker-save tarball holding the gateway, controller, lenny-ops,
@@ -91,6 +106,7 @@ const platformBundleEnvVar = "LENNY_PLATFORM_BUNDLE"
 // substrate placement seams. spec: §17.4.
 var (
 	createDevBearerSecretFn = createDevBearerSecret
+	createMasterKeySecretFn = createMasterKeySecret
 	importPlatformBundleFn  = importPlatformBundle
 	// applyNonImageManifestsFn applies the non-Deployment objects and
 	// applyDeploymentManifestsFn applies the Deployments. The bring-up runs
@@ -164,6 +180,53 @@ func createDevBearerSecretFromConfig(ctx context.Context, cfg *rest.Config, keyF
 		if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("embedded dev-bearer secret: update %s: %w", devBearerTrustSecretName, err)
 		}
+	}
+	return nil
+}
+
+// createMasterKeySecret ensures the local KMS master key Secret exists in
+// the control-plane namespace under the fixed name the development profile
+// sets. It runs before the Deployments are applied, so the gateway's and
+// lenny-ops's non-optional master key mount resolves when their pods
+// schedule. spec: §17.4.
+func createMasterKeySecret(ctx context.Context, kubeconfigPath string) error {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("embedded kms master-key secret: load kubeconfig %s: %w", kubeconfigPath, err)
+	}
+	return createMasterKeySecretFromConfig(ctx, cfg)
+}
+
+// createMasterKeySecretFromConfig creates the master key Secret holding
+// kms.DEKSize random bytes when it is absent, and leaves an existing Secret
+// unchanged. Replacing the key would orphan every ciphertext wrapped and
+// every token signed under it, so the key persists with the substrate for as
+// long as the Secret does. It is split from createMasterKeySecret so a tier-2
+// envtest can drive it against a real kube-apiserver.
+//
+// spec: §17.4 (the local provider is keyed by a master key Secret that lenny
+// up generates when the embedded cluster has none, so the key persists with
+// the substrate), §10.2 "Signing key and algorithm" (the local provider
+// derives the ES256 signing key from that master key).
+func createMasterKeySecretFromConfig(ctx context.Context, cfg *rest.Config) error {
+	key := make([]byte, kms.DEKSize)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("embedded kms master-key secret: generate key: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("embedded kms master-key secret: build core client: %w", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      devKMSMasterKeySecretName,
+			Namespace: controlPlaneNamespace,
+		},
+		Data: map[string][]byte{kmsMasterKeySecretKey: key},
+	}
+	_, err = client.CoreV1().Secrets(controlPlaneNamespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("embedded kms master-key secret: create %s: %w", devKMSMasterKeySecretName, err)
 	}
 	return nil
 }

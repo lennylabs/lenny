@@ -23,6 +23,8 @@ type fakeKMS struct {
 	failEncrypt error
 	failDecrypt error
 	lastAAD     []byte
+	// signing holds the Sign and public-key behavior (sign_test.go).
+	signing signFake
 }
 
 func newFakeKMS() *fakeKMS {
@@ -125,8 +127,8 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("k-acme", []byte("0123456789abcdef0123456789abcdef"))
 	f.seed("k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]KeyRef{
-		"tenant:acme":                    {Name: "k-acme"},
-		"platform:token-service-signing": {Name: "k-platform"},
+		"tenant:acme":          {Name: "k-acme"},
+		"platform:jwt-signing": {Name: "k-platform"},
 	})
 	return p, f
 }
@@ -167,7 +169,7 @@ func TestUnwrapDEKRejectsCrossAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapDEK: %v", err)
 	}
-	if _, err := p.UnwrapDEK(context.Background(), "platform:token-service-signing", wrapped); err == nil {
+	if _, err := p.UnwrapDEK(context.Background(), "platform:jwt-signing", wrapped); err == nil {
 		t.Error("UnwrapDEK under a different alias should fail")
 	}
 }

@@ -28,6 +28,8 @@ import (
 	"testing"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	crenvtest "sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -130,4 +132,30 @@ func Start(t testing.TB) *Environment {
 		}
 	})
 	return &Environment{cfg: cfg, assets: assets}
+}
+
+// Kubeconfig writes a kubeconfig file addressing the test API server with
+// the envtest administrator credentials and returns its path. A
+// subprocess under test, such as lenny-ops, reaches the API server
+// through a KUBECONFIG entry naming the file. The cleanup of t removes
+// the file.
+func (e *Environment) Kubeconfig(t testing.TB) string {
+	t.Helper()
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["envtest"] = &clientcmdapi.Cluster{
+		Server:                   e.cfg.Host,
+		CertificateAuthorityData: e.cfg.CAData,
+	}
+	cfg.AuthInfos["envtest"] = &clientcmdapi.AuthInfo{
+		ClientCertificateData: e.cfg.CertData,
+		ClientKeyData:         e.cfg.KeyData,
+		Token:                 e.cfg.BearerToken,
+	}
+	cfg.Contexts["envtest"] = &clientcmdapi.Context{Cluster: "envtest", AuthInfo: "envtest", Namespace: "default"}
+	cfg.CurrentContext = "envtest"
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := clientcmd.WriteToFile(*cfg, path); err != nil {
+		t.Fatalf("envtest: write kubeconfig: %v", err)
+	}
+	return path
 }

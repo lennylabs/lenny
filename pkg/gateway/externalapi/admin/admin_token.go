@@ -4,8 +4,11 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 )
 
@@ -91,6 +94,9 @@ func (r *Router) handleRotateToken(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if _, err := r.adminToken.Rotate(req.Context()); err != nil {
+		if writeSigningUnavailable(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"admin-token rotation failed: "+err.Error(), nil)
 		return
@@ -103,4 +109,23 @@ func (r *Router) handleRotateToken(w http.ResponseWriter, req *http.Request) {
 		Username:        user,
 	}
 	writeJSON(w, http.StatusOK, section)
+}
+
+// writeSigningUnavailable writes the §10.2 KMS_SIGNING_UNAVAILABLE
+// envelope (HTTP 503, `retryable: true`) when err carries the
+// *jwt.SigningError a mint's Sign call returned, with `Retry-After` set
+// from the breaker: the remaining cooldown when the breaker is open, and
+// 1 second otherwise. It reports whether it wrote the response, so a
+// caller falls through to its own mapping for every other error.
+//
+// spec: §10.2 (KMS signing failure mode); §15.1 (KMS_SIGNING_UNAVAILABLE).
+func writeSigningUnavailable(w http.ResponseWriter, err error) bool {
+	var serr *jwt.SigningError
+	if !errors.As(err, &serr) {
+		return false
+	}
+	retryAfter := time.Duration(serr.RetryAfterSeconds()) * time.Second
+	writeErrorRetryAfter(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
+		"the token could not be signed: "+err.Error(), nil, retryAfter)
+	return true
 }

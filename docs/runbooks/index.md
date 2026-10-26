@@ -105,6 +105,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `GatewayRateLimitStorm` | [gateway-rate-limit-storm](gateway-rate-limit-storm.html) | `gateway` |
 | `GatewayClockDrift` | [gateway-clock-drift](gateway-clock-drift.html) | `gateway` |
 | `OpsClockSkewExceeded` | [ops-clock-skew](ops-clock-skew.html) | `ops`, `postgres`, `redis` |
+| `KMSSignQuotaApproaching` | [jwt-key-rotation](jwt-key-rotation.html#kms-sign-quota) | `gateway`, `tokenService` |
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |
 | `EphemeralContainerCredGuardUnavailable` | [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html) | `admission` |
 | `AdmissionPlaneFeatureFlagDowngrade` | [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html) | `admission` |
@@ -276,6 +277,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 **Credentials and tokens**
 - [credential-pool-exhaustion](credential-pool-exhaustion.html)
 - [credential-revocation](credential-revocation.html)
+- [jwt-key-rotation](jwt-key-rotation.html)
 - [token-service-outage](token-service-outage.html)
 - [token-store-unavailable](token-store-unavailable.html)
 

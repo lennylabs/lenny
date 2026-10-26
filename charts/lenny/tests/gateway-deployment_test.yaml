@@ -690,6 +690,109 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --environment=dev
 
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # the gateway mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate" — on a
+  # cloud provider the gateway receives kms.signQuotaPerSecond as
+  # --kms-sign-quota-per-second and emits it on the quota gauge the alert
+  # threshold reads.
+  - it: renders --kms-sign-quota-per-second from kms.signQuotaPerSecond under a cloud provider
+    set:
+      kms.provider: gcp
+      kms.signQuotaPerSecond: 75
+      kms.aliases: "platform:jwt-signing=projects/acme/locations/global/keyRings/lenny/cryptoKeys/jwt"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=75
+          count: 1
+
+  # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate" — the
+  # local provider makes no KMS call, so the gateway renders no quota flag
+  # and the gauge stays unset.
+  - it: renders no --kms-sign-quota-per-second under the local provider
+    set:
+      kms.signQuotaPerSecond: 75
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=75
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=0
+
   # spec: §17.9.3 / F-17.5.1 — the gateway receives its ArtifactStore
   # backend selector from objectStorage.provider; the chart default is
   # minio so the cloud adapters stay dormant unless an operator opts in.
@@ -2943,7 +3046,23 @@ tests:
           content: --playground-auth-mode=dev
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --playground-bearer-ttl-seconds=900
+          content: --capability-token-ttl-seconds=900
+
+  # spec: §10.2 (Authentication), §27 — the playground bearer lifetime
+  # renders from auth.capabilityTokenTtlSeconds, the value the Token
+  # Service flag reads, rather than from a playground-scoped key.
+  - it: renders --capability-token-ttl-seconds from auth.capabilityTokenTtlSeconds
+    set:
+      playground.enabled: true
+      playground.authMode: dev
+      auth.capabilityTokenTtlSeconds: 1200
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=1200
 
   # spec: §27.2 — the chart's playground.sessionLabels map
   # renders as a comma-separated key=value flag value. F-27.2.1.

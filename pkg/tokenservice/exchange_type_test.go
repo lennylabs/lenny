@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // exchangePayloads extracts every token.exchanged payload from a
@@ -41,11 +43,13 @@ func TestExchangedRowCarriesExchangeType_Rotation_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	// A self-rotation: caller authenticates with — and rotates — its own
 	// token, preserving scope and audience.
@@ -91,11 +95,13 @@ func TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7(t *testing.T) 
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
@@ -125,11 +131,13 @@ func TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
@@ -188,10 +196,12 @@ func TestClassifyExchangeType_spec_16_7(t *testing.T) {
 func TestRejectedExchangeCarriesExchangeType_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
-	srv := NewServer(Options{
-		Signer:  signer,
-		Issuer:  "https://lenny.dev.test/token",
-		Auditor: auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
 	})
 	// Broaden scope beyond the subject's — the validator rejects it.
 	tok := mintToken(t, signer, jwt.Claims{

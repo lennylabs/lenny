@@ -186,114 +186,171 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 //
 //  1. pgtenant.InTx opens one transaction and SETs app.current_tenant.
 //  2. The transaction acquires the §11.7 per-tenant audit advisory
-//     lock (via auditstore.AppendInTx).
-//  3. The issued_tokens row is INSERTed.
+//     lock (auditstore.AcquireLockInTx).
+//  3. Step (1a): the issued_tokens rows of the sources are re-read in
+//     one SELECT. A source whose row has revoked_at set returns a
+//     *SourceRevokedError naming its role, and no issuance statement
+//     runs. A source with no row passes.
 //  4. The audit_log row is INSERTed under the same advisory lock.
+//  5. The issued_tokens row is INSERTed.
+//
+// sources lists the exchange inputs to re-read: the subject_token jti
+// and, on a delegation child mint, the actor_token jti. The gateway's
+// in-process admin rotation passes an empty list, because it has no
+// subject token to re-read.
 //
 // Only after COMMIT does the caller surface the signed token to the
 // client. If any step fails, the transaction rolls back and neither the
-// issued-token row nor the audit row is persisted — the Token Service
-// then never returns the minted token to the caller. The auditEventType
-// and auditPayload come from the caller (the Token Service handler)
-// because the audit payload schema is owned by §16.7 / §25.4 and the
-// store should not bake that vocabulary in.
+// issued-token row nor the audit row is persisted, and the Token Service
+// never returns the minted token to the caller. The auditEventType and
+// auditPayload come from the caller (the Token Service handler) because
+// the audit payload schema is owned by §16.7 / §25.4 and the store does
+// not bake that vocabulary in.
 //
 // auditPayload is a JSON-encoded object. The sealed audit row is
 // returned to the caller for cross-checking and metric labelling; the
 // returned row carries the assigned sequence number and prev_hash so a
 // caller can trace the audit chain forward.
 //
-// spec: §13.3 — single Postgres transaction binding the
-// issued-token INSERT and the token.exchanged audit INSERT.
-func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
+// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2,
+// §11.7.
+func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
 	var committed audit.Row
 	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
-		// Step 1: acquire the §11.7 advisory lock + INSERT the audit
-		// row first so the chain prev_hash is stable; the issued_tokens
-		// INSERT below is bound to the same transaction and rolls back
-		// together on any failure.
+		if err := lockAndRecheck(ctx, tx, tok.TenantID, sources); err != nil {
+			return err
+		}
+		// INSERT the audit row first so the chain prev_hash is stable;
+		// the issued_tokens INSERT below is bound to the same transaction
+		// and rolls back together on any failure.
 		row, err := auditstore.AppendInTx(ctx, tx, tok.TenantID, auditEventType, auditPayload, auditAt)
 		if err != nil {
 			return err
 		}
 		committed = row
-		// Step 2: INSERT the issued_tokens row.
-		if err := insertIssued(ctx, tx, tok); err != nil {
-			return err
-		}
-		return nil
+		return insertIssued(ctx, tx, tok)
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return audit.Row{}, ErrAlreadyExists
-		}
-		return audit.Row{}, err
+		return audit.Row{}, mapUniqueViolation(err)
 	}
 	return committed, nil
 }
 
 // RecordWithRotationAudit performs the §13.3 atomic
 // token-rotation write-before-issue. In one Postgres transaction it
-// writes the `token.exchanged` audit row, INSERTs the new issued_tokens
-// row, and stamps revoked_at/revoked_reason on the previous token
-// (prevJTI) when that token is still live. The revocation of the
-// previous token and the mint of its replacement therefore commit
-// together: there is no window in which both tokens validate, and none
-// in which the old token is revoked but the replacement was never
-// issued. Only after COMMIT does the Token Service hand the new token to
-// the caller.
+// takes the §11.7 lock, re-reads the sources (step 1a), writes the
+// `token.exchanged` audit row, INSERTs the new issued_tokens row, and
+// stamps revoked_at/revoked_reason on the previous token (prevJTI). The
+// revocation of the previous token and the mint of its replacement
+// therefore commit together: there is no window in which both tokens
+// validate, and none in which the old token is revoked but the
+// replacement was never issued. Only after COMMIT does the Token Service
+// hand the new token to the caller.
 //
-// The previous token is revoked only when its row exists in the tenant
-// and is not already revoked. revoked reports whether a row was revoked,
-// and revokedSub carries that row's subject so the caller can emit the
-// §16.7 token.revoked row with revocation_reason=rotation_replaced. A
-// missing or already-revoked previous token leaves the mint intact and
-// reports revoked=false, so a retried rotation does not double-revoke or
-// double-emit. The §16.7 token.revoked audit row itself is written by
-// the caller after COMMIT because its propagation_mode field records the
-// post-commit EventBus publish outcome.
+// The Token Service lists the subject token, which is prevJTI, in
+// sources. A rotation of a token that is already revoked, which is a
+// retried rotation or the loser of two concurrent rotations of one
+// subject, therefore fails the step (1a) re-read with a
+// *SourceRevokedError naming the subject, and commits no second mint.
+// The two concurrent rotations serialize on the §11.7 lock, so the
+// second one reads the first one's committed revoked_at stamp.
 //
-// spec: §13.3.
-func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
+// A revocation that does not take the §11.7 lock (Store.Revoke,
+// RevokeBySubject, or RevokeCascade) can commit after the step (1a)
+// re-read and before the revoke UPDATE below. The UPDATE then matches no
+// live row, so revokePrevious re-reads prevJTI's row and, when it exists
+// with revoked_at set, returns a *SourceRevokedError naming the subject.
+// The transaction rolls back and no second mint commits.
+//
+// revoked reports whether a row was revoked, and revokedSub carries that
+// row's subject so the caller can emit the §16.7 token.revoked row with
+// revocation_reason=rotation_replaced. The rotation commits with revoked
+// false only when prevJTI has no issued_tokens row in the tenant, such
+// as an upstream IdP token that was never recorded. The §16.7 token.revoked audit row itself
+// is written by the caller after COMMIT because its propagation_mode
+// field records the post-commit EventBus publish outcome.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, Token
+// rotation and revocation), §11.7.
+func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
 	err = pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
-		// §11.7 advisory lock + token.exchanged audit row first so the
-		// chain prev_hash is stable; the issued_tokens INSERT and the
-		// previous-token revocation below are bound to the same
-		// transaction and roll back together on any failure.
+		if lerr := lockAndRecheck(ctx, tx, tok.TenantID, sources); lerr != nil {
+			return lerr
+		}
+		// The token.exchanged audit row goes first so the chain prev_hash
+		// is stable; the issued_tokens INSERT and the previous-token
+		// revocation below are bound to the same transaction and roll
+		// back together on any failure.
 		if _, aerr := auditstore.AppendInTx(ctx, tx, tok.TenantID, exchangeEventType, exchangePayload, at); aerr != nil {
 			return aerr
 		}
 		if ierr := insertIssued(ctx, tx, tok); ierr != nil {
 			return ierr
 		}
-		var sub string
-		rerr := tx.QueryRow(ctx,
-			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
-			 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL
-			 RETURNING sub`,
-			prevJTI, tok.TenantID, at, pgtenant.NullString(revokedReason)).Scan(&sub)
-		if errors.Is(rerr, pgx.ErrNoRows) {
-			// Previous token absent or already revoked: the mint still
-			// commits, but there is nothing to revoke and no token.revoked
-			// to emit.
-			return nil
-		}
-		if rerr != nil {
-			return rerr
-		}
-		revokedSub = sub
-		revoked = true
-		return nil
+		sub, ok, rerr := revokePrevious(ctx, tx, tok.TenantID, prevJTI, revokedReason, at)
+		revokedSub, revoked = sub, ok
+		return rerr
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return "", false, ErrAlreadyExists
-		}
-		return "", false, err
+		return "", false, mapUniqueViolation(err)
 	}
 	return revokedSub, revoked, nil
+}
+
+// revokePrevious stamps revoked_at/revoked_reason on the rotated token
+// when its row exists in the tenant and is live, and returns its subject.
+// A missing row reports revoked=false with no error. A row that is
+// already revoked returns a *SourceRevokedError naming the subject token,
+// so a revocation that committed after the step (1a) re-read still
+// refuses the rotation.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, Token
+// rotation and revocation).
+func revokePrevious(ctx context.Context, tx pgx.Tx, tenantID, prevJTI, reason string, at time.Time) (string, bool, error) {
+	var sub string
+	err := tx.QueryRow(ctx,
+		`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
+		 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL
+		 RETURNING sub`,
+		prevJTI, tenantID, at, pgtenant.NullString(reason)).Scan(&sub)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, previousRevokedError(ctx, tx, tenantID, prevJTI)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("issuedtokenstore: revoke rotated token: %w", err)
+	}
+	return sub, true, nil
+}
+
+// previousRevokedError re-reads prevJTI's row after the revoke UPDATE
+// matched no live row. It returns nil when the tenant has no row for
+// prevJTI and a *SourceRevokedError naming the subject token when the row
+// exists with revoked_at set.
+func previousRevokedError(ctx context.Context, tx pgx.Tx, tenantID, prevJTI string) error {
+	var revokedAt *time.Time
+	err := tx.QueryRow(ctx,
+		`SELECT revoked_at FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
+		prevJTI, tenantID).Scan(&revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: re-read rotated token: %w", err)
+	}
+	if revokedAt == nil {
+		return fmt.Errorf("issuedtokenstore: rotated token %q is live but the revoke matched no row", prevJTI)
+	}
+	return &SourceRevokedError{Role: SourceSubjectToken, JTI: prevJTI, RevokedAt: *revokedAt}
+}
+
+// mapUniqueViolation maps a jti primary-key collision to ErrAlreadyExists
+// and returns every other error unchanged.
+func mapUniqueViolation(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrAlreadyExists
+	}
+	return err
 }
 
 // insertIssued runs the issued_tokens INSERT on tx. It assumes the

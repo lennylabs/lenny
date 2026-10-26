@@ -54,7 +54,7 @@ type fakeSigner struct {
 	claims jwt.Claims
 }
 
-func (s *fakeSigner) Sign(c jwt.Claims) (string, error) {
+func (s *fakeSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
 	s.calls++
 	s.claims = c
 	return "signed-token", nil

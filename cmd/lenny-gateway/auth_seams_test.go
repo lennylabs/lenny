@@ -223,8 +223,8 @@ func (admitAllRegistry) IsRegistered(string) (bool, error) { return true, nil }
 
 // TestBearerTenantClaimFollowsVerifyingKey_spec_10_2 drives the gateway's
 // Embedded Mode verifier composition through authmw.Wrap under a
-// non-default --tenant-id-claim. A Token Service user_bearer resolves
-// from `tenant_id` and is not refused for lacking the configured claim.
+// non-default --tenant-id-claim. A Lenny-issued user_bearer, verified by
+// the key-set member, resolves from `tenant_id` and is not refused for lacking the configured claim.
 // An embedded-key token resolves from the configured claim even when its
 // `tenant_id` names another tenant. An embedded-key token that carries
 // `tenant_id` but lacks the configured claim is refused with
@@ -233,11 +233,10 @@ func (admitAllRegistry) IsRegistered(string) (bool, error) { return true, nil }
 // spec: 10.2 (Authentication: `tenant_id` extraction), 17.4
 func TestBearerTenantClaimFollowsVerifyingKey_spec_10_2(t *testing.T) {
 	const claim = "https://acme.example/tenant"
-	primarySecret := []byte("token-service-secret-abcdefghijklmnop")
 	embeddedSecret := []byte("embedded-signing-secret-0123456789")
-	primary := jwt.NewHMACSigner("token-service-kid", primarySecret)
+	keySet, signer := gatewaySigning(t, localSigningProvider(t, 0x44, "local-key-1"))
 	embedded := jwt.NewHMACSigner("embedded-kid", embeddedSecret)
-	verifier := embeddedBearerVerifier(primary, embedded, claim)
+	verifier := embeddedBearerVerifier(keySet, embedded, claim)
 	exp := time.Now().Add(time.Hour).Unix()
 
 	cases := []struct {
@@ -248,10 +247,8 @@ func TestBearerTenantClaimFollowsVerifyingKey_spec_10_2(t *testing.T) {
 		wantCode   string
 	}{
 		{
-			name: "token service bearer resolves from tenant_id",
-			token: hs256(t, primarySecret, "token-service-kid", map[string]any{
-				"sub": "alice@acme.com", "exp": exp, "typ": string(auth.TokenUserBearer), "tenant_id": "acme",
-			}),
+			name:       "Lenny-issued bearer resolves from tenant_id",
+			token:      mintUserBearer(t, signer, "acme"),
 			wantStatus: http.StatusNoContent, wantTenant: "acme",
 		},
 		{
@@ -304,27 +301,21 @@ func TestBearerTenantClaimFollowsVerifyingKey_spec_10_2(t *testing.T) {
 // both members of the gateway's Embedded Mode bearer verifier through the
 // multi-tenant auth chain the gateway wires (applyTenantAuthOptions over a
 // tenantstore) for every tenant registration state. A Lenny-issued bearer,
-// verified by the unwrapped Token Service member and resolved from its own
+// verified by the unwrapped key-set member and resolved from its own
 // `tenant_id`, and an embedded OIDC bearer, verified by the trusted-key
 // member and resolved from the configured tenant claim, are each admitted
 // for a registered tenant and refused with 403 TENANT_NOT_FOUND for a tenant
 // in `deleting` or `deleted`. This test pins both verifier members over
 // every registration state at tier 1. The tier-4 tenant deletion test
 // complements it against the gateway binary: it mints Lenny-issued bearers
-// through the platform-admin impersonation endpoint and probes each one on
-// the replica that signed it, because each replica signs with its own
-// per-process Token Service key.
+// through the platform-admin impersonation endpoint.
 //
 // spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 10.2 (Authentication: `tenant_id` extraction)
 func TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8(t *testing.T) {
 	ctx := context.Background()
-	primarySecret := []byte("token-service-secret-abcdefghijklmnop")
 	embeddedSecret := []byte("embedded-signing-secret-0123456789")
-	verifier := embeddedBearerVerifier(
-		jwt.NewHMACSigner("token-service-kid", primarySecret),
-		jwt.NewHMACSigner("embedded-kid", embeddedSecret),
-		"tenant_id",
-	)
+	keySet, signer := gatewaySigning(t, localSigningProvider(t, 0x55, "local-key-1"))
+	verifier := embeddedBearerVerifier(keySet, jwt.NewHMACSigner("embedded-kid", embeddedSecret), "tenant_id")
 	store := tenantstore.NewMemory()
 	opts := authmw.Options{Verifier: verifier}
 	applyTenantAuthOptions(&opts, true, false, store)
@@ -338,9 +329,7 @@ func TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8(t *testing
 		mint func(tenant string) string
 	}{
 		{"Lenny-issued", func(tenant string) string {
-			return hs256(t, primarySecret, "token-service-kid", map[string]any{
-				"sub": "alice@" + tenant + ".com", "exp": exp, "typ": string(auth.TokenUserBearer), "tenant_id": tenant,
-			})
+			return mintUserBearer(t, signer, tenant)
 		}},
 		{"embedded OIDC", func(tenant string) string {
 			return hs256(t, embeddedSecret, "embedded-kid", map[string]any{

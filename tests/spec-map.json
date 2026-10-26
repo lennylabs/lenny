@@ -212,6 +212,8 @@
         "cmd/lenny-token-service/spiffe_test.go::TestSPIFFEAuditInterceptorAttributesPerReplicaIdentity",
         "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheEncryptedAtRestOnRealRedis",
         "tests/tier2_component/stores/tokencache_test.go::TestTokenCacheTTLExpiryOnRealRedis",
+        "tests/tier2_component/tokensigning/gateway_keyset_startup_test.go::TestGatewayExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
+        "tests/tier4_integration/gateway_keyset_peer_replica_test.go::TestGatewayMintedBearerVerifiesOnPeerReplica_spec_10_2",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
         "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenExchangeProxiedToDeployedTokenService",
@@ -222,7 +224,12 @@
         "tests/tier3_contract/tokenservice_release/release_contract_test.go",
         "pkg/gateway/credentials/credassign/client_classify_internal_test.go",
         "pkg/gateway/credentials/credassign/client_release_breaker_test.go",
-        "tests/tier0_static/token_service_tenant_render_test.go"
+        "tests/tier0_static/token_service_tenant_render_test.go",
+        "tests/tier2_component/tokensigning/tokenservice_keyset_startup_test.go::TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2",
+        "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
+        "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8"
       ],
       "packages": [
         "pkg/token",
@@ -2555,13 +2562,25 @@
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
-        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery"
+        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
+        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
+        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3"
       ],
       "packages": [
         "pkg/delegation/cycle",
         "pkg/delegation/lease",
         "pkg/gateway/mcpfabric/mcptools",
-        "pkg/gateway/externalapi/errorclassify"
+        "pkg/gateway/externalapi/errorclassify",
+        "pkg/gateway/storage/issuedtokenstore",
+        "pkg/tokenservice",
+        "pkg/gateway/mcpfabric/delegation/childtoken"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the \u00a78.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the \u00a78.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the \u00a78.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the \u00a78.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
@@ -3197,6 +3216,15 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateSharedES256SigningKey_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsCloseThePerProcessKeyFinding_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsNoteSupersededFindings_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTestGapRecords_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTier6RecordMatchesTheTree_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordParsers_spec_10_2",
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestBearerTenantClaimFollowsVerifyingKey_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestBearerOfDeletingTenantRefusedOnEveryVerifierMember_spec_12_8",
@@ -3246,6 +3274,15 @@
         "tests/tier9_security/tenant_claim_spoofing_test.go::TestMultiTenantGatewayRefusesTenantClaimSpoofing",
         "cmd/lenny-gateway/authposture_test.go::TestApplyAuthPostureOptionsByDevMode",
         "cmd/lenny-gateway/authposture_test.go::TestPublicPathMatcherAdmitsOnlySpecPublicRoutes",
+        "cmd/lenny-gateway/flags_test.go::TestJWKSPublishFlagIsUndefined",
+        "cmd/lenny-gateway/jwt_signing_test.go::TestGatewayKeySetVerifiesPeerReplicaTokens_spec_10_2",
+        "cmd/lenny-gateway/jwt_signing_test.go::TestGatewaySignerBuiltFromOneKeySetFetch_spec_10_2",
+        "cmd/lenny-gateway/jwt_signing_test.go::TestGatewaySigningFailsWhenKeySetCannotLoad_spec_10_2",
+        "cmd/lenny-gateway/jwt_signing_test.go::TestGatewayBearerVerifierRefusesNonKeySetTokens_spec_10_2",
+        "tests/tier2_component/tokensigning/gateway_keyset_startup_test.go::TestGatewayExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
+        "tests/tier4_integration/gateway_keyset_peer_replica_test.go::TestGatewayMintedBearerVerifiesOnPeerReplica_spec_10_2",
+        "tests/tier9_security/gateway_keyset_bearer_test.go::TestGatewayBearerPathVerifiesOnlyThroughKeySet_spec_10_2",
+        "tests/tier4_integration/jwks_route_absent_test.go::TestWellKnownJWKSPathNotServedByLiveGateway",
         "cmd/lenny-gateway/authposture_test.go::TestProductionPostureRefusesHeaderOnlyRequests",
         "cmd/lenny-gateway/authposture_test.go::TestProductionPostureKeepsPublicRoutesPublic",
         "cmd/lenny-gateway/authposture_test.go::TestProductionPostureBearerOverridesTenantHeader",
@@ -3273,10 +3310,136 @@
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestTenantDeletionNeverTouchesAnotherTenant_spec_12_8",
         "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestDeletionTakeoverRebuildsAtPhase3AndHoldPauses_spec_12_8",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
+        "pkg/kms/local_signing_test.go::TestLocalSigningKeyDeterministicAcrossProvidersSharingSeed_spec_10_2",
+        "pkg/kms/local_signing_test.go::TestLocalSigningKeyDistinctPerReference_spec_10_2",
+        "pkg/kms/local_signing_test.go::TestLocalSignProducesVerifiable64ByteSignature_spec_10_2",
+        "pkg/kms/local_signing_test.go::TestLocalSignRejectsNon32ByteDigestAndCancelledContext_spec_10_2",
+        "pkg/kms/local_signing_test.go::TestLocalSigningKeyConcurrentFirstUseAgrees_spec_10_2",
+        "pkg/kms/local_signing_internal_test.go::TestLocalSigningKeySeparatedFromKEKMaterial_spec_10_2",
+        "pkg/kms/local_signing_internal_test.go::TestDeriveSigningKeyIsPureFunction_spec_10_2",
+        "pkg/kms/sign_test.go::TestSignatureFromASN1LeftPadsShortR_spec_10_2",
+        "pkg/kms/sign_test.go::TestSignatureFromASN1RejectsMalformed_spec_10_2",
+        "pkg/kms/sign_test.go::TestPublicKeyFromPKIXRejectsNonP256_spec_10_2",
+        "pkg/kms/aws/sign_test.go::TestAWSSignLeftPadsShortR_spec_10_2",
+        "pkg/kms/aws/sign_test.go::TestAWSSignMapsThrottlingToErrThrottled_spec_10_2",
+        "pkg/kms/aws/sign_test.go::TestAWSSignRejectsBadDigestUnmappedAliasAndCancelledContext_spec_10_2",
+        "pkg/kms/aws/sign_test.go::TestAWSPublicKeyRequiresP256_spec_10_2",
+        "pkg/kms/aws/sign_test.go::TestAWSSignRealClientMakesOneRequestOnThrottle_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPSignLeftPadsShortR_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPSignMapsResourceExhaustedToErrThrottled_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPSignRejectsBadDigestUnmappedAliasAndCancelledContext_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPPublicKeyRequiresP256_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPSignRealClientMakesOneRequestOnUnavailable_spec_10_2",
+        "pkg/kms/gcp/sign_test.go::TestGCPSignRealClientMapsResourceExhausted_spec_10_2",
+        "pkg/kms/azure/sign_test.go::TestAzureSignReturnsRawRS_spec_10_2",
+        "pkg/kms/azure/sign_test.go::TestAzureSignMaps429ToErrThrottled_spec_10_2",
+        "pkg/kms/azure/sign_test.go::TestAzureSignRejectsBadDigestUnmappedAliasAndCancelledContext_spec_10_2",
+        "pkg/kms/azure/sign_test.go::TestAzurePublicKeyRequiresP256_spec_10_2",
+        "pkg/kms/azure/sign_test.go::TestAzureSignRealClientMakesOneRequestOnThrottle_spec_10_2",
+        "pkg/kms/providerflags/signingref_test.go::TestSigningReferenceImmutabilityTable_spec_10_2",
+        "pkg/kms/providerflags/signingref_test.go::TestResolveRejectsRepointableSigningReferenceOnCloud_spec_10_2",
+        "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2",
+        "tests/testinfra/stubs/kms/signing_test.go::TestStubSignVerifiesUnderPerAliasKey_spec_10_2",
+        "tests/testinfra/stubs/kms/signing_test.go::TestStubSignFaultInjection_spec_10_2",
+        "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignAWS",
+        "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignGCP",
+        "tests/tier6_e2e_cloud/jwt_signing_kms_test.go::TestCloudKMSJWTSignAzure",
+        "pkg/auth/jwt/remotesigner_test.go::TestRemoteSignerSendsSHA256DigestUnderSigningAlias_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestRemoteSignerPropagatesProviderFailures_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestNewRemoteSignerRequiresProviderAndSigningEntry_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestHMACSignerIsNotASigner_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestECPublicJWKThumbprintIsRFC7638_spec_10_2",
+        "pkg/auth/jwt/remotesigner_test.go::TestECPublicJWKAndThumbprintRejectNonP256_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetVerifiesRemoteES256Token_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetRejectsNonES256Alg_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetKidRejectionsMakeNoProviderCall_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetAcceptsVerifyKeyAcrossRotation_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetRejectsForeignKey_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetSignedIgnoresTimeClaims_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestKeySetSignatureAndClaimChecks_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetLoadsNoVerifyKeyWhenUnmapped_spec_10_2",
+        "pkg/auth/jwt/keyset_test.go::TestLoadKeySetFailsWhenAMappedAliasFails_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerRandomizedInterleavingsMatchSpecModel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerTripBoundaries_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenProbeReleasedByThrottleOrCancel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenIgnoresNonProbeStraggler_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerCallTimeoutCountsAsFailure_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerAppliesDefaultCallTimeout_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerOpenRefusalCarriesRemainingCooldown_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorRetryAfterSecondsRoundsUpWithFloor_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestSigningErrorWrapsInner_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2",
+        "pkg/tokenservice/caller_origin_test.go::TestNewServerRefusesNilVerifier_spec_10_2",
+        "tests/tier2_component/tokensigning/tokenservice_keyset_startup_test.go::TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2",
+        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningBuildsSignerFromOneKeySetFetch_spec_10_2",
+        "pkg/auth/jwt/loadsigning_test.go::TestLoadSigningReturnsKeySetLoadError_spec_10_2",
+        "pkg/auth/jwt/multiverifier_test.go::TestMultiVerifierWithKeySetPrimary",
+        "pkg/auth/jwt/multiverifier_test.go::TestIsUnknownKey",
+        "tests/tier0_static/jwt_retired_signer_symbols_test.go::TestRetiredJWTSignerSymbolsAbsentFromProductionGo",
+        "tests/tier0_static/jwt_retired_signer_symbols_test.go::TestRetiredJWTSignerSymbolPatternIsWordBounded",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRequiresKey",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetResolveFailureIsFatal",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestThrottledMintReturns503AndBreakerStaysClosed_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestHardSigningFailureReturns503RetryAfter1_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestOpenBreakerMintRetryAfterIsRemainingCooldown_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_kms_unavailable_test.go::TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/auth/jwt/signing_retryafter_test.go::TestSigningRetryAfterSeconds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_signing_error_test.go::TestPlaygroundMintSigningErrorRetryAfter_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_signing_error_test.go::TestPlaygroundMintNoSignerRetryAfter1_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceThrottledSignReturns503AndKeepsBreakerClosed_spec_10_2",
+        "pkg/tokenservice/kms_unavailable_test.go::TestTokenServiceOpenBreakerRetryAfterIsRemainingCooldown_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewaySignMetricsPerOutcome_spec_16_1",
+        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1",
+        "pkg/auth/jwt/capabilityttl_test.go::TestValidateCapabilityTokenTTLBound_spec_10_2",
+        "cmd/lenny-gateway/capability_token_ttl_test.go::TestCapabilityTokenTTLFlagBound_spec_10_2",
+        "cmd/lenny-gateway/capability_token_ttl_test.go::TestCapabilityTokenTTLFlagReplacesPlaygroundBearerTTL_spec_10_2",
+        "cmd/lenny-token-service/flags_test.go::TestCapabilityTokenTTLFlagBound_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExpiresInDurationSaturates_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestNewServerRefusesZeroCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
+        "charts/lenny/tests/token-service-deployment_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml",
+        "pkg/chart/values/schema_test.go::TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2",
+        "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
+        "charts/lenny/tests/kms-guard_test.yaml",
+        "pkg/embedded/stack/bringup_envtest_test.go::TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4",
+        "charts/lenny/tests/kms-master-key-secret_test.yaml",
+        "charts/lenny/tests/ops-deployment_test.yaml",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestSigningKeyRotationUnderLocal_spec_10_2",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
+        "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2"
       ],
       "packages": [
-        "pkg/auth"
+        "pkg/auth",
+        "pkg/kms",
+        "pkg/kms/aws",
+        "pkg/kms/gcp",
+        "pkg/kms/azure",
+        "pkg/kms/providerflags"
       ],
       "blocked_until_phase": "4.5",
       "notes": "Phase 4.5 ships the \u00a710.2 typ enum, RBAC role enum, tenant_id format validator, and the tenant-claim extraction state machine. The JWTSigner (KMS-backed in production, HMAC-SHA256 in dev mode), the OIDC discovery layer, and the signature-validation chain are deferred to the K8s-integration phase that wires the gateway to a real OIDC provider."
@@ -3305,27 +3468,10 @@
         "pkg/mtls/rotation_test.go::TestCARotationObserverReceivesEachTransition",
         "pkg/mtls/rotation_test.go::TestNewCARotationDefaultsOverlapWindow",
         "pkg/mtls/rotation_test.go::TestCARotationStageEnumIsClosed",
-        "pkg/auth/jwt/jwks_test.go::TestHMACSignerPublicJWKHasNoSecret",
-        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerIncludesCurrentAndPreviousDuringOverlap",
-        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerDropsPreviousKeyAfterRetireExpired",
-        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerServeHTTPContractsAndMethods",
-        "pkg/auth/jwt/jwks_test.go::TestNewJWKSHandlerRejectsNilSource",
-        "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateEmitsPromoteCurrentEvent",
-        "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateDoesNotEmitOnFailure",
-        "pkg/auth/jwt/rotating_test.go::TestRetireExpiredEmitsOnePerPrunedKey",
-        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverEmitsPromoteCurrentRow",
-        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverEmitsRetirePreviousRow",
-        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverWiresIntoRotatingVerifier",
-        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestObserverCountsAppendFailures",
-        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestNewObserverRejectsNilAppender",
         "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverEmitsRotatedRow",
         "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverWiresIntoCARotation",
         "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestNewCAObserverRejectsNilAppender",
-        "tests/tier4_integration/jwks_test.go::TestJWKSEndpointPublishedByLiveGateway",
-        "tests/tier4_integration/jwks_test.go::TestJWKSEndpointReflectsRotationOverlapWindow",
-        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsPromoteCurrentAuditRow",
-        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsRetirePreviousAuditRow",
-        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationAuditChainStaysVerified",
+        "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverCountsAppendFailuresAndHonorsOptions",
         "tests/tier5_e2e_kind/mtls_test.go",
         "tests/tier9_security/tls_test.go",
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered"
@@ -3338,7 +3484,7 @@
         "pkg/gateway/audit/jwtaudit"
       ],
       "blocked_until_phase": "3",
-      "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The Phase 4 wave that wires the JWT signing-key rotation lifecycle adds the JWKS publication endpoint (pkg/auth/jwt/jwks.go), the `platform.jwt_signing_key_rotated` audit observer (pkg/gateway/jwtaudit), and the in-process CARotation state machine (pkg/mtls/rotation.go); the cert-manager Issuer / Certificate resources, the Helm-rendered trust bundle, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
+      "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The Phase 4 wave that wires the CA rotation lifecycle adds the `platform.ca_rotated` audit observer (pkg/gateway/audit/jwtaudit) and the in-process CARotation state machine (pkg/mtls/rotation.go); the cert-manager Issuer / Certificate resources, the Helm-rendered trust bundle, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
     },
     "10.4": {
       "title": "Gateway Reliability",
@@ -3656,7 +3802,8 @@
         "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeContinuesPastDisconnect_spec_11_4",
         "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeCheckFlagsLiveSession_spec_11_4",
         "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
-        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8"
+        "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -3721,7 +3868,8 @@
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins",
         "tests/tier2_component/breakers/...",
         "tests/tier4_integration/admission_gate_order_test.go",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery"
       ],
       "packages": [
         "pkg/circuitbreaker",
@@ -3768,7 +3916,9 @@
         "tests/tier9_security/audit_integrity_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3"
       ],
       "packages": [
         "pkg/audit",
@@ -3929,7 +4079,10 @@
         "pkg/redisconn/scan_test.go",
         "pkg/redisconn/slotguard/hook_test.go",
         "pkg/gateway/storage/rediskeys/rediskeys_test.go::TestTenantPrefixIsHashTagged_spec_12_4",
-        "cmd/lenny-gateway/redis_concern_probes_test.go"
+        "cmd/lenny-gateway/redis_concern_probes_test.go",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetFollowsCachePubSubRedis",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL"
       ],
       "packages": [
         "pkg/store/lease",
@@ -4185,7 +4338,8 @@
         "tests/testinfra/lifecyclefence/checker_test.go::TestCheckerCatchesErasedUserAndBystanderResidue_spec_12_8",
         "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8",
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4"
       ],
       "packages": [
         "pkg/store",
@@ -4380,7 +4534,8 @@
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "charts/lenny/tests/ops-network-policies_test.yaml"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -4452,7 +4607,14 @@
       "spec_file": "spec/13_security-model.md",
       "tests": [
         "tests/tier9_security/network_policy_test.go",
-        "tests/tier5_e2e_kind/ingress_test.go"
+        "tests/tier5_e2e_kind/ingress_test.go",
+        "charts/lenny/tests/system-network-policies_test.yaml",
+        "charts/lenny/tests/kms-egress_test.yaml",
+        "charts/lenny/tests/ops-network-policies_test.yaml",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRefusesUnrestrictedCIDROnCloudProvider_spec_13_2_4",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRendersOneNarrowPeerPerPolicy_spec_13_2_4",
+        "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressAbsentUnderLocalProvider_spec_13_2_4",
+        "tests/tier5_e2e_kind/kms_egress_test.go::TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4"
       ],
       "chart_templates": [
         "charts/lenny/templates/system-network-policies.yaml",
@@ -4530,6 +4692,7 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3",
         "tests/tier2_component/stores/issuedtokenstore_retention_test.go",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantCaller",
@@ -4577,14 +4740,58 @@
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestWithSubjectLockAllowsDistinctSubjects",
         "tests/tier9_security/write_before_issue_failclosed_test.go::TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3",
         "tests/tier9_security/write_before_issue_failclosed_test.go::TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3",
-        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRevokeWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3"
+        "tests/tier9_security/write_before_issue_failclosed_test.go::TestRevokeWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3",
+        "pkg/tokenservice/caller_origin_test.go::TestNewServerRefusesNilVerifier_spec_10_2",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule3MatchesGatewayRevokedResponse",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule4RefusesBeforeFirstRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationTenantsListsDeletedAndDefault",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateUnionsLocalRevocations",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateFailureKeepsSetAndDuringReadRevocations",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeAppliesChecksToInScopeBearer",
+        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRequestedExpiresInAndDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExpiresInDurationSaturates_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestExchangeRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/tokenservice/capability_ttl_test.go::TestActorExchangeTakesNoDefaultLifetime_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_lifetime_test.go::TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceJTIsDeduplicatesAndSkipsEmpty_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestRecheckSourcesEmptyListMakesNoQuery_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedRejectionAuditFailure_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerLiveSourcesPassReRead_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestSourceRevokedErrorReason_spec_13_3",
+        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/revoke_previous_test.go::TestRevokePreviousDistinguishesRevokedFromMissing_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/rotation_lockfree_revoke_test.go::TestRotationRefusesSubjectRevokedAfterReRead_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAuditFailureIs500_spec_13_3",
+        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
+        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
       ],
       "packages": [
         "pkg/credential",
         "pkg/admission/credfsgroup",
         "pkg/tokenexchange",
         "pkg/gateway/storage/pubsub",
-        "pkg/gateway/credentials/revocation/propagator"
+        "pkg/gateway/credentials/revocation/propagator",
+        "pkg/gateway/storage/issuedtokenstore",
+        "pkg/tokenservice"
       ],
       "blocked_until_phase": "12a",
       "notes": "Phase 12a ships the \u00a713.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject \u2286), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the \u00a713.3 \u00b11s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."
@@ -4780,6 +4987,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestErrorCatalogKMSSigningUnavailableRow_spec_15",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
         "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
@@ -4870,7 +5078,15 @@
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestSuspendDrainOvertakenByResume_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
         "tests/tier9_security/erasure_isolation_test.go::TestErasureJobCrossTenantIsolation_spec_12_8",
-        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8"
+        "tests/tier9_security/erasure_isolation_test.go::TestCreationFenceAndResolutionOnLiveGateway_spec_12_8",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestThrottledMintReturns503AndBreakerStaysClosed_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestHardSigningFailureReturns503RetryAfter1_spec_10_2",
+        "tests/tier2_component/tokensigning/kms_outcome_test.go::TestOpenBreakerMintRetryAfterIsRemainingCooldown_spec_10_2",
+        "tests/tier3_contract/oauth_token/oauth_token_kms_unavailable_test.go::TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5266,12 +5482,18 @@
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
         "pkg/adapter/slotsession_test.go",
         "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2",
-        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2"
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerRandomizedInterleavingsMatchSpecModel_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerHalfOpenRefusesOnlyWhileProbeInFlight_spec_10_2",
+        "pkg/auth/jwt/breakersigner_test.go::TestBreakerSignerConcurrentCallsReportOneOutcomeEach_spec_10_2",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewaySignMetricsPerOutcome_spec_16_1",
+        "pkg/tokenservice/promemit/signing_test.go::TestTokenServiceSignMetricsPerOutcome_spec_16_1"
       ],
       "packages": [
         "pkg/observability/metrics",
         "pkg/gateway/metrics/gatewaymetrics",
-        "pkg/controller/ssaretry"
+        "pkg/controller/ssaretry",
+        "pkg/tokenservice/promemit"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
@@ -5348,6 +5570,7 @@
       "title": "Alerting Rules and SLOs",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestKMSSignQuotaApproachingResolvesToRunbookSection_spec_16_5",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateAcceptsWellFormed",
@@ -5373,14 +5596,20 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertFires_SEC_TS_1",
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5",
-        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go"
+        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
+        "cmd/lenny-gateway/sign_metrics_test.go::TestGatewayEmitsKMSSignQuotaGauge_spec_16_5",
+        "pkg/alerting/rules/rules_test.go::TestKMSSignQuotaApproachingRule_spec_16_5",
+        "pkg/alerting/rules/rules_test.go::TestKMSSigningUnavailableNamesBothSigners_spec_16_5",
+        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
       "packages": [
         "pkg/alerting/rules",
         "cmd/gen-alerting-rules"
       ],
       "chart_templates": [
-        "charts/lenny/templates/prometheusrule.yaml"
+        "charts/lenny/templates/prometheusrule.yaml",
+        "charts/lenny/templates/gateway-deployment.yaml"
       ],
       "blocked_until_phase": "2.5",
       "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full \u00a716.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift. Phase 16.5 is the TESTING.md \u00a713.34 experiment load re-baseline; the cloud tier re-runs the \u00a712.7 pod_claim_latency scenario with an active \u00a710.7 experiment seeded so the ExperimentRouter bucketing path is on every claim. The PR-cadence Kind smoke is phase-gated because the e2e install starts with empty runtime, pool, and experiment stores; the experiment_load scenario is the TESTING.md \u00a713.34 substrate the cloud tier runs."
@@ -5545,6 +5774,7 @@
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestEmbeddedModeDocsListNoInMemoryKMS_spec_17_4",
         "pkg/gateway/session/executor/subprocess_session_start_test.go",
         "pkg/gateway/session/executor/subprocess_session_start_internal_test.go",
         "tests/tier3_contract/adapter_jsonl/subprocess_session_start_test.go",
@@ -5552,13 +5782,30 @@
         "tests/tier11_docs/time_to_hello_world_test.go",
         "tests/tier3_contract/compose_mode/compose_mode_test.go",
         "tests/tier2_component/embedded/bringup_test.go",
+        "cmd/lenny-gateway/jwt_signing_test.go::TestGatewayBearerVerifierRefusesNonKeySetTokens_spec_10_2",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier9_security/embedded_echo_credfree_test.go",
         "tests/tier9_security/embedded_gateway_loopback_test.go",
         "tests/tier9_security/admission_token_service_gate_render_test.go",
         "tests/tier4_integration/source_mode_protocols_test.go",
         "tests/tier11_docs/embedded_manifests_sync_test.go",
-        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreSnapshotCarriesReservations_spec_12_8"
+        "pkg/gateway/session/sessionstore/memstore/fence_test.go::TestMemstoreSnapshotCarriesReservations_spec_12_8",
+        "pkg/kms/local_signing_test.go::TestLocalSigningKeyDeterministicAcrossProvidersSharingSeed_spec_10_2",
+        "pkg/kms/local_signing_internal_test.go::TestLocalSigningKeySeparatedFromKEKMaterial_spec_10_2",
+        "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "pkg/embedded/stack/bringup_envtest_test.go::TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4",
+        "pkg/embedded/stack/bringup_test.go::TestUpMasterKeySecretFailureStopsBeforeDeployments_spec_17_4",
+        "pkg/embedded/stack/bringup_test.go::TestEmbeddedManifestsMountDevMasterKeySecret_spec_17_4",
+        "charts/lenny/tests/kms-master-key-secret_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml",
+        "charts/lenny/tests/token-service-deployment_test.yaml",
+        "charts/lenny/tests/ops-deployment_test.yaml"
       ],
       "packages": [
         "cmd/lenny-dev",
@@ -5599,7 +5846,9 @@
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
-        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go"
+        "tests/tier11_docs/tenant_deletion_credentials_doc_reconciliation_test.go",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenNonSigningErrorStays500_spec_17_6",
+        "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2"
       ],
       "packages": [
         "charts/lenny",
@@ -5611,6 +5860,8 @@
       "title": "Operational Runbooks",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestAuditLockRemedyLowersConcurrentSessionQuota_spec_17_7",
+        "tests/tier11_docs/jwt_key_rotation_runbook_test.go",
         "tests/tier11_docs/runbooks_test.go"
       ],
       "packages": [
@@ -5643,7 +5894,11 @@
     "17.8.2": {
       "title": "Capacity Tier Reference",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
+        "charts/lenny/tests/kms-guard_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
       "notes": "Per-tier resource bounds for nano / micro / small / medium / large. Phase 14 lands the chart presets that encode them."
@@ -6088,7 +6343,8 @@
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/backup_test.go",
-        "tests/tier3_contract/ops_endpoints/helpers_test.go"
+        "tests/tier3_contract/ops_endpoints/helpers_test.go",
+        "tests/tier3_contract/ops_endpoints/healthz_readiness_test.go"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -6200,6 +6456,8 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestOperabilityDocsStateRevocationSetDuringPostgresOutage_spec_25_4",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestRedisKeyPrefixRegistryCompleteness_0032",
         "tests/tier11_docs/build_gaps_ops_lock_hash_tag_currency_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
@@ -6303,7 +6561,44 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
         "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock",
         "tests/tier0_static/ops_rbac_test_yaml_citation_test.go::TestOpsRBACHelmTestCitesOnlyDurableSpecSections",
-        "charts/lenny/tests/ops-rbac_test.yaml"
+        "charts/lenny/tests/ops-rbac_test.yaml",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRequiresKey",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_DevWithoutKeyIsOpen",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
+        "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_BadKeyFileErrors",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule3MatchesGatewayRevokedResponse",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule4RefusesBeforeFirstRead",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ScopeHoldsWhenExpPassesAfterVerification",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule7RefusesPlaygroundBearer",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetWithoutDSNRefusesKeySetTokens",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateUnionsLocalRevocations",
+        "pkg/gateway/credentials/revocation/revocation_test.go::TestRehydrateFailureKeepsSetAndDuringReadRevocations",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeExcludesOutOfScopeBearer",
+        "pkg/gateway/middleware/auth/revocation_scope_test.go::TestRevocationScopeAppliesChecksToInScopeBearer",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetFollowsCachePubSubRedis",
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL",
+        "tests/tier7a_load_local/revocation_rehydrate_revoke_race_test.go::TestRevokeRacingRehydrateIsNeverDropped",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "charts/lenny/tests/ops-deployment_test.yaml",
+        "charts/lenny/tests/ops-network-policies_test.yaml",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestSigningKeyRotationUnderLocal_spec_10_2",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
+        "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
+        "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestOpsAcceptBoundAnchorsOnReadyTransition_spec_25_4",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -6313,7 +6608,9 @@
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore",
-        "pkg/ops/opsservice"
+        "pkg/ops/opsservice",
+        "pkg/gateway/credentials/revocation",
+        "pkg/gateway/middleware/auth"
       ],
       "chart_templates": [
         "charts/lenny/templates/ops-rbac.yaml"
@@ -6466,7 +6763,8 @@
         "tests/tier4_integration/runbook_discovery_test.go",
         "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
         "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet",
-        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7"
+        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7",
+        "pkg/alerting/rules/rules_test.go::TestRunbookSlugDropsSectionFragment"
       ],
       "packages": [
         "pkg/ops/runbooks",
@@ -6721,7 +7019,11 @@
         "tests/tier8_chaos/ops_down_audit_survives_test.go::TestGatewayAuditSurvivesOpsOutage",
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
-        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage"
+        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule5KeepsSetThroughPostgresOutage",
+        "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel",
+        "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss"
       ],
       "packages": [],
       "blocked_until_phase": "14",
@@ -6745,7 +7047,8 @@
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadSuggestedActionBody",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels",
-        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation"
+        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation",
+        "pkg/alerting/rules/rules_test.go::TestRunbookSlugDropsSectionFragment"
       ],
       "packages": [],
       "blocked_until_phase": "14",
@@ -6878,7 +7181,8 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
-        "tests/tier3_contract/playground/playground_test.go"
+        "tests/tier3_contract/playground/playground_test.go",
+        "pkg/chart/values/schema_test.go::TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
@@ -6890,14 +7194,14 @@
       "spec_file": "spec/27_web-playground.md",
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
-        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateCapabilityTokenTTLBound",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
+      "notes": "playground.enabled gating, authMode and devTenantId validation, auth.capabilityTokenTtlSeconds bounds."
     },
     "27.3": {
       "title": "Web Playground \u2014 Authentication",
@@ -6915,7 +7219,14 @@
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
         "tests/tier11_docs/redis_key_prefix_registry_test.go",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1",
-        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1"
+        "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestChainAuditEmitterNilSinkDoesNotPanic_spec_27_3_1",
+        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3",
+        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3",
+        "tests/tier9_security/token_service_playground_caller_test.go::TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

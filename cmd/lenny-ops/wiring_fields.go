@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
@@ -57,6 +58,9 @@ type opsWiringFields struct {
 	ctx           context.Context
 	stop          context.CancelFunc
 	traceShutdown func(context.Context) error
+
+	// jwtKeySet is the §10.2 verifier key set, loaded once at startup.
+	jwtKeySet *jwt.KeySet
 
 	// §25.4 dependencies.
 	pgPool      *pgxpool.Pool

@@ -70,7 +70,7 @@ type Root struct {
 	ObjectStorage              Object     `json:"objectStorage,omitempty"`
 	MinIO                      Object     `json:"minio,omitempty"`
 	GC                         Object     `json:"gc,omitempty"`
-	KMS                        Object     `json:"kms,omitempty"`
+	KMS                        KMS        `json:"kms,omitempty" open:"true"`
 	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
 	Monitoring                 Monitoring `json:"monitoring,omitempty" open:"true"`
 	SLO                        Object     `json:"slo,omitempty"`
@@ -86,7 +86,7 @@ type Root struct {
 	ImageVerification          Object     `json:"imageVerification,omitempty"`
 	Platform                   Object     `json:"platform,omitempty"`
 	Tenancy                    Object     `json:"tenancy,omitempty"`
-	Auth                       Object     `json:"auth,omitempty"`
+	Auth                       Auth       `json:"auth,omitempty" open:"true"`
 	Global                     Global     `json:"global,omitempty"`
 	MTLS                       Object     `json:"mtls,omitempty"`
 	CertManager                Object     `json:"certmanager,omitempty"`
@@ -163,10 +163,32 @@ type NotificationTarget struct {
 	Name string `json:"name,omitempty" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" maxLength:"63" desc:"Shared OpenSLO AlertNotificationTarget name; renders into pattern-constrained metadata.name and targetRef fields."`
 }
 
+// Auth models the §10.2 authentication-chain values the schema constrains.
+// The block is open (`open:"true"` on Root.Auth), so its other documented
+// sub-keys stay free-form while capabilityTokenTtlSeconds is bounded.
+type Auth struct {
+	// CapabilityTokenTTLSeconds is the §10.2 default lifetime of every
+	// Lenny-issued JWT whose holder obtains a new token before exp. The
+	// gateway and the Token Service refuse to start outside 120..3600, and
+	// the schema refuses the same range at install time.
+	// spec: §10.2, §27.
+	CapabilityTokenTTLSeconds int `json:"capabilityTokenTtlSeconds,omitempty" min:"120" max:"3600" desc:"§10.2 default lifetime of the Lenny-issued JWTs whose holder refreshes them: playground bearers and POST /v1/oauth/token JWTs requested without expires_in. Bounded 120..3600."`
+}
+
+// KMS models the §10.2 / §17.8.2 KMS values the schema constrains. The
+// block is open (`open:"true"` on Root.KMS), so its other documented
+// sub-keys stay free-form. signQuotaPerSecond carries no default; the
+// chart's KMS guard refuses to render when kms.provider is not local and
+// the value is unset.
+type KMS struct {
+	// SignQuotaPerSecond is the provider's asymmetric Sign quota for the
+	// account and region. spec: §17.8.2.
+	SignQuotaPerSecond int `json:"signQuotaPerSecond,omitempty" min:"1" desc:"§17.8.2 provider asymmetric KMS Sign quota per second. No default; required when kms.provider is not local."`
+}
+
 // Playground models the §27 web-playground chart values. The section is
 // fully enumerated so the schema enforces the §17.6
-// devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum, and
-// rejects out-of-range bearer-token TTLs.
+// devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum.
 type Playground struct {
 	Enabled  bool   `json:"enabled,omitempty" desc:"Turns the §27 playground on. Off by default."`
 	AuthMode string `json:"authMode,omitempty" enum:"oidc|apiKey|dev" desc:"Playground authentication mode. §27.3."`
@@ -179,7 +201,6 @@ type Playground struct {
 	MaxSessionMinutes     int               `json:"maxSessionMinutes,omitempty" min:"1" desc:"§27.6 hard cap on a playground-initiated session's active time, which pauses while the session is suspended."`
 	MaxIdleTimeSeconds    int               `json:"maxIdleTimeSeconds,omitempty" min:"60" desc:"§27.6 hard idle-timeout override for a playground-initiated session."`
 	OIDCSessionTTLSeconds int               `json:"oidcSessionTtlSeconds,omitempty" min:"60" desc:"Lifetime of the §27.3.1 server-side playground session record and its cookie."`
-	BearerTTLSeconds      int               `json:"bearerTtlSeconds,omitempty" min:"60" max:"3600" desc:"TTL of an MCP bearer token minted by POST /v1/playground/token. The gateway bounds it to 60..3600."`
 	GatewayHost           string            `json:"gatewayHost,omitempty" desc:"Public gateway host the playground UI connects to over the MCP WebSocket. §27.7 connect-src CSP."`
 	SessionLabels         map[string]string `json:"sessionLabels,omitempty" desc:"§27.2 operator-tunable label map stamped on every playground session record and audit event."`
 	AcknowledgeAPIKeyMode bool              `json:"acknowledgeApiKeyMode,omitempty" desc:"Acknowledges the §27.9 paste-form phishing surface for authMode=apiKey outside dev mode."`

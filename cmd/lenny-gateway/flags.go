@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
@@ -65,7 +66,6 @@ type gatewayFlags struct {
 	bearerTrustHMACKeyFile                        *string
 	bearerExpectedIssuer                          *string
 	bearerExpectedAudiences                       *string
-	jwksPublish                                   *bool
 	runtimeBin                                    *string
 	agentRuntime                                  *string
 	postgresDSN                                   *string
@@ -326,12 +326,13 @@ type gatewayFlags struct {
 	playgroundMaxSessionMinutes                   *int
 	playgroundMaxIdleTimeSeconds                  *int
 	playgroundOIDCSessionTTL                      *int
-	playgroundBearerTTL                           *int
+	capabilityTokenTTL                            *int
 	playgroundGatewayHost                         *string
 	playgroundSessionLabels                       *string
 	maxSessionsPerReplica                         *int
 	minReplicas                                   *int
 	streamCeiling                                 *int
+	kmsSignQuotaPerSecond                         *int
 	gatewayNamespace                              *string
 	gatewayPDBName                                *string
 	gatewayServiceName                            *string
@@ -427,13 +428,11 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.sloValidated = flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
 		"§16.5 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
-		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the §10.2 JWT key set. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.bearerExpectedIssuer = flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
 		"§10.2 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
 	f.bearerExpectedAudiences = flag.String("bearer-expected-audiences", os.Getenv("LENNY_BEARER_EXPECTED_AUDIENCES"),
 		"§10.2 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
-	f.jwksPublish = flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
-		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
 	f.runtimeBin = flag.String("runtime-bin", os.Getenv("LENNY_AGENT_BINARY"),
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §28.5.3 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
 	f.agentRuntime = flag.String("agent-runtime", os.Getenv("LENNY_AGENT_RUNTIME"),
@@ -1262,8 +1261,8 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§27.2 playground.maxIdleTimeSeconds: the hard idle-timeout override for playground-initiated sessions. Override via LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS.")
 	f.playgroundOIDCSessionTTL = flag.Int("playground-oidc-session-ttl-seconds", envInt("LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS", 3600),
 		"§27.2 playground.oidcSessionTtlSeconds: the lifetime of the server-side playground session record and cookie. Override via LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS.")
-	f.playgroundBearerTTL = flag.Int("playground-bearer-ttl-seconds", envInt("LENNY_PLAYGROUND_BEARER_TTL_SECONDS", 900),
-		"§27.2 playground.bearerTtlSeconds: the TTL of MCP bearer tokens minted by POST /v1/playground/token (bounded 60..3600). Override via LENNY_PLAYGROUND_BEARER_TTL_SECONDS.")
+	f.capabilityTokenTTL = flag.Int("capability-token-ttl-seconds", envInt("LENNY_CAPABILITY_TOKEN_TTL_SECONDS", int(jwt.DefaultCapabilityTokenTTL/time.Second)),
+		"§10.2 auth.capabilityTokenTtlSeconds: the default lifetime of the MCP bearer tokens minted by POST /v1/playground/token (bounded 120..3600; startup is fatal outside the bound). Override via LENNY_CAPABILITY_TOKEN_TTL_SECONDS.")
 	f.playgroundGatewayHost = flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	f.playgroundSessionLabels = flag.String("playground-session-labels", os.Getenv("LENNY_PLAYGROUND_SESSION_LABELS"),
@@ -1279,6 +1278,10 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
 	f.streamCeiling = flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
 		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
+	// spec: §16.5 KMSSignQuotaApproaching; §17.8.2 "KMS Sign rate" —
+	// the configured provider asymmetric Sign quota (kms.signQuotaPerSecond).
+	f.kmsSignQuotaPerSecond = flag.Int("kms-sign-quota-per-second", envInt("LENNY_KMS_SIGN_QUOTA_PER_SECOND", 0),
+		"§16.5 / §17.8.2 provider asymmetric KMS Sign quota per second (kms.signQuotaPerSecond). Emitted at startup on the lenny_kms_sign_quota_per_second gauge so the KMSSignQuotaApproaching alert can evaluate via scalar(...). 0 means unset, which keeps the alert silent. Override via LENNY_KMS_SIGN_QUOTA_PER_SECOND.")
 	// spec: §10.4 / §16.5 PDBBlockedEvictions — the §10.4 PDB
 	// status poller addresses the gateway's PodDisruptionBudget object
 	// by namespace+name. The chart sets --gateway-namespace from the

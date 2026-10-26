@@ -7,8 +7,10 @@
 # migrations/ schema is in place when the gateway and controller start
 # with LENNY_POSTGRES_DSN pointed at the in-cluster Postgres.
 #
-# The Job runs the lenny-migrate:e2e image (built and kind-loaded by
-# install.sh alongside the other platform binaries) with the `up`
+# The Job runs the lenny-migrate image (built and kind-loaded by
+# install.sh alongside the other platform binaries; install.sh replaces
+# the e2e tag below with the image's content tag when it applies this
+# manifest) with the `up`
 # subcommand against the in-cluster Postgres Service. `lenny-migrate up`
 # applies every pending migration and is idempotent: a re-run against
 # an already-migrated database is a no-op (golang-migrate ErrNoChange

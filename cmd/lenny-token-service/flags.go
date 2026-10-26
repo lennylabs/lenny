@@ -4,9 +4,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
@@ -39,6 +41,11 @@ type tokenServiceFlags struct {
 	tlsCA           *string
 	secretNamespace *string
 
+	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds value
+	// in seconds: the default lifetime of a token requested without
+	// expires_in.
+	capabilityTokenTTL *int
+
 	// §4/§17.5 KMS provider selector. kmsOpts is the resolved option set and
 	// kmsFinalize is the post-parse validation hook providerflags.Bind returns;
 	// runTokenService calls it before any wiring.
@@ -60,6 +67,7 @@ func parseFlags() *tokenServiceFlags {
 	f.registerListenerFlags()
 	f.registerIssuerAndStateFlags()
 	f.registerRateLimitFlags()
+	f.registerLifetimeFlags()
 	f.registerTLSFlags()
 	f.registerKMSFlags()
 	flag.Parse()
@@ -115,6 +123,26 @@ func (f *tokenServiceFlags) registerRateLimitFlags() {
 		"§13.3 per-tenant per-second cap on /v1/oauth/token. Zero disables the tier.")
 	f.rlSampleWindow = flag.Duration("oauth-rate-limit-sample-window", envDuration("LENNY_OAUTH_RL_SAMPLE_WINDOW", 10*time.Second),
 		"§13.3 rolling-window for sampled audit emission on rate-limited requests (one audit row per (tenant_id, sub, limit_tier) per window per replica).")
+}
+
+// registerLifetimeFlags registers --capability-token-ttl-seconds, the §10.2
+// auth.capabilityTokenTtlSeconds default lifetime of a POST /v1/oauth/token
+// JWT requested without expires_in. main rejects a value outside the bound
+// before any wiring. spec: §10.2 (Authentication) "JWT claims" expiry.
+func (f *tokenServiceFlags) registerLifetimeFlags() {
+	f.capabilityTokenTTL = flag.Int("capability-token-ttl-seconds",
+		envInt("LENNY_CAPABILITY_TOKEN_TTL_SECONDS", int(jwt.DefaultCapabilityTokenTTL/time.Second)),
+		"§10.2 auth.capabilityTokenTtlSeconds: the default lifetime of a JWT issued on POST /v1/oauth/token from a request without expires_in (bounded 120..3600; startup is fatal outside the bound). Override via LENNY_CAPABILITY_TOKEN_TTL_SECONDS.")
+}
+
+// validateCapabilityTokenTTLFlag rejects a --capability-token-ttl-seconds
+// value outside the auth.capabilityTokenTtlSeconds bound.
+// spec: §10.2 (Authentication) "JWT claims" expiry.
+func validateCapabilityTokenTTLFlag(seconds int) error {
+	if err := jwt.ValidateCapabilityTokenTTL(time.Duration(seconds) * time.Second); err != nil {
+		return fmt.Errorf("--capability-token-ttl-seconds: %w", err)
+	}
+	return nil
 }
 
 // registerTLSFlags registers the §4.3 / §10.3 mTLS material for the gRPC

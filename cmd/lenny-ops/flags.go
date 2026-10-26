@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
@@ -37,6 +38,7 @@ type opsFlags struct {
 	redisSentinelPassword            *string
 	redisTLS                         *bool
 	redisAllowInsecure               *bool
+	redisCachePubSubURL              *string
 	gatewayURL                       *string
 	leaderElectNS                    *string
 	agentNamespace                   *string
@@ -92,38 +94,43 @@ type opsFlags struct {
 	escalationReconcileWPS           *int
 	oidcIssuerURL                    *string
 	bearerTrustHMACKeyFile           *string
-	authMultiTenant                  *bool
-	rateLimitRPS                     *float64
-	rateLimitBurst                   *int
-	locksMemoryTier                  *string
-	opsServiceName                   *string
-	locksMinTTL                      *int
-	locksDefaultTTL                  *int
-	locksMaxTTL                      *int
-	idempotencyKeyTTL                *int
-	idempotencyLongRunningTTL        *int
-	leaderLeaseDuration              *int
-	leaderRenewDeadline              *int
-	leaderRetryPeriod                *int
-	webhookAllowHTTP                 *bool
-	webhookBlockedCIDRs              *string
-	webhookDomainAllowlist           *string
-	installationID                   *string
-	platformTier                     *string
-	opsServiceURL                    *string
-	gatewayInternalTLS               *bool
-	gatewayHeadlessSvc               *string
-	gatewayTLSPort                   *int
-	gatewayPlaintextPort             *int
-	gatewayFanOutTimeout             *time.Duration
-	gatewayBreakerThreshold          *int
-	gatewayBreakerResetAfter         *time.Duration
-	gatewaySATokenFile               *string
-	gatewayTokenRefreshBefore        *time.Duration
-	gatewayTokenMinTTL               *time.Duration
-	gatewayCABundleFile              *string
-	alertingBundleFormats            *string
-	alertingOverrideCount            *int
+	// kmsOpts and kmsFinalize are the §4 / §17.5 KMS provider options and
+	// the post-parse alias hook providerflags.Bind returns. lenny-ops
+	// resolves the provider only to load the §10.2 verifier key set.
+	kmsOpts                   *providerflags.Options
+	kmsFinalize               func() error
+	authMultiTenant           *bool
+	rateLimitRPS              *float64
+	rateLimitBurst            *int
+	locksMemoryTier           *string
+	opsServiceName            *string
+	locksMinTTL               *int
+	locksDefaultTTL           *int
+	locksMaxTTL               *int
+	idempotencyKeyTTL         *int
+	idempotencyLongRunningTTL *int
+	leaderLeaseDuration       *int
+	leaderRenewDeadline       *int
+	leaderRetryPeriod         *int
+	webhookAllowHTTP          *bool
+	webhookBlockedCIDRs       *string
+	webhookDomainAllowlist    *string
+	installationID            *string
+	platformTier              *string
+	opsServiceURL             *string
+	gatewayInternalTLS        *bool
+	gatewayHeadlessSvc        *string
+	gatewayTLSPort            *int
+	gatewayPlaintextPort      *int
+	gatewayFanOutTimeout      *time.Duration
+	gatewayBreakerThreshold   *int
+	gatewayBreakerResetAfter  *time.Duration
+	gatewaySATokenFile        *string
+	gatewayTokenRefreshBefore *time.Duration
+	gatewayTokenMinTTL        *time.Duration
+	gatewayCABundleFile       *string
+	alertingBundleFormats     *string
+	alertingOverrideCount     *int
 }
 
 // parseFlags defines every lenny-ops flag on flag.CommandLine, parses the
@@ -145,6 +152,7 @@ func parseFlags() *opsFlags {
 	f.registerLockFlags()
 	f.registerWebhookFlags()
 	f.registerGatewayClientFlags()
+	f.registerKMSFlags()
 	flag.Parse()
 	return f
 }
@@ -180,6 +188,10 @@ func (f *opsFlags) registerCoreFlags() {
 		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set. Override via LENNY_REDIS_TLS.")
 	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envBool("LENNY_REDIS_ALLOW_INSECURE", false),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. Defaults off; set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
+	f.redisCachePubSubURL = flag.String("redis-cache-pubsub-url", os.Getenv("LENNY_REDIS_CACHE_PUBSUB_URL"),
+		"§12.4 dedicated Redis URL for the Cache/Pub-Sub concern, on which the gateway publishes "+
+			"token.revoked events (§13.3). lenny-ops subscribes there to keep its §25.4 revocation set "+
+			"current. Empty uses the base Redis client. Override via LENNY_REDIS_CACHE_PUBSUB_URL.")
 	f.gatewayURL = flag.String("gateway-url", os.Getenv("LENNY_GATEWAY_URL"),
 		"§25.4 gateway admin API base URL (the internal ClusterIP Service). Used for the "+
 			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
@@ -426,21 +438,21 @@ func (f *opsFlags) registerAuthFlags() {
 		"§25.4 ops.escalation.reconciliationWritesPerSecond — flush rate cap for the "+
 			"leader-only escalation reconciliation loop. Default 20. "+
 			"Override via LENNY_OPS_ESCALATION_RECONCILIATION_WRITES_PER_SECOND.")
-	// spec: §25.4 + §17 security.oidc.issuerUrl.
-	// lenny-ops validates bearer JWTs with the same OIDC issuer the gateway
-	// admin API trusts and requires platform-admin or tenant-admin on every
-	// endpoint. The v1 verify key is the shared HMAC signing key (the same
-	// --bearer-trust-hmac-key-file mechanism the §17.4 embedded gateway
-	// uses); --oidc-issuer-url pins the expected iss claim. F-25.4.1,
-	// F-25.4.20.
+	// spec: §25.4 (The lenny-ops Service: Authentication) + §17
+	// security.oidc.issuerUrl. lenny-ops verifies Lenny-issued tokens
+	// against the §10.2 verifier key set and requires platform-admin or
+	// tenant-admin on every endpoint. Outside production it also trusts
+	// the §17.4 embedded OIDC provider's HMAC key from
+	// --bearer-trust-hmac-key-file, and --oidc-issuer-url pins the iss
+	// claim of tokens signed with that key. F-25.4.1, F-25.4.20.
 	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
 		"§25.4/§17 security.oidc.issuerUrl: the OIDC issuer whose tokens lenny-ops trusts. "+
-			"When set, a bearer whose iss claim differs is rejected. Override via LENNY_OIDC_ISSUER_URL.")
+			"When set, a dev trust-hook bearer whose iss claim differs is rejected. Override via LENNY_OIDC_ISSUER_URL.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
-		"§25.4: path to the shared HMAC signing key (the gateway Token Service / "+
-			"embedded OIDC key file) lenny-ops verifies bearer JWTs against. Required when "+
-			"--production is set; when empty in dev the operability surface is unauthenticated. "+
-			"Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+		"§17.4: path to the embedded OIDC provider's HMAC key file, the dev trust hook "+
+			"lenny-ops accepts bearers from alongside the §10.2 key set. Refused when "+
+			"--production is set. Without it and without --production the operability "+
+			"surface is unauthenticated. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.authMultiTenant = flag.Bool("auth-multi-tenant", envBool("LENNY_AUTH_MULTI_TENANT", false),
 		"§10.2: when true, lenny-ops extracts the tenant identifier from the JWT tenant claim "+
 			"(so tenant-admin scoping resolves to the bearer's tenant); when false every caller "+
@@ -557,4 +569,16 @@ func (f *opsFlags) registerGatewayClientFlags() {
 		"§25.13 Helm value monitoring.format: comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. The §25.4 bundleRules reconciler re-stamps lenny_ops /metrics' lenny_alerting_rules_bundled{format} from it. Override via LENNY_ALERTING_BUNDLE_FORMATS.")
 	f.alertingOverrideCount = flag.Int("alerting-override-count", envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
 		"§25.13 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules. The §25.4 bundleRules reconciler re-stamps lenny_alerting_rule_overrides from it. Override via LENNY_ALERTING_OVERRIDE_COUNT.")
+}
+
+// registerKMSFlags binds the §4 / §17.5 KMS provider selector flags. lenny-ops
+// resolves the provider only to load the §10.2 verifier key set, so an unset
+// --kms-provider resolves to the local provider and derives the key from
+// --kms-master-key-file, as the gateway and the Token Service do.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation"; §4; §17.5.
+func (f *opsFlags) registerKMSFlags() {
+	f.kmsOpts, f.kmsFinalize = providerflags.Bind(flag.CommandLine, os.Getenv, providerflags.Options{
+		Provider: providerflags.ProviderLocal,
+	})
 }

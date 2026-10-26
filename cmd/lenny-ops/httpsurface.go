@@ -73,16 +73,26 @@ func (w *opsWiring) buildHTTPSurface() {
 	)
 	go alertEvaluator.Run(w.ctx)
 
-	// §25.4: build the OIDC authentication + role gate.
-	// The verify key is the shared HMAC signing key (the gateway Token
-	// Service / §17.4 embedded OIDC key). When no key is configured the
-	// surface is unauthenticated, which is rejected in production: serving
-	// the platform-admin remediation-lock / backup / drift surface without
-	// authentication is the §25.4 security regression the gate closes.
-	authCfg, err := buildAuthConfig(*w.f.bearerTrustHMACKeyFile, *w.f.oidcIssuerURL, *w.f.authMultiTenant,
-		*w.f.production, *w.f.rateLimitRPS, *w.f.rateLimitBurst)
+	// §25.4: build the authentication + role gate. Lenny-issued tokens
+	// verify against the §10.2 key set and meet the §25.4 revocation set;
+	// outside production the dev embedded-OIDC trust hook is accepted too.
+	// A production process always authenticates.
+	revocations := newOpsRevocation()
+	authCfg, err := buildAuthConfig(authInputs{
+		keySet:      w.jwtKeySet,
+		revocations: revocations,
+		hmacKeyFile: *w.f.bearerTrustHMACKeyFile,
+		issuer:      *w.f.oidcIssuerURL,
+		multiTenant: *w.f.authMultiTenant,
+		production:  *w.f.production,
+		rps:         *w.f.rateLimitRPS,
+		burst:       *w.f.rateLimitBurst,
+	})
 	if err != nil {
 		log.Fatalf("lenny-ops: %v", err)
+	}
+	if authCfg != nil {
+		w.startRevocationSet(revocations)
 	}
 
 	// The §25.4 HTTP surface. Every replica serves it, leader or not. It

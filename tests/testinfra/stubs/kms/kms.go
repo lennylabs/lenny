@@ -13,8 +13,11 @@
 //   - DenyAlias(alias) → that alias returns ErrAccessDenied
 //   - DeletedAt(alias) → that alias returns ErrKeyRevoked
 //
-// Production-grade behavior (regional replication, asymmetric keys,
-// HSM-backed signing) is intentionally absent. This stub is for
+// The stub also holds an in-memory P-256 key per alias for the §10.2
+// ES256 signer (signing.go), with hard-error and throttle injection.
+//
+// Production-grade behavior (regional replication, HSM backing) is
+// intentionally absent. This stub is for
 // tests that need a KMS to exist, not for tests that need to
 // validate KMS-vendor parity.
 package kms
@@ -44,6 +47,9 @@ type Stub struct {
 	gateExpiry map[string]time.Time
 	// rotationLog records every rotation for §16.1 metric assertions.
 	rotationLog []RotationEvent
+	// signing holds the per-alias P-256 keys and the sign fault
+	// injection (signing.go).
+	signing signingState
 }
 
 // KeyVersion is one entry in an alias's version history.
@@ -86,6 +92,7 @@ func New(t testing.TB) *Stub {
 		deleted:    make(map[string]time.Time),
 		deniedFor:  make(map[string]bool),
 		gateExpiry: make(map[string]time.Time),
+		signing:    newSigningState(),
 	}
 }
 

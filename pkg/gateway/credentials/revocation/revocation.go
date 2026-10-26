@@ -41,6 +41,12 @@ type Cache struct {
 	mu      sync.RWMutex
 	revoked map[string]struct{}
 
+	// reads counts the Rehydrate calls in flight. While it is positive,
+	// Revoke also records each jti in sinceRead, so the swap at the end of
+	// a read keeps the revocations that arrived after the read began.
+	reads     int
+	sinceRead map[string]struct{}
+
 	// lastSuccess is the instant the most recent Rehydrate completed
 	// against Postgres. The §13.3 fail-closed validation gate keys on its
 	// age. A zero value means no rehydration has ever succeeded.
@@ -104,6 +110,9 @@ func (c *Cache) Revoke(jti string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.revoked[jti] = struct{}{}
+	if c.reads > 0 {
+		c.sinceRead[jti] = struct{}{}
+	}
 }
 
 // Len returns the number of cached revocations.
@@ -115,36 +124,71 @@ func (c *Cache) Len() int {
 
 // Rehydrate rebuilds the cache from the issued-token index across
 // every tenant. It is called at startup and on a periodic ticker so
-// revocations recorded by other replicas are picked up. A revocation
-// added via Revoke between the index read and the swap is also
-// re-applied, so a concurrent operator revocation is not dropped.
+// revocations recorded by other replicas are picked up. A successful
+// read replaces the set with the rows it returned plus every jti that
+// Revoke added after the read began, so a concurrent revocation is not
+// dropped by the swap. A jti revoked before the read began that the
+// index does not return is dropped. A failed read leaves the set
+// unchanged.
+//
+// spec: §13.3 (Credential Flow: Authoritative durability for
+// revocation); §25.4 (The lenny-ops Service: Authentication, revocation
+// set rule 1).
 func (c *Cache) Rehydrate(ctx context.Context, tenants TenantLister, src Source) error {
+	c.beginRead()
+	fresh, err := readRevoked(ctx, tenants, src)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err == nil {
+		for jti := range c.sinceRead {
+			fresh[jti] = struct{}{}
+		}
+		c.revoked = fresh
+		// Record the successful read so the §13.3 validation gate
+		// knows the in-memory set reflects Postgres as of this instant.
+		c.lastSuccess = c.clock()
+	}
+	c.endReadLocked()
+	return err
+}
+
+// beginRead registers an in-flight read. The first concurrent read
+// starts a fresh sinceRead set; overlapping reads share it, which keeps
+// at least every jti revoked after each of them began.
+func (c *Cache) beginRead() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reads == 0 {
+		c.sinceRead = map[string]struct{}{}
+	}
+	c.reads++
+}
+
+// endReadLocked unregisters an in-flight read. The caller holds c.mu.
+func (c *Cache) endReadLocked() {
+	c.reads--
+	if c.reads == 0 {
+		c.sinceRead = nil
+	}
+}
+
+// readRevoked loads the revoked jtis of every tenant tenants lists.
+func readRevoked(ctx context.Context, tenants TenantLister, src Source) (map[string]struct{}, error) {
 	tenantIDs, err := tenants.ListTenants(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fresh := map[string]struct{}{}
 	for _, tenantID := range tenantIDs {
 		revoked, err := src.ListRevoked(ctx, tenantID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, tok := range revoked {
 			fresh[tok.JTI] = struct{}{}
 		}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Carry forward any revocation added locally during the rehydration
-	// so a concurrent Revoke is not lost by the swap.
-	for jti := range c.revoked {
-		fresh[jti] = struct{}{}
-	}
-	c.revoked = fresh
-	// Record the successful read so the §13.3 validation gate
-	// knows the in-memory set reflects Postgres as of this instant.
-	c.lastSuccess = c.clock()
-	return nil
+	return fresh, nil
 }
 
 // Stale reports whether the in-memory revocation set is too old to

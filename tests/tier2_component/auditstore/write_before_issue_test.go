@@ -69,7 +69,7 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 		"jti":           tok.JTI,
 		"policy_result": "accepted",
 	})
-	row, err := store.RecordWithAudit(ctx, tok, string(auditcatalog.EventTokenExchanged),
+	row, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(payload), now)
 	if err != nil {
 		t.Fatalf("RecordWithAudit: %v", err)
@@ -133,7 +133,7 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 			"jti":           jti,
 			"policy_result": "accepted",
 		})
-		row, err := store.RecordWithAudit(ctx, tok,
+		row, err := store.RecordWithAudit(ctx, tok, nil,
 			string(auditcatalog.EventTokenExchanged), json.RawMessage(payload),
 			now.Add(time.Duration(i)*time.Second))
 		if err != nil {
@@ -173,13 +173,13 @@ func TestRecordWithAuditRollsBackOnDuplicateJTI(t *testing.T) {
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 	payload := json.RawMessage(`{"policy_result":"accepted"}`)
-	if _, err := store.RecordWithAudit(ctx, tok,
+	if _, err := store.RecordWithAudit(ctx, tok, nil,
 		string(auditcatalog.EventTokenExchanged), payload, now); err != nil {
 		t.Fatalf("first RecordWithAudit: %v", err)
 	}
 	// Second call with same jti must return ErrAlreadyExists and NOT
 	// write a second audit row.
-	_, err := store.RecordWithAudit(ctx, tok,
+	_, err := store.RecordWithAudit(ctx, tok, nil,
 		string(auditcatalog.EventTokenExchanged), payload, now)
 	if err == nil {
 		t.Fatalf("second RecordWithAudit accepted; want ErrAlreadyExists")

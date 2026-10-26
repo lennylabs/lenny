@@ -377,10 +377,30 @@ func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row
 // pgtenant.InTx so the audit row and the bound write share one COMMIT.
 // spec: §11.7 (per-tenant advisory lock) and §13.3.
 func AppendInTx(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	if err := acquireAuditLock(ctx, tx, tenantID, DefaultLockConfig(), nil); err != nil {
+	if err := AcquireLockInTx(ctx, tx, tenantID); err != nil {
 		return audit.Row{}, err
 	}
 	return sealAndInsert(ctx, tx, tenantID, eventType, payload, at)
+}
+
+// AcquireLockInTx takes the §11.7 per-tenant audit advisory lock on tx,
+// the lock half of AppendInTx. The caller owns the transaction, and
+// pgtenant.InTx must have set app.current_tenant for tenantID. The lock
+// is transaction-scoped (pg_advisory_xact_lock) and releases at COMMIT
+// or ROLLBACK.
+//
+// A caller that must read state under the lock before it appends calls
+// AcquireLockInTx first, runs its reads, and then calls AppendInTx. The
+// §13.3 write-before-issue path does this: it re-reads the source
+// tokens' issued_tokens.revoked_at under the lock (step 1a) before any
+// issuance statement runs. Postgres advisory locks are re-entrant within
+// one session, so the second acquisition inside AppendInTx returns at
+// once. A lock wait that exceeds the §11.7 acquire budget returns a
+// *ConcurrencyTimeoutError.
+//
+// spec: §11.7 item 3, §13.3.
+func AcquireLockInTx(ctx context.Context, tx pgx.Tx, tenantID string) error {
+	return acquireAuditLock(ctx, tx, tenantID, DefaultLockConfig(), nil)
 }
 
 // sealAndInsert reads the chain tail, seals the new row with its

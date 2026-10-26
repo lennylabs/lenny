@@ -13,7 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
@@ -88,7 +87,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 	adminSATokenAudience := f.adminSATokenAudience
 	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
-	jwksPublish := f.jwksPublish
 	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
 	adapterTLSCert := f.adapterTLSCert
 	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
@@ -109,7 +107,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	playgroundSessionLabels := f.playgroundSessionLabels
 	playgroundMaxSessionMinutes := f.playgroundMaxSessionMinutes
 	playgroundMaxIdleTimeSeconds := f.playgroundMaxIdleTimeSeconds
-	playgroundBearerTTL := f.playgroundBearerTTL
+	capabilityTokenTTL := f.capabilityTokenTTL
 	playgroundGatewayHost := f.playgroundGatewayHost
 	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
 	mux := http.NewServeMux()
@@ -290,29 +288,6 @@ func (w *gatewayWiring) buildHTTPSurface(
 		log.Printf("lenny-gateway: §4.3 /v1/oauth/* reverse-proxied to %s", *tokenServiceHTTPURL)
 	}
 
-	// ----- §10.3 JWK Set publication -----
-	// The JWKS endpoint advertises the kid/alg of every key the
-	// §10.3 RotatingVerifier holds (the current key plus every
-	// retained previous key during the §10.3 24h overlap window).
-	// The endpoint is unauthenticated by design; the JWK Set carries
-	// only public metadata, never private key material. Suppress with
-	// --jwks-publish=false.
-	if *jwksPublish {
-		jwksHandler := jwt.NewJWKSHandler(w.rotatingVerifier)
-		mux.Handle("/.well-known/jwks.json", jwksHandler)
-		// spec: §10.2 / F-10.2.14. The v1 signer is HMAC; the
-		// published JWKS entries carry `kty: oct` with no `k` field, so
-		// the document advertises kid/alg only. Log a notice when the
-		// endpoint is mounted on top of an HMAC-only key set so
-		// operators understand that JWKS verification of the actual
-		// signature is not possible against the published document
-		// (the secret must be obtained out of band).
-		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
-			w.rotatingVerifier.CurrentKeyID())
-		if !jwksAdvertisesAsymmetric(jwksHandler.Document()) {
-			log.Printf("lenny-gateway: §10.2 / F-10.2.14: published JWKS contains only `kty: oct` entries (HMAC). The document advertises kid/alg only; verifiers cannot validate signatures against it.")
-		}
-	}
 	// §15 ExternalAdapterRegistry. Each built-in adapter registers
 	// through the registry and the registry mounts its HTTPHandler on
 	// the shared mux. The §15 admin-API runtime-registration path
@@ -390,7 +365,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
 			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
 			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
-			BearerTTL:          time.Duration(*playgroundBearerTTL) * time.Second,
+			CapabilityTokenTTL: time.Duration(*capabilityTokenTTL) * time.Second,
 			MultiTenant:        *multiTenant,
 			GatewayHost:        *playgroundGatewayHost,
 			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),
@@ -446,10 +421,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 — Sign goes through the breaker so
 			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
-			// Verify uses the inner signer (verification is local memory
-			// and never reaches KMS). F-10.2.6.
+			// Verify uses the key set, which holds public keys only and
+			// never reaches KMS. F-10.2.6.
 			Signer:   w.jwtSigner,
-			Verifier: w.kmsBackedSigner,
+			Verifier: w.jwtKeySet,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
@@ -853,15 +828,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// applyAuthPostureOptions. F-10.2.21.
 	//
 	// The §10.2 Bearer path is verified with the bearer verifier built
-	// above: the in-process Token Service signer, so a token minted by
-	// POST /v1/oauth/token round-trips through the gateway, plus the
-	// embedded OIDC provider's key when --bearer-trust-hmac-key-file is
-	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
-	// verifier.
+	// above: the §10.2 key set, so a token minted by any gateway replica
+	// or by POST /v1/oauth/token on any Token Service replica verifies
+	// here, plus the embedded OIDC provider's key when
+	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode.
 	authOpts := authmw.Options{
 		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
 		// IdP-key members read the configured `auth.tenantIdClaim`
-		// (embeddedHMACVerifier) and the Token Service member keeps
+		// (embeddedHMACVerifier) and the key-set member keeps
 		// `tenant_id`. F-10.2.9.
 		Verifier:    w.bearerVerifier,
 		Revocations: revProp,

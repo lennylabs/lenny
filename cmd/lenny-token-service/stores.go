@@ -16,8 +16,9 @@ import (
 // buildMetrics constructs the §16.1 Prometheus metric vectors. The §16.5
 // TokenServiceUnavailable alert reads lenny_token_service_circuit_state from
 // the gateway-side breaker (set in cmd/lenny-gateway/main.go); the metrics
-// emitted here are the §16.1 request_duration, errors, secret_reloads, and the
-// §13.3 rate-limit counters.
+// emitted here are the §16.1 request_duration, errors, secret_reloads, the
+// §16.1 JWT sign requests and KMS signing errors counters, and the §13.3
+// rate-limit counters.
 //
 // spec: §16.1.
 func (w *tokenServiceWiring) buildMetrics() {

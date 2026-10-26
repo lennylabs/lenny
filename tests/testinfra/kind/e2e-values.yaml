@@ -6,6 +6,13 @@
 # so the install never reaches a remote registry, and runs the gateway
 # in dev mode so it starts without external Postgres, Redis, or MinIO.
 #
+# install.sh passes a generated overlay, image-tags.gen.yaml, after this
+# file. It replaces each e2e tag below with the content tag
+# (src-<hash>) of the image the install built and loaded, so a rebuilt
+# image changes the rendered reference and its Deployment rolls out. The
+# e2e tag remains a moving alias of the same images, so rendering this
+# file alone still names loaded images.
+#
 # This overlay is for the e2e test harness only. Production installs
 # use the chart defaults with real images and external data stores.
 

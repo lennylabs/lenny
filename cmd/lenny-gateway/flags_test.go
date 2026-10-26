@@ -4,8 +4,10 @@ package main
 
 import (
 	"flag"
+	"io"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +118,38 @@ func TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval(t *testing.T)
 	}
 	if got := *f.slotCounterRecoveryProbeInterval; got != 5*time.Second {
 		t.Errorf("overridden value = %v, want 5s", got)
+	}
+}
+
+// spec: §10.2 (Authentication, "Verifier key set and rotation")
+// diagnosis: the gateway still accepted --jwks-publish, the opt-in for a
+// published JWK Set that no spec section defines and no verifier reads.
+// Every verifier loads its key set from the KMS at startup, so the flag
+// must be unknown: parsing it fails with the flag package's
+// undefined-flag error instead of configuring a route.
+func TestJWKSPublishFlagIsUndefined(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	os.Args = []string{savedArgs[0]}
+
+	f := &gatewayFlags{}
+	f.registerCoreFlags()
+	f.registerStorageFlags()
+	f.registerPolicyFlags()
+	f.registerSessionFlags()
+	f.registerArtifactFlags()
+	f.registerOpsFlags()
+
+	for _, arg := range []string{"--jwks-publish", "--jwks-publish=true", "--jwks-publish=false"} {
+		err := flag.CommandLine.Parse([]string{arg})
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -jwks-publish") {
+			t.Errorf("Parse(%q) error = %v, want the undefined-flag error", arg, err)
+		}
 	}
 }

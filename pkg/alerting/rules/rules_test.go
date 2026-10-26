@@ -259,7 +259,7 @@ var spec165WarningAlerts = []string{
 	"CycleDetectionModeUnsafe", "CycleDetectionWarnModeBlocking", "AuditSIEMNotConfigured",
 	"AuditChainGap", "AuditRedactionReceiptMissing", "CheckpointStorageHigh", "StorageQuotaHigh",
 	"CheckpointDurationHigh", "PreStopCapFallbackRateHigh", "PodClaimQueueSaturated",
-	"PodStateMirrorStale", "KMSSigningUnavailable", "GatewaySubsystemCircuitOpen",
+	"PodStateMirrorStale", "KMSSigningUnavailable", "KMSSignQuotaApproaching", "GatewaySubsystemCircuitOpen",
 	"GatewayQueueDepthHigh", "GatewayLatencyHigh", "PoolConfigDrift", "PoolConfigValidatorUnavailable",
 	"PoolScalingAdmissionStuck", "LabelImmutabilityWebhookUnavailable", "DirectModeIsolationWebhookUnavailable",
 	"T4NodeIsolationWebhookUnavailable", "DrainReadinessWebhookUnavailable", "CrdConversionWebhookUnavailable",
@@ -483,6 +483,107 @@ func TestTokenUsageAnomalyRule_spec_16_5(t *testing.T) {
 	}
 	if err := got.Validate(); err != nil {
 		t.Errorf("TokenUsageAnomaly does not validate: %v", err)
+	}
+}
+
+// catalogRule returns the Catalog rule named name, failing the test when
+// the catalog has none.
+func catalogRule(t *testing.T, name string) Rule {
+	t.Helper()
+	for _, r := range Catalog() {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("%s missing from Catalog", name)
+	return Rule{}
+}
+
+// TestKMSSignQuotaApproachingRule_spec_16_5 pins the §16.5
+// KMSSignQuotaApproaching warning alert: the fleet-wide rate of sign
+// requests that reach the KMS (every outcome except circuit_open) above
+// 80% of the configured quota for more than 10 minutes. The threshold
+// reads the quota gauge through max() so the gauge every gateway replica
+// publishes collapses to one series, and through a `> 0` filter so an
+// unset quota yields no series and the alert never fires.
+//
+// spec: §16.5 (KMSSignQuotaApproaching warning-alert row); §10.2.
+func TestKMSSignQuotaApproachingRule_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSignQuotaApproaching")
+	const wantExpr = `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)`
+	if got.Expr != wantExpr {
+		t.Errorf("expr = %q, want %q", got.Expr, wantExpr)
+	}
+	if got.For != 10*time.Minute {
+		t.Errorf("for = %v, want 10m per the §16.5 row", got.For)
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.SpecRef != "§16.5" {
+		t.Errorf("spec ref = %q, want §16.5", got.SpecRef)
+	}
+	const wantURL = "https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota"
+	if got.RunbookURL != wantURL {
+		t.Errorf("runbook URL = %q, want the KMS Sign quota section %q", got.RunbookURL, wantURL)
+	}
+	if got.RunbookSlug() != "jwt-key-rotation" {
+		t.Errorf("runbook slug = %q, want jwt-key-rotation", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("KMSSignQuotaApproaching does not validate: %v", err)
+	}
+}
+
+// TestKMSSigningUnavailableNamesBothSigners_spec_16_5 pins the §16.5
+// KMSSigningUnavailable text: a JWTSigner breaker on either the gateway
+// or the Token Service trips it, and the operator checks the KMS IAM
+// binding of the ServiceAccount the alert's job label names. The text it
+// replaced described only the gateway signer and session creation.
+//
+// spec: §16.5 (KMSSigningUnavailable warning-alert row); §10.2.
+func TestKMSSigningUnavailableNamesBothSigners_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSigningUnavailable")
+	if got.Expr != `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1` {
+		t.Errorf("expr = %q, want the unchanged signing-error rate expression", got.Expr)
+	}
+	if got.For != 60*time.Second {
+		t.Errorf("for = %v, want 60s", got.For)
+	}
+	text := got.Summary + " " + got.Description
+	for _, want := range []string{"gateway", "Token Service", "KMS_SIGNING_UNAVAILABLE", "IAM binding", "ServiceAccount", "job label"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("summary and description %q do not mention %q", text, want)
+		}
+	}
+	if strings.Contains(got.Description, "new session creation") {
+		t.Errorf("description %q still scopes the failure to session creation", got.Description)
+	}
+}
+
+// TestRunbookSlugDropsSectionFragment pins that a RunbookURL pointing at
+// one section of a runbook page still yields the page slug for the
+// alert_fired payload's runbook field, which routes on the page name.
+//
+// spec: §25.7; §25.17.
+func TestRunbookSlugDropsSectionFragment(t *testing.T) {
+	cases := []struct {
+		name string
+		rule Rule
+		want string
+	}{
+		{"page", Rule{RunbookURL: runbook("kms-unavailable")}, "kms-unavailable"},
+		{"section", Rule{RunbookURL: runbookSection("jwt-key-rotation", "kms-sign-quota")}, "jwt-key-rotation"},
+		{"short name wins", Rule{RunbookURL: runbookSection("a", "b"), RunbookShortName: "c"}, "c"},
+		{"fragment only", Rule{RunbookURL: "#kms-sign-quota"}, ""},
+		{"empty", Rule{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.rule.RunbookSlug(); got != c.want {
+				t.Errorf("RunbookSlug() = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

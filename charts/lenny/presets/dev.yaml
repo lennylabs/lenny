@@ -170,6 +170,17 @@ security:
   oidc:
     bearerTrustKeySecret: lenny-embedded-dev-bearer-key
 
+# Name the local KMS master key Secret rather than let the chart generate
+# one. `helm template` cannot look up a live Secret, so a generated key would
+# be new on every render and would be written into the pre-rendered embedded
+# manifests. `lenny up` creates this Secret with a random master key (data
+# key `master-key`) when the embedded cluster has none, before applying the
+# Deployments, and leaves an existing one unchanged, so the key persists
+# with the substrate. The gateway and lenny-ops derive their KEKs and the
+# ES256 JWT signing key from it. spec: §17.4.
+kms:
+  masterKeySecret: lenny-embedded-dev-kms-master-key
+
 # Gateway development posture: single replica (single node), the gateway
 # PodDisruptionBudget disabled (one replica), a NodePort Service the
 # loopback host-side forwarder targets, small resource requests, and a

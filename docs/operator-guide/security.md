@@ -105,13 +105,13 @@ The Token Service runs as a **separate process** with its own ServiceAccount and
 - Gateway replicas call the Token Service over mTLS
 - Gateway replicas receive short-lived access tokens, never refresh tokens or KMS keys
 - 2+ replicas with `PodDisruptionBudget` (`minAvailable: 1`)
-- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for bearer-token minting, except the bootstrap admin-credential mint and rotation, which the gateway mints in process (see below)
+- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for bearer-token minting. The gateway mints a fixed set of tokens in process instead (see below), and both components sign with the same ES256 key
 
 ### What It Manages
 
 1. **Connector credentials** -- OAuth tokens for external tools and agents (GitHub, Jira, etc.) accessed via registered connectors
 2. **LLM provider credentials** -- API keys, cloud IAM roles for backing LLMs
-3. **Bearer tokens** -- admin tokens, session tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Most tokens minted by Lenny flow through the RFC 8693 token-exchange path, either by direct caller request (self and service-principal rotation) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate. The bootstrap admin credential is the exception: `lenny-ctl admin users rotate-token --user lenny-admin` calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new admin token in process and patches the `lenny-admin-token` Secret without going through `/v1/oauth/token`.
+3. **Bearer tokens** -- admin tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Most tokens minted by Lenny flow through the RFC 8693 token-exchange path, either by direct caller request (self and service-principal rotation) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate. The gateway mints the following tokens in process, without going through `/v1/oauth/token`: the bootstrap admin credential (`lenny-ctl admin users rotate-token --user lenny-admin` calls the dedicated `POST /v1/admin/users/{user}/rotate-token` route, and the gateway mints the new admin token and patches the `lenny-admin-token` Secret), platform-admin impersonation bearers, web playground bearers, and the session-capability tokens of the session-creation path. A token that either component signs verifies on every gateway replica, every Token Service replica, and `lenny-ops`.
 
 ### Token Storage
 
@@ -151,8 +151,9 @@ Lenny uses envelope encryption for sensitive data:
 |---|---|
 | AWS KMS | JWT signing, DEK wrapping, etcd Secret encryption (EKS) |
 | GCP Cloud KMS | JWT signing, DEK wrapping, etcd Secret encryption (GKE) |
-| HashiCorp Vault Transit | JWT signing, DEK wrapping |
-| Azure Key Vault | etcd Secret encryption (AKS) |
+| Azure Key Vault | JWT signing, DEK wrapping, etcd Secret encryption (AKS) |
+
+All three cloud providers sign Lenny-issued JWTs with ES256 (ECDSA over P-256 with SHA-256): AWS KMS with key spec `ECC_NIST_P256`, GCP Cloud KMS with algorithm `EC_SIGN_P256_SHA256`, and Azure Key Vault with algorithm `ES256`. The private signing key stays in the KMS; the gateway and the Token Service send the digest to the KMS `Sign` operation and receive the signature. The `kms.provider: local` setting derives the keys from a master key for development and is refused in a production deployment.
 
 ### What Gets Encrypted
 
@@ -392,9 +393,10 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
-| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets |
+| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
 | `lenny-controller` | `lenny-system` | Warm Pool Controller | Full Sandbox CRD management |
-| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt, Secret read |
+| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt, Secret read; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-ops-sa` | `lenny-system` | `lenny-ops` | KMS `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names; no `Sign` |
 
 ---
 

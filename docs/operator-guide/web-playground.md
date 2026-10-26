@@ -24,11 +24,14 @@ playground:
   maxSessionMinutes: 30
   maxIdleTimeSeconds: 300
   oidcSessionTtlSeconds: 3600
-  bearerTtlSeconds: 900
   gatewayHost: ""
+auth:
+  capabilityTokenTtlSeconds: 900
 ```
 
 The gateway reads each value as a `--playground-*` flag. `allowedRuntimes` is a comma-separated glob list that filters the runtime picker; `"*"` offers every runtime visible to the caller. `gatewayHost` is the public host the playground UI connects to over the MCP WebSocket, and the gateway interpolates it into the `connect-src` Content-Security-Policy directive; leave it empty to omit the host.
+
+`auth.capabilityTokenTtlSeconds` sets the lifetime of the bearer tokens that `POST /v1/playground/token` mints, bounded to 120 through 3600 seconds. The value lives outside the `playground` block because it is also the default lifetime of the tokens `POST /v1/oauth/token` issues without a requested `expires_in`. A bearer's expiry is fixed at mint and never extended, and the playground obtains a new bearer before the old one expires.
 
 ## Authentication modes
 
@@ -54,5 +57,7 @@ A browser that navigates away sends a best-effort `session.cancel`; a dropped co
 The gateway applies a Content-Security-Policy to every `/playground/*` response that restricts script and connection sources to the gateway origin, sets `frame-ancestors 'none'`, and adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. Static assets carry a long immutable cache lifetime, and `index.html` carries `no-store` so a new release propagates immediately.
 
 Logout, user invalidation, idle timeout, and admin revocation all drive the same revocation path: the gateway deletes the Redis session record, writes a per-bearer deny-list entry, and publishes the revocation to peer replicas. A logout endpoint returns success only after the revocation writes commit.
+
+Revocation covers the playground bearer itself and leaves alone any token already exchanged from it. A caller that holds a playground bearer and also holds another Lenny token in the same tenant can present the bearer as the `subject_token` of `POST /v1/oauth/token`. The Token Service refuses a playground bearer only as the caller token, so the exchange succeeds, before or after logout, and yields a child token that stays valid until the bearer's original expiry. Logout does not revoke that child token. The `auth.capabilityTokenTtlSeconds` lifetime bounds this exposure.
 
 Enable `apiKey` mode only when an upstream component authenticates the caller, because the mode trusts the supplied bearer. Restrict `dev` mode to local installs, because it mints tokens without admission material.

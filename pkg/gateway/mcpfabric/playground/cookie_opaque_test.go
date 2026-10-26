@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // TestSessionCookieIsOpaqueAndDoesNotEmbedTenant asserts the §27.3.1 contract that the lenny_playground_session cookie carries only
@@ -16,8 +18,9 @@ import (
 func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "tools:sessions:read"}}
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
-		Signer:   devSigner(),
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},

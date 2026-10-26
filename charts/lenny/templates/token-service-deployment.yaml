@@ -20,6 +20,9 @@ falls back to its in-process MintLease / credassign dev path (the
 gateway --token-service-* flags are gated on the same key).
 */ -}}
 {{- if .Values.tokenService.enabled }}
+{{- /* §17.4: under kms.provider=local the Token Service mounts the shared
+   master key Secret. */ -}}
+{{- $localKMS := include "lenny.kmsLocal" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -81,8 +84,9 @@ spec:
           deployment can opt out, but the chart default is
           mtls.enabled=true.
       */ -}}
-      {{- if .Values.mtls.enabled }}
+      {{- if or .Values.mtls.enabled $localKMS }}
       volumes:
+        {{- if .Values.mtls.enabled }}
         - name: lenny-token-service-tls
           secret:
             secretName: lenny-token-service-tls
@@ -91,6 +95,12 @@ spec:
             # every mode. A root-owned 0400 cert is unreadable under
             # runAsNonRoot and breaks the §10.3 mTLS listener.
             defaultMode: 0440
+        {{- end }}
+        {{- if $localKMS }}
+        # spec: §17.4 — the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-ops (lenny.kmsMasterKeyVolume).
+        {{- include "lenny.kmsMasterKeyVolume" . | nindent 8 }}
+        {{- end }}
       {{- end }}
       containers:
         - name: token-service
@@ -101,20 +111,15 @@ spec:
             - --grpc-addr=:{{ .Values.tokenService.grpcPort }}
             - --metrics-addr=:{{ .Values.tokenService.metricsPort }}
             - --issuer={{ .Values.tokenService.issuer }}
+            # §10.2 auth.capabilityTokenTtlSeconds: the default lifetime of
+            # a POST /v1/oauth/token JWT requested without expires_in. It
+            # reads the same value as the gateway's playground bearer
+            # lifetime, so both binaries take one operator-set default.
+            - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
             # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
             # dev default; cloud installs set kms.provider to
             # aws | gcp | azure and supply the matching aliases.
-            - --kms-provider={{ .Values.kms.provider }}
-            - --environment={{ .Values.environment }}
-            {{- with .Values.kms.aliases }}
-            - --kms-alias={{ . }}
-            {{- end }}
-            {{- with .Values.kms.awsRegion }}
-            - --kms-aws-region={{ . }}
-            {{- end }}
-            {{- with .Values.kms.azureVaultURL }}
-            - --kms-azure-vault-url={{ . }}
-            {{- end }}
+            {{- include "lenny.kmsArgs" . | nindent 12 }}
             {{- if .Values.mtls.enabled }}
             # §4.3 / §10.3 mTLS server material. The gRPC listener
             # requires every client (gateway replica) to present a
@@ -134,11 +139,18 @@ spec:
               containerPort: {{ .Values.tokenService.httpPort }}
             - name: metrics
               containerPort: {{ .Values.tokenService.metricsPort }}
-          {{- if .Values.mtls.enabled }}
+          {{- if or .Values.mtls.enabled $localKMS }}
           volumeMounts:
+            {{- if .Values.mtls.enabled }}
             - name: lenny-token-service-tls
               mountPath: /etc/lenny/mtls
               readOnly: true
+            {{- end }}
+            {{- if $localKMS }}
+            # spec: §17.4 — the local provider's master key, read through
+            # --kms-master-key-file.
+            {{- include "lenny.kmsMasterKeyVolumeMount" . | nindent 12 }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             tcpSocket:
@@ -166,6 +178,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
+  {{- /* §10.2 "Signing topology": binds the ServiceAccount to the provider
+     identity that holds the KMS Sign and GetPublicKey permissions. */}}
+  {{- with .Values.tokenService.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service

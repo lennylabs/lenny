@@ -8,7 +8,8 @@ policies the chart MUST render:
     exception to the default-deny, admitting the Ingress controller
     pods to the lenny-ops http port (lenny-ops is external-only).
   - lenny-ops-egress: the bound egress for the operability plane —
-    gateway admin API, Postgres (via PgBouncer), Redis, MinIO,
+    gateway admin API, Postgres (via PgBouncer, or the
+    postgres.gatewayEgressCIDR peer when it is set), Redis, MinIO,
     Prometheus, the Kubernetes API, DNS, and tenant-influenced webhook
     delivery to the internet with the SSRF except-blocks (NET-057,
     NET-065) shared with allow-gateway-egress-llm-upstream.
@@ -81,7 +82,8 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $gatewayPort }}
-    # §25.4 — Postgres via PgBouncer (NET-061).
+    # §25.4 — Postgres via PgBouncer (NET-061). lenny-ops reads its
+    # revocation set and its audit, backup, and upgrade state there.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -92,6 +94,17 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    {{- if .Values.postgres.gatewayEgressCIDR }}
+    # §25.4 — external Postgres at postgres.gatewayEgressCIDR, the same
+    # destination allow-gateway-egress admits, so lenny-ops reaches the
+    # database the gateway's postgres.dsn names.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.gatewayEgressCIDR | quote }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
     # §25.4 — Redis (TLS port only).
     - to:
         - namespaceSelector:
@@ -134,6 +147,12 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # §13.2.4 lenny-ops row — KMS endpoint for GetPublicKey on the
+    # §10.2 JWT signing keys, rendered only when kms.provider is not
+    # local, under the same kms.endpointCIDR refusal as the gateway.
+    {{- with include "lenny.kmsEgressRule" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
     # §25.4 — DNS with the canonical CoreDNS podSelector
     # (NET-067). Both UDP/53 and TCP/53.
     - to:

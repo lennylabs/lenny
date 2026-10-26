@@ -1,37 +1,38 @@
 // SPDX-License-Identifier: MIT
 
-// Package kms is the §4 KMS abstraction for envelope encryption. It
-// defines the key-encryption-key (KEK) operation Lenny's encryption-at-
-// rest model depends on: a KMS-backed KEK wraps a per-record data-
-// encryption-key (DEK), and no plaintext DEK is ever persisted.
+// Package kms is the §4 KMS abstraction. It defines the two families of
+// key operation Lenny delegates to a key-management service: key-
+// encryption-key (KEK) wrap and unwrap for envelope encryption, and
+// asymmetric ES256 signing for Lenny-issued JWTs.
 //
-// The §4 / §12.9 model. T4 Restricted data — OAuth refresh tokens,
-// user-supplied API keys, credential pool secrets — is stored under
-// AES-256-GCM envelope encryption. Each record carries its own random
-// 32-byte DEK. The DEK is wrapped (encrypted) by a KEK that lives in
-// KMS; only the wrapped DEK is stored alongside the ciphertext. To
-// read a record the holder asks KMS to unwrap the DEK, decrypts the
-// record with the recovered DEK, and discards the plaintext DEK. A
-// database dump exposes only wrapped DEKs and ciphertext.
+// The §4 / §12.9 envelope model. T4 Restricted data, such as OAuth
+// refresh tokens, user-supplied API keys, and credential pool secrets, is
+// stored under AES-256-GCM envelope encryption. Each record carries its
+// own random 32-byte data-encryption-key (DEK). The DEK is wrapped by a
+// KEK that lives in KMS, and only the wrapped DEK is stored alongside the
+// ciphertext. To read a record the holder asks KMS to unwrap the DEK,
+// decrypts the record with the recovered DEK, and discards the plaintext
+// DEK. A database dump exposes only wrapped DEKs and ciphertext.
 //
-// Provider is the KEK seam. WrapDEK and UnwrapDEK are the two KEK
-// operations the envelope helper (pkg/kms/envelope) calls. A KEK is
-// addressed by an alias string; the §4.9.1 rotation procedure rotates
-// the key material behind an alias and stamps the version that wrapped
-// each record so any prior version can still unwrap.
+// The §10.2 signing model. Every Lenny-issued JWT is signed with ES256
+// under the key the platform:jwt-signing alias names. On a cloud provider
+// the private key stays inside the KMS: the signer sends the SHA-256
+// digest of the JWS signing input to the KMS Sign operation, and every
+// verifier loads the public keys once at startup through PublicKey.
 //
-// This package ships one fully implemented Provider: Local, a
-// deterministic in-process KEK for the no-cloud development path and
-// for tests. Cloud KEK providers (AWS KMS, GCP Cloud KMS, Azure Key
-// Vault) implement the same Provider interface; §4 specifies the
-// envelope model and the cloud KMS integrations operationally
-// (EKS/GKE/AKS encryption configuration) but does not pin a v1 cloud
-// KMS client API, so the cloud providers are a documented seam — see
-// CloudProviderSeam.
+// A key is addressed by an alias string. The deployment maps each alias
+// to a provider key reference through the --kms-alias flag
+// (pkg/kms/providerflags).
+//
+// This package ships Local, a deterministic in-process provider for the
+// no-cloud development path and for tests. The cloud providers (AWS KMS,
+// GCP Cloud KMS, and Azure Key Vault) live in pkg/kms/aws, pkg/kms/gcp,
+// and pkg/kms/azure and implement the same Provider interface.
 package kms
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 )
 
@@ -56,6 +57,23 @@ var (
 	// short or otherwise structurally invalid before any cryptographic
 	// check runs.
 	ErrMalformedWrappedDEK = errors.New("kms: malformed wrapped DEK")
+
+	// ErrThrottled is returned by Sign and PublicKey when the provider
+	// refused the request because a request-rate quota is exhausted (AWS
+	// ThrottlingException or LimitExceededException, GCP
+	// ResourceExhausted, Azure HTTP 429). It is retryable backpressure:
+	// the §10.2 signer answers it with a retryable 503 and never counts
+	// it toward the signing circuit breaker.
+	ErrThrottled = errors.New("kms: request throttled by the provider")
+
+	// ErrInvalidDigest is returned by Sign when the digest is not a
+	// 32-byte SHA-256 digest.
+	ErrInvalidDigest = errors.New("kms: sign digest must be a 32-byte SHA-256 digest")
+
+	// ErrNotP256 is returned by PublicKey when the key the alias names is
+	// not an ECDSA P-256 key, and by Sign when the provider returns a
+	// signature that is not a P-256 ECDSA signature.
+	ErrNotP256 = errors.New("kms: key is not an ECDSA P-256 key")
 )
 
 // WrappedDEK is a data-encryption-key encrypted under a KEK. It is the
@@ -73,15 +91,23 @@ type WrappedDEK struct {
 	Ciphertext []byte
 }
 
-// Provider is the §4 KMS KEK seam. A Provider wraps and unwraps data-
-// encryption-keys under a KEK addressed by an alias. Implementations
-// must be safe for concurrent use.
+// Provider is the §4 KMS seam. Implementations must be safe for
+// concurrent use. It carries two operation families.
 //
-// A Provider never sees record plaintext. It only ever handles 32-byte
-// DEKs. The envelope helper (pkg/kms/envelope) is the sole caller; it
-// generates a random DEK, calls WrapDEK to obtain the storable form,
-// encrypts the record with the DEK under AES-256-GCM, and discards the
-// plaintext DEK. On read it calls UnwrapDEK to recover the DEK.
+// KEK operations. WrapDEK, UnwrapDEK, and CurrentKEKVersion wrap and
+// unwrap 32-byte data-encryption-keys under a KEK. The envelope helper
+// (pkg/kms/envelope) generates a random DEK, calls WrapDEK to obtain the
+// storable form, encrypts the record with the DEK, and discards the
+// plaintext DEK; on read it calls UnwrapDEK. The §4.9.1 re-encryption
+// job, the tenant KMS probe (pkg/tenantkms), and the re-key tooling
+// (pkg/kms/rekey) call the same operations. A KEK operation never sees
+// record plaintext.
+//
+// Asymmetric operations. Sign and PublicKey back the §10.2 ES256 JWT
+// signer. Sign takes the SHA-256 digest of the JWS signing input and
+// returns the signature; PublicKey returns the public key every verifier
+// loads into its key set at startup. On a cloud provider the private key
+// never leaves the KMS.
 type Provider interface {
 	// WrapDEK encrypts a 32-byte data-encryption-key under the current
 	// version of the KEK named by alias. The returned WrappedDEK
@@ -102,6 +128,20 @@ type Provider interface {
 	// still wrapped under a superseded version. It returns
 	// ErrUnknownKEK when the alias has no key material.
 	CurrentKEKVersion(ctx context.Context, alias string) (int, error)
+
+	// Sign returns the ES256 signature of a 32-byte SHA-256 digest under
+	// the key the alias names, as the 64-byte JWS r||s encoding (RFC 7518
+	// section 3.4). It returns ErrInvalidDigest for a digest of any other
+	// length, ErrUnknownKEK for an alias with no key, and ErrThrottled
+	// when the provider refused the request on a rate quota. A cloud
+	// provider makes exactly one provider request per call, so a
+	// throttle surfaces at once instead of after SDK retries.
+	Sign(ctx context.Context, alias string, digest []byte) ([]byte, error)
+
+	// PublicKey returns the P-256 public key of the key the alias names.
+	// It returns ErrNotP256 when the key is not an ECDSA P-256 key and
+	// ErrUnknownKEK for an alias with no key.
+	PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKey, error)
 }
 
 // DEKSize is the byte length of a data-encryption-key. AES-256-GCM
@@ -130,7 +170,7 @@ const DEKSize = 32
 //     from the cloud KMS.
 //
 // The cloud provider maps a Lenny alias (for example "tenant:acme" or
-// "platform:token-service-signing") to the cloud KMS resource through
+// "platform:jwt-signing") to the cloud KMS resource through
 // deployment configuration. Until a cloud provider is wired, Local is
 // the implemented Provider; it is the no-cloud development KEK and the
 // test KEK, and it satisfies the same Provider contract a cloud

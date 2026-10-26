@@ -10,7 +10,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -145,21 +144,4 @@ func (a authFailureAuditAdapter) EmitAuthFailure(ctx context.Context, ev authmw.
 		event.TargetTenantID = ev.TenantID
 	}
 	a.sink.EmitAdminEvent(ctx, event)
-}
-
-// jwksAdvertisesAsymmetric reports whether doc contains at least one
-// asymmetric (`kty: RSA` or `kty: EC`) entry. The HMAC-only case
-// produces only `kty: oct` entries with no `k` field, so the document
-// advertises kid/alg metadata that a verifier cannot use to validate a
-// signature. F-10.2.14 keys the §10.3 publication notice on this check
-// so an operator who opts into --jwks-publish on top of the v1 HMAC
-// signer is told that the JWKS document is metadata-only.
-// spec: §10.2. F-10.2.14.
-func jwksAdvertisesAsymmetric(doc jwt.JWKSet) bool {
-	for _, k := range doc.Keys {
-		if k.Kty != "" && k.Kty != "oct" {
-			return true
-		}
-	}
-	return false
 }
