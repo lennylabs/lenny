@@ -516,12 +516,14 @@ redis:
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
   # password is the §12.4 Redis AUTH credential applied to the data
-  # connection on the Sentinel path (the external/url path carries the
-  # credential inline in the rediss:// URL instead). Rendered into the
-  # lenny-datastore-conn Secret and read by the gateway via
-  # LENNY_REDIS_PASSWORD. §12.4 requires AUTH; an empty value on a
-  # sentinel-provider install fails the gateway startup invariant unless
-  # --redis-allow-insecure is set. Honored only when provider=sentinel.
+  # connection on the Sentinel and Cluster paths (the external/url path
+  # carries the credential inline in the rediss:// URL instead). Rendered
+  # into the lenny-datastore-conn Secret and read by the gateway, lenny-ops,
+  # and the Token Service via LENNY_REDIS_PASSWORD; those topologies also
+  # render LENNY_REDIS_TLS=true. §12.4 requires AUTH; an empty value on a
+  # sentinel or cluster install fails each binary's startup invariant
+  # unless --redis-allow-insecure is set. Honored only when
+  # provider=sentinel or provider=cluster.
   password: ""
   # sentinels is the §12.4 list of Redis Sentinel host:port endpoints the
   # gateway discovers the master through. Honored only when

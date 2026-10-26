@@ -32,6 +32,20 @@ type RedisCluster struct {
 	Addrs []string
 	// Client is a cluster client over Addrs. Closed on cleanup.
 	Client *redis.ClusterClient
+	// CAFile is the PEM file of the CA that signed the nodes' certificate,
+	// set only for a cluster started with RedisClusterOptions.TLS. A
+	// process under test trusts it through SSL_CERT_FILE.
+	CAFile string
+}
+
+// RedisClusterOptions configures StartRedisClusterOpts.
+type RedisClusterOptions struct {
+	// Password, when set, is the AUTH password every node requires.
+	Password string
+	// TLS serves TLS on every node port with the plaintext port disabled,
+	// on a certificate for 127.0.0.1 signed by a CA the handle's CAFile
+	// holds.
+	TLS bool
 }
 
 // StartRedisCluster provisions a three-master Redis Cluster in one container
@@ -43,6 +57,16 @@ type RedisCluster struct {
 //
 // spec: §12.4 Redis HA and Failure Modes (Redis Cluster at Tier 3).
 func StartRedisCluster(t testing.TB) *RedisCluster {
+	t.Helper()
+	return StartRedisClusterOpts(t, RedisClusterOptions{})
+}
+
+// StartRedisClusterOpts is StartRedisCluster with the §12.4 AUTH and TLS
+// settings of opts applied to every node and to the returned client.
+//
+// spec: §12.4 Redis HA and Failure Modes "Security" (Redis AUTH and TLS
+// are required).
+func StartRedisClusterOpts(t testing.TB, opts RedisClusterOptions) *RedisCluster {
 	t.Helper()
 	ports := freePorts(t, redisClusterMasters)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -61,20 +85,31 @@ func StartRedisCluster(t testing.TB) *RedisCluster {
 		addrs[i] = "127.0.0.1:" + ps
 	}
 	script := filepath.Join(schematest.RepoRoot(t), "compose", "redis-cluster", "start.sh")
+	env := map[string]string{
+		"REDIS_CLUSTER_PORTS":       strings.Trim(fmt.Sprint(ports), "[]"),
+		"REDIS_CLUSTER_ANNOUNCE_IP": "127.0.0.1",
+	}
+	files := []testcontainers.ContainerFile{{
+		HostFilePath:      script,
+		ContainerFilePath: "/opt/lenny/redis-cluster-start.sh",
+		FileMode:          0o755,
+	}}
+	if opts.Password != "" {
+		env["REDIS_CLUSTER_PASSWORD"] = opts.Password
+	}
+	var clusterTLS *clusterTLSMaterial
+	if opts.TLS {
+		clusterTLS = newClusterTLSMaterial(t)
+		env["REDIS_CLUSTER_TLS_DIR"] = clusterTLSDir
+		files = append(files, clusterTLS.containerFiles()...)
+	}
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        defaultRedisImage,
-			Entrypoint:   []string{"/bin/sh", "/opt/lenny/redis-cluster-start.sh"},
-			ExposedPorts: exposed,
-			Env: map[string]string{
-				"REDIS_CLUSTER_PORTS":       strings.Trim(fmt.Sprint(ports), "[]"),
-				"REDIS_CLUSTER_ANNOUNCE_IP": "127.0.0.1",
-			},
-			Files: []testcontainers.ContainerFile{{
-				HostFilePath:      script,
-				ContainerFilePath: "/opt/lenny/redis-cluster-start.sh",
-				FileMode:          0o755,
-			}},
+			Image:              defaultRedisImage,
+			Entrypoint:         []string{"/bin/sh", "/opt/lenny/redis-cluster-start.sh"},
+			ExposedPorts:       exposed,
+			Env:                env,
+			Files:              files,
 			HostConfigModifier: func(hc *container.HostConfig) { hc.PortBindings = bindings },
 			WaitingFor:         wait.ForLog("lenny redis cluster ready").WithStartupTimeout(60 * time.Second),
 		},
@@ -89,14 +124,21 @@ func StartRedisCluster(t testing.TB) *RedisCluster {
 		_ = c.Terminate(stopCtx)
 	})
 
-	client := redis.NewClusterClient(&redis.ClusterOptions{Addrs: addrs})
+	copts := &redis.ClusterOptions{Addrs: addrs, Password: opts.Password}
+	handle := &RedisCluster{Addrs: addrs}
+	if clusterTLS != nil {
+		copts.TLSConfig = clusterTLS.clientConfig()
+		handle.CAFile = clusterTLS.caFile
+	}
+	client := redis.NewClusterClient(copts)
 	t.Cleanup(func() { _ = client.Close() })
 	if err := client.ForEachMaster(ctx, func(ctx context.Context, n *redis.Client) error {
 		return n.Ping(ctx).Err()
 	}); err != nil {
 		t.Fatalf("StartRedisCluster: ping masters: %v", err)
 	}
-	return &RedisCluster{Addrs: addrs, Client: client}
+	handle.Client = client
+	return handle
 }
 
 // freePorts returns n distinct free TCP ports on the loopback interface,

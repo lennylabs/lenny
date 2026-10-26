@@ -20,14 +20,21 @@ import (
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
 
-// chartTokenServiceDatastoreConfig renders the chart with the given
-// --set overrides and returns the Token Service container's datastore
-// configuration as a process would receive it in the cluster: every env
-// entry, with each secretKeyRef resolved against the rendered
-// lenny-datastore-conn Secret, and every --redis-* or --postgres-* arg.
-// The listener, KMS, and mTLS args stay with the test harness, which
-// supplies its own.
+// chartTokenServiceDatastoreConfig is chartDatastoreConfig for the
+// lenny-token-service Deployment.
 func chartTokenServiceDatastoreConfig(t *testing.T, set []string) (args, env []string) {
+	t.Helper()
+	return chartDatastoreConfig(t, "lenny-token-service", set)
+}
+
+// chartDatastoreConfig renders the chart with the given --set overrides
+// and returns the first container's datastore configuration in the named
+// Deployment as a process would receive it in the cluster: every
+// LENNY_REDIS_*, LENNY_POSTGRES_*, and LENNY_PG_* env entry, with each
+// secretKeyRef resolved against the rendered lenny-datastore-conn Secret,
+// and every --redis-* or --postgres-* arg. The listener, KMS, mTLS, and
+// other args and env stay with the test harness, which supplies its own.
+func chartDatastoreConfig(t *testing.T, deployment string, set []string) (args, env []string) {
 	t.Helper()
 	root := schematest.RepoRoot(t)
 	manifests := helm.Render(t, helm.Options{
@@ -39,13 +46,13 @@ func chartTokenServiceDatastoreConfig(t *testing.T, set []string) (args, env []s
 	if s, ok := manifests.Find("Secret", "lenny-datastore-conn"); ok {
 		secret, _ = s.Raw["stringData"].(map[string]any)
 	}
-	dep := manifests.MustFind(t, "Deployment", "lenny-token-service")
+	dep := manifests.MustFind(t, "Deployment", deployment)
 	spec, _ := dep.Raw["spec"].(map[string]any)
 	tmpl, _ := spec["template"].(map[string]any)
 	podSpec, _ := tmpl["spec"].(map[string]any)
 	containers, _ := podSpec["containers"].([]any)
 	if len(containers) == 0 {
-		t.Fatal("the lenny-token-service Deployment renders no container")
+		t.Fatalf("the %s Deployment renders no container", deployment)
 	}
 	c, _ := containers[0].(map[string]any)
 	for _, a := range asSlice(c["args"]) {
@@ -57,6 +64,9 @@ func chartTokenServiceDatastoreConfig(t *testing.T, set []string) (args, env []s
 	for _, e := range asSlice(c["env"]) {
 		entry, _ := e.(map[string]any)
 		name, _ := entry["name"].(string)
+		if !isDatastoreEnv(name) {
+			continue
+		}
 		if v, ok := entry["value"].(string); ok {
 			env = append(env, name+"="+v)
 			continue
@@ -69,11 +79,22 @@ func chartTokenServiceDatastoreConfig(t *testing.T, set []string) (args, env []s
 		key, _ := ref["key"].(string)
 		v, ok := secret[key].(string)
 		if !ok {
-			t.Fatalf("the Token Service env %s reads lenny-datastore-conn key %q, which the chart does not render", name, key)
+			t.Fatalf("the %s env %s reads lenny-datastore-conn key %q, which the chart does not render", deployment, name, key)
 		}
 		env = append(env, name+"="+v)
 	}
 	return args, env
+}
+
+// isDatastoreEnv reports whether an env entry configures a datastore
+// connection.
+func isDatastoreEnv(name string) bool {
+	for _, p := range []string{"LENNY_REDIS_", "LENNY_POSTGRES_", "LENNY_PG_"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // asSlice returns v as a []any, or nil.
