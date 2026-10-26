@@ -60,10 +60,29 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
 // later steps saw.
 //
-// spec: §7.1 (Normal Flow), §7.2 (Interactive Session Model), §7.3 (Resume
-// driver), §9.2 (Elicitation Chain), §10.1.5 (Stale Replica Behavior), §29.4
-// (Interrupt, terminate, and delete)
+// Every step runs on the gateway-owned terminal context (terminalContext):
+// ctx detached from the writer's cancellation and bounded by what remains of
+// the terminal pipeline budget counted from the row's TerminatedAt. A writer
+// request that ends mid-seal therefore does not cut the pipeline, and no
+// writer passes an unbounded context into it.
+//
+// spec: §7.1 (Normal Flow), §7.1 (Terminal pipeline context), §7.2
+// (Interactive Session Model), §7.3 (Resume driver), §9.2 (Elicitation
+// Chain), §10.1.5 (Stale Replica Behavior), §29.4 (Interrupt, terminate, and
+// delete)
 func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
+	signals func(context.Context, sessionstore.Session),
+) sessionstore.Session {
+	ctx, cancel := s.terminalContext(ctx, sess.TerminatedAt)
+	defer cancel()
+	return s.afterTerminalWrite(ctx, fromState, sess, signals)
+}
+
+// afterTerminalWrite is the body of the post-terminal hook. It runs on the
+// context it is handed; AfterTerminalWrite and recordSessionCompleted bound
+// that context once before calling it. spec: §7.1 (Terminal pipeline
+// context)
+func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 	signals func(context.Context, sessionstore.Session),
 ) sessionstore.Session {
 	s.CancelResumeAttempt(sess.ID)
@@ -105,11 +124,12 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 // once the funnel unlocks. When the wait ends because the server is shutting
 // down, the step is skipped and logged, and the claim, slot, and binding
 // stay, as they do when the process exits between the terminal write and
-// the release. The release itself keeps the writer's
-// context: Binder.Release and the keyed slot release make their claim and
-// slot writes on a detached context, so a writer context that ends during
-// the release cuts only the adapter Shutdown, and a slot whose Shutdown was
-// cut stays counted through its leaked member.
+// the release. The release itself runs on the hook's terminal context, which
+// the writer's cancellation does not end: Binder.Release and the keyed slot
+// release make their claim and slot writes on a detached context, so a
+// terminal context that reaches the terminal pipeline budget during the
+// release cuts only the adapter Shutdown, and a slot whose Shutdown was cut
+// stays counted through its leaked member.
 //
 // The seal runs before this step and outside the lock, because a seal can
 // run for the whole seal window and would block the funnel for that long.

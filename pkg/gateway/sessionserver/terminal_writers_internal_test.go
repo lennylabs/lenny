@@ -156,9 +156,11 @@ func TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1(t *testing.T) {
 // terminal write through DELETE, through the failure funnel's failed edge,
 // and through failSession emits exactly one status_change with the terminal
 // state and one session_complete, and that a direct emitTerminalLifecycle
-// call emits neither.
+// call emits neither. Each writer also runs with its context cancelled as
+// its terminal write commits, and the hook, which runs on the gateway-owned
+// terminal context, still emits the events once.
 //
-// spec: §7.2 (Interactive Session Model)
+// spec: §7.2 (Interactive Session Model), §7.1 (Terminal pipeline context)
 func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 	statusOf := func(bus *sessionevents.Bus, id string, st session.State) int {
 		n := 0
@@ -169,46 +171,66 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 		}
 		return n
 	}
-	for _, tc := range []struct {
+	type writeCase struct {
 		name  string
-		write func(srv *Server)
+		write func(ctx context.Context, srv *Server)
 		want  session.State
-	}{
-		{"DELETE", func(srv *Server) { terminalRequest(t, srv, http.MethodDelete, "/v1/sessions/s") }, session.StateCancelled},
-		{"failure funnel", func(srv *Server) {
-			_, _ = srv.ReportSessionFailure(context.Background(), FailureReport{
+	}
+	cases := []writeCase{
+		{"DELETE", func(ctx context.Context, srv *Server) {
+			req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil).WithContext(ctx)
+			req.Header.Set("X-Lenny-Tenant-ID", "acme")
+			srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+		}, session.StateCancelled},
+		{"failure funnel", func(ctx context.Context, srv *Server) {
+			_, _ = srv.ReportSessionFailure(ctx, FailureReport{
 				TenantID: "acme", SessionID: "s", Reason: string(session.FailureWorkspaceValidationFailed),
 			})
 		}, session.StateFailed},
-		{"failSession", func(srv *Server) { srv.failSession(context.Background(), "acme", "s") }, session.StateFailed},
-		{"direct emitTerminalLifecycle", func(srv *Server) {
-			row, _ := srv.store.Get(context.Background(), "acme", "s")
+		{"failSession", func(ctx context.Context, srv *Server) { srv.failSession(ctx, "acme", "s") }, session.StateFailed},
+		{"direct emitTerminalLifecycle", func(ctx context.Context, srv *Server) {
+			row, _ := srv.store.Get(ctx, "acme", "s")
 			row.State = session.StateCompleted
-			srv.emitTerminalLifecycle(context.Background(), row)
+			srv.emitTerminalLifecycle(ctx, row)
 		}, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := memstore.New()
-			if err := store.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
-			}); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
-			bus := sessionevents.NewBus(64)
-			srv := New(store, Options{DevTenantHeader: true, Events: bus})
-			defer srv.Close()
-			tc.write(srv)
-			completes := eventCount(bus, "s", "session_complete")
-			if tc.want == "" {
-				if completes != 0 || eventCount(bus, "s", "status_change") != 0 {
-					t.Errorf("a direct emitTerminalLifecycle emitted terminal events")
+	}
+	for _, tc := range cases {
+		for _, cancelAtCommit := range []bool{false, true} {
+			name := tc.name
+			if cancelAtCommit {
+				if tc.want == "" {
+					continue
 				}
-				return
+				name += "/writer context cancelled at commit"
 			}
-			if completes != 1 || statusOf(bus, "s", tc.want) != 1 {
-				t.Errorf("session_complete %d, status_change(%s) %d; want 1 and 1", completes, tc.want, statusOf(bus, "s", tc.want))
-			}
-		})
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				store := &tcStore{Store: memstore.New()}
+				if cancelAtCommit {
+					store.onTerminal = func(*sessionstore.Session) { cancel() }
+				}
+				if err := store.Create(context.Background(), sessionstore.Session{
+					ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+				}); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+				bus := sessionevents.NewBus(64)
+				srv := New(store, Options{DevTenantHeader: true, Events: bus})
+				defer srv.Close()
+				tc.write(ctx, srv)
+				completes := eventCount(bus, "s", "session_complete")
+				if tc.want == "" {
+					if completes != 0 || eventCount(bus, "s", "status_change") != 0 {
+						t.Errorf("a direct emitTerminalLifecycle emitted terminal events")
+					}
+					return
+				}
+				if completes != 1 || statusOf(bus, "s", tc.want) != 1 {
+					t.Errorf("session_complete %d, status_change(%s) %d; want 1 and 1", completes, tc.want, statusOf(bus, "s", tc.want))
+				}
+			})
+		}
 	}
 }
 

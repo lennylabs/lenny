@@ -13,11 +13,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // terminalWriter is one row of the terminal writer inventory: the function
 // whose mutator assigns a terminal state, and, for a funnel or hook writer,
-// the function that opens the terminal claim before the write.
+// the function that opens the terminal claim before the write, or before
+// the call to the writer when the claim function is not the writer.
 type terminalWriter struct {
 	file   string
 	writer string
@@ -54,7 +57,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/environment/translator/openai_chat.go", "handleCreateCompletion", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "handleCreate", ""},
 	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
-	{"cmd/lenny-gateway/session_budget.go", "terminate", "terminate"},
+	{"cmd/lenny-gateway/session_budget.go", "terminate", "TerminateSession"},
 	{"cmd/lenny-gateway/reconciler_workers.go", "startReconcilerWorkers", "startReconcilerWorkers"},
 }
 
@@ -250,7 +253,10 @@ func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
 			t.Errorf("%s %s: claim function %s not found", w.file, w.writer, w.claim)
 			continue
 		}
-		claim, write := firstCall(cf.decl, isClaim), firstCall(cf.decl, isWrite)
+		// A claim function that is not the writer reaches the Update through
+		// a call to the writer, as TerminateSession calls terminate.
+		reachesWrite := func(n string) bool { return isWrite(n) || (w.claim != w.writer && n == w.writer) }
+		claim, write := firstCall(cf.decl, isClaim), firstCall(cf.decl, reachesWrite)
 		if !claim.IsValid() || !write.IsValid() || claim > write {
 			t.Errorf("%s %s: BeginTerminal does not precede the Update", w.file, w.claim)
 		}
@@ -268,5 +274,25 @@ func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
 		if !claim.IsValid() || !write.IsValid() || claim > write {
 			t.Errorf("%s: BeginTerminal does not precede writeTerminal", name)
 		}
+	}
+}
+
+// TestTerminalContextTableCoversTheInventory_spec_7_1 asserts that the
+// terminal pipeline context table names exactly the writers of the terminal
+// writer inventory, so a writer added to the inventory fails until the
+// context test covers it.
+//
+// spec: §7.1 (Terminal pipeline context), §7.2 (Interactive Session Model)
+func TestTerminalContextTableCoversTheInventory_spec_7_1(t *testing.T) {
+	t.Parallel()
+	var want []string
+	for _, w := range terminalWriterInventory {
+		want = append(want, w.file+" "+w.writer)
+	}
+	sort.Strings(want)
+	got := sessionserver.TerminalContextWriterKeys()
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("terminal context table:\n  %s\nwant the inventory:\n  %s",
+			strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }

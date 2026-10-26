@@ -329,7 +329,12 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // spec: §15.1; §4.6; §7.1 (Normal Flow); §29.4 (Interrupt, terminate, and
 // delete).
 func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
-	sess = s.AfterTerminalWrite(ctx, fromState, sess, s.terminalSignals)
+	// spec: §7.1 (Terminal pipeline context) — one bounded, detached context
+	// for the hook body and the session-log close that follows it, so the
+	// budget is applied once and the close shares it.
+	ctx, cancel := s.terminalContext(ctx, sess.TerminatedAt)
+	defer cancel()
+	sess = s.afterTerminalWrite(ctx, fromState, sess, s.terminalSignals)
 	s.afterTerminalRelease(ctx, sess)
 }
 
@@ -338,7 +343,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 // release, in today's order: the §16.6 operational event, the §14 callback,
 // the lifecycle audit and retention roll, the §8.10 archive, the child_failed
 // event, the §8.3 watermark, and the cascadeOnFailure evaluation of §29.4
-// step 15. spec: §7.2; §29.4 (Interrupt, terminate, and delete).
+// step 13. spec: §7.2; §29.4 (Interrupt, terminate, and delete).
 func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session) {
 	// §16.6 / §25.3: a session reaching a terminal state emits the
 	// matching session lifecycle operational event so an ops agent

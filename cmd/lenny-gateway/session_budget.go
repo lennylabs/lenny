@@ -12,10 +12,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// budgetTerminateTimeout bounds the §11.2 mid-session budget termination
-// store update and terminal pipeline. The teardown runs on a fresh
-// background context off the proxy response path, so this is its own
-// deadline rather than the request's.
+// budgetTerminateTimeout bounds the §11.2 mid-session budget termination's
+// session lookup and terminal write. The teardown runs on a fresh background
+// context off the proxy response path, so this is its own deadline rather
+// than the request's. It does not bound the terminal pipeline:
+// AfterTerminalWrite re-bounds the hook by the §7.1 terminal pipeline budget,
+// which is longer than this deadline. spec: §11.2; §7.1 (Terminal pipeline
+// context).
 const budgetTerminateTimeout = 30 * time.Second
 
 // budgetSessionTerminator implements sessionbudget.Terminator. It
@@ -46,11 +49,23 @@ type budgetSessionTerminator struct {
 // §8.8 FailureReason and releases its pod. Idempotent: a session already
 // terminal is a no-op. The teardown runs asynchronously on a fresh
 // background context so the §4.9 proxy response path is never blocked.
+//
+// The terminal claim opens here, synchronously, before the goroutine starts,
+// so a shutdown that races the goroutine already sees the claim and waits
+// for it. The goroutine ends the claim after the terminal pipeline, or at
+// once on a lookup error, a refusal, or a write error.
+// spec: §11.2; §7.1 (Terminal pipeline context); §7.2 (Interactive Session
+// Model).
 func (t *budgetSessionTerminator) TerminateSession(sessionID, reason string) {
 	if t == nil || t.store == nil || sessionID == "" {
 		return
 	}
+	end := func() {}
+	if t.beginTerminal != nil {
+		end = t.beginTerminal(sessionID)
+	}
 	go func() {
+		defer end()
 		ctx, cancel := context.WithTimeout(context.Background(), budgetTerminateTimeout)
 		defer cancel()
 		t.terminate(ctx, sessionID, reason)
@@ -60,17 +75,13 @@ func (t *budgetSessionTerminator) TerminateSession(sessionID, reason string) {
 // terminate is the synchronous core of TerminateSession: it resolves the
 // session globally, force-transitions a non-terminal row to `expired`
 // under the tenant row lock, and runs the terminal-side-effects pipeline.
+// The caller holds the session's terminal claim across the call.
 func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reason string) {
 	sess, err := t.store.GetByID(ctx, sessionID)
 	if err != nil {
 		log.Printf("lenny-gateway: budget-terminate lookup session=%s: %v", sessionID, err)
 		return
 	}
-	end := func() {}
-	if t.beginTerminal != nil {
-		end = t.beginTerminal(sess.ID)
-	}
-	defer end()
 	var fromState session.State
 	now := time.Now()
 	updated, err := t.store.Update(ctx, sess.TenantID, sess.ID, func(s *sessionstore.Session) error {
