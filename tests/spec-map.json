@@ -3217,6 +3217,12 @@
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateSharedES256SigningKey_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsCloseThePerProcessKeyFinding_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordsNoteSupersededFindings_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTestGapRecords_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningTier6RecordMatchesTheTree_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningChaosCoverageIsRecorded_spec_10_2",
+        "tests/tier11_docs/build_gaps_jwt_signing_records_currency_test.go::TestJWTSigningRecordParsers_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
