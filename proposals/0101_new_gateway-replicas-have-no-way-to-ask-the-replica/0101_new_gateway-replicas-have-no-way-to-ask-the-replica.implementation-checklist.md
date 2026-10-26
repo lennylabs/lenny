@@ -13,11 +13,11 @@
 - [ ] **S5 · schema** — CHART-1. Lands all of CHART-1.
       Tiers 0, 1, 5, 11. Depends on: S1, S3
 - [ ] **S6 · code** — CODE-1, and the REC-1 entries that name CODE-1. Lands the holder value, listener, mTLS, credential carriage, and forward helper core.
-      Tiers 0, 1, 3, 11. Depends on: S1, S4, S5
+      Tiers 0, 1, 3, 4, 9, 11. Depends on: S1, S4, S5
 - [ ] **S7 · test** — TEST-1. Lands the R18 tests.
       Tiers 0, 1, 2, 3. Depends on: S6
 - [ ] **S8 · code** — CODE-2, and the REC-1 entries that name CODE-2. Lands the forward at every site, the DLQ fallback, and the harness forward lane.
-      Tiers 0, 1, 2, 4, 7a, 8, 11. Depends on: S1, S6, proposal 0100 CODE-1, CODE-4, and CODE-7 item 4 landed, proposal 0097 CODE-4 landed
+      Tiers 0, 1, 2, 4, 5, 7a, 8, 11. Depends on: S1, S6, proposal 0100 CODE-1, CODE-4, and CODE-7 item 4 landed, proposal 0097 CODE-4 landed
 - [ ] **S9 · test** — TEST-2. Lands the two-replica route tests.
       Tiers 0, 1, 4. Depends on: S8
 - [ ] **S10 · test** — TEST-3, and the REC-1 entry that names TEST-3. Lands the concurrency tests.
