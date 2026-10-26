@@ -32,37 +32,37 @@ Every step lands the tests that the non-spec Testing section places under its de
       Tiers 0, 1. Depends on: S4, S5, S13
 - [x] **S15 · code** — CODE-10. Lands the JWKS endpoint and rotation observer deletion.
       Tiers 0, 1, 4. Depends on: S2, S11
-- [ ] **S16 · code** — CODE-4. Lands the gateway wiring.
+- [x] **S16 · code** — CODE-4. Lands the gateway wiring.
       Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S13, S14, S15
-- [ ] **S17 · code** — CODE-5. Lands the Token Service wiring.
+- [x] **S17 · code** — CODE-5. Lands the Token Service wiring.
       Tiers 0, 1, 2, 4, 9. Depends on: S1, S2, S6, S7, S13, S14
-- [ ] **S18 · code** — CODE-6. Lands the `lenny-ops` wiring, including the key set in every process and the revocation set.
+- [x] **S18 · code** — CODE-6. Lands the `lenny-ops` wiring, including the key set in every process and the revocation set.
       Tiers 0, 1, 2, 4, 5, 7a, 9, 11. Depends on: S1, S2, S11, S13
-- [ ] **S19 · code** — CODE-12. Lands the deletion of the HMAC signer and `RotatingVerifier`.
+- [x] **S19 · code** — CODE-12. Lands the deletion of the HMAC signer and `RotatingVerifier`.
       Tiers 0, 1, 3. Depends on: S16, S17, S18
-- [ ] **S33 · code** — CODE-13. Lands the either-dependency permissive `/healthz`, the harness wait on `/readyz`, the production readiness probe on `/healthz`, the regenerated embedded manifests, and their tier-1, Helm, and embedded-manifest sync tests.
+- [x] **S33 · code** — CODE-13. Lands the either-dependency permissive `/healthz`, the harness wait on `/readyz`, the production readiness probe on `/healthz`, the regenerated embedded manifests, and their tier-1, Helm, and embedded-manifest sync tests.
       Tiers 0, 1, 4, 5, 11. Depends on: S11
-- [ ] **S20 · code** — CODE-7. Lands the outcome mapping and the sign metrics.
+- [x] **S20 · code** — CODE-7. Lands the outcome mapping and the sign metrics.
       Tiers 0, 1, 2, 3. Depends on: S4, S5, S8, S14, S16, S17
-- [ ] **S21 · code** — CODE-8. Lands the lifetime flag rename on the gateway and the Token Service default lifetime.
+- [x] **S21 · code** — CODE-8. Lands the lifetime flag rename on the gateway and the Token Service default lifetime.
       Tiers 0, 1, 3, 5. Depends on: S3, S16, S17
-- [ ] **S22 · code** — CODE-9. Lands the in-transaction revocation re-read.
+- [x] **S22 · code** — CODE-9. Lands the in-transaction revocation re-read.
       Tiers 0, 1, 2, 7a, 9. Depends on: S7, S17
-- [ ] **S23 · code** — CODE-11. Lands the alert catalog change and its generated files.
+- [x] **S23 · code** — CODE-11. Lands the alert catalog change and its generated files.
       Tiers 0, 1, 2, 4, 11. Depends on: S5, S20
-- [ ] **S24 · code** — CHART-1. Lands the values, schema, and preset changes.
+- [x] **S24 · code** — CHART-1. Lands the values, schema, and preset changes.
       Tiers 0, 1, 5. Depends on: S1, S3, S8, S21
-- [ ] **S25 · code** — CHART-2. Lands the local master key Secret and the KMS flags on all three deployments.
+- [x] **S25 · code** — CHART-2. Lands the local master key Secret and the KMS flags on all three deployments.
       Tiers 0, 1, 2, 5, 11. Depends on: S1, S9, S18, S24
-- [ ] **S27 · code** — CHART-4. Lands the gateway and `lenny-ops` KMS egress rule and the cloud-provider `kms.endpointCIDR` render refusal.
+- [x] **S27 · code** — CHART-4. Lands the gateway and `lenny-ops` KMS egress rule and the cloud-provider `kms.endpointCIDR` render refusal.
       Tiers 0, 1, 5, 9. Depends on: S10, S25
-- [ ] **S28 · code** — CHART-5. Lands the gateway quota flag render.
+- [x] **S28 · code** — CHART-5. Lands the gateway quota flag render.
       Tiers 0, 1. Depends on: S20, S24
-- [ ] **S29 · test** — TEST-1. Lands the harness change and the cross-process tests.
+- [x] **S29 · test** — TEST-1. Lands the harness change and the cross-process tests.
       Tiers 0, 4, 5, 9, 11. Depends on: S16, S17, S18, S19, S22, S25, S33
-- [ ] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
+- [x] **S30 · docs** — DOCS-1. Lands the runbook rewrite.
       Tiers 0, 11. Depends on: S1, S2, S23
-- [ ] **S31 · docs** — DOCS-2. Lands the DOCS-2 page edits.
+- [x] **S31 · docs** — DOCS-2. Lands the DOCS-2 page edits.
       Tiers 0, 11. Depends on: S1, S3, S4, S6, S7, S8, S9, S10, S11
-- [ ] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
+- [x] **S32 · docs** — REC-1. Lands the BUILD-GAPS and TEST-GAPS records.
       Tiers 0, 11. Depends on: S29, S30, S31
