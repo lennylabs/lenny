@@ -9,7 +9,7 @@ The normative rules are the numbered rules of §13.3 **Platform-admin impersonat
 - The admin handlers follow the new service signatures and the catalogued codes (CODE-4).
 - Full revoke gains the platform-admin cascade, and partial results survive an error (CODE-5).
 
-Every code step updates the existing fakes, constructors, and test helpers that its signature change breaks, so the tree compiles and tier 0 passes at every step. The TEST deliverables add the behaviour cases.
+Every code step updates the existing fakes, constructors, test helpers, and tests that it breaks, so the tree compiles and tier 0 passes at every step. The TEST deliverables add the behaviour cases.
 
 ## Staged code changes
 
@@ -24,7 +24,7 @@ Target: `pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go`, for item 7 `
 5. `RevokeImpersonationsByActor(ctx, actorSub, reason string, at time.Time) ([]string, error)`. Under `InAllTenants`, it runs a conditional `UPDATE ... WHERE act_sub=$1 AND parent_jti IS NULL AND revoked_at IS NULL AND exp > $3 RETURNING jti` (rule 6).
 6. Each query carries the `-- platform-admin-cross-tenant-allowed` annotation and a one-line justification, following the annotated queries in `pkg/gateway/audit/auditstore/translation.go`. The store does not emit `cross_tenant_read`; its callers do (CODE-3, CODE-5).
 7. **Step (1a) refusal** (§13.3 "Write-before-issue ordering" step (1a)). `selectRevokedAt` also reads `(<pred>)` per `jti`. `recheckSources` returns the existing `*SourceRevokedError` for the first listed revoked source. Otherwise it returns a new `*SourceImpersonationError{Role, JTI}` for the first listed impersonation row, whose `Reason()` is `string(Role) + "_impersonation"`. In `tokenservice.go`, the `commitIssued` caller in `persistIssuedToken` matches both types with `errors.As`, and `rejectRevokedSource` takes the reason string, so both render through the existing rejection-audit discipline. Update the doc comments that name only `SourceRevokedError` (`IssuedTokenRotationStore`, `commitIssued`, `recheckSources`). Add the exported method `IssuedToken.SourceRefusal(role SourceRole) error`. It returns `*SourceRevokedError` when `RevokedAt` is set, otherwise `*SourceImpersonationError` when `ActSubject` is non-empty and `ParentJTI` is empty, and otherwise nil. Item 8 and CODE-3 item 3 evaluate their single row through it. `recheckSources` keeps its multi-source order.
-8. **Playground mint** (§10.2 "Playground mint invariants" invariant 1). `playground.Options` gains `IssuedTokens`, a consumer-defined interface holding `Get(ctx, tenantID, jti string) (issuedtokenstore.IssuedToken, error)`, which `httpsurface.go` sets to `issuedtokenstore.New(w.pgPool)` when the pool is non-nil. After the `typ` check, `mintAPIKey` reads the subject's row by `claims.TenantID` and `claims.JWTID`. `ErrNotFound` passes. A row whose `SourceRefusal(SourceSubjectToken)` is non-nil is rejected with that error's `Reason()`. Each rejection emits `playground.bearer_mint_rejected` with that reason and returns the invariant 1 response without signing. Any other read error aborts the mint with `500 INTERNAL_ERROR` without signing. A nil `IssuedTokens` skips the read, because D17 registers no impersonation route without the pool. The session-creation mint is unbuilt (BUILD-GAPS F-10.2.25), so no code item applies step (1a) there.
+8. **Playground mint** (§10.2 "Playground mint invariants" invariant 1). `playground.Options` gains `IssuedTokens`, a consumer-defined interface holding `Get(ctx, tenantID, jti string) (issuedtokenstore.IssuedToken, error)`, which `httpsurface.go` sets to `issuedtokenstore.New(w.pgPool)` when the pool is non-nil. After the `typ` check, `mintAPIKey` reads the subject's row by `claims.TenantID` and `claims.JWTID`. `ErrNotFound` passes. A row whose `SourceRefusal(SourceSubjectToken)` is non-nil is rejected with that error's `Reason()`. Each rejection emits `playground.bearer_mint_rejected` with that reason and returns the invariant 1 response without signing. Rename that response's details key from `presentedTyp` to `subjectTyp` in `mintAPIKey`'s `typ` check, so both branches send the key §10.2 invariant 1 names. Any other read error aborts the mint with `500 INTERNAL_ERROR` without signing. A nil `IssuedTokens` skips the read, because D17 registers no impersonation route without the pool. The session-creation mint is unbuilt (BUILD-GAPS F-10.2.25), so no code item applies step (1a) there.
 9. **Impersonation record** (§13.3 **Platform-admin impersonation.** rule 1 (c)). `RecordImpersonation(ctx, tok IssuedToken, callerTenantID string) error`. An empty `callerTenantID` returns an error and writes nothing. In order:
    1. `pgtenant.InTx(ctx, s.pool, callerTenantID, ...)` runs `SELECT deleted_at IS NOT NULL FROM users WHERE tenant_id=$1 AND subject=$2 FOR SHARE` with `tok.ActSubject`.
    2. Inside that callback, `pgtenant.InTx(ctx, s.pool, tok.TenantID, ...)` runs the same `users` read with `tok.Subject`, then `insertIssued`, mapping 23505 to `ErrAlreadyExists` as `Record` does. It commits before the step 1 callback returns.
@@ -42,8 +42,9 @@ Targets:
 - `cmd/lenny-gateway/adminrouter.go`
 - `cmd/lenny-gateway/wiring_fields.go`
 - `tests/tier2_component/tokensigning/kms_outcome_test.go` (it constructs `impersonation.New` with `NewMemStore`)
+- the existing-test rewrites of item 7: `tests/tier9_security/ops_revocation_enforcement_test.go`, `tests/tier4_integration/tenant_deletion_phase4_test.go`, `tests/tier4_integration/jwt_keyset_cross_process_test.go`, `tests/tier8_chaos/jwt_keyset_chaos_test.go`, and `tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go`
 
-1. **Collaborators.** `New` takes three consumer-defined interfaces in place of `Store`. `IssuedTokens` is the slice of `*issuedtokenstore.Store` holding `Get`, `RecordImpersonation`, `EndImpersonation`, and `ListActiveImpersonations`. `RevocationCache` holds `Revoke(jti string)`. `CrossTenantReads` holds `EmitCrossTenantRead(ctx, auditstore.CrossTenantRead) error`. Delete `Store`, `MemStore`, `NewMemStore`, `SweepExpired`, `EndReason`, `EndReasonExplicit`, `EndReasonExpired`, and the `Ticket` fields `Reason`, `TicketRef`, `EndedAt`, `EndedBy`, and `EndReason` that only the deleted store read.
+1. **Collaborators.** `New` takes three consumer-defined interfaces in place of `Store`. `IssuedTokens` is the slice of `*issuedtokenstore.Store` holding `Get`, `RecordImpersonation`, `EndImpersonation`, and `ListActiveImpersonations`. `RevocationCache` holds `Revoke(jti string)`. `CrossTenantReads` holds `EmitCrossTenantRead(ctx, auditstore.CrossTenantRead) error`. Delete `Store`, `MemStore`, `NewMemStore`, `SweepExpired`, `EndReason`, `EndReasonExplicit`, `EndReasonExpired`, the `Ticket` fields `EndedAt`, `EndedBy`, and `EndReason`, and the method `Ticket.Active`.
 2. **Duration cap.** `New` clamps `Config.MaxDuration` to at most one hour, so no configuration admits a bearer longer than the §15.1 cap of 3600 seconds. `Issue` keeps returning `ErrInvalidDuration` for a duration below the §15.1 minimum or above the clamped maximum.
 3. **Issue.** Order per rule 1: first the caller check, `Get(ctx, req.CallerTenantID, req.CallerJTI)`, where an empty `CallerJTI` or `ErrNotFound` passes, a row whose `SourceRefusal(SourceSubjectToken)` is non-nil returns `ErrIssuanceRefused` wrapping it, and any other read error is returned, each with no append and no sign; then append `admin.impersonation_started` with the existing payload, which already carries `impersonation_session_id`; then sign; then `RecordImpersonation(ctx, tok, req.CallerTenantID)` with an `issuedtokenstore.IssuedToken` carrying `JTI` set to the session id, `TenantID` and `Subject` set to the target, `ActSubject` set to `req.AdminSub`, an empty `ParentJTI`, `TokenHash` set to the SHA-256 of the signed bearer, `Audience`/`Audiences`, `IssuedAt`, and `ExpiresAt`. Return the bearer only when `RecordImpersonation` returns nil. `IssueRequest` gains `CallerTenantID` and `CallerJTI`. A `*issuedtokenstore.UserInvalidatedError` returns `ErrIssuanceRefused` wrapping it. Call no `RecordWithAudit` variant, because the mint writes no `token.exchanged` row.
 4. **End.** `End(ctx, id, endedBy string) (EndResult, error)`, where `EndResult` carries `SessionID` and `EndedAt`. The order is fixed:
@@ -57,11 +58,15 @@ Targets:
 
    **IMPLEMENTOR'S CHOICE:** the `RowCount` of the listing's `cross_tenant_read` event. The event must be emitted before any row is returned. Either 0 or the count of a preceding `SELECT count(*)` under the same predicate satisfies §12.3.
 6. **Wiring.** In `adminrouter.go`, construct the service, call `adminRouter.WithImpersonation`, and assign `w.impersonationSvc` only inside `if w.pgPool != nil && w.jwtSigner != nil && revProp != nil && auditOpsStore != nil { ... }`. Pass `auditOpsStore` as the `CrossTenantReads` emitter and `revProp` as the `RevocationCache`. **Trap:** never pass a nil `*impersonation.Service` into the `ImpersonationService` interface. A typed nil passes the router's `r.impersonation == nil` guard in `routes.go`, registers the routes, and panics on the first request. Delete the expiry-sweep goroutine in `workers.go` and its `impersonation` import.
-7. **Compile maintenance.** In `service_test.go`, delete `TestSweepExpired_EndsExpiredOnly_spec_16_7` and `TestSweepExpired_FailClosedRetries_spec_11_7`, and replace the `NewMemStore` constructor with the fakes TEST-1 extends. In `kms_outcome_test.go`, replace `NewMemStore` with a fake `IssuedTokens`.
+7. **Existing-test maintenance.** In `service_test.go`, delete `TestSweepExpired_EndsExpiredOnly_spec_16_7` and `TestSweepExpired_FailClosedRetries_spec_11_7`, and move the remaining tests onto the CODE-3 signatures (`End`, `ListActive`, no `Ticket.Active` or `EndReason`) over the fakes TEST-1 extends. In `kms_outcome_test.go`, replace `NewMemStore` with a fake `IssuedTokens`.
+
+   Existing tests that present an impersonation bearer as `subject_token` are refused once CODE-2 item 7 and CODE-3 item 3 land. They are `opsRevStack.exchange` in `ops_revocation_enforcement_test.go`, `lennyIssuedProbes` in `tenant_deletion_phase4_test.go`, the `mintExchanged` calls in `tests/tier4_integration/jwt_keyset_cross_process_test.go`, `keySetChaosExchange` in `tests/tier8_chaos/jwt_keyset_chaos_test.go`, and the exchange in `TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2` in `tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go`. `mintPlayground` in `TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4` pastes an impersonation bearer as the playground subject and is refused once CODE-2 item 8 lands. Each takes its subject, or its pasted subject, from a token for the same tenant and `sub` signed through `stackkey.Signer`, as `TestEveryVerifierRefusesForgedLennyTokens_spec_10_2` does. The impersonation bearer may stay the caller.
+
+   **IMPLEMENTOR'S CHOICE:** how the tier-5 test signs its subject — it must be signed by the installed gateway's `platform:jwt-signing` key and carry no impersonation row.
 
 ### CODE-4 · Admin handlers and the served OpenAPI document
 
-Targets: `pkg/gateway/externalapi/admin/impersonation.go`, `pkg/gateway/externalapi/openapi/openapi.json` (hand edit), and the fakes in `pkg/gateway/externalapi/admin/impersonation_test.go` and `signing_unavailable_test.go` (compile maintenance).
+Targets: `pkg/gateway/externalapi/admin/impersonation.go`, `pkg/gateway/externalapi/openapi/openapi.json` (hand edit), and the fakes in `pkg/gateway/externalapi/admin/impersonation_test.go`, `signing_unavailable_test.go`, and `pkg/gateway/externalapi/openapi/routestub_test.go` (compile maintenance).
 
 1. Update the `ImpersonationService` interface to the CODE-3 signatures: `End(ctx, id, endedBy) (impersonation.EndResult, error)` and `ListActive(ctx, callerSub string) ([]impersonation.Session, error)`. The list handler passes `principal.Subject`.
 2. `handleStartImpersonation` sets `CallerTenantID` and `CallerJTI` from `principal.TenantID` and `principal.JTI`, and maps `impersonation.ErrIssuanceRefused` to `403 FORBIDDEN` before `writeImpersonationError`.
@@ -83,9 +88,9 @@ Targets:
 - `pkg/gateway/externalapi/admin/users.go` (`handleInvalidateUser` and `fullRevoke` pass the cascade decision)
 - the `UserTokenRevoker` fakes in `pkg/gateway/externalapi/admin` tests (compile maintenance)
 
-1. **Decision (rule 6), in the router.** `handleInvalidateUser` passes `revokeImpersonations = principal.HasRole(auth.RolePlatformAdmin)` through `fullRevoke` to `runFullRevokeFanOut` and reads no role from the user record. When `revokeImpersonations` is false, step 5 sets `tokenRevokeError` to name the skipped impersonation revocation, joined with any error `RevokeUserTokens` returns, and runs no `__all__` query. The cascade is not keyed on the user's tenant: platform-admins live in ordinary tenants such as the bootstrap admin's `--admin-token-tenant`, so a `tenantID == "platform"` guard never matches.
+1. **Decision (rule 6), in the router.** `handleInvalidateUser` passes `revokeImpersonations = principal.HasRole(auth.RolePlatformAdmin)` through `fullRevoke` to `runFullRevokeFanOut` and reads no role from the user record. When `revokeImpersonations` is false, step 5 sets `tokenRevokeError` to name the skipped impersonation revocation, joined with any error `RevokeUserTokens` returns, and runs no `__all__` query.
 2. **Interface.** `RevokeUserTokens(ctx, tenantID, subject, reason string, at time.Time, revokeImpersonations bool) ([]string, error)`. Update its doc comment to state that the returned JTIs are every durably revoked token, returned even when the error is non-nil.
-3. **Revoker.** `userTokenRevoker` gains one field, `reads CrossTenantReads`, which is `auditOpsStore` in the wiring. `RevokeUserTokens` works as follows:
+3. **Revoker.** In `user_revocation.go`, `userTokenRevoker.store` becomes a consumer-defined interface holding `RevokeBySubject` and `RevokeImpersonationsByActor`, as `adminIssuedTokenStore` is, and the revoker gains `reads`, a consumer-defined interface holding `EmitCrossTenantRead(ctx, auditstore.CrossTenantRead) error`, set to `auditOpsStore` only when that pointer is non-nil. `RevokeUserTokens` works as follows:
    - It calls `jtis, err := store.RevokeBySubject(...)`.
    - When `revokeImpersonations` is true, it calls `more, err2 := store.RevokeImpersonationsByActor(ctx, subject, reason, at)` even when `RevokeBySubject` failed, and appends `more`. It then emits one `cross_tenant_read` (category `impersonation_session`, endpoint `POST /v1/admin/users/{userId}/invalidate`, `RowCount` `len(more)`, and the caller subject from the context principal), including when `more` is empty, because the call set `__all__` (rule 7).
    - It returns every JTI that was durably revoked together with `errors.Join(err, err2, emitErr)`. A failed step contributes no JTIs, and a committed step's JTIs are returned alongside the error.
@@ -102,20 +107,20 @@ Targets:
 - `migrations/0190_issued_tokens_impersonation_index.up.sql`: `CREATE INDEX idx_issued_tokens_impersonation ON issued_tokens (act_sub) WHERE act_sub IS NOT NULL AND parent_jti IS NULL;`
 - `migrations/0190_issued_tokens_impersonation_index.down.sql`: `DROP INDEX IF EXISTS idx_issued_tokens_impersonation;`
 - `migrations/issued_tokens_impersonation_index_test.go` (new). Following the repository's per-migration test convention, it reads both 0190 files from `migrations.FS`. It asserts that the up file creates the partial index with exactly the SPEC-3 predicate and that the down file drops it. `// spec: §12.2`.
-- `tests/tier2_component/migrations/prod_schema_test.go`: add `mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")`. `// spec: §12.2`.
+- `tests/tier2_component/migrations/prod_schema_test.go`: add `mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")` under the comment `// 0190 adds the §13.3 impersonation partial index.`, whose number is the reference `scripts/lint-migrations.sh` requires a file in this directory to carry. `// spec: §12.2`.
 
-Confirm that 0189 is still the latest migration when applying, and take the next free number otherwise.
+Confirm that 0189 is still the latest migration when applying, and take the next free number otherwise, in both file names and the tier-2 comment.
 
 ## Staged docs changes
 
 ### DOCS-1 · Operator guide, admin API reference, and BUILD-GAPS closure
 
-Targets: `docs/operator-guide/security.md` (bearer-tokens item 3), `docs/api/admin.md`, the `PlatformAuditResidencyViolation` and `PLATFORM_AUDIT_REGION_UNRESOLVABLE` rows in `docs/operator-guide/observability.md`, `docs/reference/metrics.md`, and `docs/reference/error-catalog.md`, and `BUILD-GAPS.md` F-13.3.20 and F-10.2.25.
+Targets: `docs/operator-guide/security.md` (bearer-tokens item 3), `docs/api/admin.md`, the `PlatformAuditResidencyViolation` and `PLATFORM_AUDIT_REGION_UNRESOLVABLE` rows in `docs/operator-guide/observability.md`, `docs/reference/metrics.md`, and `docs/reference/error-catalog.md`, and `BUILD-GAPS.md` F-13.3.20 and F-10.2.25; and the tier-11 test `tests/tier11_docs/impersonation_revocation_docs_test.go` (new) with its `tests/spec-map.json` entry.
 
-(a) Append to item 3 under "What It Manages" in `docs/operator-guide/security.md`:
+(a) Append to the item 3 line (same physical line) under "What It Manages" in `docs/operator-guide/security.md`:
 
 ```
-The gateway records each platform-admin impersonation bearer in the issued-token index, so the bearer can be revoked like any other recorded token. The bearer is revoked when an administrator ends the impersonation session with `DELETE /v1/admin/impersonation/{id}`, when the target user is fully revoked, when the platform administrator who started the session is fully revoked, or when the bearer is revoked by its token id. Every gateway replica refuses a revoked bearer, and `lenny-ops` refuses it within 30 seconds. Any gateway replica can list or end an impersonation session.
+The gateway records each platform-admin impersonation bearer in the issued-token index, so the bearer can be revoked like any other recorded token. The bearer is revoked when an administrator ends the impersonation session with `DELETE /v1/admin/impersonation/{id}`, when the target user is fully revoked, or when the bearer is revoked by its token id. Every gateway replica refuses a revoked bearer, and `lenny-ops` refuses it after its next successful revocation-set read from Postgres, which it attempts every 30 seconds. Any gateway replica can list or end an impersonation session.
 ```
 
 (b) In `docs/api/admin.md`, add sections `POST /v1/admin/impersonation`, `GET /v1/admin/impersonation`, and `DELETE /v1/admin/impersonation/{id}` immediately after the `POST /v1/admin/users/{userId}/rotate-token` section. Each carries the `platform-admin` label block that the rotate-token section uses, and states the request fields, response fields, and errors of its SPEC-6 row, including the `409 INVALID_STATE_TRANSITION` for an already revoked or expired bearer. The `POST` section also states that the call returns `403 FORBIDDEN` when the target user or the calling administrator is hard-disabled or fully revoked, and that the bearer cannot be used to call `POST /v1/admin/impersonation`, cannot obtain a playground token, and cannot be presented to `/v1/oauth/token` as a subject or actor token. The `DELETE` section also states that when the ended audit write fails after the revoke commits, the call returns the audit error and the bearer stays revoked. The page cites no spec section numbers.
@@ -126,11 +131,13 @@ The gateway records each platform-admin impersonation bearer in the issued-token
 
 (e) Mirror SPEC-7 Edits (b) and (d). In `docs/operator-guide/observability.md`, in the `PlatformAuditResidencyViolation` row, delete "; the originating operation will succeed once audit can commit". In `docs/reference/metrics.md`, in the `PlatformAuditResidencyViolation` alert row, delete "The originating operation halts. ". In `docs/reference/error-catalog.md`, in the `PLATFORM_AUDIT_REGION_UNRESOLVABLE` row, delete "The originating operation halts (impersonation issuance, Phase 3.5 escrow ledger write, compliance decommission). ". Each row stays one physical table line.
 
+(f) Add `tests/tier11_docs/impersonation_revocation_docs_test.go` (new, tier 11, `// spec: 13.3, 15.1, 11.7`), built on `runDocPageChecks`, and map it in `tests/spec-map.json` under those sections. It checks that the `3. **Bearer tokens**` line of `operator-guide/security.md`, which (a) extends, contains `DELETE /v1/admin/impersonation/{id}`. It checks that `api/admin.md` contains the three section headings from (b), `409 INVALID_STATE_TRANSITION`, and `bearer stays revoked`. It checks that the `` | `PlatformAuditResidencyViolation` | `` line of `operator-guide/observability.md` and of `reference/metrics.md`, and the `PLATFORM_AUDIT_REGION_UNRESOLVABLE` row of `reference/error-catalog.md`, contain neither `originating operation halts` nor `once audit can commit`.
+
 ## Testing
 
-Every test carries `// spec:` for the sections it verifies (§13.3, §16.7, §15.1, §11.4, or §12.2), and every tier-2-and-higher test carries a `// diagnosis:` comment.
+Every test carries `// spec:` for the sections it verifies, and every tier-2-and-higher test carries a `// diagnosis:` comment.
 
-### TEST-1 · Unit and Postgres-tier tests
+### TEST-1 · Unit, Postgres-tier, and tier-3 contract tests
 
 Targets:
 - `pkg/gateway/credentials/impersonation/service_test.go`
@@ -143,6 +150,9 @@ Targets:
 - `pkg/tokenservice/source_recheck_test.go`
 - `pkg/gateway/storage/issuedtokenstore/recheck_test.go`
 - `pkg/gateway/mcpfabric/playground` (a new test file)
+- `tests/tier3_contract/playground/playground_test.go`
+- `tests/tier3_contract/admin_impersonation/openapi_document_test.go` (new)
+- `tests/spec-map.json` (map `tests/tier3_contract/admin_impersonation/openapi_document_test.go` under section `15.1`)
 
 Service unit tests, with fakes for `IssuedTokens`, `RevocationCache`, `CrossTenantReads`, the appender, and the signer:
 - **Issue order (rule 1).** An append failure leads to no sign and no `RecordImpersonation`. A sign failure leads to no `RecordImpersonation`; this is the no-row assertion that `signing_unavailable_test.go` cannot make. A `RecordImpersonation` failure returns no bearer. The caller check reads the caller's tenant and jti, and `RecordImpersonation` receives the caller's tenant. A caller-check refusal returns `ErrIssuanceRefused` with no append, no sign, and no `RecordImpersonation` call; an empty `CallerJTI` and an `ErrNotFound` row each pass; any other `Get` error is returned with no append. A `*UserInvalidatedError` from `RecordImpersonation` returns `ErrIssuanceRefused` and no bearer. The recorded row carries the session `jti`, the target tenant and sub, `act_sub` set to the admin, an empty `parent_jti`, the bearer hash, and the rule 1 `exp`, asserted with a fake clock that advances between the append and the sign. No `RecordWithAudit` call is made.
@@ -157,6 +167,7 @@ Handler tests:
 - A sign failure returns 503 `KMS_SIGNING_UNAVAILABLE`.
 - A joined CMP-058 error on `DELETE` returns 422.
 - The `DELETE` body has no `endReason`, and the list response carries `hasMore` and items with no `reason` or `ticketId`.
+- A tenant-admin caller of `GET /v1/admin/impersonation` and of `DELETE /v1/admin/impersonation/{id}` receives 403 `FORBIDDEN`, and the fake service records no `ListActive` or `End` call (rule 7); the no-call assertion is the one that discriminates.
 
 Tier-2 Postgres tests (`tests/tier2_component/stores`, extending `TestTokenIssuanceStoreContract`'s harness):
 - **EndImpersonation.** The first call revokes the row with `revoked_reason = 'impersonation_ended'`. A retry returns `NotActiveError{revoked}`. An expired row returns `NotActiveError{expired}`. A plain user token's `jti` and a delegation child's `jti` each return `ErrNotFound` and stay unrevoked.
@@ -166,20 +177,21 @@ Tier-2 Postgres tests (`tests/tier2_component/stores`, extending `TestTokenIssua
 - **Recording fence (rule 1 (c)).** The first two cases discriminate. A test transaction locks the target's `users` row `FOR UPDATE` and sets `deleted_at` without committing; a concurrent `RecordImpersonation` blocks, then returns `*UserInvalidatedError` after the test commits, and no row is written. The same case runs on the caller's `users` row in a tenant other than the target's. Randomized interleavings of `RecordImpersonation` with the full-revoke sequence (`userpg` `Update` setting `deleted_at`, then `RevokeBySubject`, then `RevokeImpersonationsByActor`), run once on the target and once on the admin, hold the invariant: either `RecordImpersonation` returned `*UserInvalidatedError` and no row exists, or the row exists with `revoked_at` set. The other cases: a missing `users` row passes, a `users` row with `disabled` set and `deleted_at` null (soft disable) passes, a hard-disabled row (`deleted_at` set without a following `RevokeBySubject`) is refused, and an empty `callerTenantID` writes nothing.
 - **RLS.** Impersonation rows are invisible under a tenant `InTx` for another tenant and visible under `__all__`.
 - **Invariant checker.** After the suite, every row with a non-null `act_sub` and a null `parent_jti` was written by the impersonation `RecordImpersonation` path.
-- **Step (1a).** `RecordWithAudit` and `RecordWithRotationAudit` whose subject or actor is a live impersonation row return `*SourceImpersonationError` naming that role and commit no row. A revoked impersonation row returns `*SourceRevokedError`. A delegation child passes.
+- **Step (1a).** `RecordWithAudit` and `RecordWithRotationAudit` whose subject or actor is a live impersonation row return `*SourceImpersonationError` naming that role and commit no row. A revoked impersonation row returns `*SourceRevokedError`. A live impersonation subject with a revoked actor returns `*SourceRevokedError` naming the actor and commits no row; this case discriminates CODE-2 item 7's cross-source order from a per-source loop. A delegation child passes.
 
 `IssuedToken.SourceRefusal` unit test (`recheck_test.go`, tier 1): one case per branch of CODE-2 item 7's method, plus a revoked impersonation row and a delegation child.
 
 Token Service unit test (`source_recheck_test.go`): `*SourceImpersonationError` renders `400 invalid_grant` with its reason and a `rejected:<reason>` audit row.
 
-**Playground step (1a) (CODE-2 item 8).** One assertion per branch: an `apiKey` mint whose subject row is a live impersonation row returns 401 `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED`, makes no signer call, and audits reason `subject_token_impersonation`. A revoked row audits `subject_token_revoked`, a missing row mints, and a read error returns 500 with no signer call.
+**Playground step (1a) (CODE-2 item 8).** One assertion per branch: an `apiKey` mint whose subject row is a live impersonation row returns 401 `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` with `details.subjectTyp` = `user_bearer`, makes no signer call, and audits reason `subject_token_impersonation`. A revoked row audits `subject_token_revoked`, a missing row mints, and a read error returns 500 with no signer call. Extend `TestAPIKeyModeRejectsCapabilitySubjectToken` (tests/tier3_contract/playground/playground_test.go, tier 3) to assert `details.subjectTyp` = `session_capability` and no `details.presentedTyp`.
 
 `userTokenRevoker` unit tests, with a fake store and emitter:
 - The cascade revokes the actor's rows in two target tenants and returns the union of JTIs.
+- Each cascade call emits exactly one `cross_tenant_read` carrying the fields CODE-5 item 3 names, also when the cascade revokes no row; the user also has own tokens revoked, so a `RowCount` equal to the union count fails.
 - When the cascade fails after `RevokeBySubject` commits, the user's own JTIs are returned with the error.
 - When `RevokeBySubject` fails and the cascade succeeds, the cascade JTIs are returned.
-- When the emit fails, the JTIs are still returned.
-- When `revokeImpersonations` is false, no `__all__` call is made.
+- When the emit fails, the JTIs are still returned and the returned error wraps the emit error.
+- When `revokeImpersonations` is false, no `__all__` call is made and no event is emitted.
 - A nil emitter fails closed.
 
 Full-revoke handler tests, with fakes:
@@ -193,7 +205,9 @@ Wiring (`release_wiring_test.go`):
 - The `ImpersonationService` field is a true nil in that case.
 - No impersonation sweep goroutine starts.
 
-Tiers: 0, 1, 2.
+Served document (`tests/tier3_contract/admin_impersonation/openapi_document_test.go`, new, tier 3, modelled on `TestServedDocumentOpenResponsesByIDHasNoDeleteOperation`, `// spec: §15.1`): the `delete` operation of `/v1/admin/impersonation/{id}` in the document `openapi.Handler()` serves declares `200` with `impersonationSessionId` and `endedAt`, declares `404` and `409` referencing `#/components/schemas/Error`, and declares no `204`.
+
+Tiers: 0, 1, 2, 3.
 
 ### TEST-2 · Multi-replica integration and lenny-ops security tests
 
@@ -202,7 +216,7 @@ Tiers: 0, 1, 2.
 - **Listing.** `GET` on B lists the session A issued.
 - **Restart.** Stop A and start a new A before `exp`. B still lists the session, and `DELETE` on B succeeds.
 - **Target full revoke.** A §11.4 full revoke of the target user makes both replicas refuse the bearer. A later `DELETE` returns 409 `INVALID_STATE_TRANSITION`, and no `admin.impersonation_ended` is written.
-- **Admin cascade.** Create the impersonating admin (the `X-Lenny-User-ID` the harness sends, `carol@acme.com`) as a user in `auth.DefaultTenantID` with a platform-managed mapping that lists `platform-admin`. Mint bearers into two target tenants, then fully revoke that admin as a different platform-admin caller. Every one of those bearers is refused.
+- **Admin cascade.** Create a second platform-admin, `dave@acme.com`, as a user in `auth.DefaultTenantID` with a platform-managed mapping that lists `platform-admin`, and send it as `X-Lenny-User-ID` on this case's mints. Mint bearers into two target tenants, then fully revoke `dave@acme.com` as the harness's default caller. Every one of those bearers is refused.
 - **Expiry.** With `durationSeconds=60`, once `exp` has passed, no ended event is written and the session leaves the listing.
 - **Concurrent `DELETE`.** Concurrent `DELETE` calls on A and B yield exactly one 200, one 409, and one ended event.
 
@@ -214,11 +228,7 @@ Tiers: 0, 1, 2.
 - A live impersonation bearer pasted into `POST /v1/playground/token` returns 401 `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED`.
 - **Nested impersonation (rule 1 caller check).** Provision the target as a user whose platform-managed mapping lists `platform-admin`, as the tier-4 admin cascade case does. The live impersonation bearer is accepted by `GET /v1/admin/impersonation` and refused by `POST /v1/admin/impersonation` with `403 FORBIDDEN`. `GET` then lists only the outer session, and no `admin.impersonation_started` row carries the target's `sub` as `admin_sub`. The `GET` acceptance makes the case discriminating, because it shows the `403` comes from the caller check rather than the role check.
 
-Existing tests that present an impersonation bearer as `subject_token` are refused once CODE-2 item 7 and CODE-3 item 3 land. They are `opsRevStack.exchange` in `ops_revocation_enforcement_test.go`, `lennyIssuedProbes` in `tenant_deletion_phase4_test.go`, the `mintExchanged` calls in `tests/tier4_integration/jwt_keyset_cross_process_test.go`, `keySetChaosExchange` in `tests/tier8_chaos/jwt_keyset_chaos_test.go`, and the exchange in `TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2` in `tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go`. `mintPlayground` in `TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4` pastes an impersonation bearer as the playground subject and is refused once CODE-2 item 8 lands. Each takes its subject, or its pasted subject, from a token for the same tenant and `sub` signed through `stackkey.Signer`, as `TestEveryVerifierRefusesForgedLennyTokens_spec_10_2` does. The impersonation bearer may stay the caller.
-
-**IMPLEMENTOR'S CHOICE:** how the tier-5 test signs its subject — it must be signed by the installed gateway's `platform:jwt-signing` key and carry no impersonation row.
-
-Tiers: 0, 4, 5, 8, 9.
+Tiers: 0, 4, 9.
 
 ## Edge cases and accepted failure modes
 
@@ -260,14 +270,19 @@ The spec-owned cases are in the spec-changes file, under **Edge cases and accept
 - pkg/gateway/externalapi/admin/users_invalidate.go
 - pkg/gateway/externalapi/admin full-revoke handler tests
 - pkg/gateway/externalapi/openapi/openapi.json
+- pkg/gateway/externalapi/openapi/routestub_test.go
 - tests/tier2_component/tokensigning/kms_outcome_test.go
 - tests/tier2_component/stores/issuedtokenstore_test.go
+- tests/tier3_contract/admin_impersonation/openapi_document_test.go (new)
+- tests/spec-map.json
+- tests/tier3_contract/playground/playground_test.go
 - tests/tier4_integration/impersonation_revocation_cross_replica_test.go (new)
 - tests/tier4_integration/tenant_deletion_phase4_test.go
 - tests/tier4_integration/jwt_keyset_cross_process_test.go
 - tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go
 - tests/tier8_chaos/jwt_keyset_chaos_test.go
 - tests/tier9_security/ops_revocation_enforcement_test.go
+- tests/tier11_docs/impersonation_revocation_docs_test.go (new)
 - docs/operator-guide/security.md
 - docs/api/admin.md
 - docs/operator-guide/observability.md

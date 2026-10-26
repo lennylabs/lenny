@@ -42,7 +42,7 @@
 - The single-winner guarantee is a Postgres property. A concurrency test against the fake store proves nothing, so the discriminating test is tier 2 (TEST-1).
 - `go generate` does not regenerate the impersonation entries in `openapi.json`, and `generated_tools.go` needs no change (CODE-4 item 5).
 - Deleting `MemStore` breaks `service_test.go` and `tests/tier2_component/tokensigning/kms_outcome_test.go` in the same step (CODE-3 item 7).
-- Existing tier-4, tier-5, tier-8, and tier-9 tests that present an impersonation bearer as `subject_token` fail once CODE-2 item 7 and CODE-3 item 3 land (TEST-2).
+- Existing tier-4, tier-5, tier-8, and tier-9 tests that present an impersonation bearer as `subject_token` fail once CODE-2 item 7 and CODE-3 item 3 land (CODE-3 item 7).
 - Confirm that 0190 is still the next free migration number when applying (CODE-1).
 - Step 5 must stay after the users-row commit in `handleInvalidateUser` (CODE-5 item 5).
 
@@ -86,14 +86,12 @@
 ## Open decisions for human to make
 
 - **OD-1. Does a session-creation refusal under step (1a) write the rejected-exchange audit row?** SPEC-2 Edit (b) makes the session-creation `session_capability` mint refuse an impersonation bearer with `403 FORBIDDEN`. §13.3 "Write-before-issue ordering" writes a rejection audit row for a step (1a) refusal at `/v1/oauth/token`, and returns `500 token_exchange_failed` when that audit write fails. The choices are (A) the session-creation refusal inherits the audit row, and an audit failure returns 500, or (B) it returns only the 403 and writes no audit row. One reviewer read §13.3 as already implying (A); the staged SPEC-2 (b) text names only the 403. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one. The session-creation mint is unbuilt (BUILD-GAPS F-10.2.25), so the choice changes spec text only.
-- **OD-2. Where is the outcome of revoking the admin's own bearer stated?** Revoking the platform-admin's own bearer by `jti` revokes none of the impersonation bearers that admin started, and a `POST` in flight during that revocation can still commit its row. The proposal accepts this outcome: the edge-case row "An operator revokes the caller's bearer by `jti` while a `POST` is in flight" cites rule 4. Rule 4 lists only the routes that do revoke an impersonation row, so neither the staged §13.3 text nor the DOCS-1 (a) operator-guide paragraph states the outcome. The choices are (A) add a sentence to rule 4 and a matching sentence to DOCS-1 (a), (B) add the sentence to DOCS-1 (a) only, or (C) leave the outcome implied. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
-- **OD-3. Do impersonation `GET` items carry the per-item `etag` that §15.1 requires?** §15.1 "GET responses" requires a per-item `etag`, and the staged `GET /v1/admin/impersonation` items carry none. The review log records the gap as pre-existing across admin lists. The choices are (A) add `etag` to the impersonation items in this proposal, or (B) leave it to a separate finding. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
-- **OD-4. Is the `docs/operator-guide/agent-operability.md` "rolled back" sentence corrected here?** The sentence "An operation that succeeds but fails to audit is treated as failed and rolled back." has no spec home and contradicts rules 3 and 7, under which a revocation stands when its audit write fails. The spec loop's derived recommendation is that the sentence needs its own finding rather than a DOCS-1 edit in this proposal.
 
 ## Defects in the shipped tree that this proposal does not stage
 
 - **Single-token revoke endpoint absent from §15.1.** The gateway serves `POST /v1/admin/issued-tokens/{jti}/revoke`, but no spec file names it. This proposal relies on the endpoint only in tests and refers to it in spec text as an operator revocation of a `jti`. Specifying it is left to a §15.1 proposal.
 - **`issued_tokens` ignores regional storage routing.** §12.8 routes a regional tenant's Postgres writes to a region-local backend, while the gateway opens `issued_tokens` on its single pool everywhere. The defect covers the whole revocation store rather than this change, which follows the existing single-pool behaviour.
+- **`docs/operator-guide/agent-operability.md` "rolled back" sentence.** The sentence "An operation that succeeds but fails to audit is treated as failed and rolled back." under **Audit trail** has no spec home and contradicts §13.3 rules 3 and 7, under which a revocation stands when its audit write fails. It predates this proposal, DOCS-1 does not edit it, and it is left to its own finding.
 
 ## Impacts on other proposals
 
@@ -113,9 +111,9 @@
 - SPEC-7 — spec/11_policy-and-controls.md, spec/15_external-api-surface.md, spec/25_agent-operability.md, spec/16_observability.md — §11.7 item 3 pointer to §13.3 rule 3; CMP-058 catalog and alert rows trimmed to §11.7.
 - CODE-1 — migrations, tests/tier2_component/migrations — migration 0190 partial index and its tests.
 - CODE-2 — pkg/gateway/storage/issuedtokenstore, pkg/tokenservice, pkg/gateway/mcpfabric/playground, cmd/lenny-gateway — impersonation-scoped record, end, list, and actor revoke, the step (1a) impersonation refusal, and the playground mint's step (1a) check.
-- CODE-3 — pkg/gateway/credentials/impersonation, cmd/lenny-gateway, tests/tier2_component/tokensigning — service over `issued_tokens`; MemStore, Store, and the sweep deleted; fail-closed wiring.
+- CODE-3 — pkg/gateway/credentials/impersonation, cmd/lenny-gateway, tests/tier2_component/tokensigning, tests/tier4_integration, tests/tier5_e2e_kind, tests/tier8_chaos, tests/tier9_security — service over `issued_tokens`; MemStore, Store, and the sweep deleted; fail-closed wiring; existing subject-token tests rewritten.
 - CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/openapi — handler signatures, catalogued 409, narrowed bodies, and the `DELETE` OpenAPI entry.
 - CODE-5 — cmd/lenny-gateway, pkg/gateway/externalapi/admin — full-revoke platform-admin cascade, partial-result handling, and the step 5 commit order.
-- TEST-1 — pkg/gateway/credentials/impersonation, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/tokenservice, pkg/gateway/storage/issuedtokenstore, pkg/gateway/mcpfabric/playground, tests/tier2_component/stores — unit and Postgres-tier tests.
-- TEST-2 — tests/tier4_integration, tests/tier5_e2e_kind, tests/tier8_chaos, tests/tier9_security — two-replica and `lenny-ops` tests, and the rewrite of existing exchange tests.
-- DOCS-1 — docs/operator-guide/security.md, docs/api/admin.md, docs/operator-guide/observability.md, docs/reference/metrics.md, docs/reference/error-catalog.md, BUILD-GAPS.md — operator guide sentence, admin API reference sections, CMP-058 row trims, and F-13.3.20 closure and the F-10.2.25 pointer.
+- TEST-1 — pkg/gateway/credentials/impersonation, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/tokenservice, pkg/gateway/storage/issuedtokenstore, pkg/gateway/mcpfabric/playground, tests/tier2_component/stores, tests/tier3_contract, tests/spec-map.json — unit, Postgres-tier, and tier-3 contract tests.
+- TEST-2 — tests/tier4_integration, tests/tier9_security — two-replica and `lenny-ops` tests.
+- DOCS-1 — docs/operator-guide/security.md, docs/api/admin.md, docs/operator-guide/observability.md, docs/reference/metrics.md, docs/reference/error-catalog.md, BUILD-GAPS.md, tests/tier11_docs, tests/spec-map.json — operator guide sentence, admin API reference sections, CMP-058 row trims, F-13.3.20 closure and the F-10.2.25 pointer, and their tier-11 test.
