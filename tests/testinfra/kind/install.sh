@@ -16,9 +16,12 @@
 #      and each node's genuinely nameless (dangling) containerd images.
 #      Guards against unbounded disk growth on this long-lived cluster
 #      from tests that build or load uniquely-tagged images per run.
-#   1. Build the platform binary images and the two reference echo
-#      runtime images, each as a separate `docker build` process.
-#   2. Load the images onto the Kind cluster nodes.
+#      Old content tags are pruned from the host and the nodes as well.
+#   1. Compute each image's content tag, and build the platform binary
+#      images, the reference runtime images, and the test fixture images
+#      whose content tag is not yet present locally, each as a separate
+#      `docker build` process.
+#   2. Load onto the Kind cluster nodes the images a node lacks.
 #   3. Create the Kind cluster from tests/testinfra/kind/cluster.yaml.
 #   4. Create the lenny-system and monitoring namespaces.
 #   5. Install cert-manager and wait for it to become Available.
@@ -35,25 +38,67 @@
 #  10. Apply the agent-pod workload and wait for its pods to become
 #      Ready.
 #
+# Image tags:
+#   By default every image is tagged with a content tag, src-<12 hex
+#   digits>, that tests/testinfra/kind/imagetag computes from the image's
+#   build inputs: its Dockerfile, its build arguments, the context files
+#   its COPY instructions name, the Go package closure of the binary it
+#   compiles (go list -deps, including go.mod, go.sum, and embedded
+#   files), and the content tags of the images it builds on. The hash
+#   reads the working tree, so uncommitted and untracked changes count.
+#   An image whose content tag is already present locally is reused
+#   rather than rebuilt, and an image a node already holds under its
+#   content tag is not reloaded onto that node. A change to any input
+#   changes the tag, so the changed image is rebuilt and reloaded, and
+#   the chart's Deployments roll out because the rendered image reference
+#   changed. The base images the Dockerfiles name (golang, distroless)
+#   are unpinned tags and are not hashed; set LENNY_FORCE_BUILD=1 after
+#   pulling a newer base image.
+#
+#   Every consumer this script renders (the chart values, the bootstrap
+#   overlay, the Runtime CRs, and the migration Job) receives the content
+#   tag. Each loaded image also carries the moving alias tag
+#   <name>:${LENNY_ALIAS_TAG:-e2e}, locally and on every node, because
+#   tests and fixtures outside this script name images such as
+#   lenny-adapter:e2e and lenny-migrate:e2e directly.
+#
 # Environment variables:
 #   LENNY_KIND_CLUSTER   Cluster name. Default: lenny-e2e.
-#   LENNY_IMAGE_TAG      Image tag for the built binaries. Default: e2e.
-#   LENNY_SKIP_BUILD     When "1", skip the image build and load steps
-#                        (the images are assumed already loaded).
-#   LENNY_FORCE_BUILD    When "1", rebuild every image even when a
-#                        <name>:<tag> image already exists locally. The
-#                        default skip-if-present shortcut reuses a stale
-#                        image built from older source, which silently
-#                        deploys out-of-date binaries after a code change;
-#                        set this to guarantee the deployed images reflect
-#                        the current tree. Ignored when LENNY_SKIP_BUILD=1.
-#   LENNY_SKIP_PRUNE     When "1", skip the pre-build host and node prune
-#                        step (see below). Default: prune runs every time.
+#   LENNY_IMAGE_TAG      When set, tag every image with this fixed tag
+#                        instead of a content tag, and skip building an
+#                        image whose <name>:<tag> already exists locally.
+#                        That shortcut deploys a stale image after a
+#                        source change unless LENNY_FORCE_BUILD=1 is set.
+#   LENNY_ALIAS_TAG      The moving alias tag applied to each loaded
+#                        image in content-tag mode. Default: e2e.
+#   LENNY_SKIP_BUILD     When "1", skip the image build, load, and
+#                        content-tag prune steps, and deploy the images
+#                        already loaded under the alias tag (or under
+#                        LENNY_IMAGE_TAG when it is set).
+#   LENNY_FORCE_BUILD    When "1", rebuild every image even when its tag
+#                        already exists locally, and hand every image to
+#                        `kind load`, which reloads a node whose copy has a
+#                        different image ID. Ignored when LENNY_SKIP_BUILD=1.
+#   LENNY_SKIP_PRUNE     When "1", skip the host and node prune steps (see
+#                        below). Default: prune runs every time.
+#   LENNY_KEEP_CONTENT_TAGS
+#                        How many content tags per image the host keeps
+#                        besides the current one. Default: 3.
 
 set -euo pipefail
 
 CLUSTER="${LENNY_KIND_CLUSTER:-lenny-e2e}"
-TAG="${LENNY_IMAGE_TAG:-e2e}"
+ALIAS_TAG="${LENNY_ALIAS_TAG:-e2e}"
+KEEP_CONTENT_TAGS="${LENNY_KEEP_CONTENT_TAGS:-3}"
+# FIXED_TAG is empty in content-tag mode. LENNY_SKIP_BUILD=1 deploys what
+# is already loaded, which carries the alias tag.
+if [[ -n "${LENNY_IMAGE_TAG:-}" ]]; then
+  FIXED_TAG="${LENNY_IMAGE_TAG}"
+elif [[ "${LENNY_SKIP_BUILD:-}" == "1" ]]; then
+  FIXED_TAG="${ALIAS_TAG}"
+else
+  FIXED_TAG=""
+fi
 CERT_MANAGER_VERSION="v1.16.2"
 PROM_OPERATOR_VERSION="v0.79.2"
 INGRESS_NGINX_VERSION="controller-v1.11.3"
@@ -78,88 +123,93 @@ MINIO_BUCKET="lenny-artifacts"
 MINIO_ACCESS_KEY="lennyminio"
 MINIO_SECRET_KEY="lennyminio123"
 
-# The platform binaries. Each maps to a cmd/<binary> package and is
-# built into a <binary>:<tag> image.
-BINARIES=(
-  lenny-controller
-  lenny-gateway
-  lenny-webhook
-  lenny-token-service
-  lenny-ops
-  lenny-migrate
-  lenny-adapter
-  lenny-preflight
-  lenny-backup
-  lenny-ctl
-  # §4.6.2 PoolScalingController runs as its own Deployment with a
-  # dedicated leader lease; the chart references it by image, so it must
-  # be built and loaded onto the offline Kind cluster like the rest.
-  lenny-pool-scaling-controller
-  # TESTING.md §12.9.8 tier-9 egress-capture sidecar; the controller injects this
-  # image when a Sandbox carries the egress-capture annotation.
-  lenny-egress-capture
-)
+# IMAGE_SPECS is the image inventory, one image per line, in the format
+# tests/testinfra/kind/imagetag parses:
+#
+#   <name> <dockerfile> [--context=<dir>] [--no-load] [KEY=VALUE ...]
+#
+# The Dockerfile path and the context are relative to the repository
+# root, and the context defaults to it. KEY=VALUE is a build argument; a
+# value of the form @<name> names another image in this list and is
+# replaced by that image's <name>:<tag> reference, so the referencing
+# image builds after it and its content tag covers the named image's tag.
+# --no-load marks a build-only base that is not loaded onto the cluster.
+# tests/testinfra/kind/imagetag/install_specs_test.go parses this block
+# and computes its tags at tier 1, so a line naming a missing Dockerfile,
+# package, or image fails there before an install does.
+# read -d '' returns 1 at the end of the here-document, hence || true.
+read -r -d '' IMAGE_SPECS <<'SPECS' || true
+# The platform binaries, built from the root Dockerfile. Each maps to a
+# cmd/<binary> package.
+lenny-controller Dockerfile BINARY=lenny-controller
+lenny-gateway Dockerfile BINARY=lenny-gateway
+lenny-webhook Dockerfile BINARY=lenny-webhook
+lenny-token-service Dockerfile BINARY=lenny-token-service
+lenny-ops Dockerfile BINARY=lenny-ops
+lenny-migrate Dockerfile BINARY=lenny-migrate
+lenny-preflight Dockerfile BINARY=lenny-preflight
+lenny-backup Dockerfile BINARY=lenny-backup
+lenny-ctl Dockerfile BINARY=lenny-ctl
+# §4.6.2 PoolScalingController runs as its own Deployment with a
+# dedicated leader lease; the chart references it by image, so it must be
+# built and loaded onto the offline Kind cluster like the rest.
+lenny-pool-scaling-controller Dockerfile BINARY=lenny-pool-scaling-controller
+# TESTING.md §12.9.8 tier-9 egress-capture sidecar; the controller injects
+# this image when a Sandbox carries the egress-capture annotation.
+lenny-egress-capture Dockerfile BINARY=lenny-egress-capture
+# The adapter binary image. It is a build base only: the lenny-adapter
+# image below overlays the supervise-probe binary onto it.
+lenny-adapter-base Dockerfile BINARY=lenny-adapter --no-load
 
-# The reference echo runtime images exercise the two §4.7 deployment
-# models. lenny-runtime-echo runs the sidecar model: cmd/runtimes/echo
-# is a stdin/stdout JSONL exec target and the lenny-adapter sidecar
-# bridges it over an abstract Unix socket. lenny-runtime-echo-embedded
-# runs the embedded model: cmd/runtimes/echo-embedded links the adapter
-# into one container that serves the gRPC contract directly. Each entry
-# is <image-base>=<cmd-path>; the cmd path differs from the image name,
-# so these cannot reuse the BINARIES convention.
-RUNTIME_IMAGES=(
-  "lenny-runtime-echo=runtimes/echo"
-  "lenny-runtime-echo-embedded=runtimes/echo-embedded"
-  # §6.1 SDK-warm reference runtime. preconnect-echo declares
-  # capabilities.preConnect; the §6.3 startup_latency benchmark drives
-  # its pool as the SDK-warm arm against the pod-warm echo pool.
-  "lenny-runtime-preconnect-echo=runtimes/preconnect-echo"
-  # TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
-  # /bin/sh for the credential-leakage probes; elicitation-echo
-  # raises §9.2 elicitations through the platform MCP fabric.
-  "lenny-runtime-cred-shell-echo=runtimes/cred-shell-echo"
-  "lenny-runtime-elicitation-echo=runtimes/elicitation-echo"
-  # §5.2 sessionId dispatch-loop reference runtime. Backs
-  # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
-  # tier-5 real-pod counterpart of the tier-4
-  # concurrent_workspace_test.go in-process flow.
-  "lenny-runtime-echo-concurrent=runtimes/echo-concurrent"
-)
+# The reference runtime images exercise the two §4.7 deployment models.
+# lenny-runtime-echo runs the sidecar model: cmd/runtimes/echo is a
+# stdin/stdout JSONL exec target and the lenny-adapter sidecar bridges it
+# over an abstract Unix socket. lenny-runtime-echo-embedded runs the
+# embedded model: cmd/runtimes/echo-embedded links the adapter into one
+# container that serves the gRPC contract directly.
+lenny-runtime-echo Dockerfile BINARY=runtimes/echo
+lenny-runtime-echo-embedded Dockerfile BINARY=runtimes/echo-embedded
+# §6.1 SDK-warm reference runtime. preconnect-echo declares
+# capabilities.preConnect; the §6.3 startup_latency benchmark drives its
+# pool as the SDK-warm arm against the pod-warm echo pool.
+lenny-runtime-preconnect-echo Dockerfile BINARY=runtimes/preconnect-echo
+# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
+# /bin/sh for the credential-leakage probes; elicitation-echo raises §9.2
+# elicitations through the platform MCP fabric.
+lenny-runtime-cred-shell-echo Dockerfile BINARY=runtimes/cred-shell-echo
+lenny-runtime-elicitation-echo Dockerfile BINARY=runtimes/elicitation-echo
+# §5.2 sessionId dispatch-loop reference runtime. Backs
+# concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
+# tier-5 real-pod counterpart of the tier-4 concurrent_workspace_test.go
+# in-process flow.
+lenny-runtime-echo-concurrent Dockerfile BINARY=runtimes/echo-concurrent
 
-# Test-only fixture images. Each entry is <image-base>=<base-image-base>:
-# tests/testinfra/heartbeatsilence/Dockerfile layers the heartbeat-silence
-# fixture on top of the named reference runtime image, so the reference
-# binary runs unchanged behind a filter that stops forwarding heartbeats
-# after the fixture's directive. Only the heartbeat-silence pools below
-# use these images; they back the tier-5 stream-failure cases in
-# tests/tier5_e2e_kind/stream_failure_kind_test.go.
-FIXTURE_IMAGES=(
-  "lenny-runtime-heartbeat-silence-echo=lenny-runtime-echo"
-  "lenny-runtime-heartbeat-silence-echo-concurrent=lenny-runtime-echo-concurrent"
-)
-FIXTURE_DOCKERFILE="${REPO_ROOT}/tests/testinfra/heartbeatsilence/Dockerfile"
+# Test-only fixture images. tests/testinfra/heartbeatsilence/Dockerfile
+# layers the heartbeat-silence fixture on top of the named reference
+# runtime image, so the reference binary runs unchanged behind a filter
+# that stops forwarding heartbeats after the fixture's directive. Only the
+# heartbeat-silence pools below use these images; they back the tier-5
+# stream-failure cases in tests/tier5_e2e_kind/stream_failure_kind_test.go.
+lenny-runtime-heartbeat-silence-echo tests/testinfra/heartbeatsilence/Dockerfile BASE_IMAGE=@lenny-runtime-echo
+lenny-runtime-heartbeat-silence-echo-concurrent tests/testinfra/heartbeatsilence/Dockerfile BASE_IMAGE=@lenny-runtime-echo-concurrent
 
-# Images built from their own Dockerfile rather than the platform one. Each
-# entry is <image-base>=<dockerfile path relative to the repository root>.
 # lenny-supervisor is the runtime supervisor every sidecar pod of a
 # type: agent runtime stages into its read-only supervisor volume (§4.7.10
-# Runtime supervisor; §13.1 Runtime supervisor volume); e2e-values.yaml names
-# it as controller.supervisorImage, and without it the controller creates no
-# pod for any such pool. lenny-runtime-supervise-probe is the test-only probe
-# runtime (tests/testinfra/superviseprobe) the supervisor's cluster tiers run;
-# its image sets an ENV variable no Runtime env sets and STOPSIGNAL SIGINT.
-DOCKERFILE_IMAGES=(
-  "lenny-supervisor=Dockerfile.supervisor"
-  "lenny-runtime-supervise-probe=cmd/runtimes/supervise-probe/Dockerfile"
-)
+# Runtime supervisor; §13.1 Runtime supervisor volume); the chart values
+# overlay names it as controller.supervisorImage, and without it the
+# controller creates no pod for any such pool.
+lenny-supervisor Dockerfile.supervisor
+# lenny-runtime-supervise-probe is the test-only probe runtime
+# (tests/testinfra/superviseprobe) the supervisor's cluster tiers run; its
+# image sets an ENV variable no Runtime env sets and STOPSIGNAL SIGINT.
+lenny-runtime-supervise-probe cmd/runtimes/supervise-probe/Dockerfile
 
-# ADAPTER_OVERLAY_DOCKERFILE adds the supervise-probe binary to the e2e
-# adapter image as /usr/local/bin/lenny-setup-probe, the setup command the
+# The e2e adapter image: lenny-adapter-base with the supervise-probe binary
+# added as /usr/local/bin/lenny-setup-probe, the setup command the
 # supervised scrub's setup-residue case runs in the adapter container
-# (§5.2 Supervised scrub sequence). The overlay is rebuilt on every build
-# because it is a single COPY over whatever lenny-adapter:${TAG} holds.
-ADAPTER_OVERLAY_DOCKERFILE="${REPO_ROOT}/cmd/runtimes/supervise-probe/adapter-overlay.Dockerfile"
+# (§5.2 Supervised scrub sequence).
+lenny-adapter cmd/runtimes/supervise-probe/adapter-overlay.Dockerfile --context=cmd/runtimes/supervise-probe BASE_IMAGE=@lenny-adapter-base PROBE_IMAGE=@lenny-runtime-supervise-probe
+SPECS
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -174,6 +224,7 @@ require docker
 require kind
 require kubectl
 require helm
+require go
 
 if ! docker info >/dev/null 2>&1; then
   echo "error: the Docker daemon is not reachable" >&2
@@ -200,34 +251,79 @@ if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
 fi
 
 # ---------------------------------------------------------------------
-# Step 1+2: build and load the binary images.
+# Step 1: compute the image tags and build the images.
 #
+# image-tags prints one line per image in build order: name, tag, load
+# flag (1 or 0), Dockerfile, context, and the build arguments with every
+# @<name> reference resolved to <name>:<tag>. In content-tag mode the tag
+# is the image's content tag; with LENNY_IMAGE_TAG set, or with
+# LENNY_SKIP_BUILD=1, it is FIXED_TAG for every image.
+# ---------------------------------------------------------------------
+log "computing image tags"
+IMAGE_PLAN="$(printf '%s\n' "${IMAGE_SPECS}" | (
+  cd "${REPO_ROOT}" &&
+    go run ./tests/testinfra/kind/imagetag/cmd/image-tags --root "${REPO_ROOT}" ${FIXED_TAG:+--tag "${FIXED_TAG}"}
+))"
+
+# image_tag <name> prints the tag this install deploys for <name>.
+image_tag() {
+  local tag
+  tag="$(awk -F'\t' -v n="$1" '$1 == n { print $2 }' <<<"${IMAGE_PLAN}")"
+  if [[ -z "${tag}" ]]; then
+    echo "error: image $1 is not in IMAGE_SPECS" >&2
+    exit 1
+  fi
+  printf '%s' "${tag}"
+}
+
+# image_ref <name> prints <name>:<tag> for the tag this install deploys.
+image_ref() { printf '%s:%s' "$1" "$(image_tag "$1")"; }
+
+# LOADED_REFS are the <name>:<tag> references of the images loaded onto
+# the cluster, and LOADED_NAMES their names.
+LOADED_REFS=()
+LOADED_NAMES=()
+while IFS=$'\t' read -r name tag load _; do
+  if [[ "${load}" == "1" ]]; then
+    LOADED_REFS+=("${name}:${tag}")
+    LOADED_NAMES+=("${name}")
+  fi
+done <<<"${IMAGE_PLAN}"
+
 # Each image is built with its own `docker build` invocation. A shell
 # `for` loop that redirects output does not land the image in this
 # host's Docker Desktop daemon store, so every build runs as its own
 # foreground process with output going to the terminal. If an image
 # does not appear in `docker images` after a build, the build falls
 # back to DOCKER_BUILDKIT=0, which writes to the legacy image store.
-# ---------------------------------------------------------------------
-# build_image <image-base> [cmd-path]. cmd-path defaults to image-base
-# for the platform binaries whose image name matches their cmd/<name>
-# package; the runtime images pass an explicit cmd-path.
+#
+# build_image <name> <tag> <dockerfile> <context> [KEY=VALUE ...] builds
+# <name>:<tag> unless that tag already exists locally and
+# LENNY_FORCE_BUILD is not "1". In content-tag mode an existing tag holds
+# an image built from the same inputs, so skipping it is safe.
 build_image() {
-  local image_base="$1"
-  local cmd_path="${2:-$1}"
-  local image="${image_base}:${TAG}"
+  local image="$1:$2"
+  local dockerfile_rel="$3"
+  local dockerfile="${REPO_ROOT}/$3"
+  local context="${REPO_ROOT}/$4"
+  shift 4
+  local build_args=()
+  local arg
+  for arg in "$@"; do
+    build_args+=(--build-arg "${arg}")
+  done
 
   if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
+    log "image ${image} already built; skipping"
     return 0
   fi
 
-  log "building ${image}"
-  docker build --build-arg "BINARY=${cmd_path}" -t "${image}" "${REPO_ROOT}"
+  log "building ${image} from ${dockerfile_rel}"
+  docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
     log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build --build-arg "BINARY=${cmd_path}" -t "${image}" "${REPO_ROOT}"
+    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
   fi
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
@@ -236,79 +332,50 @@ build_image() {
   fi
 }
 
-# build_fixture_image <image-base> <base-image-base> builds a test-only
-# fixture image from FIXTURE_DOCKERFILE on top of the already-built
-# <base-image-base>:${TAG}, with the same skip and legacy-builder fallback
-# as build_image.
-build_fixture_image() {
-  local image="$1:${TAG}"
-  local base="$2:${TAG}"
-
-  if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
-    return 0
-  fi
-
-  log "building fixture ${image} on ${base}"
-  docker build -f "${FIXTURE_DOCKERFILE}" --build-arg "BASE_IMAGE=${base}" -t "${image}" "${REPO_ROOT}"
-
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build -f "${FIXTURE_DOCKERFILE}" --build-arg "BASE_IMAGE=${base}" -t "${image}" "${REPO_ROOT}"
-  fi
-
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    echo "error: image ${image} is still absent after both build attempts" >&2
-    exit 1
-  fi
-}
-
-# build_dockerfile_image <image-base> <dockerfile> builds <image-base>:${TAG}
-# from the named Dockerfile with the repository root as context, with the same
-# skip and legacy-builder fallback as build_image.
-build_dockerfile_image() {
-  local image="$1:${TAG}"
-  local dockerfile="${REPO_ROOT}/$2"
-
-  if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
-    return 0
-  fi
-
-  log "building ${image} from ${dockerfile}"
-  docker build -f "${dockerfile}" -t "${image}" "${REPO_ROOT}"
-
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" -t "${image}" "${REPO_ROOT}"
-  fi
-
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    echo "error: image ${image} is still absent after both build attempts" >&2
-    exit 1
-  fi
-}
+# is_content_tag <tag> reports whether <tag> has the content-tag form
+# src-<12 hex digits> that imagetag.IsContentTag matches. Only tags of
+# this form are pruned; e2e, e2e-journey, and other fixed tags are never
+# touched.
+is_content_tag() { [[ "$1" =~ ^src-[0-9a-f]{12}$ ]]; }
 
 if [[ "${LENNY_SKIP_BUILD:-}" == "1" ]]; then
-  log "LENNY_SKIP_BUILD=1; skipping image build and load"
+  log "LENNY_SKIP_BUILD=1; skipping image build and load; deploying tag ${FIXED_TAG}"
 else
-  for binary in "${BINARIES[@]}"; do
-    build_image "${binary}"
-  done
-  for entry in "${RUNTIME_IMAGES[@]}"; do
-    build_image "${entry%%=*}" "${entry#*=}"
-  done
-  for entry in "${FIXTURE_IMAGES[@]}"; do
-    build_fixture_image "${entry%%=*}" "${entry#*=}"
-  done
-  for entry in "${DOCKERFILE_IMAGES[@]}"; do
-    build_dockerfile_image "${entry%%=*}" "${entry#*=}"
-  done
-  log "overlaying lenny-supervise-probe onto lenny-adapter:${TAG} as lenny-setup-probe"
-  docker build -f "${ADAPTER_OVERLAY_DOCKERFILE}" \
-    --build-arg "BASE_IMAGE=lenny-adapter:${TAG}" \
-    --build-arg "PROBE_IMAGE=lenny-runtime-supervise-probe:${TAG}" \
-    -t "lenny-adapter:${TAG}" "$(dirname "${ADAPTER_OVERLAY_DOCKERFILE}")"
+  while IFS=$'\t' read -r name tag load dockerfile context args; do
+    # args is a space-separated KEY=VALUE list with no embedded spaces.
+    # shellcheck disable=SC2086
+    build_image "${name}" "${tag}" "${dockerfile}" "${context}" ${args}
+  done <<<"${IMAGE_PLAN}"
+
+  if [[ -z "${FIXED_TAG}" ]]; then
+    # Point the moving alias tag at this install's images, for the tests
+    # and fixtures that name <name>:e2e directly.
+    for ref in "${LOADED_REFS[@]}"; do
+      docker tag "${ref}" "${ref%%:*}:${ALIAS_TAG}"
+    done
+
+    # Prune old content tags on the host. Per image, keep the tag this
+    # install deploys and the KEEP_CONTENT_TAGS most recently created
+    # other content tags, so switching between a few revisions reuses
+    # their images, and remove the rest. `docker image ls` lists newest
+    # first. `docker rmi` without -f refuses an image a container uses,
+    # and the failure is ignored.
+    if [[ "${LENNY_SKIP_PRUNE:-}" != "1" ]]; then
+      while IFS=$'\t' read -r name tag _; do
+        kept=0
+        for old in $(docker image ls --format '{{.Tag}}' "${name}"); do
+          is_content_tag "${old}" || continue
+          [[ "${old}" == "${tag}" ]] && continue
+          if ((kept < KEEP_CONTENT_TAGS)); then
+            kept=$((kept + 1))
+            continue
+          fi
+          log "pruning old content tag ${name}:${old}"
+          docker rmi "${name}:${old}" >/dev/null 2>&1 || true
+        done
+      done <<<"${IMAGE_PLAN}"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------
@@ -338,7 +405,70 @@ kc() { kubectl --context "${KCTX}" "$@"; }
 LENNY_KIND_CLUSTER="${CLUSTER}" "${SCRIPT_DIR}/install-gvisor.sh"
 
 # ---------------------------------------------------------------------
-# Step 3b: prune genuinely dangling (nameless) images from each node's
+# Step 3b: prune old content tags from each node's containerd store.
+#
+# In content-tag mode each source change loads a new <name>:src-<hash>
+# image onto the nodes, so the older ones accumulate. A content tag of an
+# image in IMAGE_SPECS is removed from a node when this install does not
+# deploy it and no container on the node, running or exited, uses its
+# image. Removing the tag leaves the image nameless once the alias tag has
+# moved to the current image, and Step 3c below (or the next install's
+# Step 3c, while a digest reference still names it) removes it. Nodes keep
+# no older revisions, because reloading one costs seconds. A name outside
+# IMAGE_SPECS and a fixed tag such as e2e or e2e-journey are never
+# touched.
+# ---------------------------------------------------------------------
+if [[ "${LENNY_SKIP_PRUNE:-}" != "1" && "${LENNY_SKIP_BUILD:-}" != "1" && -z "${FIXED_TAG}" ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "WARNING: python3 not found; skipping node content-tag prune"
+  else
+    prune_dir="$(mktemp -d)"
+    awk -F'\t' '{ print "docker.io/library/" $1 ":" $2 }' <<<"${IMAGE_PLAN}" >"${prune_dir}/keep"
+    awk -F'\t' '{ print "docker.io/library/" $1 }' <<<"${IMAGE_PLAN}" >"${prune_dir}/names"
+    for node in $(kind get nodes --name "${CLUSTER}"); do
+      if ! docker exec "${node}" which crictl >/dev/null 2>&1; then
+        log "WARNING: crictl not found on ${node}; skipping node content-tag prune"
+        continue
+      fi
+      docker exec "${node}" crictl images -o json >"${prune_dir}/images.json" 2>/dev/null || continue
+      docker exec "${node}" crictl ps -a -o json >"${prune_dir}/containers.json" 2>/dev/null || continue
+      stale="$(python3 - "${prune_dir}" <<'PY' || true
+import json, os, re, sys
+d = sys.argv[1]
+keep = set(open(os.path.join(d, "keep")).read().split())
+names = set(open(os.path.join(d, "names")).read().split())
+images = json.load(open(os.path.join(d, "images.json"))).get("images", [])
+containers = json.load(open(os.path.join(d, "containers.json"))).get("containers", [])
+in_use = set()
+for c in containers:
+    for key in ("imageRef", "imageId"):
+        if c.get(key):
+            in_use.add(c[key])
+    image = (c.get("image") or {}).get("image")
+    if image:
+        in_use.add(image)
+content = re.compile(r"^(.*):src-[0-9a-f]{12}$")
+for img in images:
+    if img.get("id") in in_use:
+        continue
+    for tag in img.get("repoTags") or []:
+        m = content.match(tag)
+        if m and m.group(1) in names and tag not in keep:
+            print(tag)
+PY
+)"
+      while IFS= read -r ref; do
+        [[ -z "${ref}" ]] && continue
+        log "pruning old content tag ${ref} on ${node}"
+        docker exec "${node}" ctr -n k8s.io images rm "${ref}" >/dev/null 2>&1 || true
+      done <<<"${stale}"
+    done
+    rm -rf "${prune_dir}"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# Step 3c: prune genuinely dangling (nameless) images from each node's
 # containerd store.
 #
 # A node's containerd content store only grows: `kind load docker-image`
@@ -394,17 +524,57 @@ fi
 # ---------------------------------------------------------------------
 # Step 2 (load): load the built images onto the cluster nodes. Done
 # after cluster creation because `kind load` needs the cluster to exist.
+#
+# `kind load docker-image` saves every image it is given into one archive
+# whenever any node lacks any of them, so handing it the full list
+# re-exports and re-imports every image after a one-image change. In
+# content-tag mode a node that lists <name>:src-<hash> holds exactly that
+# image, so the list is narrowed to the images some node lacks, and kind
+# loads each onto the nodes that lack it. A load interrupted part-way
+# leaves the remaining nodes without the tag, and the next install loads
+# them. With LENNY_FORCE_BUILD=1 or a fixed tag the same tag may name
+# new content, so every image is handed to kind, which compares image IDs
+# per node.
 # ---------------------------------------------------------------------
 if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
-  images=()
-  for binary in "${BINARIES[@]}"; do
-    images+=("${binary}:${TAG}")
-  done
-  for entry in "${RUNTIME_IMAGES[@]}" "${FIXTURE_IMAGES[@]}" "${DOCKERFILE_IMAGES[@]}"; do
-    images+=("${entry%%=*}:${TAG}")
-  done
-  log "loading ${#images[@]} images onto cluster ${CLUSTER}"
-  kind load docker-image --name "${CLUSTER}" "${images[@]}"
+  nodes="$(kind get nodes --name "${CLUSTER}")"
+  to_load=()
+  if [[ -z "${FIXED_TAG}" && "${LENNY_FORCE_BUILD:-}" != "1" ]]; then
+    node_refs=""
+    for node in ${nodes}; do
+      node_refs+="$(docker exec "${node}" ctr -n k8s.io images ls -q 2>/dev/null | sed "s|^|${node} |")"$'\n'
+    done
+    for ref in "${LOADED_REFS[@]}"; do
+      for node in ${nodes}; do
+        if ! grep -qxF "${node} docker.io/library/${ref}" <<<"${node_refs}"; then
+          to_load+=("${ref}")
+          break
+        fi
+      done
+    done
+  else
+    to_load=("${LOADED_REFS[@]}")
+  fi
+  if ((${#to_load[@]} > 0)); then
+    log "loading ${#to_load[@]} of ${#LOADED_REFS[@]} images onto cluster ${CLUSTER}: ${to_load[*]}"
+    kind load docker-image --name "${CLUSTER}" "${to_load[@]}"
+  else
+    log "every node already holds all ${#LOADED_REFS[@]} images; nothing to load"
+  fi
+
+  if [[ -z "${FIXED_TAG}" ]]; then
+    # Point each node's alias tag at this install's images, for the tests
+    # and fixtures that name <name>:e2e directly. One exec per node.
+    alias_cmds=""
+    for ref in "${LOADED_REFS[@]}"; do
+      alias_cmds+="ctr -n k8s.io images tag --force docker.io/library/${ref} docker.io/library/${ref%%:*}:${ALIAS_TAG} >/dev/null && "
+    done
+    for node in ${nodes}; do
+      docker exec "${node}" sh -c "${alias_cmds}true" ||
+        log "WARNING: could not move the ${ALIAS_TAG} alias tags on ${node}"
+    done
+  fi
+
   # External prebuilt images the chart references that install.sh does not
   # build: the MinIO client the bucket lifecycle Job runs. Pull and load it
   # so the offline cluster's pullPolicy: Never resolves.
@@ -436,7 +606,7 @@ fi
 #
 # The §13.1 admission plane requires every Runtime CR and every §17.6
 # bootstrap runtime image to be digest-pinned (`image@sha256:...`); a bare
-# `:e2e` tag is rejected with a digest-pattern error. A local `docker
+# tag is rejected with a digest-pattern error. A local `docker
 # build` assigns a fresh image id on every build, so a hardcoded digest
 # goes stale the moment the image is rebuilt and the kubelet then reports
 # ImagePullBackOff against a digest that no longer exists. install.sh
@@ -467,15 +637,15 @@ resolve_digest() {
 }
 
 log "resolving the runtime image digests"
-ECHO_IMAGE="$(resolve_digest "lenny-runtime-echo:${TAG}")"
-ECHO_EMBEDDED_IMAGE="$(resolve_digest "lenny-runtime-echo-embedded:${TAG}")"
-PRECONNECT_ECHO_IMAGE="$(resolve_digest "lenny-runtime-preconnect-echo:${TAG}")"
-CRED_SHELL_ECHO_IMAGE="$(resolve_digest "lenny-runtime-cred-shell-echo:${TAG}")"
-ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}")"
-ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-echo-concurrent:${TAG}")"
-HEARTBEAT_SILENCE_ECHO_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo:${TAG}")"
-HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo-concurrent:${TAG}")"
-SUPERVISE_PROBE_IMAGE="$(resolve_digest "lenny-runtime-supervise-probe:${TAG}")"
+ECHO_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-echo)")"
+ECHO_EMBEDDED_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-echo-embedded)")"
+PRECONNECT_ECHO_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-preconnect-echo)")"
+CRED_SHELL_ECHO_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-cred-shell-echo)")"
+ELICITATION_ECHO_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-elicitation-echo)")"
+ECHO_CONCURRENT_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-echo-concurrent)")"
+HEARTBEAT_SILENCE_ECHO_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-heartbeat-silence-echo)")"
+HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-heartbeat-silence-echo-concurrent)")"
+SUPERVISE_PROBE_IMAGE="$(resolve_digest "$(image_ref lenny-runtime-supervise-probe)")"
 log "echo runtime image pinned to ${ECHO_IMAGE}"
 
 # ---------------------------------------------------------------------
@@ -485,7 +655,7 @@ log "echo runtime image pinned to ${ECHO_IMAGE}"
 # image by its digest-pinned form `<repo>:<tag>@sha256:<id>` because the
 # §13.1 admission plane rejects a bare tag. `kind load docker-image`
 # imports the image into containerd under its tag name only, so containerd
-# has `lenny-runtime-echo:e2e` but no image named
+# has `lenny-runtime-echo:<tag>` but no image named
 # `lenny-runtime-echo@sha256:<id>`. When the kubelet resolves a pod's
 # digest-pinned reference it looks up `<repo>@<digest>`, does not find it
 # locally, and with imagePullPolicy IfNotPresent falls through to a
@@ -650,7 +820,9 @@ done
 # itself is idempotent regardless.
 log "running the lenny-migrate schema-migration Job"
 kc -n lenny-system delete job lenny-e2e-migrate --ignore-not-found --wait=true
-kc apply -f "${MIGRATE_JOB_MANIFEST}"
+# The manifest names lenny-migrate:e2e; substitute the reference this
+# install deploys.
+sed "s|image: lenny-migrate:e2e|image: $(image_ref lenny-migrate)|" "${MIGRATE_JOB_MANIFEST}" | kc apply -f -
 if ! kc -n lenny-system wait --for=condition=Complete job/lenny-e2e-migrate --timeout=180s; then
   log "the lenny-migrate Job did not complete; dumping its logs"
   kc -n lenny-system logs job/lenny-e2e-migrate || true
@@ -732,7 +904,7 @@ BOOTSTRAP_OVERLAY="${REPO_ROOT}/tests/testinfra/kind/bootstrap-overlay.gen.yaml"
 log "generating the bootstrap overlay with resolved runtime digests"
 cat >"${BOOTSTRAP_OVERLAY}" <<EOF
 # Generated by install.sh; do not edit. Runtime images are digest-pinned
-# to the freshly-built lenny-runtime-*:e2e images (resolved at install
+# to the lenny-runtime-* images this install deployed (resolved at install
 # time with docker image inspect). Regenerate by re-running install.sh.
 bootstrap:
   runtimes:
@@ -864,7 +1036,7 @@ bootstrap:
       isolationProfile: standard
       labels:
         lenny.dev/e2e: echo-task-mode
-    # Test-only heartbeat-silence fixture runtimes (see FIXTURE_IMAGES and
+    # Test-only heartbeat-silence fixture runtimes (see IMAGE_SPECS and
     # agent-workload.yaml). They back only the heartbeat-silence pools
     # below. capabilities.injection.supported is true (§5.1) to match the
     # Runtime CRDs: the wrapped echo loops answer every inbound `message`
@@ -917,7 +1089,7 @@ bootstrap:
       # Setup commands run in the adapter container, whose distroless image
       # has no /bin/sh, so this runtime execs them as argv (§7.5). The
       # setup-residue case runs the probe binary the e2e adapter image
-      # carries (ADAPTER_OVERLAY_DOCKERFILE).
+      # carries (the lenny-adapter entry in IMAGE_SPECS).
       setupCommandPolicy:
         shell: false
       labels:
@@ -1260,6 +1432,50 @@ kc -n lenny-system create secret generic lenny-e2e-bearer-trust-key \
   --from-literal=key='{"keyId":"lenny-e2e-bearer-trust","secret":"bGVubnktZTJlLWJlYXJlci10cnVzdC1obWFjLWtleS0zMmJ5dGVz"}' \
   --dry-run=client -o yaml | kc apply -f -
 
+# Generate the image-tag values overlay. e2e-values.yaml names every
+# platform image with the e2e tag; this overlay replaces each with the tag
+# this install deploys, so a rebuilt image changes the rendered image
+# reference and its Deployment rolls out. It is passed after
+# e2e-values.yaml and before the bootstrap overlay.
+IMAGE_TAGS_OVERLAY="${REPO_ROOT}/tests/testinfra/kind/image-tags.gen.yaml"
+log "generating the image-tag values overlay"
+cat >"${IMAGE_TAGS_OVERLAY}" <<EOF
+# Generated by install.sh; do not edit. Regenerate by re-running install.sh.
+controller:
+  image:
+    tag: $(image_tag lenny-controller)
+  adapterImage: $(image_ref lenny-adapter)
+  supervisorImage: $(image_ref lenny-supervisor)
+  egressCaptureImage: $(image_ref lenny-egress-capture)
+admissionWebhooks:
+  image:
+    tag: $(image_tag lenny-webhook)
+tokenService:
+  image:
+    tag: $(image_tag lenny-token-service)
+gateway:
+  image:
+    tag: $(image_tag lenny-gateway)
+ops:
+  image:
+    tag: $(image_tag lenny-ops)
+migrate:
+  image:
+    tag: $(image_tag lenny-migrate)
+preflight:
+  image:
+    tag: $(image_tag lenny-preflight)
+backups:
+  image:
+    tag: $(image_tag lenny-backup)
+poolScalingController:
+  image:
+    tag: $(image_tag lenny-pool-scaling-controller)
+bootstrap:
+  image:
+    tag: $(image_tag lenny-ctl)
+EOF
+
 # --server-side=false forces client-side apply. Helm 4 defaults to
 # server-side apply, whose strict (containerPort, protocol) list-map key
 # rejects the chart's named http+metrics ports sharing one containerPort
@@ -1274,6 +1490,7 @@ if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; t
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    -f "${IMAGE_TAGS_OVERLAY}" \
     -f "${BOOTSTRAP_OVERLAY}" \
     --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
@@ -1284,6 +1501,7 @@ else
     -n lenny-system \
     --kube-context "${KCTX}" \
     -f "${E2E_VALUES}" \
+    -f "${IMAGE_TAGS_OVERLAY}" \
     -f "${BOOTSTRAP_OVERLAY}" \
     --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
@@ -1317,6 +1535,15 @@ kc apply -f "${APISERVER_EGRESS_MANIFEST}"
 # and webhooks. The component!=coredns selector clause is retained as a
 # guard so a future re-enable of the dedicated instance does not silently
 # block the install on a CoreDNS image gap.
+#
+# A helm upgrade that changes an image tag rolls the Deployment out, and
+# `kubectl wait pod -l` resolves the selector once, so it would wait on the
+# replaced pods, which terminate rather than become Ready. Each Deployment's
+# rollout is awaited first so the pod wait sees only the current pods.
+log "waiting for the lenny-system control-plane rollouts to complete"
+for deploy in $(kc -n lenny-system get deploy -l app.kubernetes.io/name=lenny -o name); do
+  kc -n lenny-system rollout status "${deploy}" --timeout=300s
+done
 log "waiting for the lenny-system control-plane pods to become Ready"
 kc -n lenny-system wait --for=condition=Ready pod \
   -l app.kubernetes.io/name=lenny,lenny.dev/component!=coredns \
@@ -1337,8 +1564,8 @@ kc -n lenny-system wait --for=condition=Ready pod \
 #
 # The Runtime CR images carry __*_IMAGE__ placeholders so the manifest
 # never embeds a stale digest. Substitute the digests resolved in Step 2b
-# before applying; the §13.1 admission plane rejects a bare :e2e tag, so
-# every image must be the pinned image:e2e@sha256:<digest> form.
+# before applying; the §13.1 admission plane rejects a bare tag, so
+# every image must be the pinned image:<tag>@sha256:<digest> form.
 # ---------------------------------------------------------------------
 log "applying the agent Runtime CRs (digest-pinned)"
 sed \

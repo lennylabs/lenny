@@ -4636,6 +4636,13 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** The retried session runs uncounted, so the pod can admit sessions beyond `maxConcurrentSessions` until it ends.
 **Suggested resolution:** Reserve the slot again on a retried `/start` before it binds. The fix changes `/start` retry semantics, which is outside release ownership. No owner is named.
 
+### - [ ] F-5.2.57 — §5.2 says pool admission refuses a pool that does not meet the `claimOrphanTimeout` bound, and no pool-admission check exists [Low] — OPEN
+
+**Spec:** §5.2 Pool Configuration and Execution Modes, **Slot assignment atomicity (`maxConcurrentSessions > 1`).** ("The gateway refuses to start, and pool admission refuses a pool, whose configuration does not meet this bound.").
+**Evidence:** The gateway's startup gate `validateSlotReaperFlags` (`cmd/lenny-gateway/startupgates.go:327-345`) and the chart `fail` gate (`charts/lenny/templates/gateway-deployment.yaml:118-121`) enforce the bound. The pool admission paths (`validatePoolForStore` at `pkg/gateway/externalapi/admin/pools.go:433` and the bootstrap pool validation at `pkg/gateway/externalapi/admin/bootstrap.go:635-641`) read no `claimOrphanTimeout` and no window the bound compares. None of the windows the bound names (`maxFinalizingTimeoutSeconds`, the `resuming` watchdog's duration, and `maxWorkspaceSealDurationSeconds`) is a pool field: each is a gateway flag. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** The pool-admission half of the sentence has no implementation, and no pool configuration field enters the bound, so the specification names a check that has no input to evaluate.
+**Suggested resolution:** Through the proposal pipeline, either name the pool field that the bound reads or remove the pool-admission clause and leave the startup gate and the chart gate as the enforcement points. The specification states a check without a pool-level input, so this needs the proposal pipeline. Owner: proposal P3 (session timers and sweep ownership), whose spec edits restate the deadlines the bound composes.
+
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
 
@@ -22103,6 +22110,13 @@ Evidence:
 **Gap:** Operators sizing the Postgres primary from the table omit the token-issuance write rate, which grows with the 15-minute token lifetime proposal 0097 adopts.
 **Suggested resolution:** Through the proposal pipeline, add a token-issuance row (inserts and rotation revocations per tier) to the §12.3 table and the total. It is a specification gap. Owner: unassigned.
 
+### - [ ] F-12.3.27 — §12.3 states RPO 0 for committed writes, while a commit whose standby acknowledgement wait is interrupted stays visible on the primary and can be lost at failover [Medium] — OPEN
+
+**Spec:** §12.3 Postgres HA Requirements, **RPO/RTO targets:** ("RPO: 0 (synchronous replication — no committed transaction lost)") and **Write durability categories during failover:** (the "Committed session state transitions" row).
+**Evidence:** Under Postgres synchronous replication, a backend whose wait for the standby acknowledgement is cancelled or terminated has already committed locally, and the transaction is visible to every other session on the primary before any standby holds it. The tree configures no `synchronous_commit` or `synchronous_standby_names` value (no match under `charts/`, `pkg/`, `cmd/`, or `migrations/`), and F-12.3.23 records synchronous replication as operator-supplied. Every reader of a session row, including the terminal read-back that proposal 0100's CODE-3 adds, can act on such a write. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** A reader can observe and act on a write that a failover then loses, so "no committed transaction lost" does not hold for writes that other sessions have already read. TEST-GAPS T-12.3.1 tracks the untested failover itself and does not cover this case.
+**Suggested resolution:** Through the proposal pipeline, run a Postgres HA review of §12.3 that restates the RPO for writes visible on the primary before the standby acknowledgement, and states which readers must tolerate a lost write or which writes must confirm replication before a dependent action. It is a specification defect that applies to every reader in the tree. Owner: unassigned (a new proposal).
+
 ---
 
 ### Spec/implementation alignment summary
@@ -24919,6 +24933,13 @@ This makes the gaps in F2 (artifact legal-hold endpoint), F5 (pg-backed billing 
 **Evidence:** Writers that update a tenant's row, or create or update a row keyed by a tenant ID, read no tenant state, including the admin-API writers that act on a platform-admin's requested `tenantId`. `handleRotateErasureSalt` refuses only a tombstone; `PUT /v1/admin/tenants/{id}` and the user, credential-pool, and environment writers read no state; and the bootstrap seed sections and the admin-token provisioner recreate rows on any bootstrap run the gateway admits. Filed by proposal 0095 (`proposals/0095_fix_data-lifecycle-second-half-the-remaining-tenant-deletion-and/`), 2026-10-23.
 **Gap:** A write after Phase 4, or onto the tombstone, recreates erased rows or restores a field the keep list nulls, such as a fresh erasure salt.
 **Suggested resolution:** Through the proposal pipeline, add a §17.6 refusal row for these seed entries and a refusal outcome for the admin-API writers, then refuse a tenant in `deleting` or `deleted` in each writer. Owner: unassigned.
+
+### - [ ] F-12.8.60 — Terminal-tail writes that follow the pod release, and chunk uploads on a late presigned grant, can land after user erasure has run [Medium] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces, **Lifecycle fence and drain** (a successful drain does not wait for the session's terminal steps) and **Data erasure (GDPR).**; §4.4 (Session logs); §12.5 Artifact Store (`checkpointCapabilityTTLSeconds`).
+**Evidence:** `afterTerminalRelease` (`pkg/gateway/sessionserver/usage.go:395`) runs after the pod release. It calls the session-log close hook (line 403), which writes the `/{tenant_id}/sessions/{session_id}/stderr.log` artifact under the session's prefix, and then `s.billing.Append` with the raw `sess.UserID` (lines 439-441). User erasure's drain (`admin.DrainSessions`, `pkg/gateway/externalapi/admin/drain.go:82`, run by `Runner.runDrain` in `pkg/gateway/storage/erasurejob/runner_phases.go:107`) waits only until every scoped row is terminal on the primary. A chunk upload on a presigned grant minted just before the seal window ends can also land up to `checkpointCapabilityTTLSeconds` later (`pkg/gateway/checkpoint/checkpointer/checkpointer.go:54`). Proposal 0100's CODE-7 item 6 narrows the window to the interval between its release record and these writes, and its SPEC-1 (e) holds erasure only to the post-terminal window that ends at the release record. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** An object and a billing row carrying the erased user's raw ID can be written after the erasers ran, and no later pass removes them.
+**Suggested resolution:** Through the proposal pipeline, either move the release record on the hook path after these writes, or add a second prefix sweep and billing pass after the grant TTL, and state which in §12.8. The specification does not state either mechanism, so this needs the proposal pipeline after proposal 0100 lands its release record. Owner: proposal P2b (terminal pipeline completeness, second half).
 
 ## §12.9 Data Classification <a id="12.9"></a>
 Spec source: `spec/12_storage-architecture.md` lines 995–1057.
@@ -38864,6 +38885,13 @@ carried access paths; prose headings (Decision, Escalation) are
 skipped. Step IDs are sequential over the kept steps."). Stub-runbook
 coverage gap is tracked under F-17.7.7 (Medium, OPEN). No code change.
 
+### - [ ] F-17.7.13 — The `workspace-seal-stuck` runbook's first diagnosis step queries a session listing and a `sealing` state that do not exist [Medium] — OPEN
+
+**Spec:** §17.7 Operational Runbooks (each runbook's diagnosis steps name commands the platform provides); §24.11 Session Investigation (the admin session surface is `GET /v1/admin/sessions/{id}` and `POST /v1/admin/sessions/{id}/force-terminate`).
+**Evidence:** `docs/runbooks/workspace-seal-stuck.md` Diagnosis Step 1 issues `GET /v1/admin/sessions?state=sealing&ageSeconds=gt:<maxSealSeconds>` and reads `sealStartedAt`, `lastRetryAt`, `retryCount`, and `lastError` from each result. The admin router registers only `GET /v1/admin/sessions/{id}` and the force-terminate route (`pkg/gateway/externalapi/admin/routes.go:203-205`), and no session state `sealing` exists. The `WorkspaceSealStuck` alert (`pkg/alerting/rules/rules.go:1379-1385`) carries no session identifier, so the operator has no other way to name the affected sessions. Proposal 0100's DOC-5 corrects the Trigger and Verify bullets that name the state and leaves this step. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** The first diagnosis step returns 404, and the later steps depend on its output.
+**Suggested resolution:** Through the proposal pipeline, add a session-listing surface to §15.1 and §24.11 that can select sessions with a seal in progress, or state another way to identify them, then rewrite the step. The listing is not stated in the specification, so this needs the proposal pipeline. Owner: unassigned (a new admin session investigation proposal, with F-24.11.4).
+
 ---
 
 ### Summary
@@ -43104,6 +43132,13 @@ Locations: `cmd/lenny-ctl/main.go:9`, `:144-146`, `:277` (error message also rea
 - **Suggested resolution:** Add `EventSessionForceTerminated` to the catalog with OCSF class mapping; emit it from the force-terminate handler with `operator_sub`/`operator_tenant_id`/`session_id`/`reason` fields.
 
 **Resolution (`4e2f458b`):** Added `EventSessionForceTerminated = "session.force_terminated"` to `auxKnownEventTypes` (recognized by `IsKnownEventType`, excluded from `Catalog()` because §16.7 enumerates the session-lifecycle terminals but not this §24.11 operator action — mirrors the §24.12 erasure-job operator events). An explicit OCSF `exactCatalog` entry maps it to `apiActivity(ActivityDelete)` rather than the generic `session.` prefix Unknown; the committed `schemas/ocsf-mapping.yaml` mirror was regenerated. The force-terminate handler emits it (only on a real transition) with operator identity via `r.emit`, plus `session_id`, `previous_state`, and the optional `reason`.
+
+### - [ ] F-24.11.4 — §24.11 says force-terminate moves a session immediately to `failed`, while the handler leaves an already-terminal session unchanged [Low] — OPEN
+
+**Spec:** §24.11 Session Investigation (the `lenny-ctl admin sessions force-terminate <id>` row: "The session transitions immediately to `failed` and the gateway releases the assigned pod").
+**Evidence:** `handleForceTerminateSession` (`pkg/gateway/externalapi/admin/sessions.go:134`) returns 200 with the current state and emits the `session.force_terminated` audit event only when `ForceTerminate` reports that it transitioned the row (lines 160-166); the comment above it (lines 131-133) states the idempotent behavior. Proposal 0100's DOC-5 removes the runbook's use of the command on a terminal session and leaves the §24.11 row. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** The §24.11 row describes a transition that does not occur for a session that is already `completed`, `cancelled`, `expired`, or `failed`, so an operator reading it expects a `failed` state and an audit event that never appear.
+**Suggested resolution:** Through the proposal pipeline, restate the §24.11 row to cover the already-terminal case (200 with the current state and no audit event). The row is specification text, so this needs the proposal pipeline. Owner: unassigned (a new admin session investigation proposal, with F-17.7.13).
 
 ---
 
@@ -50156,5 +50191,12 @@ Spec: `spec/29_communication-scenarios.md` §29.3 (**Off-holder matrix.**).
 **Evidence:** `restDelivery.route` (`pkg/gateway/sessionserver/messages_delivery.go`) and the MCP `send_message` path (`pkg/gateway/mcpfabric/mcptools/send_delivery.go`) take the `ActionBufferInbox` branch for an `input_required` session, or a session with a pending input wait on the serving replica, without reading the lease holder, and `bufferIncomingMessages` enqueues the message in the serving replica's own session inbox. Under `durableInbox: false` that inbox is in-process, and `deliverBuffered` on the coordinating replica reads only its own. The message is answered `queued` and stays there until the serving replica coordinates the session or the session ends. The `running` row's missing forward, where the serving replica answers `EXECUTOR_FAILURE`, is F-7.2.38; this finding is the buffering location, which a forward does not change on an unreachable coordinator. The claim-register row "Session inbox redelivery" stays `ABSENT` under R19 for the same surface. Recorded by proposal 0092 (`proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/`) as a gap it does not close, filed 2026-10-15.
 **Gap:** A `queued` receipt is answered for a message that no coordinating replica will deliver, so the message is lost to the session unless the serving replica later coordinates it.
 **Suggested resolution:** Forward the message to the coordinator, and on an unreachable coordinator hold it where the coordinator reads it (the DLQ under the path-6 custody rule) rather than in the serving replica's in-memory inbox. Owned by remediation step R19 (cross-replica message forwarding, `gateway-runtime-comms-remediation.md` §10.1), with F-7.2.38. Tests follow the owner's expansive-test instruction of 2026-10-12 in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-29.3.3 — The §29.3 off-holder matrix rows for terminate and DELETE omit `resuming`, in which the session holds `REG-COORDLEASE` and DELETE is accepted [Low] — OPEN
+
+**Spec:** §29.3 Interactive message send, **Off-holder matrix.** (the `POST /v1/sessions/{id}/terminate` row lists "`starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while the session row names a pod", and the `DELETE /v1/sessions/{id}` row takes "The same states"); §10.1.1 Stateless Replicas and Per-Session Coordination (the coordinator renews the lease in `resuming`).
+**Evidence:** `EndpointDelete` admits `StateResuming` (`pkg/api/v1/session/session.go:334-342`), and `EndpointTerminate` does not (lines 310-318); proposal 0100's CODE-7 item 4 adds `resuming` to terminate. §10.1.1 lists `resuming` among the states in which the coordinating replica renews the lease. Filed from proposal 0100's unstaged-defects list (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`), 2026-10-25.
+**Gap:** The matrix states no off-holder outcome for a DELETE, or after proposal 0100 a terminate, that lands on a non-coordinating replica during `resuming`.
+**Suggested resolution:** Through the proposal pipeline, add `resuming` to the two rows when the off-holder forward is specified. The rows are specification text, and off-holder behavior belongs to the inter-replica carrier proposal (F-10.1.33), so this needs the proposal pipeline. Owner: the inter-replica carrier proposal (proposal 0101).
 
 ---
