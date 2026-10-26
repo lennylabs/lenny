@@ -19,6 +19,21 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go"
       ]
     },
+    "tests/testinfra/stackkey/": {
+      "unit": ["tests/testinfra/stackkey/..."],
+      "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
+      "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
+      "security": [
+        "tests/tier9_security/ops_revocation_enforcement_test.go",
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go"
+      ]
+    },
+    "tests/testinfra/tcpfault/": {
+      "unit": ["tests/testinfra/tcpfault/..."],
+      "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
+      "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
+      "security": ["tests/tier9_security/ops_revocation_enforcement_test.go"]
+    },
     "supervisor/": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
       "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
