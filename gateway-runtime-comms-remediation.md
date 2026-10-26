@@ -3247,8 +3247,9 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     enforcing CNI (PgBouncer port 6432 against 5432 policies, no upstream database, no direct egress). Fixed
     in `937dd13d1`: PgBouncer listens on 5432 with a complete `pgbouncer.ini` routed to the CloudNativePG
     primary, and the answer files point `postgres.dsn` at `lenny-pgbouncer:5432`.
-  - [ ] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
-    only at the next 30-second read.
+  - [x] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
+    only at the next 30-second read. Fixed in `d3ef3232e`: with `--redis-url` the Token Service publishes the
+    revoked `jti` on the `token:revocations` channel the gateway replicas and `lenny-ops` apply.
   - [ ] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set.
   - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
