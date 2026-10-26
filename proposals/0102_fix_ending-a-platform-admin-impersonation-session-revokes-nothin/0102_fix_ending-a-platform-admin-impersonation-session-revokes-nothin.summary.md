@@ -5,8 +5,8 @@
 **Problem statement.** Ending a platform-admin impersonation session revokes nothing. The gateway mints the target-user bearer without an `issued_tokens` row and records the session only in a replica-local in-memory store that no verifier reads. The bearer therefore stays valid on every gateway replica and on `lenny-ops` until `exp`. A §11.4 full revoke of the target user misses it, and the single-token revoke returns 404 for it. A revoked bearer passes as a `subject_token`. `DELETE` and `GET` fail or return partial results on a replica that did not issue the session, and a restart of the issuing replica loses the session. The specification defines neither the impersonation endpoints nor what ending a session does.
 
 **What changes.**
-- §13.3 gains the **Platform-admin impersonation.** paragraph, which is the single normative home of the mechanism, and step (1a) of "Write-before-issue ordering" refuses an impersonation bearer (SPEC-1). §10.2 applies step (1a) to the session-creation and playground mints. §10.2, §12.2, §16.7, §11.4, and §15.1 cite the paragraph, and §15.1 gains the three endpoint rows (SPEC-2 to SPEC-6). SPEC-7 points the §11.7 CMP-058 halt rule at rule 3 and trims the rows that restate it.
-- `issuedtokenstore` gains the impersonation-scoped end, list, and actor-revoke queries and the caller-checked impersonation insert, the step (1a) re-read refuses an impersonation row, and migration 0190 adds the partial index (CODE-1, CODE-2).
+- §13.3 gains the **Platform-admin impersonation.** paragraph, which is the single normative home of the mechanism, and step (1a) of "Write-before-issue ordering" refuses an impersonation bearer (SPEC-1). §10.2 applies step (1a) to the session-creation and playground mints. §10.2, §12.2, §12.6, §16.7, §11.4, and §15.1 cite the paragraph, §11.4 states that a full revoke commits the invalidation level before step 1, and §15.1 gains the three endpoint rows (SPEC-2 to SPEC-6). SPEC-7 points the §11.7 CMP-058 halt rule at rule 3 and trims the rows that restate it.
+- `issuedtokenstore` gains the impersonation-scoped end, list, and actor-revoke queries and the fenced impersonation insert, the step (1a) re-read refuses an impersonation row, and migration 0190 adds the partial index (CODE-1, CODE-2).
 - The impersonation service records the bearer in `issued_tokens` and ends a session by revoking the row. The replica-local store and the expiry sweep are deleted (CODE-3).
 - The admin handlers use catalogued error codes and the narrowed response bodies (CODE-4).
 - A §11.4 full revoke of a platform-admin by a platform-admin caller also revokes the bearers that admin minted, and partial revocation results survive an error (CODE-5).
@@ -14,7 +14,7 @@
 
 **Decisions.**
 - D1. The session is the bearer's `issued_tokens` row, and the gateway keeps no other session state. A separate table, a migration with RLS apparatus, a residency statement, and a sweep are all avoided, and the POST, GET, and DELETE endpoints the problem requires are kept.
-- D2. Issuance stays audit first, then sign, then record. This keeps the CMP-058 fail-closed gate unchanged, and a failure leaves only an overstating started event, which a sign failure already leaves today.
+- D2. After the caller check (D20), issuance stays audit first, then sign, then record. This keeps the CMP-058 fail-closed gate unchanged, and a failure leaves only an overstating started event, which a sign failure already leaves today.
 - D3. The mint writes no `token.exchanged` row. This follows the bootstrap admin-token `Record` precedent and 0097's warning that a cross-tenant `token.exchanged` row falsifies §13.3's single-`tenant_id` statement.
 - D4. An impersonation row is identified by `act_sub IS NOT NULL AND parent_jti IS NULL`. No production code writes `ActSubject` today, and delegation children set `ParentJTI`, so no marker column is needed.
 - D5. Cross-replica `DELETE`, `GET`, and the cascade use the existing `__all__` path (`pgtenant.InAllTenants`; migration 0047 already covers `issued_tokens`). Each call emits one `cross_tenant_read` through the existing synchronous `EmitCrossTenantRead`.
@@ -32,7 +32,8 @@
 - D17. Without a Postgres pool, signer, propagator, or audit store, the gateway registers no impersonation routes, rather than minting a bearer nobody can revoke.
 - D18. Migration 0190 adds the partial index. Without it, `GET` and the cascade range-scan every live token in every tenant.
 - D19. `Config.MaxDuration` stays and is clamped to one hour, so no setting exceeds the §15.1 cap.
-- D20. The session-creation and playground mints apply step (1a) to the caller's bearer, as an exchange does, so neither mints a token from an impersonation bearer, and an impersonating admin cannot create a session or a playground bearer as the target user. A token minted from the bearer would outlive `DELETE` and the rule 4 bound.
+- D20. Every mint that applies step (1a) to a presented bearer refuses an impersonation bearer, revoked or not (§13.3 rule 5), and `POST /v1/admin/impersonation` applies it to the caller's bearer (rule 1). A token minted from the bearer, including a second impersonation bearer whose `act_sub` is the impersonated user, would outlive `DELETE` of the outer session, the rule 4 bound, or the rule 6 cascade on the admin who started it. Rule 1 runs the caller check before the started event, because a nested attempt would otherwise write an `admin.impersonation_started` naming the impersonated user as `admin_sub`. A mint that only the caller's roles authorize, such as rotate-token, applies no step (1a) and is outside the rule, and it returns no credential to the caller. The session-creation refusal holds in code once the session-creation mint lands (BUILD-GAPS F-10.2.25).
+- D21. Rule 1 (c) serialises the recording with full revokes through the user rows, as the §12.8 creation fence does, and holds the caller's lock in its own transaction because §12.8 **Data residency** can place the caller's and the target's user rows on different instances. A full revoke writes the invalidation level under an exclusive row lock and commits it before §11.4 step 1, so one fence covers the target's full revoke and the admin's, needs no order between step 5's two revocations, and does not depend on the caller's bearer having an `issued_tokens` row. The caller check (D20) reads the caller's bearer row without a lock, because the impersonation half of step (1a) never changes after insert, and an operator revocation of the caller's bearer does not reach a session started before it either. The fence also refuses a hard-disabled target or admin, because hard disable sets the same `deleted_at` marker.
 
 **Watch out for.**
 - A typed-nil `*impersonation.Service` passed to `WithImpersonation` registers the routes and panics (CODE-3 item 6).
@@ -43,6 +44,7 @@
 - Deleting `MemStore` breaks `service_test.go` and `tests/tier2_component/tokensigning/kms_outcome_test.go` in the same step (CODE-3 item 7).
 - Existing tier-4, tier-5, tier-8, and tier-9 tests that present an impersonation bearer as `subject_token` fail once CODE-2 item 7 and CODE-3 item 3 land (TEST-2).
 - Confirm that 0190 is still the next free migration number when applying (CODE-1).
+- Step 5 must stay after the users-row commit in `handleInvalidateUser` (CODE-5 item 5).
 
 ## Goals
 
@@ -83,7 +85,10 @@
 
 ## Open decisions for human to make
 
-None. The review loops add entries here.
+- **OD-1. Does a session-creation refusal under step (1a) write the rejected-exchange audit row?** SPEC-2 Edit (b) makes the session-creation `session_capability` mint refuse an impersonation bearer with `403 FORBIDDEN`. §13.3 "Write-before-issue ordering" writes a rejection audit row for a step (1a) refusal at `/v1/oauth/token`, and returns `500 token_exchange_failed` when that audit write fails. The choices are (A) the session-creation refusal inherits the audit row, and an audit failure returns 500, or (B) it returns only the 403 and writes no audit row. One reviewer read §13.3 as already implying (A); the staged SPEC-2 (b) text names only the 403. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one. The session-creation mint is unbuilt (BUILD-GAPS F-10.2.25), so the choice changes spec text only.
+- **OD-2. Where is the outcome of revoking the admin's own bearer stated?** Revoking the platform-admin's own bearer by `jti` revokes none of the impersonation bearers that admin started, and a `POST` in flight during that revocation can still commit its row. The proposal accepts this outcome: the edge-case row "An operator revokes the caller's bearer by `jti` while a `POST` is in flight" cites rule 4. Rule 4 lists only the routes that do revoke an impersonation row, so neither the staged §13.3 text nor the DOCS-1 (a) operator-guide paragraph states the outcome. The choices are (A) add a sentence to rule 4 and a matching sentence to DOCS-1 (a), (B) add the sentence to DOCS-1 (a) only, or (C) leave the outcome implied. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+- **OD-3. Do impersonation `GET` items carry the per-item `etag` that §15.1 requires?** §15.1 "GET responses" requires a per-item `etag`, and the staged `GET /v1/admin/impersonation` items carry none. The review log records the gap as pre-existing across admin lists. The choices are (A) add `etag` to the impersonation items in this proposal, or (B) leave it to a separate finding. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one.
+- **OD-4. Is the `docs/operator-guide/agent-operability.md` "rolled back" sentence corrected here?** The sentence "An operation that succeeds but fails to audit is treated as failed and rolled back." has no spec home and contradicts rules 3 and 7, under which a revocation stands when its audit write fails. The spec loop's derived recommendation is that the sentence needs its own finding rather than a DOCS-1 edit in this proposal.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -95,22 +100,22 @@ None. The review loops add entries here.
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0097 (Lenny-issued bearer tokens verify on every process) | Implemented | 0102 makes the impersonation bearer revocable, which 0097 left out of scope as D25, and follows its warning against a cross-tenant `token.exchanged` row | Nothing. 0097 is not edited |
-| 0101 (off-holder request forwarding on `CH-HOLDERFORWARD`) | Approved 2026-10-26, being implemented | 0101 CODE-4 renames the propagator package that `cmd/lenny-gateway/user_revocation.go` imports, and 0102 CODE-5 edits the same file. In §11.4 **Full revoke propagation mechanism:**, 0101 SPEC-6 (b) and (c) edit the two-tier propagation note and step 2, and 0102 SPEC-5 appends to step 5. The anchors are disjoint, and no 0101 deliverable loses its subject | Whichever proposal lands second re-reads `user_revocation.go` and confirms that both changes are present, and applies its §11.4 edit against the other's text by its quoted anchor with no change to content |
+| 0101 (off-holder request forwarding on `CH-HOLDERFORWARD`) | Approved 2026-10-26, being implemented | 0101 CODE-4 renames the propagator package that `cmd/lenny-gateway/user_revocation.go` imports, and 0102 CODE-5 edits the same file. In §11.4 **Full revoke propagation mechanism:**, 0101 SPEC-6 (b) and (c) edit the two-tier propagation note and step 2, and 0102 SPEC-5 adds a sentence after the **Full revoke propagation mechanism:** label and appends to step 5. The anchors are disjoint, and no 0101 deliverable loses its subject | Whichever proposal lands second re-reads `user_revocation.go` and confirms that both changes are present, and applies its §11.4 edit against the other's text by its quoted anchor with no change to content |
 
 ## Deliverable index
 
 - SPEC-1 — spec/13_security-model.md — §13.3 **Platform-admin impersonation.** paragraph with rules 1 to 7, the tenant-scope enforcement pointer, and the step (1a) impersonation refusal.
 - SPEC-2 — spec/10_gateway-internals.md — §10.2 **Signing topology.** citation and step (1a) on the session-creation mint; playground mint invariant 1 and its failure row.
-- SPEC-3 — spec/12_storage-architecture.md — §12.2 `TokenIssuanceStore` row: `act_sub` for impersonation rows and the partial index.
+- SPEC-3 — spec/12_storage-architecture.md — §12.2 `TokenIssuanceStore` row: `act_sub` for impersonation rows and the partial index; §12.6 **Scaling extension interfaces.** names the §13.3 rule 1 (c) fence.
 - SPEC-4 — spec/16_observability.md — §16.7 started payload gains `impersonation_session_id`; the ended event cites §13.3 rules 3 and 4 and its payload is defined.
-- SPEC-5 — spec/11_policy-and-controls.md — §11.4 step 5 points at the §13.3 rule 6 cascade.
+- SPEC-5 — spec/11_policy-and-controls.md — §11.4 commit-order sentence; step 5 points at the §13.3 rule 6 cascade.
 - SPEC-6 — spec/15_external-api-surface.md — §15.1 `POST`, `GET`, and `DELETE /v1/admin/impersonation` rows, and the `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` catalog row.
 - SPEC-7 — spec/11_policy-and-controls.md, spec/15_external-api-surface.md, spec/25_agent-operability.md, spec/16_observability.md — §11.7 item 3 pointer to §13.3 rule 3; CMP-058 catalog and alert rows trimmed to §11.7.
 - CODE-1 — migrations, tests/tier2_component/migrations — migration 0190 partial index and its tests.
-- CODE-2 — pkg/gateway/storage/issuedtokenstore, pkg/gateway/storage/pgtenant, pkg/tokenservice, pkg/gateway/mcpfabric/playground, cmd/lenny-gateway — impersonation-scoped record, end, list, and actor revoke, the step (1a) impersonation refusal, and the playground mint's step (1a) check.
+- CODE-2 — pkg/gateway/storage/issuedtokenstore, pkg/tokenservice, pkg/gateway/mcpfabric/playground, cmd/lenny-gateway — impersonation-scoped record, end, list, and actor revoke, the step (1a) impersonation refusal, and the playground mint's step (1a) check.
 - CODE-3 — pkg/gateway/credentials/impersonation, cmd/lenny-gateway, tests/tier2_component/tokensigning — service over `issued_tokens`; MemStore, Store, and the sweep deleted; fail-closed wiring.
 - CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/openapi — handler signatures, catalogued 409, narrowed bodies, and the `DELETE` OpenAPI entry.
-- CODE-5 — cmd/lenny-gateway, pkg/gateway/externalapi/admin — full-revoke platform-admin cascade and partial-result handling.
-- TEST-1 — pkg/gateway/credentials/impersonation, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/tokenservice, pkg/gateway/mcpfabric/playground, tests/tier2_component/stores — unit and Postgres-tier tests.
+- CODE-5 — cmd/lenny-gateway, pkg/gateway/externalapi/admin — full-revoke platform-admin cascade, partial-result handling, and the step 5 commit order.
+- TEST-1 — pkg/gateway/credentials/impersonation, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/tokenservice, pkg/gateway/storage/issuedtokenstore, pkg/gateway/mcpfabric/playground, tests/tier2_component/stores — unit and Postgres-tier tests.
 - TEST-2 — tests/tier4_integration, tests/tier5_e2e_kind, tests/tier8_chaos, tests/tier9_security — two-replica and `lenny-ops` tests, and the rewrite of existing exchange tests.
-- DOCS-1 — docs/operator-guide/security.md, docs/api/admin.md, docs/operator-guide/observability.md, docs/reference/metrics.md, docs/reference/error-catalog.md, BUILD-GAPS.md — operator guide sentence, admin API reference sections, CMP-058 row trims, and F-13.3.20 closure.
+- DOCS-1 — docs/operator-guide/security.md, docs/api/admin.md, docs/operator-guide/observability.md, docs/reference/metrics.md, docs/reference/error-catalog.md, BUILD-GAPS.md — operator guide sentence, admin API reference sections, CMP-058 row trims, and F-13.3.20 closure and the F-10.2.25 pointer.
