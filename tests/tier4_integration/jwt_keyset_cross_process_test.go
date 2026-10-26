@@ -20,6 +20,7 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -465,9 +466,10 @@ func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 // diagnosis: a /healthz other than 200 during the outage means the
 // production readiness check fails on Postgres alone and empties the
 // Service while the Kubernetes API is reachable. The non-revoked token
-// refused during the outage means lenny-ops refuses Lenny-issued tokens
-// when a read fails after one succeeded; the revoked token admitted means
-// the revocation set does not stay in force across failed reads. A token
+// refused while the outage runs through a failed read means lenny-ops
+// refuses Lenny-issued tokens when a read fails after one succeeded; the
+// revoked token admitted then means a failed read clears the revocation
+// set rather than leaving it unchanged. A token
 // admitted after the restart with Postgres down means lenny-ops accepts a
 // Lenny-issued token before any read succeeded. Either token wrong after
 // Postgres returns means the read loop does not resume.
@@ -511,12 +513,13 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 		}
 	}
 	requireHealthzOK("right after Postgres stopped")
-	if got := ops.Me(t, kept); !got.Authenticated() {
-		t.Errorf("non-revoked token during the outage: %d %s, want it admitted through authentication", got.Status, got.Body)
-	}
-	if got := ops.Me(t, revoked); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeRevoked {
-		t.Errorf("revoked token during the outage: %d %s, want 401 %s", got.Status, got.Body, opsprocess.CodeRevoked)
-	}
+	// The outage reaches the revocation set only at the next read, up to
+	// 30 s after the cut, so the outcomes are held on every poll until
+	// lenny-ops has logged a failed read and checked once more after it.
+	ops.RequireThroughFailedReads(t, 1, opsReadBound, func() error {
+		return checkOutageOutcomes(t, ops, kept, revoked)
+	})
+	requireHealthzOK("after a revocation set read failed")
 
 	ops.Stop(t)
 	ops = opsprocess.StartOpts(t, opsOpts)
@@ -530,4 +533,27 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 	if got := ops.Me(t, revoked); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeRevoked {
 		t.Errorf("revoked token after Postgres returned: %d %s, want 401 %s", got.Status, got.Body, opsprocess.CodeRevoked)
 	}
+}
+
+// checkOutageOutcomes checks lenny-ops's answers for a non-revoked and a
+// revoked POST /v1/oauth/token token during a Postgres outage that began
+// after a successful revocation set read: the set stays as the last read
+// left it, so the non-revoked token is admitted through authentication and
+// the revoked one keeps the revoked-token response. It returns the first
+// outcome that differs, and an error when /healthz is not 200.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+// rule 5), §25.15 (Failure Mode Analysis).
+func checkOutageOutcomes(t *testing.T, ops *opsprocess.Process, kept, revoked string) error {
+	t.Helper()
+	if got := ops.Me(t, kept); !got.Authenticated() {
+		return fmt.Errorf("non-revoked token during the outage: %d %s, want it admitted through authentication", got.Status, got.Body)
+	}
+	if got := ops.Me(t, revoked); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeRevoked {
+		return fmt.Errorf("revoked token during the outage: %d %s, want 401 %s", got.Status, got.Body, opsprocess.CodeRevoked)
+	}
+	if code := ops.Healthz(t); code != http.StatusOK {
+		return fmt.Errorf("lenny-ops /healthz = %d during the outage, want 200 while the Kubernetes API is reachable", code)
+	}
+	return nil
 }

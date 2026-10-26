@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,10 @@ const (
 
 // pollInterval is how often the token helpers re-send a request.
 const pollInterval = 250 * time.Millisecond
+
+// readFailedRecord is the text of the record lenny-ops logs for each
+// failed revocation set read (cmd/lenny-ops logRevocationRead).
+const readFailedRecord = "revocation set read failed"
 
 // AuthArgs returns the flags that make a non-production lenny-ops
 // authenticate its requests: the §17.4 dev bearer-trust hook over a
@@ -207,4 +212,39 @@ func (p *Process) Healthz(t testing.TB) int {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	return resp.StatusCode
+}
+
+// FailedReads returns how many failed revocation set reads lenny-ops has
+// logged so far.
+func (p *Process) FailedReads() int {
+	return strings.Count(p.Logs(), readFailedRecord)
+}
+
+// RequireThroughFailedReads runs check on every poll until lenny-ops has
+// logged n failed revocation set reads more than it had at the call, and
+// then once more. It fails the test on the first error check returns, and
+// when the reads have not failed within d. A test uses it to hold an
+// assertion across a Postgres outage until the outage has reached the
+// revocation set, so the assertion covers the state in which a read has
+// failed after one succeeded rather than the moment the outage began.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+// rules 1 and 5).
+func (p *Process) RequireThroughFailedReads(t testing.TB, n int, d time.Duration, check func() error) {
+	t.Helper()
+	want := p.FailedReads() + n
+	deadline := time.Now().Add(d)
+	for {
+		reached := p.FailedReads() >= want
+		if err := check(); err != nil {
+			t.Fatalf("opsprocess: %v (failed revocation set reads so far: %d)\nlogs:\n%s", err, p.FailedReads(), p.Logs())
+		}
+		if reached {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("opsprocess: lenny-ops logged no further %d failed revocation set read(s) within %s\nlogs:\n%s", n, d, p.Logs())
+		}
+		time.Sleep(pollInterval)
+	}
 }

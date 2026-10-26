@@ -3,8 +3,11 @@
 package opsprocess
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -123,6 +126,80 @@ func TestRequireRefusedThroughoutFailsWhenTheRefusalEnds(t *testing.T) {
 	}
 	if len(AuthArgs(t)) != 1 || !strings.HasPrefix(AuthArgs(t)[0], "--bearer-trust-hmac-key-file=") {
 		t.Errorf("AuthArgs = %v", AuthArgs(t))
+	}
+}
+
+// logWriter appends records to the log file a Process reads through Logs.
+func logWriter(t *testing.T, p *Process) func(string) {
+	t.Helper()
+	p.stderrPath = filepath.Join(t.TempDir(), "ops.log")
+	if err := os.WriteFile(p.stderrPath, []byte("lenny-ops: §25.4 revocation set read failed; earlier outage\n"), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	return func(line string) {
+		f, err := os.OpenFile(p.stderrPath, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Errorf("open log: %v", err)
+			return
+		}
+		defer f.Close()
+		_, _ = f.WriteString(line + "\n")
+	}
+}
+
+// spec: 25.4 (The lenny-ops Service: Authentication, revocation set rule 5)
+// diagnosis: RequireThroughFailedReads returns before the outage reaches
+// the revocation set, counts a failed read logged before the call, or
+// stops checking once the read fails, so the tier-4 Postgres-outage test
+// would assert the rule-5 outcomes before any read had failed, which is
+// the state an implementation that clears the set on a failed read also
+// passes.
+func TestRequireThroughFailedReadsHoldsUntilAReadFails(t *testing.T) {
+	p := fakeOps(t, 0)
+	appendLog := logWriter(t, p)
+	var checks atomic.Int32
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		appendLog("lenny-ops: §25.4 revocation set read failed; the revocation set keeps its previous contents")
+	}()
+	start := time.Now()
+	p.RequireThroughFailedReads(t, 1, 5*time.Second, func() error {
+		checks.Add(1)
+		return nil
+	})
+	if elapsed := time.Since(start); elapsed < 700*time.Millisecond {
+		t.Errorf("RequireThroughFailedReads returned after %s, before the failed read was logged", elapsed)
+	}
+	if checks.Load() < 3 {
+		t.Errorf("check ran %d times, want it run on every poll through the failed read and once after", checks.Load())
+	}
+
+	ft := &failRecorder{TB: t}
+	func() {
+		defer func() { _ = recover() }()
+		p.RequireThroughFailedReads(ft, 1, 600*time.Millisecond, func() error { return nil })
+	}()
+	if !ft.failed {
+		t.Error("RequireThroughFailedReads did not fail when no further read failed within its bound")
+	}
+
+	ft = &failRecorder{TB: t}
+	var calls atomic.Int32
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		appendLog("lenny-ops: §25.4 revocation set read failed; the revocation set keeps its previous contents")
+	}()
+	func() {
+		defer func() { _ = recover() }()
+		p.RequireThroughFailedReads(ft, 1, 5*time.Second, func() error {
+			if calls.Add(1) > 2 {
+				return errors.New("non-revoked token refused after the read failed")
+			}
+			return nil
+		})
+	}()
+	if !ft.failed {
+		t.Error("RequireThroughFailedReads did not fail when the check failed after the read failed")
 	}
 }
 
