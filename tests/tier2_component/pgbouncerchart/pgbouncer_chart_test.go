@@ -13,9 +13,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +39,7 @@ import (
 // and the pgbouncer.ini of the ConfigMap.
 type renderedPgBouncer struct {
 	container corev1.Container
+	exporter  *corev1.Container
 	volumes   []corev1.Volume
 	ini       string
 }
@@ -60,13 +64,18 @@ func renderPgBouncer(t *testing.T, host string, port int) renderedPgBouncer {
 	var cm corev1.ConfigMap
 	decode(t, ms.MustFind(t, "ConfigMap", "lenny-pgbouncer-config"), &cm)
 	out := renderedPgBouncer{volumes: dep.Spec.Template.Spec.Volumes, ini: cm.Data["pgbouncer.ini"]}
-	for _, c := range dep.Spec.Template.Spec.Containers {
-		if c.Name == "pgbouncer" {
-			out.container = c
-			return out
+	found := false
+	for i, c := range dep.Spec.Template.Spec.Containers {
+		switch c.Name {
+		case "pgbouncer":
+			out.container, found = c, true
+		case "pgbouncer-exporter":
+			out.exporter = &dep.Spec.Template.Spec.Containers[i]
 		}
 	}
-	t.Fatal("lenny-pgbouncer renders no pgbouncer container")
+	if !found {
+		t.Fatal("lenny-pgbouncer renders no pgbouncer container")
+	}
 	return out
 }
 
@@ -87,8 +96,10 @@ func decode(t *testing.T, m helm.Manifest, into any) {
 // holding pgbouncer.ini, an emptyDir becomes a world-writable tmpfs, and
 // the root filesystem is read-only when the container's securityContext
 // says so. databaseURL stands in for the Secret DATABASE_URL reads. It
-// returns the host address PgBouncer's listen port is published on.
-func startRenderedPgBouncer(t *testing.T, r renderedPgBouncer, databaseURL string) string {
+// returns the host address PgBouncer's listen port is published on and
+// the container. extraPorts are published too, for a sidecar that joins
+// the container's network namespace as it joins the pod's.
+func startRenderedPgBouncer(t *testing.T, r renderedPgBouncer, databaseURL string, extraPorts ...string) (string, testcontainers.Container) {
 	t.Helper()
 	cmDir := t.TempDir()
 	if err := os.Chmod(cmDir, 0o755); err != nil {
@@ -130,7 +141,7 @@ func startRenderedPgBouncer(t *testing.T, r renderedPgBouncer, databaseURL strin
 			Entrypoint:   r.container.Command,
 			Cmd:          r.container.Args,
 			Env:          env,
-			ExposedPorts: []string{port},
+			ExposedPorts: append([]string{port}, extraPorts...),
 			HostConfigModifier: func(hc *container.HostConfig) {
 				hc.Binds = binds
 				hc.Tmpfs = tmpfs
@@ -167,7 +178,7 @@ func startRenderedPgBouncer(t *testing.T, r renderedPgBouncer, databaseURL strin
 	if err != nil {
 		t.Fatalf("mapped port: %v", err)
 	}
-	return fmt.Sprintf("%s:%s", host, mapped.Port())
+	return fmt.Sprintf("%s:%s", host, mapped.Port()), c
 }
 
 // spec: 17.9 (Deployment Answer Files), 12.3 (Postgres HA Requirements), 4.2 (Session Manager), 13.2 (Network Isolation)
@@ -194,7 +205,7 @@ func TestChartPgBouncerReachesPostgres_spec_17_9(t *testing.T) {
 
 	r := renderPgBouncer(t, "host.docker.internal", pgPort)
 	upstream := fmt.Sprintf("postgres://postgres:postgres@host.docker.internal:%d/lenny_test", pgPort)
-	addr := startRenderedPgBouncer(t, r, upstream)
+	addr, _ := startRenderedPgBouncer(t, r, upstream)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -234,4 +245,163 @@ func TestChartPgBouncerReachesPostgres_spec_17_9(t *testing.T) {
 	if tenant != "__unset__" {
 		t.Fatalf("app.current_tenant = %q after the transaction, want __unset__", tenant)
 	}
+}
+
+// startRenderedExporter runs the rendered pgbouncer-exporter sidecar in
+// the network namespace of the PgBouncer container, as the two share the
+// pod's, with databaseURL in place of the Secret DATABASE_URL reads.
+func startRenderedExporter(t *testing.T, exp corev1.Container, pgbouncer testcontainers.Container, databaseURL string) testcontainers.Container {
+	t.Helper()
+	env := map[string]string{"DATABASE_URL": databaseURL}
+	for _, e := range exp.Env {
+		if e.ValueFrom == nil {
+			env[e.Name] = e.Value
+		}
+	}
+	readOnly := exp.SecurityContext != nil && exp.SecurityContext.ReadOnlyRootFilesystem != nil && *exp.SecurityContext.ReadOnlyRootFilesystem
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:      exp.Image,
+			Entrypoint: expandKubeVars(exp.Command, env),
+			Cmd:        expandKubeVars(exp.Args, env),
+			Env:        env,
+			HostConfigModifier: func(hc *container.HostConfig) {
+				hc.NetworkMode = container.NetworkMode("container:" + pgbouncer.GetContainerID())
+				hc.ReadonlyRootfs = readOnly
+			},
+		},
+		Started: true,
+	})
+	if c != nil {
+		t.Cleanup(func() {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stopCancel()
+			_ = c.Terminate(stopCtx)
+		})
+	}
+	if err != nil {
+		t.Fatalf("start the rendered pgbouncer-exporter: %v", err)
+	}
+	return c
+}
+
+// containerLogs returns up to 8 KiB of a container's output.
+func containerLogs(c testcontainers.Container) string {
+	rc, err := c.Logs(context.Background())
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rc.Close() }()
+	b, _ := io.ReadAll(io.LimitReader(rc, 8192))
+	return string(b)
+}
+
+// expandKubeVars applies the kubelet's $(VAR) expansion to a command or
+// args list, which Docker does not perform: each $(NAME) naming a
+// variable in env becomes its value, and $$ becomes $.
+func expandKubeVars(in []string, env map[string]string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		for name, v := range env {
+			s = strings.ReplaceAll(s, "$("+name+")", v)
+		}
+		out[i] = strings.ReplaceAll(s, "$$", "$")
+	}
+	return out
+}
+
+// scrape returns the body of GET url, or "" when the request fails.
+func scrape(ctx context.Context, url string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// spec: 12.3 (Postgres HA Requirements) "Connection pooling", 16.5 (Alerting Rules and SLOs) PgBouncerPoolSaturated
+// diagnosis: pgbouncer_up 0 means the exporter cannot run SHOW commands:
+// it connects to the upstream Postgres instead of the PgBouncer admin
+// console, or the DATABASE_URL user is not a stats_users entry, so
+// PgBouncer refuses the console login. A missing
+// pgbouncer_pools_client_maxwait_seconds series with pgbouncer_up 1 means
+// the exporter reads the console but sees no pool, so the client
+// connection did not go through this PgBouncer. Either way the §16.5
+// PgBouncerPoolSaturated alert has no numerator and cannot fire.
+func TestChartPgBouncerExporterServesPoolMetrics_spec_12_3(t *testing.T) {
+	helm.SkipUnlessAvailable(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{})
+	u, err := url.Parse(pg.DSN)
+	if err != nil {
+		t.Fatalf("parse Postgres DSN: %v", err)
+	}
+	var pgPort int
+	if _, err := fmt.Sscanf(u.Port(), "%d", &pgPort); err != nil {
+		t.Fatalf("Postgres port %q: %v", u.Port(), err)
+	}
+
+	r := renderPgBouncer(t, "host.docker.internal", pgPort)
+	if r.exporter == nil {
+		t.Fatal("lenny-pgbouncer renders no pgbouncer-exporter sidecar")
+	}
+	metricsPort := fmt.Sprintf("%d/tcp", r.exporter.Ports[0].ContainerPort)
+	upstream := fmt.Sprintf("postgres://postgres:postgres@host.docker.internal:%d/lenny_test", pgPort)
+	addr, pgb := startRenderedPgBouncer(t, r, upstream, metricsPort)
+	exp := startRenderedExporter(t, *r.exporter, pgb, upstream)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	// A client connection through PgBouncer creates the pool the
+	// exporter reports.
+	conn, err := pgx.Connect(ctx, "postgres://postgres:postgres@"+addr+"/lenny_test?sslmode=disable")
+	if err != nil {
+		t.Fatalf("connect through the rendered PgBouncer: %v", err)
+	}
+	defer conn.Close(ctx)
+	var one int
+	if err := conn.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
+		t.Fatalf("query through PgBouncer: %v", err)
+	}
+
+	host, err := pgb.Host(ctx)
+	if err != nil {
+		t.Fatalf("container host: %v", err)
+	}
+	mapped, err := pgb.MappedPort(ctx, metricsPort)
+	if err != nil {
+		t.Fatalf("mapped metrics port: %v", err)
+	}
+	metricsURL := fmt.Sprintf("http://%s:%s/metrics", host, mapped.Port())
+	var body string
+	for ctx.Err() == nil {
+		body = scrape(ctx, metricsURL)
+		if strings.Contains(body, "\npgbouncer_up 1") && strings.Contains(body, "pgbouncer_pools_client_maxwait_seconds{") {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	up := "absent"
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "pgbouncer_up ") {
+			up = line
+		}
+	}
+	if body == "" {
+		up = "no response from the exporter"
+	}
+	t.Fatalf("the exporter serves no pgbouncer_pools_client_maxwait_seconds series (%s)\nexporter logs:\n%s\npgbouncer logs:\n%s", up, containerLogs(exp), containerLogs(pgb))
 }
