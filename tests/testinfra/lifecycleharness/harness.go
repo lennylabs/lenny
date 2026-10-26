@@ -79,12 +79,15 @@ type Options struct {
 	// Replicas is the number of gateway replicas; at least one.
 	Replicas int
 	// Store, when set, is the shared session store; otherwise an in-memory
-	// store with the post-terminal cap PostTerminalCap is used.
+	// store with the post-terminal cap PostTerminalCap is used. New refuses a
+	// store that does not count the post-terminal window under
+	// PostTerminalCap (CheckStoreCap), since the checker applies that cap.
 	Store sessionstore.Store
 	// NewStore, when set and Store is not, builds the shared session store
 	// over the harness's stepped clock, so the store's row stamps and the
 	// gateway's timers read one clock. It builds the store with the
-	// post-terminal cap PostTerminalCap, as PostgresStore does.
+	// post-terminal cap PostTerminalCap, as PostgresStore and PostgresStoreOn
+	// do, and New refuses one that does not (CheckStoreCap).
 	NewStore func(now func() time.Time) sessionstore.Store
 	// Pods is the number of idle pods seeded before the scenario.
 	Pods int
@@ -293,6 +296,9 @@ func New(t testing.TB, opts Options) *Harness {
 		h.Inner = opts.NewStore(h.Clock.Now)
 	default:
 		h.Inner = NewMemStore(h.Clock.Now)
+	}
+	if err := CheckStoreCap(h.Inner); err != nil {
+		t.Fatalf("lifecycleharness: %v", err)
 	}
 	h.Store = NewTracedStore(h.Inner, h.Trace)
 	h.CredLeases = credleasestore.New()

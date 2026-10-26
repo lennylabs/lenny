@@ -505,9 +505,7 @@ func partitionedPrimary(t *testing.T, opts lifecycleharness.Options) (*lifecycle
 	}
 	t.Cleanup(primary.Close)
 	opts.CredentialPool = true
-	opts.NewStore = func(now func() time.Time) sessionstore.Store {
-		return lifecycleharness.NewSteppedClockStore(sessionpg.New(primary, sessionpg.WithReadPool(pg.Pool)), now)
-	}
+	opts.NewStore = lifecycleharness.PostgresStoreOn(primary, sessionpg.WithReadPool(pg.Pool))
 	return lifecycleharness.New(t, opts), proxy
 }
 

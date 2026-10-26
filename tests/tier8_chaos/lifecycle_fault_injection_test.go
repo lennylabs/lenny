@@ -21,11 +21,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
@@ -120,9 +117,7 @@ func runFaultInjection(t *testing.T, scenario func(*testing.T, *lifecycleharness
 	seedChaosTenant(t, pg, lifecycleharness.Tenant)
 	h := lifecycleharness.New(t, lifecycleharness.Options{
 		Replicas: 2, Pods: 96, CredentialPool: true,
-		NewStore: func(now func() time.Time) sessionstore.Store {
-			return lifecycleharness.NewSteppedClockStore(sessionpg.New(pg.Pool), now)
-		},
+		NewStore: lifecycleharness.PostgresStoreOn(pg.Pool),
 	})
 	h.RelaxOrphanClaims = true
 	ok := map[session.State]bool{}
