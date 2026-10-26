@@ -3473,6 +3473,38 @@ F-10.2.26 `jwt.OIDCVerifier`.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
     from `auth.oidc.*`.
 
+**Object-store dependency (2026-10-26).** A review of the MinIO dependency found six defects. Each was
+re-confirmed against the tree and filed in BUILD-GAPS. None was already tracked: F-12.8.52 covers the
+per-region escrow clients and not the escrow object lock, the F-12.8.2 resolution named the lock as residual
+backend provisioning without filing it, and no open finding covered the images, replication targets, S3
+endpoint, KMS error codes, or the `lenny-ops` probe.
+
+- Direct-fix queue, at high priority ahead of the direct-fix queues above.
+  - [ ] **F-17.9.26** (High): the chart's default MinIO image (`quay.io/minio/minio`, pinned tag) and the
+    lifecycle Job's `minio/mc:latest` cannot be pulled anonymously, so a self-managed install that deploys
+    MinIO, and any install whose lifecycle hook runs, fails. Pin a maintained image by digest in the chart
+    and the test harness: the project's own source-built MinIO copy (in progress on branch
+    `infra/minio-local-copy`) or the maintained fork `pgsty/silo` with `pgsty/mc`. The `mc` lifecycle Job is
+    replaced by a Go job later, under the proposal below.
+- New proposals.
+  - [ ] **S3-compatible object-store capability profile proposal** (not yet written): **F-12.8.63** (Medium,
+    the escrow object lock is unimplemented and §12.8's `COMPLIANCE` mode cannot be released on hold clear),
+    **F-25.11.24** (Medium, §25.11 promises MinIO replication to AWS S3, GCS, or Azure, and the only driver is
+    MinIO-specific), **F-12.5.33** (Medium, the T4 KMS-unavailable classification matches MinIO's `kms:` code
+    only), **F-12.5.32** (Medium, the aws-sdk `s3` backend takes no endpoint and no path-style setting; §17.9.3
+    gives the `s3` provider no endpoint key, so it needs the proposal), and **F-25.6.8** (Low, the `lenny-ops`
+    probe GETs `/minio/health/live` and passes on any non-5xx answer). The proposal covers the following.
+    - A capability list in §12.5 that states what Lenny requires of an object-store backend.
+    - A backend-neutral KMS-unavailable classification with each provider's error codes.
+    - A replication driver for each backend, and a corrected §25.11 destination list.
+    - A Go bucket-setup job in place of the `mc` lifecycle Job.
+    - An authenticated `HeadBucket` probe in `lenny-ops`.
+    - The escrow restated as an Object Lock legal hold on a lock-enabled escrow bucket, and implemented.
+    - Metric and alert renames from `lenny_minio_*` and `MinIO*` to backend-neutral names.
+
+    Owner decisions it lists: whether the `minio.*` Helm keys are renamed to backend-neutral keys, and
+    whether the metric and alert renames ship with aliases for the old names or without them.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
