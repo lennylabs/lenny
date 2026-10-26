@@ -2,9 +2,9 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the §17.9.1 edits (a) and (b).
+- [x] **S1 · spec** — SPEC-1. Lands the §17.9.1 edits (a) and (b).
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §11.7, §12.3, §16.4, §16.5, and §17.6 edits (a) to (j).
+- [x] **S2 · spec** — SPEC-2. Lands the §11.7, §12.3, §16.4, §16.5, and §17.6 edits (a) to (j).
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · code** — CODE-1.
       Tiers 0, 1. Depends on: S1
