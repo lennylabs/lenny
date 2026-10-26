@@ -5,12 +5,14 @@
 // Tier-9 security test for the lenny-ops revocation set (§25.4
 // "Authentication", revocation set rules 1 to 7) against real
 // cmd/lenny-gateway, cmd/lenny-token-service, and cmd/lenny-ops processes
-// over one Postgres and one Redis. A Lenny-issued token revoked through
+// over one Postgres and one Redis, with the gateway serving the apiKey-mode
+// playground. A Lenny-issued token revoked through
 // rotation, through §11.4 user invalidation, or before its tenant is
 // deleted must be refused on lenny-ops within one 35 s read bound, with
 // lenny-ops's Redis link up and with it cut, and the deleted tenant's
 // revocation must survive into a fresh lenny-ops process. A playground
-// bearer must be refused on lenny-ops (rule 7), and as a caller of
+// bearer the gateway mints for a tenant-admin user must be refused on
+// lenny-ops (rule 7), and as a caller of
 // POST /v1/oauth/token through a gateway replica (§13.3).
 package tier9_security_test
 
@@ -22,12 +24,12 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
@@ -70,6 +72,7 @@ func startOpsRevStack(t *testing.T) *opsRevStack {
 		"--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn="+s.pg.DSN, "--postgres-billing-audit-ddl-dsn="+s.pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
+		"--playground-enabled", "--playground-auth-mode=apiKey",
 		"--tenancy-mode=multi", "--multi-tenant=true",
 		"--tenant-deletion-interval=300ms",
 		"--token-service-http-url="+s.ts.BaseURL(),
@@ -289,39 +292,86 @@ func TestOpsRefusesRevokedLennyTokens_spec_25_4(t *testing.T) {
 	})
 }
 
+// mintPlayground mints a playground bearer through the gateway's
+// POST /v1/playground/token in apiKey mode from the user bearer pasted,
+// so the gateway's own playground mint stamps every claim. It fails the
+// test on any outcome but 200.
+func (s *opsRevStack) mintPlayground(t *testing.T, pasted string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.gw.BaseURL()+"/v1/playground/token", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("new playground mint request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+pasted)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &out) != nil || out.BearerToken == "" {
+		t.Fatalf("POST /v1/playground/token: status %d: %s\n%s", resp.StatusCode, raw, s.gw.Logs())
+	}
+	return out.BearerToken
+}
+
+// requirePlaygroundAdmittedOnGateway asserts the gateway that minted
+// playground admits it as a tenant-admin of acme, so a refusal elsewhere
+// rests on the bearer's playground origin rather than on a malformed
+// token.
+func (s *opsRevStack) requirePlaygroundAdmittedOnGateway(t *testing.T, playground string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.gw.BaseURL()+"/v1/admin/me", nil)
+	if err != nil {
+		t.Fatalf("new /v1/admin/me request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+playground)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /v1/admin/me: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var me struct {
+		TenantID string      `json:"tenantId"`
+		Typ      string      `json:"typ"`
+		Roles    []auth.Role `json:"roles"`
+	}
+	_ = json.Unmarshal(raw, &me)
+	if resp.StatusCode != http.StatusOK || me.TenantID != "acme" || !slices.Contains(me.Roles, auth.RoleTenantAdmin) {
+		t.Fatalf("gateway /v1/admin/me with the playground bearer: status %d: %s, want 200 as an acme tenant-admin", resp.StatusCode, raw)
+	}
+}
+
 // spec: 25.4 (The lenny-ops Service), 27.3.1 (OIDC cookie-to-MCP-bearer exchange), 13.3 (Credential Flow)
 // diagnosis: a playground bearer admitted on lenny-ops means lenny-ops
 // honours a bearer whose revocation it cannot check, because the playground
-// revocation key lives in Redis and lenny-ops does not read it (rule 7).
-// An access_token returned through the gateway means the Token Service
-// accepts a playground bearer as a caller credential, which mints a child
-// that playground logout does not revoke.
+// revocation key lives in Redis and lenny-ops does not read it (rule 7),
+// or the gateway's playground mint no longer stamps the origin claim that
+// rule 7 keys on. An access_token returned through the gateway means the
+// Token Service accepts a playground bearer as a caller credential, which
+// mints a child that playground logout does not revoke.
 func TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	s := startOpsRevStack(t)
-	_, signer := stackkey.Signer(t, stackkey.MasterKeyFile(t), map[string]string{kms.AliasJWTSigning: "local-key-1"})
 	a, b := s.tenantAdmin(t, "acme", "alice@acme.com")
 	s.ops.WaitAccepted(t, a, opsRevBound)
 
-	// The claims mirror the gateway's playground mint for a tenant-admin
-	// user: the origin claim, the session-capability typ, and the user's
-	// role. The bearer has no revocation record anywhere.
-	now := time.Now()
-	playground, err := signer.Sign(context.Background(), jwt.Claims{
-		Issuer:   "https://lenny.dev.local/playground",
-		Subject:  "alice@acme.com",
-		TenantID: "acme",
-		Audience: []string{"lenny-gateway"},
-		Roles:    []auth.Role{auth.RoleTenantAdmin},
-		Typ:      auth.TokenSessionCapability,
-		Origin:   jwt.OriginPlayground,
-		IssuedAt: now.Unix(),
-		Expiry:   now.Add(10 * time.Minute).Unix(),
-		JWTID:    "playground-tenant-admin",
-	})
-	if err != nil {
-		t.Fatalf("sign playground bearer: %v", err)
-	}
+	// The gateway mints the playground bearer from alice's tenant-admin
+	// user bearer, so it carries her tenant-admin role and the origin
+	// claim the gateway's playground mint stamps. It has no issued_tokens
+	// row, and its revocation key lives in Redis.
+	playground := s.mintPlayground(t, a)
+	s.requirePlaygroundAdmittedOnGateway(t, playground)
+
 	got := s.ops.Me(t, playground)
 	if got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeUnauthorized || got.Reason != "bearer_revoked" {
 		t.Errorf("lenny-ops: %d %s, want 401 %s with reason bearer_revoked", got.Status, got.Body, opsprocess.CodeUnauthorized)

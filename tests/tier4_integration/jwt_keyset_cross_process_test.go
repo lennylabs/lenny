@@ -10,8 +10,11 @@
 // verifies on every gateway replica, on every Token Service replica, and
 // on lenny-ops; that it survives a restart of its signer; that the
 // three-rollout rotation keeps old tokens verifying until the verify key
-// is removed; and that lenny-ops keeps its revocation set through a
-// Postgres outage.
+// is removed, with the §17.6 bootstrap admin credential re-minted during
+// the swap; and that lenny-ops keeps its revocation set through a
+// Postgres outage. The gateways of the admin-credential cases reach an
+// envtest Kubernetes API, where the §17.6 provisioner writes the
+// lenny-admin-token Secret.
 package tier4_integration_test
 
 import (
@@ -26,6 +29,10 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -50,6 +57,90 @@ const opsStartBound = 30 * time.Second
 // bearer to either one: §13.3 refuses an exchange that broadens the
 // subject's audience.
 const keySetAudiences = "lenny-gateway,lenny-ops"
+
+// adminTokenNamespace is the envtest namespace the §17.6 provisioner of
+// every cluster-backed gateway writes the lenny-admin-token Secret to.
+const adminTokenNamespace = "default"
+
+// adminTokenUser is the §17.6 initial admin username.
+const adminTokenUser = admintoken.DefaultUsername
+
+// adminCluster is the envtest Kubernetes API the gateways of the
+// admin-credential cases run against: the gateway builds its cluster
+// client from the kubeconfig, and the §17.6 provisioner writes the
+// lenny-admin-token Secret through it.
+type adminCluster struct {
+	kubeconfig string
+	secrets    kubernetes.Interface
+}
+
+// startAdminCluster starts an envtest API server for the §17.6
+// provisioner. It skips the test when the envtest binaries are absent.
+func startAdminCluster(t *testing.T) *adminCluster {
+	t.Helper()
+	envtest.SkipUnlessAvailable(t)
+	env := envtest.Start(t)
+	cs, err := kubernetes.NewForConfig(env.RESTConfig())
+	if err != nil {
+		t.Fatalf("envtest clientset: %v", err)
+	}
+	return &adminCluster{kubeconfig: env.Kubeconfig(t), secrets: cs}
+}
+
+// gatewayOptions returns the options of a gateway replica with args that
+// reaches the cluster, so it provisions and rotates the §17.6 admin
+// credential.
+func (c *adminCluster) gatewayOptions(binary string, args []string) gateway.Options {
+	return gateway.Options{
+		Binary: binary,
+		Args:   append(append([]string(nil), args...), "--agent-namespace="+adminTokenNamespace, "--admin-token-namespace="+adminTokenNamespace),
+		Env:    []string{"KUBECONFIG=" + c.kubeconfig},
+	}
+}
+
+// adminToken returns the bearer the lenny-admin-token Secret holds.
+func (c *adminCluster) adminToken(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sec, err := c.secrets.CoreV1().Secrets(adminTokenNamespace).Get(ctx, admintoken.DefaultSecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("read the %s/%s Secret: %v", adminTokenNamespace, admintoken.DefaultSecretName, err)
+	}
+	tok := string(sec.Data[admintoken.TokenKey])
+	if tok == "" {
+		t.Fatalf("the %s/%s Secret carries no %q value", adminTokenNamespace, admintoken.DefaultSecretName, admintoken.TokenKey)
+	}
+	return tok
+}
+
+// rotateAdminToken re-mints the §17.6 admin credential through base's
+// POST /v1/admin/users/lenny-admin/rotate-token, which revokes the prior
+// credential, and returns the re-minted bearer from the Secret.
+func (c *adminCluster) rotateAdminToken(t *testing.T, base string) string {
+	t.Helper()
+	code, raw := deletionAdminDo(t, base, http.MethodPost, "/v1/admin/users/"+adminTokenUser+"/rotate-token", nil)
+	if code != http.StatusOK {
+		t.Fatalf("rotate the admin credential on %s: status %d: %s", base, code, raw)
+	}
+	return c.adminToken(t)
+}
+
+// requireAdminAdmitted asserts GET /v1/admin/me admits the §17.6 admin
+// credential as lenny-admin on every gateway in gws, and that lenny-ops
+// accepts it as lenny-admin within opsStartBound.
+func requireAdminAdmitted(t *testing.T, what, bearer string, ops *opsprocess.Process, gws ...*gateway.Process) {
+	t.Helper()
+	for i, gw := range gws {
+		code, body := tenancyCall(t, http.MethodGet, gw.BaseURL()+"/v1/admin/me", bearer, nil, nil)
+		if code != http.StatusOK || body["subject"] != adminTokenUser {
+			t.Errorf("%s on gateway replica %d: status %d (%v), want 200 as %s\n%s", what, i, code, body, adminTokenUser, gw.Logs())
+		}
+	}
+	if got := ops.WaitAccepted(t, bearer, opsStartBound); got.Subject != adminTokenUser {
+		t.Errorf("%s on lenny-ops: identity.sub = %q, want %s", what, got.Subject, adminTokenUser)
+	}
+}
 
 // keySetGatewayArgs returns the flags of one multi-tenant gateway replica
 // over pgDSN, proxying /v1/oauth/* to tsURL when it is set, with the
@@ -112,12 +203,14 @@ func startKeySetPostgres(t *testing.T) *containers.Postgres {
 	})
 }
 
-// bootstrapAcme seeds the acme tenant through base and creates alice as a
-// user and dave as a tenant-admin.
+// bootstrapAcme seeds the default and acme tenants through base and
+// creates alice as a user and dave as a tenant-admin. On a gateway that
+// reaches a cluster, the bootstrap run also provisions the §17.6 admin
+// credential, a platform-admin of the default tenant.
 func bootstrapAcme(t *testing.T, base string) {
 	t.Helper()
 	code, raw := deletionAdminDo(t, base, http.MethodPost, "/v1/admin/bootstrap", map[string]any{
-		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"tenants": []map[string]any{{"id": "default"}, {"id": "acme", "displayName": "Acme Corp"}},
 	})
 	if code != http.StatusOK {
 		t.Fatalf("bootstrap: status %d: %s", code, raw)
@@ -205,24 +298,30 @@ func requireUnknownKID(t *testing.T, what, bearer string, gws ...*gateway.Proces
 // diagnosis: a refusal on a peer replica means a Lenny-issued token still
 // verifies only on the process that signed it: a gateway or Token Service
 // replica does not sign or verify through the shared platform:jwt-signing
-// key set. A refusal on lenny-ops means lenny-ops does not load the key set
-// or refuses a Lenny-issued class it must accept. A refusal after a
+// key set. A refusal of the bootstrap admin credential means the §17.6
+// admin-token mint signs with something other than the shared key set. A
+// refusal on lenny-ops means lenny-ops does not load the key set or refuses
+// a Lenny-issued class it must accept. A refusal after a
 // restart means a process derives its signing key from something other
 // than the master key and the mapped reference.
 func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	stackkey.MasterKeyFile(t)
+	cluster := startAdminCluster(t)
 	pg := startKeySetPostgres(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	refs := map[string]string{kms.AliasJWTSigning: "local-key-1"}
 	tsBin, gwBin := tokensvc.Build(t), gateway.Build(t)
 	ts1 := tokensvc.StartOpts(t, tokensvc.Options{Binary: tsBin, Args: keySetTokenServiceArgs(pg.DSN, refs)})
 	ts2 := tokensvc.StartOpts(t, tokensvc.Options{Binary: tsBin, Args: keySetTokenServiceArgs(pg.DSN, refs)})
-	gwArgs := func(ts *tokensvc.Process) []string { return keySetGatewayArgs(pg.DSN, rd.Addr, ts.BaseURL(), refs) }
-	gwA := gateway.StartOpts(t, gateway.Options{Binary: gwBin, Args: gwArgs(ts1)})
-	gwB := gateway.StartOpts(t, gateway.Options{Binary: gwBin, Args: gwArgs(ts2)})
+	gwOpts := func(ts *tokensvc.Process) gateway.Options {
+		return cluster.gatewayOptions(gwBin, keySetGatewayArgs(pg.DSN, rd.Addr, ts.BaseURL(), refs))
+	}
+	gwA := gateway.StartOpts(t, gwOpts(ts1))
+	gwB := gateway.StartOpts(t, gwOpts(ts2))
 	ops := opsprocess.StartWith(t, keySetOpsArgs(t, pg.DSN, refs)...)
 	bootstrapAcme(t, gwA.BaseURL())
+	admin := cluster.adminToken(t)
 
 	alice1 := mintImpersonationBearer(t, gwA.BaseURL(), "acme", "alice@acme.com")
 	alice2 := mintImpersonationBearer(t, gwB.BaseURL(), "acme", "alice@acme.com")
@@ -233,6 +332,10 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 		requireAdmittedOnGateways(t, "impersonation bearer minted on replica 1", alice2, gwA, gwB)
 		requireAdmittedOnGateways(t, "playground bearer minted on replica 0", mintPlaygroundBearer(t, gwA.BaseURL()), gwA, gwB)
 		requireAdmittedOnGateways(t, "playground bearer minted on replica 1", mintPlaygroundBearer(t, gwB.BaseURL()), gwA, gwB)
+	})
+
+	t.Run("the bootstrap admin credential verifies on every gateway replica and on lenny-ops", func(t *testing.T) {
+		requireAdminAdmitted(t, "bootstrap admin credential minted on replica 0", admin, ops, gwA, gwB)
 	})
 
 	t.Run("lenny-ops accepts a gateway-minted impersonation bearer", func(t *testing.T) {
@@ -266,7 +369,7 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 			t.Errorf("restarted Token Service refused the token it signed before the restart: %d %v", code, body)
 		}
 		gwA.Stop(t)
-		restartedGW := gateway.StartOpts(t, gateway.Options{Binary: gwBin, Args: gwArgs(restartedTS)})
+		restartedGW := gateway.StartOpts(t, gwOpts(restartedTS))
 		requireAdmittedOnGateways(t, "impersonation bearer the replica minted before its restart", alice1, restartedGW)
 	})
 }
@@ -278,9 +381,15 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 // means the swapped platform:jwt-signing reference is not the key the
 // process signs with, or a peer does not hold it. An old token admitted
 // after step 3 means a process keeps a key the alias map no longer names.
+// The replaced admin credential admitted on lenny-ops after step 2 means
+// lenny-ops does not enforce the revocation the rotate-token route
+// records. The re-minted admin credential refused after step 3 means the
+// step-2 re-mint did not sign with the swapped key, so removing the old
+// verify key locks the operator out.
 func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	stackkey.MasterKeyFile(t)
+	cluster := startAdminCluster(t)
 	pg := startKeySetPostgres(t)
 	gwBin, opsBin := gateway.Build(t), opsprocess.Build(t)
 	authArgs := opsprocess.AuthArgs(t)
@@ -297,7 +406,7 @@ func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 		}
 		gws = gws[:0]
 		for range 2 {
-			gws = append(gws, gateway.StartOpts(t, gateway.Options{Binary: gwBin, Args: keySetGatewayArgs(pg.DSN, "", "", refs)}))
+			gws = append(gws, gateway.StartOpts(t, cluster.gatewayOptions(gwBin, keySetGatewayArgs(pg.DSN, "", "", refs))))
 		}
 		opsArgs := append([]string{"--postgres-dsn=" + pg.DSN, "--kms-provider=local"}, authArgs...)
 		ops = opsprocess.StartOpts(t, opsprocess.Options{Binary: opsBin, Args: append(opsArgs, aliasArgs(refs)...)})
@@ -306,15 +415,22 @@ func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 	rollout(map[string]string{kms.AliasJWTSigning: "rotation-key-a"})
 	bootstrapAcme(t, gws[0].BaseURL())
 	old := mintImpersonationBearer(t, gws[0].BaseURL(), "acme", "dave@acme.com")
+	replacedAdmin := cluster.adminToken(t)
 
 	// Step 1: map platform:jwt-verify to the new key.
 	rollout(map[string]string{kms.AliasJWTSigning: "rotation-key-a", kms.AliasJWTVerify: "rotation-key-b"})
 	requireAdmittedOnGateways(t, "old token after step 1", old, gws...)
 	ops.WaitAccepted(t, old, opsStartBound)
 
-	// Step 2: swap the mappings.
+	// Step 2: swap the mappings and re-mint the admin credential, which
+	// revokes the one it replaces.
 	rollout(map[string]string{kms.AliasJWTSigning: "rotation-key-b", kms.AliasJWTVerify: "rotation-key-a"})
 	fresh := mintImpersonationBearer(t, gws[1].BaseURL(), "acme", "dave@acme.com")
+	reminted := cluster.rotateAdminToken(t, gws[1].BaseURL())
+	if reminted == replacedAdmin {
+		t.Fatal("rotate-token left the admin credential in the Secret unchanged")
+	}
+	ops.WaitRefused(t, replacedAdmin, http.StatusUnauthorized, opsprocess.CodeRevoked, opsReadBound)
 	requireAdmittedOnGateways(t, "old token after step 2", old, gws...)
 	requireAdmittedOnGateways(t, "new token after step 2", fresh, gws...)
 	ops.WaitAccepted(t, old, opsStartBound)
@@ -325,6 +441,7 @@ func TestSigningKeyRotationUnderLocal_spec_10_2(t *testing.T) {
 	requireUnknownKID(t, "old token after step 3", old, gws...)
 	requireAdmittedOnGateways(t, "new token after step 3", fresh, gws...)
 	ops.WaitAccepted(t, fresh, opsStartBound)
+	requireAdminAdmitted(t, "re-minted admin credential after step 3", reminted, ops, gws...)
 	if got := ops.Me(t, old); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeInvalid || !strings.Contains(got.Body, "unknown_kid") {
 		t.Errorf("lenny-ops answered the old token after step 3 with %d %s, want 401 TOKEN_INVALID unknown_kid", got.Status, got.Body)
 	}
