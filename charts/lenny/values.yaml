@@ -36,15 +36,16 @@ controller:
   # on (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
   # claimOrphanTimeoutSeconds is the §4.6.1 claimOrphanTimeout: a live or
-  # empty-status SandboxClaim older than this with no active session is an
-  # orphan the controller's GC reclaims, and a concurrent-workspace slot
+  # empty-status SandboxClaim older than this whose pod no session holds is
+  # an orphan the controller's GC reclaims, and a concurrent-workspace slot
   # set member whose session row has been terminal for longer than this
   # is released by the gateway's §5.2 stale-slot reaper. The chart renders
   # this one value into both the controller's --claim-orphan-timeout and
   # the gateway's --slot-reaper-terminal-age, so the two copies cannot
   # differ. It must be at least one second more than the largest of the
-  # seal window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) and
-  # the gateway's finalizing (600s) and resuming (300s) deadlines;
+  # seal window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) plus
+  # the gateway's 30 s release allowance (--stream-failure-report-timeout)
+  # and the gateway's finalizing (600s) and resuming (300s) deadlines;
   # rendering fails otherwise. Default 900 (15 minutes).
   claimOrphanTimeoutSeconds: 900
   # adapterImage is the lenny-adapter sidecar image the §4.7 Sandbox

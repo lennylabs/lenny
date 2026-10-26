@@ -62,22 +62,25 @@ func TestSlotReaperFlagDefaults_spec_5_2(t *testing.T) {
 // defaultReaperSettings is the reaper gate's input at every default.
 func defaultReaperSettings() slotReaperSettings {
 	return slotReaperSettings{
-		interval:             60 * time.Second,
-		rate:                 50,
-		terminalAge:          15 * time.Minute,
-		maxFinalizingSeconds: 600,
-		maxResumingSeconds:   300,
-		sealSeconds:          300,
+		interval:                   60 * time.Second,
+		rate:                       50,
+		terminalAge:                15 * time.Minute,
+		maxFinalizingSeconds:       600,
+		maxResumingSeconds:         300,
+		sealSeconds:                300,
+		streamFailureReportTimeout: 30 * time.Second,
 	}
 }
 
 // TestSlotReaperStartupGate_spec_5_2 pins the startup gate: the terminal age
-// must be at least one second more than the largest of the finalizing,
-// resuming, and seal deadlines in effect, and the rate and interval must be
-// positive. A non-positive deadline resolves to its default before the
-// comparison, as the watchdog and the session server resolve it.
+// must be at least one second more than the largest of the finalizing and
+// resuming deadlines in effect and the terminal pipeline budget (the seal
+// window plus the release allowance, --stream-failure-report-timeout), and
+// the rate and interval must be positive. A non-positive deadline or
+// allowance resolves to its default before the comparison, as the watchdog
+// and the session server resolve it. With the defaults the floor is 601 s.
 //
-// spec: §5.2 (Slot assignment atomicity)
+// spec: §5.2 (Slot assignment atomicity), §7.1 (Terminal pipeline context)
 func TestSlotReaperStartupGate_spec_5_2(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -97,6 +100,33 @@ func TestSlotReaperStartupGate_spec_5_2(t *testing.T) {
 			c.sealSeconds = 0
 			c.terminalAge = 601 * time.Second
 		}, true},
+		{"the defaults floor the terminal age at 601s", func(c *slotReaperSettings) { c.terminalAge = 601 * time.Second }, true},
+		{"a seal window of 580s with the allowance floors the terminal age at 611s", func(c *slotReaperSettings) {
+			c.sealSeconds = 580
+			c.terminalAge = 610 * time.Second
+		}, false},
+		{"a terminal age of 611s clears a 580s seal window with the allowance", func(c *slotReaperSettings) {
+			c.sealSeconds = 580
+			c.terminalAge = 611 * time.Second
+		}, true},
+		{"an allowance of 400s sets the floor at 701s", func(c *slotReaperSettings) {
+			c.streamFailureReportTimeout = 400 * time.Second
+			c.terminalAge = 700 * time.Second
+		}, false},
+		{"a terminal age of 701s clears an allowance of 400s", func(c *slotReaperSettings) {
+			c.streamFailureReportTimeout = 400 * time.Second
+			c.terminalAge = 701 * time.Second
+		}, true},
+		{"a zero allowance is 30s in effect", func(c *slotReaperSettings) {
+			c.streamFailureReportTimeout = 0
+			c.sealSeconds = 580
+			c.terminalAge = 610 * time.Second
+		}, false},
+		{"a negative allowance is 30s in effect", func(c *slotReaperSettings) {
+			c.streamFailureReportTimeout = -time.Second
+			c.sealSeconds = 580
+			c.terminalAge = 611 * time.Second
+		}, true},
 		{"a zero rate", func(c *slotReaperSettings) { c.rate = 0 }, false},
 		{"a negative rate", func(c *slotReaperSettings) { c.rate = -5 }, false},
 		{"a zero interval", func(c *slotReaperSettings) { c.interval = 0 }, false},
@@ -108,6 +138,27 @@ func TestSlotReaperStartupGate_spec_5_2(t *testing.T) {
 				t.Errorf("validateSlotReaperFlags(%+v) = %v, want ok=%v", c, err, tc.ok)
 			}
 		})
+	}
+}
+
+// TestSlotReaperStartupGateNamesTheReleaseAllowance_spec_5_2 pins the
+// rejection text: a terminal age below the terminal pipeline budget names
+// --stream-failure-report-timeout and the budget's floor, so an operator can
+// see which flag set it.
+//
+// spec: §5.2 (Slot assignment atomicity), §7.1 (Terminal pipeline context)
+func TestSlotReaperStartupGateNamesTheReleaseAllowance_spec_5_2(t *testing.T) {
+	c := defaultReaperSettings()
+	c.sealSeconds = 580
+	c.terminalAge = 610 * time.Second
+	err := validateSlotReaperFlags(c)
+	if err == nil {
+		t.Fatal("validateSlotReaperFlags accepted a terminal age below the terminal pipeline budget")
+	}
+	for _, want := range []string{"--stream-failure-report-timeout 30s", "must be at least 10m11s", "terminal pipeline budget (10m10s"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("rejection %q lacks %q", err, want)
+		}
 	}
 }
 
@@ -200,7 +251,8 @@ func renderArgs(t *testing.T, ms helm.Manifests, deployment string) string {
 // controller's --claim-orphan-timeout and the gateway's
 // --slot-reaper-terminal-age, so the two copies cannot differ, and the
 // render fails on a non-positive reaper rate or a timeout that does not
-// exceed the post-terminal slot activity windows.
+// exceed the post-terminal slot activity windows, whose seal term is the seal
+// window plus the gateway's 30s release allowance.
 //
 // spec: §5.2 (Slot assignment atomicity), §4.6.1 (Warm Pool Controller pod
 // lifecycle)
@@ -213,6 +265,7 @@ func TestChartRendersOneClaimOrphanTimeoutIntoBothBinaries_spec_5_2(t *testing.T
 	}{
 		{"the defaults", nil, "900s"},
 		{"a changed timeout", []string{"controller.claimOrphanTimeoutSeconds=1200"}, "1200s"},
+		{"a seal window of 580s with a timeout of 611s, at the allowance floor", []string{"gateway.workspaceSealMaxDurationSeconds=580", "controller.claimOrphanTimeoutSeconds=611"}, "611s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ms := helm.Render(t, helm.Options{Chart: chartDir(), Set: append(append([]string(nil), chartRenderBase...), tc.set...)})
@@ -231,6 +284,7 @@ func TestChartRendersOneClaimOrphanTimeoutIntoBothBinaries_spec_5_2(t *testing.T
 		{"a zero reaper rate", "gateway.slotReaper.ratePerSecond=0"},
 		{"a timeout equal to the finalizing deadline", "controller.claimOrphanTimeoutSeconds=600"},
 		{"a seal window of 900s with the default timeout", "gateway.workspaceSealMaxDurationSeconds=900"},
+		{"a seal window of 580s with a timeout of 610s, below the allowance", "gateway.workspaceSealMaxDurationSeconds=580,controller.claimOrphanTimeoutSeconds=610"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", "lenny", chartDir(), "--set", "global.spiffeTrustDomain=lenny-test", "--set", tc.set}
