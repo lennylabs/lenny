@@ -61,6 +61,25 @@ var terminalWriterInventory = []terminalWriter{
 	{"cmd/lenny-gateway/reconciler_workers.go", "startReconcilerWorkers", "startReconcilerWorkers"},
 }
 
+// terminalValueBuilders are functions that build a session value carrying a
+// terminal state without writing it: the checkpointer's ReleaseGone seam
+// hands ReleaseTerminalBinding a failed-state row for a session whose row is
+// gone, so the binding release applies the failed disposition. Each one is
+// excluded from the writer scan and must call no store writer.
+var terminalValueBuilders = []terminalWriter{
+	{file: "cmd/lenny-gateway/pod_lifecycle.go", writer: "ReleaseGone"},
+}
+
+// storeWriteCall names the calls that persist or claim a terminal session
+// state.
+func storeWriteCall(n string) bool {
+	switch n {
+	case "Update", "Create", "CreateIfGeneration", "MarkTerminated", "writeTerminal", "BeginTerminal", "beginTerminal":
+		return true
+	}
+	return false
+}
+
 // writeTerminalCallers are the hook-path writers that write through
 // writeTerminal, each opening its claim before the call.
 var writeTerminalCallers = []string{"cascadeToChildren", "expireSession", "failFinalizing", "failSession"}
@@ -200,7 +219,8 @@ func firstCall(fd *ast.FuncDecl, match func(string) bool) token.Pos {
 
 // TestTerminalWriterInventoryMatchesTheCode_spec_7_2 asserts that the
 // functions under pkg/ and cmd/ that assign a terminal session state are
-// exactly the terminal writer inventory, that every terminal assignment is
+// exactly the terminal writer inventory, apart from the terminal value
+// builders, which call no store writer, that every terminal assignment is
 // followed by MarkTerminated in the same function (for transitionTerminate and
 // handleDelete, in handleTerminalWrite's mutator), and that the claim
 // function of every
@@ -211,9 +231,22 @@ func firstCall(fd *ast.FuncDecl, match func(string) bool) token.Pos {
 func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
 	t.Parallel()
 	funcs, _ := scanRepo(t)
+	builders := map[string]bool{}
+	for _, b := range terminalValueBuilders {
+		key := b.file + " " + b.writer
+		builders[key] = true
+		sf, ok := funcs[key]
+		if !ok {
+			t.Errorf("%s: terminal value builder not found", key)
+			continue
+		}
+		if firstCall(sf.decl, storeWriteCall).IsValid() {
+			t.Errorf("%s: a terminal value builder calls a store writer; it is a terminal writer and needs an inventory row", key)
+		}
+	}
 	var found []string
 	for key, sf := range funcs {
-		if terminalAssignment(sf.decl).IsValid() {
+		if !builders[key] && terminalAssignment(sf.decl).IsValid() {
 			found = append(found, key)
 		}
 	}
