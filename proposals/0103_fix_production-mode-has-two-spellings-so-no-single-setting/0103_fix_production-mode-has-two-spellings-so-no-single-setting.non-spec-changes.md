@@ -15,7 +15,7 @@ Every staged sketch below locates code by symbol and file. The line numbers in t
 
 ### CODE-1 · pkg/deployenv: the closed set and the predicate
 
-Targets: `pkg/deployenv/deployenv.go` (new), `pkg/deployenv/deployenv_test.go` (new).
+Targets: `pkg/deployenv/deployenv.go` (new), `pkg/deployenv/deployenv_test.go` (new), and `tests/change-graph.json`, which gains a `"pkg/deployenv"` glob key with `"unit": ["pkg/deployenv/...", "pkg/kms/providerflags/...", "pkg/preflight/...", "pkg/ctlcli/...", "cmd/lenny-gateway/...", "cmd/lenny-ops/..."]` so `lenny-test validate-maps` covers the new directory.
 
 ```go
 // Package deployenv states the §17.9.1 Environment dimension and the
@@ -103,19 +103,22 @@ Tests: see Testing, CODE-3.
 
 ### CODE-4 · lenny-ops derives production from `--environment`
 
-Targets: `cmd/lenny-ops/flags.go`, `cmd/lenny-ops/keyset.go`, `cmd/lenny-ops/main.go`, `cmd/lenny-ops/httpsurface.go`, `cmd/lenny-ops/services_wiring.go`, `cmd/lenny-ops/flags_test.go`, `cmd/lenny-ops/keyset_test.go`, `cmd/lenny-ops/auth_config_test.go`, `cmd/lenny-ops/devmode_gate_test.go`, `cmd/lenny-ops/revocation_test.go`, `tests/tier9_security/ops_production_startup_refusal_test.go`, `tests/tier9_security/ops_dev_mode_gate_test.go` (comments), `tests/testinfra/opsprocess/tokens.go` (comment).
+Targets: `cmd/lenny-ops/flags.go`, `cmd/lenny-ops/keyset.go`, `cmd/lenny-ops/main.go`, `cmd/lenny-ops/httpsurface.go`, `cmd/lenny-ops/services_wiring.go`, `cmd/lenny-ops/flags_test.go`, `cmd/lenny-ops/keyset_test.go`, `cmd/lenny-ops/auth_config_test.go` (comments), `cmd/lenny-ops/devmode_gate_test.go` (comments), `cmd/lenny-ops/revocation_test.go` (comments), `pkg/ops/opsserver/opsserver.go`, `pkg/ops/opsserver/idempotency_test.go`, `tests/tier2_component/opsidem/outage_test.go`, `tests/tier3_contract/ops_endpoints/upgrade_test.go`, `tests/tier3_contract/ops_endpoints/upgrade_idempotency_test.go`, `tests/tier4_integration/ops_service_e2e_test.go`, `tests/tier9_security/ops_production_startup_refusal_test.go`, `tests/tier9_security/ops_dev_mode_gate_test.go` (comments), `tests/testinfra/opsprocess/tokens.go` (comment).
 
 1. `flags.go`: delete the `production` field of `opsFlags` and the `--production` flag with its `LENNY_PRODUCTION` default. Add:
    ```go
    // productionMode reports §17.9.1 production mode from the finalized
    // --environment value. Call it only after kmsFinalize has returned nil.
    func (f *opsFlags) productionMode() bool { return deployenv.IsProduction(f.kmsOpts.Environment) }
+
+   // idempotencyKeyRequired reports the §25.4 Tier 2/3 required-key posture from --platform-tier.
+   func (f *opsFlags) idempotencyKeyRequired() bool { t := *f.platformTier; return t == "tier2" || t == "tier3" }
    ```
-2. Replace every `*w.f.production` and every other read of the deleted field (in `httpsurface.go`, `services_wiring.go`, and `keyset.go`) with `productionMode()`. `buildBackupService`, `checkDevTrustPosture`, `devRelaxed`, and the `httpsurface` fields keep their `production bool` parameters and their behavior.
+2. Replace every `*w.f.production` and every other read of the deleted field (in `httpsurface.go`, `services_wiring.go`, and `keyset.go`) with `productionMode()`. The §25.4 required-key posture is the exception, because §25.4 keys it on Tier 2/3 rather than production mode. `opsserver.Options` gains `IdempotencyKeyRequired bool`, which `httpsurface.go` sets to `w.f.idempotencyKeyRequired()`. `opsserver.New` passes that field to `opsidem.Config.Production` in place of `opts.Production`, and its comment and the `Options.Production` doc name only the §25.11 full-backup confirm. `buildBackupService`, `checkDevTrustPosture`, `devRelaxed`, and the `httpsurface` fields keep their `production bool` parameters and their behavior.
 3. `keyset.go`: delete `errLocalProviderInProduction`, `resolvesToLocal`, and the `production` parameter of `loadOpsKeySet`, which becomes `loadOpsKeySet(ctx, opts, resolve)`. The local refusal now comes from `providerflags.Resolve` as `providerflags.ErrLocalForbidden`. Rewrite the file comment so it names `--environment=prod` and drops both `--production` and the `LENNY_ENV=prod` spelling.
 4. `main.go`: in `errDevTrustInProduction`, replace "when --production is set" with "in production mode (--environment=prod)".
-5. `flags.go` help text: in `--dev-mode`, replace "Ignored under --production" with "Ignored in production mode (--environment=prod)". In `--bearer-trust-hmac-key-file`, replace each `--production` reference with "production mode (--environment=prod)".
-6. Tests that set the deleted field to true set `kmsOpts.Environment = "prod"` instead. The tier-9 refusal tests start lenny-ops with `--environment=prod` in place of `--production`. Comments that name `--production` in `ops_dev_mode_gate_test.go` and `opsprocess/tokens.go` name production mode (`--environment=prod`).
+5. `flags.go` help text: in `--dev-mode`, replace "Ignored under --production" with "Ignored in production mode (--environment=prod)". In `--bearer-trust-hmac-key-file`, replace each `--production` reference with "production mode (--environment=prod)". In `--platform-tier`, add that tier2 and tier3 also select the §25.4 required `Idempotency-Key`.
+6. `flags_test.go` and `keyset_test.go` drop their uses of the deleted field. The tier-9 refusal tests start lenny-ops with `--environment=prod` in place of `--production`. Comments that name `--production` in `auth_config_test.go`, `devmode_gate_test.go`, `revocation_test.go`, `ops_dev_mode_gate_test.go`, and `opsprocess/tokens.go` name production mode (`--environment=prod`); the `production bool` cases and assertions in the first three are unchanged. Tests that set `opsserver.Options.Production` to obtain the required-key posture (the `idemBackupServer` helper in `pkg/ops/opsserver/idempotency_test.go`, the tier-2 `opsidem/outage_test.go` helper, and the tier-3 `upgrade_test.go` and `upgrade_idempotency_test.go` servers) set `IdempotencyKeyRequired` instead.
 
 CODE-4 lands in the same commit as CHART-1. If the binary drops `--production` while the chart or the embedded manifest still renders it, lenny-ops exits at flag parsing.
 
@@ -138,7 +141,7 @@ Targets: `pkg/alerting/rules/rules.go` (the `AuditSIEMNotConfigured` and `AuditR
 
 1. `AuditSIEMNotConfigured` description begins "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set." and keeps the rest of its text.
 2. `AuditRetentionLow` description begins "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM." and keeps the rest of its text.
-3. The gauge `Help` and the catalog entry carry identical text: `1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5).`
+3. The gauge `Help` and the catalog entry both read: `1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5).`
 4. Code comments that name `LENNY_ENV=production` name production mode (`--environment=prod`, §17.9.1).
 
 The metric name `lenny_env_production` and both alert expressions do not change. Regenerate `docs/alerting/rules.yaml` and `charts/lenny/files/alerting-rules.yaml` with `cmd/gen-alerting-rules`, and refresh the embedded manifest copy with `make generate`. Do not hand-edit generated YAML.
@@ -154,6 +157,7 @@ Targets: `charts/lenny/templates/ops-deployment.yaml`, `charts/lenny/values.yaml
 1. `ops-deployment.yaml`:
    - The `$devTrust` assignment becomes `{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret .Values.global.devMode (ne .Values.environment "prod") -}}`, and its comment says the hook renders only when `global.devMode` is true and `environment` is not `prod`.
    - Delete the `--production={{ .Values.ops.production }}` argument.
+   - Render `- --platform-tier={{ .Values.global.deploymentTier | default "tier1" }}`, the preflight Job's expression, so lenny-ops reads the §25.4 tier posture (CODE-4 step 2).
    - The readiness probe switch becomes `{{- if eq .Values.environment "prod" }}` for `/healthz`, else `/readyz`.
    - Every comment in the file that names `ops.production` or `--production` names `environment: prod` (production mode) instead.
    The comparisons are exact `eq`/`ne` against `"prod"`, matching `deployenv.IsProduction`.
@@ -206,15 +210,18 @@ Every Go test below carries `// spec: 17.9.1 (Composition Dimensions)` plus the 
 
 `cmd/lenny-gateway/production_gates_test.go`:
 - One table per decision function over production true and false crossed with the condition present and absent. `siemGateFatal` and `pgauditGateFatal` include a row with a non-matching error under production, which must return false; that row discriminates the message match. `pgauditPreflightFatal` includes production true with `regulatedPresent` false. `auditIntegrityFatal` includes a nil error under production.
-- A carrier test drives `providerflags.Bind` and its finalizer on a fresh `FlagSet` and asserts the bool the gates consume: `--environment=prod` with `LENNY_ENV` unset (the chart configuration) yields true; `LENNY_ENV=prod` with no flag yields true; `--environment=staging` yields false; unset yields false.
+- A wiring test, following the source-text check in `capability_token_ttl_test.go`, reads `billing_pipeline.go`, `stores.go`, and `metricsbackfill.go` with whitespace collapsed. It asserts that each file contains the CODE-3 `production := deployenv.IsProduction(f.kmsOpts.Environment)` statement and passes `production` as the first argument of each call the CODE-3 call-site list names for that file. This is the assertion that fails when a call site drops the gate or feeds it another value; the decision-function tables cannot detect that.
 
 `cmd/lenny-gateway/audit_batching_test.go`: the rows take the bool signature and cover each of the eight combinations.
 
-### CODE-4 tests (tier 1, tier 9)
+### CODE-4 tests (tier 1, tier 4, tier 9)
 
-- `flags_test.go`: no flag named `production` is registered; `--environment=prod` yields `productionMode()` true; `--environment=staging` and unset yield false.
+- `flags_test.go`: no flag named `production` is registered; `--environment=prod` yields `productionMode()` true; `--environment=staging` and unset yield false. `--platform-tier=tier2 --environment=dev` yields `idempotencyKeyRequired()` true, `--platform-tier=tier1 --environment=prod` yields false, and an unset value yields false.
+- `flags_test.go`: a wiring test, built as the CODE-3 wiring test is, reads `httpsurface.go` and `services_wiring.go` with whitespace collapsed and asserts that they contain `production: w.f.productionMode()`, `Production: w.f.productionMode()`, and `buildBackupService(w.f.productionMode(),`, which fails when either site is fed another value.
+- `pkg/ops/opsserver/idempotency_test.go`: `Production: true, IdempotencyKeyRequired: false` admits a full backup with `confirm:true` and no key, and `Production: false, IdempotencyKeyRequired: true` rejects it with 400 `IDEMPOTENCY_KEY_REQUIRED`. These two rows discriminate the split.
+- Tier 4, `TestOpsServiceRemediationLockPersistenceE2E` in `tests/tier4_integration/ops_service_e2e_test.go`, which starts lenny-ops with `--platform-tier=tier2` and no `--environment`: a key-less `POST /v1/admin/platform/upgrade/start` answers 400 `IDEMPOTENCY_KEY_REQUIRED`. This is the one assertion that fails if `httpsurface.go` sets `IdempotencyKeyRequired` from `productionMode()`. Extend the test's `// spec:` and `// diagnosis:` comments to cover it.
 - `keyset_test.go`: `errors.Is(err, providerflags.ErrLocalForbidden)` for provider `local` and for an empty provider under `prod`; `staging` admits `local`.
-- `auth_config_test.go`, `devmode_gate_test.go`, `revocation_test.go`: cases that set production true set `kmsOpts.Environment = "prod"` and keep their assertions.
+- `auth_config_test.go`, `devmode_gate_test.go`, `revocation_test.go`: comments only, per CODE-4 step 6.
 - Tier 9, `tests/tier9_security/ops_production_startup_refusal_test.go`: lenny-ops started with `--environment=prod` and `--kms-provider=local` exits with the `ErrLocalForbidden` text; started with `--environment=prod`, `--dev-mode`, and the trust hook it exits with the new `errDevTrustInProduction` text; started with `--environment=PROD` it exits with the `--environment` validation error.
 
 ### CODE-5 tests (tier 1)
@@ -226,14 +233,13 @@ Every Go test below carries `// spec: 17.9.1 (Composition Dimensions)` plus the 
 ### CODE-6 tests (tier 0, tier 11)
 
 - The generator drift check for the alerting rules passes after regeneration.
-- The metric catalog consistency check passes with the gauge `Help` and the catalog text identical.
 - The tier-11 alert-to-runbook resolution passes for both alerts.
 
 ### CHART-1 tests (tier 0 chart unit tests, tier 5)
 
-- `tier-presets_test.yaml`: invert the case that asserts `--production=true` so that it asserts no `--production` argument under the tier2 and tier3 presets.
+- `tier-presets_test.yaml`: the tier2 case that asserts `--production=true` asserts `notContains` `--production=true` and `contains` `--platform-tier=tier2`, and its title names the platform tier.
 - `gateway-deployment_test.yaml` and `ops-deployment_test.yaml`: with `environment: prod`, the container args contain `--environment=prod`, and the container env carries neither `LENNY_ENV` nor `LENNY_PRODUCTION`. `token-service-deployment_test.yaml` and `preflight-job_test.yaml` already pin `--environment=prod`; add the same env assertions there.
-- `ops-deployment_test.yaml`: rewrite the cases that set `ops.production` to set `environment`. `environment: prod` renders the `/healthz` readiness path and no dev trust hook even with `global.devMode: true`; `environment: dev` with `global.devMode: true` renders `/readyz` and the hook. Keep the §17.4 case that `environment: prod` without `global.devMode` renders no `--dev-mode`.
+- `ops-deployment_test.yaml`: rewrite the cases that set `ops.production` to set `environment`. `environment: prod` renders the `/healthz` readiness path and no dev trust hook even with `global.devMode: true`; `environment: dev` with `global.devMode: true` renders `/readyz` and the hook. Keep the §17.4 case that `environment: prod` without `global.devMode` renders no `--dev-mode`. The default-render case `renders no --dev-mode on lenny-ops by default` replaces `contains --production=false` with `notContains --production=false` and `contains --platform-tier=tier1`, and its comment drops `ops.production`.
 - Tier 5: the Kind install with the regenerated chart brings lenny-ops to Ready, which fails if any render still passes `--production`.
 
 ### DOCS-1 tests (tier 11)
@@ -256,15 +262,16 @@ Target: `tests/tier0_static/production_mode_carrier_test.go` (new), a Tier 0 sta
 
 - **A leftover `ops.production` key.** The `ops` values object is untyped, so a stale key is ignored and renders nothing. No chart `fail` guard is added.
 - **A hand-set `LENNY_PRODUCTION`.** Nothing reads it after CODE-4, and TEST-1 fails on any new read.
-- **A staging install that set `ops.production` or layered a tier2 or tier3 preset.** It loses the lenny-ops full-backup confirmation requirement and the `/healthz` readiness variant. This is the intended behavior change.
+- **A staging install that set `ops.production` or layered a tier2 or tier3 preset.** See summary D8.
 - **Tests and harnesses that start binaries without `--environment`.** The finalizer accepts the unset value and every gate reads non-production.
 
 ## Files touched on application (non-spec)
 
-- pkg/deployenv/deployenv.go (new), pkg/deployenv/deployenv_test.go (new)
+- pkg/deployenv/deployenv.go (new), pkg/deployenv/deployenv_test.go (new), tests/change-graph.json
 - pkg/kms/providerflags/providerflags.go, providerflags_test.go
 - cmd/lenny-gateway/production_gates.go (new), production_gates_test.go (new), billing_pipeline.go, stores.go, metricsbackfill.go, auditpipeline_seams.go, audit_batching_test.go
 - cmd/lenny-ops/flags.go, keyset.go, main.go, httpsurface.go, services_wiring.go, flags_test.go, keyset_test.go, auth_config_test.go, devmode_gate_test.go, revocation_test.go
+- pkg/ops/opsserver/opsserver.go, idempotency_test.go; tests/tier2_component/opsidem/outage_test.go; tests/tier3_contract/ops_endpoints/upgrade_test.go, upgrade_idempotency_test.go; tests/tier4_integration/ops_service_e2e_test.go
 - tests/tier9_security/ops_production_startup_refusal_test.go, ops_dev_mode_gate_test.go
 - tests/testinfra/opsprocess/tokens.go
 - pkg/preflight/install_prereqs.go, cosign_production.go, install_prereqs_test.go, cosign_production_test.go
