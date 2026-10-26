@@ -19,6 +19,12 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go"
       ]
     },
+    "tests/testinfra/testtmp/": {
+      "static": ["tests/tier0_static/test_fixture_temp_root_test.go"],
+      "unit": ["tests/testinfra/testtmp/...", "cmd/lenny-test/...", "cmd/lenny-compliance/...", "pkg/adapter/...", "pkg/gateway/session/executor/..."],
+      "contract": ["tests/tier3_contract/adapter_jsonl/...", "tests/tier3_contract/adapter_supervise/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
     "tests/testinfra/stackkey/": {
       "unit": ["tests/testinfra/stackkey/..."],
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
