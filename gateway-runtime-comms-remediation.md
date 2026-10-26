@@ -3365,9 +3365,11 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     harness-owned root.
   - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
     shares with the load and chaos tiers. The security tier gets its own budget.
-  - [ ] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
+  - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
     (about 55 minutes), because `selector.resolve` takes the `--tier` case before the change-selection case
-    and drops the diff. A changed `go.mod` or a widely imported package is not the cause.
+    and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
+    `--tier` with a discovery selector runs that selection restricted to the one tier, and the scoped unit
+    run takes about 3 minutes.
 - New proposals.
   - [ ] **Transaction-pooler compatibility proposal** (not yet written): **F-12.3.28** (Medium, the gateway's
     `LISTEN/NOTIFY` deny-list fallback connects through the transaction-mode PgBouncer and receives no
