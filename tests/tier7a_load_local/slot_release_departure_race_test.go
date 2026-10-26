@@ -31,6 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
@@ -554,11 +555,21 @@ func recycleRebindRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Ran
 // completeScrub stands in for the scrub report the harness does not deliver
 // and the occupancy projection it does not run: the recycled claim moves to
 // `reserved` with a hold, and the pod's Sandbox to `reserved`, so a
-// same-tenant acquisition rebinds it.
-// spec: §4.6.1 (Reserved hold; within-hold rebind)
+// same-tenant acquisition rebinds it. The rebind reads the agent Pod for its
+// runtime-process lifetime and skips a candidate whose Pod is absent, so the
+// Pod the WarmPoolController would have created is seeded first, pinned to
+// the harness tenant and labelled with the pool's `keep` lifetime.
+// spec: §4.6.1 (Reserved hold; within-hold rebind), §5.2 (Runtime-process
+// lifetime; Tenant pinning)
 func completeScrub(t *testing.T, h *lifecycleharness.Harness, round int, pod string) {
 	t.Helper()
 	ctx := context.Background()
+	if err := h.Cluster.SeedAgentPod(ctx, h.Cluster.PodOf(pod), map[string]string{
+		podclaim.LabelRuntimeProcess: string(runtimestore.RuntimeProcessKeep),
+		podclaim.LabelTenant:         lifecycleharness.Tenant,
+	}); err != nil {
+		t.Fatalf("round %d: %v", round, err)
+	}
 	if _, err := podclaim.WriteReservedStatus(ctx, h.Cluster.Client, lifecycleharness.Namespace, podclaim.ClaimName(pod), 10*time.Minute, time.Now); err != nil {
 		t.Fatalf("round %d: reserve the recycled claim of %s: %v", round, pod, err)
 	}
