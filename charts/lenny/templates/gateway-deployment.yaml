@@ -554,6 +554,14 @@ spec:
             # connector-credential DEKs and signs Lenny-issued JWTs through
             # this provider (§10.2 "Signing key and algorithm").
             {{- include "lenny.kmsArgs" . | nindent 12 }}
+            {{- if not $localKMS }}
+            # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate".
+            # The gateway emits the provider's asymmetric Sign quota on the
+            # lenny_kms_sign_quota_per_second gauge, which the alert's
+            # threshold reads. The local provider makes no KMS call, so the
+            # flag stays unset there and the alert stays silent.
+            - --kms-sign-quota-per-second={{ int .Values.kms.signQuotaPerSecond }}
+            {{- end }}
             # §17.9.3 object-storage backend selector (F-17.5.1). The
             # gateway resolves the matching blobstore.Store adapter
             # (minio | s3 | gcs | azure) from these flags. The shared

@@ -5571,14 +5571,16 @@
         "cmd/lenny-gateway/sign_metrics_test.go::TestGatewayEmitsKMSSignQuotaGauge_spec_16_5",
         "pkg/alerting/rules/rules_test.go::TestKMSSignQuotaApproachingRule_spec_16_5",
         "pkg/alerting/rules/rules_test.go::TestKMSSigningUnavailableNamesBothSigners_spec_16_5",
-        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions"
+        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
       "packages": [
         "pkg/alerting/rules",
         "cmd/gen-alerting-rules"
       ],
       "chart_templates": [
-        "charts/lenny/templates/prometheusrule.yaml"
+        "charts/lenny/templates/prometheusrule.yaml",
+        "charts/lenny/templates/gateway-deployment.yaml"
       ],
       "blocked_until_phase": "2.5",
       "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full \u00a716.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift. Phase 16.5 is the TESTING.md \u00a713.34 experiment load re-baseline; the cloud tier re-runs the \u00a712.7 pod_claim_latency scenario with an active \u00a710.7 experiment seeded so the ExperimentRouter bucketing path is on every claim. The PR-cadence Kind smoke is phase-gated because the e2e install starts with empty runtime, pool, and experiment stores; the experiment_load scenario is the TESTING.md \u00a713.34 substrate the cloud tier runs."
@@ -5862,7 +5864,8 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "pkg/chart/values/schema_test.go::TestKMSSignQuotaPerSecondMinimum_spec_17_8_2",
-        "charts/lenny/tests/kms-guard_test.yaml"
+        "charts/lenny/tests/kms-guard_test.yaml",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
       "packages": [],
       "blocked_until_phase": "14",

@@ -758,6 +758,41 @@ tests:
             name: kms-master-key
           any: true
 
+  # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate" — on a
+  # cloud provider the gateway receives kms.signQuotaPerSecond as
+  # --kms-sign-quota-per-second and emits it on the quota gauge the alert
+  # threshold reads.
+  - it: renders --kms-sign-quota-per-second from kms.signQuotaPerSecond under a cloud provider
+    set:
+      kms.provider: gcp
+      kms.signQuotaPerSecond: 75
+      kms.aliases: "platform:jwt-signing=projects/acme/locations/global/keyRings/lenny/cryptoKeys/jwt"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=75
+          count: 1
+
+  # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate" — the
+  # local provider makes no KMS call, so the gateway renders no quota flag
+  # and the gauge stays unset.
+  - it: renders no --kms-sign-quota-per-second under the local provider
+    set:
+      kms.signQuotaPerSecond: 75
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=75
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-sign-quota-per-second=0
+
   # spec: §17.9.3 / F-17.5.1 — the gateway receives its ArtifactStore
   # backend selector from objectStorage.provider; the chart default is
   # minio so the cloud adapters stay dormant unless an operator opts in.
