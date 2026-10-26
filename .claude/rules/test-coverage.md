@@ -158,6 +158,19 @@ subject is intact. The pattern is a helper called at the top of the test that li
 the fixture's name prefix or label, skips the ones this run created, deletes the rest, and logs each deletion
 without failing the test when the sweep itself errors.
 
+**7. Every image the environment needs can be built or pulled.** An image a fixture pulls from a public
+registry can disappear upstream, and a cluster or a Docker host that still caches it hides the loss until a
+fresh environment fails to install with `ImagePullBackOff` or `pull access denied`. MinIO is the known case:
+the upstream `minio/minio` and `minio/mc` images are no longer served, so the fixtures run `lenny-minio`,
+which `tests/testinfra/images/minio/Dockerfile` builds from the upstream source at pinned releases. The Kind
+install builds and loads it through `IMAGE_SPECS`, and `containers.StartMinIO` builds it on first use as
+`lenny-minio:<server release>`. The compose stacks build the same tag, and on a host whose `docker compose
+build` refuses for want of a newer buildx, `docker build -t lenny-minio:<server release>
+tests/testinfra/images/minio` builds it instead. Every one of these builds clones from GitHub and downloads
+Go modules, so a host without that network access needs the image preloaded. `LENNY_MINIO_IMAGE` points
+`StartMinIO` at another copy of the image. Do not repoint a fixture at an upstream MinIO image, because none
+of the pinned releases can be pulled.
+
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
 skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to
