@@ -40,7 +40,7 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 - D19. The §10.1.1 **Fallback:** bullet gains a sentence saying that the Postgres fallback stores the same holder value, which matches `pgstore`. As a result, the address survives a Redis outage.
 
 **Watch out for.**
-- A lease or mirror consumer that misses the composite holder value decides that it coordinates nothing (CODE-1 item 3, TEST-1 item 2).
+- A lease or mirror consumer that misses the composite holder value fails silently (CODE-1 item 3, TEST-1 item 2).
 - `ActionBufferInbox` is §7.2 path 3 on the coordinator, and no off-holder branch exists to delete there (CODE-2 item 5).
 - A failure on a reused keep-alive connection is outcome-unknown, never not-delivered (CODE-1 item 8).
 - The §29.3 upload row names `/upload`, but the pod-touching route in code is `/upload-to-session`, so the forward goes on `/upload-to-session` (CODE-2).
@@ -83,10 +83,7 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 
 ## Open decisions for human to make
 
-- **OD1. Length of the no-deadline wait in the forward helper's unit test.** The forward helper bounds only the TCP dial and the TLS handshake, at 2 seconds, and adds no deadline to the forwarded request, because a request served on the coordinating replica runs with no gateway deadline either. A tier-1 test case (TEST-1 item 4) pins this by having a fake coordinator answer 35 seconds after it reads the request, for a message and for an interrupt, run in parallel, and asserting that the caller receives the response rather than a 409. Should the wait stay at 35 seconds or be shortened to about 3 seconds?
-  - Option A keeps 35 seconds. It is the only case that fails if a forward-only 30-second request bound is reintroduced, and it costs one parallel 35-second wait inside the unit-tier timeout.
-  - Option B shortens the wait to about 3 seconds. It runs faster but pins only that the 2-second dial context does not cover the request, so a reintroduced 30-second bound passes it.
-  - The non-spec loop applied Option A in the staged text as the default, citing the owner's standing preference for discriminating tests on failure paths. It recorded the choice as open for the owner to confirm.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -129,6 +126,6 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 - TEST-2 — pkg/gateway/sessionserver, tests/tier4_integration — off-holder route tests on two replicas.
 - TEST-3 — tests/tier7a_load_local — concurrency and interleaving tests.
 - TEST-4 — pkg/gateway/externalapi/admin, cmd/lenny-gateway, tests/tier4_integration — drain publish and rename tests.
-- TEST-5 — tests/tier8_chaos — coordinator kill and dropped publish cases.
+- TEST-5 — tests/tier8_chaos — chaos cases.
 - TEST-6 — tests/tier5_e2e_kind, tests/tier9_security, charts/lenny/tests — cluster, security, and chart tests.
 - TEST-7 — tests/tier11_docs, pkg/gateway/storage/rediskeys — tier-11 pins of the spec text the staged edits replace.
