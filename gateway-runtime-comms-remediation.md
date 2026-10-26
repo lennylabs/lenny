@@ -3206,11 +3206,11 @@ narrows to Kata.
 
 **Queued direct fixes filed by 0095's implementation (2026-10-23).**
 
-- [ ] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
+- [x] **F-10.2.22: a Lenny-issued bearer verifies only on the replica that signed it.** Each gateway
   replica (and the Token Service) generates and seals its own signing key at process start, so a peer
   replica rejects the token. It fails closed but breaks every multi-replica deployment. The spec does not
   state a shared key source and contradicts itself on the signing topology, so the fix goes through
-  proposal 0097 (draft, in review on 2026-10-24): remote ES256 KMS signing with one key shared by the
+  proposal 0097 (approved 2026-10-24, implemented 2026-10-26, merge `d6830f0df`): remote ES256 KMS signing with one key shared by the
   gateway and the Token Service, a startup-loaded verifier key set on every replica and on `lenny-ops`,
   and fixed-lifetime tokens. Its owner decisions are in section 10.3.
 - [x] **F-27.8.1: the gateway exits at startup with the playground enabled** (proposal 0098, implemented
