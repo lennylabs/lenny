@@ -3417,9 +3417,11 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     Cluster, or concern-URL options the chart topologies need.
     Fixed in `9141366c4`; the Cluster topology's missing Redis password and TLS setting, shared with the
     gateway and `lenny-ops`, is filed as F-12.4.37 and queued after T-17.4.19.
-  - [ ] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
+  - [x] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
     rather than the PgBouncer admin console, and `pgbouncer.ini` names no `stats_users`, so
     `PgBouncerPoolSaturated` cannot fire.
+    Fixed in `2a170a61b`: the `DATABASE_URL` user is appended to `stats_users`, and the exporter reads the
+    `pgbouncer` database on `127.0.0.1:5432`.
   - [ ] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
     fail when `/tmp` is cleaned mid-run, which is the shared cause of T-4.7.19 to T-4.7.22. `lenny-test`
     exports a run-scoped `TMPDIR` and `GOTMPDIR`, and the tier-10 socket directory moves under a
@@ -3445,6 +3447,8 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     The §17.7 Postgres failover and PgBouncer pool saturation entries and their runbooks connect on port
     6432 as a `pgbouncer` admin user the chart does not configure, set pool-size values the chart does not
     have, and name a `postgres-credentials` Secret the chart does not create.
+    F-12.3.29's fix (2026-10-26) made the `DATABASE_URL` user a `stats_users` entry on port 5432, so the
+    proposal can name that user, or add a dedicated console user, when it corrects the entries.
 
 **Defects filed from the direct fix of F-10.2.26 (2026-10-26).** The F-10.2.26 resolution names three
 residual defects in the IdP-token paths that no record tracked. Each is filed in BUILD-GAPS and routed
