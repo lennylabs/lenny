@@ -509,11 +509,11 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.redisSentinelMaster = flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when --redis-sentinel-addrs is set.")
 	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password applied to both direct and Sentinel modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
+		"Redis AUTH password applied to the direct, Sentinel, and Cluster modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
 	f.redisSentinelPassword = flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
 		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
 	f.redisTLS = flag.Bool("redis-tls", envFlag("LENNY_REDIS_TLS"),
-		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel topology back into TLS. Override via LENNY_REDIS_TLS.")
+		"§12.4 request TLS on the Sentinel and Cluster paths. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel or Cluster topology back into TLS. Override via LENNY_REDIS_TLS.")
 	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
