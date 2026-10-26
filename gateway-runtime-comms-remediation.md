@@ -3239,8 +3239,10 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     whenever `--production` is false, and the chart defaults `ops.production` to false. Bind every relaxation
     to `LENNY_DEV_MODE` per §17.4 "Dev mode guard rails" item 3 (0097 decision D26). Fixed in `9fe24b9bd`:
     `lenny-ops` reads `--dev-mode` from `LENNY_DEV_MODE`, and the chart renders it from `global.devMode`.
-  - [ ] **F-25.4.33** (Medium): `lenny-ops` sets no `PlatformRoles` resolver, so a platform-managed role
-    downgrade does not reach it until `exp`.
+  - [x] **F-25.4.33** (Medium): `lenny-ops` sets no `PlatformRoles` resolver, so a platform-managed role
+    downgrade does not reach it until `exp`. Fixed in `d59e708dc` and `a62f91b39`: `lenny-ops` applies the
+    stored assignment through `userstore.PlatformRoles`, and keeps the claim when Postgres is unreachable
+    (§25.4 revocation set rule 5).
   - [ ] **F-17.9.25** (High): the self-managed answer-file renders give no client a Postgres path under an
     enforcing CNI (PgBouncer port 6432 against 5432 policies, no upstream database, no direct egress).
   - [ ] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
