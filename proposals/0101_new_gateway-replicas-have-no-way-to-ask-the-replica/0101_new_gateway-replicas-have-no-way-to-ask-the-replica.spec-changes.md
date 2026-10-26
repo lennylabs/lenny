@@ -24,6 +24,7 @@ The staged text owns each case below. The rule that decides each one is cited ra
 - A not-delivered message waits in the DLQ for the next delivery point. When the coordinator is reachable but receives no further message, the entry waits for the idle suspension or **Backlog resume.** (§29.3 **Forwarding.** rule 6, citing §7.2 **Delivery of held messages.**). This is accepted.
 - A restarted replica with a pinned replica identity writes a new holder value. Until its previous process's leases expire, it reads them as held by another replica (§10.1.1 **Replica address:**).
 - In dev mode, a gateway with no certificate material does not forward, and every forward takes the not-delivered outcome (§10.3 NET-072).
+- A call on a WebSocket connection whose bearer has expired since the upgrade is forwarded to the coordinator. §29.3 **Forwarding.** rule 3 and §27.3.1 **Silent refresh.** (SPEC-5 (g)) decide it.
 - A dropped `CH-BINDRELEASE` publish is not redelivered (§28.5.7 `CH-BINDRELEASE` **Degradation.**).
 
 ## Staged edits
@@ -65,7 +66,7 @@ The fallback records the lease holder and its expiry in a Postgres lease row key
 (b) Insert the following bullet immediately after the bullet that begins "- **Primary:** Redis-based distributed lease (`SET NX` with TTL)" and before the bullet that begins "- **Fallback:**":
 
 ```markdown
-- **Replica address:** Each replica's `REG-COORDLEASE` holder value is `<replica identity>.<process token>@<address>`. `<process token>` is a random value the replica draws once at process start, so a restarted replica writes a new holder value even when its replica identity is pinned, and it acquires the leases its previous process held only after they expire. `<address>` is `<pod IP>:<gateway.interReplicaPort>`, and an IPv6 pod IP is written in brackets. The replica writes this value as its holder in the Redis lease and in the Postgres fallback, and as the `coordinator_replica` of its `REG-COORDMIRROR` rows. It decides whether it coordinates a session by comparing the holder value it reads with its own. A replica that does not coordinate a session reaches the coordinating replica at the `<address>` of the holder value over `CH-HOLDERFORWARD` ([§28.5.4](28_communication-channels.md#2854-inter-replica)). The forwarding replica bounds the TCP dial and the TLS handshake together at 2 seconds. When the holder value is absent or unreadable, or carries no address, the coordinating replica is unreachable, and the forward takes the not-delivered outcome of [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 6. A replica does not read the `REG-COORDMIRROR` projection to find the coordinating replica, because the Sweeper is that projection's only writer and it lags the lease.
+- **Replica address:** Each replica's `REG-COORDLEASE` holder value is `<replica identity>.<process token>@<address>`. `<process token>` is a random value the replica draws once at process start, so a restarted replica writes a new holder value even when its replica identity is pinned, and it acquires the leases its previous process held only after they expire. `<address>` is `<pod IP>:<gateway.holderForwardPort>`, and an IPv6 pod IP is written in brackets. The replica writes this value as its holder in the Redis lease and in the Postgres fallback, and as the `coordinator_replica` of its `REG-COORDMIRROR` rows. It decides whether it coordinates a session by comparing the holder value it reads with its own. A replica that does not coordinate a session reaches the coordinating replica at the `<address>` of the holder value over `CH-HOLDERFORWARD` ([§28.5.4](28_communication-channels.md#2854-inter-replica)). The forwarding replica bounds the TCP dial and the TLS handshake together at 2 seconds. When the holder value is absent or unreadable, or carries no address, the coordinating replica is unreachable, and the forward takes the not-delivered outcome of [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 6. A replica does not read the `REG-COORDMIRROR` projection to find the coordinating replica, because the Sweeper is that projection's only writer and it lags the lease.
 ```
 
 (c) In §10.1.8, in the list item that begins "1. **Barrier signal:**", replace `WHERE coordinator_replica = $this_replica_id AND released_at IS NULL` with `WHERE coordinator_replica = $this_holder_value AND released_at IS NULL`.
@@ -93,7 +94,7 @@ with the endpoint stated in its card describes the connection.
 
   CH-HOLDERFORWARD: HTTP over mutual TLS, dialled by the forwarding replica,
   at the address in the coordinating replica's REG-COORDLEASE holder value,
-  TCP gateway.interReplicaPort.
+  TCP gateway.holderForwardPort.
 ```
 
 (c) Replace the paragraph that begins "The conversation the connection carries is the internal gRPC `ForwardMessage` RPC used for cross-replica message routing." and ends "This subsection gains a card at the point the §28.3 channel register places a channel on this boundary." with the following card:
@@ -103,7 +104,7 @@ with the endpoint stated in its card describes the connection.
 
 - **Link.** `None` (§28.3).
 - **Endpoint.** The `<address>` part of the coordinating replica's `REG-COORDLEASE` holder value, which is
-  its pod IP and TCP `gateway.interReplicaPort`
+  its pod IP and TCP `gateway.holderForwardPort`
   ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Replica address:**).
   Both ends present the gateway replica certificate under the peer validation
   [§10.3](10_gateway-internals.md#103-mtls-pki) **Gateway ↔ Gateway mTLS peer validation (NET-072).** states,
@@ -212,7 +213,7 @@ forwarded request reaches these channels only through the holder (§28.5.4).
 A register entry in the §28.3 register-entry register is not a channel and carries no row here.
 ```
 
-### SPEC-5 · spec/29_communication-scenarios.md § 29.2 Session start, § 29.3 Interactive message send; spec/11_policy-and-controls.md § 11.5 Idempotency
+### SPEC-5 · spec/29_communication-scenarios.md § 29.2 Session start, § 29.3 Interactive message send; spec/11_policy-and-controls.md § 11.5 Idempotency; spec/27_web-playground.md § 27.3.1 OIDC cookie-to-MCP-bearer exchange
 
 (a) Replace the paragraph that begins "Two requirements govern the rows whose required outcome is a forward to the coordinator." and ends "and the store-only row requires no forwarding at all." with the following:
 
@@ -234,8 +235,10 @@ coordinator performs the effect. The following rules govern every forwarding row
    same tool and arguments ([§15.2](15_external-api-surface.md#152-mcp-api)). The handler returns the
    coordinator's response as its own, and the caller receives it as it receives the handler's local response
    ([§15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract)).
-3. The coordinator authenticates the forwarded client credential and applies the authorization of the route
-   or tool. A platform tool call reaches the serving replica over `LNK-GWCONTROL` with no client
+3. The coordinator authenticates the forwarded client credential as it authenticates a credential presented
+   to it directly, including the `exp` check of [§13.3](13_security-model.md#133-credential-flow), and applies
+   the authorization of the route or tool. A platform tool call reaches the serving replica over
+   `LNK-GWCONTROL` with no client
    credential ([§28.5.3](28_communication-channels.md#2853-intra-pod)), so its forward carries the calling
    session's identifier, and the coordinator runs the call as a call from that session. The coordinator
    accepts no other principal the forwarding replica asserts
@@ -317,6 +320,12 @@ The gateway does not store a `TARGET_NOT_READY` response that [§29.3](29_commun
 
 (f) In §29.2 Session start, step 9 ("`gateway` → `postgres`, no register entry, the Postgres `SessionStore` role"), replace "places one channel on the gateway-to-store boundary, `CH-EVENTRELAY`, which carries the session event backlog on Redis (§28.5.7)" with "places two channels on the gateway-to-store boundary, `CH-EVENTRELAY` and `CH-BINDRELEASE`, which carry the session event backlog and the binding-release fan-out on Redis (§28.5.7)".
 
+(g) In §27.3.1, in the bullet that begins "**Silent refresh.**", insert the following sentence immediately after "they continue running under the token they were upgraded with until the connection drops or the token's underlying session expiry is hit.":
+
+```markdown
+A call on such a connection that the serving replica forwards to the session's coordinating replica is authenticated by the coordinator ([§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 3), so once the old bearer has expired the coordinator refuses that call as unauthenticated.
+```
+
 ### SPEC-6 · spec/12_storage-architecture.md § 12.4 Redis HA and Failure Modes, § 12.6 Interface Design, § 12.8 Compliance Interfaces; spec/11_policy-and-controls.md § 11.4 User Invalidation
 
 (a) In §12.8, in the paragraph that begins "**Lifecycle fence and drain.**", insert the following text immediately after the sentence "The transition writes the terminal state on the session row." and before the sentence that follows it:
@@ -368,7 +377,7 @@ Replace "(2) they use a poll-with-pub/sub-hint pattern where the pub/sub channel
 (a) In §10.3, insert the following paragraph immediately before the paragraph that begins "**Gateway ↔ Interceptor mTLS peer validation (NET-063).**":
 
 ```markdown
-**Gateway ↔ Gateway mTLS peer validation (NET-072).** On `CH-HOLDERFORWARD` ([§28.5.4](28_communication-channels.md#2854-inter-replica)) both replicas present the gateway replica certificate, and peer validation is symmetric, as on the Token Service ↔ Gateway link above. The dialling replica sets `tls.Config.ServerName` to `lenny-gateway.lenny-system.svc`, because it dials a pod IP rather than the Service name. The accepting listener on `gateway.interReplicaPort` requires a client certificate that chains to the cluster CA and carries that DNS SAN. At handshake it rejects plaintext, one-way TLS, and any other cluster-CA certificate, including agent-pod SPIFFE certificates. Possession of a valid cluster-CA certificate is never sufficient on its own. Outside dev mode ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)), a gateway configured with a coordination lease store refuses to start when the gateway replica certificate material is absent. In dev mode, a gateway without that material does not forward, and every forward takes the not-delivered outcome of [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 6. A successful handshake establishes only that the peer is a gateway replica and carries no user authority. [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 3 states the authorization of a forwarded request.
+**Gateway ↔ Gateway mTLS peer validation (NET-072).** On `CH-HOLDERFORWARD` ([§28.5.4](28_communication-channels.md#2854-inter-replica)) both replicas present the gateway replica certificate, and peer validation is symmetric, as on the Token Service ↔ Gateway link above. The dialling replica sets `tls.Config.ServerName` to `lenny-gateway.lenny-system.svc`, because it dials a pod IP rather than the Service name. The accepting listener on `gateway.holderForwardPort` requires a client certificate that chains to the cluster CA and carries that DNS SAN. At handshake it rejects plaintext, one-way TLS, and any other cluster-CA certificate, including agent-pod SPIFFE certificates. Possession of a valid cluster-CA certificate is never sufficient on its own. Outside dev mode ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)), a gateway configured with a coordination lease store refuses to start when the gateway replica certificate material is absent. In dev mode, a gateway without that material does not forward, and every forward takes the not-delivered outcome of [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 6. A successful handshake establishes only that the peer is a gateway replica and carries no user authority. [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 3 states the authorization of a forwarded request.
 ```
 
 (b) In §13.2.4, in the table row that begins "| **Gateway** (`lenny.dev/component: gateway`)", make two insertions. The row stays one physical line.
@@ -376,13 +385,13 @@ Replace "(2) they use a poll-with-pub/sub-hint pattern where the pub/sub channel
 In the Egress cell, insert the following text immediately after "Token Service (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, mTLS); ":
 
 ```markdown
-gateway pods (TCP `{{ .Values.gateway.interReplicaPort }}` — default 50054, mTLS, `CH-HOLDERFORWARD`, selector `lenny.dev/component: gateway`); 
+gateway pods (TCP `{{ .Values.gateway.holderForwardPort }}` — default 50054, mTLS, `CH-HOLDERFORWARD`, selector `lenny.dev/component: gateway`); 
 ```
 
 In the Ingress cell, insert the following text immediately after "`GET /internal/drain-readiness` — NET-037); ":
 
 ```markdown
-gateway pods (TCP `{{ .Values.gateway.interReplicaPort }}` — default 50054, mTLS, `CH-HOLDERFORWARD`, the only source the rule admits on that port, selector `lenny.dev/component: gateway`); 
+gateway pods (TCP `{{ .Values.gateway.holderForwardPort }}` — default 50054, mTLS, `CH-HOLDERFORWARD`, the only source the rule admits on that port, selector `lenny.dev/component: gateway`); 
 ```
 
 (c) In §10.3, in the paragraph that begins "**Certificate authority:**", replace "a service mesh (Istio/Linkerd) is an optional alternative." with:
@@ -406,5 +415,6 @@ the `CH-HOLDERFORWARD` off-holder request forward ([§28.5.4](28_communication-c
 - spec/12_storage-architecture.md (SPEC-6)
 - spec/13_security-model.md (SPEC-7)
 - spec/18_build-sequence.md (SPEC-8)
+- spec/27_web-playground.md (SPEC-5)
 - spec/28_communication-channels.md (SPEC-1, SPEC-3, SPEC-4)
 - spec/29_communication-scenarios.md (SPEC-5)
