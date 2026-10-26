@@ -81,10 +81,12 @@ func (p *pathStore) CreateReserved(ctx context.Context, s sessionstore.Session) 
 	return nil
 }
 
-// Create implements sessionstore.Store. Under the create's ID it is the
-// terminal derive-failure row's insert.
-func (p *pathStore) Create(ctx context.Context, s sessionstore.Session) error {
-	err := p.Store.Create(ctx, s)
+// CreateIfGeneration implements sessionstore.Store. Under the create's ID it
+// is the terminal derive-failure row's insert, which the session server
+// fences on the source's coordination generation inside the insert.
+// spec: §7.1 (Derive session semantics), §12.8 (Lifecycle fence and drain)
+func (p *pathStore) CreateIfGeneration(ctx context.Context, s sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
+	err := p.Store.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
 	if s.ID != p.o.ID {
 		return err
 	}

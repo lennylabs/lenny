@@ -751,3 +751,28 @@ func (failingUpdateTenants) Get(context.Context, string) (tenantstore.Tenant, er
 func (failingUpdateTenants) Update(context.Context, string, func(*tenantstore.Tenant) error) (tenantstore.Tenant, error) {
 	return tenantstore.Tenant{}, errors.New("primary unreachable")
 }
+
+// TestSuspendTenantDoesNotWaitForThePostTerminalWindow_spec_12_8 pins
+// tenant suspension to the drain alone: no step after its drain acts on a
+// session's resources, so a session still in its §7.1 post-terminal window
+// does not hold the suspension, which answers 200.
+//
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window)
+func TestSuspendTenantDoesNotWaitForThePostTerminalWindow_spec_12_8(t *testing.T) {
+	store := tenantstore.NewMemory()
+	seedSuspendTenant(t, store, tenantstore.Tenant{ID: "acme"})
+	sessions := memstore.New(memstore.WithPostTerminalCap(time.Hour))
+	row := sessionstore.Session{
+		ID: "sess_sealing", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-a", TerminatedAt: time.Now(),
+	}
+	if err := sessions.Create(context.Background(), row); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	sa := &fakeSessionAdmin{rows: map[string]sessionstore.Session{row.ID: row}}
+	h := newSuspendRouter(store, &recordingSink{}).WithSessions(sessions).WithSessionAdmin(sa).Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants/acme/suspend", nil)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+}

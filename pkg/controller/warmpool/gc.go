@@ -70,20 +70,22 @@ var orphanedClaims = func() *prometheus.CounterVec {
 	return c
 }()
 
-// SessionLookup reports whether an active (non-terminal) session backs a
-// SandboxClaim. spec: §4.6.1 — "the controller queries Postgres to check
-// whether an active session references it. If no active session exists,
-// the claim is reclaimed". The per-pod claim (§4.6.3) carries no session
-// identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding. The WarmPoolController depends only on
-// this narrow contract so the GC loop stays decoupled from the session
-// store package.
+// SessionLookup reports whether a session holds the pod of a SandboxClaim:
+// a session whose row names the pod and is non-terminal or in its §7.1
+// post-terminal window. spec: §4.6.1 (Orphaned SandboxClaim detection) — the
+// controller reclaims a claim only when no session holds its pod. The
+// per-pod claim (§4.6.3) carries no session identifier, so the check keys
+// on the pod through the Postgres `pod_assignment` binding. The
+// WarmPoolController depends only on this narrow contract so the GC loop
+// stays decoupled from the session store package.
 type SessionLookup interface {
-	// PodHasActiveSession reports whether any non-terminal session is
-	// bound to the named Sandbox pod. A pod with no live session reports
-	// false (the gateway crashed before persisting the session, or every
-	// session it served has reached a terminal state), so its orphaned
-	// claim is reclaimable.
+	// PodHasActiveSession reports whether any session holds the named
+	// Sandbox pod: a non-terminal session bound to it, or a terminal one
+	// whose release the gateway has not recorded within the post-terminal
+	// cap (claimOrphanTimeout in the controller). A pod with no holder
+	// reports false (the gateway crashed before persisting the session, or
+	// every session it served released the pod or passed the cap), so its
+	// orphaned claim is reclaimable. spec: §7.1 (Post-terminal window).
 	PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error)
 }
 
@@ -334,8 +336,18 @@ func (g *ClaimGarbageCollector) aged(key, now time.Time, window time.Duration) b
 }
 
 func (g *ClaimGarbageCollector) orphanTimeout() time.Duration {
-	if g.OrphanTimeout > 0 {
-		return g.OrphanTimeout
+	return ResolveClaimOrphanTimeout(g.OrphanTimeout)
+}
+
+// ResolveClaimOrphanTimeout returns the orphan timeout the GC loop applies
+// for a configured value d: d when positive, otherwise the §4.6.1 default.
+// The controller's session store takes the same value as its §7.1
+// post-terminal cap, so the window the orphan predicates count and the
+// orphan age the loop applies stay one number.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+func ResolveClaimOrphanTimeout(d time.Duration) time.Duration {
+	if d > 0 {
+		return d
 	}
 	return defaultClaimOrphanTimeout
 }

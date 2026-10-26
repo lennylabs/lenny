@@ -542,6 +542,9 @@ func (s *Server) terminalReclaimPreRunning(ctx context.Context, fromState sessio
 		log.Printf("lenny-gateway: reclaim claimed pod %s for pre-running terminal session %s: %v",
 			sess.PodAssignment, sess.ID, err)
 	}
+	// spec: §7.1 (Post-terminal window) — the reclaim ran, so record the
+	// release whatever its error.
+	s.recordPodRelease(ctx, sess)
 	return true
 }
 

@@ -69,12 +69,16 @@ var ErrRehydrationStalled = errors.New("slotcounter: slot-counter rehydration di
 // The production implementation is the Postgres-backed SessionStore.
 //
 // GetActiveSlotsByPod returns the identifiers of the pod's slot holders: the
-// sessions whose row is non-terminal and whose pod_assignment names the pod
-// (the slot-holder predicate). The rehydration adds them to the pod's set and
-// removes no member.
+// sessions whose pod_assignment names the pod and whose row is non-terminal
+// or in its §7.1 post-terminal window (terminal, no release recorded, and
+// terminated within the post-terminal cap). The Postgres store reads the two
+// arms through the migration 0080 index and the migration 0191 index. The
+// rehydration adds them to the pod's set and removes no member, so a slot a
+// terminal pipeline still uses is not reissued after a Redis set loss.
 //
-// ListPodsWithActiveSlots returns the distinct pods that a non-terminal
-// concurrent-workspace session row names, across tenants. The recovery
+// ListPodsWithActiveSlots returns the distinct pods that a
+// concurrent-workspace session row holds by the same two arms, across
+// tenants. The recovery
 // rebuild deletes each listed pod's rehydrated flag, so the pod's next
 // reservation or release rehydrates its set from the rows.
 //
@@ -82,7 +86,7 @@ var ErrRehydrationStalled = errors.New("slotcounter: slot-counter rehydration di
 // no member on first access (apart from a release's own member), which is
 // only correct for deployments that never restart Redis under load.
 // spec: §5.2 (Post-recovery rehydration atomicity), §12.4 (Redis failure
-// behavior).
+// behavior), §7.1 (Post-terminal window).
 type SlotSource interface {
 	GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error)
 	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)

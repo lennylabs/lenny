@@ -309,11 +309,14 @@ var preconditionTable = map[Endpoint]endpointRule{
 	},
 	EndpointTerminate: {
 		// §7.2 input_required → cancelled requires terminate to
-		// accept the sub-state too.
+		// accept the sub-state too. spec: §7.2 (Interactive Session
+		// Model), §15.1 — terminate from the internal `resuming`
+		// transient is admitted, as DELETE admits it, and yields
+		// `completed` like terminate from resume_pending.
 		baseStates: []State{
 			StateCreated, StateFinalizing, StateReady, StateStarting,
 			StateRunning, StateInputRequired, StateSuspended, StateResumePending,
-			StateAwaitingClientAction,
+			StateAwaitingClientAction, StateResuming,
 		},
 	},
 	// spec: §15.1 — POST /resume admits awaiting_client_action and
@@ -422,11 +425,10 @@ func Validate(r PreconditionRequest) error {
 			return nil
 		}
 	}
-	sort.Slice(allowed, func(i, j int) bool { return allowed[i] < allowed[j] })
 	return &PreconditionError{
 		Endpoint:      r.Endpoint,
 		CurrentState:  r.CurrentState,
-		AllowedStates: allowed,
+		AllowedStates: externallyVisible(allowed),
 	}
 }
 
@@ -442,6 +444,25 @@ func AllowedStates(endpoint Endpoint, capabilities map[Capability]bool) []State 
 	for _, g := range rule.gated {
 		if capabilities[g.flag] {
 			out = append(out, g.states...)
+		}
+	}
+	return externallyVisible(out)
+}
+
+// externallyVisible returns the members of states that AllStates() lists,
+// sorted. Admission checks the full set, internal `resuming` included, but
+// a §15.1 409 echoes only externally visible states, so no
+// details.allowedStates names `resuming`.
+// spec: §15.1 (Externally visible vs. internal-only states)
+func externallyVisible(states []State) []State {
+	visible := make(map[State]bool, len(AllStates()))
+	for _, st := range AllStates() {
+		visible[st] = true
+	}
+	out := make([]State, 0, len(states))
+	for _, st := range states {
+		if visible[st] {
+			out = append(out, st)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })

@@ -547,6 +547,10 @@ func (w *gatewayWiring) buildAdminRouter(
 				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, tenantID, userID)
 				return err
 			}).
+			// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal
+			// window) — the store deletions wait until no drained session
+			// of the user is in its post-terminal window.
+			WithReleaseGate(w.erasureReleaseGate()).
 			WithHoldCheck(func(ctx context.Context, tenantID, userID string) ([]erasurejob.Hold, error) {
 				held, err := admin.HeldResourcesForUser(ctx, w.sessions, artifactHolds, tenantID, userID)
 				if err != nil {
@@ -730,11 +734,10 @@ func (w *gatewayWiring) buildAdminRouter(
 			// §12.8 Phase 2: drain the tenant's sessions through the shared
 			// lifecycle drain, each drain bounded by --lifecycle-tick-budget.
 			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
-			Terminator: tenantSessionTerminator{
-				sessions: w.sessions,
-				term:     sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal},
-				budget:   *lifecycleTickBudget,
-			},
+			Terminator: w.newTenantSessionTerminator(
+				sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal},
+				*lifecycleTickBudget,
+			),
 			Clock: clockinject.Now,
 		}
 		if auditAppender != nil {
@@ -1211,3 +1214,30 @@ func sessionIDsAdapter(fn func(ctx context.Context, tenantID, userID string, ses
 // mutates w.mux in place later.
 //
 // spec: §4.1 gateway subsystem seams; §15.1 REST API; §27.3 middleware.
+
+// erasureReleaseGate returns the §12.8 erasure runner's post-terminal
+// release gate: the identifiers of the user's sessions in their §7.1
+// post-terminal window, listed from the primary over w.sessions on the
+// injected clock with the cap buildStores computed. The gate returns
+// identifiers rather than an admin error, because admin imports erasurejob.
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window)
+func (w *gatewayWiring) erasureReleaseGate() func(ctx context.Context, tenantID, userID string) ([]string, error) {
+	return func(ctx context.Context, tenantID, userID string) ([]string, error) {
+		return admin.ReleasePending(ctx, w.sessions, tenantID, userID, clockinject.Now(), w.postTerminalCap)
+	}
+}
+
+// newTenantSessionTerminator returns the §12.8 Phase 2 session terminator
+// over w.sessions, draining through term under the per-drain budget and
+// holding Phase 2 while a session is in its §7.1 post-terminal window, with
+// the cap buildStores computed and the injected clock.
+// spec: §12.8 (Tenant deletion lifecycle), §7.1 (Post-terminal window)
+func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, budget time.Duration) tenantSessionTerminator {
+	return tenantSessionTerminator{
+		sessions: w.sessions,
+		term:     term,
+		budget:   budget,
+		cap:      w.postTerminalCap,
+		clock:    clockinject.Now,
+	}
+}

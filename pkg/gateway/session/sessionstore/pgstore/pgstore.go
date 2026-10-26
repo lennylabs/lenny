@@ -44,6 +44,12 @@ type Store struct {
 	// CreateWithTranscript return ErrTranscriptCopierUnwired.
 	// spec: §12.8 (Lifecycle fence and drain).
 	copyTranscript TranscriptCopier
+	// postTerminalCap caps the §7.1 post-terminal window the slot queries
+	// count: a terminal row that names a pod and records no release holds
+	// that pod until terminated_at plus postTerminalCap. Zero or negative
+	// counts no terminal row (WithPostTerminalCap).
+	// spec: §7.1 (Post-terminal window).
+	postTerminalCap time.Duration
 }
 
 // Option configures a Store at construction time.
@@ -57,6 +63,26 @@ func WithReadPool(read *pgxpool.Pool) Option {
 		if read != nil {
 			s.read = read
 		}
+	}
+}
+
+// PostTerminalCap returns the §7.1 post-terminal cap the store's slot
+// queries count, as WithPostTerminalCap set it. The composition roots' wiring
+// tests read it to pin the cap each production construction passes.
+// spec: §7.1 (Post-terminal window).
+func (s *Store) PostTerminalCap() time.Duration {
+	return s.postTerminalCap
+}
+
+// WithPostTerminalCap sets the cap of the §7.1 post-terminal window that
+// GetActiveSlotsByPod, ReserveSlotUnderLock, and ListPodsWithActiveSlots
+// count: the gateway passes the terminal pipeline budget, the warm-pool
+// controller claimOrphanTimeout. A non-positive cap omits the terminal arm,
+// so the queries count only non-terminal rows.
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration atomicity)
+func WithPostTerminalCap(d time.Duration) Option {
+	return func(s *Store) {
+		s.postTerminalCap = d
 	}
 }
 
@@ -139,7 +165,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	last_agent_activity_at,
 	COALESCE(credential_origin_session_id::text, ''),
 	credential_deny,
-	accumulated_session_age_seconds`
+	accumulated_session_age_seconds,
+	pod_released_at`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -152,8 +179,46 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 // reservation whose ID and owner match the row, in one transaction.
 // spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
-	return s.create(ctx, sess, nil)
+	return s.create(ctx, sess, nil, nil)
 }
+
+// CreateIfGeneration implements Store: Create with a generation fence on the
+// source row, read FOR SHARE in the insert transaction before the INSERT,
+// as the creation fence reads its marker rows.
+// spec: §7.1 (Derive session semantics).
+func (s *Store) CreateIfGeneration(ctx context.Context, sess sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
+	return s.create(ctx, sess, func(ctx context.Context, tx pgx.Tx) error {
+		return fenceSourceGeneration(ctx, tx, sourceTenantID, sourceID, wantGen)
+	}, nil)
+}
+
+// fenceSourceGeneration reads the source row's coordination_generation FOR
+// SHARE on tx and returns ErrGenerationAdvanced when it is not wantGen, or
+// ErrNotFound when the row is missing. The shared lock makes a concurrent
+// Update of the source row, which takes FOR UPDATE, wait for this
+// transaction, so a generation bump either precedes the read or follows the
+// commit.
+// spec: §7.1 (Derive session semantics).
+func fenceSourceGeneration(ctx context.Context, tx pgx.Tx, tenantID, sourceID string, wantGen int64) error {
+	var gen int64
+	err := tx.QueryRow(ctx,
+		`SELECT coordination_generation FROM sessions WHERE id = $1::uuid AND tenant_id = $2 FOR SHARE`,
+		sourceID, tenantID).Scan(&gen)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sessionstore.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read source session %s generation: %w", sourceID, err)
+	}
+	if gen != wantGen {
+		return sessionstore.ErrGenerationAdvanced
+	}
+	return nil
+}
+
+// beforeInsert runs in the insert transaction after the creation fence and
+// before the INSERT. A non-nil error rolls the transaction back.
+type beforeInsert func(ctx context.Context, tx pgx.Tx) error
 
 // afterInsert runs in the insert transaction after the fence, the INSERT,
 // and the reservation DELETE. reservationDeleted reports whether that DELETE
@@ -162,7 +227,7 @@ type afterInsert func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session,
 
 // create is the shared insert of Create, CreateReserved, and
 // CreateWithTranscript.
-func (s *Store) create(ctx context.Context, sess sessionstore.Session, after afterInsert) error {
+func (s *Store) create(ctx context.Context, sess sessionstore.Session, before beforeInsert, after afterInsert) error {
 	now := time.Now().UTC()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = now
@@ -220,7 +285,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, after aft
 		last_agent_activity_at,
 		credential_origin_session_id,
 		credential_deny,
-		accumulated_session_age_seconds
+		accumulated_session_age_seconds,
+		pod_released_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -265,7 +331,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, after aft
 		-- after creation, so it is absent from updateSQL.
 		$58,
 		-- §6.2 accumulated_session_age_seconds; zero for a new row.
-		$59
+		$59,
+		-- §7.1 pod_released_at; NULL until the release is recorded.
+		$60
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -289,6 +357,11 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, after aft
 		// marker rows FOR SHARE before the INSERT, in this transaction.
 		if err := fenceInsert(ctx, tx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0); err != nil {
 			return err
+		}
+		if before != nil {
+			if err := before(ctx, tx); err != nil {
+				return err
+			}
 		}
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
@@ -376,7 +449,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, after aft
 			sess.CredentialDeny,
 			// $59 — §6.2 accumulated_session_age_seconds, the active age
 			// Update accrues on every later write. Zero for a new row.
-			sess.AccumulatedSessionAgeSeconds)
+			sess.AccumulatedSessionAgeSeconds,
+			// $60 — §7.1 release marker; a zero time persists as NULL.
+			pgtenant.NullTime(sess.PodReleasedAt))
 		if err != nil {
 			return err
 		}
@@ -533,7 +608,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		last_agent_activity_at = $49,
 		workspace_plan = $55::jsonb,
 		accumulated_session_age_seconds = $56,
-		last_write_id = $57::uuid
+		last_write_id = $57::uuid,
+		pod_released_at = $58
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -661,6 +737,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $57 — §12.3 write identifier, read back after a lost
 			// commit acknowledgement.
 			writeID,
+			// $58 — §7.1 release marker MarkPodReleased sets; a zero
+			// time keeps SQL NULL. spec: §7.1 (Post-terminal window).
+			pgtenant.NullTime(sess.PodReleasedAt),
 		); err != nil {
 			return err
 		}
@@ -919,28 +998,77 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	return deleted, err
 }
 
+// nonTerminalHolderArm is the non-terminal arm of the §7.1 pod-holder
+// predicate: a non-terminal row that names a pod. Its predicate is the
+// migration 0080 idx_sessions_active_by_pod predicate verbatim and matches
+// session.TerminalStates(), so the planner reads that partial index.
+const nonTerminalHolderArm = `pod_assignment <> ''
+	AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`
+
+// terminalHolderArmFormat is the terminal arm of the §7.1 pod-holder
+// predicate: a terminal row that names a pod, records no release, and
+// terminated after the cutoff (the store clock minus the post-terminal
+// cap). Its predicate is the migration 0191
+// idx_sessions_unreleased_terminal_by_pod predicate verbatim plus the
+// terminated_at range the index leads with. The single verb is the bind
+// position of the cutoff. Every slot query takes the arm from here.
+// spec: §7.1 (Post-terminal window).
+const terminalHolderArmFormat = `pod_assignment <> ''
+	AND pod_released_at IS NULL
+	AND state IN ('completed', 'failed', 'cancelled', 'expired')
+	AND terminated_at > $%d`
+
+// terminalHolderArm returns the terminal arm with the cutoff at bind
+// position cutoffParam.
+func terminalHolderArm(cutoffParam int) string {
+	return fmt.Sprintf(terminalHolderArmFormat, cutoffParam)
+}
+
+// holderCutoff reports whether the terminal arm runs and, when it does, the
+// cutoff terminated_at must exceed: the wall clock minus the post-terminal
+// cap. The arm is omitted when the cap is not positive.
+// spec: §7.1 (Post-terminal window).
+func (s *Store) holderCutoff() (time.Time, bool) {
+	if s.postTerminalCap <= 0 {
+		return time.Time{}, false
+	}
+	return time.Now().Add(-s.postTerminalCap), true
+}
+
+// podHoldersQuery returns the query selecting the identifiers of the
+// sessions that hold the pod at bind position 1, and its arguments: the
+// non-terminal arm, and, when the cap is positive, the terminal arm joined
+// by UNION ALL. Each arm matches one partial index.
+func (s *Store) podHoldersQuery(podID string) (string, []any) {
+	q := `SELECT id FROM sessions WHERE pod_assignment = $1 AND ` + nonTerminalHolderArm
+	args := []any{podID}
+	if cutoff, ok := s.holderCutoff(); ok {
+		q += ` UNION ALL SELECT id FROM sessions WHERE pod_assignment = $1 AND ` + terminalHolderArm(2)
+		args = append(args, cutoff)
+	}
+	return q, args
+}
+
 // GetActiveSlotsByPod implements Store: the §5.2 rehydration seed source.
-// It returns the identifiers of the non-terminal sessions whose
-// pod_assignment names podID (the slot-holder predicate). The read runs
+// It returns the identifiers of the sessions that hold podID: the
+// non-terminal sessions whose pod_assignment names it, read through the
+// migration 0080 index, and the terminal sessions in their §7.1
+// post-terminal window, read through the migration 0191 index when the
+// store has a post-terminal cap (WithPostTerminalCap). The read runs
 // cross-tenant (InAllTenants) because the rehydration path holds only the
 // pod identity; §5.2 tenant pinning guarantees every row belongs to one
-// tenant. The partial index from migration 0080 keeps the read under the 5ms
-// target the spec assumes during a post-restart rehydration burst. The
-// non-terminal predicate matches the index predicate and
-// session.TerminalStates() verbatim.
-// spec: §5.2 (Post-recovery rehydration atomicity).
+// tenant. The partial indexes keep the read under the 5ms target the spec
+// assumes during a post-restart rehydration burst.
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.1 (Post-terminal window).
 func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error) {
 	if podID == "" {
 		return nil, nil
 	}
+	q, args := s.podHoldersQuery(podID)
 	var ids []string
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
 		var qErr error
-		ids, qErr = collectStrings(ctx, tx,
-			`SELECT id FROM sessions
-			   WHERE pod_assignment = $1
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
-			podID)
+		ids, qErr = collectStrings(ctx, tx, q, args...)
 		return qErr
 	})
 	if err != nil {
@@ -951,18 +1079,26 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) ([]string
 
 // ListPodsWithActiveSlots implements Store: the pods the slot counter's
 // recovery rebuild names. It returns the distinct pod_assignment values of
-// the non-terminal best-effort-per-slot session rows across tenants, with
-// the predicate of the migration 0080 partial index.
-// spec: §12.4 (Redis failure behavior).
+// the best-effort-per-slot session rows that hold their pod across tenants:
+// the non-terminal arm through the migration 0080 index and, when the store
+// has a post-terminal cap, the terminal arm through the migration 0191
+// index, joined by UNION.
+// spec: §12.4 (Redis failure behavior), §7.1 (Post-terminal window).
 func (s *Store) ListPodsWithActiveSlots(ctx context.Context) ([]string, error) {
+	q := `SELECT pod_assignment FROM sessions
+		WHERE scrub_policy = 'best-effort-per-slot' AND ` + nonTerminalHolderArm
+	var args []any
+	if cutoff, ok := s.holderCutoff(); ok {
+		q += ` UNION SELECT pod_assignment FROM sessions
+		WHERE scrub_policy = 'best-effort-per-slot' AND ` + terminalHolderArm(1)
+		args = append(args, cutoff)
+	} else {
+		q = `SELECT DISTINCT pod_assignment FROM (` + q + `) holders`
+	}
 	var pods []string
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
 		var qErr error
-		pods, qErr = collectStrings(ctx, tx,
-			`SELECT DISTINCT pod_assignment FROM sessions
-			   WHERE pod_assignment <> ''
-			     AND scrub_policy = 'best-effort-per-slot'
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`)
+		pods, qErr = collectStrings(ctx, tx, q, args...)
 		return qErr
 	})
 	if err != nil {
@@ -1035,14 +1171,17 @@ func collectStrings(ctx context.Context, tx pgx.Tx, query string, args ...any) (
 // commit (releasing the xact lock) before reading the count, and cannot
 // observe the same free slot. The lock key is a 64-bit hash of podID; the
 // xact-scoped form releases automatically at commit or rollback, so a
-// crashed gateway never strands the lock. The count predicate matches
-// GetActiveSlotsByPod (and session.TerminalStates()) verbatim so the gate
-// reads the same source the blocking-rehydration protocol reads. The
+// crashed gateway never strands the lock. The count reads the holders
+// GetActiveSlotsByPod reads (podHoldersQuery): the non-terminal arm through
+// the migration 0080 index and the §7.1 post-terminal arm through the
+// migration 0191 index, so the gate reads the same source the
+// blocking-rehydration protocol reads and a slot a terminal pipeline still
+// uses is not reissued. The
 // returned post-admission count is the observed count plus one; the caller
 // (slotcounter) does not write the Postgres row — the slot occupancy is
 // recorded when the session row's pod_assignment is persisted on bind.
-// spec: §12.4;
-// §5.2.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
+// §7.1 (Post-terminal window).
 func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
@@ -1062,11 +1201,9 @@ func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcu
 			return fmt.Errorf("pgstore: acquire per-pod advisory lock for %s: %w", podID, err)
 		}
 		var current int32
+		holders, args := s.podHoldersQuery(podID)
 		if err := tx.QueryRow(ctx,
-			`SELECT count(*) FROM sessions
-			   WHERE pod_assignment = $1
-			     AND state NOT IN ('completed', 'failed', 'cancelled', 'expired')`,
-			podID).Scan(&current); err != nil {
+			`SELECT count(*) FROM (`+holders+`) holders`, args...).Scan(&current); err != nil {
 			return fmt.Errorf("pgstore: count active slots under lock for pod %s: %w", podID, err)
 		}
 		if current >= maxConcurrent {
@@ -1320,6 +1457,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §6.2 idle-timer anchor from migration 0159.
 		// Nullable (NULL until the first qualifying agent event). F-11.3.7.
 		lastAgentActivityAt *time.Time
+		podReleasedAt       *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -1400,8 +1538,14 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §6.2 — accumulated_session_age_seconds from migration 0182, the
 		// active age up to the row's last write.
 		&s.AccumulatedSessionAgeSeconds,
+		// §7.1 — pod_released_at from migration 0191. NULL until the
+		// release is recorded.
+		&podReleasedAt,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if podReleasedAt != nil {
+		s.PodReleasedAt = *podReleasedAt
 	}
 	if legalHoldSetAt != nil {
 		s.LegalHoldSetAt = *legalHoldSetAt

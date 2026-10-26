@@ -146,7 +146,7 @@ var closedLifecycleFindings = []closedLifecycleFinding{
 	{id: "F-12.8.36", file: "pkg/gateway/storage/erasurejob/runner_sweep.go", symbol: "Runner.RunPending"},
 	{
 		id: "F-12.8.38", file: terminatorFile, symbol: "tenantSessionTerminator",
-		holds: fileContains("cmd/lenny-gateway/adminrouter.go", "Terminator: tenantSessionTerminator"),
+		holds: fileContains("cmd/lenny-gateway/adminrouter.go", "Terminator: w.newTenantSessionTerminator("),
 	},
 	{id: "F-12.8.39", file: erasurePgFile, symbol: "Store.Complete"},
 	{

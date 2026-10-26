@@ -121,7 +121,7 @@ func requireReservation(_ context.Context, _ pgx.Tx, sess sessionstore.Session, 
 // CreateReserved implements sessionstore.Store.
 // spec: §12.8 (Lifecycle fence and drain).
 func (s *Store) CreateReserved(ctx context.Context, sess sessionstore.Session) error {
-	return s.create(ctx, sess, requireReservation)
+	return s.create(ctx, sess, nil, requireReservation)
 }
 
 // CreateWithTranscript implements sessionstore.Store: the copy runs on the
@@ -133,7 +133,7 @@ func (s *Store) CreateWithTranscript(ctx context.Context, sess sessionstore.Sess
 	if s.copyTranscript == nil {
 		return sessionstore.ErrTranscriptCopierUnwired
 	}
-	return s.create(ctx, sess, func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, _ bool) error {
+	return s.create(ctx, sess, nil, func(ctx context.Context, tx pgx.Tx, sess sessionstore.Session, _ bool) error {
 		if err := s.copyTranscript(ctx, tx, sess.TenantID, transcriptSourceID, sess.ID); err != nil {
 			return fmt.Errorf("copy transcript %s to %s: %w", transcriptSourceID, sess.ID, err)
 		}

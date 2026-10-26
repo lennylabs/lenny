@@ -440,6 +440,11 @@ func assertTerminalContext(t *testing.T, f *tcFixture, entry time.Time, sc tcSce
 	if logCalled && !logDL.Equal(releaseDL) {
 		t.Errorf("session-log close deadline %v differs from the release deadline %v; they must share one context", logDL, releaseDL)
 	}
+	// spec: 7.1 (Post-terminal window) — the binding was held, so the
+	// release is recorded on the row, an already-expired context included.
+	if row, err := f.store.Get(context.Background(), "acme", "s"); err != nil || row.PodReleasedAt.IsZero() {
+		t.Errorf("PodReleasedAt = %v (%v), want the release recorded", row.PodReleasedAt, err)
+	}
 }
 
 // TestTerminalPipelineBudgetFor_spec_7_1 pins the one computation of the

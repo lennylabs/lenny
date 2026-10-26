@@ -69,7 +69,7 @@ func terminalRequest(t *testing.T, srv *Server, method, path string) *httptest.R
 
 // TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1 asserts that POST
 // /terminate and DELETE re-validate on the locked row: a terminate on a row
-// that became resuming answers the precondition error with no hook; a
+// that became resuming writes completed with a generation bump; a
 // terminate on a row that became resume_pending completes; a delete on a row
 // that became resuming writes cancelled with a generation bump; a delete on a
 // row that became expired answers the precondition error with no hook; and a
@@ -90,7 +90,7 @@ func TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1(t *testing.T) {
 	}{
 		{
 			"terminate on a row that became resuming", http.MethodPost, "/v1/sessions/s/terminate",
-			session.StateRunning, session.StateResuming, http.StatusConflict, session.StateResuming, false,
+			session.StateRunning, session.StateResuming, http.StatusOK, session.StateCompleted, true,
 		},
 		{
 			"terminate on a row that became resume_pending", http.MethodPost, "/v1/sessions/s/terminate",

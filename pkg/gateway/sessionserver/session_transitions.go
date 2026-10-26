@@ -33,8 +33,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 // endpoint's precondition on the locked row inside the Update, and on a
 // terminal write records the Terminated fact and runs the post-terminal hook
 // with fromState from the locked row. Terminate admits every non-terminal
-// state except resuming, so a restore that moved the row to resuming after
-// the entry read gets no terminate write.
+// state, the internal resuming transient included, and yields completed from
+// each; from resume_pending and resuming the session ends as the caller
+// asked. A terminate of a resuming row bumps coordination_generation in the
+// same write (MarkTerminated), so the in-flight restore's stale RPCs fail
+// their fence.
 //
 // spec: §7.2 (Interactive Session Model), §15.1 (REST API)
 func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*sessionstore.Session)) http.HandlerFunc {

@@ -305,3 +305,74 @@ func TestAllowedStatesIncludesGatedWhenCapabilityHeld(t *testing.T) {
 		t.Errorf("with-capability AllowedStates: want 2 entries, got %v", with)
 	}
 }
+
+// TestTerminateAdmitsResumingAndEchoesOnlyVisibleStates_spec_7_2 pins the
+// terminate precondition: terminate from every precondition state, the
+// internal resuming transient included, is admitted. For every endpoint and
+// capability set, AllowedStates and the AllowedStates of each rejecting
+// Validate hold only AllStates() members, so no 409 names resuming. DELETE
+// from expired is the case the pre-fix echo fails, because DELETE admits
+// resuming.
+//
+// spec: §7.2 (Interactive Session Model), §15.1 (REST API)
+func TestTerminateAdmitsResumingAndEchoesOnlyVisibleStates_spec_7_2(t *testing.T) {
+	for _, st := range append(nonTerminalForTest(), StateResuming) {
+		if err := Validate(PreconditionRequest{Endpoint: EndpointTerminate, CurrentState: st}); err != nil {
+			t.Errorf("terminate from %s = %v, want admitted", st, err)
+		}
+	}
+	visible := map[State]bool{}
+	for _, st := range AllStates() {
+		visible[st] = true
+	}
+	endpoints := []Endpoint{
+		EndpointUpload, EndpointFinalize, EndpointStart, EndpointInterrupt, EndpointTerminate,
+		EndpointResume, EndpointMessages, EndpointDerive, EndpointDelete,
+	}
+	capSets := []map[Capability]bool{
+		nil,
+		{CapabilityMidSessionUpload: true},
+		{CapabilityAllowStaleDerive: true},
+		{CapabilityMidSessionUpload: true, CapabilityAllowStaleDerive: true},
+	}
+	checkVisible := func(where string, states []State) {
+		for _, st := range states {
+			if !visible[st] {
+				t.Errorf("%s lists %q, which AllStates() does not", where, st)
+			}
+		}
+	}
+	for _, ep := range endpoints {
+		for _, caps := range capSets {
+			checkVisible(string(ep)+" AllowedStates", AllowedStates(ep, caps))
+			for _, st := range append(AllStates(), StateResuming) {
+				err := Validate(PreconditionRequest{Endpoint: ep, CurrentState: st, Capabilities: caps})
+				var pe *PreconditionError
+				if errors.As(err, &pe) {
+					checkVisible(string(ep)+" from "+string(st), pe.AllowedStates)
+				}
+			}
+		}
+	}
+	err := Validate(PreconditionRequest{Endpoint: EndpointDelete, CurrentState: StateExpired})
+	var pe *PreconditionError
+	if !errors.As(err, &pe) {
+		t.Fatalf("DELETE from expired = %v, want a precondition error", err)
+	}
+	for _, st := range pe.AllowedStates {
+		if st == StateResuming {
+			t.Errorf("DELETE from expired echoes resuming: %v", pe.AllowedStates)
+		}
+	}
+}
+
+// nonTerminalForTest lists the AllStates() members that are not terminal.
+func nonTerminalForTest() []State {
+	var out []State
+	for _, st := range AllStates() {
+		if !IsTerminal(st) {
+			out = append(out, st)
+		}
+	}
+	return out
+}

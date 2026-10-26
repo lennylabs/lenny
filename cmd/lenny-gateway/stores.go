@@ -101,6 +101,9 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	postgresDSN := f.postgresDSN
 	readDSN := f.readDSN
 	sqlitePath := f.sqlitePath
+	// spec: §7.1 (Post-terminal window) — the window cap is the terminal
+	// pipeline budget the session server runs with, computed once here.
+	w.postTerminalCap = terminalPipelineBudgetInEffect(*f.workspaceSealMaxDurationSeconds, *f.streamFailureReportTimeout)
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -270,8 +273,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		}
 		// spec: §12.8 (Lifecycle fence and drain) — the replay transcript
 		// copy runs on the replayed session's insert transaction.
-		sessions = sessionpg.New(pool, sessionpg.WithReadPool(readPool),
-			sessionpg.WithTranscriptCopier(transcriptpg.CopySessionTx))
+		sessions = w.newPGSessionStore(pool, readPool)
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
 		capOverrides = capoverridepg.New(pool)
@@ -299,6 +301,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		sessMem := memstore.New(
 			memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenantMem, userMem)),
 			memstore.WithTranscriptCopier(transcriptMem.CopySession),
+			memstore.WithPostTerminalCap(w.postTerminalCap),
 		)
 		connectorMem := connectorstore.NewMemory()
 		billingMem := billingstore.NewMemory()
@@ -573,3 +576,13 @@ func objectStoreBackendName(provider, minioEndpoint string) string {
 // earlier build step and threaded through the accumulator.
 //
 // spec: §17 — the run-and-shutdown loop; §25.13 in-process alert tracker.
+
+// newPGSessionStore builds the Postgres session store over the primary and
+// the optional read-replica pool, with the replay transcript copier and the
+// §7.1 post-terminal cap buildPersistenceStores computed.
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window)
+func (w *gatewayWiring) newPGSessionStore(pool, readPool *pgxpool.Pool) *sessionpg.Store {
+	return sessionpg.New(pool, sessionpg.WithReadPool(readPool),
+		sessionpg.WithTranscriptCopier(transcriptpg.CopySessionTx),
+		sessionpg.WithPostTerminalCap(w.postTerminalCap))
+}

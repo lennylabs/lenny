@@ -1095,7 +1095,7 @@ func TestPartialCleanerCleanupAfterResumeReleasesChunksAndRow(t *testing.T) {
 	objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
 	cleaner := &checkpointer.PartialCleaner{Store: store, Catalog: catalog, Objects: objects, TombstoneRetention: time.Hour}
 
-	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1", 1); err != nil {
 		t.Fatalf("CleanupAfterResume: %v", err)
 	}
 	if len(objects.deleted) != 1 {
@@ -1115,7 +1115,7 @@ func TestPartialCleanerCleanupAfterResumeReleasesChunksAndRow(t *testing.T) {
 func TestPartialCleanerCleanupAfterResumeNoActiveManifestIsNoOp(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	cleaner := &checkpointer.PartialCleaner{Store: store}
-	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1", 1); err != nil {
 		t.Errorf("CleanupAfterResume with no active manifest = %v, want nil", err)
 	}
 }
@@ -1127,7 +1127,7 @@ func TestPartialCleanerCleanupAfterResumeSurfacesReadError(t *testing.T) {
 	inner := partialmanifeststore.NewMemoryStore(nil)
 	store := &errInjectStore{MemoryStore: inner, latestActiveErr: errors.New("postgres unreachable")}
 	cleaner := &checkpointer.PartialCleaner{Store: store}
-	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err == nil {
+	if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1", 1); err == nil {
 		t.Fatal("expected an error when the latest-active read fails")
 	}
 }
@@ -1135,10 +1135,77 @@ func TestPartialCleanerCleanupAfterResumeSurfacesReadError(t *testing.T) {
 // A nil cleaner or a cleaner with no store is a no-op.
 func TestPartialCleanerCleanupAfterResumeNilIsNoOp(t *testing.T) {
 	var nilCleaner *checkpointer.PartialCleaner
-	if err := nilCleaner.CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+	if err := nilCleaner.CleanupAfterResume(context.Background(), "acme", "s1", 1); err != nil {
 		t.Errorf("nil cleaner = %v, want nil", err)
 	}
-	if err := (&checkpointer.PartialCleaner{}).CleanupAfterResume(context.Background(), "acme", "s1"); err != nil {
+	if err := (&checkpointer.PartialCleaner{}).CleanupAfterResume(context.Background(), "acme", "s1", 1); err != nil {
 		t.Errorf("cleaner with no store = %v, want nil", err)
+	}
+}
+
+// seedInProgressAtGen writes an in_progress partial manifest for session s1
+// stamped with coordination generation gen.
+func seedInProgressAtGen(t *testing.T, store partialmanifeststore.Store, checkpointID string, gen int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	r := partialmanifeststore.Record{
+		TenantID:               "acme",
+		CheckpointID:           checkpointID,
+		SessionID:              "s1",
+		ChunkObjectKeyPrefix:   "/acme/checkpoints/s1/" + checkpointID + "/",
+		ChunkSizeBytes:         16 << 20,
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		ManifestReason:         partialmanifeststore.ReasonInProgress,
+		CoordinationGeneration: gen,
+		CheckpointStartedAt:    now,
+		CheckpointTimeoutAt:    now.Add(90 * time.Second),
+	}
+	if err := store.Put(context.Background(), r); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+}
+
+// TestCleanupAfterResumeScopedByGeneration_spec_10_1_7 pins the post-resume
+// cleanup to the coordination generation of the committed resume row. An
+// in_progress row a crashed attempt left at a lower generation is residue
+// and is cleaned. An in_progress row at the resumed generation is the live
+// incarnation's (a terminal seal's or a periodic checkpoint's intent row) and
+// is left, which is the case that fails when cleanup deletes the latest
+// active row unconditionally. A row above the resumed generation is left as
+// well; that case pins the direction of the comparison.
+//
+// spec: §10.1.7 (preStop Hook Drain), §12.5 (Artifact Store)
+func TestCleanupAfterResumeScopedByGeneration_spec_10_1_7(t *testing.T) {
+	cases := []struct {
+		name      string
+		rowGen    int64
+		resumed   int64
+		wantClean bool
+	}{
+		{name: "crash residue below the resumed generation is cleaned", rowGen: 3, resumed: 4, wantClean: true},
+		{name: "live intent row at the resumed generation is left", rowGen: 4, resumed: 4, wantClean: false},
+		{name: "row above the resumed generation is left", rowGen: 5, resumed: 4, wantClean: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := partialmanifeststore.NewMemoryStore(nil)
+			seedInProgressAtGen(t, store, "cp-1", tc.rowGen)
+			objects := newFakeObjectStore(chunkURI("acme", "s1", "cp-1", 0))
+			catalog := newFakeChunkCatalog(chunkRow("acme", "s1", "cp-1", 0, 100))
+			cleaner := &checkpointer.PartialCleaner{Store: store, Catalog: catalog, Objects: objects, TombstoneRetention: time.Hour}
+			if err := cleaner.CleanupAfterResume(context.Background(), "acme", "s1", tc.resumed); err != nil {
+				t.Fatalf("CleanupAfterResume: %v", err)
+			}
+			row, err := store.Get(context.Background(), "acme", "cp-1")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if cleaned := !row.DeletedAt.IsZero(); cleaned != tc.wantClean {
+				t.Errorf("row soft-deleted = %v, want %v", cleaned, tc.wantClean)
+			}
+			if gotObjects := len(objects.deleted) > 0; gotObjects != tc.wantClean {
+				t.Errorf("chunk objects deleted = %v (%v), want %v", gotObjects, objects.deleted, tc.wantClean)
+			}
+		})
 	}
 }

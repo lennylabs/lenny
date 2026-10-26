@@ -36,8 +36,9 @@ import (
 //   - otherwise: release exactly that binding with the disposition of the
 //     row's state, which returns the binding's credential leases.
 //
-// It writes no session row. Each reclaim is logged at INFO with the session
-// ID, state, and action.
+// It writes no session state; after a release it ran, it records the release
+// on the row (§7.1 Post-terminal window). Each reclaim is logged at INFO with
+// the session ID, state, and action.
 //
 // spec: §7.2 (Interactive Session Model), §10.1.1 (Stateless Replicas and
 // Per-Session Coordination), §10.1.5 (Stale Replica Behavior)
@@ -121,6 +122,12 @@ func (s *Server) releaseTerminalBinding(ctx context.Context, row sessionstore.Se
 		return false, nil
 	}
 	released, err := s.releaseCurrentBinding(ctx, row.ID, bind, dispositionForState(row.State))
+	// spec: §7.1 (Post-terminal window) — the release ran on the current
+	// binding; record it whatever its error. A binding replaced after the
+	// read released nothing and records nothing.
+	if released || err != nil {
+		s.recordPodRelease(ctx, row)
+	}
 	if err != nil {
 		return false, fmt.Errorf("release the binding of session %s: %w", row.ID, err)
 	}

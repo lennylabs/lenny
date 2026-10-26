@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -61,9 +63,14 @@ func reclaimTestServer(t *testing.T, podName string) (*Server, client.Client, *r
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(claim).Build()
 	assigner := &reclaimRecordingAssigner{}
 	reg := podsession.NewRegistry()
+	// The store and clock back the §7.1 release record the reclaim writes
+	// after it runs; the rows these tests reclaim are not seeded, so the
+	// record finds no row and writes nothing.
 	s := &Server{
 		podBinder:   &podsession.Binder{Client: c, Namespace: ns, Credentials: assigner},
 		podRegistry: reg,
+		store:       memstore.New(),
+		clock:       time.Now,
 	}
 	return s, c, assigner
 }

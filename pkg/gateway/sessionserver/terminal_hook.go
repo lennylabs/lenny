@@ -173,11 +173,17 @@ func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.Sta
 	if s.terminalReclaimPreRunning(ctx, fromState, sess) || s.executor == nil {
 		return
 	}
+	_, bound := s.lookupBinding(sess.ID)
 	if err := releaseExecutor(ctx, s.executor, sess.ID, disposition); err != nil {
 		// The release is best-effort, but a failed teardown leaves a claim
 		// or slot counted, so it is logged for an operator.
 		slog.Warn("sessionserver: post-terminal executor release failed",
 			"session_id", sess.ID, "state", string(sess.State), "error", err)
+	}
+	// spec: §7.1 (Post-terminal window) — a binding was held, so the
+	// executor release ran on it; record the release whatever its error.
+	if bound {
+		s.recordPodRelease(ctx, sess)
 	}
 }
 
