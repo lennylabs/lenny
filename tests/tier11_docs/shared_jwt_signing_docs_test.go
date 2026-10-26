@@ -159,12 +159,17 @@ func TestReaderDocsStateSharedES256SigningKey_spec_10_2(t *testing.T) {
 
 // TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3
 // asserts the lifetime knob replaced playground.bearerTtlSeconds and the
-// tokenExchange lifetime rows, the token exchange example returns the
+// tokenExchange lifetime rows, the token exchange paragraph limits the
+// default to refreshable tokens and exempts an actor_token delegation
+// child minted without expires_in, the token exchange example returns the
 // 900-second default, the admin API documents the playground caller
 // refusal, and the playground guide states the subject_token residual.
 //
 // diagnosis: A failure means a page still documents a lifetime key the
-// chart no longer reads, an example response contradicts the 900-second
+// chart no longer reads, the configuration reference applies the default
+// to a delegation child minted through actor_token (whose lifetime is
+// capped by the subject and actor expiries and the per-dialect cap
+// instead), an example response contradicts the 900-second
 // default, the admin API omits the 401 invalid_client refusal of a
 // playground caller token, or the playground guide implies that logout
 // revokes a child token exchanged from a playground bearer.
@@ -182,6 +187,17 @@ func TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3(t *tes
 		{
 			page:       "reference/configuration.md",
 			notContain: []string{"bearerTtlSeconds", "tokenExchange.defaultTokenTTLSeconds", "tokenExchange.maxTokenTTLSeconds"},
+		},
+		{
+			page: "reference/configuration.md",
+			row:  "issues a JWT whose holder obtains a new token before expiry",
+			contains: []string{
+				"A rotation or scope-narrowing request that carries no `expires_in`",
+				"A delegation child token minted with an `actor_token` and no `expires_in` does not take the `auth.capabilityTokenTtlSeconds` default",
+				"the earliest of the subject token's expiry, the actor token's expiry, and the per-dialect cap",
+				"Tokens whose holder has no refresh path do not take the default.",
+			},
+			notContain: []string{"A JWT issued from a request that carries no `expires_in` receives the default lifetime"},
 		},
 		{
 			page:       "client-guide/authentication.md",
@@ -285,8 +301,10 @@ func TestErrorCatalogKMSSigningUnavailableRow_spec_15(t *testing.T) {
 // tenant's concurrent-session quota on the admin API.
 //
 // diagnosis: A failure means the runbook still sends the operator to a
-// Helm token-endpoint rate limit, which does not slow session creation, or
-// lost the admin API access marker for the quota update.
+// Helm token-endpoint rate limit, which does not slow session creation,
+// lost the admin API access marker for the quota update, or nests the
+// quota under a "quota" object that the tenant update body does not
+// define, so the PUT succeeds and the quota stays unchanged.
 //
 // spec: 17.7 (Audit pipeline degradation remediation), 11.2 (Budgets and
 // quotas)
@@ -294,8 +312,8 @@ func TestAuditLockRemedyLowersConcurrentSessionQuota_spec_17_7(t *testing.T) {
 	runDocPageChecks(t, []docPageCheck{
 		{
 			page:       "runbooks/audit-pipeline-degraded.md",
-			contains:   []string{"<!-- access: api method=PUT path=/v1/admin/tenants/{id} -->", `"maxConcurrentSessions"`},
-			notContain: []string{"oauth.rateLimit.tenantPerSecond"},
+			contains:   []string{"<!-- access: api method=PUT path=/v1/admin/tenants/{id} -->", `{"maxConcurrentSessions": <lower value>}`, "confirm that `maxConcurrentSessions` carries the new value"},
+			notContain: []string{"oauth.rateLimit.tenantPerSecond", `{"quota":`},
 		},
 	})
 }

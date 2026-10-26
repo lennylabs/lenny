@@ -115,8 +115,9 @@ Replay-buffer utilization approaching 100 % indicates drops will accelerate — 
    ```
    PUT /v1/admin/tenants/<tenant-id>
    If-Match: <etag>
-   {"quota": {"maxConcurrentSessions": <lower value>}}
+   {"maxConcurrentSessions": <lower value>}
    ```
+   Read the tenant back with `GET /v1/admin/tenants/<tenant-id>` and confirm that `maxConcurrentSessions` carries the new value.
    While the tenant's session count is at or above the new quota, its session creation is refused with `429 QUOTA_EXCEEDED`, so no new sessions add audit writes under the tenant's audit lock.
 2. Force-terminate long-running sessions owned by the hot tenant to drain in-flight audit writes:
    <!-- access: lenny-ctl -->

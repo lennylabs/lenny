@@ -267,7 +267,7 @@ Lenny authenticates client requests with OIDC (OpenID Connect), the standard ide
 
 `/v1/oauth/token` is the canonical endpoint for token issuance, rotation, and delegation token minting via RFC 8693. Grant type URN: `urn:ietf:params:oauth:grant-type:token-exchange`.
 
-A JWT issued from a request that carries no `expires_in` receives the default lifetime that `auth.capabilityTokenTtlSeconds` sets (see [Web Playground configuration](#web-playground-configuration)). A request that carries `expires_in` of at least 60 seconds receives that lifetime, and a smaller value is rejected with `invalid_request`. The issued token's lifetime is then capped by the subject token's expiry and by the per-dialect cap.
+A rotation or scope-narrowing request that carries no `expires_in` issues a JWT whose holder obtains a new token before expiry, and that JWT receives the default lifetime that `auth.capabilityTokenTtlSeconds` sets (see [Web Playground configuration](#web-playground-configuration)). A request that carries `expires_in` of at least 60 seconds receives that lifetime, and a smaller value is rejected with `invalid_request`. The issued token's lifetime is then capped by the subject token's expiry and by the per-dialect cap. A delegation child token minted with an `actor_token` and no `expires_in` does not take the `auth.capabilityTokenTtlSeconds` default: its lifetime is the earliest of the subject token's expiry, the actor token's expiry, and the per-dialect cap. A delegation child token minted with `expires_in` is also capped by the actor token's expiry. Tokens whose holder has no refresh path do not take the default.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
