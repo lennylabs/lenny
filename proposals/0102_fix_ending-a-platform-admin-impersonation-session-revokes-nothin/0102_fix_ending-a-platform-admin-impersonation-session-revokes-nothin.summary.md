@@ -1,0 +1,116 @@
+# Summary: Record the platform-admin impersonation bearer in issued_tokens and end the session by revoking that row
+
+## Summary
+
+**Problem statement.** Ending a platform-admin impersonation session revokes nothing. The gateway mints the target-user bearer without an `issued_tokens` row and records the session only in a replica-local in-memory store that no verifier reads. The bearer therefore stays valid on every gateway replica and on `lenny-ops` until `exp`. A §11.4 full revoke of the target user misses it, and the single-token revoke returns 404 for it. A revoked bearer passes as a `subject_token`. `DELETE` and `GET` fail or return partial results on a replica that did not issue the session, and a restart of the issuing replica loses the session. The specification defines neither the impersonation endpoints nor what ending a session does.
+
+**What changes.**
+- §13.3 gains the **Platform-admin impersonation.** paragraph, which is the single normative home of the mechanism, and step (1a) of "Write-before-issue ordering" refuses an impersonation bearer (SPEC-1). §10.2 applies step (1a) to the session-creation and playground mints. §10.2, §12.2, §16.7, §11.4, and §15.1 cite the paragraph, and §15.1 gains the three endpoint rows (SPEC-2 to SPEC-6). SPEC-7 points the §11.7 CMP-058 halt rule at rule 3 and trims the rows that restate it.
+- `issuedtokenstore` gains the impersonation-scoped end, list, and actor-revoke queries and the caller-checked impersonation insert, the step (1a) re-read refuses an impersonation row, and migration 0190 adds the partial index (CODE-1, CODE-2).
+- The impersonation service records the bearer in `issued_tokens` and ends a session by revoking the row. The replica-local store and the expiry sweep are deleted (CODE-3).
+- The admin handlers use catalogued error codes and the narrowed response bodies (CODE-4).
+- A §11.4 full revoke of a platform-admin by a platform-admin caller also revokes the bearers that admin minted, and partial revocation results survive an error (CODE-5).
+- The operator guide, the admin API reference, and BUILD-GAPS follow the change (DOCS-1).
+
+**Decisions.**
+- D1. The session is the bearer's `issued_tokens` row, and the gateway keeps no other session state. A separate table, a migration with RLS apparatus, a residency statement, and a sweep are all avoided, and the POST, GET, and DELETE endpoints the problem requires are kept.
+- D2. Issuance stays audit first, then sign, then record. This keeps the CMP-058 fail-closed gate unchanged, and a failure leaves only an overstating started event, which a sign failure already leaves today.
+- D3. The mint writes no `token.exchanged` row. This follows the bootstrap admin-token `Record` precedent and 0097's warning that a cross-tenant `token.exchanged` row falsifies §13.3's single-`tenant_id` statement.
+- D4. An impersonation row is identified by `act_sub IS NOT NULL AND parent_jti IS NULL`. No production code writes `ActSubject` today, and delegation children set `ParentJTI`, so no marker column is needed.
+- D5. Cross-replica `DELETE`, `GET`, and the cascade use the existing `__all__` path (`pgtenant.InAllTenants`; migration 0047 already covers `issued_tokens`). Each call emits one `cross_tenant_read` through the existing synchronous `EmitCrossTenantRead`.
+- D6. `DELETE` revokes first and writes the audit event second. The conditional update picks one winner across replicas. An audit or CMP-058 outage never blocks revoking a leaked bearer.
+- D7. When the ended append fails after the revoke, `DELETE` returns the append's error and the bearer stays revoked. This keeps a single writer, and was chosen over returning 200 and relying on a sweep.
+- D8. §16.7 is narrowed so that only a winning `DELETE` writes `admin.impersonation_ended`. Expiry, full revokes, and single-token revokes write none. This removes the duplicate-sweep problem and the restart-loss problem together, and loses no fail-closed check, because the sweep wrote its row after the bearer had already expired.
+- D9. The ended payload is built from the row and the caller, without `ticket_id` or `end_reason`. A join on `impersonation_session_id` recovers the ticket.
+- D10. The admin cascade is adopted. Without it, fully revoking a compromised platform-admin leaves the bearers that admin minted live for up to an hour. The §11.4 playground extension is the precedent.
+- D11. The cascade is gated on the caller holding `platform-admin` alone (§13.3 rule 6). It reads none of the user's roles, because the bearers were minted under the role the user held then, and a demotion before the revoke would otherwise skip the cascade. The gate is not keyed on tenant, because platform-admins live in ordinary tenants and a `platform` tenant guard never matches. A caller without `platform-admin` must never reach `__all__` (§4.2, §12.3), so its full revoke always reports the skipped cascade: without that read the gateway cannot tell whether the user started a session.
+- D12. The cascade's JTIs travel through `RevokeUserTokens`, and the router pushes and counts every returned JTI even when an error is returned. Counts and failures use the existing `tokensRevoked` and `tokenRevokeError` fields.
+- D13. `lenny-ops` refuses an ended bearer at its next §25.4 rule 1 read (30 s). §25.4 is not edited, and no text claims immediate refusal.
+- D14. The row is a target-tenant `issued_tokens` row, so no CMP-058 table-placement question arises. §12.8 erasure and tenant deletion already cover it.
+- D15. `GET` items carry only the fields `issued_tokens` holds. `reason` and `ticketId` stay on the started audit event.
+- D16. Every error code is catalogued. `DELETE`'s uncatalogued `CONFLICT` becomes `409 INVALID_STATE_TRANSITION` with `currentState`, and a record failure keeps the existing `500 INTERNAL_ERROR`.
+- D17. Without a Postgres pool, signer, propagator, or audit store, the gateway registers no impersonation routes, rather than minting a bearer nobody can revoke.
+- D18. Migration 0190 adds the partial index. Without it, `GET` and the cascade range-scan every live token in every tenant.
+- D19. `Config.MaxDuration` stays and is clamped to one hour, so no setting exceeds the §15.1 cap.
+- D20. The session-creation and playground mints apply step (1a) to the caller's bearer, as an exchange does, so neither mints a token from an impersonation bearer, and an impersonating admin cannot create a session or a playground bearer as the target user. A token minted from the bearer would outlive `DELETE` and the rule 4 bound.
+
+**Watch out for.**
+- A typed-nil `*impersonation.Service` passed to `WithImpersonation` registers the routes and panics (CODE-3 item 6).
+- Today's step 5 discards every JTI on a non-nil error. Leaving it would drop the user's own tokens from the cache when the cascade fails (CODE-5 item 4).
+- `End` must attempt the ended append even when `cross_tenant_read` fails, and the reverse (CODE-3 item 4).
+- The single-winner guarantee is a Postgres property. A concurrency test against the fake store proves nothing, so the discriminating test is tier 2 (TEST-1).
+- `go generate` does not regenerate the impersonation entries in `openapi.json`, and `generated_tools.go` needs no change (CODE-4 item 5).
+- Deleting `MemStore` breaks `service_test.go` and `tests/tier2_component/tokensigning/kms_outcome_test.go` in the same step (CODE-3 item 7).
+- Existing tier-4, tier-5, tier-8, and tier-9 tests that present an impersonation bearer as `subject_token` fail once CODE-2 item 7 and CODE-3 item 3 land (TEST-2).
+- Confirm that 0190 is still the next free migration number when applying (CODE-1).
+
+## Goals
+
+- Make an ended impersonation bearer refused on every gateway replica, on `lenny-ops`, and as a `subject_token`.
+- Make a §11.4 full revoke of the target user, and of the impersonating platform-admin, reach the bearer.
+- Make list and end work from any replica and survive a restart of the issuing replica.
+- Specify the impersonation endpoints, the duration cap, and the audit trail in one normative home.
+- Close BUILD-GAPS F-13.3.20.
+
+## Non-goals
+
+- A separate `impersonation_sessions` table. Its only content beyond `issued_tokens` is the reason, the ticket reference, and an end-pending state that exists only to guarantee an ended event at expiry, which the narrowed §16.7 no longer requires.
+- A session table in platform Postgres, global or regional. Regulated target identifiers would move out of region, and the table cannot commit atomically with the target-tenant revoke.
+- Keeping the expiry ended event through a leader-gated sweep, a guarded audit append, or a `SKIP LOCKED` per-replica sweep. Each adds coordination to record an end that the started event and `exp` already bound.
+- Writing `admin.impersonation_ended` for a full revoke or a single-token revoke. Each needs a second writer and an `end_reason` enum (D8).
+- A separate §11.4 step for sessions targeting the user. `RevokeBySubject` already reaches the row.
+- An `issue_failed` ended event. An unpaired started event already reads as "ended no later than started plus duration".
+- Reordering issuance to sign, record, then audit. It changes the CMP-058 ordering and needs a compensating revoke (D2).
+- Writing the audit event before the revoke on end. An audit outage would then block revoking a leaked bearer (D6).
+- Returning 200 from `DELETE` when the ended append fails, and relying on a sweep (D7).
+- Re-attempting the ended append on a 409 retry. It can duplicate the event after a lost response.
+- Two-phase `revoked_reason` values with a reconciler. This adds a state and a worker for a failure mode that already overstates.
+- A `token.revoked` audit row on end. The §16.7 `revocation_reason` enum has no value for it, and the ended event is the receipt.
+- A `token.exchanged` row for the mint (D3).
+- An impersonation JWT claim with a new `lenny-ops` refusal rule, or a playground-style revocation key. Gateway replicas would still accept the token, and a new §25.4 rule would be needed.
+- A `kind` or `ended_audited_at` marker column (D4).
+- Using the `imp-` `jti` prefix as the discriminator. It puts semantics in an opaque identifier.
+- Requiring `tenantId` on `DELETE` and deleting `GET`. The problem requires `GET`, and `__all__` is an existing spec surface.
+- Forwarding `DELETE` and `GET` to the issuing replica over `CH-HOLDERFORWARD`. State is still lost on restart, and an impersonation session is not a coordinated session.
+- Ending sessions only through the single-token revoke endpoint. `DELETE` is the generated contract and writes the ended event.
+- Declining the admin cascade (D10).
+- New full-revoke response fields (D12).
+- Mapping a record failure to `503 SERVICE_UNAVAILABLE` (D16).
+- Removing `Config.MaxDuration` (D19).
+- A general rule that every gateway mint records `issued_tokens`. It would pull in the playground bearer, which uses its own revocation key (§27.3.1).
+- Carrying `act_sub` or a `parent_jti` link onto a token minted from an impersonation bearer so that `GET`, `DELETE`, and rule 6 reach it. It needs a recursive revoke in rule 3 and a §8.2 exception to step (1a), and the playground bearer has no row to link (D20).
+- An EventBus `token.revoked` publish so that `lenny-ops` refuses faster than 30 s (D13).
+
+## Open decisions for human to make
+
+None. The review loops add entries here.
+
+## Defects in the shipped tree that this proposal does not stage
+
+- **Single-token revoke endpoint absent from §15.1.** The gateway serves `POST /v1/admin/issued-tokens/{jti}/revoke`, but no spec file names it. This proposal relies on the endpoint only in tests and refers to it in spec text as an operator revocation of a `jti`. Specifying it is left to a §15.1 proposal.
+- **`issued_tokens` ignores regional storage routing.** §12.8 routes a regional tenant's Postgres writes to a region-local backend, while the gateway opens `issued_tokens` on its single pool everywhere. The defect covers the whole revocation store rather than this change, which follows the existing single-pool behaviour.
+
+## Impacts on other proposals
+
+| Proposal | Status | What this change does to it | What it must do |
+|:--|:--|:--|:--|
+| 0097 (Lenny-issued bearer tokens verify on every process) | Implemented | 0102 makes the impersonation bearer revocable, which 0097 left out of scope as D25, and follows its warning against a cross-tenant `token.exchanged` row | Nothing. 0097 is not edited |
+| 0101 (off-holder request forwarding on `CH-HOLDERFORWARD`) | Approved, being implemented | 0101 CODE-4 renames the propagator package that `cmd/lenny-gateway/user_revocation.go` imports, and 0102 CODE-5 edits the same file | Whichever proposal lands second re-reads `user_revocation.go` and confirms that both changes are present |
+
+## Deliverable index
+
+- SPEC-1 — spec/13_security-model.md — §13.3 **Platform-admin impersonation.** paragraph with rules 1 to 7, the tenant-scope enforcement pointer, and the step (1a) impersonation refusal.
+- SPEC-2 — spec/10_gateway-internals.md — §10.2 **Signing topology.** citation and step (1a) on the session-creation mint; playground mint invariant 1 and its failure row.
+- SPEC-3 — spec/12_storage-architecture.md — §12.2 `TokenIssuanceStore` row: `act_sub` for impersonation rows and the partial index.
+- SPEC-4 — spec/16_observability.md — §16.7 started payload gains `impersonation_session_id`; the ended event cites §13.3 rules 3 and 4 and its payload is defined.
+- SPEC-5 — spec/11_policy-and-controls.md — §11.4 step 5 points at the §13.3 rule 6 cascade.
+- SPEC-6 — spec/15_external-api-surface.md — §15.1 `POST`, `GET`, and `DELETE /v1/admin/impersonation` rows, and the `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` catalog row.
+- SPEC-7 — spec/11_policy-and-controls.md, spec/15_external-api-surface.md, spec/25_agent-operability.md, spec/16_observability.md — §11.7 item 3 pointer to §13.3 rule 3; CMP-058 catalog and alert rows trimmed to §11.7.
+- CODE-1 — migrations, tests/tier2_component/migrations — migration 0190 partial index and its tests.
+- CODE-2 — pkg/gateway/storage/issuedtokenstore, pkg/gateway/storage/pgtenant, pkg/tokenservice, pkg/gateway/mcpfabric/playground, cmd/lenny-gateway — impersonation-scoped record, end, list, and actor revoke, the step (1a) impersonation refusal, and the playground mint's step (1a) check.
+- CODE-3 — pkg/gateway/credentials/impersonation, cmd/lenny-gateway, tests/tier2_component/tokensigning — service over `issued_tokens`; MemStore, Store, and the sweep deleted; fail-closed wiring.
+- CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/openapi — handler signatures, catalogued 409, narrowed bodies, and the `DELETE` OpenAPI entry.
+- CODE-5 — cmd/lenny-gateway, pkg/gateway/externalapi/admin — full-revoke platform-admin cascade and partial-result handling.
+- TEST-1 — pkg/gateway/credentials/impersonation, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/tokenservice, pkg/gateway/mcpfabric/playground, tests/tier2_component/stores — unit and Postgres-tier tests.
+- TEST-2 — tests/tier4_integration, tests/tier5_e2e_kind, tests/tier8_chaos, tests/tier9_security — two-replica and `lenny-ops` tests, and the rewrite of existing exchange tests.
+- DOCS-1 — docs/operator-guide/security.md, docs/api/admin.md, docs/operator-guide/observability.md, docs/reference/metrics.md, docs/reference/error-catalog.md, BUILD-GAPS.md — operator guide sentence, admin API reference sections, CMP-058 row trims, and F-13.3.20 closure.
