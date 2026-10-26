@@ -3501,10 +3501,17 @@ F-10.2.26 `jwt.OIDCVerifier`.
     `oidc` mode's login and callback answer `503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE`. Wire the exchanger from
     `--oidc-issuer-url`, `--oidc-client-id`, and the issuer's discovery document, and validate the returned
     ID token with the F-10.2.26 verifier.
-  - [ ] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
+  - [x] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
     key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
     from `auth.oidc.*`.
+    Fixed in `6e0607410`: `tokenservice.Options.CallerVerifier` carries the key set joined by the IdP
+    verifier, built from `--oidc-issuer-url`, `--oidc-client-id`, and `--tenant-id-claim`. The Token
+    Service's NetworkPolicy egress to the IdP, which §13.2 does not name, is filed as F-13.2.25.
+- Proposal routing, from the F-13.3.21 fix.
+  - [ ] **F-13.2.25** (Medium), with a **Token Service IdP egress proposal** (not yet written): the §13.2
+    Token Service egress row and `allow-token-service` admit no path to the IdP, so the bootstrap caller
+    verification fails with `jwks_unavailable` under NetworkPolicy enforcement.
 
 **Object-store dependency (2026-10-26).** A review of the MinIO dependency found six defects. Each was
 re-confirmed against the tree and filed in BUILD-GAPS. None was already tracked: F-12.8.52 covers the
