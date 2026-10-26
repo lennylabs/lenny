@@ -16,9 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/commitfault"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
@@ -71,6 +74,21 @@ func (f commitAckFixture) primaryReason(t *testing.T) string {
 		t.Fatalf("GetPrimary: %v", err)
 	}
 	return got.FailureReason
+}
+
+// seedUpdatedAt overwrites the row's updated_at inside a tenant-scoped
+// transaction, because the row-level tenant guard rejects a write on a
+// connection with no tenant context.
+func (f commitAckFixture) seedUpdatedAt(t *testing.T, at time.Time) {
+	t.Helper()
+	err := pgtenant.InTx(context.Background(), f.pg.Pool, f.tenant, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(),
+			`UPDATE sessions SET updated_at = $1 WHERE id = $2::uuid AND tenant_id = $3`, at, f.id, f.tenant)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed updated_at: %v", err)
+	}
 }
 
 // spec: 12.3 (Postgres HA Requirements)
@@ -214,9 +232,7 @@ func TestSessionStoreLostCommitAckClassifiedByWriteID_spec_12_3(t *testing.T) {
 		// Both writers' clocks lag the stored updated_at, so each stamps
 		// the stored value plus 1µs.
 		prev := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
-		if _, err := f.pg.Pool.Exec(ctx, `UPDATE sessions SET updated_at = $1 WHERE id = $2::uuid`, prev, f.id); err != nil {
-			t.Fatalf("seed updated_at: %v", err)
-		}
+		f.seedUpdatedAt(t, prev)
 		var competing sessionstore.Session
 		var competingErr error
 		f.inj.OnRedial(func(context.Context) error {
