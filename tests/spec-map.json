@@ -4011,6 +4011,8 @@
       "title": "Postgres HA Requirements (R-01, R-02, R-03)",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "tests/tier0_static/self_managed_postgres_path_render_test.go::TestSelfManagedRendersGivePostgresPath_spec_17_9",
+        "tests/tier2_component/pgbouncerchart/pgbouncer_chart_test.go::TestChartPgBouncerReachesPostgres_spec_17_9",
         "tests/tier2_component/tenantsalt/saltlockpg_test.go::TestSaltLockTransactionScopedOutsidePool_spec_12_8",
         "tests/tier2_component/auditstore/cross_tenant_read_test.go::TestEmitCrossTenantReadCarriesEndpointAndCaller",
         "pkg/gateway/storage/erasurejob/runner_sweep_test.go::TestRunPendingCrossTenantRead_spec_12_3",
@@ -4519,6 +4521,8 @@
       "title": "Network Isolation",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier0_static/self_managed_postgres_path_render_test.go::TestSelfManagedRendersGivePostgresPath_spec_17_9",
+        "tests/tier2_component/pgbouncerchart/pgbouncer_chart_test.go::TestChartPgBouncerReachesPostgres_spec_17_9",
         "tests/tier2_component/migrations/migrations_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
         "tests/tier9_security/network_policy_test.go",
@@ -5963,6 +5967,8 @@
       "title": "Deployment Answer Files",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier0_static/self_managed_postgres_path_render_test.go::TestSelfManagedRendersGivePostgresPath_spec_17_9",
+        "tests/tier2_component/pgbouncerchart/pgbouncer_chart_test.go::TestChartPgBouncerReachesPostgres_spec_17_9",
         "cmd/lenny-ctl/..."
       ],
       "packages": [

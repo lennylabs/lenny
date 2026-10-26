@@ -3243,8 +3243,10 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     downgrade does not reach it until `exp`. Fixed in `d59e708dc` and `a62f91b39`: `lenny-ops` applies the
     stored assignment through `userstore.PlatformRoles`, and keeps the claim when Postgres is unreachable
     (§25.4 revocation set rule 5).
-  - [ ] **F-17.9.25** (High): the self-managed answer-file renders give no client a Postgres path under an
-    enforcing CNI (PgBouncer port 6432 against 5432 policies, no upstream database, no direct egress).
+  - [x] **F-17.9.25** (High): the self-managed answer-file renders give no client a Postgres path under an
+    enforcing CNI (PgBouncer port 6432 against 5432 policies, no upstream database, no direct egress). Fixed
+    in `937dd13d1`: PgBouncer listens on 5432 with a complete `pgbouncer.ini` routed to the CloudNativePG
+    primary, and the answer files point `postgres.dsn` at `lenny-pgbouncer:5432`.
   - [ ] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
     only at the next 30-second read.
   - [ ] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
