@@ -537,3 +537,108 @@ spec: §25.11. F-25.11.9.
 {{- $cfg | toJson -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+lenny.kmsLocal returns "true" when kms.provider selects the local provider
+and the empty string otherwise. An unset provider is local, matching the
+binaries' providerflags default.
+spec: §10.2 "Signing key and algorithm", §17.4.
+*/}}
+{{- define "lenny.kmsLocal" -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- if eq ($kms.provider | default "local") "local" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.kmsMasterKeySecretName returns the name of the Secret that holds the
+local provider's master key: kms.masterKeySecret when set, and otherwise the
+Secret kms-master-key-secret.yaml generates.
+spec: §17.4 (the local provider is keyed by a master key Secret).
+*/}}
+{{- define "lenny.kmsMasterKeySecretName" -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- $kms.masterKeySecret | default "lenny-kms-master-key" -}}
+{{- end -}}
+
+{{/*
+lenny.kmsArgs renders the KMS provider flags that lenny-gateway,
+lenny-token-service, and lenny-ops each receive, so every process that signs
+or verifies a Lenny-issued JWT resolves the same provider, aliases, and
+environment. Under the local provider it also passes --kms-master-key-file,
+which reads the shared master key Secret that lenny.kmsMasterKeyVolume mounts;
+every process therefore derives the same KEKs and the same ES256 signing key.
+Include it with nindent at the args list indentation.
+spec: §10.2 "Signing key and algorithm", §10.2 "Verifier key set and
+rotation", §17.4.
+*/}}
+{{- define "lenny.kmsArgs" -}}
+- --kms-provider={{ .Values.kms.provider }}
+- --environment={{ .Values.environment }}
+{{- with .Values.kms.aliases }}
+- --kms-alias={{ . }}
+{{- end }}
+{{- with .Values.kms.awsRegion }}
+- --kms-aws-region={{ . }}
+{{- end }}
+{{- with .Values.kms.azureVaultURL }}
+- --kms-azure-vault-url={{ . }}
+{{- end }}
+{{- if include "lenny.kmsLocal" . }}
+- --kms-master-key-file=/etc/lenny/kms/master-key
+{{- end }}
+{{- end -}}
+
+{{/*
+lenny.kmsEgressRule renders the KMS endpoint egress rule (TCP 443 to
+kms.endpointCIDR) that allow-gateway-egress and lenny-ops-egress carry
+whenever kms.provider is not local, and nothing under the local provider,
+which makes no KMS call. The gateway signs and both processes call
+GetPublicKey for the JWT verifier key set. Under a cloud provider the
+helper refuses to render while kms.endpointCIDR is 0.0.0.0/0 or ::/0:
+NetworkPolicy allows are additive, so an unrestricted 443 peer would
+cancel the private-range and IMDS excepts of the external HTTPS rules
+(NET-057). Include it with nindent at the egress list indentation.
+spec: §13.2.4 (Gateway row, lenny-ops row), §25.4 lenny-ops-egress.
+*/}}
+{{- define "lenny.kmsEgressRule" -}}
+{{- if not (include "lenny.kmsLocal" .) -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- $cidr := trim ($kms.endpointCIDR | default "" | toString) -}}
+{{- if has $cidr (list "" "0.0.0.0/0" "::/0") -}}
+{{- fail (printf "kms.endpointCIDR is %q while kms.provider is %q: set it to the subnet of the provider's private KMS endpoint, because an unrestricted KMS egress peer cancels the external HTTPS excepts (§13.2.4)" $cidr $kms.provider) -}}
+{{- end -}}
+- to:
+    - ipBlock:
+        cidr: {{ $cidr | quote }}
+  ports:
+    - port: 443
+      protocol: TCP
+{{- end -}}
+{{- end -}}
+
+{{/*
+lenny.kmsMasterKeyVolumeMount and lenny.kmsMasterKeyVolume render the
+read-only mount of the local provider's master key Secret at
+/etc/lenny/kms. The volume is never optional: a pod whose master key Secret
+is absent does not start, rather than falling back to a per-process random
+key that no other process shares. A caller renders them only when
+lenny.kmsLocal is true, so neither appears under a cloud provider. Include
+them with nindent at the volumeMounts and volumes list indentation.
+spec: §17.4 (the local provider is keyed by a master key Secret).
+*/}}
+{{- define "lenny.kmsMasterKeyVolumeMount" -}}
+- name: kms-master-key
+  mountPath: /etc/lenny/kms
+  readOnly: true
+{{- end -}}
+
+{{- define "lenny.kmsMasterKeyVolume" -}}
+- name: kms-master-key
+  secret:
+    secretName: {{ include "lenny.kmsMasterKeySecretName" . }}
+    items:
+      - key: master-key
+        path: master-key
+{{- end -}}

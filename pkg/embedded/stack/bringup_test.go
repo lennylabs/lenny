@@ -3,11 +3,14 @@
 package stack
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +18,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/yaml"
+
+	"github.com/lennylabs/lenny/pkg/embedded/manifests"
 )
 
 // withBringUpSeams stubs the in-cluster bring-up seams Up drives after the
@@ -34,15 +40,21 @@ func withBringUpSeams(t *testing.T) *bringUpCalls {
 	t.Helper()
 	calls := &bringUpCalls{}
 	prevSecret, prevImport := createDevBearerSecretFn, importPlatformBundleFn
+	prevMasterKey := createMasterKeySecretFn
 	prevNonImage, prevDeploy := applyNonImageManifestsFn, applyDeploymentManifestsFn
 	prevWait, prevInstall, prevPool := waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn
 	t.Cleanup(func() {
 		createDevBearerSecretFn, importPlatformBundleFn = prevSecret, prevImport
+		createMasterKeySecretFn = prevMasterKey
 		applyNonImageManifestsFn, applyDeploymentManifestsFn = prevNonImage, prevDeploy
 		waitGatewayDeployReadyFn, installRuntimesFn, applyEchoPoolFn = prevWait, prevInstall, prevPool
 	})
 	createDevBearerSecretFn = func(context.Context, string, string) error {
 		calls.record("secret")
+		return nil
+	}
+	createMasterKeySecretFn = func(context.Context, string) error {
+		calls.record("master-key")
 		return nil
 	}
 	importPlatformBundleFn = func(*Stack, string, io.Writer) {
@@ -180,9 +192,9 @@ func TestUpSequenceOrder_spec_17_4(t *testing.T) {
 	defer func() { _ = s.Stop(context.Background()) }()
 
 	order := calls.snapshot()
-	want := []string{"secret", "apply-nonimage", "apply-deploy", "wait", "seed", "pool"}
+	want := []string{"secret", "master-key", "apply-nonimage", "apply-deploy", "wait", "seed", "pool"}
 	if !subsequence(order, want) {
-		t.Errorf("bring-up order = %v, want the subsequence %v (secret before non-image apply, deployments after, wait before seed, pool after seed)", order, want)
+		t.Errorf("bring-up order = %v, want the subsequence %v (secrets before non-image apply, deployments after, wait before seed, pool after seed)", order, want)
 	}
 	if !calls.seeded || !calls.poolApplied {
 		t.Errorf("bring-up did not seed the registry record (%v) or apply the echo pool (%v)", calls.seeded, calls.poolApplied)
@@ -231,7 +243,7 @@ func TestUpWarmReconcileSkipsReapplyOnTagMatch_spec_17_4(t *testing.T) {
 	}
 	defer func() { _ = s.Stop(context.Background()) }()
 
-	for _, leg := range []string{"secret", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+	for _, leg := range []string{"secret", "master-key", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
 		if containsLeg(calls.snapshot(), leg) {
 			t.Errorf("warm reconcile ran the %q leg on a tag match; want it skipped (order=%v)", leg, calls.snapshot())
 		}
@@ -374,7 +386,7 @@ func TestUpDownUpWarmRestartSkipsReapply_spec_17_4(t *testing.T) {
 		t.Fatalf("second RunUp: %v", err)
 	}
 	second := calls.snapshot()[before:]
-	for _, leg := range []string{"secret", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
+	for _, leg := range []string{"secret", "master-key", "import", "apply-nonimage", "apply-deploy", "seed", "pool"} {
 		if containsLeg(second, leg) {
 			t.Errorf("warm down→up ran the %q leg; want it skipped against the persisted tag (legs=%v)", leg, second)
 		}
@@ -759,4 +771,111 @@ func TestCreateDevBearerSecretFromConfigMissingKeyFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("createDevBearerSecretFromConfig with no key file = nil error, want a read failure")
 	}
+}
+
+// TestUpMasterKeySecretFailureStopsBeforeDeployments_spec_17_4 asserts that a
+// failed master key Secret create aborts the bring-up before any Deployment
+// is applied. The gateway and lenny-ops mount the Secret without optional, so
+// applying them without it would leave their pods stuck rather than report
+// the failure.
+//
+// spec: §17.4 (lenny up generates the master key Secret before the
+// Deployments are applied).
+func TestUpMasterKeySecretFailureStopsBeforeDeployments_spec_17_4(t *testing.T) {
+	l := &fakeLauncher{gatewayHost: "127.0.0.1", kubeconfig: filepath.Join(t.TempDir(), "kubeconfig")}
+	withSubstrateSeams(t, true, l, nil)
+	withActivationSeams(t, "ghcr.io/lennylabs/runtime-echo-embedded@sha256:"+
+		"4444444444444444444444444444444444444444444444444444444444444444")
+	withRuntimeClassSeam(t)
+	calls := withBringUpSeams(t)
+	createMasterKeySecretFn = func(context.Context, string) error {
+		calls.record("master-key")
+		return errors.New("master key boom")
+	}
+
+	s, err := Up(context.Background(), upConfig(t))
+	if s != nil {
+		defer func() { _ = s.Stop(context.Background()) }()
+	}
+	if err == nil || !strings.Contains(err.Error(), "master key boom") {
+		t.Fatalf("Up with a failing master key Secret create = %v, want the create error", err)
+	}
+	for _, leg := range []string{"apply-nonimage", "apply-deploy", "wait", "seed", "pool"} {
+		if containsLeg(calls.snapshot(), leg) {
+			t.Errorf("bring-up ran the %q leg after the master key Secret create failed (order=%v)", leg, calls.snapshot())
+		}
+	}
+}
+
+// TestEmbeddedManifestsMountDevMasterKeySecret_spec_17_4 asserts that the
+// pre-rendered embedded manifests mount the master key Secret the bring-up
+// creates, under the name and data key the bring-up writes, on the gateway and
+// lenny-ops Deployments, pass --kms-master-key-file to both, and carry no
+// Secret holding key material themselves.
+//
+// spec: §17.4 (the local provider is keyed by a master key Secret that lenny
+// up generates), §10.2 "Signing key and algorithm".
+func TestEmbeddedManifestsMountDevMasterKeySecret_spec_17_4(t *testing.T) {
+	raw, err := manifests.FS.ReadFile("manifests.yaml")
+	if err != nil {
+		t.Fatalf("read embedded manifests: %v", err)
+	}
+	mounted := map[string]bool{}
+	for _, chunk := range bytes.Split(raw, []byte("\n---")) {
+		var meta struct {
+			Kind     string            `json:"kind"`
+			Data     map[string]string `json:"data"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal(chunk, &meta); err != nil {
+			t.Fatalf("decode embedded document: %v", err)
+		}
+		if meta.Kind == "Secret" {
+			if _, ok := meta.Data[kmsMasterKeySecretKey]; ok {
+				t.Errorf("embedded Secret %q carries master key material; the dev profile must name a Secret lenny up creates", meta.Metadata.Name)
+			}
+		}
+		if meta.Kind != "Deployment" {
+			continue
+		}
+		var dep appsv1.Deployment
+		if err := yaml.Unmarshal(chunk, &dep); err != nil {
+			t.Fatalf("decode embedded Deployment: %v", err)
+		}
+		if deploymentMountsMasterKey(dep) {
+			mounted[dep.Name] = true
+		}
+	}
+	for _, want := range []string{gatewayDeploymentName, "lenny-ops"} {
+		if !mounted[want] {
+			t.Errorf("embedded %s Deployment does not mount Secret %q key %q with --kms-master-key-file", want, devKMSMasterKeySecretName, kmsMasterKeySecretKey)
+		}
+	}
+}
+
+// deploymentMountsMasterKey reports whether dep mounts the dev master key
+// Secret's data key and passes --kms-master-key-file to its first container.
+func deploymentMountsMasterKey(dep appsv1.Deployment) bool {
+	var volume bool
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Secret == nil || v.Secret.SecretName != devKMSMasterKeySecretName || v.Secret.Optional != nil {
+			continue
+		}
+		for _, item := range v.Secret.Items {
+			if item.Key == kmsMasterKeySecretKey {
+				volume = true
+			}
+		}
+	}
+	if !volume || len(dep.Spec.Template.Spec.Containers) == 0 {
+		return false
+	}
+	for _, arg := range dep.Spec.Template.Spec.Containers[0].Args {
+		if strings.HasPrefix(arg, "--kms-master-key-file=") {
+			return true
+		}
+	}
+	return false
 }

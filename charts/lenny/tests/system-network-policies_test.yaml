@@ -459,6 +459,42 @@ tests:
             port: 8080
             protocol: TCP
 
+  # spec: §4.3; §13.2 — the gateway reverse-proxies /v1/oauth/* to the
+  # Token Service's HTTP listener, so the gateway egress rule to the
+  # token-service pods admits the HTTP port alongside the gRPC port,
+  # mirroring the ingress side of allow-token-service.
+  - it: allows gateway egress to the token-service gRPC and HTTP ports
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: token-service
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 50052
+            protocol: TCP
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 8081
+            protocol: TCP
+
+  - it: follows a custom tokenService.httpPort on the gateway egress rule
+    set:
+      tokenService.httpPort: 9181
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 9181
+            protocol: TCP
+
   - it: allows ops egress to CoreDNS for name resolution
     documentSelector:
       path: metadata.name
@@ -595,3 +631,28 @@ tests:
       - equal:
           path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: tenant-x-filters
+
+  # spec: §13.2.4 (PgBouncer row), §25.4 (The lenny-ops Service) — lenny-ops
+  # reads its revocation set through PgBouncer, so allow-pgbouncer admits
+  # app: lenny-ops from the release namespace on 5432. lenny-ops carries the
+  # §13.2.3 selector exception label, so the peer pairs it with the
+  # release-namespace selector.
+  - it: admits lenny-ops from the release namespace to PgBouncer on 5432
+    documentSelector:
+      path: metadata.name
+      value: allow-pgbouncer
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: lenny-system
+            podSelector:
+              matchLabels:
+                app: lenny-ops
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 5432
+              protocol: TCP

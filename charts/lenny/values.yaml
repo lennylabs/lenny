@@ -430,6 +430,12 @@ tokenService:
   # ImagePullBackOff under imagePullPolicy: IfNotPresent).
   enabled: true
   replicas: 2
+  # serviceAccount.annotations are stamped onto the lenny-token-service
+  # ServiceAccount, so it can be bound to the provider identity that holds
+  # the KMS Sign and GetPublicKey permissions (§10.2 "Signing topology"),
+  # for example eks.amazonaws.com/role-arn. Empty by default.
+  serviceAccount:
+    annotations: {}
   # rollingUpdate configures the §10.5 / §17.1 Deployment.spec.strategy
   # block on the Token Service. maxUnavailable: 0 keeps full
   # token-minting capacity through a rollout because the Token Service
@@ -884,16 +890,19 @@ gc:
   # spec: §12.5.
   leaderElection: true
 
-# kms configures the §4 envelope-encryption KEK provider for both the
-# gateway and the Token Service. The gateway wraps §4.9 connector
-# credentials; the Token Service wraps its signing key. spec: §4 /
-# §17.5 / F-4.3.11 / F-10.2.11 / F-17.5.2.
+# kms configures the KMS provider for the gateway, the Token Service, and
+# lenny-ops. The gateway wraps the §4.9 connector-credential DEKs through
+# it, and the gateway and the Token Service sign every Lenny-issued JWT
+# with the ES256 key the platform:jwt-signing alias names (§10.2 "Signing
+# topology"). lenny-ops verifies with the same key set and never signs.
+# spec: §4 / §10.2 / §17.5 / §17.8.2.
 kms:
-  # provider selects the §4 KEK adapter: local | aws | gcp | azure.
-  # `local` uses the in-process random KEK (dev only; rejected when
-  # environment=prod). `aws`, `gcp`, and `azure` wrap DEKs through
-  # the named cloud KMS. The chart renders the value into the
-  # --kms-provider flag on both lenny-gateway and lenny-token-service.
+  # provider selects the KMS adapter: local | aws | gcp | azure.
+  # `local` derives its keys from the master key (dev only; rejected when
+  # environment=prod). `aws`, `gcp`, and `azure` wrap DEKs and sign JWTs
+  # through the named cloud KMS. The chart renders the value into the
+  # --kms-provider flag on lenny-gateway, lenny-token-service, and
+  # lenny-ops.
   provider: "local"
   # awsRegion is the AWS region for provider=aws. Empty falls back
   # to the AWS SDK default chain (AWS_REGION).
@@ -901,24 +910,59 @@ kms:
   # azureVaultURL is the Azure Key Vault URL for provider=azure
   # (https://<vault>.vault.azure.net).
   azureVaultURL: ""
-  # aliases is the comma-separated alias=key mapping the §4 KEK
-  # aliases map onto. AWS: alias=<key-id|ARN|alias/name>. GCP:
-  # alias=<full CryptoKey resource>. Azure: alias=<keyName>@<version>.
-  # The chart renders the value into --kms-alias on both binaries.
-  # Example: platform:token-service-signing=alias/lenny/token-service,
+  # aliases is the comma-separated alias=key mapping the KMS aliases map
+  # onto. AWS: alias=<key-id|ARN|alias/name>. GCP: alias=<full CryptoKey
+  # resource>. Azure: alias=<keyName>@<version>. The chart renders the
+  # value into --kms-alias on lenny-gateway, lenny-token-service, and
+  # lenny-ops.
+  #
+  # Two aliases are reserved for JWT signing (§10.2 "Verifier key set and
+  # rotation"). platform:jwt-signing names the P-256 key that signs every
+  # Lenny-issued JWT. platform:jwt-verify is optional and names a second
+  # P-256 key that verifies and never signs; it is mapped only during a
+  # key rotation. On a cloud provider each must name an immutable key
+  # version: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending
+  # in /cryptoKeyVersions/<n>, or an Azure key with a non-empty @<version>
+  # suffix. A process refuses to start when either alias names a
+  # repointable reference (an AWS alias, a GCP CryptoKey without a version,
+  # or an Azure key without a version).
+  # Example: platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab,
   # platform:credential-leases=alias/lenny/credential-leases,
   # tenant:acme=alias/lenny/tenant-acme.
   aliases: ""
-  # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint
-  # (§13.2). Operators should tighten this to the provider's range;
-  # the broad default is bounded by the per-port (443) egress rule.
+  # signQuotaPerSecond is the provider's documented asymmetric Sign quota
+  # per second for the account and region (§17.8.2 "KMS Sign rate"). It has
+  # no default because provider quotas vary by account and region. When
+  # provider is not local the value is required and the chart refuses to
+  # render without it; it must be at least 1.
+  # signQuotaPerSecond: 50
+  # masterKeySecret names the Secret that holds the local provider's master
+  # key under data key master-key (at least 32 bytes). It applies only when
+  # provider is local: lenny-gateway, lenny-token-service, and lenny-ops each
+  # mount it and pass --kms-master-key-file, so every process derives the
+  # same KEKs and the same ES256 JWT signing key (§17.4). Empty renders the
+  # lenny-kms-master-key Secret with a random key generated on first install
+  # and preserved across upgrades through lookup. Under a cloud provider
+  # neither the Secret nor the flag renders.
+  masterKeySecret: ""
+  # endpointCIDR is the destination CIDR of the KMS HTTPS endpoint
+  # (TCP 443, §13.2.4). The Token Service egress policy always carries
+  # it, and allow-gateway-egress and lenny-ops-egress carry it whenever
+  # provider is not local. Under a cloud provider (aws, gcp, or azure)
+  # the chart refuses to render while the value is 0.0.0.0/0 or ::/0,
+  # because NetworkPolicy allows are additive and an unrestricted peer
+  # cancels the private-range and IMDS excepts of the external HTTPS
+  # rules. A cloud deployment therefore sets it to the subnet of the
+  # provider's private KMS endpoint (an AWS KMS interface VPC endpoint,
+  # a GCP Private Service Connect endpoint, or an Azure Key Vault
+  # private endpoint). The 0.0.0.0/0 default applies only to the local
+  # provider, which makes no KMS call.
   endpointCIDR: "0.0.0.0/0"
 
 # environment is the §17.9.1 composition dimension naming the target
 # deployment environment (local | dev | staging | prod). The chart
-# renders it into --environment on both binaries; production refuses to
-# start with kms.provider=local because the in-process random KEK cannot
-# survive a restart. The value also drives gateway log verbosity through
+# renders it into --environment on lenny-gateway, lenny-token-service, and
+# lenny-ops; production refuses to start with kms.provider=local. The value also drives gateway log verbosity through
 # the lenny.gatewayLogLevel helper: local and dev render
 # LENNY_LOG_LEVEL=debug, staging and prod render info. spec: §17.9.1, F-4.3.11 / F-17.5.2 / F-17.9.9.
 environment: "dev"
@@ -1377,13 +1421,13 @@ postgres:
   # database endpoint; the broad default is bounded by the per-port
   # (5432) egress rule.
   cidr: "0.0.0.0/0"
-  # gatewayEgressCIDR is the destination CIDR the gateway and token-
-  # service NetworkPolicies admit for external Postgres egress.
-  # Empty disables the rule, so the default install only allows the
-  # in-cluster PgBouncer pod (matched by component label). Tier-7
+  # gatewayEgressCIDR is the destination CIDR the gateway, token-
+  # service, and lenny-ops NetworkPolicies admit for external Postgres
+  # egress. Empty disables the rule, so the default install only allows
+  # the in-cluster PgBouncer pod (matched by component label). Tier-7
   # cloud-load sets this to the managed-Postgres CIDR (or 0.0.0.0/0
-  # with the per-port bound) so the gateway can reach RDS, Azure
-  # Flexible Server, or Cloud SQL.
+  # with the per-port bound) so the gateway and lenny-ops can reach
+  # RDS, Azure Flexible Server, or Cloud SQL.
   gatewayEgressCIDR: ""
   # dsn is the Postgres connection string the gateway and controller
   # use to persist session, transcript, tenant, runtime, and §4.6.1
@@ -1883,6 +1927,15 @@ auth:
   # deployment (auth.multiTenant: false) ignores this value and stamps
   # the built-in `default` tenant on every request.
   tenantIdClaim: tenant_id
+  # capabilityTokenTtlSeconds is the §10.2 default lifetime, in seconds,
+  # of every Lenny-issued JWT whose holder obtains a new token before exp:
+  # the MCP bearers POST /v1/playground/token mints, and the JWTs
+  # POST /v1/oauth/token issues from a request without expires_in. A token
+  # is never extended after mint. The chart renders the value into
+  # --capability-token-ttl-seconds on lenny-gateway and
+  # lenny-token-service; the schema bounds it to 120..3600 and both
+  # binaries refuse to start outside that range.
+  capabilityTokenTtlSeconds: 900
   # oidc names the OIDC issuer the gateway's Bearer-token validation
   # trusts (§10.3). Both keys are required platform
   # configuration outside global.devMode: the gateway refuses to become
@@ -2911,9 +2964,6 @@ playground:
   # oidcSessionTtlSeconds is the lifetime of the §27.3.1 server-side
   # playground session record and its cookie.
   oidcSessionTtlSeconds: 3600
-  # bearerTtlSeconds is the TTL of an MCP bearer token minted by
-  # POST /v1/playground/token. The gateway bounds it to 60..3600.
-  bearerTtlSeconds: 900
   # gatewayHost is the public gateway host the playground UI connects
   # to over the MCP WebSocket. It is interpolated into the §27.7
   # connect-src CSP directive. Leave empty to omit the directive host.
@@ -3324,6 +3374,12 @@ ops:
   # --addr flag). The lenny-ops Service exposes it; the Ingress and the
   # §13.2 NET-051 ingress NetworkPolicy reference it.
   httpPort: 8090
+  # serviceAccount.annotations are stamped onto the lenny-ops-sa
+  # ServiceAccount, so it can be bound to the provider identity that holds
+  # the KMS GetPublicKey permission (§10.2 "Signing topology"). Empty by
+  # default.
+  serviceAccount:
+    annotations: {}
   # metricsPort is the port lenny-ops serves Prometheus metrics on; the
   # §13.2 NET-045 monitoring-scrape NetworkPolicy and podmonitor.yaml
   # admit and scrape it. The binary serves /metrics on the same
@@ -3635,13 +3691,15 @@ security:
     # set, a bearer whose iss claim differs is rejected. Flows to
     # lenny-ops as --oidc-issuer-url.
     issuerUrl: ""
-    # bearerTrustKeySecret names a Secret holding the shared HMAC signing
-    # key (key "key") lenny-ops verifies bearer JWTs against — the same
-    # key the gateway Token Service / §17.4 embedded OIDC provider signs
-    # with. When empty in a dev render the lenny-ops surface is
-    # unauthenticated; a production render (ops.production: true) requires
-    # it. Mounted at /etc/lenny/oidc and passed as
-    # --bearer-trust-hmac-key-file.
+    # bearerTrustKeySecret is dev-only. It names a Secret holding the
+    # HMAC key (data key "key") the `lenny` CLI signs its embedded dev
+    # bearer with (§17.4). When set, the gateway and lenny-ops mount it at
+    # /etc/lenny/oidc and trust that bearer through
+    # --bearer-trust-hmac-key-file, wrapped in the dev.local audience check.
+    # The gateway refuses the flag unless global.devMode is true, and a
+    # production lenny-ops (ops.production: true) refuses it, so the chart
+    # does not render it on lenny-ops there. Leave it empty outside dev. Lenny-issued JWTs verify through
+    # the ES256 key set the kms block configures, not through this key.
     bearerTrustKeySecret: ""
     # tokenRefreshBeforeExpirySeconds is the §25.4 pre-emptive
     # refresh window the GatewayClient service-account token lifecycle

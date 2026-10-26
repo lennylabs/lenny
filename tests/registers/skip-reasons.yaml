@@ -520,7 +520,7 @@ sites:
       call: Skipf
       reason: 'gateway.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/testinfra/gateway/gateway.go
-      function: StartWith
+      function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'
@@ -614,7 +614,7 @@ sites:
       call: Skipf
       reason: 'opsprocess.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/testinfra/opsprocess/opsprocess.go
-      function: StartWith
+      function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'
@@ -649,7 +649,7 @@ sites:
       call: Skipf
       reason: 'tokenservice.SkipUnlessAvailable: go not on PATH: %v'
     - path: tests/testinfra/tokenservice/tokenservice.go
-      function: Start
+      function: Build
       site: 1
       call: Skipf
       reason: 'go not on PATH: %v'

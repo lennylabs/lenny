@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeSecrets is an in-memory SecretStore. It records create/update
@@ -156,7 +157,7 @@ func newProvisioner(t *testing.T, secrets admintoken.SecretStore, rev admintoken
 	p, err := admintoken.New(admintoken.Config{
 		Namespace:   "lenny-system",
 		AdminTenant: "default",
-	}, signer, users, secrets, rev, func() time.Time {
+	}, jwtsign.HMAC(signer), users, secrets, rev, func() time.Time {
 		return time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	})
 	if err != nil {
@@ -585,8 +586,8 @@ func TestNewValidatesDeps(t *testing.T) {
 		sig  admintoken.Signer
 	}{
 		{"no signer", admintoken.Config{Namespace: "ns", AdminTenant: "t"}, nil},
-		{"no namespace", admintoken.Config{AdminTenant: "t"}, signer},
-		{"no tenant", admintoken.Config{Namespace: "ns"}, signer},
+		{"no namespace", admintoken.Config{AdminTenant: "t"}, jwtsign.HMAC(signer)},
+		{"no tenant", admintoken.Config{Namespace: "ns"}, jwtsign.HMAC(signer)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -47,7 +47,6 @@ var publicRouteCases = []struct{ method, path string }{
 	{http.MethodGet, "/openapi.json"},
 	{http.MethodGet, "/v1/openapi.json"},
 	{http.MethodGet, "/v1/openapi.yaml"},
-	{http.MethodGet, "/.well-known/jwks.json"},
 	{http.MethodPost, "/v1/oauth/token"},
 	{http.MethodGet, "/playground"},
 	{http.MethodGet, "/playground/auth/login"},
@@ -89,6 +88,10 @@ var authenticatedRouteCases = []struct{ method, path string }{
 	{http.MethodDelete, "/internal/drain-readiness"},
 	{http.MethodGet, "/healthz/../v1/sessions"},
 	{http.MethodGet, "/playground-admin"},
+	// No spec section defines a published JWK Set; every verifier loads
+	// its key set from the KMS at startup (§10.2 "Verifier key set and
+	// rotation"), so the former JWKS path is not a public route.
+	{http.MethodGet, "/.well-known/jwks.json"},
 }
 
 // TestPublicPathMatcherAdmitsOnlySpecPublicRoutes asserts the public-route

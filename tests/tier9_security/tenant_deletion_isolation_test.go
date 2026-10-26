@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecyclefence"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -98,7 +99,7 @@ func TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8(t *test
 
 	signer := jwt.NewHMACSigner("tenant-deletion-sec", []byte("tenant-deletion-playground-secret"))
 	h := playground.New(playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, MultiTenant: true},
-		playground.Options{Signer: signer, Tenants: tenantpg.New(pg.Pool)}).
+		playground.Options{Signer: jwtsign.HMAC(signer), Verifier: signer, Tenants: tenantpg.New(pg.Pool)}).
 		WithAuditEmitter(playground.ChainAuditEmitter{Sink: admin.NewAuditLogSink(auditstore.New(pg.Router(t)), nil)})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()

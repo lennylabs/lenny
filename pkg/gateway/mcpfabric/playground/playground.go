@@ -65,10 +65,6 @@ var tenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 // Bound constants from §27.2.
 const (
-	// minBearerTTL and maxBearerTTL bound playground.bearerTtlSeconds.
-	minBearerTTL = 60 * time.Second
-	maxBearerTTL = 3600 * time.Second
-
 	// minIdleTime bounds the lower end of playground.maxIdleTimeSeconds;
 	// the upper bound is the runtime's own maxIdleTimeSeconds, applied
 	// per-session in §27.6.
@@ -119,9 +115,10 @@ type Config struct {
 	// lenny_playground_session cookie.
 	OIDCSessionTTL time.Duration
 
-	// BearerTTL mirrors playground.bearerTtlSeconds: the TTL of MCP
-	// bearer tokens minted by POST /v1/playground/token.
-	BearerTTL time.Duration
+	// CapabilityTokenTTL mirrors auth.capabilityTokenTtlSeconds: the
+	// default lifetime of the MCP bearer tokens minted by
+	// POST /v1/playground/token. The §10.2 bound is 120s..3600s.
+	CapabilityTokenTTL time.Duration
 
 	// MultiTenant mirrors auth.multiTenant. When true and AuthMode is
 	// dev, DevTenantID must be set explicitly (§27.2 layer 3).
@@ -163,8 +160,8 @@ func (c Config) withDefaults() Config {
 	if c.OIDCSessionTTL == 0 {
 		c.OIDCSessionTTL = 3600 * time.Second
 	}
-	if c.BearerTTL == 0 {
-		c.BearerTTL = 900 * time.Second
+	if c.CapabilityTokenTTL == 0 {
+		c.CapabilityTokenTTL = jwt.DefaultCapabilityTokenTTL
 	}
 	c.SessionLabels = c.EffectiveLabels()
 	return c
@@ -200,8 +197,10 @@ func (c Config) Validate() error {
 	if !c.AuthMode.IsValid() {
 		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.authMode %q is not one of oidc, apiKey, dev", c.AuthMode)
 	}
-	if c.BearerTTL < minBearerTTL || c.BearerTTL > maxBearerTTL {
-		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.bearerTtlSeconds %s is outside the bound 60s..3600s", c.BearerTTL)
+	// spec: §10.2 (Authentication) "JWT claims" expiry — the
+	// auth.capabilityTokenTtlSeconds bound is 120s..3600s.
+	if err := jwt.ValidateCapabilityTokenTTL(c.CapabilityTokenTTL); err != nil {
+		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: %w", err)
 	}
 	if time.Duration(c.MaxIdleTimeSeconds)*time.Second < minIdleTime {
 		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.maxIdleTimeSeconds %d is below the lower bound of 60", c.MaxIdleTimeSeconds)
@@ -339,14 +338,15 @@ type Handler struct {
 
 // Options configures New.
 type Options struct {
-	// Signer mints the playground session-capability JWTs. In
-	// production this is the KMS-backed gateway signer; the dev HMAC
-	// signer satisfies the same interface for the no-cloud path.
+	// Signer mints the playground session-capability JWTs. The gateway
+	// passes its breaker-wrapped remote signer over the §10.2
+	// platform:jwt-signing key.
 	Signer jwt.Signer
 
-	// Verifier validates pasted bearer tokens in apiKey mode. When nil
-	// and Signer also verifies (the HMAC and KMS signers both do), New
-	// uses the signer itself.
+	// Verifier validates pasted bearer tokens in apiKey mode. The gateway
+	// passes the §10.2 key set. When nil and Signer also verifies, New
+	// uses the signer itself; the remote signer does not verify, so the
+	// gateway always sets it.
 	Verifier jwt.Verifier
 
 	// Tenants resolves tenant existence for the §27.2 layer-4

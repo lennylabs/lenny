@@ -29,6 +29,14 @@
       "type": "object"
     },
     "auth": {
+      "properties": {
+        "capabilityTokenTtlSeconds": {
+          "description": "§10.2 default lifetime of the Lenny-issued JWTs whose holder refreshes them: playground bearers and POST /v1/oauth/token JWTs requested without expires_in. Bounded 120..3600.",
+          "maximum": 3600,
+          "minimum": 120,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "autoscaling": {
@@ -153,6 +161,13 @@
       "type": "string"
     },
     "kms": {
+      "properties": {
+        "signQuotaPerSecond": {
+          "description": "§17.8.2 provider asymmetric KMS Sign quota per second. No default; required when kms.provider is not local.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "kubeApiServerCIDR": {
@@ -231,12 +246,6 @@
             "dev"
           ],
           "type": "string"
-        },
-        "bearerTtlSeconds": {
-          "description": "TTL of an MCP bearer token minted by POST /v1/playground/token. The gateway bounds it to 60..3600.",
-          "maximum": 3600,
-          "minimum": 60,
-          "type": "integer"
         },
         "devTenantId": {
           "description": "Tenant bound to every dev-mode playground token; applies only when authMode is dev. §27.3.",

@@ -92,9 +92,13 @@ type firingCase struct {
 	// idle-pod gauge is scoped to). Merged with the rendered static labels
 	// to form the full expected label set.
 	resultLabels map[string]string
+	// noAlert marks a case whose input series must leave the alert
+	// silent at evalTime. The promtool test then carries `exp_alerts: []`,
+	// which asserts that no alert of that name is firing.
+	noAlert bool
 }
 
-// spec: 25.13 (bundled alerting rules fire in Prometheus), 16.5 (alert catalog), 12.8 (Compliance Interfaces: Erasure SLA enforcement)
+// spec: 25.13 (bundled alerting rules fire in Prometheus), 16.5 (alert catalog; KMSSignQuotaApproaching), 12.8 (Compliance Interfaces: Erasure SLA enforcement)
 // diagnosis: a Prometheus-only §16.5 alert did not fire in the real
 // Prometheus rule engine under its documented triggering condition, or
 // fired with the wrong severity/labels/annotations. The rendered PromQL
@@ -202,6 +206,42 @@ func TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions(t *testing.T) 
 			},
 			resultLabels: map[string]string{"tenant_id": "acme", "job_id": "erasure_a"},
 		},
+		{
+			// KMSSignQuotaApproaching:
+			//   sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m]))
+			//     > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)
+			// Two gateway instances each publish the quota gauge at 50 and
+			// each sign 22.5/s, so the fleet rate of 45/s is above the 40/s
+			// threshold while neither instance alone is. A bare scalar()
+			// over the two gauge series returns NaN and never fires, and a
+			// per-instance comparison stays below the threshold, so only
+			// the fleet-wide form fires after the 10m `for` window.
+			// spec: 16.5 (KMSSignQuotaApproaching).
+			alert:       "KMSSignQuotaApproaching",
+			interval:    "1m",
+			evalTime:    "20m",
+			inputSeries: kmsSignQuotaSeries("ok", "50"),
+		},
+		{
+			// KMSSignQuotaApproaching stays silent when every request at
+			// the same rate was refused by the circuit breaker before any
+			// KMS call: those requests consume no provider quota.
+			alert:       "KMSSignQuotaApproaching",
+			interval:    "1m",
+			evalTime:    "20m",
+			inputSeries: kmsSignQuotaSeries("circuit_open", "50"),
+			noAlert:     true,
+		},
+		{
+			// KMSSignQuotaApproaching stays silent when no quota is set:
+			// the gauge at 0 on both instances is filtered out by `> 0`,
+			// scalar() of no series is NaN, and the comparison is false.
+			alert:       "KMSSignQuotaApproaching",
+			interval:    "1m",
+			evalTime:    "20m",
+			inputSeries: kmsSignQuotaSeries("ok", "0"),
+			noAlert:     true,
+		},
 	}
 
 	// Render the shared catalog exactly as the Helm chart bundles it for
@@ -219,23 +259,13 @@ func TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions(t *testing.T) 
 		if !ok {
 			t.Fatalf("alert %q not present in the rendered catalog", c.alert)
 		}
-		expLabels := map[string]string{}
-		for k, v := range rendered.labels {
-			expLabels[k] = v
-		}
-		for k, v := range c.resultLabels {
-			expLabels[k] = v
-		}
 		doc.Tests = append(doc.Tests, promtoolTest{
 			Interval:    c.interval,
 			InputSeries: c.inputSeries,
 			AlertRuleTest: []promtoolAlertTest{{
 				EvalTime:  c.evalTime,
 				Alertname: c.alert,
-				ExpAlerts: []promtoolExpAlert{{
-					ExpLabels:      expLabels,
-					ExpAnnotations: rendered.annotations,
-				}},
+				ExpAlerts: expectedAlerts(c, rendered),
 			}},
 		})
 	}
@@ -247,9 +277,49 @@ func TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions(t *testing.T) 
 
 	res := containers.RunPromtoolRuleTest(t, rulesYAML, testYAML)
 	if res.ExitCode != 0 {
-		t.Fatalf("promtool test rules exit=%d, want 0 (a Prometheus-only alert did not fire as expected)\n"+
+		t.Fatalf("promtool test rules exit=%d, want 0 (a Prometheus-only alert did not fire, or fired when it must stay silent)\n"+
 			"unit test:\n%s\npromtool output:\n%s", res.ExitCode, testYAML, res.Output)
 	}
+}
+
+// expectedAlerts returns the promtool exp_alerts list for one case: an
+// empty list for a no-alert case, which promtool reads as "no alert of
+// this name is firing", and otherwise the single firing alert carrying
+// the rendered static labels merged with the case's result labels.
+func expectedAlerts(c firingCase, rendered renderedRule) []promtoolExpAlert {
+	if c.noAlert {
+		return []promtoolExpAlert{}
+	}
+	expLabels := map[string]string{}
+	for k, v := range rendered.labels {
+		expLabels[k] = v
+	}
+	for k, v := range c.resultLabels {
+		expLabels[k] = v
+	}
+	return []promtoolExpAlert{{ExpLabels: expLabels, ExpAnnotations: rendered.annotations}}
+}
+
+// kmsSignQuotaSeries returns the input series for one
+// KMSSignQuotaApproaching case: two gateway instances, each publishing
+// the quota gauge at quota and each signing 22.5 requests per second
+// (1350 per 1m interval) under the given outcome label, for 25 minutes.
+func kmsSignQuotaSeries(outcome, quota string) []promtoolSeries {
+	var out []promtoolSeries
+	for _, instance := range []string{"gw-0", "gw-1"} {
+		out = append(
+			out,
+			promtoolSeries{
+				Series: `lenny_jwt_sign_requests_total{component="gateway",outcome="` + outcome + `",instance="` + instance + `"}`,
+				Values: "0+1350x25",
+			},
+			promtoolSeries{
+				Series: `lenny_kms_sign_quota_per_second{instance="` + instance + `"}`,
+				Values: quota + "x25",
+			},
+		)
+	}
+	return out
 }
 
 // renderedRule is the static label and annotation set of one rendered

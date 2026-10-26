@@ -1204,7 +1204,7 @@ func sessionIDsAdapter(fn func(ctx context.Context, tenantID, userID string, ses
 // buildHTTPSurface is an extracted §4.1 composition-root build step (R1).
 // spec: §4.1 gateway subsystem seams.
 // buildHTTPSurface composes the §15.1 REST mux: it mounts the session,
-// admin, credential, playground, JWKS, metrics, health, readiness, and
+// admin, credential, playground, metrics, health, readiness, and
 // drain-readiness handlers, wraps them in the §27.3 / §11 middleware stack
 // (correlation, auth, rate-limit, idempotency, fail-open), and records the
 // resulting *http.Server on w.httpSrv. The §13.4 stateless-routing wiring

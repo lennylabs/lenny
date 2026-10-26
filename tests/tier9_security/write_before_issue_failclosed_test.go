@@ -212,7 +212,7 @@ func TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3(t *testing.T) 
 		TokenHash: []byte("h"), Scope: []string{"sessions:read"},
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
-	_, err := store.RecordWithAudit(ctx, tok, string(auditcatalog.EventTokenExchanged),
+	_, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(`{"policy_result":"accepted"}`), now)
 	assertUndefinedTable(t, err)
 
@@ -260,7 +260,8 @@ func TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3(t *te
 		JTI: "jti-next", TenantID: tenant, Subject: "bob@globex.com",
 		TokenHash: []byte("n"), IssuedAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
 	}
-	_, _, err := store.RecordWithRotationAudit(ctx, next, "jti-prev",
+	_, _, err := store.RecordWithRotationAudit(ctx, next,
+		[]issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "jti-prev"}}, "jti-prev",
 		"rotation_replaced", string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(`{"policy_result":"accepted"}`), now.Add(time.Minute))
 	assertUndefinedTable(t, err)

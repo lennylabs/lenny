@@ -497,47 +497,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// strictHealthDeps are the dependencies the §25.4 strict readiness
-// gate requires reachable before a replica accepts traffic: the
-// Postgres connection and the Kubernetes API (spec: §25.4 —
-// "200 only when both Postgres connection AND K8s API are reachable").
+// strictHealthDeps are the dependencies both §25.4 /healthz modes
+// evaluate: the Postgres connection and the Kubernetes API. The
+// permissive mode, which liveness, startup, and readiness probe, passes
+// when at least one of them is reachable. The strict mode
+// (?strict=true) is the diagnostic check no probe uses, and it passes
+// only when both are reachable (spec: §25.4 "Probes").
 var strictHealthDeps = []string{ProbePostgresName, ProbeK8sAPIName}
 
-// Probe names the strict readiness gate keys on. They mirror the
-// opsservice.Probe* constants the binary registers; redeclared here so
-// the opsserver package does not import the wiring package.
+// Probe names of the dependencies the §25.4 /healthz modes evaluate.
+// They mirror the opsservice.Probe* constants the binary registers;
+// redeclared here so the opsserver package does not import the wiring
+// package.
 const (
 	ProbePostgresName = "postgres"
 	ProbeK8sAPIName   = "kubernetes"
 )
 
 // handleHealthz serves both §25.4 probe modes on the same path (spec:
-// §25.4):
+// §25.4 "Probes"):
 //
-//   - permissive (the default, used by liveness and startup): it reports
-//     that the process is running. It does not fail on a downstream
-//     dependency outage, so a transient Postgres or Kubernetes API blip
-//     does not cause Kubernetes to restart an otherwise-healthy pod.
-//   - strict (?strict=true, used by readiness): 200 only when both the
-//     Postgres connection and the Kubernetes API are reachable; otherwise
-//     503 with a body naming the degraded dependencies so traffic is not
-//     routed to a replica that cannot serve the full §25 API.
+//   - permissive (the default, used by liveness, startup, and
+//     readiness): it probes only Postgres and the Kubernetes API, and
+//     returns 200 when at least one is reachable. When neither is, it
+//     returns 503 naming both, so liveness restarts a pod that can reach
+//     no dependency while a Postgres outage alone keeps every replica in
+//     the Service and the §25.15 degraded mode reachable.
+//   - strict (?strict=true): the diagnostic check an operator or agent
+//     runs against a replica, which no probe uses. It returns 200 only
+//     when both the Postgres connection and the Kubernetes API are
+//     reachable, and otherwise 503 with a body naming the degraded
+//     dependencies.
+//
+// In both modes a dependency whose probe is absent from the probe map
+// cannot be confirmed reachable, so it counts as degraded.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("strict") != "true" {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
+	strict := r.URL.Query().Get("strict") == "true"
+	probes := s.probes
+	if !strict {
+		// spec: §25.4 — the permissive check never runs the Redis,
+		// MinIO, or gateway probes.
+		probes = healthDepProbes(s.probes)
 	}
-	// spec: §25.4 — strict gate. A required probe that is
-	// absent from the map (e.g. no Kubernetes client wired) cannot be
-	// confirmed reachable, so it counts as degraded.
-	results := probe.Run(r.Context(), s.probes, probeTimeout)
-	var degraded []string
-	for _, dep := range strictHealthDeps {
-		if res, ok := results[dep]; !ok || !res.OK {
-			degraded = append(degraded, dep)
-		}
+	results := probe.Run(r.Context(), probes, probeTimeout)
+	degraded := degradedHealthDeps(results)
+	failed := len(degraded) > 0
+	if !strict {
+		failed = len(degraded) == len(strictHealthDeps)
 	}
-	if len(degraded) > 0 {
+	if failed {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"status":       "degraded",
 			"degraded":     degraded,
@@ -551,12 +559,35 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReadyz is the readiness probe. §25 has lenny-ops degrade
-// gracefully when a downstream dependency is transiently unavailable,
-// so the process reports ready (HTTP 200) as long as it is serving;
-// the per-dependency probe results are reported in the body so an
-// operator or agent reading the endpoint sees which dependency is
-// down.
+// healthDepProbes returns the subset of probes naming a /healthz
+// dependency (spec: §25.4 "Probes").
+func healthDepProbes(probes map[string]probe.Func) map[string]probe.Func {
+	subset := make(map[string]probe.Func, len(strictHealthDeps))
+	for _, dep := range strictHealthDeps {
+		if fn, ok := probes[dep]; ok {
+			subset[dep] = fn
+		}
+	}
+	return subset
+}
+
+// degradedHealthDeps lists the /healthz dependencies that results do
+// not report reachable, including any whose probe is absent.
+func degradedHealthDeps(results map[string]probe.Result) []string {
+	var degraded []string
+	for _, dep := range strictHealthDeps {
+		if res, ok := results[dep]; !ok || !res.OK {
+			degraded = append(degraded, dep)
+		}
+	}
+	return degraded
+}
+
+// handleReadyz serves the §25.4 /readyz dependency report. It returns
+// 200 while the process is serving and reports each dependency probe
+// result in the body, so an operator or agent reading the endpoint sees
+// which dependency is down. The non-production chart render probes it
+// for readiness; the production render probes the permissive /healthz.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
 	body := map[string]any{

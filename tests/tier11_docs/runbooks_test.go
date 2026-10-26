@@ -246,7 +246,9 @@ func TestAlertCatalogRunbookSlugsResolveToDocs(t *testing.T) {
 			t.Errorf("alert %q: runbook URL %q does not use the canonical %s prefix", r.Name, r.RunbookURL, runbookHostPrefix)
 			continue
 		}
-		slug := strings.TrimPrefix(r.RunbookURL, runbookHostPrefix)
+		// A section fragment names a heading inside the page; the
+		// page itself is what must exist on disk.
+		slug, _, _ := strings.Cut(strings.TrimPrefix(r.RunbookURL, runbookHostPrefix), "#")
 		path := filepath.Join(dir, slug+".md")
 		_, err := os.Stat(path)
 		exists := err == nil

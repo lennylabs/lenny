@@ -86,15 +86,14 @@ func Resolve(ctx context.Context, opts Options) (kms.Provider, error) {
 	if prov == ProviderLocal && strings.EqualFold(opts.Environment, "prod") {
 		return nil, ErrLocalForbidden
 	}
+	if prov != ProviderLocal {
+		if err := validateSigningReferences(prov, opts.AliasToKey); err != nil {
+			return nil, err
+		}
+	}
 	switch prov {
 	case ProviderLocal:
-		// §17.4: a file-backed master key makes the local KEK
-		// survive a restart (Embedded Mode). Without one the seed is
-		// random per process, which is the zero-config dev/test posture.
-		if opts.MasterKeyFile != "" {
-			return kms.NewLocalFromKeyFile(opts.MasterKeyFile)
-		}
-		return kms.NewLocalRandom()
+		return resolveLocal(opts)
 	case ProviderAWS:
 		return resolveAWS(ctx, opts)
 	case ProviderGCP:
@@ -114,6 +113,34 @@ var ErrLocalForbidden = errors.New(
 	"kms/providerflags: --kms-provider=local is forbidden when --environment=prod " +
 		"(the in-process random KEK does not survive a restart; pick aws|gcp|azure)",
 )
+
+// resolveLocal builds the local provider and passes it the §10.2 JWT
+// alias entries of the alias map, from which it derives the ES256 key.
+//
+// spec: §10.2 (Authentication) "Development"; §17.4.
+func resolveLocal(opts Options) (kms.Provider, error) {
+	local, err := newLocal(opts.MasterKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	for alias, ref := range opts.AliasToKey {
+		if kms.IsJWTAlias(alias) {
+			local.SetSigningReference(alias, ref)
+		}
+	}
+	return local, nil
+}
+
+// newLocal seeds the local provider. §17.4: a file-backed master key
+// makes the local KEK and signing key survive a restart and lets every
+// process that mounts it share them. Without one the seed is random per
+// process, which is the zero-config dev and test posture.
+func newLocal(masterKeyFile string) (*kms.Local, error) {
+	if masterKeyFile != "" {
+		return kms.NewLocalFromKeyFile(masterKeyFile)
+	}
+	return kms.NewLocalRandom()
+}
 
 func resolveAWS(ctx context.Context, opts Options) (kms.Provider, error) {
 	cfg, err := loadAWSConfig(ctx, opts.AWSRegion)
@@ -203,7 +230,9 @@ func Bind(fs *flag.FlagSet, env func(string) string, defaults Options) (*Options
 		"Comma-separated alias=key pairs the §4 KEK aliases map onto. "+
 			"AWS: alias=<key-id|ARN|alias/name>. GCP: alias=<full CryptoKey resource>. "+
 			"Azure: alias=<keyName>@<version>. Repeat with commas: "+
-			"`platform:token-service-signing=alias/lenny/token-service,tenant:acme=alias/lenny/tenant-acme`.")
+			"`platform:jwt-signing=<immutable P-256 key ref>,tenant:acme=alias/lenny/tenant-acme`. "+
+			"On a cloud provider, platform:jwt-signing and platform:jwt-verify must name an immutable "+
+			"key version (AWS key ID or key ARN, GCP .../cryptoKeyVersions/<n>, Azure <keyName>@<version>).")
 	return opts, func() error {
 		m, err := ParseAliases(aliasesRaw)
 		if err != nil {

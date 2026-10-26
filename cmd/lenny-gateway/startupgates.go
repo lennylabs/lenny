@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/deployment/devmode"
@@ -196,6 +197,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateErasureMaxConcurrentJobs(*f.erasureMaxConcurrentJobs); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -266,6 +270,18 @@ func (w *gatewayWiring) buildStartupGates() {
 func validatePrimaryReadTimeout(d time.Duration) error {
 	if d <= 0 {
 		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
+}
+
+// validateCapabilityTokenTTLFlag rejects a --capability-token-ttl-seconds
+// value outside the auth.capabilityTokenTtlSeconds bound. The gate runs whether
+// or not the playground is enabled, so a misrendered value fails at startup
+// rather than on the first playground mint.
+// spec: §10.2 (Authentication) "JWT claims" expiry.
+func validateCapabilityTokenTTLFlag(seconds int) error {
+	if err := jwt.ValidateCapabilityTokenTTL(time.Duration(seconds) * time.Second); err != nil {
+		return fmt.Errorf("--capability-token-ttl-seconds: %w", err)
 	}
 	return nil
 }

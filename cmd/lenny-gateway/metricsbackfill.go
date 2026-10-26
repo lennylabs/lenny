@@ -48,6 +48,7 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	minReplicas := f.minReplicas
 	streamCeiling := f.streamCeiling
+	kmsSignQuotaPerSecond := f.kmsSignQuotaPerSecond
 	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
 	auditSIEMEndpoint := f.auditSIEMEndpoint
 	auditBatchingEnabled := f.auditBatchingEnabled
@@ -344,6 +345,7 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	}
 	gwMetrics.SetMinReplicas(*minReplicas)
 	gwMetrics.SetStreamCeiling(*streamCeiling)
+	emitKMSSignQuota(gwMetrics, *kmsSignQuotaPerSecond)
 	gwMetrics.SetReplicaCount(1)
 	// §16.4 / §16.5: emit the audit alert-support scalars so the
 	// AuditSIEMNotConfigured and AuditRetentionLow expressions resolve.
@@ -487,4 +489,17 @@ func newCheckpointSkippedEmitter(bus checkpointSkippedBus) func(context.Context,
 		}
 		bus.PublishForTenant(tenantID, sessionID, "checkpoint.skipped", string(payload), clockinject.Now())
 	}
+}
+
+// emitKMSSignQuota emits the configured provider Sign quota on the
+// lenny_kms_sign_quota_per_second gauge, the scalar the §16.5
+// KMSSignQuotaApproaching alert compares the fleet sign rate against.
+// Zero means unset; a negative value is a misconfiguration and is fatal.
+//
+// spec: §16.5 (KMSSignQuotaApproaching); §17.8.2 "KMS Sign rate".
+func emitKMSSignQuota(m *gatewaymetrics.Metrics, quota int) {
+	if quota < 0 {
+		log.Fatalf("lenny-gateway: --kms-sign-quota-per-second must be >= 0 (got %d) (§17.8.2)", quota)
+	}
+	m.SetKMSSignQuotaPerSecond(quota)
 }

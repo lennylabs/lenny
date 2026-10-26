@@ -417,8 +417,8 @@ type gatewayWiringFields struct {
 	hwmReader          sessionserver.DelegationHighWatermarkReader
 	inProcessAssign    *credassign.Service
 	interactions       interactionstore.Store
+	jwtKeySet          *jwt.KeySet
 	jwtSigner          *jwt.BreakerSigner
-	kmsBackedSigner    *jwt.KMSSigner
 	kmsBreakerObs      *kmsBreakerObserver
 	kmsProvider        kms.Provider
 	kubeHealthzProbe   func(context.Context) error
@@ -431,7 +431,6 @@ type gatewayWiringFields struct {
 	readPool           *pgxpool.Pool
 	recycleBoundary    *recycle.RecycleBoundaryCoordinator
 	ring               *uploadtoken.KeyRing
-	rotatingVerifier   *jwt.RotatingVerifier
 	runtimes           runtimestore.Store
 	saTokenVerifier    leasecontrol.TokenVerifier
 	saUserVerifier     serviceidentity.SATokenAuthenticator

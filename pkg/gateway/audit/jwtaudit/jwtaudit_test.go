@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/mtls"
 )
 
@@ -41,130 +40,6 @@ func (r *recordingAppender) Append(_ context.Context, tenantID, eventType string
 		at:        at,
 	})
 	return audit.Row{TenantID: tenantID, EventType: eventType, Payload: payload, Timestamp: at}, nil
-}
-
-// spec: 10.3
-// diagnosis: a promote_current rotation event did not produce a
-// `platform.jwt_signing_key_rotated` audit row, or the row landed on
-// the wrong tenant chain. The observer must emit one row per
-// transition on the `platform` chain by default with the canonical
-// event type.
-func TestObserverEmitsPromoteCurrentRow(t *testing.T) {
-	t.Parallel()
-	ap := &recordingAppender{}
-	obs := NewObserver(ap)
-	at := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	obs.OnRotation(jwt.RotationEvent{
-		FromKeyID:  "kid-1",
-		ToKeyID:    "kid-2",
-		Transition: jwt.TransitionPromoteCurrent,
-		At:         at,
-	})
-
-	if len(ap.appends) != 1 {
-		t.Fatalf("appends = %d, want 1", len(ap.appends))
-	}
-	got := ap.appends[0]
-	if got.tenantID != PlatformTenantID {
-		t.Errorf("tenantID = %q, want %q", got.tenantID, PlatformTenantID)
-	}
-	if got.eventType != EventTypeJWTSigningKeyRotated {
-		t.Errorf("eventType = %q, want %q", got.eventType, EventTypeJWTSigningKeyRotated)
-	}
-	if !got.at.Equal(at) {
-		t.Errorf("at = %v, want %v", got.at, at)
-	}
-	var payload Payload
-	if err := json.Unmarshal(got.payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload.FromKeyID != "kid-1" {
-		t.Errorf("payload.FromKeyID = %q, want kid-1", payload.FromKeyID)
-	}
-	if payload.ToKeyID != "kid-2" {
-		t.Errorf("payload.ToKeyID = %q, want kid-2", payload.ToKeyID)
-	}
-	if payload.Transition != jwt.TransitionPromoteCurrent {
-		t.Errorf("payload.Transition = %q, want %q",
-			payload.Transition, jwt.TransitionPromoteCurrent)
-	}
-}
-
-// spec: 10.3
-// diagnosis: a retire_previous rotation event emitted a row with a
-// non-empty ToKeyID. A retire-previous transition has no successor
-// kid; ToKeyID must serialise as empty (omitempty) so a downstream
-// consumer reads the canonical fields without a phantom successor.
-func TestObserverEmitsRetirePreviousRow(t *testing.T) {
-	t.Parallel()
-	ap := &recordingAppender{}
-	obs := NewObserver(ap)
-	at := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	obs.OnRotation(jwt.RotationEvent{
-		FromKeyID:  "kid-1",
-		Transition: jwt.TransitionRetirePrevious,
-		At:         at,
-	})
-
-	if len(ap.appends) != 1 {
-		t.Fatalf("appends = %d, want 1", len(ap.appends))
-	}
-	body := string(ap.appends[0].payload)
-	if !strings.Contains(body, `"transition":"retire_previous"`) {
-		t.Errorf("payload missing transition: %s", body)
-	}
-	if strings.Contains(body, `"to_key_id"`) {
-		t.Errorf("retire_previous payload included to_key_id: %s", body)
-	}
-}
-
-// spec: 10.3
-// diagnosis: the observer wired with the RotatingVerifier did not
-// receive an end-to-end event when the verifier rotated. The
-// jwt.RotationObserver contract must drop in as a SetObserver target
-// and produce one audit row per Rotate call.
-func TestObserverWiresIntoRotatingVerifier(t *testing.T) {
-	t.Parallel()
-	ap := &recordingAppender{}
-	obs := NewObserver(ap)
-	cur := jwt.NewHMACSigner("kid-1", []byte("secret-1"))
-	v := jwt.NewRotatingVerifier(cur, 24*time.Hour)
-	v.SetObserver(obs)
-
-	if err := v.Rotate(jwt.NewHMACSigner("kid-2", []byte("secret-2"))); err != nil {
-		t.Fatalf("Rotate: %v", err)
-	}
-	if len(ap.appends) != 1 {
-		t.Fatalf("after Rotate: appends = %d, want 1", len(ap.appends))
-	}
-	if ap.appends[0].eventType != EventTypeJWTSigningKeyRotated {
-		t.Errorf("after Rotate: eventType = %q, want %q",
-			ap.appends[0].eventType, EventTypeJWTSigningKeyRotated)
-	}
-}
-
-// spec: 10.3
-// diagnosis: an audit append failure surfaced as a panic or as a
-// silent drop with no signal. A failure must be logged and counted
-// so the §16.1 observability surface can alarm on dropped rotation
-// rows, but the rotation itself must not be rolled back.
-func TestObserverCountsAppendFailures(t *testing.T) {
-	t.Parallel()
-	ap := &recordingAppender{failErr: errors.New("postgres down")}
-	logs := &recordingLogger{}
-	obs := NewObserver(ap, WithLogger(logs.Printf))
-	obs.OnRotation(jwt.RotationEvent{
-		FromKeyID:  "kid-1",
-		ToKeyID:    "kid-2",
-		Transition: jwt.TransitionPromoteCurrent,
-		At:         time.Now().UTC(),
-	})
-	if obs.FailedAppends() != 1 {
-		t.Errorf("FailedAppends after failure = %d, want 1", obs.FailedAppends())
-	}
-	if len(logs.entries) != 1 || !strings.Contains(logs.entries[0], "postgres down") {
-		t.Errorf("failure was not logged: %v", logs.entries)
-	}
 }
 
 // spec: 10.3
@@ -265,17 +140,33 @@ func TestNewCAObserverRejectsNilAppender(t *testing.T) {
 }
 
 // spec: 10.3
-// diagnosis: NewObserver accepted a nil appender so the gateway
-// would panic on the first rotation. Construction must reject a
-// nil appender so the wiring failure surfaces at boot.
-func TestNewObserverRejectsNilAppender(t *testing.T) {
+// diagnosis: a failed `platform.ca_rotated` append was dropped
+// silently, or the observer ignored its configured tenant and logger.
+// A failed append must be counted and logged, and the configured
+// tenant must receive the row when the append succeeds.
+func TestCAObserverCountsAppendFailuresAndHonorsOptions(t *testing.T) {
 	t.Parallel()
-	defer func() {
-		if recover() == nil {
-			t.Errorf("NewObserver(nil) did not panic")
-		}
-	}()
-	_ = NewObserver(nil)
+	logs := &recordingLogger{}
+	ap := &recordingAppender{failErr: errors.New("postgres down")}
+	obs := NewCAObserver(ap, WithTenantID("acme"), WithLogger(logs.Printf), WithAppendTimeout(time.Second))
+	ev := mtls.CARotationEvent{From: mtls.CAStageIdle, To: mtls.CAStageNewCADeployed, CurrentCAID: "ca-1", At: time.Now().UTC()}
+
+	obs.OnCARotation(ev)
+	if obs.FailedAppends() != 1 {
+		t.Errorf("FailedAppends after failure = %d, want 1", obs.FailedAppends())
+	}
+	if len(logs.entries) != 1 || !strings.Contains(logs.entries[0], "postgres down") {
+		t.Errorf("failure was not logged: %v", logs.entries)
+	}
+
+	ap.failErr = nil
+	obs.OnCARotation(ev)
+	if obs.FailedAppends() != 1 {
+		t.Errorf("FailedAppends after success = %d, want 1", obs.FailedAppends())
+	}
+	if len(ap.appends) != 1 || ap.appends[0].tenantID != "acme" {
+		t.Errorf("appends = %+v, want one row on tenant acme", ap.appends)
+	}
 }
 
 // recordingLogger captures formatted log lines.

@@ -15,6 +15,7 @@ import (
 // KMS signer) against the same fault-injecting stub the rest of the
 // credential tests use.
 //
+// Sign and PublicKey (signing.go) use an in-memory P-256 key per alias.
 // The adapter maps the envelope KEK operations onto the stub's per-
 // alias AES-GCM key:
 //

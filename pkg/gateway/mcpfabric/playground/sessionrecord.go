@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
@@ -57,7 +58,7 @@ type SessionRecord struct {
 	// BearerJTIs tracks the jti of every bearer the session has minted
 	// within the record's lifetime, newest last. The §27.3.1
 	// revocation path revokes every entry. The slice is bounded by
-	// ⌈oidcSessionTtlSeconds / bearerTtlSeconds⌉ + 1.
+	// ⌈oidcSessionTtlSeconds / auth.capabilityTokenTtlSeconds⌉ + 1.
 	BearerJTIs []string `json:"bearer_jtis,omitempty"`
 
 	// CurrentExp is the exp of the most-recently-minted bearer.
@@ -666,7 +667,7 @@ func (s *RedisSessionStore) IsBearerRevoked(ctx context.Context, tenant, jti str
 	}
 	if n > 0 {
 		s.cacheMu.Lock()
-		s.cache[key] = s.now().Add(maxBearerTTL)
+		s.cache[key] = s.now().Add(jwt.MaxCapabilityTokenTTL)
 		s.cacheMu.Unlock()
 		return true, nil
 	}
@@ -810,7 +811,7 @@ func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
 		return
 	}
 	s.cacheMu.Lock()
-	s.cache[revokedKey(tenant, jti)] = s.now().Add(maxBearerTTL)
+	s.cache[revokedKey(tenant, jti)] = s.now().Add(jwt.MaxCapabilityTokenTTL)
 	s.cacheMu.Unlock()
 	if tsOK && originReplicaID != s.replicaID {
 		latency := s.now().Sub(time.Unix(0, publishNano)).Seconds()

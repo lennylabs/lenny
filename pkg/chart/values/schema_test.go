@@ -190,18 +190,53 @@ func TestRejectsNoEnvironmentPolicyEnum_spec_17_6_365(t *testing.T) {
 	}
 }
 
-// TestRejectsBearerTTLOutOfRange enforces the §27.3 60..3600 bound the
-// gateway also clamps.
-func TestRejectsBearerTTLOutOfRange(t *testing.T) {
+// TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2 enforces the §10.2
+// 120..3600 bound on auth.capabilityTokenTtlSeconds, which the gateway and
+// the Token Service also refuse at startup, and pins the removal of the
+// retired playground.bearerTtlSeconds key (no alias is kept).
+//
+// spec: 10.2 (Authentication), 27 (Web Playground)
+func TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2(t *testing.T) {
 	schema := mustSchema(t)
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 5\n")); err == nil {
-		t.Error("expected bearerTtlSeconds below 60 to be rejected")
+	cases := []struct {
+		name  string
+		yaml  string
+		valid bool
+	}{
+		{"below floor", "auth:\n  capabilityTokenTtlSeconds: 119\n", false},
+		{"at floor", "auth:\n  capabilityTokenTtlSeconds: 120\n", true},
+		{"default", "auth:\n  capabilityTokenTtlSeconds: 900\n", true},
+		{"at ceiling", "auth:\n  capabilityTokenTtlSeconds: 3600\n", true},
+		{"above ceiling", "auth:\n  capabilityTokenTtlSeconds: 3601\n", false},
+		{"siblings stay open", "auth:\n  multiTenant: true\n  capabilityTokenTtlSeconds: 900\n", true},
+		{"retired playground key", "playground:\n  bearerTtlSeconds: 900\n", false},
 	}
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 99999\n")); err == nil {
-		t.Error("expected bearerTtlSeconds above 3600 to be rejected")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateYAML(schema, []byte(tc.yaml))
+			if tc.valid && err != nil {
+				t.Errorf("expected %q to pass: %v", tc.yaml, err)
+			}
+			if !tc.valid && err == nil {
+				t.Errorf("expected %q to be rejected", tc.yaml)
+			}
+		})
 	}
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 900\n")); err != nil {
-		t.Errorf("expected an in-range bearerTtlSeconds to pass: %v", err)
+}
+
+// TestKMSSignQuotaPerSecondMinimum_spec_17_8_2 enforces the §17.8.2
+// minimum of 1 on kms.signQuotaPerSecond while leaving the other kms
+// sub-keys free-form. The required-on-cloud rule is a render guard in the
+// chart (charts/lenny/tests/kms-guard_test.yaml).
+//
+// spec: 17.8.2 (Capacity Tier Reference), 10.2 (Authentication)
+func TestKMSSignQuotaPerSecondMinimum_spec_17_8_2(t *testing.T) {
+	schema := mustSchema(t)
+	if err := ValidateYAML(schema, []byte("kms:\n  signQuotaPerSecond: 0\n")); err == nil {
+		t.Error("expected signQuotaPerSecond 0 to be rejected")
+	}
+	if err := ValidateYAML(schema, []byte("kms:\n  provider: aws\n  aliases: \"\"\n  signQuotaPerSecond: 1\n")); err != nil {
+		t.Errorf("expected signQuotaPerSecond 1 with sibling keys to pass: %v", err)
 	}
 }
 

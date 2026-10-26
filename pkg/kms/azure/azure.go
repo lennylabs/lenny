@@ -16,6 +16,10 @@
 //     version on the configured cadence; WrapDEK always targets the
 //     current version while UnwrapDEK retains the version the wrapped
 //     DEK references so prior versions stay decryptable.
+//
+// The Provider also signs with an EC P-256 Key Vault key for the §10.2
+// ES256 JWT signer (Sign, PublicKey). A signing alias maps to a key with
+// a non-empty version ("<name>@<version>" on --kms-alias).
 package azure
 
 import (
@@ -37,6 +41,7 @@ type keyClient interface {
 	Encrypt(ctx context.Context, name, version string, parameters azkeys.KeyOperationParameters, opts *azkeys.EncryptOptions) (azkeys.EncryptResponse, error)
 	Decrypt(ctx context.Context, name, version string, parameters azkeys.KeyOperationParameters, opts *azkeys.DecryptOptions) (azkeys.DecryptResponse, error)
 	GetKey(ctx context.Context, name, version string, opts *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error)
+	Sign(ctx context.Context, name, version string, parameters azkeys.SignParameters, opts *azkeys.SignOptions) (azkeys.SignResponse, error)
 }
 
 // Provider implements kms.Provider over Azure Key Vault.
@@ -115,6 +120,10 @@ func (c clientAdapter) Decrypt(ctx context.Context, name, version string, params
 
 func (c clientAdapter) GetKey(ctx context.Context, name, version string, opts *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error) {
 	return c.inner.GetKey(ctx, name, version, opts)
+}
+
+func (c clientAdapter) Sign(ctx context.Context, name, version string, params azkeys.SignParameters, opts *azkeys.SignOptions) (azkeys.SignResponse, error) {
+	return c.inner.Sign(ctx, name, version, params, opts)
 }
 
 // newWithClient is the test-injection constructor.

@@ -317,6 +317,14 @@ func (s *Stack) applyControlPlane(ctx context.Context, res substrateResult, keyF
 		return err
 	}
 
+	// Create the local KMS master key Secret before any Deployment is
+	// applied: the gateway and lenny-ops mount it without optional, so a
+	// missing Secret would hold their pods in ContainerCreating.
+	fmt.Fprintln(out, "lenny up: ensuring the local KMS master key secret")
+	if err := createMasterKeySecretFn(ctx, res.kubeconfig); err != nil {
+		return err
+	}
+
 	// Apply the non-image objects (everything but the Deployments) while the
 	// import is still in flight: none of these objects pulls an image.
 	fmt.Fprintln(out, "lenny up: applying the embedded control-plane manifests")

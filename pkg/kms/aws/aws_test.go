@@ -28,6 +28,8 @@ type fakeKMS struct {
 	// lastContext records the EncryptionContext from the most recent
 	// Encrypt / Decrypt call so a test can assert it.
 	lastContext map[string]string
+	// signing holds the Sign and public-key behavior (sign_test.go).
+	signing signFake
 }
 
 func newFakeKMS() *fakeKMS {
@@ -149,8 +151,8 @@ func newTestProvider(t *testing.T) (*Provider, *fakeKMS) {
 	f.seed("arn:aws:kms:us-east-1:000000000000:key/k-acme", []byte("0123456789abcdef0123456789abcdef"))
 	f.seed("arn:aws:kms:us-east-1:000000000000:key/k-platform", []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
 	p := newWithClient(f, map[string]string{
-		"tenant:acme":                    "arn:aws:kms:us-east-1:000000000000:key/k-acme",
-		"platform:token-service-signing": "arn:aws:kms:us-east-1:000000000000:key/k-platform",
+		"tenant:acme":          "arn:aws:kms:us-east-1:000000000000:key/k-acme",
+		"platform:jwt-signing": "arn:aws:kms:us-east-1:000000000000:key/k-platform",
 	})
 	return p, f
 }
@@ -203,7 +205,7 @@ func TestUnwrapDEKRejectsCrossAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapDEK: %v", err)
 	}
-	_, err = p.UnwrapDEK(context.Background(), "platform:token-service-signing", wrapped)
+	_, err = p.UnwrapDEK(context.Background(), "platform:jwt-signing", wrapped)
 	if err == nil {
 		t.Error("UnwrapDEK under a different alias should fail")
 	}

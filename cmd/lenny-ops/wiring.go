@@ -39,6 +39,10 @@ func runOps(f *opsFlags) {
 		_ = w.traceShutdown(shutdownCtx)
 	}()
 
+	// §10.2 verifier key set: loaded once, before the listener starts; a
+	// process that cannot load it exits.
+	w.buildKeySet()
+
 	// §25.4 dependencies: Postgres, Redis, the §12.6 store router and §11.7
 	// audit recorder, the Kubernetes clients, probes, runbooks, and the
 	// leader elector.

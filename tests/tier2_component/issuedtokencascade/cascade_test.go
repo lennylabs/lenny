@@ -204,7 +204,7 @@ func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 			Scope: []string{"sessions:read"}, Audiences: []string{"lenny-gateway"},
 			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
 		}
-		sub, revoked, err := store.RecordWithRotationAudit(ctx, newTok, "old-jti",
+		sub, revoked, err := store.RecordWithRotationAudit(ctx, newTok, subjectSource("old-jti"), "old-jti",
 			"rotation_replaced", "token.exchanged", []byte(`{"policy_result":"accepted"}`), at)
 		if err != nil {
 			t.Fatalf("RecordWithRotationAudit: %v", err)
@@ -230,7 +230,7 @@ func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 		}
 	})
 
-	t.Run("re-rotation against an already-revoked previous token is a no-op revoke", func(t *testing.T) {
+	t.Run("re-rotation against an already-revoked previous token fails subject_token_revoked", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		record(t, tenant, "prev", "bob@acme.com")
 		at := time.Now().UTC().Truncate(time.Microsecond)
@@ -238,23 +238,24 @@ func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 		if _, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
 			JTI: "r1", TenantID: tenant, Subject: "bob@acme.com", TokenHash: []byte("r1"),
 			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
-		}, "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at); err != nil || !revoked {
+		}, subjectSource("prev"), "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at); err != nil || !revoked {
 			t.Fatalf("first rotation: revoked=%v err=%v", revoked, err)
 		}
-		// Second rotation naming the already-revoked prev still mints but
-		// reports revoked=false.
+		// §13.3 step (1a): a second rotation naming the already-revoked
+		// prev fails the in-lock re-read and mints nothing.
 		_, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
 			JTI: "r2", TenantID: tenant, Subject: "bob@acme.com", TokenHash: []byte("r2"),
 			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
-		}, "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
-		if err != nil {
-			t.Fatalf("second rotation: %v", err)
+		}, subjectSource("prev"), "prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
+		var revokedErr *issuedtokenstore.SourceRevokedError
+		if !errors.As(err, &revokedErr) || revokedErr.Reason() != "subject_token_revoked" {
+			t.Fatalf("second rotation err = %v, want *SourceRevokedError subject_token_revoked", err)
 		}
 		if revoked {
 			t.Error("second rotation reported a revoke of an already-revoked previous token")
 		}
-		if got, _ := store.Get(ctx, tenant, "r2"); got.Revoked() {
-			t.Error("second replacement should be live")
+		if _, err := store.Get(ctx, tenant, "r2"); !errors.Is(err, issuedtokenstore.ErrNotFound) {
+			t.Errorf("second replacement Get err = %v, want ErrNotFound (no mint)", err)
 		}
 	})
 
@@ -264,7 +265,7 @@ func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 		_, revoked, err := store.RecordWithRotationAudit(ctx, issuedtokenstore.IssuedToken{
 			JTI: "solo", TenantID: tenant, Subject: "carol@acme.com", TokenHash: []byte("solo"),
 			IssuedAt: at, ExpiresAt: at.Add(time.Hour),
-		}, "ghost-prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
+		}, subjectSource("ghost-prev"), "ghost-prev", "rotation_replaced", "token.exchanged", []byte(`{}`), at)
 		if err != nil {
 			t.Fatalf("rotation with absent prev: %v", err)
 		}
@@ -275,4 +276,11 @@ func TestRecordWithRotationAuditContract_spec_13_3_597(t *testing.T) {
 			t.Errorf("replacement not minted or revoked: err=%v revoked=%v", err, got.Revoked())
 		}
 	})
+}
+
+// subjectSource lists jti as the exchange's subject token for the §13.3
+// step (1a) re-read, which is how the Token Service calls the rotation
+// path.
+func subjectSource(jti string) []issuedtokenstore.SourceToken {
+	return []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: jti}}
 }

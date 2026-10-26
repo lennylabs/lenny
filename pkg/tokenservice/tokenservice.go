@@ -7,14 +7,15 @@
 // with the configured Signer, and returns the RFC 8693 response
 // envelope.
 //
-// The Server signs with any jwt.Signer. §4 requires the production
-// Token Service to sign with KMS-backed material: jwt.KMSSigner holds
-// signing material whose durable form is KMS-envelope-encrypted, so
-// no plaintext signing key is persisted. The dev HMAC signer
-// (jwt.HMACSigner) satisfies the same interface for the no-cloud
-// development path. The Server keeps an in-memory issued-tokens store
-// and no Postgres advisory lock; a durable IssuedTokenStore makes the
-// §13.3 write-before-issue record durable.
+// The Server signs with any jwt.Signer. §10.2 requires every
+// Lenny-issued token to be ES256-signed through the KMS provider
+// (jwt.RemoteSigner behind a jwt.BreakerSigner), and every verifier to
+// check it against the §10.2 key set, which the Server takes as its
+// required Verifier. jwt.HMACSigner does not satisfy jwt.Signer; tests
+// adapt it through tests/testinfra/jwtsign. Without an IssuedTokenStore
+// the Server keeps no durable record and takes no Postgres advisory
+// lock; a durable IssuedTokenStore makes the §13.3 write-before-issue
+// record durable.
 package tokenservice
 
 import (
@@ -25,7 +26,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -58,7 +61,7 @@ type IssuedTokenStore interface {
 // spec: §13.3.
 type IssuedTokenAuditStore interface {
 	IssuedTokenStore
-	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
+	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
 }
 
 // IssuedTokenRotationStore extends IssuedTokenAuditStore with the §13.3 atomic token-rotation path: the new token's INSERT, its
@@ -70,9 +73,14 @@ type IssuedTokenAuditStore interface {
 // returned `revoked` reports whether the previous token was live and got
 // revoked, and `revokedSub` is its subject for the §16.7 token.revoked
 // row. F-16.7.5.
+//
+// Both store methods take the exchange's source tokens and re-read their
+// revocation state under the §11.7 lock before any issuance statement
+// (§13.3 write-before-issue step 1a). A revoked source returns a
+// *issuedtokenstore.SourceRevokedError and commits nothing.
 type IssuedTokenRotationStore interface {
 	IssuedTokenAuditStore
-	RecordWithRotationAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error)
+	RecordWithRotationAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error)
 }
 
 // The Postgres-backed issuedtokenstore.Store is the production
@@ -116,8 +124,16 @@ type Server struct {
 	issuer       string
 	perDialect   map[string]time.Duration
 	issuedTokens IssuedTokenStore
-	auditor      Auditor
-	metrics      Metrics
+
+	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds
+	// default lifetime of a token requested without expires_in.
+	capabilityTokenTTL time.Duration
+
+	// now is Options.Now: the injected clock, nil in production.
+	now func() time.Time
+
+	auditor Auditor
+	metrics Metrics
 
 	rateLimiter *RateLimiter
 
@@ -137,12 +153,12 @@ type Server struct {
 
 // Options configures the Server.
 type Options struct {
-	// Signer mints the issued JWTs. §4 wants the production Token
-	// Service to use jwt.KMSSigner (KMS-envelope-backed signing
-	// material); jwt.HMACSigner is the development signer. Both
-	// satisfy jwt.Signer.
+	// Signer mints the issued JWTs. Sign receives the request context,
+	// which bounds the remote KMS Sign call (§10.2).
 	Signer jwt.Signer
 
+	// Verifier authenticates the caller, subject, and actor tokens. It
+	// is required; production passes the §10.2 key set.
 	Verifier jwt.Verifier
 	Issuer   string
 
@@ -150,6 +166,13 @@ type Options struct {
 	// by audience. Empty map means no cap (the validator falls
 	// through to min(requested, subject.exp, actor.exp)).
 	PerDialectCap map[string]time.Duration
+
+	// CapabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds
+	// value: the default lifetime of a JWT requested without expires_in,
+	// except an actor_token exchange, whose requested exp is left absent.
+	// It is required; NewServer returns ErrNoCapabilityTokenTTL when it
+	// is not positive.
+	CapabilityTokenTTL time.Duration
 
 	// IssuedTokens, when set, records every minted token before it is
 	// returned (§13.3 write-before-issue). When nil, no durable
@@ -201,15 +224,29 @@ type Options struct {
 	RevocationPropagator func(ctx context.Context, tenantID, jti string) error
 }
 
-// NewServer returns a Server. When Options.Verifier is nil and the
-// configured Signer also verifies (both jwt.HMACSigner and
-// jwt.KMSSigner do), the Server verifies caller, subject, and actor
-// tokens with the signer itself.
-func NewServer(opts Options) *Server {
+// ErrNoVerifier is returned by NewServer when Options.Verifier is nil.
+var ErrNoVerifier = errors.New("tokenservice: Options.Verifier is required")
+
+// ErrNoCapabilityTokenTTL is returned by NewServer when
+// Options.CapabilityTokenTTL is not positive. A zero default would issue
+// every token without expires_in at the subject's exp instead of the §10.2
+// default lifetime.
+var ErrNoCapabilityTokenTTL = errors.New("tokenservice: Options.CapabilityTokenTTL is required")
+
+// NewServer returns a Server, or ErrNoVerifier when Options.Verifier is
+// nil, or ErrNoCapabilityTokenTTL when Options.CapabilityTokenTTL is not
+// positive. The verifier authenticates the caller, subject, and actor tokens;
+// in production it is the §10.2 key set. A remote signer holds no key
+// material that can verify, so the Server never falls back to its
+// signer as the verifier.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation", §4.3.
+func NewServer(opts Options) (*Server, error) {
 	if opts.Verifier == nil {
-		if v, ok := opts.Signer.(jwt.Verifier); ok {
-			opts.Verifier = v
-		}
+		return nil, ErrNoVerifier
+	}
+	if opts.CapabilityTokenTTL <= 0 {
+		return nil, ErrNoCapabilityTokenTTL
 	}
 	if opts.PerDialectCap == nil {
 		opts.PerDialectCap = map[string]time.Duration{}
@@ -218,21 +255,24 @@ func NewServer(opts Options) *Server {
 		opts.Metrics = NoMetrics{}
 	}
 	s := &Server{
-		signer:        opts.Signer,
-		verifier:      opts.Verifier,
-		issuer:        opts.Issuer,
-		perDialect:    opts.PerDialectCap,
-		issuedTokens:  opts.IssuedTokens,
-		auditor:       opts.Auditor,
-		metrics:       opts.Metrics,
-		driftDegraded: opts.DriftDegraded,
+		signer:     opts.Signer,
+		verifier:   opts.Verifier,
+		issuer:     opts.Issuer,
+		perDialect: opts.PerDialectCap,
+
+		capabilityTokenTTL: opts.CapabilityTokenTTL,
+		now:                opts.Now,
+		issuedTokens:       opts.IssuedTokens,
+		auditor:            opts.Auditor,
+		metrics:            opts.Metrics,
+		driftDegraded:      opts.DriftDegraded,
 
 		revocationPropagator: opts.RevocationPropagator,
 	}
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
 	}
-	return s
+	return s, nil
 }
 
 // Handler returns the http.Handler that routes POST /v1/oauth/token.
@@ -252,7 +292,11 @@ type Request struct {
 	RequestedTokenType string `json:"requested_token_type"`
 	Scope              string `json:"scope"`
 	Audience           string `json:"audience"`
-	ExpiresIn          int64  `json:"expires_in"`
+
+	// ExpiresIn is the optional requested lifetime in seconds. Nil means
+	// the request carried no expires_in, which selects the §10.2 default
+	// lifetime; a present value below minRequestedExpiresIn is rejected.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
 }
 
 // Response is the RFC 8693 successful response.
@@ -263,6 +307,10 @@ type Response struct {
 	ExpiresIn       int64  `json:"expires_in"`
 	Scope           string `json:"scope,omitempty"`
 }
+
+// minRequestedExpiresIn is the smallest expires_in, in seconds, a request
+// may carry. spec: §10.2 (Authentication) "JWT claims" expiry.
+const minRequestedExpiresIn = 60
 
 const (
 	grantTypeExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -445,6 +493,16 @@ func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, fini
 		finish("invalid_client")
 		return jwt.Claims{}, false
 	}
+	// spec: §13.3 "Client authentication on /v1/oauth/token" — a token
+	// carrying origin: "playground" is not a caller credential. Only the
+	// caller token is checked: §8.2 makes a playground bearer the
+	// subject_token of a delegation from a playground session, so the
+	// subject_token and actor_token take no origin check.
+	if callerClaims.Origin == jwt.OriginPlayground {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "a playground-origin token is not a caller credential")
+		finish("invalid_client")
+		return jwt.Claims{}, false
+	}
 	return callerClaims, true
 }
 
@@ -467,6 +525,14 @@ func parseAndValidateRequest(w http.ResponseWriter, r *http.Request, finish func
 	}
 	if req.SubjectToken == "" {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "subject_token is required")
+		finish("invalid_request")
+		return Request{}, false
+	}
+	// spec: §10.2 (Authentication) "JWT claims" expiry — a request
+	// that carries expires_in below 60 is rejected with invalid_request.
+	if req.ExpiresIn != nil && *req.ExpiresIn < minRequestedExpiresIn {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("expires_in must be at least %d seconds", minRequestedExpiresIn))
 		finish("invalid_request")
 		return Request{}, false
 	}
@@ -541,7 +607,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request, req Requ
 		return
 	}
 
-	jti, signed, ok := s.mintToken(w, issued, now, finish)
+	jti, signed, ok := s.mintToken(r.Context(), w, issued, now, finish)
 	if !ok {
 		return
 	}
@@ -571,7 +637,7 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 			Scope:    splitScope(req.Scope),
 			Audience: splitSpace(req.Audience),
 		},
-		RequestedExp: now.Add(durationFromExpiresIn(req.ExpiresIn)),
+		RequestedExp: s.requestedExp(req, actorClaims != nil, now),
 		Now:          now,
 	}
 	if actorClaims != nil {
@@ -582,6 +648,47 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 		exchangeReq.PerDialectCap = dialectCap
 	}
 	return exchangeReq
+}
+
+// requestedExp returns the §10.2 requested_exp of an exchange: now +
+// expires_in when the request carries it, and now +
+// auth.capabilityTokenTtlSeconds when it does not. An actor_token exchange
+// without expires_in returns the zero time, which tokenexchange.Derive treats
+// as absent, so the child's exp is min(subject exp, actor exp, per-dialect
+// cap) and the capability default never applies to it.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry; §13.3 "exp
+// granularity and parent-expiry handling".
+func (s *Server) requestedExp(req Request, hasActor bool, now time.Time) time.Time {
+	switch {
+	case req.ExpiresIn != nil:
+		return now.Add(expiresInDuration(*req.ExpiresIn))
+	case hasActor:
+		return time.Time{}
+	default:
+		return now.Add(s.capabilityTokenTTL)
+	}
+}
+
+// maxExpiresInSeconds is the largest expires_in, in seconds, that converts
+// to a time.Duration without overflowing int64 nanoseconds (about 292
+// years).
+const maxExpiresInSeconds = int64(math.MaxInt64 / int64(time.Second))
+
+// expiresInDuration converts a request's expires_in to a duration,
+// saturating a value above maxExpiresInSeconds. §10.2 places no upper bound
+// on expires_in and the §13.3 min(requested_exp, subject_token.exp,
+// per-dialect cap) clamps it, so an oversized value must stay far in the
+// future rather than wrap to a past or short-lived requested_exp. Values
+// below the 60 s minimum are rejected before this conversion.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry; §13.3 "exp
+// granularity and parent-expiry handling".
+func expiresInDuration(seconds int64) time.Duration {
+	if seconds > maxExpiresInSeconds {
+		seconds = maxExpiresInSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // resolveDialectCap returns the §13.3 per-dialect lifetime cap to apply.
@@ -666,10 +773,11 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 // freshly minted jti, the signed token, and true on success. The jti is
 // a crypto/rand-derived 128-bit identifier so two replicas minting at
 // the same wall-clock instant do not collide on the issued_tokens
-// primary key. spec: §4.3. An open JWTSigner circuit breaker fails with
-// 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2,
-// F-10.2.6).
-func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
+// primary key. spec: §4.3. Every Sign failure, including an open
+// JWTSigner circuit breaker and provider throttling, fails with 503
+// KMS_SIGNING_UNAVAILABLE, `retryable: true`, and the breaker's
+// `Retry-After` (§10.2, F-10.2.6).
+func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
 	jti, err := newJTI()
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
@@ -695,20 +803,16 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 		AuthorizedTools: issued.AuthorizedTools,
 		Typ:             auth.TokenType(issued.Typ),
 	}
-	signed, err := s.signer.Sign(out)
+	signed, err := s.signer.Sign(ctx, out)
 	if err != nil {
-		// spec: §10.2 — when the JWTSigner circuit breaker is
-		// open (or otherwise reports the KMS-backed signing material is
-		// unreachable), the mint fails with 503 KMS_SIGNING_UNAVAILABLE
-		// and `retryable: true`. The §16.5 KMSSigningUnavailable alert
-		// reads `lenny_gateway_kms_signing_errors_total`. F-10.2.6.
-		if errors.Is(err, jwt.ErrSigningUnavailable) {
-			writeKMSUnavailable(w, err.Error())
-			finish("kms_signing_unavailable")
-			return "", "", false
-		}
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
-		finish("server_error")
+		// spec: §10.2 "KMS signing failure mode" — a mint whose
+		// signature cannot be obtained, whether the breaker refused it,
+		// the KMS throttled it, or the KMS failed, fails with 503
+		// KMS_SIGNING_UNAVAILABLE, `retryable: true`, and the breaker's
+		// `Retry-After`. The §16.5 KMSSigningUnavailable alert reads
+		// `lenny_gateway_kms_signing_errors_total`. F-10.2.6.
+		writeKMSUnavailable(w, err.Error(), jwt.SigningRetryAfterSeconds(err))
+		finish("kms_signing_unavailable")
 		return "", "", false
 	}
 	return jti, signed, true
@@ -717,13 +821,46 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 // persistIssuedToken commits the §13.3 write-before-issue record: the
 // issued_tokens row and the token.exchanged audit row commit in one
 // Postgres transaction under the per-tenant audit advisory lock, so the
-// signed token is not handed to the caller until COMMIT succeeds. It
-// routes between the rotation, transactional-audit, in-memory dev, and
-// test-only store paths and returns true once the record is durable.
-// spec: §13.3.
+// signed token is not handed to the caller until COMMIT succeeds. The
+// token was signed before this transaction opened, outside the lock.
+// When the in-lock re-read (step 1a) finds the subject or actor token
+// revoked, the signed token is discarded and the exchange is rejected
+// with 400 invalid_grant. It returns true once the record is durable.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
+	rec := issuedRecord(jti, issued, signed, dialectCap, now)
+	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
+	auditPayload := exchangeAuditPayload{
+		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
+		CallerSub:       callerClaims.Subject,
+		SubjectSub:      issued.Subject,
+		JTI:             jti,
+		Scope:           issued.Scope,
+		Audience:        issued.Audience,
+		DelegationDepth: issued.DelegationDepth,
+		PolicyResult:    "accepted",
+		Now:             now,
+	}
+	sources := exchangeSources(subjectClaims, actorClaims)
+
+	err := s.commitIssued(r.Context(), rec, sources, isRotation, subjectClaims.JWTID, auditPayload)
+	var revokedErr *issuedtokenstore.SourceRevokedError
+	switch {
+	case errors.As(err, &revokedErr):
+		s.rejectRevokedSource(w, r, issued.TenantID, revokedErr, auditPayload, finish)
+		return false
+	case err != nil:
+		writeIssueStoreError(w, finish, err)
+		return false
+	}
+	return true
+}
+
+// issuedRecord builds the issued_tokens row for a signed token. The row
+// carries the SHA-256 digest of the token, never the token itself.
+func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, now time.Time) issuedtokenstore.IssuedToken {
 	hash := sha256.Sum256([]byte(signed))
-	rec := issuedtokenstore.IssuedToken{
+	return issuedtokenstore.IssuedToken{
 		JTI:       jti,
 		TenantID:  issued.TenantID,
 		Subject:   issued.Subject,
@@ -739,70 +876,103 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 		IssuedAt:                 now,
 		ExpiresAt:                issued.Exp,
 	}
-	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
+}
 
-	auditPayload := exchangeAuditPayload{
-		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
-		CallerSub:       callerClaims.Subject,
-		SubjectSub:      issued.Subject,
-		JTI:             jti,
-		Scope:           issued.Scope,
-		Audience:        issued.Audience,
-		DelegationDepth: issued.DelegationDepth,
-		PolicyResult:    "accepted",
-		Now:             now,
+// exchangeSources lists the source tokens the issuance transaction
+// re-reads under the lock: the subject_token and, on a delegation child
+// mint, the actor_token. The subject is listed first, so a token that
+// plays both roles is reported as the subject.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
+func exchangeSources(subjectClaims jwt.Claims, actorClaims *jwt.Claims) []issuedtokenstore.SourceToken {
+	sources := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: subjectClaims.JWTID}}
+	if actorClaims != nil {
+		sources = append(sources, issuedtokenstore.SourceToken{Role: issuedtokenstore.SourceActorToken, JTI: actorClaims.JWTID})
 	}
+	return sources
+}
 
+// commitIssued routes the write-before-issue record between the rotation,
+// transactional-audit, in-memory dev, and test-only store paths. The two
+// Postgres paths re-read the sources under the §11.7 lock and return a
+// *issuedtokenstore.SourceRevokedError when one is revoked. The in-memory
+// paths hold no durable revocation state to re-read.
+// spec: §13.3.
+func (s *Server) commitIssued(ctx context.Context, rec issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, isRotation bool, prevJTI string, auditPayload exchangeAuditPayload) error {
 	auditStore, _ := s.issuedTokens.(IssuedTokenAuditStore)
 	rotationStore, _ := s.issuedTokens.(IssuedTokenRotationStore)
+	now := auditPayload.Now
 	switch {
 	case isRotation && rotationStore != nil:
 		// Postgres rotation path: the new issued-token INSERT, the
 		// token.exchanged audit row, and the revoked_at stamp on the
 		// previous token commit in one transaction (§13.3).
-		revokedSub, revoked, err := rotationStore.RecordWithRotationAudit(r.Context(), rec,
-			subjectClaims.JWTID, revocationReasonRotationReplaced,
+		revokedSub, revoked, err := rotationStore.RecordWithRotationAudit(ctx, rec, sources,
+			prevJTI, revocationReasonRotationReplaced,
 			string(obsaudit.EventTokenExchanged), auditPayload.JSON(), now)
 		if err != nil {
-			writeIssueStoreError(w, finish, err)
-			return false
+			return err
 		}
 		if revoked {
 			// The token.revoked row and cluster propagation run after the
 			// durable commit so propagation_mode reflects the real publish
 			// outcome.
-			s.emitRotationRevoked(r.Context(), issued.TenantID, subjectClaims.JWTID, revokedSub, now)
+			s.emitRotationRevoked(ctx, rec.TenantID, prevJTI, revokedSub, now)
 		}
+		return nil
 	case auditStore != nil:
 		// Postgres path: one transaction binds the issued-token
 		// INSERT and the audit_log INSERT under the §11.7 lock.
-		if _, err := auditStore.RecordWithAudit(r.Context(), rec, string(obsaudit.EventTokenExchanged),
-			auditPayload.JSON(), now); err != nil {
-			writeIssueStoreError(w, finish, err)
-			return false
-		}
+		_, err := auditStore.RecordWithAudit(ctx, rec, sources, string(obsaudit.EventTokenExchanged),
+			auditPayload.JSON(), now)
+		return err
 	case s.issuedTokens != nil:
 		// In-memory dev path: no advisory lock is needed because the
 		// issued-tokens record and the audit append share no Postgres
-		// state. We still write the issued record first so the
-		// audit row references a durable jti.
-		if err := s.issuedTokens.Record(r.Context(), rec); err != nil {
-			writeIssueStoreError(w, finish, err)
-			return false
+		// state. The issued record is written first so the audit row
+		// references a durable jti.
+		if err := s.issuedTokens.Record(ctx, rec); err != nil {
+			return err
 		}
 		// The accepted-exchange write-before-issue fail-closed obligation
-		// (§13.3) is met by the production Postgres path above,
-		// which routes through auditStore.RecordWithAudit/writeIssueStoreError.
-		// This in-memory dev path is non-production, so the audit write is
+		// (§13.3) is met by the production Postgres paths above. This
+		// in-memory dev path is non-production, so the audit write is
 		// best-effort and the returned error is discarded.
-		_ = s.recordExchangeAudit(r.Context(), issued.TenantID, auditPayload)
+		_ = s.recordExchangeAudit(ctx, rec.TenantID, auditPayload)
+		return nil
 	default:
 		// Test-only path with no durable issued-token store; the audit
 		// write is best-effort here too (non-production), so the error is
 		// discarded.
-		_ = s.recordExchangeAudit(r.Context(), issued.TenantID, auditPayload)
+		_ = s.recordExchangeAudit(ctx, rec.TenantID, auditPayload)
+		return nil
 	}
-	return true
+}
+
+// rejectRevokedSource renders the §13.3 step (1a) rejection. The signed
+// token is discarded by the caller and never returned. The rejection
+// token.exchanged audit row, with policy_result
+// rejected:subject_token_revoked or rejected:actor_token_revoked, is
+// written through the Auditor, whose production implementation takes the
+// §11.7 lock and commits before it returns, so the client receives the
+// 400 invalid_grant only after the rejection audit is durable. A failed
+// rejection audit write returns 500 token_exchange_failed with the
+// intended reason in the description, matching the §13.3 rejected-exchange
+// discipline.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
+func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID string, revokedErr *issuedtokenstore.SourceRevokedError, accepted exchangeAuditPayload, finish func(string)) {
+	reason := revokedErr.Reason()
+	rejection := accepted
+	rejection.JTI = "" // The discarded token was never issued.
+	rejection.PolicyResult = "rejected:" + reason
+	rejection.ErrorCode = "invalid_grant"
+	if err := s.recordExchangeAudit(r.Context(), tenantID, rejection); err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+			"§13.3 rejection-audit write failed; intended rejection: "+reason)
+		finish("token_exchange_failed")
+		return
+	}
+	writeOAuthError(w, http.StatusBadRequest, "invalid_grant", reason)
+	finish("invalid_grant")
 }
 
 // isSelfRotation reports whether this exchange is a §13.3
@@ -1038,10 +1208,11 @@ func (s *Server) propagateRevocation(ctx context.Context, tenantID, jti string) 
 	return mode
 }
 
-// clockNow returns the configured clock or time.Now.
+// clockNow returns the Options.Now clock, or time.Now when none is
+// configured. The handler and the rate limiter read the same clock.
 func (s *Server) clockNow() time.Time {
-	if s.rateLimiter != nil {
-		return s.rateLimiter.Now()
+	if s.now != nil {
+		return s.now().UTC()
 	}
 	return time.Now().UTC()
 }
@@ -1058,6 +1229,10 @@ func parseRequest(r *http.Request) (Request, error) {
 		if err := r.ParseForm(); err != nil {
 			return Request{}, err
 		}
+		expiresIn, err := parseFormExpiresIn(r.PostForm)
+		if err != nil {
+			return Request{}, err
+		}
 		return Request{
 			GrantType:          r.PostForm.Get("grant_type"),
 			SubjectToken:       r.PostForm.Get("subject_token"),
@@ -1067,9 +1242,23 @@ func parseRequest(r *http.Request) (Request, error) {
 			RequestedTokenType: r.PostForm.Get("requested_token_type"),
 			Scope:              r.PostForm.Get("scope"),
 			Audience:           r.PostForm.Get("audience"),
-			ExpiresIn:          0,
+			ExpiresIn:          expiresIn,
 		}, nil
 	}
+}
+
+// parseFormExpiresIn returns the expires_in form field as a pointer, nil
+// when the form does not carry the field, or an error when the value is not
+// an integer.
+func parseFormExpiresIn(form url.Values) (*int64, error) {
+	if !form.Has("expires_in") {
+		return nil, nil
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(form.Get("expires_in")), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("expires_in is not an integer: %w", err)
+	}
+	return &n, nil
 }
 
 func toExchangeToken(c jwt.Claims) tokenexchange.Token {
@@ -1126,13 +1315,6 @@ func splitSpace(s string) []string {
 		return nil
 	}
 	return strings.Fields(s)
-}
-
-func durationFromExpiresIn(seconds int64) time.Duration {
-	if seconds <= 0 {
-		return time.Hour // sensible default per §13.3 dialect cap discipline
-	}
-	return time.Duration(seconds) * time.Second
 }
 
 func mapStatus(rfcCode string) int {
@@ -1193,15 +1375,15 @@ func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error)
 }
 
 // writeKMSUnavailable writes the §10.2 / §15.1
-// KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` so
-// the client retries the mint after the circuit-breaker cooldown
-// elapses. The body uses the Lenny error envelope (rather than the
+// KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` and
+// `Retry-After: retryAfterSeconds`, the breaker's remaining cooldown
+// when it is open and 1 second otherwise. The body uses the Lenny error envelope (rather than the
 // OAuth envelope) because §15.1's catalog row carries the code and
 // transient classification, and a client matching on the catalog
 // expects the lenny shape.
-func writeKMSUnavailable(w http.ResponseWriter, description string) {
+func writeKMSUnavailable(w http.ResponseWriter, description string, retryAfterSeconds int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Retry-After", "30")
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{

@@ -146,6 +146,57 @@ tests:
             name: metrics
             containerPort: 9090
 
+  # spec: §10.2 (Authentication) — the Token Service default lifetime for a
+  # request without expires_in comes from auth.capabilityTokenTtlSeconds,
+  # the same value the gateway's playground bearer lifetime reads.
+  - it: renders --capability-token-ttl-seconds from the shared lifetime value
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=900
+
+  - it: renders an operator-set capability token lifetime
+    set:
+      auth.capabilityTokenTtlSeconds: 1800
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=1800
+
+  # spec: §10.2 (Authentication), §27 — the values schema bounds
+  # auth.capabilityTokenTtlSeconds to 120..3600, so 119 fails the install
+  # before either binary sees it, and the retired playground key is gone.
+  - it: rejects auth.capabilityTokenTtlSeconds of 119 at schema validation
+    set:
+      auth.capabilityTokenTtlSeconds: 119
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/capabilityTokenTtlSeconds.: minimum: got 119, want 120"
+
+  - it: accepts auth.capabilityTokenTtlSeconds at the 120 floor
+    set:
+      auth.capabilityTokenTtlSeconds: 120
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=120
+
+  - it: rejects the retired playground.bearerTtlSeconds key
+    set:
+      playground.bearerTtlSeconds: 900
+    asserts:
+      - failedTemplate:
+          errorPattern: "bearerTtlSeconds"
+
   # spec: F-4.3.11 / F-17.5.2 — the Token Service receives its KMS
   # provider selector from kms.provider, defaulting to local for the
   # dev install. environment carries the production-rejection gate.
@@ -165,7 +216,8 @@ tests:
     set:
       kms.provider: aws
       kms.awsRegion: us-east-1
-      kms.aliases: "platform:token-service-signing=alias/lenny/token-service"
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       environment: prod
     documentSelector:
       path: kind
@@ -179,10 +231,100 @@ tests:
           content: --kms-aws-region=us-east-1
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --kms-alias=platform:token-service-signing=alias/lenny/token-service
+          content: --kms-alias=platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
       - contains:
           path: spec.template.spec.containers[0].args
           content: --environment=prod
+
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # the Token Service mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §10.2 "Signing topology" — the ServiceAccount binds to the provider
+  # identity holding the KMS Sign and GetPublicKey permissions.
+  - it: renders tokenService.serviceAccount.annotations on lenny-token-service
+    set:
+      tokenService.serviceAccount.annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/lenny-token-service
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - equal:
+          path: metadata.annotations["eks.amazonaws.com/role-arn"]
+          value: arn:aws:iam::111122223333:role/lenny-token-service
+
+  - it: renders no annotations on lenny-token-service by default
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - notExists:
+          path: metadata.annotations
 
   - it: protects the token-service with a PodDisruptionBudget
     documentSelector:
@@ -274,10 +416,16 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --tls-cert=/etc/lenny/mtls/tls.crt
-      - isNull:
+      - notContains:
           path: spec.template.spec.volumes
-      - isNull:
+          content:
+            name: lenny-token-service-tls
+          any: true
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-token-service-tls
+          any: true
 
   # spec: §10.5 /
   # §17.1 — the Token Service declares an explicit RollingUpdate

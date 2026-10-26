@@ -333,7 +333,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
-    # §25.4 — Postgres via PgBouncer (NET-061).
+    # §25.4 — Postgres via PgBouncer (NET-061). lenny-ops reads its
+    # revocation set and its audit, backup, and upgrade state there.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -386,6 +387,9 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # §13.2.4 lenny-ops row — KMS endpoint for GetPublicKey on the
+    # §10.2 JWT signing keys, rendered only when kms.provider is not
+    # local, under the same kms.endpointCIDR refusal as the gateway.
     # §25.4 — DNS with the canonical CoreDNS podSelector
     # (NET-067). Both UDP/53 and TCP/53.
     - to:
@@ -879,6 +883,12 @@ spec:
         - podSelector:
             matchLabels:
               lenny.dev/component: controller
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+          podSelector:
+            matchLabels:
+              app: lenny-ops
       ports:
         - port: 5432
           protocol: TCP
@@ -975,6 +985,11 @@ spec:
               lenny.dev/component: token-service
       ports:
         - port: 50052
+          protocol: TCP
+        # §4.3 canonical token endpoint: the gateway reverse-proxies
+        # /v1/oauth/* to the Token Service's HTTP listener, the egress
+        # counterpart of the HTTP port allow-token-service admits.
+        - port: 8081
           protocol: TCP
     - to:
         - podSelector:
@@ -2125,8 +2140,17 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: The gateway JWTSigner circuit breaker has tripped open — new session creation is failing with KMS_SIGNING_UNAVAILABLE. Existing sessions are unaffected until JWT expiry.
-                summary: Gateway KMS signing circuit breaker tripped
+                description: A JWTSigner circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with KMS_SIGNING_UNAVAILABLE. Verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's job label names.
+                summary: A JWTSigner circuit breaker on the gateway or the Token Service tripped open
+            - alert: KMSSignQuotaApproaching
+              expr: sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                description: The fleet-wide rate of JWT sign requests that reach the KMS has exceeded 80% of kms.signQuotaPerSecond for more than 10 minutes. Raise the provider's asymmetric Sign quota and kms.signQuotaPerSecond together.
+                runbook_url: https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota
+                summary: Fleet-wide KMS sign request rate exceeds 80% of the configured quota
             - alert: GatewaySubsystemCircuitOpen
               expr: max by (subsystem) (lenny_gateway_subsystem_circuit_state) == 2
               for: 1m
@@ -4025,6 +4049,14 @@ spec:
             items:
               - key: key
                 path: key
+        # spec: §17.4 — the local provider's master key Secret, shared with
+        # lenny-token-service and lenny-ops (lenny.kmsMasterKeyVolume).
+        - name: kms-master-key
+          secret:
+            secretName: lenny-embedded-dev-kms-master-key
+            items:
+              - key: master-key
+                path: master-key
       containers:
         - name: gateway
           image: "ghcr.io/lennylabs/lenny-gateway:0.1.0"
@@ -4091,9 +4123,11 @@ spec:
             # this fallback for dev mode) for §4.9 leases and the §4.3
             # /v1/oauth/* proxy, so the absent Service is never dialed.
             # §4 KMS provider (F-4.3.11). The gateway wraps the §4.9
-            # connector-credential DEKs through this provider.
+            # connector-credential DEKs and signs Lenny-issued JWTs through
+            # this provider (§10.2 "Signing key and algorithm").
             - --kms-provider=local
             - --environment=dev
+            - --kms-master-key-file=/etc/lenny/kms/master-key
             # §17.9.3 object-storage backend selector (F-17.5.1). The
             # gateway resolves the matching blobstore.Store adapter
             # (minio | s3 | gcs | azure) from these flags. The shared
@@ -4604,6 +4638,11 @@ spec:
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
+            # spec: §17.4 — the local provider's master key, read through
+            # --kms-master-key-file.
+            - name: kms-master-key
+              mountPath: /etc/lenny/kms
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -4726,6 +4765,12 @@ spec:
             - --gateway-token-refresh-before-expiry=300s
             - --gateway-token-min-ttl=600s
             - --production=false
+            # §10.2 "Verifier key set and rotation": lenny-ops loads its key
+            # set from the same KMS provider, aliases, and environment the
+            # gateway and the Token Service sign with.
+            - --kms-provider=local
+            - --environment=dev
+            - --kms-master-key-file=/etc/lenny/kms/master-key
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -4761,6 +4806,8 @@ spec:
             - --escalation-reconciliation-writes-per-second=20
             # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
+            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
+            # refuses it, so it renders only when ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps=20
@@ -4841,33 +4888,38 @@ spec:
             # the metrics endpoint on the rendered pod spec. F-16.9.10.
             - name: metrics
               containerPort: 8090
-          # §25.4 — the permissive /healthz covers
-          # startup and liveness so a transient Postgres or Kubernetes
-          # API blip does not restart an otherwise-healthy pod; the
-          # startup probe's 30×2s budget covers Postgres connection
-          # establishment.
+          # §25.4 — startup and liveness probe the permissive /healthz,
+          # which restarts a pod only when neither Postgres nor the
+          # Kubernetes API is reachable; the startup probe's 30×2s budget
+          # covers Postgres connection establishment. Every probe sets
+          # timeoutSeconds 3, above the 2s bound on each dependency probe,
+          # so kubelet's 1s default does not fail a probe before /healthz
+          # answers.
           startupProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 — readiness uses the strict gate so traffic
-          # is not routed to a replica that cannot reach both Postgres
-          # and the Kubernetes API. Strict readiness is gated on
-          # ops.production: the stock degraded single-process render
-          # (LENNY_POSTGRES_DSN unset) would never reach Ready under the
-          # strict gate, so it falls back to the graceful /readyz report.
+          # §25.4 — production readiness uses the permissive /healthz
+          # check, which passes when Postgres or the Kubernetes API is
+          # reachable, so a Postgres outage does not remove every replica
+          # from the Service and the §25.15 degraded mode stays reachable.
+          # The strict ?strict=true form is a diagnostic check no probe
+          # uses. The non-production render keeps the /readyz report.
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
@@ -4891,9 +4943,14 @@ spec:
             - name: gateway-sa-token
               mountPath: /var/run/secrets/lenny/gateway
               readOnly: true
-            # §25.4: the shared HMAC bearer-verify key. F-25.4.20.
+            # §17.4: the dev embedded-OIDC trust key. F-25.4.20.
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
+              readOnly: true
+            # §17.4: the local provider's master key, read through
+            # --kms-master-key-file.
+            - name: kms-master-key
+              mountPath: /etc/lenny/kms
               readOnly: true
           resources:
             limits:
@@ -4920,6 +4977,14 @@ spec:
             items:
               - key: key
                 path: key
+        # §17.4: the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-token-service.
+        - name: kms-master-key
+          secret:
+            secretName: lenny-embedded-dev-kms-master-key
+            items:
+              - key: master-key
+                path: master-key
 ---
 # Source: lenny/templates/reference-runtimes.yaml
 apiVersion: lenny.dev/v1alpha1

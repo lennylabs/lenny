@@ -74,6 +74,9 @@ only the env vars it can satisfy.
    Default tls.enabled is true; an explicit `false` is honored. */ -}}
 {{- $minioUseSSL := true -}}
 {{- $minioCABundle := "" -}}
+{{- /* §17.4: under kms.provider=local the gateway mounts the shared master
+   key Secret, so the volume lists render whenever the provider is local. */ -}}
+{{- $localKMS := include "lenny.kmsLocal" . -}}
 {{- if and $minio (hasKey ($minio | default dict) "tls") -}}
 {{- $minioTLS := $minio.tls -}}
 {{- if hasKey ($minioTLS | default dict) "enabled" -}}
@@ -317,7 +320,7 @@ spec:
           no-mesh / external-mTLS deployment can opt out, but the chart
           default is mtls.enabled=true.
       */ -}}
-      {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret }}
+      {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret $localKMS }}
       volumes:
         {{- if .Values.mtls.enabled }}
         {{- if .Values.gateway.spiffe.enabled }}
@@ -370,6 +373,11 @@ spec:
             items:
               - key: key
                 path: key
+        {{- end }}
+        {{- if $localKMS }}
+        # spec: §17.4 — the local provider's master key Secret, shared with
+        # lenny-token-service and lenny-ops (lenny.kmsMasterKeyVolume).
+        {{- include "lenny.kmsMasterKeyVolume" . | nindent 8 }}
         {{- end }}
       {{- end }}
       {{- /*
@@ -543,17 +551,16 @@ spec:
             # /v1/oauth/* proxy, so the absent Service is never dialed.
             {{- end }}
             # §4 KMS provider (F-4.3.11). The gateway wraps the §4.9
-            # connector-credential DEKs through this provider.
-            - --kms-provider={{ .Values.kms.provider }}
-            - --environment={{ .Values.environment }}
-            {{- with .Values.kms.aliases }}
-            - --kms-alias={{ . }}
-            {{- end }}
-            {{- with .Values.kms.awsRegion }}
-            - --kms-aws-region={{ . }}
-            {{- end }}
-            {{- with .Values.kms.azureVaultURL }}
-            - --kms-azure-vault-url={{ . }}
+            # connector-credential DEKs and signs Lenny-issued JWTs through
+            # this provider (§10.2 "Signing key and algorithm").
+            {{- include "lenny.kmsArgs" . | nindent 12 }}
+            {{- if not $localKMS }}
+            # spec: §16.5 KMSSignQuotaApproaching, §17.8.2 "KMS Sign rate".
+            # The gateway emits the provider's asymmetric Sign quota on the
+            # lenny_kms_sign_quota_per_second gauge, which the alert's
+            # threshold reads. The local provider makes no KMS call, so the
+            # flag stays unset there and the alert stays silent.
+            - --kms-sign-quota-per-second={{ int .Values.kms.signQuotaPerSecond }}
             {{- end }}
             # §17.9.3 object-storage backend selector (F-17.5.1). The
             # gateway resolves the matching blobstore.Store adapter
@@ -716,7 +723,7 @@ spec:
             - --playground-max-session-minutes={{ .Values.playground.maxSessionMinutes }}
             - --playground-max-idle-time-seconds={{ .Values.playground.maxIdleTimeSeconds }}
             - --playground-oidc-session-ttl-seconds={{ .Values.playground.oidcSessionTtlSeconds }}
-            - --playground-bearer-ttl-seconds={{ .Values.playground.bearerTtlSeconds }}
+            - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
             {{- with .Values.playground.gatewayHost }}
             - --playground-gateway-host={{ . }}
             {{- end }}
@@ -1623,7 +1630,7 @@ spec:
             - name: llm-proxy
               containerPort: {{ .Values.gateway.llmProxyPort }}
             {{- end }}
-          {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret }}
+          {{- if or .Values.mtls.enabled $minioCABundle .Values.security.oidc.bearerTrustKeySecret $localKMS }}
           volumeMounts:
             {{- if .Values.mtls.enabled }}
             - name: lenny-gateway-tls
@@ -1644,6 +1651,11 @@ spec:
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
+            {{- end }}
+            {{- if $localKMS }}
+            # spec: §17.4 — the local provider's master key, read through
+            # --kms-master-key-file.
+            {{- include "lenny.kmsMasterKeyVolumeMount" . | nindent 12 }}
             {{- end }}
           {{- end }}
           livenessProbe:

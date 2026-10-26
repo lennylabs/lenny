@@ -244,7 +244,7 @@ func (f *fakeAdminIssuedTokenStore) Record(context.Context, issuedtokenstore.Iss
 	return nil
 }
 
-func (f *fakeAdminIssuedTokenStore) RecordWithAudit(context.Context, issuedtokenstore.IssuedToken, string, json.RawMessage, time.Time) (audit.Row, error) {
+func (f *fakeAdminIssuedTokenStore) RecordWithAudit(context.Context, issuedtokenstore.IssuedToken, []issuedtokenstore.SourceToken, string, json.RawMessage, time.Time) (audit.Row, error) {
 	return audit.Row{}, nil
 }
 

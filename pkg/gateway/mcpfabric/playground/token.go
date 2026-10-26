@@ -125,13 +125,18 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// §27.3.1: the subject is the validated OIDC principal backing the
-	// session record, normalized to typ = user_bearer.
+	// session record, normalized to typ = user_bearer. Its Expiry is the
+	// record's fixed expiry (IssuedAt + oidcSessionTtlSeconds, the instant
+	// completeMint keeps as the record TTL), so bearerExpiry clamps the
+	// bearer to it and the bearer cannot outlive its session record.
+	// spec: §10.2 (Authentication) "JWT claims" expiry.
 	subject := jwt.Claims{
 		Subject:    rec.UserID,
 		TenantID:   rec.TenantID,
 		CallerType: rec.CallerType,
 		Scope:      rec.Scope,
 		Typ:        auth.TokenUserBearer,
+		Expiry:     h.sessionRecordExpiry(rec).Unix(),
 	}
 	h.completeMint(w, r, subject, &recordRef{tenant: tenant, id: id, rec: rec})
 }
@@ -213,6 +218,9 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Roles:      claims.Roles,
 		Groups:     claims.Groups,
 		Typ:        auth.TokenUserBearer,
+		// spec: §10.2 (Authentication) "JWT claims" expiry — the
+		// minted bearer's exp never passes the pasted subject's exp.
+		Expiry: claims.Expiry,
 	}
 	h.completeMint(w, r, subject, nil)
 }
@@ -251,12 +259,11 @@ type recordRef struct {
 // event, and writes the response.
 func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject jwt.Claims, ref *recordRef) {
 	if h.signer == nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT signer is not configured", nil)
+		writeSigningUnavailable(w, nil, "the playground JWT signer is not configured")
 		return
 	}
 	now := h.now().UTC()
-	exp := now.Add(h.cfg.BearerTTL)
+	exp := h.bearerExpiry(now, subject)
 	jti := newJTI(now)
 
 	// §27.3 / §10.2 invariant: scope is the intersection of the
@@ -283,10 +290,9 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		Typ:        auth.TokenSessionCapability,
 		Origin:     PlaygroundOrigin,
 	}
-	signed, err := h.signer.Sign(out)
+	signed, err := h.signer.Sign(r.Context(), out)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT mint failed: "+err.Error(), nil)
+		writeSigningUnavailable(w, err, "the playground JWT mint failed: "+err.Error())
 		return
 	}
 
@@ -301,7 +307,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		// activity heartbeat; refresh the idle clock so the sweep does not
 		// reclaim a session the user is actively re-minting against.
 		updated.LastActivityAt = h.now()
-		ttl := time.Unix(updated.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0).Sub(h.now())
+		ttl := h.sessionRecordExpiry(updated).Sub(h.now())
 		if ttl < 0 {
 			ttl = 0
 		}
@@ -317,7 +323,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	writeJSON(w, http.StatusOK, tokenResponse{
 		BearerToken:      signed,
 		TokenType:        "Bearer",
-		ExpiresInSeconds: int64(h.cfg.BearerTTL / time.Second),
+		ExpiresInSeconds: exp.Unix() - now.Unix(),
 		Reusable:         true,
 		IssuedAt:         now.Format(time.RFC3339),
 		// spec: §27.3.1 — EffectiveScope carries the same narrowed value
@@ -327,14 +333,39 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	})
 }
 
+// bearerExpiry returns the exp of a playground bearer minted at now:
+// now + auth.capabilityTokenTtlSeconds, clamped to the subject token's exp
+// when the subject carries one. The bearer is truncated to whole seconds
+// because exp is a Unix-seconds claim. The gateway applies no per-dialect
+// cap of its own to this mint, and every lenny-gateway cap exceeds the
+// 3600s upper bound of the lifetime.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry, §27.3.1.
+func (h *Handler) bearerExpiry(now time.Time, subject jwt.Claims) time.Time {
+	exp := now.Add(h.cfg.CapabilityTokenTTL).Truncate(time.Second)
+	if subject.Expiry > 0 {
+		if subjectExp := time.Unix(subject.Expiry, 0); subjectExp.Before(exp) {
+			exp = subjectExp
+		}
+	}
+	return exp
+}
+
+// sessionRecordExpiry returns the fixed expiry of an oidc-mode session
+// record, IssuedAt + oidcSessionTtlSeconds truncated to whole seconds. A
+// mint does not reset it. spec: §27.3.1.
+func (h *Handler) sessionRecordExpiry(rec SessionRecord) time.Time {
+	return time.Unix(rec.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0)
+}
+
 // maxTrackedJTIs returns the §27.3.1 bound on the number of bearer
 // jtis a session record tracks: ⌈oidcSessionTtlSeconds /
-// bearerTtlSeconds⌉ + 1.
+// auth.capabilityTokenTtlSeconds⌉ + 1.
 func (h *Handler) maxTrackedJTIs() int {
-	if h.cfg.BearerTTL <= 0 {
+	if h.cfg.CapabilityTokenTTL <= 0 {
 		return 2
 	}
-	n := int((h.cfg.OIDCSessionTTL + h.cfg.BearerTTL - 1) / h.cfg.BearerTTL)
+	n := int((h.cfg.OIDCSessionTTL + h.cfg.CapabilityTokenTTL - 1) / h.cfg.CapabilityTokenTTL)
 	return n + 1
 }
 

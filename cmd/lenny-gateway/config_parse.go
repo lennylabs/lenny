@@ -71,9 +71,9 @@ func envFlag(name string) bool {
 }
 
 // envFlagDefault returns true / false from the env var name, or def
-// when the var is unset. Used for flags that default on (e.g., the
-// §10.3 --jwks-publish endpoint) where envFlag's always-false-default
-// semantics do not match the spec posture.
+// when the var is unset. Used for flags that default on (e.g.,
+// --memory-enabled) where envFlag's always-false-default semantics do
+// not match the spec posture.
 func envFlagDefault(name string, def bool) bool {
 	v := strings.TrimSpace(os.Getenv(name))
 	if v == "" {

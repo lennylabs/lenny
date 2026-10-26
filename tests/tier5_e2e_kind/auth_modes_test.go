@@ -135,9 +135,9 @@ func ensureTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *sessiondriver.
 // is local with no persisted master-key file (see
 // pkg/kms/providerflags.Resolve), so a long-lived dev cluster whose
 // gateway Deployment has rolled since the Secret was first written
-// carries a token the *current* replica's KMS-backed signer can no
-// longer verify (RotatingVerifier has no matching key at all, not
-// merely an expired one). Rotating through the documented §17.6
+// carries a token the *current* replica's §10.2 key set can no longer
+// verify (the key set holds no key under the token's kid, so the token
+// is rejected as unknown_kid rather than as expired). Rotating through the documented §17.6
 // procedure before the test's own assertions removes that dependency
 // on how long the cluster has been up, exactly as an operator would
 // recover per the spec's rotation procedure.

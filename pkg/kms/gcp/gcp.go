@@ -16,6 +16,11 @@
 //     targets the CryptoKey (which resolves to the current primary
 //     version), while UnwrapDEK passes the recorded resource name
 //     so prior versions remain decryptable.
+//
+// The Provider also signs with an EC_SIGN_P256_SHA256 CryptoKeyVersion
+// for the §10.2 ES256 JWT signer (Sign, PublicKey). A signing alias maps
+// to the full CryptoKeyVersion resource name, which ends in
+// "/cryptoKeyVersions/<n>".
 package gcp
 
 import (
@@ -26,6 +31,7 @@ import (
 
 	cloudkms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
+	"github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,6 +44,8 @@ type keyClient interface {
 	Encrypt(ctx context.Context, req *kmspb.EncryptRequest, opts ...option.ClientOption) (*kmspb.EncryptResponse, error)
 	Decrypt(ctx context.Context, req *kmspb.DecryptRequest, opts ...option.ClientOption) (*kmspb.DecryptResponse, error)
 	GetCryptoKey(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...option.ClientOption) (*kmspb.CryptoKey, error)
+	AsymmetricSign(ctx context.Context, req *kmspb.AsymmetricSignRequest, opts ...gax.CallOption) (*kmspb.AsymmetricSignResponse, error)
+	GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...gax.CallOption) (*kmspb.PublicKey, error)
 }
 
 // Provider implements kms.Provider over GCP Cloud KMS.
@@ -79,6 +87,16 @@ func (c *clientAdapter) Decrypt(ctx context.Context, req *kmspb.DecryptRequest, 
 
 func (c *clientAdapter) GetCryptoKey(ctx context.Context, req *kmspb.GetCryptoKeyRequest, _ ...option.ClientOption) (*kmspb.CryptoKey, error) {
 	return c.inner.GetCryptoKey(ctx, req)
+}
+
+// AsymmetricSign passes the per-call options through, because Sign
+// relies on them to disable the client's default retry.
+func (c *clientAdapter) AsymmetricSign(ctx context.Context, req *kmspb.AsymmetricSignRequest, opts ...gax.CallOption) (*kmspb.AsymmetricSignResponse, error) {
+	return c.inner.AsymmetricSign(ctx, req, opts...)
+}
+
+func (c *clientAdapter) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...gax.CallOption) (*kmspb.PublicKey, error) {
+	return c.inner.GetPublicKey(ctx, req, opts...)
 }
 
 // New returns a Provider configured against ctx-resolved Cloud KMS

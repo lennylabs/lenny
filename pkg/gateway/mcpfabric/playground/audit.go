@@ -122,7 +122,7 @@ func (h *Handler) emitBearerMintedAudit(r *http.Request, tenant, user, jti strin
 		TenantID:         tenant,
 		SessionCookieID:  cookieID,
 		BearerJTI:        jti,
-		BearerTTLSeconds: int64(h.cfg.BearerTTL / time.Second),
+		BearerTTLSeconds: int64(h.cfg.CapabilityTokenTTL / time.Second),
 		Origin:           PlaygroundOrigin,
 		Labels:           h.cfg.EffectiveLabels(),
 		At:               h.now(),

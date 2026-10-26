@@ -208,12 +208,19 @@ func runbook(slug string) string {
 	return "https://docs.lenny.dev/runbooks/" + slug
 }
 
+// runbookSection builds a §17.7 runbook URL that points at one section
+// of a runbook page. anchor is the heading's rendered fragment id.
+func runbookSection(slug, anchor string) string {
+	return runbook(slug) + "#" + anchor
+}
+
 // RunbookSlug returns the §25.7 / §25.17 short runbook slug for the
 // alert_fired payload's `runbook` field. It prefers the explicit
 // RunbookShortName; absent that, it derives the slug from the last path
-// segment of RunbookURL (the docs/runbooks/<slug>.md convention), so a
-// rule that sets only RunbookURL still emits the slug rather than the
-// full URL. Returns "" when neither is set.
+// segment of RunbookURL (the docs/runbooks/<slug>.md convention), with
+// any section fragment dropped, so a rule that sets only RunbookURL
+// still emits the slug rather than the full URL. Returns "" when
+// neither is set.
 //
 // spec: §25.7 — "include a runbook field ... set to the
 // alert's runbook annotation" (the short slug, per §25.17).
@@ -221,13 +228,14 @@ func (r Rule) RunbookSlug() string {
 	if r.RunbookShortName != "" {
 		return r.RunbookShortName
 	}
-	if r.RunbookURL == "" {
+	page, _, _ := strings.Cut(r.RunbookURL, "#")
+	if page == "" {
 		return ""
 	}
-	if i := strings.LastIndex(r.RunbookURL, "/"); i >= 0 && i < len(r.RunbookURL)-1 {
-		return r.RunbookURL[i+1:]
+	if i := strings.LastIndex(page, "/"); i >= 0 && i < len(page)-1 {
+		return page[i+1:]
 	}
-	return r.RunbookURL
+	return page
 }
 
 // admissionPlaneDowngradeRule builds one (flag, webhook) pair of the
@@ -953,8 +961,24 @@ func warningAlerts() []Rule {
 			Expr:        `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1`,
 			For:         60 * time.Second,
 			Severity:    SeverityWarning,
-			Summary:     "Gateway KMS signing circuit breaker tripped",
-			Description: "The gateway JWTSigner circuit breaker has tripped open — new session creation is failing with KMS_SIGNING_UNAVAILABLE. Existing sessions are unaffected until JWT expiry.",
+			Summary:     "A JWTSigner circuit breaker on the gateway or the Token Service tripped open",
+			Description: "A JWTSigner circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with KMS_SIGNING_UNAVAILABLE. Verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's job label names.",
+			SpecRef:     "§16.5",
+		},
+		{
+			// The `> 0` filter drops a zero or absent quota gauge, so
+			// scalar() sees no series and returns NaN and the comparison
+			// never fires when no quota is configured. max() collapses the
+			// gauge every gateway replica publishes into one series; a bare
+			// scalar() over more than one series is also NaN.
+			// spec: §16.5 (KMSSignQuotaApproaching); §10.2.
+			Name:        "KMSSignQuotaApproaching",
+			Expr:        `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)`,
+			For:         10 * time.Minute,
+			Severity:    SeverityWarning,
+			Summary:     "Fleet-wide KMS sign request rate exceeds 80% of the configured quota",
+			Description: "The fleet-wide rate of JWT sign requests that reach the KMS has exceeded 80% of kms.signQuotaPerSecond for more than 10 minutes. Raise the provider's asymmetric Sign quota and kms.signQuotaPerSecond together.",
+			RunbookURL:  runbookSection("jwt-key-rotation", "kms-sign-quota"),
 			SpecRef:     "§16.5",
 		},
 		{

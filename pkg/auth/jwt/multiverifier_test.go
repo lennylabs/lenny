@@ -3,8 +3,12 @@
 package jwt
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/kms"
 )
 
 // mvClaims builds a minimal valid Claims value for the multi-verifier
@@ -133,17 +137,31 @@ func TestMultiVerifierLen(t *testing.T) {
 	}
 }
 
-func TestMultiVerifierWithRotatingMember(t *testing.T) {
-	// A MultiVerifier over a RotatingVerifier primary plus an HMAC
-	// secondary. A token signed under an unknown kid is rejected by the
-	// rotating member with unknown_kid; the secondary then verifies it.
-	rotating := NewRotatingVerifier(NewHMACSigner("current", []byte("current-secret")), 0)
+// spec: 10.2 (Authentication) "Verifier key set and rotation"; 17.4
+// (Embedded Mode)
+// diagnosis: the §17.4 Embedded Mode gateway composes the KeySet with
+// the embedded OIDC provider's HMAC verifier. A token the KeySet does
+// not hold a key for must fall through to the secondary member; a
+// failure here means the KeySet's unknown-key rejection stopped the
+// composition before the member that signed the token was tried.
+func TestMultiVerifierWithKeySetPrimary(t *testing.T) {
+	provider, err := kms.NewLocal(bytes.Repeat([]byte{0x42}, kms.DEKSize))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	keys, err := LoadKeySet(context.Background(), provider, nil)
+	if err != nil {
+		t.Fatalf("LoadKeySet: %v", err)
+	}
 	secondary := NewHMACSigner("trusted", []byte("trusted-secret"))
-	v := NewMultiVerifier(rotating, secondary)
+	v := NewMultiVerifier(keys, secondary)
 
 	tok, err := secondary.Sign(mvClaims("dave@acme.com"))
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
+	}
+	if _, err := keys.Verify(tok); err == nil {
+		t.Fatal("KeySet accepted an HMAC-signed token; the fall-through is untested")
 	}
 	claims, err := v.Verify(tok)
 	if err != nil {
@@ -154,6 +172,11 @@ func TestMultiVerifierWithRotatingMember(t *testing.T) {
 	}
 }
 
+// spec: 10.2 (Authentication) "Verifier key set and rotation"
+// diagnosis: IsUnknownKey must name exactly the KeySet's two key-
+// selection rejections, missing_kid and unknown_kid. A retired-key
+// reason belongs to no verifier any longer and must not be classed as
+// an unknown key.
 func TestIsUnknownKey(t *testing.T) {
 	cases := []struct {
 		reason string
@@ -161,7 +184,7 @@ func TestIsUnknownKey(t *testing.T) {
 	}{
 		{"unknown_kid", true},
 		{"missing_kid", true},
-		{"key_retired", true},
+		{"key_retired", false},
 		{"signature_mismatch", false},
 		{"expired", false},
 		{"malformed", false},

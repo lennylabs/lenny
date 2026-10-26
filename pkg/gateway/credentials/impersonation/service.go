@@ -25,10 +25,10 @@ type AuditAppender interface {
 }
 
 // Signer mints the target-user bearer once the started audit commits.
-// pkg/auth/jwt.Signer (the KMS-backed / breaker-wrapped gateway signer)
-// satisfies it.
+// pkg/auth/jwt.Signer (the gateway's breaker-wrapped remote signer over
+// the §10.2 platform:jwt-signing key) satisfies it.
 type Signer interface {
-	Sign(c jwt.Claims) (string, error)
+	Sign(ctx context.Context, c jwt.Claims) (string, error)
 }
 
 // Config configures a Service.
@@ -143,7 +143,7 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 	}
 
 	// 2. Mint the target-user bearer now that the start is durable.
-	signed, err := s.signer.Sign(jwt.Claims{
+	signed, err := s.signer.Sign(ctx, jwt.Claims{
 		Issuer:     s.cfg.Issuer,
 		Subject:    t.TargetUserID,
 		Audience:   s.cfg.Audience,
