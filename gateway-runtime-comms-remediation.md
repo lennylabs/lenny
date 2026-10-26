@@ -3250,6 +3250,9 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [x] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
     only at the next 30-second read. Fixed in `d3ef3232e`: with `--redis-url` the Token Service publishes the
     revoked `jti` on the `token:revocations` channel the gateway replicas and `lenny-ops` apply.
+  - [ ] **F-4.3.21** (High), next: the chart passes the Token Service neither `--postgres-dsn` nor
+    `--redis-url`, so in a chart install the F-13.3.19 publish and issued-token rotation do nothing. Filed
+    2026-10-26 and routed in the block on the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 below.
   - [x] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
@@ -3339,6 +3342,47 @@ T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS 
   - [ ] **Channel register completeness proposal** (not yet written): **F-28.3.1** (Low). The credential
     revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
     register.
+
+**Defects filed from the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 (2026-10-26).** The three
+direct fixes surfaced defects that no record tracked. Two were already tracked and are not refiled: the
+session-level advisory lock in `issuedtokenstore.WithSubjectLock` behind the transaction-mode pooler
+(F-12.3.25, filed unassigned on 2026-10-21 and routed below) and `TestDockerBackedBringUpInstallsCRDs`
+failing with "apiserver not ready" (TEST-GAPS T-17.4.18, which now records the re-observation on this
+branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
+
+- Direct-fix queue, in this order. F-4.3.21 also stands next in the post-0097 direct-fix queue above, ahead
+  of F-10.2.26, because without it rotation and revocation publishing do nothing in a chart install.
+  - [ ] **F-4.3.21** (High): `token-service-deployment.yaml` passes neither `--postgres-dsn` nor
+    `--redis-url` and renders no `env` block. The Token Service therefore issues tokens with no
+    `issued_tokens` row or durable audit row, accepts a revoked source token, performs no issued-token
+    rotation, and records `postgres_only` for every revocation. Render the DSN from `lenny-datastore-conn`
+    and the Redis connection of the gateway's Cache/Pub-Sub concern, and give the binary the Sentinel,
+    Cluster, or concern-URL options the chart topologies need.
+  - [ ] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
+    rather than the PgBouncer admin console, and `pgbouncer.ini` names no `stats_users`, so
+    `PgBouncerPoolSaturated` cannot fire.
+  - [ ] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
+    fail when `/tmp` is cleaned mid-run, which is the shared cause of T-4.7.19 to T-4.7.22. `lenny-test`
+    exports a run-scoped `TMPDIR` and `GOTMPDIR`, and the tier-10 socket directory moves under a
+    harness-owned root.
+  - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
+    shares with the load and chaos tiers. The security tier gets its own budget.
+  - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
+    (about 55 minutes), because `selector.resolve` takes the `--tier` case before the change-selection case
+    and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
+    `--tier` with a discovery selector runs that selection restricted to the one tier, and the scoped unit
+    run takes about 3 minutes.
+- New proposals.
+  - [ ] **Transaction-pooler compatibility proposal** (not yet written): **F-12.3.28** (Medium, the gateway's
+    `LISTEN/NOTIFY` deny-list fallback connects through the transaction-mode PgBouncer and receives no
+    notification) and **F-12.3.25** (Medium, the session-level advisory lock in `WithSubjectLock`, whose
+    transaction-scoped remedy needs the §13.3 per-subject serialization wording restated). §12.3 requires a
+    transaction-mode pooler for every client and §13.2.4 admits the gateway only to PgBouncer, so the
+    proposal states how a `LISTEN` connection reaches Postgres or replaces the fallback with polling.
+  - [ ] **PgBouncer operations proposal** (not yet written), after F-12.3.29's fix: **F-17.7.14** (Medium).
+    The §17.7 Postgres failover and PgBouncer pool saturation entries and their runbooks connect on port
+    6432 as a `pgbouncer` admin user the chart does not configure, set pool-size values the chart does not
+    have, and name a `postgres-credentials` Secret the chart does not create.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

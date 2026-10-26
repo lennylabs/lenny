@@ -148,7 +148,9 @@ Run flags:
                            nightly, pre-release, phase-3.5-gate).
   --tier <name>            A single tier (static, unit, component, contract,
                            integration, e2e_kind, e2e_cloud, load, chaos, security,
-                           conformance, docs).
+                           conformance, docs). With --changed, --since,
+                           --spec, or --pkg, runs that selection restricted to
+                           the one tier (unit keeps the selected packages).
   --max-tier <name>        Run all tiers up to and including <name>.
   --changed                Run tests affected by uncommitted changes (git diff).
   --spec <s1,s2,...>       Run tests covering the given spec sections.
