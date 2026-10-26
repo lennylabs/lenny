@@ -57,13 +57,41 @@ type opsRevStack struct {
 	ops       *opsprocess.Process
 	opsOpts   opsprocess.Options
 	redisLink *tcpfault.Proxy
+	// owner is the top-level test. A lenny-ops process restarted inside a
+	// subtest is stopped at owner's cleanup, so it serves every later
+	// subtest of the same stack.
+	owner testing.TB
+}
+
+// ownerScopedTB reports failures through the subtest it wraps and
+// registers its cleanups and logs on the stack's top-level test, because
+// a cleanup runs after the subtest has completed.
+type ownerScopedTB struct {
+	testing.TB
+	owner testing.TB
+}
+
+// Cleanup registers f on the top-level test rather than on the subtest.
+func (o ownerScopedTB) Cleanup(f func()) { o.owner.Cleanup(f) }
+
+// Logf logs on the top-level test, which is still running when a cleanup
+// registered through Cleanup logs.
+func (o ownerScopedTB) Logf(format string, args ...any) { o.owner.Logf(format, args...) }
+
+// restartOps stops the running lenny-ops and starts a fresh one whose
+// lifetime is the stack's top-level test, so the restart a subtest makes
+// does not end with that subtest.
+func (s *opsRevStack) restartOps(t *testing.T) {
+	t.Helper()
+	s.ops.Stop(t)
+	s.ops = opsprocess.StartOpts(ownerScopedTB{TB: t, owner: s.owner}, s.opsOpts)
 }
 
 // startOpsRevStack starts the stack and seeds acme, globex, and initech.
 func startOpsRevStack(t *testing.T) *opsRevStack {
 	t.Helper()
 	stackkey.MasterKeyFile(t)
-	s := &opsRevStack{pg: containers.StartPostgres(t, containers.PostgresOptions{
+	s := &opsRevStack{owner: t, pg: containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})}
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -264,9 +292,9 @@ func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant
 		s.admin(t, http.MethodDelete, "/v1/admin/tenants/"+tenant, nil, http.StatusAccepted)
 		s.awaitTenantDeleted(t, tenant)
 		// A fresh process loads the deleted tenant's revocations from its
-		// first read, because the read lists tombstoned tenants.
-		s.ops.Stop(t)
-		s.ops = opsprocess.StartOpts(t, s.opsOpts)
+		// first read, because the read lists tombstoned tenants. The fresh
+		// process outlives this subtest, so a later pass runs against it.
+		s.restartOps(t)
 		s.ops.WaitRefused(t, tok, http.StatusUnauthorized, opsprocess.CodeRevoked, opsRevBound)
 	})
 }
@@ -288,6 +316,13 @@ func TestOpsRefusesRevokedLennyTokens_spec_25_4(t *testing.T) {
 	})
 	s.redisLink.Cut()
 	t.Run("Redis stopped", func(t *testing.T) {
+		// The process the first pass restarted is still serving; a stopped
+		// one fails here with a connection error rather than an outcome.
+		resp, err := http.Get(s.ops.BaseURL() + "/readyz")
+		if err != nil {
+			t.Fatalf("lenny-ops restarted by the first pass is not serving: %v", err)
+		}
+		_ = resp.Body.Close()
 		s.revocationPaths(t, "frank@acme.com", "grace@acme.com", "initech", "heidi@initech.com")
 	})
 }
