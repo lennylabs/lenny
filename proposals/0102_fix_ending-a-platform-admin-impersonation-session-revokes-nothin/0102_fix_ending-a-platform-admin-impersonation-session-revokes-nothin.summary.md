@@ -95,7 +95,7 @@ None. The review loops add entries here.
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0097 (Lenny-issued bearer tokens verify on every process) | Implemented | 0102 makes the impersonation bearer revocable, which 0097 left out of scope as D25, and follows its warning against a cross-tenant `token.exchanged` row | Nothing. 0097 is not edited |
-| 0101 (off-holder request forwarding on `CH-HOLDERFORWARD`) | Approved, being implemented | 0101 CODE-4 renames the propagator package that `cmd/lenny-gateway/user_revocation.go` imports, and 0102 CODE-5 edits the same file | Whichever proposal lands second re-reads `user_revocation.go` and confirms that both changes are present |
+| 0101 (off-holder request forwarding on `CH-HOLDERFORWARD`) | Approved 2026-10-26, being implemented | 0101 CODE-4 renames the propagator package that `cmd/lenny-gateway/user_revocation.go` imports, and 0102 CODE-5 edits the same file. In §11.4 **Full revoke propagation mechanism:**, 0101 SPEC-6 (b) and (c) edit the two-tier propagation note and step 2, and 0102 SPEC-5 appends to step 5. The anchors are disjoint, and no 0101 deliverable loses its subject | Whichever proposal lands second re-reads `user_revocation.go` and confirms that both changes are present, and applies its §11.4 edit against the other's text by its quoted anchor with no change to content |
 
 ## Deliverable index
 
