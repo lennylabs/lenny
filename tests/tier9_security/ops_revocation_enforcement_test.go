@@ -264,21 +264,25 @@ func tokenJTI(t *testing.T, tok string) string {
 }
 
 // revocationPaths revokes a token through each path and asserts lenny-ops
-// refuses it. users names the acme users this pass creates and tenant the
+// refuses it. Each revoked token is a POST /v1/oauth/token token, which
+// carries no roles claim, so before its revocation lenny-ops admits it
+// through authentication and the revocation set and its role gate answers
+// 403; afterwards the revocation set refuses it with the gateway's
+// revoked-token response. users names the acme users this pass creates and tenant the
 // tenant it deletes.
 func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant, tenantUser string) {
 	t.Helper()
 	t.Run("rotation", func(t *testing.T) {
 		a, b := s.tenantAdmin(t, "acme", rotUser)
 		tok := s.exchange(t, a, b)
-		s.ops.WaitAccepted(t, tok, opsRevBound)
+		s.ops.WaitAuthenticated(t, tok, opsRevBound)
 		s.rotate(t, tok)
 		s.requireRevokedOnOps(t, tok)
 	})
 	t.Run("user invalidation", func(t *testing.T) {
 		a, b := s.tenantAdmin(t, "acme", invalidUser)
 		tok := s.exchange(t, a, b)
-		s.ops.WaitAccepted(t, tok, opsRevBound)
+		s.ops.WaitAuthenticated(t, tok, opsRevBound)
 		s.admin(t, http.MethodPost, "/v1/admin/users/"+invalidUser+"/invalidate", map[string]any{
 			"tenantId": "acme", "mode": "full_revoke", "reason": "lenny-ops revocation probe",
 		}, http.StatusOK)

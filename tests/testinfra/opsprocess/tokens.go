@@ -31,6 +31,10 @@ const (
 	// CodeInvalid is the error code of the 401 for a token the key set
 	// does not verify.
 	CodeInvalid = "TOKEN_INVALID"
+	// CodeForbidden is the error code of the 403 the §25.4 role gate
+	// writes for an authenticated principal that holds neither
+	// platform-admin nor tenant-admin.
+	CodeForbidden = "FORBIDDEN"
 )
 
 // pollInterval is how often the token helpers re-send a request.
@@ -114,6 +118,33 @@ func decodeOutcome(status int, raw []byte) Outcome {
 func (p *Process) WaitAccepted(t testing.TB, bearer string, d time.Duration) Outcome {
 	t.Helper()
 	return p.waitFor(t, "200", d, bearer, func(o Outcome) bool { return o.Status == http.StatusOK })
+}
+
+// Authenticated reports whether lenny-ops's authentication chain admitted
+// the bearer: the key set verified it and the revocation set let it
+// through, so lenny-ops answered 200 or the §25.4 role gate's 403. The
+// role gate runs after the bearer middleware, so its 403 is reached only
+// by a token rules 3, 4, 5, and 7 do not refuse. A POST /v1/oauth/token
+// token carries no roles claim, so lenny-ops admits it through
+// authentication and its role gate then refuses it.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set).
+func (o Outcome) Authenticated() bool {
+	return o.Status == http.StatusOK || (o.Status == http.StatusForbidden && o.Code == CodeForbidden)
+}
+
+// WaitAuthenticated polls GET /v1/admin/me until lenny-ops's
+// authentication chain admits bearer (Outcome.Authenticated), and fails
+// the test when it has not within d. A test calls it before asserting
+// that a token without an admin role is refused as revoked, because
+// lenny-ops refuses every Lenny-issued token until its first revocation
+// set read succeeds.
+//
+// spec: §25.4 (The lenny-ops Service: Authentication, revocation set
+// rules 1 and 4).
+func (p *Process) WaitAuthenticated(t testing.TB, bearer string, d time.Duration) Outcome {
+	t.Helper()
+	return p.waitFor(t, "200 or the role gate's 403", d, bearer, Outcome.Authenticated)
 }
 
 // WaitRefused polls GET /v1/admin/me until lenny-ops refuses bearer with

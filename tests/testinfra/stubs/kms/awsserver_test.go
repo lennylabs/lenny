@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 	pkgkms "github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
@@ -118,9 +119,42 @@ func TestAWSServerArgsRenderOneAliasFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseAliases: %v", err)
 	}
-	for _, alias := range []string{pkgkms.AliasJWTSigning, "tenant:acme", "tenant:default"} {
+	for _, alias := range append([]string{pkgkms.AliasJWTSigning, "tenant:acme", "tenant:default"}, platformKEKAliases...) {
 		if m[alias] != s.KeyID() {
 			t.Errorf("alias %s maps to %q, want %q", alias, m[alias], s.KeyID())
 		}
+	}
+}
+
+// spec: 12.8 (Compliance Interfaces), 10.2 (Authentication) "KMS signing failure mode"
+// diagnosis: the AWS provider a binary resolves from Args refuses the
+// platform:audit-redaction-signing alias, so a gateway with a
+// Postgres-backed audit chain started against the server exits while it
+// seals the §12.8 redaction receipt key, and the tier-8 KMS outage test
+// fails during startup for a harness reason.
+func TestAWSServerArgsMapTheGatewayStartupKEK(t *testing.T) {
+	s := NewAWSServer(t)
+	var aliases map[string]string
+	for _, a := range s.Args("acme") {
+		if v, ok := strings.CutPrefix(a, "--kms-alias="); ok {
+			m, err := providerflags.ParseAliases(v)
+			if err != nil {
+				t.Fatalf("ParseAliases: %v", err)
+			}
+			aliases = m
+		}
+	}
+	for _, kv := range s.Env() {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
+	p, err := providerflags.Resolve(context.Background(), providerflags.Options{
+		Provider: providerflags.ProviderAWS, AWSRegion: "us-east-1", AliasToKey: aliases,
+	})
+	if err != nil {
+		t.Fatalf("resolve aws provider from Args: %v", err)
+	}
+	if _, err := deadletterredaction.NewKMSReceiptSigner(context.Background(), p, "platform:audit-redaction-signing", "boot"); err != nil {
+		t.Fatalf("seal the redaction receipt key the gateway seals at startup: %v", err)
 	}
 }

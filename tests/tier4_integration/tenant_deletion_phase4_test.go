@@ -191,6 +191,37 @@ func leftoverTenantTables(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	return out
 }
 
+// withoutRetainedIssuedTokens removes from left the tenant's issued_tokens
+// rows that §13.3 keeps through tenant deletion: a row whose exp has not
+// yet passed the trailing hour stays so that a replica that restarts still
+// loads the token's revocation. Every Token Service bearer the probes mint
+// is such a row. The rows past the trailing hour stay counted, because
+// Phase 4 deletes them.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation",
+// §12.8 (Compliance Interfaces) "Tenant deletion lifecycle".
+func withoutRetainedIssuedTokens(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string, left map[string]int) map[string]int {
+	t.Helper()
+	if left["issued_tokens"] == 0 {
+		return left
+	}
+	var retained int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM issued_tokens WHERE tenant_id = $1 AND exp > now() - interval '1 hour'`, tenant).Scan(&retained); err != nil {
+		t.Fatalf("count the retained issued_tokens rows of %s: %v", tenant, err)
+	}
+	out := make(map[string]int, len(left))
+	for table, n := range left {
+		if table == "issued_tokens" {
+			n -= retained
+		}
+		if n > 0 {
+			out[table] = n
+		}
+	}
+	return out
+}
+
 // tenantDeletionLogLines returns the gateway log lines that mention the
 // tenant-deletion lifecycle, capped so a failure message stays readable.
 func tenantDeletionLogLines(logs string) string {
@@ -794,7 +825,7 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 		}
 	}
 	requireNoGlobexRowLost(t, globexTablesBefore, leftoverTenantTables(t, ctx, pg.Pool, "globex"))
-	if left := leftoverTenantTables(t, ctx, pg.Pool, "acme"); len(left) > 0 {
+	if left := withoutRetainedIssuedTokens(t, ctx, pg.Pool, "acme", leftoverTenantTables(t, ctx, pg.Pool, "acme")); len(left) > 0 {
 		t.Errorf("tenant-scoped tables still holding acme rows after the deletion: %v", left)
 	}
 }

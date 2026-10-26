@@ -57,7 +57,7 @@ func TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4(t *testing.T) {
 		t.Fatalf("read lenny-gateway args: %v\n%s", err, args)
 	}
 	if !strings.Contains(args, "--kms-provider=local") {
-		t.Skipf("the e2e install does not run the local KMS provider (args %s); this case covers the local install only", args)
+		t.Skipf("not-yet-applicable: the e2e install does not run the local KMS provider (args %s); this case covers the local install only", args)
 	}
 
 	for _, name := range []string{"allow-gateway-egress", "lenny-ops-egress"} {

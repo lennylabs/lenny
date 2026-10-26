@@ -13,7 +13,8 @@ import (
 
 // fakeOps answers GET /v1/admin/me with the stale-set refusal for its first
 // staleCalls requests and then with 200 for the bearer "good", the revoked
-// response for "revoked", and the playground refusal for "playground".
+// response for "revoked", the role gate's 403 for "roleless", the bad-kid
+// refusal for "forged", and the playground refusal for "playground".
 func fakeOps(t *testing.T, staleCalls int32) *Process {
 	t.Helper()
 	var calls atomic.Int32
@@ -31,6 +32,12 @@ func fakeOps(t *testing.T, staleCalls int32) *Process {
 		switch strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") {
 		case "good":
 			_, _ = w.Write([]byte(`{"identity":{"sub":"carol@acme.com"}}`))
+		case "roleless":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN"}}`))
+		case "forged":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"TOKEN_INVALID"}}`))
 		case "playground":
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":{"code":"UNAUTHORIZED","details":{"reason":"bearer_revoked"}}}`))
@@ -66,6 +73,38 @@ func TestTokenHelpersReadLennyOpsAnswers(t *testing.T) {
 		t.Errorf("Healthz = %d", code)
 	}
 	p.RequireRefusedThroughout(t, "revoked", http.StatusUnauthorized, CodeRevoked, 600*time.Millisecond)
+}
+
+// spec: 25.4 (The lenny-ops Service: Authentication, revocation set rules 1, 3, and 4)
+// diagnosis: WaitAuthenticated or Outcome.Authenticated misclassifies an
+// answer, so a tier-4 or higher revocation check of a token without an
+// admin role would either start before the first revocation set read
+// (counting the stale-set 503 as admitted) or count a refusal by the key
+// set or the revocation set as an authentication pass.
+func TestAuthenticatedSeparatesTheRoleGateFromAuthenticationRefusals(t *testing.T) {
+	p := fakeOps(t, 2)
+	if o := p.Me(t, "roleless"); o.Authenticated() {
+		t.Fatalf("stale-set refusal %+v counted as authenticated", o)
+	}
+	if o := p.WaitAuthenticated(t, "roleless", 5*time.Second); o.Status != http.StatusForbidden || o.Code != CodeForbidden {
+		t.Errorf("WaitAuthenticated(roleless) = %+v, want the role gate's 403", o)
+	}
+	if o := p.WaitAuthenticated(t, "good", time.Second); o.Status != http.StatusOK {
+		t.Errorf("WaitAuthenticated(good) = %+v, want 200", o)
+	}
+	for _, bearer := range []string{"revoked", "forged", "playground"} {
+		if o := p.Me(t, bearer); o.Authenticated() {
+			t.Errorf("refusal of %q (%+v) counted as authenticated", bearer, o)
+		}
+	}
+	ft := &failRecorder{TB: t}
+	func() {
+		defer func() { _ = recover() }()
+		p.WaitAuthenticated(ft, "revoked", 600*time.Millisecond)
+	}()
+	if !ft.failed {
+		t.Error("WaitAuthenticated did not fail for a bearer lenny-ops refuses as revoked")
+	}
 }
 
 // spec: 25.4 (The lenny-ops Service: Authentication, revocation set rule 4)

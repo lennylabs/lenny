@@ -81,12 +81,24 @@ func (s *AWSServer) PublicKey() *ecdsa.PublicKey { return &s.key.PublicKey }
 // KeyID returns the key reference to map platform:jwt-signing to.
 func (s *AWSServer) KeyID() string { return awsKeyID }
 
+// platformKEKAliases are the platform-scoped KEK aliases a gateway seals
+// under: the §12.8 dead-letter redaction receipt key, which the gateway
+// seals at startup when its audit chain is Postgres-backed, and the §4.9
+// credential-lease KEK of the Postgres lease store. An AWS provider
+// refuses an alias its map does not name, so a gateway started against
+// the server without them exits during startup.
+var platformKEKAliases = []string{"platform:audit-redaction-signing", "platform:credential-leases"}
+
 // Args returns the flags that select the AWS provider and map
-// platform:jwt-signing, and the tenant:<id> KEK alias of each tenant in
-// tenants, to the server's key. The aliases go in one --kms-alias flag,
-// because a repeated flag keeps only its last value.
+// platform:jwt-signing, the platform KEK aliases a gateway seals under,
+// and the tenant:<id> KEK alias of each tenant in tenants, to the
+// server's key. The aliases go in one --kms-alias flag, because a
+// repeated flag keeps only its last value.
 func (s *AWSServer) Args(tenants ...string) []string {
 	pairs := []string{pkgkms.AliasJWTSigning + "=" + awsKeyID}
+	for _, alias := range platformKEKAliases {
+		pairs = append(pairs, alias+"="+awsKeyID)
+	}
 	for _, tenant := range tenants {
 		pairs = append(pairs, "tenant:"+tenant+"="+awsKeyID)
 	}

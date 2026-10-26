@@ -68,14 +68,19 @@ const adminTokenUser = admintoken.DefaultUsername
 // adminCluster is the envtest Kubernetes API the gateways of the
 // admin-credential cases run against: the gateway builds its cluster
 // client from the kubeconfig, and the §17.6 provisioner writes the
-// lenny-admin-token Secret through it.
+// lenny-admin-token Secret through it. The gateway builds that client
+// only for pod-based sandboxes (--agent-namespace), and §13.2 requires
+// such a gateway to mint presigned checkpoint capabilities, so the
+// cluster comes with a MinIO artifact store the gateways sign against.
 type adminCluster struct {
 	kubeconfig string
 	secrets    kubernetes.Interface
+	artifacts  *containers.MinIO
 }
 
 // startAdminCluster starts an envtest API server for the §17.6
-// provisioner. It skips the test when the envtest binaries are absent.
+// provisioner and the MinIO artifact store of its gateways. It skips the
+// test when the envtest binaries are absent.
 func startAdminCluster(t *testing.T) *adminCluster {
 	t.Helper()
 	envtest.SkipUnlessAvailable(t)
@@ -84,17 +89,26 @@ func startAdminCluster(t *testing.T) *adminCluster {
 	if err != nil {
 		t.Fatalf("envtest clientset: %v", err)
 	}
-	return &adminCluster{kubeconfig: env.Kubeconfig(t), secrets: cs}
+	return &adminCluster{
+		kubeconfig: env.Kubeconfig(t),
+		secrets:    cs,
+		artifacts:  containers.StartMinIO(t, containers.MinIOOptions{}),
+	}
 }
 
 // gatewayOptions returns the options of a gateway replica with args that
 // reaches the cluster, so it provisions and rotates the §17.6 admin
-// credential.
+// credential, and that stores artifacts in the cluster's MinIO, which
+// implements the presigner §13.2 requires of a pod-based gateway.
 func (c *adminCluster) gatewayOptions(binary string, args []string) gateway.Options {
 	return gateway.Options{
 		Binary: binary,
-		Args:   append(append([]string(nil), args...), "--agent-namespace="+adminTokenNamespace, "--admin-token-namespace="+adminTokenNamespace),
-		Env:    []string{"KUBECONFIG=" + c.kubeconfig},
+		Args: append(append([]string(nil), args...),
+			"--agent-namespace="+adminTokenNamespace, "--admin-token-namespace="+adminTokenNamespace,
+			"--minio-endpoint="+c.artifacts.Endpoint, "--minio-bucket="+c.artifacts.Bucket,
+			"--minio-access-key="+c.artifacts.AccessKey, "--minio-secret-key="+c.artifacts.SecretKey,
+			"--minio-use-ssl=false"),
+		Env: []string{"KUBECONFIG=" + c.kubeconfig},
 	}
 }
 
@@ -482,7 +496,11 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 	kept := mintExchanged(t, gw.BaseURL(), daveB, daveA, "lenny-ops")
 	// A self-rotation of revoked revokes it in issued_tokens (§13.3).
 	mintExchanged(t, gw.BaseURL(), revoked, revoked, "lenny-ops")
-	ops.WaitAccepted(t, kept, opsStartBound)
+	// Both tokens are POST /v1/oauth/token tokens, which carry no roles
+	// claim, so lenny-ops accepts the non-revoked one through
+	// authentication and the revocation set, and its role gate then
+	// answers 403 (opsprocess.Outcome.Authenticated).
+	ops.WaitAuthenticated(t, kept, opsStartBound)
 	ops.WaitRefused(t, revoked, http.StatusUnauthorized, opsprocess.CodeRevoked, opsReadBound)
 
 	pgProxy.Cut()
@@ -493,8 +511,8 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 		}
 	}
 	requireHealthzOK("right after Postgres stopped")
-	if got := ops.Me(t, kept); got.Status != http.StatusOK {
-		t.Errorf("non-revoked token during the outage: %d %s, want 200", got.Status, got.Body)
+	if got := ops.Me(t, kept); !got.Authenticated() {
+		t.Errorf("non-revoked token during the outage: %d %s, want it admitted through authentication", got.Status, got.Body)
 	}
 	if got := ops.Me(t, revoked); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeRevoked {
 		t.Errorf("revoked token during the outage: %d %s, want 401 %s", got.Status, got.Body, opsprocess.CodeRevoked)
@@ -508,7 +526,7 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 	requireHealthzOK("at the end of the outage")
 
 	pgProxy.Restore(t)
-	ops.WaitAccepted(t, kept, opsReadBound)
+	ops.WaitAuthenticated(t, kept, opsReadBound)
 	if got := ops.Me(t, revoked); got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeRevoked {
 		t.Errorf("revoked token after Postgres returned: %d %s, want 401 %s", got.Status, got.Body, opsprocess.CodeRevoked)
 	}
