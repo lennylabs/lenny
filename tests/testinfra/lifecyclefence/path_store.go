@@ -86,10 +86,13 @@ func (p *pathStore) CreateReserved(ctx context.Context, s sessionstore.Session) 
 // fences on the source's coordination generation inside the insert.
 // spec: §7.1 (Derive session semantics), §12.8 (Lifecycle fence and drain)
 func (p *pathStore) CreateIfGeneration(ctx context.Context, s sessionstore.Session, sourceTenantID, sourceID string, wantGen int64) error {
-	err := p.Store.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
 	if s.ID != p.o.ID {
-		return err
+		return p.Store.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
 	}
+	if fn := p.w.Faults.takeBeforeFailureRow(); fn != nil {
+		fn()
+	}
+	err := p.Store.CreateIfGeneration(ctx, s, sourceTenantID, sourceID, wantGen)
 	p.failureRow, p.failureRowErr = true, err
 	if err == nil {
 		p.o.CommittedSeq = p.w.next()

@@ -24,6 +24,9 @@ type Faults struct {
 	beforeList    func()
 	beforeTerm    func()
 	beforeInsert  func()
+	// beforeFailureRow is the hook of the next derive-failure row's
+	// insert.
+	beforeFailureRow func()
 	// beforeTenantList is the hook of the next tenant-scope primary
 	// listing, which only a suspend's drain and a Phase 2 drain issue.
 	beforeTenantList func()
@@ -104,6 +107,24 @@ func (f *Faults) takeBeforeInsert() func() {
 	defer f.mu.Unlock()
 	fn := f.beforeInsert
 	f.beforeInsert = nil
+	return fn
+}
+
+// BeforeDeriveFailureRow runs fn once, before the next derive-failure
+// row's generation-fenced insert, such as to delete the source row the
+// insert's fence reads.
+func (f *Faults) BeforeDeriveFailureRow(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeFailureRow = fn
+}
+
+// takeBeforeFailureRow returns and disarms the before-failure-row hook.
+func (f *Faults) takeBeforeFailureRow() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn := f.beforeFailureRow
+	f.beforeFailureRow = nil
 	return fn
 }
 
