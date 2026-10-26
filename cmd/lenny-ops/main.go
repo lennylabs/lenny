@@ -158,17 +158,22 @@ func durationOrDefault(seconds int, def time.Duration) time.Duration {
 }
 
 // authInputs carries what buildAuthConfig needs: the §10.2 key set, the
-// revocation set, and the authentication flags.
+// revocation set, the §10.2 platform-managed role resolver, and the
+// authentication flags.
 type authInputs struct {
 	keySet      *jwt.KeySet
 	revocations *opsRevocation
-	hmacKeyFile string
-	issuer      string
-	multiTenant bool
-	devMode     bool
-	production  bool
-	rps         float64
-	burst       int
+	// platformRoles is the §10.2 platform-managed role resolver. Nil
+	// leaves the token's roles claim authoritative, which is the posture
+	// of a process with no Postgres.
+	platformRoles authmw.PlatformRoleResolver
+	hmacKeyFile   string
+	issuer        string
+	multiTenant   bool
+	devMode       bool
+	production    bool
+	rps           float64
+	burst         int
 }
 
 // errDevTrustInProduction refuses the dev embedded-OIDC trust hook under
@@ -223,8 +228,11 @@ func checkDevTrustPosture(devMode, production bool, hmacKeyFile string) error {
 // --oidc-issuer-url wraps only the dev trust member, because
 // Lenny-issued tokens are accepted whatever their issuer and audience.
 // The revocation set applies to tokens the key set verifies and never to
-// dev trust-hook tokens (§25.4 rule 6). The per-service-account rate
-// limiter is always attached.
+// dev trust-hook tokens (§25.4 rule 6). The platform-managed role
+// resolver applies to every authenticated principal, whichever member
+// verified its token, so a stored role assignment replaces the roles
+// claim as it does on the gateway (§10.2 "Role assignment"). The
+// per-service-account rate limiter is always attached.
 //
 // The X-Lenny-* identity headers and the dev roles are honored only
 // under devRelaxed, and only devRelaxed without the key file serves the
@@ -253,6 +261,7 @@ func buildAuthConfig(in authInputs) (*opsserver.AuthConfig, error) {
 		// transport; outside it every claim is anchored to the bearer JWT.
 		AllowDevHeaders: relaxed,
 		AllowDevRoles:   relaxed,
+		PlatformRoles:   in.platformRoles,
 	}
 	if in.hmacKeyFile != "" {
 		dev, err := devTrustVerifier(in.hmacKeyFile, in.issuer)

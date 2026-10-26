@@ -11,36 +11,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
-
-// userstorePlatformRoles adapts a userstore.Store into the §10.2 platform-managed role resolver consulted by the auth middleware.
-// When a row carries a platform-managed assignment (RoleAssigned) — even
-// one whose Roles slice is empty — its Roles fully replace the OIDC
-// claim, so tenant-admins can downgrade a user with an over-broad OIDC
-// claim by recording an explicit (possibly empty) assignment. A row with
-// no assignment (the state left by `DELETE /v1/admin/tenants/{id}/users/
-// {userId}/role`) or a missing row leaves the JWT claim authoritative.
-// spec: §10.2, §15.1. F-10.2.3, F-15.1.3.
-type userstorePlatformRoles struct {
-	store userstore.Store
-}
-
-func (r userstorePlatformRoles) ResolveRoles(ctx context.Context, tenantID, subject string) ([]auth.Role, bool, error) {
-	if r.store == nil {
-		return nil, false, nil
-	}
-	row, err := r.store.Get(ctx, tenantID, subject)
-	if errors.Is(err, userstore.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return append([]auth.Role(nil), row.Roles...), row.RoleAssigned, nil
-}
 
 // tenantIntrospectionConfig resolves the §10.6 real-time
 // group-check configuration from a tenant's stored identityProvider
