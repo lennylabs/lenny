@@ -294,7 +294,7 @@
       "spec_anchor": "#2854-inter-replica",
       "deferral_id": "R21",
       "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions`; spec \u00a712.8 Lifecycle fence and drain, Drain: a successful drain does not wait for the session's terminal steps or the release of its pod",
-      "note": "the drain writes the terminal row only; the binding replica's Sweeper releases the pod when it lists that row, and a row that user erasure deletes first leaves the pod to the claim-orphan GC after claimOrphanTimeout; BUILD-GAPS.md F-12.8.43 records the residual, owned by P2 (terminal pipeline completeness)"
+      "note": "the drain writes the terminal row only; the binding replica's Sweeper releases the pod when it lists that row, and BUILD-GAPS.md F-12.8.43 records the residual when user erasure deletes the row first, owned by the inter-replica carrier proposal"
     },
     {
       "claim": "Mirror seed at bind",

@@ -263,7 +263,7 @@ var filedLifecycleFindings = []filedLifecycleFinding{
 	{id: "F-12.8.40", closed: true},
 	{id: "F-12.8.41", owner: "Owned by proposal P5b"},
 	{id: "F-12.8.42", owner: "Owned by proposal P5b"},
-	{id: "F-12.8.43", owner: "Owned by proposal P2"},
+	{id: "F-12.8.43", owner: "Owned by the inter-replica carrier proposal"},
 	{id: "F-12.8.44", owner: "Owner: unassigned."},
 	{id: "F-12.8.45", owner: "Owner: unassigned."},
 	{id: "F-12.8.46", owner: "Owner: unassigned."},
@@ -324,7 +324,7 @@ func dataLifecyclePlanEntry(plan string) string {
 // diagnosis: the remediation plan does not record the data-lifecycle proposal
 // as implemented, still says erasure waits for terminal hooks, which the
 // specification dropped, or no longer names the residual the drain leaves to
-// P2 or the members moved to P5b. Restore the item from the BUILD-GAPS.md
+// the inter-replica carrier proposal or the members moved to P5b. Restore the item from the BUILD-GAPS.md
 // records it summarizes.
 func TestRemediationPlanRecordsTheDataLifecycleProposal(t *testing.T) {
 	root := repoRoot(t)
@@ -336,7 +336,7 @@ func TestRemediationPlanRecordsTheDataLifecycleProposal(t *testing.T) {
 	if strings.Contains(entry, "waits for their terminal hooks") {
 		t.Error("the data-lifecycle item still says erasure waits for the sessions' terminal hooks")
 	}
-	for _, want := range []string{"F-12.8.43", "P2", "P5b", "P1 (0093)", "F-11.4.12", "F-11.4.13", "R21"} {
+	for _, want := range []string{"F-12.8.43", "inter-replica carrier proposal", "P5b", "P1 (0093)", "F-11.4.12", "F-11.4.13", "R21"} {
 		if !strings.Contains(entry, want) {
 			t.Errorf("the data-lifecycle item does not mention %s", want)
 		}
@@ -383,7 +383,7 @@ func TestClaimRegisterCarriesTheDrainTerminalTailResidual(t *testing.T) {
 	if row.Status != "ABSENT" || row.DeferralID != "R21" {
 		t.Errorf("terminal-tail row has status %q and deferral %q, want ABSENT and R21", row.Status, row.DeferralID)
 	}
-	for _, want := range []string{"F-12.8.43", "P2"} {
+	for _, want := range []string{"F-12.8.43", "inter-replica carrier proposal"} {
 		if !strings.Contains(row.Note, want) {
 			t.Errorf("terminal-tail row note does not name %s", want)
 		}
