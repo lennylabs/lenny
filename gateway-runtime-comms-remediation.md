@@ -3280,9 +3280,14 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
       closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
-  - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
-    §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
-    on every production gate.
+  - [x] **Production-mode spelling proposal** (done as a proposal; implementation pending): **F-17.9.24**
+    (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
+    `LENNY_ENV`, so no value turns on every production gate.
+    - **Outcome.** Proposal 0103
+      (`proposals/0103_fix_production-mode-has-two-spellings-so-no-single-setting/`) was approved
+      2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
+      every gate reads through one predicate. Its implementation, which closes F-17.9.24, is pending. Its
+      unstaged defects are filed below.
   - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
@@ -3400,6 +3405,34 @@ tree, so it is recorded as a follow-up rather than filed. The rest are filed in 
     follow-up decides whether a refused impersonation start is audited under the §13.3 rejected-exchange
     discipline (owner's delegate, 2026-10-26). It applies once 0102's implementation lands.
 
+**Defects filed from proposal 0103's unstaged-defect list (2026-10-26).** Proposal 0103 (the production-mode
+spelling proposal) lists defects in the shipped tree that it does not stage. None was already tracked in
+BUILD-GAPS or TEST-GAPS. The closed F-17.6.1 deferred the etcd warning and counted the §12.9 volume audit as
+the node disk warning, and TEST-GAPS T-17.6.13 records both warnings as unit-covered; neither tracks the
+missing checks, so they are filed as F-17.6.25, and T-17.6.13 is corrected when that fix lands. All six
+re-confirm against the tree and are filed in BUILD-GAPS and routed below.
+
+- Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
+  because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
+  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
+  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
+  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+    off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
+    requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+- Proposal routing.
+  - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
+    SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
+    the tenant listing fails, even in production mode. The proposal states the listing-failure posture and
+    its interaction with a Postgres outage at startup, after 0103's implementation.
+  - [ ] **Dev-mode guard-rail statement proposal** (not yet written): **F-17.4.36** (Low). `lenny-ops`
+    refuses the dev trust hook and suppresses its dev relaxations in production, and §17.4 item 3 names only
+    the gateway's hook. The proposal states both `lenny-ops` gates, after 0103's implementation.
+  - [ ] **§17.6 text-corrections proposal** (not yet written): **F-17.6.26** (Low). The §17.6 installer
+    "Target environment" question omits `staging`, which §17.9.1 and the wizard admit. It can ride with any
+    later §17.6 edit, including the dev-mode guard-rail statement proposal.
+
 **Defects filed from the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 (2026-10-26).** The three
 direct fixes surfaced defects that no record tracked. Two were already tracked and are not refiled: the
 session-level advisory lock in `issuedtokenstore.WithSubjectLock` behind the transaction-mode pooler
@@ -3472,6 +3505,38 @@ F-10.2.26 `jwt.OIDCVerifier`.
     key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
     from `auth.oidc.*`.
+
+**Object-store dependency (2026-10-26).** A review of the MinIO dependency found six defects. Each was
+re-confirmed against the tree and filed in BUILD-GAPS. None was already tracked: F-12.8.52 covers the
+per-region escrow clients and not the escrow object lock, the F-12.8.2 resolution named the lock as residual
+backend provisioning without filing it, and no open finding covered the images, replication targets, S3
+endpoint, KMS error codes, or the `lenny-ops` probe.
+
+- Direct-fix queue, at high priority ahead of the direct-fix queues above.
+  - [ ] **F-17.9.26** (High): the chart's default MinIO image (`quay.io/minio/minio`, pinned tag) and the
+    lifecycle Job's `minio/mc:latest` cannot be pulled anonymously, so a self-managed install that deploys
+    MinIO, and any install whose lifecycle hook runs, fails. Pin a maintained image by digest in the chart
+    and the test harness: the project's own source-built MinIO copy (in progress on branch
+    `infra/minio-local-copy`) or the maintained fork `pgsty/silo` with `pgsty/mc`. The `mc` lifecycle Job is
+    replaced by a Go job later, under the proposal below.
+- New proposals.
+  - [ ] **S3-compatible object-store capability profile proposal** (not yet written): **F-12.8.63** (Medium,
+    the escrow object lock is unimplemented and §12.8's `COMPLIANCE` mode cannot be released on hold clear),
+    **F-25.11.24** (Medium, §25.11 promises MinIO replication to AWS S3, GCS, or Azure, and the only driver is
+    MinIO-specific), **F-12.5.33** (Medium, the T4 KMS-unavailable classification matches MinIO's `kms:` code
+    only), **F-12.5.32** (Medium, the aws-sdk `s3` backend takes no endpoint and no path-style setting; §17.9.3
+    gives the `s3` provider no endpoint key, so it needs the proposal), and **F-25.6.8** (Low, the `lenny-ops`
+    probe GETs `/minio/health/live` and passes on any non-5xx answer). The proposal covers the following.
+    - A capability list in §12.5 that states what Lenny requires of an object-store backend.
+    - A backend-neutral KMS-unavailable classification with each provider's error codes.
+    - A replication driver for each backend, and a corrected §25.11 destination list.
+    - A Go bucket-setup job in place of the `mc` lifecycle Job.
+    - An authenticated `HeadBucket` probe in `lenny-ops`.
+    - The escrow restated as an Object Lock legal hold on a lock-enabled escrow bucket, and implemented.
+    - Metric and alert renames from `lenny_minio_*` and `MinIO*` to backend-neutral names.
+
+    Owner decisions it lists: whether the `minio.*` Helm keys are renamed to backend-neutral keys, and
+    whether the metric and alert renames ship with aliases for the old names or without them.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
