@@ -633,6 +633,10 @@ var prodMigrationSchema = []struct {
 	// admission reads before admitting recycle.runtimeProcess: restart.
 	// spec: §5.1, §5.2.
 	{migration: "0189", table: "runtime_definitions", columns: []string{"restartable"}},
+	// 0190 adds sessions.last_write_id, the §12.3 per-write identifier the
+	// session store's Update stores and reads back from the primary after a
+	// lost commit acknowledgement. spec: §12.3.
+	{migration: "0190", table: "sessions", columns: []string{"last_write_id"}},
 }
 
 // spec: 12.2, 18.5

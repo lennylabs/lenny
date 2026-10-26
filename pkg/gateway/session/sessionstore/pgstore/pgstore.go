@@ -472,6 +472,13 @@ func (s *Store) GetByID(ctx context.Context, id string) (sessionstore.Session, e
 // writes it back. UpdatedAt strictly advances on every successful
 // Update (clamped to the prior value + 1µs, the Postgres timestamptz
 // resolution) so callers can rely on monotonicity.
+//
+// Every Update stores a fresh write identifier in last_write_id. When the
+// transaction's commit returns an error after the UPDATE executed, the
+// acknowledgement may be lost on a write that committed, so Update reads the
+// row back from the primary: a row carrying this write's identifier returns
+// the written row and nil, and anything else returns the commit error.
+// spec: §12.3 (Write durability categories during failover)
 func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	// The trailing five SET clauses cover the §4.2 session-record
 	// fields added in migration 0050; the next three cover the §4.2 retry counter, policy enforcement state, and
@@ -525,9 +532,16 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		legal_hold_note = $48,
 		last_agent_activity_at = $49,
 		workspace_plan = $55::jsonb,
-		accumulated_session_age_seconds = $56
+		accumulated_session_age_seconds = $56,
+		last_write_id = $57::uuid
 	WHERE id = $1::uuid AND tenant_id = $2`
 
+	// spec: §12.3 (Write durability categories during failover) — the
+	// identifier is unique to this call, so a read-back after a lost commit
+	// acknowledgement tells this write apart from any other writer's,
+	// including one that stamped the same updated_at.
+	writeID := uuid.NewString()
+	wroteOK := false
 	var out sessionstore.Session
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
@@ -644,16 +658,45 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			jsonbArg(sess.WorkspacePlan),
 			// $56 — §6.2 accumulated_session_age_seconds, accrued above.
 			sess.AccumulatedSessionAgeSeconds,
+			// $57 — §12.3 write identifier, read back after a lost
+			// commit acknowledgement.
+			writeID,
 		); err != nil {
 			return err
 		}
+		wroteOK = true
 		out = sess
 		return nil
 	})
 	if err != nil {
+		// A mutate or Exec error rolls the transaction back, so only an
+		// error after a successful Exec can hide a committed write.
+		if wroteOK && s.writeApplied(ctx, tenantID, id, writeID) {
+			return out, nil
+		}
 		return sessionstore.Session{}, normalizeMiss(err)
 	}
 	return out, nil
+}
+
+// writeApplied reports whether the primary's row carries writeID in
+// last_write_id, which holds exactly when the Update that stored writeID
+// committed and no later write replaced it. It reads on a context detached
+// from ctx's cancellation and bounded by DefaultPrimaryReadTimeout, because the
+// caller's context may be the one whose end cut the commit. A missing row, a
+// NULL or different identifier, a query error, and the timeout all report
+// false, so the caller treats the write as not applied.
+// spec: §12.3 (Write durability categories during failover)
+func (s *Store) writeApplied(ctx context.Context, tenantID, id, writeID string) bool {
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionstore.DefaultPrimaryReadTimeout)
+	defer cancel()
+	var applied *bool
+	err := pgtenant.InTx(readCtx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(readCtx,
+			`SELECT last_write_id = $3::uuid FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			id, tenantID, writeID).Scan(&applied)
+	})
+	return err == nil && applied != nil && *applied
 }
 
 // List returns the tenant's sessions newest-first, narrowed by filter.
