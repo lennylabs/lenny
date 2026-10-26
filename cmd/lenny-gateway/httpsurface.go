@@ -429,6 +429,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
+			// spec: §27.3.1 — the oidc-mode authorization-code
+			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
+			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
 		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is

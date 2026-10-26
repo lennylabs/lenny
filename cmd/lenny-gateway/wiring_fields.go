@@ -385,6 +385,11 @@ type gatewayWiringFields struct {
 	tokenServiceConn *grpc.ClientConn
 	auditSyncPool    *pgxpool.Pool
 	bearerVerifier   jwt.Verifier
+	// idpVerifier is the §10.2 upstream IdP verifier buildIdPVerifier
+	// returns (nil when no IdP is configured). The §27.3.1 playground
+	// exchanger validates the ID token of its authorization-code flow
+	// with it.
+	idpVerifier      jwt.Verifier
 	billingAuditPool *pgxpool.Pool
 	// billingAuditDDLPool is the CREATE-privileged DDL pool for the
 	// billing/audit instance (LENNY_PG_BILLING_AUDIT_DDL_DSN). It logs in as
