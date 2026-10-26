@@ -232,17 +232,20 @@ func TestCheckpointReturnsErrNoBindingForAnUncoordinatedSession(t *testing.T) {
 	}
 }
 
-// TestSealNoOpsForAnUncoordinatedSession_spec_7_1 asserts that Seal, unlike
-// Checkpoint, returns nil for a session this replica holds no binding for:
-// such a session has no live workspace to export, so the §7.1 seal
-// retry path must not treat it as a transient export failure to retry.
-func TestSealNoOpsForAnUncoordinatedSession_spec_7_1(t *testing.T) {
+// TestSealReturnsErrNoBindingForAnUncoordinatedSession_spec_7_1 asserts that
+// Seal, like Checkpoint, returns ErrNoBinding for a session this replica
+// holds no binding for. The seal step calls Seal only while it holds a
+// binding, so the error means the binding was removed after the seal began,
+// which the seal step classifies as the permanent outcome. Mapping it to nil
+// reported a seal success for a workspace that was never exported.
+// spec: 7.1 (Normal Flow)
+func TestSealReturnsErrNoBindingForAnUncoordinatedSession_spec_7_1(t *testing.T) {
 	cp := &checkpointer.Checkpointer{
 		Sessions: memstore.New(),
 		Registry: podsession.NewRegistry(), // empty
 	}
-	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
-		t.Errorf("Seal for an uncoordinated session = %v, want nil (no-op)", err)
+	if err := cp.Seal(context.Background(), "acme", "s1"); !errors.Is(err, checkpointer.ErrNoBinding) {
+		t.Errorf("Seal for an uncoordinated session = %v, want ErrNoBinding", err)
 	}
 }
 

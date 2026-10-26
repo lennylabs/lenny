@@ -195,6 +195,7 @@ func newTCFixture(t *testing.T, st session.State, cancelWriter context.CancelFun
 		DevTenantHeader:              true,
 		Events:                       sessionevents.NewBus(64),
 		Sealer:                       f.sealer,
+		PodRegistry:                  sealBoundRegistry("s"),
 		Executor:                     f.exec,
 		SessionLogHook:               f.logHook,
 		ObserveWorkspaceSealDuration: f.outcomes.observe,

@@ -29,7 +29,10 @@ import (
 )
 
 // ErrNoBinding reports that the checkpointer holds no pod binding for
-// the session: it is not coordinated by this gateway replica.
+// the session it can checkpoint: it is not coordinated by this gateway
+// replica, or, for an attempt other than the seal, the binding is closing
+// for the session's terminal seal. spec: §7.1 (Delivery and checkpoints
+// during the seal).
 var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
 
 // defaultInterval is the periodic-checkpoint cadence used when Interval
@@ -380,13 +383,12 @@ func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sess
 // on session completion, distinguished from a periodic checkpoint only
 // by the recorded snapshot source.
 //
-// A session this replica holds no binding for has no live workspace to
-// seal — it either never ran on a pod or is coordinated elsewhere — so
-// Seal returns nil rather than ErrNoBinding, satisfying the Sealer
-// contract's "no-op for a session that never ran on a pod". The
-// session's final snapshot then falls back to the latest checkpoint
-// (§7.1). The §7.1 retry path therefore retries only
-// real export failures, never an inapplicable seal.
+// Seal returns ErrNoBinding when this replica holds no binding for the
+// session. The seal step skips the Sealer for a session with no binding
+// before it starts, so ErrNoBinding here means the binding was removed
+// after the seal began, which the seal step classifies as the permanent
+// outcome: the workspace was not exported. spec: §7.1 (Seal-and-export
+// invariant).
 //
 // Seal stamps the §4.4 TriggerPeriodic label on the duration histogram:
 // the §4.4 enum (pkg/checkpoint.Trigger) has no seal value, and the
@@ -394,11 +396,7 @@ func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sess
 // WorkspaceSnapshotSource on the session row rather than by the trigger.
 // spec: §4.4.
 func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) error {
-	err := c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed, checkpoint.TriggerPeriodic)
-	if errors.Is(err, ErrNoBinding) {
-		return nil
-	}
-	return err
+	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed, checkpoint.TriggerPeriodic)
 }
 
 // snapshot drives the session's bound pod adapter to checkpoint its
@@ -425,7 +423,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		return ErrNoBinding
 	}
 	startedAt := c.now()
-	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, trigger)
+	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, source, trigger)
 	elapsed := c.now().Sub(startedAt).Seconds()
 	// spec: §4.4 — observe the duration histogram regardless
 	// of outcome so operators see slow checkpoints that also failed
@@ -495,7 +493,14 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // spec: §10.1 — the gateway mints the checkpoint_id, opens
 // the stream, and the adapter reports the confirmed byte total in
 // CheckpointSummary.
-func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string, trigger checkpoint.Trigger) (string, int64, error) {
+//
+// source is the snapshot source the attempt records. The seal stamps the
+// periodic trigger, so the trigger cannot tell a seal apart from a periodic
+// attempt; the source can, and an attempt whose source is not sealed opens
+// no stream on a binding that is closing for the terminal seal.
+func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string,
+	source sessionstore.WorkspaceSnapshotSource, trigger checkpoint.Trigger,
+) (string, int64, error) {
 	// Serialise every attempt for this session so the supersede set
 	// the intent-row transaction fences is stable for the duration of the
 	// attempt.
@@ -504,17 +509,15 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		return "", 0, fmt.Errorf("checkpoint session %s: wait for the single-flight lock: %w", sessionID, err)
 	}
 	defer unlock()
-
-	// Cancel the stream on return so its RPC is torn down once the
-	// terminal frame is read. c.Deadline additionally bounds the whole
-	// attempt: a stalled stream cancels rather than blocking the sweep
-	// indefinitely. Zero lets the adapter apply its own §4.4 default.
-	var cancel context.CancelFunc
-	if c.Deadline > 0 {
-		ctx, cancel = context.WithTimeout(ctx, c.Deadline)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
+	// spec: §7.1 (Delivery and checkpoints during the seal) — read after
+	// the single-flight lock, so a periodic, barrier, or preStop attempt
+	// that waited behind the seal sees the mark and records no checkpoint
+	// snapshot over the sealed one.
+	if source != sessionstore.WorkspaceSnapshotSealed && binding.Closing() {
+		return "", 0, ErrNoBinding
 	}
+
+	ctx, cancel := c.attemptContext(ctx)
 	defer cancel()
 	stream, err := binding.Adapter.Checkpoint(ctx)
 	if err != nil {
@@ -573,6 +576,28 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		baselineBytes:   sc.baselineBytes,
 	}
 	return d.run()
+}
+
+// attemptContext derives the context one checkpoint attempt runs on, so the
+// stream is torn down once the terminal frame is read and every attempt
+// carries a deadline. c.Deadline bounds the attempt when it is set. When it
+// is zero and ctx already carries a deadline (the seal window inside the
+// terminal pipeline budget, or a preStop tier cap), that deadline bounds the
+// attempt. Otherwise the §4.4 checkpoint timeout does, so a periodic attempt
+// on the Run context cannot stall the sweep indefinitely. The intent row
+// records the resulting deadline as its checkpoint_timeout_at, which the
+// §12.5 backstop reads before it reclaims an in_progress row.
+//
+// spec: §10.1.7 (preStop Hook Drain), §7.1 (Terminal pipeline context),
+// §4.4.3 (Checkpoint timeout and recovery)
+func (c *Checkpointer) attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.Deadline > 0 {
+		return context.WithTimeout(ctx, c.Deadline)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, checkpoint.CheckpointTimeout)
 }
 
 // sessionCheckpointContext is the slice of session-row state a checkpoint

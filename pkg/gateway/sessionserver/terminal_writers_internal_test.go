@@ -401,3 +401,47 @@ func TestShutdownCloseBeforeTheWaitSkipsAPendingRelease_spec_10_1_7(t *testing.T
 		t.Error("the binding was released although Close preceded the lock acquisition")
 	}
 }
+
+// TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1 pins the
+// REST end of the closing gate. The message handler classifies the session
+// running on its entry read, the terminal write commits after that read,
+// and the seal has marked the binding closing. With no held entries, the
+// pod executor's closing refusal surfaces as a *SealedError, the handler
+// re-reads the row on the primary, and the terminal state answers
+// TARGET_TERMINAL. Returning the bare sentinel from Send would reach the
+// handler's fallthrough and answer EXECUTOR_FAILURE.
+//
+// spec: §7.1 (Delivery and checkpoints during the seal), §7.2 (Message
+// delivery routing — seven paths, path 6), §28.5.1 (Gateway-to-pod)
+func TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1(t *testing.T) {
+	inner := memstore.New()
+	store := &movingStore{Store: inner, move: func(r *sessionstore.Session) {
+		from := r.State
+		r.State = session.StateCompleted
+		sessionstore.MarkTerminated(r, from, time.Now().UTC())
+	}}
+	if err := inner.Create(context.Background(), sessionstore.Session{
+		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	reg := sealBoundRegistry("s")
+	bind, _ := reg.Get("s")
+	bind.MarkClosing()
+	srv := New(store, Options{DevTenantHeader: true, PodRegistry: reg, Executor: executor.NewPodExecutor(reg, nil)})
+	t.Cleanup(srv.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s/messages",
+		strings.NewReader(`{"messages":[{"role":"user","content":"x"}]}`))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if strings.Contains(rr.Body.String(), "EXECUTOR_FAILURE") {
+		t.Fatalf("POST messages to a closing binding answered EXECUTOR_FAILURE: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "TARGET_TERMINAL") {
+		t.Fatalf("POST messages to a closing binding = %d %s, want 409 TARGET_TERMINAL", rr.Code, rr.Body.String())
+	}
+}

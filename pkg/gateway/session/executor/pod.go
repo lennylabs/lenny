@@ -101,10 +101,20 @@ var (
 // because the session is sealed, Send returns a *SealedError carrying the
 // count and the response of the batch's messages already delivered. That
 // end is not a stream failure, and the conn has left the cache, so the next
-// Send opens a new stream. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3,
-// §7.2, §4.7.1 (Role and Gateway RPC Contract).
+// Send opens a new stream. When the session's binding is marked closing for
+// the terminal seal, Send writes nothing and returns a *SealedError with
+// Delivered zero. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3, §7.2, §4.7.1
+// (Role and Gateway RPC Contract), §7.1 (Delivery and checkpoints during the
+// seal).
 func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	conn, err := e.streamFor(ctx, sessionID)
+	if errors.Is(err, ErrSessionSealed) {
+		// spec: §7.1 (Delivery and checkpoints during the seal) — the
+		// binding is closing for the terminal seal and nothing was written.
+		// The typed error sends every caller down its sealed-reroute
+		// branch, which routes the message by the session's terminal state.
+		return Response{}, &SealedError{Delivered: 0}
+	}
 	if err != nil {
 		return Response{}, err
 	}
@@ -161,9 +171,17 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*attachC
 		return nil, fmt.Errorf("podexec: %w", ErrSessionIDRequired)
 	}
 	e.mu.Lock()
+	// spec: §7.1 (Delivery and checkpoints during the seal) — the closing
+	// mark is read from the registry on the cache hit as well as the miss,
+	// so a stream cached before the seal began, or reopened after an
+	// eviction, cannot carry a turn while the export reads the workspace.
+	bind, bound := e.registry.Get(sessionID)
+	if bound && bind.Closing() {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("podexec: session %s: %w", sessionID, ErrSessionSealed)
+	}
 	c, ok := e.streams[sessionID]
 	if !ok {
-		bind, bound := e.registry.Get(sessionID)
 		if !bound {
 			e.mu.Unlock()
 			return nil, fmt.Errorf("podexec: session %s: %w", sessionID, ErrNotBound)

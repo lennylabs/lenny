@@ -239,6 +239,7 @@ func TestShutdownLetsAnOpenTerminalPipelineReleaseItsPod_spec_10_1_7(t *testing.
 	exec := &releaseRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
 		Sealer:                     sealer,
+		PodRegistry:                sealBoundTestRegistry("s_1"),
 		Executor:                   exec,
 		WorkspaceSealMaxDuration:   10 * time.Second,
 		StreamFailureReportTimeout: 5 * time.Second,

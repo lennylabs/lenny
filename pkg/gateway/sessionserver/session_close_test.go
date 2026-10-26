@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -151,7 +152,12 @@ func TestTerminalTransitionSealsTheWorkspaceBeforeClosing(t *testing.T) {
 	order := []string{}
 	exec := &closeRecordingExecutor{order: &order}
 	sealer := &recordingSealer{order: &order}
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Sealer: sealer})
+	// spec: §7.1 (Seal-and-export invariant) — the seal step seals only a
+	// session this replica holds a binding for. The binding's generation is
+	// above the row's, so the hook's stale-binding step leaves it in place.
+	reg := podsession.NewRegistry()
+	reg.Put(&podsession.BindResult{SessionID: "sess-seal", TenantID: "acme", CoordinationGeneration: 1 << 30})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec, Sealer: sealer, PodRegistry: reg})
 	seedRunning(t, store, "sess-seal")
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-seal", nil)

@@ -611,11 +611,12 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 // `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
 // terminal session's seal-and-export. outcome is "success" when the seal
 // completed, "timeout" when the retry window was exhausted, or
-// "permanent" when the seal failed on an export error the adapter
-// reported as permanent and returned immediately without retrying. The
-// §16.5 WorkspaceSealStuck alert fires on a nonzero outcome="timeout"
-// count alone.
-// spec: §7.1.
+// "permanent" when the seal ended on a condition the §7.1 Seal-and-export
+// invariant classifies as permanent (an export error the adapter reports as
+// permanent, a binding lost during the seal, or a session row absent on the
+// primary) and returned immediately without retrying. The §16.5
+// WorkspaceSealStuck alert fires on a nonzero outcome="timeout" count alone.
+// spec: §7.1 (Seal-and-export invariant).
 func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
 	if m == nil {
 		return

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -265,6 +266,7 @@ func TestBudgetTerminatorHookOutlastsTheTerminateTimeout_spec_7_1(t *testing.T) 
 	sealer := &deadlineSealer{ev: ev}
 	srv := sessionserver.New(store, sessionserver.Options{
 		Sealer:                     sealer,
+		PodRegistry:                sealBoundTestRegistry("s_1"),
 		WorkspaceSealMaxDuration:   300 * time.Second,
 		StreamFailureReportTimeout: 30 * time.Second,
 	})
@@ -294,4 +296,17 @@ func TestBudgetTerminatorHookOutlastsTheTerminateTimeout_spec_7_1(t *testing.T) 
 	if got := ev.list(); len(got) != 3 || got[0] != "open" || got[1] != "seal" || got[2] != "end" {
 		t.Errorf("events = %v, want [open seal end]", got)
 	}
+}
+
+// sealBoundTestRegistry returns a pod registry holding a binding for each
+// session, so the post-terminal hook's seal step has a binding to seal. The
+// binding's generation is above any row these tests write, so the hook's
+// stale-binding step leaves it in place. spec: §7.1 (Seal-and-export
+// invariant).
+func sealBoundTestRegistry(sessionIDs ...string) *podsession.Registry {
+	reg := podsession.NewRegistry()
+	for _, id := range sessionIDs {
+		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", CoordinationGeneration: 1 << 30})
+	}
+	return reg
 }

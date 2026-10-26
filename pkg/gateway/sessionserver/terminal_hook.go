@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -47,13 +48,16 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     with no binder call, so the later steps send the peer's pod nothing.
 //  3. Seal and export the workspace when a Sealer is wired; a seal failure
 //     relabels the row failed through failWorkspaceSeal, whose returned row
-//     replaces sess. With no local binding the Sealer returns nil.
+//     replaces sess. With no local binding the seal step skips the
+//     Sealer; with one, it marks the binding closing and evicts its
+//     cached Attach stream first.
 //  4. Drain the session's inbox and DLQ, sending message_expired.
 //  5. On a terminal row, emit one status_change carrying the row's state and
 //     one session_complete, then run signals.
 //  6. Release the pod under the session's slot-accounting lock
 //     (releaseAfterTerminal): a pre-running claim by name, otherwise the
-//     executor's binding with the disposition of the row's state.
+//     executor's binding with the failed disposition after a failed seal
+//     and the disposition of the row's state otherwise.
 //  7. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
@@ -87,8 +91,15 @@ func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State
 ) sessionstore.Session {
 	s.CancelResumeAttempt(sess.ID)
 	s.settleStaleBinding(fromState, sess)
+	// spec: §7.1 (Seal-and-export invariant) — a failed seal releases with
+	// the failed disposition whether or not the relabel committed, so the
+	// hook records the failure itself rather than reading it back from the
+	// relabel's returned row, which is the input row when the relabel's
+	// store write errors.
+	sealFailed := false
 	if s.sealer != nil {
 		if err := s.sealWorkspace(ctx, sess); err != nil {
+			sealFailed = true
 			sess = s.failWorkspaceSeal(ctx, sess, err)
 		}
 	}
@@ -102,11 +113,22 @@ func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State
 	if signals != nil {
 		signals(ctx, sess)
 	}
-	s.releaseAfterTerminal(ctx, fromState, sess)
+	s.releaseAfterTerminal(ctx, fromState, sess, releaseDisposition(sess.State, sealFailed))
 	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// releaseDisposition is the executor disposition the post-terminal hook
+// releases with: failed after a failed seal, whatever state the row holds,
+// and the disposition of the row's terminal state otherwise. spec: §7.1
+// (Seal-and-export invariant), §6.2.
+func releaseDisposition(st session.State, sealFailed bool) executor.Disposition {
+	if sealFailed {
+		return executor.DispositionFailed
+	}
+	return dispositionForState(st)
 }
 
 // releaseAfterTerminal is the post-terminal hook's release step. It takes
@@ -138,7 +160,9 @@ func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State
 //
 // spec: §5.2 (whole-pod replacement trigger), §7.3 (Resume flow after pod
 // failure), §7.2 (Interactive Session Model)
-func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
+func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session,
+	disposition executor.Disposition,
+) {
 	unlock, err := s.slotAccountLocks.Lock(s.lifetime(), sess.ID)
 	if err != nil {
 		slog.Warn("sessionserver: post-terminal release skipped; the server is shutting down",
@@ -149,7 +173,7 @@ func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.Sta
 	if s.terminalReclaimPreRunning(ctx, fromState, sess) || s.executor == nil {
 		return
 	}
-	if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
+	if err := releaseExecutor(ctx, s.executor, sess.ID, disposition); err != nil {
 		// The release is best-effort, but a failed teardown leaves a claim
 		// or slot counted, so it is logged for an operator.
 		slog.Warn("sessionserver: post-terminal executor release failed",

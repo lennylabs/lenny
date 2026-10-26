@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -174,9 +175,14 @@ func ctxRaceRound(t *testing.T, round int, rng *rand.Rand) {
 	store := memstore.New()
 	sealer := &ctxRaceSealer{rng: rand.New(rand.NewSource(rng.Int63())), seals: map[string]int{}}
 	exec := &ctxRaceExecutor{releases: map[string]int{}}
+	// spec: §7.1 (Seal-and-export invariant) — the seal step seals only a
+	// session this replica holds a binding for, so every session is bound,
+	// at a generation above any row the writers produce.
+	reg := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:            true,
 		Sealer:                     sealer,
+		PodRegistry:                reg,
 		Executor:                   exec,
 		WorkspaceSealMaxDuration:   300 * time.Second,
 		StreamFailureReportTimeout: 30 * time.Second,
@@ -192,6 +198,7 @@ func ctxRaceRound(t *testing.T, round int, rng *rand.Rand) {
 		}); err != nil {
 			t.Fatalf("round %d: seed %s: %v", round, ids[i], err)
 		}
+		reg.Put(&podsession.BindResult{SessionID: ids[i], TenantID: "acme", CoordinationGeneration: 1 << 30})
 	}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -253,13 +260,11 @@ func assertCtxRaceSession(t *testing.T, round int, store sessionstore.Store, id 
 	if got != want {
 		t.Fatalf("round %d: releases of %s (state %s) = %d, want %d", round, id, row.State, got, want)
 	}
-	if want == 0 {
-		sealer.mu.Lock()
-		seals := sealer.seals[id]
-		sealer.mu.Unlock()
-		if seals != 0 {
-			t.Fatalf("round %d: %s stayed %s but was sealed %d times", round, id, row.State, seals)
-		}
+	sealer.mu.Lock()
+	seals := sealer.seals[id]
+	sealer.mu.Unlock()
+	if seals != want {
+		t.Fatalf("round %d: %s (state %s) was sealed %d times, want %d", round, id, row.State, seals, want)
 	}
 }
 
