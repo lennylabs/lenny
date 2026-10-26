@@ -6482,6 +6482,9 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedLoserRemoval_spec_25_4",
+        "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileRetryKeepsFailingRemovalPending_spec_25_4",
+        "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedEpochMirror_spec_25_4",
         "cmd/lenny-ops/platformroles_test.go::TestClaimOnLookupError_spec_25_4",
         "cmd/lenny-ops/platformroles_test.go::TestOpsRoleGateAppliesStoredAssignment_spec_10_2",
         "cmd/lenny-ops/platformroles_test.go::TestOpsPlatformRoles_KeepsClaimWhenPostgresUnreachable_spec_25_4",
@@ -6639,6 +6642,7 @@
         "pkg/ops/opsserver",
         "pkg/ops/conventions",
         "pkg/ops/probe",
+        "pkg/ops/coordination",
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore",
