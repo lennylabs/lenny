@@ -4057,6 +4057,7 @@
       "title": "Redis HA and Failure Modes",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
+        "cmd/lenny-gateway/redis_cluster_flag_help_test.go::TestRedisClusterAddrsHelpDescribesTheDeploymentCluster_spec_12_4",
         "tests/tier2_component/breakers/breakerstore_test.go",
         "tests/tier2_component/quota/quotastore_test.go",
         "pkg/redisconn/redisconn_test.go",
