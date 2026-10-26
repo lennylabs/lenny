@@ -64,6 +64,7 @@ type opsFlags struct {
 	webhookFailuresRetentionDays     *int
 	memoryLimitBytes                 *int64
 	production                       *bool
+	devMode                          *bool
 	releaseChannelKeyPath            *string
 	releaseChannelKeyID              *string
 	releaseChannelPrevKeyPath        *string
@@ -266,7 +267,16 @@ func (f *opsFlags) registerEventFlags() {
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
 	f.production = flag.Bool("production", envBool("LENNY_PRODUCTION", false),
-		"§25.11: when set, a full backup requires confirm:true. Override via LENNY_PRODUCTION.")
+		"§25.11: when set, a full backup requires confirm:true; it also refuses the local KMS "+
+			"provider and the dev trust hook, and suppresses every dev-mode relaxation. "+
+			"Override via LENNY_PRODUCTION.")
+	// spec: §17.4 "Dev mode guard rails" item 3 — LENNY_DEV_MODE is the
+	// single gate for every dev-mode security relaxation, on lenny-ops as
+	// on the gateway, which reads the same variable through --dev-mode.
+	f.devMode = flag.Bool("dev-mode", envDevMode(),
+		"§17.4: enable the lenny-ops dev-mode relaxations: the dev bearer-trust hook, the "+
+			"X-Lenny-* identity headers and dev roles, and the unauthenticated surface when no "+
+			"trust hook is configured. Ignored under --production. Override via LENNY_DEV_MODE.")
 }
 
 // registerUpgradeFlags registers the §25.8 release-channel, registry, and
@@ -441,7 +451,7 @@ func (f *opsFlags) registerAuthFlags() {
 	// spec: §25.4 (The lenny-ops Service: Authentication) + §17
 	// security.oidc.issuerUrl. lenny-ops verifies Lenny-issued tokens
 	// against the §10.2 verifier key set and requires platform-admin or
-	// tenant-admin on every endpoint. Outside production it also trusts
+	// tenant-admin on every endpoint. In dev mode it also trusts
 	// the §17.4 embedded OIDC provider's HMAC key from
 	// --bearer-trust-hmac-key-file, and --oidc-issuer-url pins the iss
 	// claim of tokens signed with that key. F-25.4.1, F-25.4.20.
@@ -451,8 +461,9 @@ func (f *opsFlags) registerAuthFlags() {
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"§17.4: path to the embedded OIDC provider's HMAC key file, the dev trust hook "+
 			"lenny-ops accepts bearers from alongside the §10.2 key set. Refused when "+
-			"--production is set. Without it and without --production the operability "+
-			"surface is unauthenticated. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+			"--production is set or --dev-mode is not. Without it, under --dev-mode and "+
+			"without --production, the operability surface is unauthenticated. "+
+			"Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.authMultiTenant = flag.Bool("auth-multi-tenant", envBool("LENNY_AUTH_MULTI_TENANT", false),
 		"§10.2: when true, lenny-ops extracts the tenant identifier from the JWT tenant claim "+
 			"(so tenant-admin scoping resolves to the bearer's tenant); when false every caller "+

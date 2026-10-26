@@ -1411,11 +1411,11 @@ bootstrap:
       dnsPolicy: cluster-default
 EOF
 
-# §25.4 — "No anonymous access except /healthz." lenny-ops only
-# wires its authentication gate when a bearer-trust key is configured;
-# without it cmd/lenny-ops/main.go buildAuthConfig returns a nil
-# AuthConfig outside production and the operability surface admits
-# anonymous callers. Create the bearer-trust key Secret named by
+# §25.4 — "No anonymous access except /healthz." In dev mode
+# (global.devMode renders --dev-mode on lenny-ops) lenny-ops only wires
+# its authentication gate when a bearer-trust key is configured; without
+# it cmd/lenny-ops/main.go buildAuthConfig returns a nil AuthConfig and
+# the operability surface admits anonymous callers. Create the bearer-trust key Secret named by
 # security.oidc.bearerTrustKeySecret in e2e-values.yaml so the deployed
 # lenny-ops runs with a RequireAuth AuthConfig and the §25.4 auth gate is
 # exercised end-to-end. The Secret holds a §17.4 HMAC key file (keyId +
@@ -1423,7 +1423,7 @@ EOF
 # jwt.LoadHMACKeyFile parses; the chart mounts it at /etc/lenny/oidc/key
 # and passes --bearer-trust-hmac-key-file. The key is a fixed dev value:
 # the e2e callers authenticate through the dev-mode identity headers
-# (global.devMode: true keeps production=false), so no test mints a bearer
+# (global.devMode: true renders --dev-mode on lenny-ops), so no test mints a bearer
 # against this key. It exists only so the auth gate is wired and anonymous
 # callers are rejected. create --dry-run | apply keeps the step
 # idempotent across re-runs.

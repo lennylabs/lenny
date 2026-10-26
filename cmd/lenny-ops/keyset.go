@@ -15,9 +15,9 @@ import (
 )
 
 // errLocalProviderInProduction refuses the local KMS provider under
-// --production. lenny-ops has no --dev-mode, and --production is its only
-// production signal, so the providerflags check on --environment alone
-// would admit local under --production without LENNY_ENV=prod.
+// --production. --production is lenny-ops's production signal, so the
+// providerflags check on --environment alone would admit local under
+// --production without LENNY_ENV=prod.
 var errLocalProviderInProduction = errors.New("§17.4: --kms-provider=local is refused when --production is set; select aws, gcp, or azure")
 
 // kmsResolver resolves the KMS provider from the parsed flags.
@@ -56,11 +56,11 @@ func resolvesToLocal(provider string) bool {
 
 // buildKeySet loads the §10.2 verifier key set once at startup, before the
 // HTTP listener starts, and exits the process when it cannot. It first
-// refuses the dev trust hook under --production, so that refusal does not
-// depend on the KMS being reachable. spec: §25.4
+// refuses the dev trust hook under --production or without --dev-mode, so
+// that refusal does not depend on the KMS being reachable. spec: §25.4
 // (The lenny-ops Service: Startup and Readiness).
 func (w *opsWiring) buildKeySet() {
-	if err := checkDevTrustPosture(*w.f.production, *w.f.bearerTrustHMACKeyFile); err != nil {
+	if err := checkDevTrustPosture(*w.f.devMode, *w.f.production, *w.f.bearerTrustHMACKeyFile); err != nil {
 		log.Fatalf("lenny-ops: %v", err)
 	}
 	keySet, err := loadOpsKeySet(w.ctx, *w.f.kmsOpts, *w.f.production, providerflags.Resolve)

@@ -3387,7 +3387,13 @@ ops:
   # metrics port to that listener.
   metricsPort: 9090
   # production gates the §25.11 confirm:true requirement on full
-  # backups. Set true on staging and production installs.
+  # backups, and lenny-ops refuses the local KMS provider and the dev
+  # trust hook under it. It does not control the dev-mode relaxations
+  # (the dev trust hook, the X-Lenny-* identity headers, and the
+  # unauthenticated surface): global.devMode is their single gate
+  # (§17.4), and with global.devMode false lenny-ops authenticates every
+  # request whether production is true or false. Set true on staging and
+  # production installs.
   production: false
   # service carries the lenny-ops Service overrides. §25.4
   # pins sessionAffinity: ClientIP with a 3h client-IP timeout so SSE
@@ -3696,9 +3702,10 @@ security:
     # bearer with (§17.4). When set, the gateway and lenny-ops mount it at
     # /etc/lenny/oidc and trust that bearer through
     # --bearer-trust-hmac-key-file, wrapped in the dev.local audience check.
-    # The gateway refuses the flag unless global.devMode is true, and a
-    # production lenny-ops (ops.production: true) refuses it, so the chart
-    # does not render it on lenny-ops there. Leave it empty outside dev. Lenny-issued JWTs verify through
+    # The gateway refuses the flag unless global.devMode is true. lenny-ops
+    # refuses it without global.devMode and under ops.production: true, so
+    # the chart renders it on lenny-ops only when global.devMode is true
+    # and ops.production is false. Leave it empty outside dev. Lenny-issued JWTs verify through
     # the ES256 key set the kms block configures, not through this key.
     bearerTrustKeySecret: ""
     # tokenRefreshBeforeExpirySeconds is the §25.4 pre-emptive

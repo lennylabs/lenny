@@ -4771,6 +4771,13 @@ spec:
             - --kms-provider=local
             - --environment=dev
             - --kms-master-key-file=/etc/lenny/kms/master-key
+            # §17.4 "Dev mode guard rails": LENNY_DEV_MODE is the single
+            # gate for every dev-mode relaxation, so lenny-ops reads the
+            # same global.devMode value the gateway's --dev-mode does. It
+            # admits the dev trust hook, the X-Lenny-* identity headers,
+            # and the dev roles; without it lenny-ops authenticates every
+            # request whatever ops.production says.
+            - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -4806,8 +4813,9 @@ spec:
             - --escalation-reconciliation-writes-per-second=20
             # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
-            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
-            # refuses it, so it renders only when ops.production is false.
+            # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
+            # without --dev-mode and under --production, so it renders only
+            # when global.devMode is true and ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps=20

@@ -86,12 +86,13 @@ func mintDevToken(t *testing.T, secret string, claims jwt.Claims) string {
 }
 
 // authInputsFor returns authInputs over keySet with an empty revocation set.
-func authInputsFor(keySet *jwt.KeySet, hmacKeyFile, issuer string, production bool) authInputs {
+func authInputsFor(keySet *jwt.KeySet, hmacKeyFile, issuer string, devMode, production bool) authInputs {
 	return authInputs{
 		keySet:      keySet,
 		revocations: newOpsRevocation(),
 		hmacKeyFile: hmacKeyFile,
 		issuer:      issuer,
+		devMode:     devMode,
 		production:  production,
 		rps:         20,
 		burst:       50,
@@ -107,7 +108,7 @@ func authInputsFor(keySet *jwt.KeySet, hmacKeyFile, issuer string, production bo
 // spec: 25.4 (The lenny-ops Service: Authentication), 10.2 (Authentication)
 func TestBuildAuthConfig_ProductionRequiresKey(t *testing.T) {
 	keySet, signer := testKeySet(t, 0x31)
-	cfg, err := buildAuthConfig(authInputsFor(keySet, "", "", true))
+	cfg, err := buildAuthConfig(authInputsFor(keySet, "", "", false, true))
 	if err != nil {
 		t.Fatalf("buildAuthConfig: %v", err)
 	}
@@ -133,12 +134,13 @@ func TestBuildAuthConfig_ProductionRequiresKey(t *testing.T) {
 }
 
 // TestBuildAuthConfig_ProductionRefusesDevTrustHook pins that the dev
-// embedded-OIDC trust hook is fatal under --production.
+// embedded-OIDC trust hook is fatal under --production, even with
+// --dev-mode set.
 //
 // spec: 25.4 (The lenny-ops Service: Authentication), 17.4 (Dev mode guard rails)
 func TestBuildAuthConfig_ProductionRefusesDevTrustHook(t *testing.T) {
 	keySet, _ := testKeySet(t, 0x31)
-	cfg, err := buildAuthConfig(authInputsFor(keySet, writeHMACKeyFile(t, "s"), "", true))
+	cfg, err := buildAuthConfig(authInputsFor(keySet, writeHMACKeyFile(t, "s"), "", true, true))
 	if !errors.Is(err, errDevTrustInProduction) {
 		t.Fatalf("err = %v, want errDevTrustInProduction", err)
 	}
@@ -148,12 +150,13 @@ func TestBuildAuthConfig_ProductionRefusesDevTrustHook(t *testing.T) {
 }
 
 // TestBuildAuthConfig_DevWithoutKeyIsOpen pins that a non-production
-// process without the trust hook serves the surface unauthenticated.
+// dev-mode process without the trust hook serves the surface
+// unauthenticated.
 //
 // spec: 25.4 (The lenny-ops Service: Authentication)
 func TestBuildAuthConfig_DevWithoutKeyIsOpen(t *testing.T) {
 	keySet, _ := testKeySet(t, 0x31)
-	cfg, err := buildAuthConfig(authInputsFor(keySet, "", "", false))
+	cfg, err := buildAuthConfig(authInputsFor(keySet, "", "", true, false))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +176,7 @@ func TestBuildAuthConfig_DevWithoutKeyIsOpen(t *testing.T) {
 func TestBuildAuthConfig_WithKeyAndIssuer(t *testing.T) {
 	const secret = "ops-test-secret"
 	keySet, signer := testKeySet(t, 0x31)
-	cfg, err := buildAuthConfig(authInputsFor(keySet, writeHMACKeyFile(t, secret), "https://idp.acme.com", false))
+	cfg, err := buildAuthConfig(authInputsFor(keySet, writeHMACKeyFile(t, secret), "https://idp.acme.com", true, false))
 	if err != nil {
 		t.Fatalf("buildAuthConfig: %v", err)
 	}
@@ -202,7 +205,7 @@ func TestBuildAuthConfig_WithKeyAndIssuer(t *testing.T) {
 // spec: 25.4 (The lenny-ops Service: Authentication)
 func TestBuildAuthConfig_BadKeyFileErrors(t *testing.T) {
 	keySet, _ := testKeySet(t, 0x31)
-	if _, err := buildAuthConfig(authInputsFor(keySet, filepath.Join(t.TempDir(), "missing.json"), "", false)); err == nil {
+	if _, err := buildAuthConfig(authInputsFor(keySet, filepath.Join(t.TempDir(), "missing.json"), "", true, false)); err == nil {
 		t.Fatal("expected error for unreadable key file")
 	}
 }
