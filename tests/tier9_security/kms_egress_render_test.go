@@ -68,7 +68,8 @@ func renderKMSEgressErr(t *testing.T, set ...string) (stderr string, failed bool
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = &bytes.Buffer{}
 	cmd.Stderr = &errBuf
-	return errBuf.String(), cmd.Run() != nil
+	err := cmd.Run()
+	return errBuf.String(), err != nil
 }
 
 // ipBlockPeer is one ipBlock peer of an egress rule with the TCP ports the
