@@ -3250,8 +3250,10 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [x] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
     only at the next 30-second read. Fixed in `d3ef3232e`: with `--redis-url` the Token Service publishes the
     revoked `jti` on the `token:revocations` channel the gateway replicas and `lenny-ops` apply.
-  - [ ] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
-    or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set.
+  - [x] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
+    or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
+    gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
+    `user_bearer`; T-10.2.1 is closed with it.
   - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
     the mint through the Token Service exchange §8.2 names. Coordinate with F-10.2.25.
   - [ ] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
