@@ -22692,12 +22692,13 @@ The `t:{tenant_id}:` keys are written without braces, so they carry no hash tag.
 **Gap:** After an unplanned total Redis loss, open circuit breakers close, revoked playground bearers become valid until `exp`, undelivered inbox and DLQ messages are lost, and staged billing entries that have not drained are lost. The specification and the disaster-recovery guide tell operators none of this happens.
 **Suggested resolution:** Through the proposal pipeline, restate the posture per role in §12.4 and §28.5.7 (which roles rebuild from Postgres, which lose state, and what each loss means), and correct the disaster-recovery page in the same change. It is a specification defect that does not depend on topology. Owner: unassigned (a new Redis and `lenny-ops` text-corrections proposal).
 
-### - [ ] F-12.4.35 — The `--redis-cluster-addrs` help text calls cluster mode the migration topology for the Quota / Rate Limiting instance [Low] — OPEN
+### - [x] F-12.4.35 — The `--redis-cluster-addrs` help text calls cluster mode the migration topology for the Quota / Rate Limiting instance [Low] — CLOSED
 
 **Spec:** §12.4 Redis HA and Failure Modes, **Shared Redis topology.** and the Redis Cluster migration pre-plan (a whole-deployment cutover).
 **Evidence:** The flag help in `cmd/lenny-gateway/flags.go:511-512` reads "the Tier 2→3 migration topology for the Quota/Rate Limiting instance". Proposal 0099 replaced the per-instance migration with a whole-deployment cutover and left the help text outside its code bound. Filed from proposal 0099's unstaged-defects list (`proposals/0099_fix_lenny-ops-remediation-locks-cannot-run-on-a-redis/`), 2026-10-25.
 **Gap:** The help text describes a migration the specification no longer states.
 **Suggested resolution:** Reword the help text to describe the whole-deployment Cluster topology. A direct fix with no spec change. Owner: a direct fix.
+**Resolution:** Fixed in 6ff8ed783 (2026-10-26). The `--redis-cluster-addrs` help text (`cmd/lenny-gateway/flags.go`) now describes the single Redis Cluster that serves every concern at Tier 3 under the §12.4 shared Redis topology, reached through the whole-deployment cutover of the Redis Cluster migration pre-plan. The `lenny-ops` flag of the same name already described its own use of the cluster and needed no change. Test: `cmd/lenny-gateway/redis_cluster_flag_help_test.go::TestRedisClusterAddrsHelpDescribesTheDeploymentCluster_spec_12_4`.
 
 ### - [ ] F-12.4.36 — With `redis.deploy: true` the chart renders only one in-cluster Redis provider, so one release cannot run the Sentinel instance and the Cluster side by side for the migration [Low] — OPEN
 
