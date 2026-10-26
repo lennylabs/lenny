@@ -547,7 +547,10 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
-        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1"
+        "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1807,7 +1810,11 @@
         "tests/tier9_security/runtime_supervisor_security_test.go::TestLabelImmutabilityRefusesARuntimeProcessRelabel_spec_17_2",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestRestartPodSweepRemovesAgentResidue_spec_4_7_10",
         "tests/tier9_security/runtime_supervisor_security_test.go::TestScrubDoesNotFollowAPlantedLink_spec_5_2",
-        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10"
+        "tests/tier9_security/runtime_supervisor_security_test.go::TestSignalsToTheSupervisorReachNeitherItNorTheRuntime_spec_4_7_10",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -2260,7 +2267,16 @@
         "pkg/gateway/storage/slotcounter/slotcounter_test.go",
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheMiss_spec_7_1",
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAClosingBindingOnACacheHit_spec_7_1",
-        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1"
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorInFlightSendEndsAtTheSealEviction_spec_7_1",
+        "pkg/gateway/sessionserver/derive_test.go::TestDeriveTerminalSourceReportsRecordedSnapshotSource_spec_7_1",
+        "pkg/gateway/sessionserver/derive_test.go::TestDeriveCompletedSourceDuringSealWindow_spec_7_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
+        "tests/testinfra/lifecycleharness/slots_test.go::TestDefaultStoreTakesTheReplicasTerminalPipelineBudget_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedCountsASessionInItsPostTerminalWindow_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedStopsCountingASessionPastThePostTerminalCap_spec_7_1",
+        "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
+        "tests/tier7a_load_local/derive_failure_fence_race_test.go"
       ],
       "packages": [
         "pkg/session"

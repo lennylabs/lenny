@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -56,18 +57,34 @@ const (
 	MaxResuming = 30 * time.Second
 	// MaxRetries is the retry budget.
 	MaxRetries = 2
+	// SealWindow is every replica's §7.1 seal-and-export window, the
+	// deployment default.
+	SealWindow = sessionserver.DefaultWorkspaceSealMaxDuration
+	// ReleaseAllowance is every replica's release allowance
+	// (--stream-failure-report-timeout), the deployment default.
+	ReleaseAllowance = sessionserver.DefaultStreamFailureReportTimeout
 )
+
+// PostTerminalCap is the cap of the §7.1 post-terminal window: the terminal
+// pipeline budget the replicas run with. Every session store the harness
+// builds counts a terminal session as holding its pod under this cap, and the
+// checker's pods-and-claims and slot-set invariants apply the same holder
+// predicate on the harness clock.
+//
+// spec: §7.1 (Terminal pipeline context, Post-terminal window)
+var PostTerminalCap = sessionserver.TerminalPipelineBudgetFor(SealWindow, ReleaseAllowance)
 
 // Options configures a harness.
 type Options struct {
 	// Replicas is the number of gateway replicas; at least one.
 	Replicas int
 	// Store, when set, is the shared session store; otherwise an in-memory
-	// store is used.
+	// store with the post-terminal cap PostTerminalCap is used.
 	Store sessionstore.Store
 	// NewStore, when set and Store is not, builds the shared session store
 	// over the harness's stepped clock, so the store's row stamps and the
-	// gateway's timers read one clock.
+	// gateway's timers read one clock. It builds the store with the
+	// post-terminal cap PostTerminalCap, as PostgresStore does.
 	NewStore func(now func() time.Time) sessionstore.Store
 	// Pods is the number of idle pods seeded before the scenario.
 	Pods int
@@ -140,8 +157,8 @@ type Harness struct {
 	// Claims records every SandboxClaim any replica's binder created.
 	Claims *ClaimLog
 	// RelaxOrphanClaims applies the crash relaxation of the pods-and-claims
-	// invariant: a bound claim whose pod no non-terminal row names and no
-	// surviving replica binds is accepted, because the claim-orphan GC
+	// invariant: a bound claim whose pod no session holds (the §7.1 holder
+	// predicate) and no surviving replica binds is accepted, because the claim-orphan GC
 	// reclaims it (§4.6.1 Orphaned SandboxClaim detection, §7.3).
 	RelaxOrphanClaims bool
 	// Slots records every slot-set reservation and removal the replicas'
@@ -149,12 +166,13 @@ type Harness struct {
 	Slots *SlotLog
 	// RelaxStaleSlotMembers applies the slot relaxation that matches
 	// RelaxOrphanClaims: a plain slot-set member whose session is terminal
-	// is accepted, because a release no replica performs leaves it counted
-	// until the stale-slot reaper or the orphan GC (§5.2 Slot assignment
-	// atomicity).
+	// and past its post-terminal window is accepted, because a release no
+	// replica performs leaves it counted until the stale-slot reaper or the
+	// orphan GC (§5.2 Slot assignment atomicity). A member in its window is
+	// accepted without the relaxation.
 	RelaxStaleSlotMembers bool
 	// RelaxEmptySetClaims accepts a bound claim on a pod whose slot set is
-	// empty and that no non-terminal row names, which the claim-orphan GC
+	// empty and that no session holds, which the claim-orphan GC
 	// reclaims (§4.6.1 Orphaned SandboxClaim detection).
 	RelaxEmptySetClaims bool
 
@@ -274,7 +292,7 @@ func New(t testing.TB, opts Options) *Harness {
 	case opts.NewStore != nil:
 		h.Inner = opts.NewStore(h.Clock.Now)
 	default:
-		h.Inner = memstore.NewWithClock(h.Clock.Now)
+		h.Inner = NewMemStore(h.Clock.Now)
 	}
 	h.Store = NewTracedStore(h.Inner, h.Trace)
 	h.CredLeases = credleasestore.New()
@@ -303,6 +321,16 @@ func New(t testing.TB, opts Options) *Harness {
 	return h
 }
 
+// NewMemStore returns the harness's default session store: an in-memory
+// store on now whose slot queries count a session in its post-terminal
+// window under PostTerminalCap, as the gateway's production store does.
+//
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+// atomicity)
+func NewMemStore(now func() time.Time) *memstore.Store {
+	return memstore.NewWithClock(now, memstore.WithPostTerminalCap(PostTerminalCap))
+}
+
 // AddReplica starts one more replica.
 func (h *Harness) AddReplica(id string) *Replica {
 	h.T.Helper()
@@ -327,26 +355,28 @@ func (h *Harness) AddReplica(id string) *Replica {
 		bus = sessionevents.NewBus(256).WithRedisRelay(sessionevents.NewRedisRelay(h.rc))
 	}
 	r.Server = sessionserver.New(h.Store, sessionserver.Options{
-		DevTenantHeader:         true,
-		Events:                  bus,
-		IDFunc:                  newIDFunc(id),
-		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               binder,
-		PodRegistry:             reg,
-		Executor:                exec,
-		AgentNamespace:          Namespace,
-		CoordinationLeaseStore:  h.Leases,
-		CoordinationLeaseTTL:    LeaseTTL,
-		ReplicaID:               id,
-		Messaging:               h.Messaging,
-		Clock:                   h.Clock.Now,
-		MaxResumePending:        MaxResumePending,
-		MaxResuming:             MaxResuming,
-		SuspensionCheckpointer:  h.Checkpoints,
-		Interactions:            h.Interactions,
-		TreeRecoveryMetrics:     h.TreeMetrics,
-		InputWaits:              r.InputWaits,
-		Pools:                   h.poolRegistry(),
+		DevTenantHeader:            true,
+		Events:                     bus,
+		IDFunc:                     newIDFunc(id),
+		DefaultIsolationProfile:    isolation.ProfileSandboxed,
+		PodBinder:                  binder,
+		PodRegistry:                reg,
+		Executor:                   exec,
+		AgentNamespace:             Namespace,
+		CoordinationLeaseStore:     h.Leases,
+		CoordinationLeaseTTL:       LeaseTTL,
+		ReplicaID:                  id,
+		Messaging:                  h.Messaging,
+		Clock:                      h.Clock.Now,
+		MaxResumePending:           MaxResumePending,
+		MaxResuming:                MaxResuming,
+		SuspensionCheckpointer:     h.Checkpoints,
+		Interactions:               h.Interactions,
+		TreeRecoveryMetrics:        h.TreeMetrics,
+		InputWaits:                 r.InputWaits,
+		Pools:                      h.poolRegistry(),
+		WorkspaceSealMaxDuration:   SealWindow,
+		StreamFailureReportTimeout: ReleaseAllowance,
 	})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
@@ -617,4 +647,40 @@ func (h *Harness) watchdogIdleSeconds() int {
 		return h.idleSeconds
 	}
 	return 100000
+}
+
+// releaseMarkerSite is the gateway call site of the §7.1 release-marker
+// write, as the trace names it.
+const releaseMarkerSite = "recordPodRelease"
+
+// WatchReleaseMarker restarts trace recording so AwaitReleaseMarkerWrite
+// observes the next release-marker write. With fail set it also arms a store
+// error on that write, so the release runs and its marker is not recorded,
+// which leaves the session in its post-terminal window until the cap.
+//
+// spec: §7.1 (Post-terminal window)
+func (h *Harness) WatchReleaseMarker(fail bool) {
+	if fail {
+		h.Trace.ArmMatching("Update", releaseMarkerSite, FaultStoreError, nil)
+		return
+	}
+	h.Trace.Start()
+}
+
+// AwaitReleaseMarkerWrite waits until a replica has made the release-marker
+// write for the session since WatchReleaseMarker, whether the write applied
+// or failed, and fails the test after ten seconds.
+func (h *Harness) AwaitReleaseMarkerWrite(t testing.TB, id string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range h.Trace.Entries() {
+			if e.Call == "Update" && e.SessionID == id && strings.Contains(e.Site, releaseMarkerSite) {
+				h.Settle()
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("no replica made the release-marker write for %s", id)
 }

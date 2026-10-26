@@ -4,7 +4,10 @@
 
 // Tier-7a departure cases: races whose residue §5.2 (Slot assignment
 // atomicity), §4.6.1 (Orphaned SandboxClaim detection), and §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse) accept.
+// (SandboxClaim: a release that ends the occupancy without reuse) accept,
+// and the reseed of a lost slot set racing concurrent reservations while a
+// session is in its §7.1 post-terminal window. The harness checker applies
+// the §7.1 holder predicate to the pods-and-claims and slot-set invariants.
 // Each case runs on the lifecycle harness, drives the racing actors through
 // the replicas' session servers and binders, and ends every round with the
 // harness invariants, relaxed only for the residue its own departure
@@ -19,6 +22,7 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -589,4 +593,80 @@ func requireClaimGone(t *testing.T, h *lifecycleharness.Harness, round int, pod 
 	if phase, exists, err := h.Cluster.ClaimPhase(context.Background(), pod); err != nil || exists {
 		t.Fatalf("round %d: claim of %s = %q (exists %v, err %v) after the writer's by-name delete, want it gone", round, pod, phase, exists, err)
 	}
+}
+
+// spec: §7.1 (Post-terminal window), §5.2 (Post-recovery rehydration
+// atomicity, Slot assignment atomicity), §4.6.1 (Warm Pool Controller (Pod
+// Lifecycle))
+// diagnosis: a session on a full concurrent pod ended and released its slot,
+// with its release-marker write either recorded or fault-injected, the pod's
+// slot set was lost, and concurrent starts on both replicas raced the
+// reseed. With the marker recorded exactly one start must take the freed
+// slot; with the marker write failed the session is in its post-terminal
+// window, the reseed must count it, and every start must be refused. More
+// admissions mean the reseed ignored the holder predicate or two reseeds
+// raced past the rehydration lock; fewer mean the reseed counted a released
+// session; a harness violation means the set or a claim fell out of step
+// with the holder predicate.
+func TestPostTerminalReseedRacesConcurrentReservations_spec_7_1(t *testing.T) {
+	seed := time.Now().UnixNano()
+	t.Logf("seed %d", seed)
+	rng := rand.New(rand.NewSource(seed))
+	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, MaxConcurrentSessions: departureCap})
+	const racers = 3
+	outcomes := map[string]int{}
+	for round := 0; round < departureRounds; round++ {
+		failMarker := rng.Intn(2) == 1
+		h.Cluster.AddIdlePod(t)
+		pod, ids := h.FillPod(t, h.Replicas[rng.Intn(2)])
+		ended := ids[rng.Intn(len(ids))]
+		h.EndWithRelease(t, h.Replicas[rng.Intn(2)], pod, ended, failMarker)
+		if err := h.LoseSlotSet(context.Background(), pod); err != nil {
+			t.Fatalf("round %d: lose the slot set of %s: %v", round, pod, err)
+		}
+		codes := make([]int, racers)
+		started := make([]string, racers)
+		actors := make([]func(), racers)
+		for i := range actors {
+			r := h.Replicas[rng.Intn(2)]
+			actors[i] = func() { started[i], codes[i], _ = h.TryStartSession(r) }
+		}
+		raceJittered(rng, actors...)
+		h.Settle()
+		admitted := 0
+		for i, code := range codes {
+			if code != http.StatusCreated {
+				continue
+			}
+			admitted++
+			if got := h.Row(started[i]).PodAssignment; got != pod {
+				t.Fatalf("round %d: admitted session %s runs on %q, want the freed slot on %q", round, started[i], got, pod)
+			}
+		}
+		want := 1
+		if failMarker {
+			want = 0
+		}
+		if admitted != want {
+			t.Fatalf("round %d (marker write failed %v): %d starts admitted, want %d", round, failMarker, admitted, want)
+		}
+		members, err := h.SlotMembers(context.Background(), pod)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(members) != departureCap {
+			t.Fatalf("round %d: slot set of %s = %v, want %d members", round, pod, members, departureCap)
+		}
+		if counted := slices.Contains(members, ended); counted != failMarker {
+			t.Fatalf("round %d: slot set of %s = %v; ended session %s counted %v, want %v", round, pod, members, ended, counted, failMarker)
+		}
+		requireNoViolations(t, h, round, "after the race")
+		if failMarker {
+			outcomes["window session counted, starts refused"]++
+		} else {
+			outcomes["released session omitted, one start admitted"]++
+		}
+	}
+	t.Logf("outcomes: %v", outcomes)
+	h.Check(t)
 }

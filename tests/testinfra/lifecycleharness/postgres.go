@@ -18,7 +18,11 @@ import (
 // harness tenant, and returns the Options.NewStore constructor of a session
 // store over it, whose rows read as stamped from the clock it is given
 // (SteppedClockStore), with the started database, for a scenario that runs
-// the harness on the compose Postgres.
+// the harness on the compose Postgres. The store counts a session in its
+// §7.1 post-terminal window under PostTerminalCap. Its window cutoff reads
+// the wall clock while the harness steps its own clock forward
+// from the wall clock, so a terminal row with no release marker stays in its
+// window for the whole of a scenario.
 func PostgresStore(t *testing.T) (func(now func() time.Time) sessionstore.Store, *containers.Postgres) {
 	t.Helper()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -29,6 +33,6 @@ func PostgresStore(t *testing.T) (func(now func() time.Time) sessionstore.Store,
 		t.Fatalf("seed tenant: %v", err)
 	}
 	return func(now func() time.Time) sessionstore.Store {
-		return NewSteppedClockStore(sessionpg.New(pg.Pool), now)
+		return NewSteppedClockStore(sessionpg.New(pg.Pool, sessionpg.WithPostTerminalCap(PostTerminalCap)), now)
 	}, pg
 }
