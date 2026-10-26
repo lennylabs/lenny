@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
 // Process represents a running lenny-gateway subprocess.
@@ -65,7 +66,37 @@ func Start(t testing.TB) *Process {
 // can exercise the dev-header RBAC path.
 func StartWith(t testing.TB, extraArgs ...string) *Process {
 	t.Helper()
-	binary := Build(t)
+	return StartOpts(t, Options{Args: extraArgs})
+}
+
+// Options configures StartOpts.
+type Options struct {
+	// Args are cmd/lenny-gateway flags appended after the bind address.
+	// A later value of a flag wins over an earlier one.
+	Args []string
+	// Env entries are appended after the harness defaults, so an entry
+	// here overrides a default of the same name.
+	Env []string
+	// Binary is a cmd/lenny-gateway binary Build returned. Empty builds
+	// one. A test that restarts replicas passes one binary to every
+	// start so it builds once.
+	Binary string
+}
+
+// StartOpts builds and spawns cmd/lenny-gateway with opts and returns
+// once the gateway answers HTTP.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation" — every
+// gateway a test starts runs on the local KMS provider over the master
+// key of the test's stack (tests/testinfra/stackkey), so peer replicas,
+// the Token Service, and lenny-ops in one test share one key set and a
+// restarted replica keeps it.
+func StartOpts(t testing.TB, opts Options) *Process {
+	t.Helper()
+	binary := opts.Binary
+	if binary == "" {
+		binary = Build(t)
+	}
 	tmp := filepath.Dir(binary)
 
 	port, err := freePort()
@@ -74,18 +105,20 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
-	stderrPath := filepath.Join(tmp, "stderr.log")
-	stderrFile, err := os.Create(stderrPath)
+	// Each process gets its own log, because processes started from one
+	// binary share its directory.
+	stderrFile, err := os.CreateTemp(tmp, "stderr-*.log")
 	if err != nil {
 		t.Fatalf("create stderr log: %v", err)
 	}
+	stderrPath := stderrFile.Name()
 
 	// §10.6: the gateway fail-closes without an explicit
 	// environment-variable policy. The harness defaults to deny-all;
 	// a test may override it by passing --no-environment-policy in
-	// extraArgs, where the later value wins.
+	// opts.Args, where the later value wins.
 	baseArgs := []string{"--addr", addr, "--no-environment-policy", "deny-all"}
-	cmd := exec.Command(binary, append(baseArgs, extraArgs...)...)
+	cmd := exec.Command(binary, append(baseArgs, opts.Args...)...)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
 	// §17.4: the harness emulates the production edge, where an
@@ -119,7 +152,9 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		"LENNY_TLS_TERMINATED_UPSTREAM=true",
 		"LENNY_DEV_MODE=true",
 		"LENNY_REDIS_ALLOW_INSECURE=true",
+		stackkey.Env(t),
 	)
+	cmd.Env = append(cmd.Env, opts.Env...)
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
 	// the gateway to exit within this window, the runtime sends
 	// SIGKILL and closes the inherited stdio pipes so cmd.Wait can
@@ -190,6 +225,15 @@ func (p *Process) stop(t testing.TB, sig os.Signal) {
 			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
 		}
 	})
+}
+
+// Stop ends the gateway with SIGINT, as a rollout ends a replica, and
+// waits for it to exit. A test uses it to restart a replica with new
+// flags or to take one replica away. The cleanup StartOpts registers
+// tolerates a prior Stop.
+func (p *Process) Stop(t testing.TB) {
+	t.Helper()
+	p.stop(t, os.Interrupt)
 }
 
 // Kill ends the gateway with SIGKILL and waits for it to exit, as a crash

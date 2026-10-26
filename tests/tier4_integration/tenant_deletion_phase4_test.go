@@ -54,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
 
 // phase4Tables are the session-keyed tables the seed populates. Phase 4
@@ -365,8 +366,9 @@ func assertGlobexLive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, liv
 // --multi-tenant=true together. The trusted HMAC key lets the test sign an
 // embedded-OIDC bearer every replica verifies. The dev-mode playground is
 // bound to acme, because multi-tenant dev mode requires an explicit
-// non-default dev tenant.
-func deletionGatewayArgs(pgDSN, redisAddr, keyFile string) []string {
+// non-default dev tenant. Every replica proxies POST /v1/oauth/token to the
+// Token Service at tsURL.
+func deletionGatewayArgs(pgDSN, redisAddr, keyFile, tsURL string) []string {
 	return []string{
 		"--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn=" + pgDSN,
@@ -379,6 +381,7 @@ func deletionGatewayArgs(pgDSN, redisAddr, keyFile string) []string {
 		"--tenant-deletion-interval=300ms",
 		"--playground-enabled", "--playground-auth-mode=dev",
 		"--playground-dev-tenant-id=acme",
+		"--token-service-http-url=" + tsURL,
 	}
 }
 
@@ -421,7 +424,8 @@ func createTenantUser(t *testing.T, base, tenant, subject string) {
 
 // mintImpersonationBearer mints a Lenny-issued user bearer for subject in
 // tenant through base's platform-admin impersonation endpoint. The replica
-// signs it with its own Token Service key, so only that replica verifies it.
+// signs it with the shared §10.2 platform:jwt-signing key, so every replica
+// of the install verifies it.
 func mintImpersonationBearer(t *testing.T, base, tenant, subject string) string {
 	t.Helper()
 	code, raw := deletionAdminDo(t, base, http.MethodPost, "/v1/admin/impersonation", map[string]any{
@@ -440,16 +444,32 @@ func mintImpersonationBearer(t *testing.T, base, tenant, subject string) string 
 	return out.BearerToken
 }
 
-// lennyIssuedProbes mints one Lenny-issued bearer on each replica and
-// returns a probe per bearer whose replica list is the minting replica.
+// lennyIssuedProbes mints, through each replica, an impersonation bearer
+// and a Token Service bearer from POST /v1/oauth/token, and returns a probe
+// per bearer over every replica: each Lenny-issued bearer verifies on every
+// replica of the install, whichever process signed it.
+//
+// spec: §10.2 (Authentication) "Signing topology", §4.3 (Token Service).
 func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) []bearerProbe {
 	t.Helper()
-	out := make([]bearerProbe, 0, len(replicas))
+	impersonation := make([]string, len(replicas))
+	out := make([]bearerProbe, 0, 2*len(replicas))
 	for i, base := range replicas {
+		impersonation[i] = mintImpersonationBearer(t, base, tenant, subject)
 		out = append(out, bearerProbe{
-			name:     fmt.Sprintf("%s Lenny-issued (replica %d)", tenant, i),
-			bearer:   mintImpersonationBearer(t, base, tenant, subject),
-			replicas: []string{base},
+			name:     fmt.Sprintf("%s impersonation (minted on replica %d)", tenant, i),
+			bearer:   impersonation[i],
+			replicas: replicas,
+		})
+	}
+	for i, base := range replicas {
+		// The subject is another replica's bearer, so the exchange is not a
+		// self-rotation and revokes nothing.
+		subjectToken := impersonation[(i+1)%len(replicas)]
+		out = append(out, bearerProbe{
+			name:     fmt.Sprintf("%s Token Service (requested through replica %d)", tenant, i),
+			bearer:   mintExchanged(t, base, impersonation[i], subjectToken, ""),
+			replicas: replicas,
 		})
 	}
 	return out
@@ -457,8 +477,8 @@ func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) 
 
 // playgroundProbes mints one dev-mode playground bearer for the gateway's
 // dev tenant on each replica through POST /v1/playground/token and returns
-// a probe per bearer whose replica list is the minting replica. The mint
-// runs behind the dev-tenant Ready gate, so it needs the tenant seeded.
+// a probe per bearer over every replica. The mint runs behind the
+// dev-tenant Ready gate, so it needs the tenant seeded.
 //
 // spec: §27.3.1 (OIDC cookie-to-MCP-bearer exchange), §27.3 (Authentication).
 func playgroundProbes(t *testing.T, tenant string, replicas []string) []bearerProbe {
@@ -466,9 +486,9 @@ func playgroundProbes(t *testing.T, tenant string, replicas []string) []bearerPr
 	out := make([]bearerProbe, 0, len(replicas))
 	for i, base := range replicas {
 		out = append(out, bearerProbe{
-			name:     fmt.Sprintf("%s playground (replica %d)", tenant, i),
+			name:     fmt.Sprintf("%s playground (minted on replica %d)", tenant, i),
 			bearer:   mintPlaygroundBearer(t, base),
-			replicas: []string{base},
+			replicas: replicas,
 		})
 	}
 	return out
@@ -667,9 +687,12 @@ func nonGDPRAuditRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ten
 // Phase 2 did not drain the tenant before Phase 4; a globex session no
 // longer running means the drain crossed tenants. A bearer admitted from
 // Phase 3 or during the legal-hold pause, on either replica, means the
-// tenant registry still admits a deleting tenant; a Lenny-issued
-// (impersonation-minted) bearer admitted there means the Token Service
-// verifier path skips the registry check the embedded-OIDC path applies; an acme Redis key left
+// tenant registry still admits a deleting tenant; a Lenny-issued bearer
+// (impersonation-minted or Token Service-issued) admitted there means the
+// key-set verifier path skips the registry check the embedded-OIDC path
+// applies; a Lenny-issued bearer refused before the deletion on a replica
+// other than its signer means the replicas do not share the §10.2 key set;
+// an acme Redis key left
 // means a Redis-backed eraser was wired nil at the gateway's call site; a
 // globex key gone means one crossed tenants; a globex bearer refused on
 // either replica, or a tenant-scoped table holding fewer globex rows, means
@@ -688,7 +711,8 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	args := deletionGatewayArgs(pg.DSN, rd.Addr, writeTenancyTrustKey(t))
+	ts := tokensvc.StartWith(t, "--postgres-dsn="+pg.DSN)
+	args := deletionGatewayArgs(pg.DSN, rd.Addr, writeTenancyTrustKey(t), ts.BaseURL())
 	gwA := gateway.StartWith(t, args...)
 	gwB := gateway.StartWith(t, args...)
 	ctx := context.Background()
@@ -717,12 +741,10 @@ func TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8(t *test
 		}
 	}
 
-	// The embedded-OIDC bearer verifies on both replicas. A Lenny-issued
-	// bearer is minted by each replica's platform-admin impersonation
-	// endpoint under that replica's own Token Service key, so it verifies
-	// only on the replica that minted it. Each replica also mints a
-	// playground bearer under its own Token Service key, so each playground
-	// bearer is probed only on the replica that minted it.
+	// Every bearer is probed on both replicas: the embedded-OIDC bearer,
+	// and each Lenny-issued bearer (impersonation, Token Service, and
+	// playground), which the replicas and the Token Service sign with one
+	// shared key.
 	replicas := []string{gwA.BaseURL(), gwB.BaseURL()}
 	createTenantUser(t, gwA.BaseURL(), "acme", "alice@acme.com")
 	createTenantUser(t, gwA.BaseURL(), "globex", "bob@globex.com")

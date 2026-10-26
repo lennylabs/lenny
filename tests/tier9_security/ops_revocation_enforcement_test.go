@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: MIT
+
+//go:build security
+
+// Tier-9 security test for the lenny-ops revocation set (§25.4
+// "Authentication", revocation set rules 1 to 7) against real
+// cmd/lenny-gateway, cmd/lenny-token-service, and cmd/lenny-ops processes
+// over one Postgres and one Redis. A Lenny-issued token revoked through
+// rotation, through §11.4 user invalidation, or before its tenant is
+// deleted must be refused on lenny-ops within one 35 s read bound, with
+// lenny-ops's Redis link up and with it cut, and the deleted tenant's
+// revocation must survive into a fresh lenny-ops process. A playground
+// bearer must be refused on lenny-ops (rule 7), and as a caller of
+// POST /v1/oauth/token through a gateway replica (§13.3).
+package tier9_security_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/gateway"
+	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
+	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
+	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
+)
+
+// opsRevBound is the §25.4 bound on lenny-ops refusing a revoked token: the
+// 30 s read interval plus margin for the read.
+const opsRevBound = 35 * time.Second
+
+// opsRevAlias maps platform:jwt-signing on every process of the stack.
+const opsRevAlias = "--kms-alias=" + kms.AliasJWTSigning + "=local-key-1"
+
+// opsRevStack is a gateway, a Token Service, and lenny-ops over one
+// Postgres and one Redis. lenny-ops reaches Redis through redisLink so a
+// test can cut that link alone.
+type opsRevStack struct {
+	pg        *containers.Postgres
+	gw        *gateway.Process
+	ts        *tokensvc.Process
+	ops       *opsprocess.Process
+	opsOpts   opsprocess.Options
+	redisLink *tcpfault.Proxy
+}
+
+// startOpsRevStack starts the stack and seeds acme, globex, and initech.
+func startOpsRevStack(t *testing.T) *opsRevStack {
+	t.Helper()
+	stackkey.MasterKeyFile(t)
+	s := &opsRevStack{pg: containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})}
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	s.ts = tokensvc.StartWith(t, "--postgres-dsn="+s.pg.DSN, "--kms-provider=local", opsRevAlias)
+	s.gw = gateway.StartWith(t,
+		"--no-environment-policy", "allow-all", "--dev-mode",
+		"--postgres-dsn="+s.pg.DSN, "--postgres-billing-audit-ddl-dsn="+s.pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--tenancy-mode=multi", "--multi-tenant=true",
+		"--tenant-deletion-interval=300ms",
+		"--token-service-http-url="+s.ts.BaseURL(),
+		"--kms-provider=local", opsRevAlias)
+	var opsRedis string
+	s.redisLink, opsRedis = tcpfault.StartURL(t, "redis://"+rd.Addr+"/0")
+	s.opsOpts = opsprocess.Options{
+		Binary: opsprocess.Build(t),
+		Args: append([]string{
+			"--postgres-dsn=" + s.pg.DSN, "--redis-url=" + opsRedis,
+			"--kms-provider=local", opsRevAlias,
+		}, opsprocess.AuthArgs(t)...),
+	}
+	s.ops = opsprocess.StartOpts(t, s.opsOpts)
+	s.admin(t, http.MethodPost, "/v1/admin/bootstrap", map[string]any{
+		"tenants": []map[string]any{
+			{"id": "acme", "displayName": "Acme Corp"},
+			{"id": "globex", "displayName": "Globex"},
+			{"id": "initech", "displayName": "Initech"},
+		},
+	}, http.StatusOK)
+	return s
+}
+
+// admin issues an admin request as a platform-admin on the default tenant
+// and fails the test unless it answers want. It returns the decoded body.
+func (s *opsRevStack) admin(t *testing.T, method, path string, body any, want int) map[string]any {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		raw, _ := json.Marshal(body)
+		reader = bytes.NewReader(raw)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, s.gw.BaseURL()+path, reader)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", auth.DefaultTenantID)
+	req.Header.Set("X-Lenny-User-ID", "carol@acme.com")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s: status %d, want %d: %s\n%s", method, path, resp.StatusCode, want, out, s.gw.Logs())
+	}
+	var decoded map[string]any
+	_ = json.Unmarshal(out, &decoded)
+	return decoded
+}
+
+// tenantAdmin creates subject as a tenant-admin of tenant and returns two
+// impersonation bearers for it, each with its own jti.
+func (s *opsRevStack) tenantAdmin(t *testing.T, tenant, subject string) (string, string) {
+	t.Helper()
+	s.admin(t, http.MethodPost, "/v1/admin/users", map[string]any{
+		"tenantId": tenant, "subject": subject, "roles": []string{"tenant-admin"},
+	}, http.StatusCreated)
+	mint := func() string {
+		body := s.admin(t, http.MethodPost, "/v1/admin/impersonation", map[string]any{
+			"targetTenantId": tenant, "targetUserId": subject,
+			"reason": "lenny-ops revocation probe", "ticketId": "ops-revocation", "durationSeconds": 600,
+		}, http.StatusOK)
+		tok, _ := body["bearerToken"].(string)
+		if tok == "" {
+			t.Fatalf("impersonation of %s/%s returned no bearer: %v", tenant, subject, body)
+		}
+		return tok
+	}
+	return mint(), mint()
+}
+
+// exchange mints a Token Service token through the gateway's
+// POST /v1/oauth/token, which records an issued_tokens row for it.
+func (s *opsRevStack) exchange(t *testing.T, caller, subject string) string {
+	t.Helper()
+	code, body := forgeryExchange(t, s.gw.BaseURL(), caller, subject)
+	tok, _ := body["access_token"].(string)
+	if code != http.StatusOK || tok == "" {
+		t.Fatalf("token exchange: status %d body %v\n%s", code, body, s.ts.Logs())
+	}
+	return tok
+}
+
+// rotate self-rotates tok, which revokes it in issued_tokens (§13.3).
+func (s *opsRevStack) rotate(t *testing.T, tok string) {
+	t.Helper()
+	s.exchange(t, tok, tok)
+}
+
+// awaitRowRevoked polls issued_tokens until tok's row carries revoked_at.
+func (s *opsRevStack) awaitRowRevoked(t *testing.T, tok string) {
+	t.Helper()
+	jti := tokenJTI(t, tok)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var revoked bool
+		err := s.pg.Pool.QueryRow(context.Background(),
+			`SELECT revoked_at IS NOT NULL FROM issued_tokens WHERE jti = $1`, jti).Scan(&revoked)
+		if err == nil && revoked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("issued_tokens row %s not revoked within 15 s (err %v)", jti, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// awaitTenantDeleted polls the tenant row until the deletion tombstone is
+// written.
+func (s *opsRevStack) awaitTenantDeleted(t *testing.T, tenant string) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var state string
+		err := s.pg.Pool.QueryRow(context.Background(),
+			`SELECT coalesce(state, '') FROM tenants WHERE id = $1`, tenant).Scan(&state)
+		if err == nil && state == "deleted" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tenant %s state %q 90 s after DELETE, want deleted (err %v)\n%s", tenant, state, err, s.gw.Logs())
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// requireRevokedOnOps asserts lenny-ops refuses tok with the gateway's
+// revoked-token response within opsRevBound of its row being revoked.
+func (s *opsRevStack) requireRevokedOnOps(t *testing.T, tok string) {
+	t.Helper()
+	s.awaitRowRevoked(t, tok)
+	s.ops.WaitRefused(t, tok, http.StatusUnauthorized, opsprocess.CodeRevoked, opsRevBound)
+}
+
+// tokenJTI returns the jti claim of a compact JWS.
+func tokenJTI(t *testing.T, tok string) string {
+	t.Helper()
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("token has %d parts", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var c struct {
+		JTI string `json:"jti"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil || c.JTI == "" {
+		t.Fatalf("payload carries no jti: %s (%v)", raw, err)
+	}
+	return c.JTI
+}
+
+// revocationPaths revokes a token through each path and asserts lenny-ops
+// refuses it. users names the acme users this pass creates and tenant the
+// tenant it deletes.
+func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant, tenantUser string) {
+	t.Helper()
+	t.Run("rotation", func(t *testing.T) {
+		a, b := s.tenantAdmin(t, "acme", rotUser)
+		tok := s.exchange(t, a, b)
+		s.ops.WaitAccepted(t, tok, opsRevBound)
+		s.rotate(t, tok)
+		s.requireRevokedOnOps(t, tok)
+	})
+	t.Run("user invalidation", func(t *testing.T) {
+		a, b := s.tenantAdmin(t, "acme", invalidUser)
+		tok := s.exchange(t, a, b)
+		s.ops.WaitAccepted(t, tok, opsRevBound)
+		s.admin(t, http.MethodPost, "/v1/admin/users/"+invalidUser+"/invalidate", map[string]any{
+			"tenantId": "acme", "mode": "full_revoke", "reason": "lenny-ops revocation probe",
+		}, http.StatusOK)
+		s.requireRevokedOnOps(t, tok)
+	})
+	t.Run("tenant deletion", func(t *testing.T) {
+		a, b := s.tenantAdmin(t, tenant, tenantUser)
+		tok := s.exchange(t, a, b)
+		s.rotate(t, tok)
+		s.requireRevokedOnOps(t, tok)
+		s.admin(t, http.MethodDelete, "/v1/admin/tenants/"+tenant, nil, http.StatusAccepted)
+		s.awaitTenantDeleted(t, tenant)
+		// A fresh process loads the deleted tenant's revocations from its
+		// first read, because the read lists tombstoned tenants.
+		s.ops.Stop(t)
+		s.ops = opsprocess.StartOpts(t, s.opsOpts)
+		s.ops.WaitRefused(t, tok, http.StatusUnauthorized, opsprocess.CodeRevoked, opsRevBound)
+	})
+}
+
+// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow), 11.4 (User Invalidation), 12.8 (Compliance Interfaces)
+// diagnosis: a revoked token admitted on lenny-ops past the 35 s bound
+// means lenny-ops does not load the revoked issued_tokens rows on its 30 s
+// read, so a Lenny-issued token revoked through rotation or §11.4 user
+// invalidation stays usable on the operability surface. A failure only
+// with the Redis link cut means lenny-ops relies on the event path and its
+// read loop is not running. A deleted tenant's token admitted after the
+// restart means the read omits tombstoned tenants.
+func TestOpsRefusesRevokedLennyTokens_spec_25_4(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startOpsRevStack(t)
+
+	t.Run("Redis up", func(t *testing.T) {
+		s.revocationPaths(t, "bob@acme.com", "dave@acme.com", "globex", "erin@globex.com")
+	})
+	s.redisLink.Cut()
+	t.Run("Redis stopped", func(t *testing.T) {
+		s.revocationPaths(t, "frank@acme.com", "grace@acme.com", "initech", "heidi@initech.com")
+	})
+}
+
+// spec: 25.4 (The lenny-ops Service), 27.3.1 (OIDC cookie-to-MCP-bearer exchange), 13.3 (Credential Flow)
+// diagnosis: a playground bearer admitted on lenny-ops means lenny-ops
+// honours a bearer whose revocation it cannot check, because the playground
+// revocation key lives in Redis and lenny-ops does not read it (rule 7).
+// An access_token returned through the gateway means the Token Service
+// accepts a playground bearer as a caller credential, which mints a child
+// that playground logout does not revoke.
+func TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startOpsRevStack(t)
+	_, signer := stackkey.Signer(t, stackkey.MasterKeyFile(t), map[string]string{kms.AliasJWTSigning: "local-key-1"})
+	a, b := s.tenantAdmin(t, "acme", "alice@acme.com")
+	s.ops.WaitAccepted(t, a, opsRevBound)
+
+	// The claims mirror the gateway's playground mint for a tenant-admin
+	// user: the origin claim, the session-capability typ, and the user's
+	// role. The bearer has no revocation record anywhere.
+	now := time.Now()
+	playground, err := signer.Sign(context.Background(), jwt.Claims{
+		Issuer:   "https://lenny.dev.local/playground",
+		Subject:  "alice@acme.com",
+		TenantID: "acme",
+		Audience: []string{"lenny-gateway"},
+		Roles:    []auth.Role{auth.RoleTenantAdmin},
+		Typ:      auth.TokenSessionCapability,
+		Origin:   jwt.OriginPlayground,
+		IssuedAt: now.Unix(),
+		Expiry:   now.Add(10 * time.Minute).Unix(),
+		JWTID:    "playground-tenant-admin",
+	})
+	if err != nil {
+		t.Fatalf("sign playground bearer: %v", err)
+	}
+	got := s.ops.Me(t, playground)
+	if got.Status != http.StatusUnauthorized || got.Code != opsprocess.CodeUnauthorized || got.Reason != "bearer_revoked" {
+		t.Errorf("lenny-ops: %d %s, want 401 %s with reason bearer_revoked", got.Status, got.Body, opsprocess.CodeUnauthorized)
+	}
+	for name, pair := range map[string][2]string{
+		"caller token":                   {playground, b},
+		"caller token and subject_token": {playground, playground},
+	} {
+		code, body := forgeryExchange(t, s.gw.BaseURL(), pair[0], pair[1])
+		if code != http.StatusUnauthorized || body["error"] != "invalid_client" {
+			t.Errorf("playground bearer as the %s through the gateway: status %d (%v), want 401 invalid_client", name, code, body)
+		}
+		if _, ok := body["access_token"]; ok {
+			t.Errorf("playground bearer as the %s through the gateway returned an access_token", name)
+		}
+	}
+}
