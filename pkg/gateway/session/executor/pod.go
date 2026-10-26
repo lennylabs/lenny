@@ -103,9 +103,13 @@ var (
 // end is not a stream failure, and the conn has left the cache, so the next
 // Send opens a new stream. When the session's binding is marked closing for
 // the terminal seal, Send writes nothing and returns a *SealedError with
-// Delivered zero. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3, §7.2, §4.7.1
-// (Role and Gateway RPC Contract), §7.1 (Delivery and checkpoints during the
-// seal).
+// Delivered zero. When the seal's eviction ends the stream of a Send that
+// obtained it before the mark, a message of the batch not yet written ends
+// the Send with a *SealedError carrying the messages already delivered; a
+// message already written ends it with the stream-end error, because the
+// runtime may have received it. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3,
+// §7.2, §4.7.1 (Role and Gateway RPC Contract), §7.1 (Delivery and
+// checkpoints during the seal).
 func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	conn, err := e.streamFor(ctx, sessionID)
 	if errors.Is(err, ErrSessionSealed) {
@@ -139,10 +143,14 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			return Response{}, err
 		}
 		res, err := conn.runTurn(ctx, line)
-		if errors.Is(err, ErrSessionSealed) {
+		if errors.Is(err, ErrSessionSealed) || conn.stoppedByClosing(err) {
 			// spec: §28.5.1 (CH-ATTACH) — the adapter refused this message
 			// as sealed; the batch's earlier messages were delivered, and
-			// the caller routes the rest again.
+			// the caller routes the rest again. spec: §7.1 (Delivery and
+			// checkpoints during the seal) — the seal's eviction ended the
+			// stream before this message was written, which is the same
+			// outcome: the message arrived after the seal began and the
+			// caller routes it by the session's terminal state.
 			return Response{}, &SealedError{Delivered: delivered, Response: Response{Parts: out, Annotations: envAnn}}
 		}
 		if err != nil {
