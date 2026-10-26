@@ -3280,9 +3280,14 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
       closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
-  - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
-    §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
-    on every production gate.
+  - [x] **Production-mode spelling proposal** (done as a proposal; implementation pending): **F-17.9.24**
+    (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
+    `LENNY_ENV`, so no value turns on every production gate.
+    - **Outcome.** Proposal 0103
+      (`proposals/0103_fix_production-mode-has-two-spellings-so-no-single-setting/`) was approved
+      2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
+      every gate reads through one predicate. Its implementation, which closes F-17.9.24, is pending. Its
+      unstaged defects are filed below.
   - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
@@ -3399,6 +3404,34 @@ tree, so it is recorded as a follow-up rather than filed. The rest are filed in 
     audit row, while 0102's D22 audits the session-creation, `/v1/oauth/token`, and playground refusals. A
     follow-up decides whether a refused impersonation start is audited under the §13.3 rejected-exchange
     discipline (owner's delegate, 2026-10-26). It applies once 0102's implementation lands.
+
+**Defects filed from proposal 0103's unstaged-defect list (2026-10-26).** Proposal 0103 (the production-mode
+spelling proposal) lists defects in the shipped tree that it does not stage. None was already tracked in
+BUILD-GAPS or TEST-GAPS. The closed F-17.6.1 deferred the etcd warning and counted the §12.9 volume audit as
+the node disk warning, and TEST-GAPS T-17.6.13 records both warnings as unit-covered; neither tracks the
+missing checks, so they are filed as F-17.6.25, and T-17.6.13 is corrected when that fix lands. All six
+re-confirm against the tree and are filed in BUILD-GAPS and routed below.
+
+- Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
+  because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
+  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
+  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
+  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+    off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
+    requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+- Proposal routing.
+  - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
+    SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
+    the tenant listing fails, even in production mode. The proposal states the listing-failure posture and
+    its interaction with a Postgres outage at startup, after 0103's implementation.
+  - [ ] **Dev-mode guard-rail statement proposal** (not yet written): **F-17.4.36** (Low). `lenny-ops`
+    refuses the dev trust hook and suppresses its dev relaxations in production, and §17.4 item 3 names only
+    the gateway's hook. The proposal states both `lenny-ops` gates, after 0103's implementation.
+  - [ ] **§17.6 text-corrections proposal** (not yet written): **F-17.6.26** (Low). The §17.6 installer
+    "Target environment" question omits `staging`, which §17.9.1 and the wizard admit. It can ride with any
+    later §17.6 edit, including the dev-mode guard-rail statement proposal.
 
 **Defects filed from the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 (2026-10-26).** The three
 direct fixes surfaced defects that no record tracked. Two were already tracked and are not refiled: the
