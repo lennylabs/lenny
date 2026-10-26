@@ -23,6 +23,26 @@ gateway --token-service-* flags are gated on the same key).
 {{- /* §17.4: under kms.provider=local the Token Service mounts the shared
    master key Secret. */ -}}
 {{- $localKMS := include "lenny.kmsLocal" . -}}
+{{- /* §4.3 / §13.3 datastore connections. The Token Service writes
+   issued_tokens and the token.exchanged audit rows in Postgres, and it
+   publishes each committed revocation on token:revocations, so it reads
+   the same lenny-datastore-conn values the gateway does: the Postgres DSN,
+   the §17.9.3 Redis topology (url, Sentinel, or Cluster), and the §12.4
+   Cache/Pub-Sub concern URL the gateway replicas and lenny-ops subscribe
+   on. F-4.3.21. */ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- $redis := .Values.redis -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
+{{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
+{{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $useSentinel := eq $redisProvider "sentinel" -}}
+{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
+{{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
+{{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
+{{- $anyRedis := or $hasRedis $hasRedisCluster $useSentinel -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -132,6 +152,72 @@ spec:
             - --tls-key=/etc/lenny/mtls/tls.key
             - --tls-ca=/etc/lenny/mtls/ca.crt
             {{- end }}
+            {{- if and .Values.global.devMode $anyRedis }}
+            # §12.4 requires Redis AUTH and TLS; a dev install backed by a
+            # plaintext no-password Redis would otherwise fail the Token
+            # Service startup invariant. Dev mode acknowledges the insecure
+            # dev Redis, matching the gateway and lenny-ops.
+            - --redis-allow-insecure
+            {{- end }}
+          {{- if or $hasPg $anyRedis $hasCacheRedis }}
+          env:
+            {{- if $hasPg }}
+            # §13.3 write-before-issue: issued_tokens rows, the step (1a)
+            # source revocation check, rotation, and token.exchanged audit
+            # rows all need Postgres; without it the Token Service keeps no
+            # durable state.
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+            {{- end }}
+            {{- if $hasRedis }}
+            - name: LENNY_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-url
+            {{- end }}
+            {{- if $hasRedisCluster }}
+            # §12.4 Redis Cluster seed nodes (plain env; not secret).
+            - name: LENNY_REDIS_CLUSTER_ADDRS
+              value: {{ $redisCluster.addrs | quote }}
+            {{- end }}
+            {{- if $useSentinel }}
+            # §17.9.3 / §12.4 Redis Sentinel topology, with TLS requested
+            # so §12.4 AUTH+TLS holds.
+            - name: LENNY_REDIS_SENTINEL_ADDRS
+              value: {{ join "," $redis.sentinels | quote }}
+            - name: LENNY_REDIS_SENTINEL_MASTER
+              value: {{ $redis.sentinelMaster | quote }}
+            - name: LENNY_REDIS_TLS
+              value: "true"
+            {{- if $hasRedisPassword }}
+            - name: LENNY_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+            {{- end }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- if $hasCacheRedis }}
+            # §12.4 / §13.3: the Cache/Pub-Sub Redis the gateway replicas
+            # and lenny-ops subscribe to token:revocations on.
+            - name: LENNY_REDIS_CACHE_PUBSUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-cache-pubsub-url
+            {{- end }}
+          {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.tokenService.grpcPort }}
