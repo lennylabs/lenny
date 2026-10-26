@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1029,5 +1031,255 @@ func TestRotationReleaseUsesConfiguredTombstoneRetention(t *testing.T) {
 	}
 	if catalog.lastRetention != window {
 		t.Errorf("tombstone retention stamped = %s, want %s", catalog.lastRetention, window)
+	}
+}
+
+// countingCheckpointAdapter counts each Checkpoint stream the gateway opens
+// on it, then answers an empty workspace probe, which writes the intent row,
+// and closes the attempt with a zero-byte summary.
+type countingCheckpointAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	opened *atomic.Int64
+}
+
+func (a countingCheckpointAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
+	a.opened.Add(1)
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{}},
+	}); err != nil {
+		return err
+	}
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{}},
+	})
+}
+
+// goneRecorder records every ReleaseGone call.
+type goneRecorder struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *goneRecorder) release(tenantID, sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, tenantID+"/"+sessionID)
+}
+
+func (r *goneRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+// laggingReplicaStore answers the replica Get with ErrNotFound for every
+// session while the embedded memstore answers the primary read and writes,
+// standing in for a pgstore whose replica has not caught up with the bind.
+type laggingReplicaStore struct{ *memstore.Store }
+
+func (laggingReplicaStore) Get(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, sessionstore.ErrNotFound
+}
+
+// failingPrimaryStore fails the primary read with an error other than
+// ErrNotFound.
+type failingPrimaryStore struct{ *memstore.Store }
+
+var errPrimaryDown = errors.New("primary unreachable")
+
+func (failingPrimaryStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errPrimaryDown
+}
+
+func (failingPrimaryStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errPrimaryDown
+}
+
+// countingManifests counts the intent rows written.
+type countingManifests struct {
+	*partialmanifeststore.MemoryStore
+	puts    atomic.Int64
+	lastGen atomic.Int64
+}
+
+func (m *countingManifests) Put(ctx context.Context, r partialmanifeststore.Record) error {
+	m.puts.Add(1)
+	m.lastGen.Store(r.CoordinationGeneration)
+	return m.MemoryStore.Put(ctx, r)
+}
+
+// goneFixture binds s1 on a counting adapter with no session row.
+func goneFixture(t *testing.T) (*checkpointer.Checkpointer, *goneRecorder, *atomic.Int64) {
+	t.Helper()
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{Sessions: memstore.New(), Registry: registry, ReleaseGone: rec.release}
+	return cp, rec, opened
+}
+
+// TestCheckpointReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1 asserts
+// that a periodic or eviction checkpoint of a bound session whose row is
+// absent on the primary calls ReleaseGone with the session's tenant and ID
+// once per tick, concurrent ticks included, returns an error wrapping
+// sessionstore.ErrNotFound, and opens no adapter Checkpoint stream. Before
+// the fix the attempt opened a stream at generation 0 and released nothing,
+// so the binding stayed until the replica exited.
+//
+// spec: 7.1 (Seal-and-export invariant), 10.1.7 (preStop Hook Drain)
+func TestCheckpointReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	const ticks = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, ticks)
+	for i := range ticks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				errs <- cp.Checkpoint(context.Background(), "acme", "s1")
+				return
+			}
+			errs <- cp.CheckpointWithTrigger(context.Background(), "acme", "s1", checkpoint.TriggerEviction)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("checkpoint error = %v, want one wrapping ErrNotFound", err)
+		}
+	}
+	calls := rec.snapshot()
+	if len(calls) != ticks {
+		t.Fatalf("ReleaseGone calls = %d, want one per tick (%d)", len(calls), ticks)
+	}
+	for _, c := range calls {
+		if c != "acme/s1" {
+			t.Errorf("ReleaseGone(%s), want acme/s1", c)
+		}
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+}
+
+// TestSweepReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1 asserts the
+// periodic Sweep reaches the release through Checkpoint.
+//
+// spec: 7.1 (Seal-and-export invariant)
+func TestSweepReleasesABindingWhoseRowIsGoneOnThePrimary_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	cp.Sweep(context.Background())
+	if got := rec.snapshot(); len(got) != 1 || got[0] != "acme/s1" {
+		t.Errorf("ReleaseGone calls = %v, want [acme/s1]", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+}
+
+// TestCheckpointReadsTheRowFromThePrimaryNotTheReplica_spec_10_1_7 asserts
+// that a row present on the primary but missing from a lagging replica is
+// neither released nor skipped: the checkpoint runs and records its snapshot
+// at the primary's coordination generation.
+//
+// spec: 10.1.7 (preStop Hook Drain), 7.1 (Seal-and-export invariant)
+func TestCheckpointReadsTheRowFromThePrimaryNotTheReplica_spec_10_1_7(t *testing.T) {
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	mem := memstore.New()
+	if err := mem.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo", CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	manifests := &countingManifests{MemoryStore: partialmanifeststore.NewMemoryStore(nil)}
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: laggingReplicaStore{mem}, Registry: registry, ReleaseGone: rec.release, Manifests: manifests,
+	}
+	if err := cp.Checkpoint(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Checkpoint against a lagging replica: %v", err)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none", got)
+	}
+	if n := opened.Load(); n != 1 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 1", n)
+	}
+	if n := manifests.puts.Load(); n != 1 {
+		t.Fatalf("intent rows written = %d, want 1", n)
+	}
+	if g := manifests.lastGen.Load(); g != 7 {
+		t.Errorf("intent row coordination_generation = %d, want the primary's 7", g)
+	}
+}
+
+// TestCheckpointPrimaryReadErrorReleasesNothing_spec_10_1_7 asserts that a
+// primary read error other than ErrNotFound fails the attempt with that
+// error wrapped, releases nothing, opens no adapter Checkpoint stream, and
+// writes no intent row. Before the fix the read error degraded to a zero
+// context and the intent row was written at generation 0.
+//
+// spec: 10.1.7 (preStop Hook Drain), 7.1 (Seal-and-export invariant)
+func TestCheckpointPrimaryReadErrorReleasesNothing_spec_10_1_7(t *testing.T) {
+	opened := &atomic.Int64{}
+	registry := podsession.NewRegistry()
+	registry.Put(&podsession.BindResult{
+		SessionID: "s1", TenantID: "acme",
+		Adapter: dialAdapter(t, countingCheckpointAdapter{opened: opened}),
+	})
+	manifests := &countingManifests{MemoryStore: partialmanifeststore.NewMemoryStore(nil)}
+	rec := &goneRecorder{}
+	cp := &checkpointer.Checkpointer{
+		Sessions: failingPrimaryStore{memstore.New()}, Registry: registry, ReleaseGone: rec.release, Manifests: manifests,
+	}
+	for _, trigger := range []checkpoint.Trigger{checkpoint.TriggerPeriodic, checkpoint.TriggerEviction} {
+		err := cp.CheckpointWithTrigger(context.Background(), "acme", "s1", trigger)
+		if !errors.Is(err, errPrimaryDown) || errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("%s: error = %v, want one wrapping the primary read error only", trigger, err)
+		}
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
+	}
+	if n := manifests.puts.Load(); n != 0 {
+		t.Errorf("intent rows written = %d, want 0", n)
+	}
+}
+
+// TestSealOfAGoneRowReturnsNotFoundAndReleasesNothing_spec_7_1 asserts that
+// Seal for a bound session whose row is absent on the primary opens no
+// adapter Checkpoint stream, does not call ReleaseGone (the post-terminal
+// hook runs its own release), and returns an error wrapping
+// sessionstore.ErrNotFound, which the seal step classifies as permanent.
+//
+// spec: 7.1 (Seal-and-export invariant)
+func TestSealOfAGoneRowReturnsNotFoundAndReleasesNothing_spec_7_1(t *testing.T) {
+	cp, rec, opened := goneFixture(t)
+	err := cp.Seal(context.Background(), "acme", "s1")
+	if !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("Seal error = %v, want one wrapping ErrNotFound", err)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Errorf("ReleaseGone calls = %v, want none from Seal", got)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Errorf("adapter Checkpoint streams opened = %d, want 0", n)
 	}
 }
