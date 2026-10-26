@@ -3264,9 +3264,15 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
     broadcast load first; a switch to sharded pub/sub is a direct fix.
 - New proposals, each after proposal 0097.
-  - [ ] **Impersonation revocation proposal** (not yet written), first after 0097: **F-13.3.20** (High).
-    Ending an impersonation session revokes nothing, the session store is replica-local, and a full revoke
-    misses the bearer. No section states revocation on end, so the specification needs the rule.
+  - [x] **Impersonation revocation proposal** (done as a proposal; implementation pending), first after 0097:
+    **F-13.3.20** (High). Ending an impersonation session revokes nothing, the session store is replica-local,
+    and a full revoke misses the bearer. No section states revocation on end, so the specification needs the
+    rule.
+    - **Outcome.** Proposal 0102
+      (`proposals/0102_fix_ending-a-platform-admin-impersonation-session-revokes-nothin/`) was approved
+      2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
+      by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
+      closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
   - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
     §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
     on every production gate.
@@ -3342,6 +3348,39 @@ T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS 
   - [ ] **Channel register completeness proposal** (not yet written): **F-28.3.1** (Low). The credential
     revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
     register.
+
+**Defects filed from proposal 0102's unstaged-defect list (2026-10-26).** Proposal 0102 (the impersonation
+revocation proposal) lists defects in the shipped tree that it does not stage. None was already tracked in
+BUILD-GAPS or TEST-GAPS: F-12.8.47 covers the session, tenant, and user stores but not `issued_tokens`, and the
+closed F-15.1.24 concerned the missing issued-token listing rather than the unspecified revoke route. The
+refused-start audit entry is a follow-up to 0102's staged caller check rather than a defect in the shipped
+tree, so it is recorded as a follow-up rather than filed. The rest are filed in BUILD-GAPS and routed below.
+
+- Direct-fix queue, after the post-0097 direct-fix queue above.
+  - [ ] **F-11.7.24** (Low): `docs/operator-guide/agent-operability.md` says an operation that fails to audit
+    is rolled back, which no section states and §11.7 item 6 contradicts. Delete or restate the sentence.
+  - [ ] **F-10.2.28** (Medium), after 0102's implementation: a rejected playground mint returns its error
+    response whether or not the `playground.bearer_mint_rejected` row was written, because the playground
+    emitter and `admin.AuditSink.EmitAdminEvent` return no error. Give the rejection path an error-returning
+    emit and answer the §13.3 `500` with the intended reason in `detail`, which also covers the step (1a)
+    branch 0102's CODE-2 adds.
+- Proposal routing.
+  - [ ] **F-15.1.59** (Low), with the **token audience and error-catalog proposal** (not yet written, with
+    F-10.2.27, F-15.1.56, F-15.1.58, and F-12.3.26): the gateway serves
+    `POST /v1/admin/issued-tokens/{jti}/revoke`, and no section names it. The proposal adds the §15.1 row.
+  - [ ] **Data-residency storage routing proposal** (not yet written): **F-12.8.62** (Medium, the
+    `issued_tokens` store opens on the single default pool) with **F-12.8.47** (Medium, filed unassigned on
+    2026-10-21, the session, tenant, and user stores). The per-tenant routing is code against §12.8 item 2,
+    and the proposal states how the revocation-set loads and the all-tenant reads span regional backends.
+  - [ ] **§15.1 list `etag` coverage proposal** (not yet written): **F-15.1.60** (Low). §15.1 requires a
+    per-item `etag` on every admin list, while lists over unversioned rows such as `issued_tokens` carry none,
+    and the `GET /v1/admin/tenants/{id}/users` row omits the `etag` the code returns.
+- Follow-up.
+  - [ ] **Refused impersonation start audit.** Under 0102's staged §13.3 rule 1, a `POST /v1/admin/impersonation`
+    that the caller check refuses (an impersonation bearer as the caller, or a revoked caller bearer) writes no
+    audit row, while 0102's D22 audits the session-creation, `/v1/oauth/token`, and playground refusals. A
+    follow-up decides whether a refused impersonation start is audited under the §13.3 rejected-exchange
+    discipline (owner's delegate, 2026-10-26). It applies once 0102's implementation lands.
 
 **Defects filed from the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 (2026-10-26).** The three
 direct fixes surfaced defects that no record tracked. Two were already tracked and are not refiled: the
