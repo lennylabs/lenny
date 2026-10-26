@@ -30,7 +30,7 @@ For evaluation and developer laptops, the `lenny` binary runs the entire platfor
 lenny up
 ```
 
-It renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtime catalog as pods in an embedded Kubernetes (k3s). The application data stores (Postgres, Redis, key management, and artifact storage) are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The CLI authenticates by minting a development bearer from a persisted local key, and the in-cluster gateway trusts it in development mode. On Linux it downloads k3s to `~/.lenny/k3s/` and supervises it as a managed child process, needing no external services. On macOS and Windows the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM; Docker Desktop is the one prerequisite on those hosts, and you should start it before `lenny up`. The first `lenny up` imports the platform and runtime images once and may take longer; subsequent bring-ups reuse the persisted substrate and image store and are well under a minute. The pool controller warms the reference-runtime pods shortly after the gateway answers.
+It renders the production chart under a development profile and runs the gateway, the management plane, the controllers, and the reference runtime catalog as pods in an embedded Kubernetes (k3s). The application data stores (Postgres, Redis, and artifact storage) are in-process in-memory backends inside the gateway pod, so there is no separate Postgres, Redis, KMS, or identity-provider process. The local KMS provider derives its keys, including the JWT signing key, from a master key Secret that `lenny up` generates in the embedded cluster when none exists, so the keys persist with the cluster. The CLI authenticates by minting a development bearer from a persisted local key, and the in-cluster gateway trusts it in development mode. On Linux it downloads k3s to `~/.lenny/k3s/` and supervises it as a managed child process, needing no external services. On macOS and Windows the embedded k3s needs a Linux kernel the binary cannot embed, so it runs the same pinned k3s version as a container under Docker Desktop's Linux VM; Docker Desktop is the one prerequisite on those hosts, and you should start it before `lenny up`. The first `lenny up` imports the platform and runtime images once and may take longer; subsequent bring-ups reuse the persisted substrate and image store and are well under a minute. The pool controller warms the reference-runtime pods shortly after the gateway answers.
 
 The embedded single-node cluster does not reproduce the full production isolation surface: the `sandboxed` and `microvm` profiles both fall back to standard `runc` (gVisor because the cluster installs no gVisor runtime class, Kata because it needs hardware virtualization the local substrate cannot nest), and NetworkPolicy enforcement is disabled. Treat the local stack as a functional preview rather than the production isolation boundary.
 
@@ -468,7 +468,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Amazon RDS (PostgreSQL) | Session state, tokens, audit log | Multi-AZ, `db.r6g.xlarge` at Growth size, envelope encryption via AWS KMS |
 | Amazon ElastiCache (Redis) | Leases, quota counters, routing cache | Cluster mode, TLS in-transit, AUTH token |
 | Amazon S3 | Workspace artifacts and checkpoints | Versioning on, lifecycle rules to expire non-current versions |
-| AWS KMS | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
+| AWS KMS | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption, for wrapping the gateway's data-encryption keys, and for ES256 signing of Lenny-issued JWTs |
 | Amazon RDS Proxy | Connection pooling | Use instead of self-managed PgBouncer; set `postgres.connectionPooler: external` |
 
 ### GCP
@@ -478,7 +478,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Cloud SQL (PostgreSQL) | Session state, tokens, audit log | HA, `db-custom-4-16384` at Growth size, CMEK via Cloud KMS |
 | Memorystore (Redis) | Leases, quota counters, routing cache | Standard tier (HA), TLS, AUTH |
 | Google Cloud Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle rules |
-| Cloud KMS | Envelope encryption of data-encryption keys | Used for wrapping the gateway's data-encryption keys |
+| Cloud KMS | Envelope encryption of data-encryption keys | Used for wrapping the gateway's data-encryption keys and for ES256 signing of Lenny-issued JWTs |
 | Cloud SQL Auth Proxy | Connection pooling | Use instead of PgBouncer; set `postgres.connectionPooler: external` |
 
 ### Azure
@@ -488,7 +488,7 @@ For production deployments, cloud-managed services are recommended over self-man
 | Azure Database for PostgreSQL | Session state, tokens, audit log | Flexible server with HA, `Standard_D4s_v3` at Growth size |
 | Azure Cache for Redis | Leases, quota counters, routing cache | Premium tier (HA), TLS, access keys |
 | Azure Blob Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle management rules |
-| Azure Key Vault | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
+| Azure Key Vault | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption, for wrapping the gateway's data-encryption keys, and for ES256 signing of Lenny-issued JWTs |
 
 ### When using a cloud-managed database proxy
 

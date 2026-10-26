@@ -81,7 +81,7 @@ The operational target that no active session's last checkpoint age exceeds `per
 ### Circuit Breaker
 {: #circuit-breaker }
 
-An automatic or operator-managed mechanism that stops traffic to a failing component. Lenny uses two kinds: (1) per-subsystem automatic circuit breakers within the gateway binary (per-replica, in-memory), and (2) operator-managed global circuit breakers backed by Redis that propagate across all replicas. See [Operator Guide](../operator-guide/).
+An automatic or operator-managed mechanism that stops traffic to a failing component. Lenny uses two kinds: (1) automatic circuit breakers, each held in memory by every replica of the component that makes the protected calls, such as the gateway's per-subsystem breakers and the KMS signing breakers of the gateway and the Token Service, and (2) operator-managed global circuit breakers backed by Redis that propagate across all replicas. See [Operator Guide](../operator-guide/).
 
 ### Claim (Pod Claim)
 {: #claim }

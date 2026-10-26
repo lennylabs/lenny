@@ -110,12 +110,14 @@ Replay-buffer utilization approaching 100 % indicates drops will accelerate — 
 
 ### Step 2 — Audit-lock contention
 
-1. Reduce new-session pressure on the hot tenant:
-   <!-- access: kubectl requires=cluster-access -->
-   ```bash
-   # Helm upgrade lowering oauth.rateLimit.tenantPerSecond for the tenant
+1. Reduce new-session pressure on the hot tenant by lowering its concurrent-session quota. Read the tenant with `GET /v1/admin/tenants/<tenant-id>` to obtain its ETag, then update it:
+   <!-- access: api method=PUT path=/v1/admin/tenants/{id} -->
    ```
-   This throttles `/v1/oauth/token` for that tenant, indirectly slowing new-session creation.
+   PUT /v1/admin/tenants/<tenant-id>
+   If-Match: <etag>
+   {"quota": {"maxConcurrentSessions": <lower value>}}
+   ```
+   While the tenant's session count is at or above the new quota, its session creation is refused with `429 QUOTA_EXCEEDED`, so no new sessions add audit writes under the tenant's audit lock.
 2. Force-terminate long-running sessions owned by the hot tenant to drain in-flight audit writes:
    <!-- access: lenny-ctl -->
    ```bash

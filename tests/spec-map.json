@@ -3216,6 +3216,7 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateSharedES256SigningKey_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookCoversEveryVerifier_spec_10_2",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go::TestJWTKeyRotationRunbookNamesNoRetiredSurface_spec_10_2",
         "cmd/lenny-gateway/auth_seams_test.go::TestTenantRegistryAdaptersApplyRegisteredReading_spec_10_2",
@@ -4685,6 +4686,7 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3",
         "tests/tier2_component/stores/issuedtokenstore_retention_test.go",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantCaller",
@@ -4979,6 +4981,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestErrorCatalogKMSSigningUnavailableRow_spec_15",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
         "tests/tier3_contract/admin_tenant_suspend/suspend_response_test.go::TestTenantSuspendResponseContract_spec_15_1",
@@ -5765,6 +5768,7 @@
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestEmbeddedModeDocsListNoInMemoryKMS_spec_17_4",
         "pkg/gateway/session/executor/subprocess_session_start_test.go",
         "pkg/gateway/session/executor/subprocess_session_start_internal_test.go",
         "tests/tier3_contract/adapter_jsonl/subprocess_session_start_test.go",
@@ -5850,6 +5854,7 @@
       "title": "Operational Runbooks",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestAuditLockRemedyLowersConcurrentSessionQuota_spec_17_7",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go",
         "tests/tier11_docs/runbooks_test.go"
       ],
@@ -6445,6 +6450,7 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestOperabilityDocsStateRevocationSetDuringPostgresOutage_spec_25_4",
         "tests/tier11_docs/redis_key_prefix_registry_test.go::TestRedisKeyPrefixRegistryCompleteness_0032",
         "tests/tier11_docs/build_gaps_ops_lock_hash_tag_currency_test.go",
         "pkg/ops/opsserver/opsserver_test.go",

@@ -129,7 +129,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
   "access_token": "eyJhbGciOi...",
   "issued_token_type": "urn:ietf:params:oauth:token-type:jwt",
   "token_type": "Bearer",
-  "expires_in": 3600
+  "expires_in": 900
 }
 ```
 

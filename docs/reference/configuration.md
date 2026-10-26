@@ -267,10 +267,10 @@ Lenny authenticates client requests with OIDC (OpenID Connect), the standard ide
 
 `/v1/oauth/token` is the canonical endpoint for token issuance, rotation, and delegation token minting via RFC 8693. Grant type URN: `urn:ietf:params:oauth:grant-type:token-exchange`.
 
+A JWT issued from a request that carries no `expires_in` receives the default lifetime that `auth.capabilityTokenTtlSeconds` sets (see [Web Playground configuration](#web-playground-configuration)). A request that carries `expires_in` of at least 60 seconds receives that lifetime, and a smaller value is rejected with `invalid_request`. The issued token's lifetime is then capped by the subject token's expiry and by the per-dialect cap.
+
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `tokenExchange.defaultTokenTTLSeconds` | int | 3600 | Default lifetime for newly minted access tokens. Narrowed child tokens inherit a cap from the parent's remaining lifetime. | Must be > 0. |
-| `tokenExchange.maxTokenTTLSeconds` | int | 28800 | Absolute maximum lifetime for any token issued by `/v1/oauth/token`. Parent lifetime caps child lifetime. | Must be >= `defaultTokenTTLSeconds`. |
 | `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Rotation + delegation minting share this budget. | Must be > 0. |
 | `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on delegation child-token minting. Enforces the parent→child chain of custody. | -- |
 | `tokenExchange.supportedSubjectTokenTypes` | string[] | `["urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"]` | Accepted `subject_token_type` values. | Subset of IANA-registered token types. |
@@ -279,11 +279,14 @@ Lenny authenticates client requests with OIDC (OpenID Connect), the standard ide
 
 ### KMS
 
-Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption keys for sensitive at-rest data.
+Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption keys for sensitive at-rest data and to sign every Lenny-issued JWT with ES256. The gateway and the Token Service sign with one key, and the gateway, the Token Service, and `lenny-ops` verify with the public keys they fetch from the KMS at startup. See [JWT key rotation](../runbooks/jwt-key-rotation.md) for the rotation procedure.
 
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
-| `kms.provider` | string | -- | KMS provider: `aws-kms`, `gcp-kms`, `azure-keyvault`, `vault`. |
+| `kms.provider` | string | `local` | KMS provider: `aws`, `gcp`, `azure`, or `local`. `local` derives its keys from a master key and is for development only; the gateway, the Token Service, and `lenny-ops` refuse to start with `local` in a production deployment. |
+| `kms.aliases` | string | `""` | Comma-separated `alias=key` mapping. Two entries are reserved for JWT signing: `platform:jwt-signing` names the P-256 key that signs every Lenny-issued JWT, and the optional `platform:jwt-verify` names a second key that verifies and never signs, which is mapped only during a key rotation. On a cloud provider each entry must name an immutable key version: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending in `/cryptoKeyVersions/<n>`, or an Azure key identifier with a non-empty `@<version>` suffix. A process refuses to start when either entry names a repointable reference, such as an AWS alias, a GCP CryptoKey without a version, or an Azure key without a version. |
+| `kms.signQuotaPerSecond` | int | -- | The provider's asymmetric `Sign` quota per second for the account and region. Required when `kms.provider` is not `local`, and the chart refuses to render without it. It has no default because provider quotas vary by account and region. The `KMSSignQuotaApproaching` alert fires when the fleet sign rate exceeds 80% of this value. Must be at least 1. |
+| `kms.endpointCIDR` | string | `0.0.0.0/0` | Destination CIDR of the KMS HTTPS endpoint (TCP 443). The Token Service egress NetworkPolicy always carries it, and the gateway and `lenny-ops` egress NetworkPolicies carry it when `kms.provider` is not `local`. When `kms.provider` is not `local`, the chart refuses to render while the value is `0.0.0.0/0` or `::/0`, because an unrestricted peer would cancel the private-range and metadata-service exclusions of the external HTTPS egress rule. A cloud deployment sets it to the subnet of the provider's private KMS endpoint. |
 | `kms.keyId` | string | -- | KMS key identifier for envelope encryption. |
 
 ---
@@ -424,12 +427,12 @@ The web playground is an optional browser-based UI for testing runtimes. It is g
 |:------|:-----|:--------|:------------|:-----------|
 | `playground.enabled` | bool | `false` | When `false`, `/playground/*` returns `404` and the asset bundle is unmounted. | -- |
 | `playground.authMode` | string | `oidc` | Authentication mode for the playground UI. One of `oidc` (redirect to OIDC provider), `apiKey` (user pastes a standard gateway bearer token), or `dev` (no auth; dev-mode only). | One of `oidc`, `apiKey`, `dev`. |
-| `playground.devTenantId` | string | `default` | Tenant bound to the dev HMAC JWT `tenant_id` claim when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
+| `playground.devTenantId` | string | `default` | Tenant bound to the `tenant_id` claim of the dev-mode playground JWT when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
 | `playground.allowedRuntimes` | string[] | `["*"]` | Glob list of runtime IDs visible in the playground runtime picker. | Valid glob patterns. |
 | `playground.maxSessionMinutes` | int | 30 | Hard cap on a playground-initiated session's active time. The cap counts active time as `maxSessionAgeSeconds` does: it pauses while the session is `suspended` and resumes when the session returns to `running`. | Must be > 0. |
 | `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxClientIdleSeconds` for playground-initiated sessions. The effective bound is `min(runtime.maxClientIdleSeconds, playground.maxIdleTimeSeconds)`. When it elapses, the gateway idle-suspends the session and releases its pod, or expires a session that cannot be idle-suspended. | `60 <= v <= runtime.maxClientIdleSeconds`. |
 | `playground.oidcSessionTtlSeconds` | int | 3600 | Lifetime of the server-side playground session record and the `lenny_playground_session` cookie. | Must be > 0. |
-| `playground.bearerTtlSeconds` | int | 900 | TTL of MCP bearer tokens minted by `POST /v1/playground/token`. | `60 <= ttl <= 3600`. |
+| `auth.capabilityTokenTtlSeconds` | int | 900 | Default lifetime, in seconds, of every Lenny-issued JWT whose holder obtains a new token before expiry by requesting one: the MCP bearer tokens minted by `POST /v1/playground/token`, and the JWTs `POST /v1/oauth/token` issues from a request without `expires_in`. A token's expiry is fixed at mint and never extended. The gateway and the Token Service refuse to start outside the bounds. | `120 <= ttl <= 3600`. |
 | `playground.sessionLabels` | map[string]string | `{origin: "playground"}` | Labels applied to playground sessions for audit and accounting. | -- |
 | `playground.acknowledgeApiKeyMode` | bool | `false` | Set `true` to acknowledge the `apiKey`-mode paste-form phishing surface. When `playground.enabled=true`, `playground.authMode=apiKey`, and `global.devMode=false`, `lenny-preflight` emits a non-blocking `WARNING` unless this value is `true`. Acknowledgement is install-time only; the gateway does not gate startup on it. | -- |
 
