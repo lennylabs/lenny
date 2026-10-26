@@ -41,6 +41,7 @@ lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
 lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
+lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
 lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec 4.6.1,12.3 --dry-run
 

@@ -29,7 +29,7 @@ import (
 func runRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	groupFlag := fs.String("group", "", "named group from tests/groups.yaml")
-	tierFlag := fs.String("tier", "", "single tier")
+	tierFlag := fs.String("tier", "", "single tier; with --changed, --since, --spec, or --pkg, the selection restricted to this tier")
 	maxTierFlag := fs.String("max-tier", "", "run all tiers up to and including this one")
 	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
 	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
@@ -153,6 +153,12 @@ type tierPlan struct {
 // Selectors compose: --changed --max-tier component runs the
 // changed-only plan capped at component; --spec 4.2 --max-tier
 // integration runs only the tiers for §4.2's tests up to integration.
+// --tier combined with a discovery selector (--changed, --since,
+// --spec, or --pkg) runs the discovery plan restricted to that one
+// tier: --tier unit --since main keeps the package scope the diff
+// reaches, and a tier the discovery plan does not select runs nothing
+// and carries a note saying so. --tier alone names the whole tier, and
+// --group names a complete plan that no other selector narrows.
 func (s selector) resolve() (resolvedSelector, error) {
 	tiers := allTiers()
 
@@ -161,8 +167,9 @@ func (s selector) resolve() (resolvedSelector, error) {
 	}
 
 	// Compute the raw plan from whatever the primary selector is.
-	// --group / --tier are mutually exclusive with the others (each
-	// names a complete plan).
+	// --group names a complete plan and excludes the others. --tier
+	// alone names one whole tier; with a discovery selector it
+	// restricts the discovery plan to that tier.
 	var raw []tierPlan
 	var notes []string
 	switch {
@@ -175,23 +182,19 @@ func (s selector) resolve() (resolvedSelector, error) {
 		if !contains(tiers, s.tier) {
 			return resolvedSelector{}, fmt.Errorf("unknown tier %q. Valid tiers: %s", s.tier, strings.Join(tiers, ", "))
 		}
-		raw = []tierPlan{{name: s.tier, subsets: s.subsets}}
-	case s.changed, len(s.specs) > 0, len(s.pkgs) > 0:
-		// Union the discovery selectors. Each contributes tiers and,
-		// for the unit tier, a package scope; see mergeDiscoveryPlans.
-		var plans [][]tierPlan
-		if s.changed {
-			changed, changedNotes := resolveChangedPlanFor(s.since, selectOpts{rdepsDepth: s.rdepsDepth, all: s.all})
-			plans = append(plans, changed)
-			notes = append(notes, changedNotes...)
+		if !s.hasDiscovery() {
+			raw = []tierPlan{{name: s.tier, subsets: s.subsets}}
+			break
 		}
-		if len(s.specs) > 0 {
-			plans = append(plans, resolveSpecsPlan(s.specs))
+		discovered, discoveryNotes := s.discoveryPlan()
+		notes = append(notes, discoveryNotes...)
+		var tierNote string
+		raw, tierNote = restrictToTier(discovered, s.tier, s.subsets)
+		if tierNote != "" {
+			notes = append(notes, tierNote)
 		}
-		if len(s.pkgs) > 0 {
-			plans = append(plans, resolvePkgsPlan(s.pkgs))
-		}
-		raw = mergeDiscoveryPlans(plans, s.all)
+	case s.hasDiscovery():
+		raw, notes = s.discoveryPlan()
 		if len(raw) == 0 {
 			// No tiers resolved — when --max-tier is set we still
 			// honor it as the explicit plan; otherwise fall back to
@@ -228,6 +231,52 @@ func (s selector) resolve() (resolvedSelector, error) {
 	}
 
 	return resolvedSelector{tiers: raw, notes: notes}, nil
+}
+
+// hasDiscovery reports whether a discovery selector (--changed,
+// --since, --spec, or --pkg) is active. --since sets changed.
+func (s selector) hasDiscovery() bool {
+	return s.changed || len(s.specs) > 0 || len(s.pkgs) > 0
+}
+
+// discoveryPlan unions the discovery selectors. Each contributes tiers
+// and, for the unit tier, a package scope; see mergeDiscoveryPlans.
+func (s selector) discoveryPlan() ([]tierPlan, []string) {
+	var plans [][]tierPlan
+	var notes []string
+	if s.changed {
+		changed, changedNotes := resolveChangedPlanFn(s.since, selectOpts{rdepsDepth: s.rdepsDepth, all: s.all})
+		plans = append(plans, changed)
+		notes = append(notes, changedNotes...)
+	}
+	if len(s.specs) > 0 {
+		plans = append(plans, resolveSpecsPlan(s.specs))
+	}
+	if len(s.pkgs) > 0 {
+		plans = append(plans, resolvePkgsPlan(s.pkgs))
+	}
+	return mergeDiscoveryPlans(plans, s.all), notes
+}
+
+// resolveChangedPlanFn resolves the --changed and --since plan. Tests
+// replace it to resolve a fixed diff without git.
+var resolveChangedPlanFn = resolveChangedPlanFor
+
+// restrictToTier keeps the one entry of plan named tier, with its tests
+// and unit package scope, and applies the --subset filter. When plan
+// does not select the tier, it returns an empty plan and a note that
+// names the tier, so nothing runs for it.
+func restrictToTier(plan []tierPlan, tier string, subsets []string) ([]tierPlan, string) {
+	for _, p := range plan {
+		if p.name != tier {
+			continue
+		}
+		if len(subsets) > 0 {
+			p.subsets = subsets
+		}
+		return []tierPlan{p}, ""
+	}
+	return []tierPlan{}, fmt.Sprintf("the selection does not reach the %s tier, so --tier %s runs nothing", tier, tier)
 }
 
 // indexOf returns the index of needle in haystack, or -1.
@@ -925,7 +974,8 @@ func tierStatusRank(status string) int {
 
 // runUnitTier runs `go test` over pkgs, or over the whole module
 // (`./...`) when pkgs is nil. --changed and --pkg pass the scope they
-// resolved; --tier unit, --max-tier, and --all leave it nil.
+// resolved, also when --tier unit restricts them; --tier unit alone,
+// --max-tier alone, and --all leave it nil.
 func runUnitTier(pkgs []string) (string, string, *tierResult) {
 	// Race detection is on by default per §17.4. When
 	// LENNY_COVER_PROFILE is set, coverage is emitted to that path so
