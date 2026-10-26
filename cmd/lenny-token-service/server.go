@@ -53,17 +53,23 @@ func revocationPublisher(bus *pubsub.Bus) func(ctx context.Context, tenantID, jt
 }
 
 // buildServer constructs the §13.3 token-exchange Server from the signer,
-// the §10.2 key set as its verifier, the issuer, per-dialect caps, the
+// the §10.2 key set as its verifier, the caller verifier that also admits
+// the upstream IdP's ID token, the issuer, per-dialect caps, the
 // §10.2 capability token lifetime,
 // write-before-issue stores, metrics, rate limits, the drift-degraded
 // gate, and the revocation publisher.
 //
 // spec: §13.3; §10.2 (Authentication) "Verifier key set and rotation".
 func (w *tokenServiceWiring) buildServer() {
+	callerVerifier, err := buildCallerVerifier(w.f, w.keySet)
+	if err != nil {
+		fatalf("%v", err)
+	}
 	srv, err := tokenservice.NewServer(tokenservice.Options{
-		Signer:   w.signer,
-		Verifier: w.keySet,
-		Issuer:   *w.f.issuer,
+		Signer:         w.signer,
+		Verifier:       w.keySet,
+		CallerVerifier: callerVerifier,
+		Issuer:         *w.f.issuer,
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,

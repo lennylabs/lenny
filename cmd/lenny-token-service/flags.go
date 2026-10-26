@@ -53,6 +53,17 @@ type tokenServiceFlags struct {
 	redisAllowInsecure    *bool
 	redisCachePubSubURL   *string
 
+	// §13.3 bootstrap caller credential: the deployer's upstream OIDC
+	// IdP. registerIdPFlags binds them; the names and env variables match
+	// the gateway's, and the chart renders them from auth.oidc.* and
+	// auth.tenantIdClaim.
+	oidcIssuerURL              *string
+	oidcClientID               *string
+	tenantIDClaim              *string
+	oidcJWKSRefreshInterval    *time.Duration
+	oidcJWKSMinRefetchInterval *time.Duration
+	oidcFetchTimeout           *time.Duration
+
 	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds value
 	// in seconds: the default lifetime of a token requested without
 	// expires_in.
@@ -79,6 +90,7 @@ func parseFlags() *tokenServiceFlags {
 	f.registerListenerFlags()
 	f.registerIssuerAndStateFlags()
 	f.registerRedisFlags()
+	f.registerIdPFlags()
 	f.registerRateLimitFlags()
 	f.registerLifetimeFlags()
 	f.registerTLSFlags()
@@ -115,6 +127,29 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	// API), falling back to lenny-system.
 	f.secretNamespace = flag.String("secret-namespace", envOr("POD_NAMESPACE", "lenny-system"),
 		"namespace the §4.9 RBAC live-probe checks for credentialPool secretRef Secrets.")
+}
+
+// registerIdPFlags registers the upstream OIDC IdP whose ID tokens §13.3
+// admits as the bootstrap caller credential on /v1/oauth/token. The flags
+// mirror the gateway's flags of the same names. With no issuer, or an
+// issuer without a client id, the Token Service trusts no IdP and admits
+// only Lenny-issued caller tokens.
+//
+// spec: §13.3 "Client authentication on /v1/oauth/token"; §10.2
+// (Authentication) "`tenant_id` extraction".
+func (f *tokenServiceFlags) registerIdPFlags() {
+	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
+		"§13.3 auth.oidc.issuerUrl: the OIDC issuer whose ID tokens the Token Service admits as the bootstrap caller credential. Empty admits only Lenny-issued caller tokens. Override via LENNY_OIDC_ISSUER_URL.")
+	f.oidcClientID = flag.String("oidc-client-id", os.Getenv("LENNY_OIDC_CLIENT_ID"),
+		"§13.3 auth.oidc.clientId: the audience every IdP caller token must carry. Required with --oidc-issuer-url. Override via LENNY_OIDC_CLIENT_ID.")
+	f.tenantIDClaim = flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
+		"§10.2 claim an IdP caller token carries its tenant identifier in. Mirrors the auth.tenantIdClaim Helm value. Override via LENNY_TENANT_ID_CLAIM.")
+	f.oidcJWKSRefreshInterval = flag.Duration("oidc-jwks-refresh-interval", envDuration("LENNY_OIDC_JWKS_REFRESH_INTERVAL", jwt.DefaultOIDCKeyRefreshInterval),
+		"§10.2 how long the IdP signing keys serve before the Token Service fetches them again. Operator-tunable. Override via LENNY_OIDC_JWKS_REFRESH_INTERVAL.")
+	f.oidcJWKSMinRefetchInterval = flag.Duration("oidc-jwks-min-refetch-interval", envDuration("LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL", jwt.DefaultOIDCMinRefetchInterval),
+		"§10.2 minimum spacing between two fetches of the IdP signing keys. Operator-tunable. Override via LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL.")
+	f.oidcFetchTimeout = flag.Duration("oidc-fetch-timeout", envDuration("LENNY_OIDC_FETCH_TIMEOUT", jwt.DefaultOIDCFetchTimeout),
+		"§10.2 timeout of one IdP discovery or signing-key request. Operator-tunable. Override via LENNY_OIDC_FETCH_TIMEOUT.")
 }
 
 // registerRedisFlags registers the §17.9.3 Redis topology flags (a direct
