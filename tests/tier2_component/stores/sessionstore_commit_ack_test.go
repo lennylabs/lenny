@@ -13,6 +13,8 @@ package stores_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -230,22 +232,49 @@ func TestSessionStoreLostCommitAckClassifiedByWriteID_spec_12_3(t *testing.T) {
 		f := newCommitAckFixture(t)
 		ctx := context.Background()
 		// Both writers' clocks lag the stored updated_at, so each stamps
-		// the stored value plus 1µs.
+		// the updated_at it read plus 1µs, and both read the seeded value
+		// when the rolled-back write leaves the row as it was.
 		prev := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 		f.seedUpdatedAt(t, prev)
-		var competing sessionstore.Session
-		var competingErr error
+		var (
+			faultyRead, competingRead time.Time
+			competing                 sessionstore.Session
+			competingErr              error
+			competitorRuns            atomic.Int32
+			once                      sync.Once
+		)
+		// The hook runs on every dial after the fault, so the competitor
+		// runs on the first of them only; a second write would read the
+		// first one's stamp rather than the seeded value.
 		f.inj.OnRedial(func(context.Context) error {
-			competing, competingErr = f.plain.Update(ctx, f.tenant, f.id, setReason("competitor"))
+			once.Do(func() {
+				competitorRuns.Add(1)
+				competing, competingErr = f.plain.Update(ctx, f.tenant, f.id, func(s *sessionstore.Session) error {
+					competingRead = s.UpdatedAt
+					s.FailureReason = "competitor"
+					return nil
+				})
+			})
 			return competingErr
 		})
 		f.inj.Arm(commitfault.CutBeforeCommit)
-		_, err := f.faulty.Update(ctx, f.tenant, f.id, setReason("rolled-back"))
+		_, err := f.faulty.Update(ctx, f.tenant, f.id, func(s *sessionstore.Session) error {
+			faultyRead = s.UpdatedAt
+			s.FailureReason = "rolled-back"
+			return nil
+		})
+		if n := competitorRuns.Load(); n != 1 {
+			t.Fatalf("competing writer ran %d times, want once after the fault", n)
+		}
 		if competingErr != nil {
 			t.Fatalf("competing Update: %v", competingErr)
 		}
+		if !faultyRead.Equal(prev) || !competingRead.Equal(prev) {
+			t.Fatalf("faulty write read updated_at %v and competing write read %v, want both %v so both stamp the same instant",
+				faultyRead, competingRead, prev)
+		}
 		if want := prev.Add(time.Microsecond); !competing.UpdatedAt.Equal(want) {
-			t.Fatalf("competing UpdatedAt = %v, want %v so both writes stamp the same instant", competing.UpdatedAt, want)
+			t.Fatalf("competing UpdatedAt = %v, want %v, the instant the rolled-back write stamped", competing.UpdatedAt, want)
 		}
 		if err == nil {
 			t.Fatal("Update rolled back behind a competing writer with the same updated_at = nil, want the commit error")
