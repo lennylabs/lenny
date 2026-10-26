@@ -12,6 +12,7 @@ Changelog (compaction pass 1, after round 7):
 - Length: 154 lines, within the 200 target. No trap, open item, or deferred correction was dropped to reach it.
 
 ### Settled
+- Owner's delegate, 2026-10-26: the Helm values key for the forward port takes the holder-forward stem, matching CH-HOLDERFORWARD, so one identifier is spelled the same in every carrier (channel-naming N4, N7). The #2854-inter-replica anchor and the §28.5.4 boundary name stay. Do not reopen.
 
 - **LNK-INTERREPLICA retired.** SPEC-1 (a)/(b) delete its §28.3 row and paragraph; `CH-HOLDERFORWARD` takes Link `None`, keeps provenance C19, and its card Endpoint carries the address [spec.1.fix-design-G1.1].
 - **§28.3 link rule.** A link entry exists only for a connection more than one channel row refers to, or one no channel rides yet; a one-row connection reads `None`. LNK-GWCONTROL qualifies through CH-MCP-PLATFORM and CH-MCP-CONNECTOR.
@@ -1557,3 +1558,7 @@ DECISION: no security findings in round 9. BECAUSE the trust anchors hold: the h
 DECISION: no test-coverage finding in non-spec round 9 — BECAUSE the r7-prefix diff is the exported ForwardKind/ForwardOutcome rename, the coordinationHolder bracket-strip, and test-text edits; TEST-1 item 1 now pins the already-bracketed case ("returned unchanged") and an unmatched bracket, TEST-2 item 9 pins the inReplyTo not-delivered MCP refusal, and TEST-2 item 10 cites TEST-1 item 4 instead of restating the idempotency cases — ALTERNATIVES: filing TEST-1 item 2's omission of the §25.3 nonce checkpoint from its keeps-resolveReplicaID assertion (rejected: the change leaves that consumer untouched, so the extra assertion is nice-to-have); filing the forward-listener X-Lenny-Calling-Session deny path (rejected, same reasoning as [non-spec.7] line 1387: CODE-1 item 6 states no outcome for an unreadable calling session).
 USEFUL [review-log :1198 and :1387]: the 35-second-row WATCHOUT and the calling-session deny DECISION saved re-deriving two already-settled non-findings.
 FACT: the §25.3 nonce checkpoint consumer is the eventKey/emitter built from w.replica in cmd/lenny-gateway/auxstores.go:144-179, fed by resolveReplicaID() at cmd/lenny-gateway/redis_quota.go:106; CODE-1 item 3 keeps it on the bare identity. EVIDENCE: cmd/lenny-gateway/redis_quota.go:106, cmd/lenny-gateway/auxstores.go:160-167
+
+### [owner-delegate-2026-10-26]
+
+- DECISION: rename `gateway.interReplicaPort` to the holder-forward stem in SPEC-2 (b), SPEC-7, summary D4, and CHART-1 (owner's delegate, consistency with N4).
