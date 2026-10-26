@@ -355,7 +355,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 - Interactive sessions: the `input_required` state in the session manager, message injection, and the elicitation surface per [§7.2](07_session-lifecycle.md#72-interactive-session-model).
 - Tool-use and elicitation REST endpoints per [§15.1](15_external-api-surface.md#151-rest-api): `POST /v1/sessions/{id}/tool-use/{tool_use_id}/approve`, `POST /v1/sessions/{id}/tool-use/{tool_use_id}/deny`, `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond`, `POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss`. Each handler validates the `(session_id, user_id, elicitation_id|tool_use_id)` authorization triple.
-- Session inbox subsystem per [§7.2](07_session-lifecycle.md#72-interactive-session-model): the seven delivery paths, in-memory inbox, Redis-list durable inbox at `t:{tenant_id}:session:{session_id}:inbox`, `ForwardMessage` cross-replica gRPC, drain-on-resume, and the `session_dlq_archive` Postgres table for DLQ entries with TTL.
+- Session inbox subsystem per [§7.2](07_session-lifecycle.md#72-interactive-session-model): the seven delivery paths, in-memory inbox, Redis-list durable inbox at `t:{tenant_id}:session:{session_id}:inbox`, the `CH-HOLDERFORWARD` off-holder request forward ([§28.5.4](28_communication-channels.md#2854-inter-replica)), drain-on-resume, and the `session_dlq_archive` Postgres table for DLQ entries with TTL.
 - `POST /v1/sessions/{id}/messages` and `POST /v1/sessions/{id}/replay` REST handlers per [§15.1](15_external-api-surface.md#151-rest-api). `replay` validates `replayMode`, `allowIsolationDowngrade`, and `targetRuntime`.
 - Streaming reconnect with cursor.
 - Go client SDK per [§15.6](15_external-api-surface.md#156-client-sdks).
