@@ -1124,6 +1124,7 @@ tests:
   # renders neither the flag nor its key volume and mount.
   - it: omits the dev trust hook flag, volume, and mount when ops.production is true
     set:
+      global.devMode: true
       ops.production: true
       security.oidc.bearerTrustKeySecret: oidc-trust
     documentSelector:
@@ -1144,8 +1145,9 @@ tests:
             name: oidc-bearer-trust-key
           any: true
 
-  - it: renders the dev trust hook flag, volume, and mount when ops.production is false
+  - it: renders the dev trust hook flag, volume, and mount under global.devMode when ops.production is false
     set:
+      global.devMode: true
       ops.production: false
       security.oidc.bearerTrustKeySecret: oidc-trust
     documentSelector:
@@ -1165,6 +1167,72 @@ tests:
           content:
             name: oidc-bearer-trust-key
           any: true
+
+  # spec: §17.4 (Dev mode guard rails) item 3 — LENNY_DEV_MODE is the
+  # single gate for every lenny-ops dev-mode relaxation. Without
+  # global.devMode the trust hook does not render on lenny-ops even when
+  # the secret is set and ops.production is false, because lenny-ops
+  # refuses it without --dev-mode. F-17.4.35.
+  - it: omits the dev trust hook flag, volume, and mount without global.devMode
+    set:
+      global.devMode: false
+      ops.production: false
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails), §25.4 — a default render, which
+  # leaves ops.production false, renders no --dev-mode, so lenny-ops
+  # authenticates every request and ignores the X-Lenny-* identity
+  # headers. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --production=false
+
+  # spec: §17.4 (Dev mode guard rails) — lenny-ops reads the same
+  # global.devMode value the gateway's --dev-mode does. F-17.4.35.
+  - it: renders --dev-mode on lenny-ops under global.devMode
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+
+  # spec: §17.4 (Dev mode guard rails) — ops.production does not stand in
+  # for dev mode: a production render without global.devMode renders no
+  # --dev-mode. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops when ops.production is true without global.devMode
+    set:
+      ops.production: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
 
   # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
   # lenny-ops mounts the shared master key Secret (never optional) and

@@ -3235,9 +3235,10 @@ for F-10.2.22 was fixed at `5ae0355ce`, and tier 11 passes, so it is not filed. 
 renewal path is filed together with the session-creation mint as F-10.2.25.
 
 - Direct fixes after proposal 0097 lands, in this order. The first two are security fixes and lead the queue.
-  - [ ] **F-17.4.35** (High): `lenny-ops` admits the dev identity headers and an unauthenticated surface
+  - [x] **F-17.4.35** (High): `lenny-ops` admits the dev identity headers and an unauthenticated surface
     whenever `--production` is false, and the chart defaults `ops.production` to false. Bind every relaxation
-    to `LENNY_DEV_MODE` per §17.4 "Dev mode guard rails" item 3 (0097 decision D26).
+    to `LENNY_DEV_MODE` per §17.4 "Dev mode guard rails" item 3 (0097 decision D26). Fixed in `9fe24b9bd`:
+    `lenny-ops` reads `--dev-mode` from `LENNY_DEV_MODE`, and the chart renders it from `global.devMode`.
   - [ ] **F-25.4.33** (Medium): `lenny-ops` sets no `PlatformRoles` resolver, so a platform-managed role
     downgrade does not reach it until `exp`.
   - [ ] **F-17.9.25** (High): the self-managed answer-file renders give no client a Postgres path under an

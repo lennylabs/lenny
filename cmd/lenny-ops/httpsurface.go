@@ -75,8 +75,9 @@ func (w *opsWiring) buildHTTPSurface() {
 
 	// §25.4: build the authentication + role gate. Lenny-issued tokens
 	// verify against the §10.2 key set and meet the §25.4 revocation set;
-	// outside production the dev embedded-OIDC trust hook is accepted too.
-	// A production process always authenticates.
+	// in dev mode the dev embedded-OIDC trust hook is accepted too. A
+	// process outside dev mode, and a production process, always
+	// authenticates (§17.4 "Dev mode guard rails").
 	revocations := newOpsRevocation()
 	authCfg, err := buildAuthConfig(authInputs{
 		keySet:      w.jwtKeySet,
@@ -84,6 +85,7 @@ func (w *opsWiring) buildHTTPSurface() {
 		hmacKeyFile: *w.f.bearerTrustHMACKeyFile,
 		issuer:      *w.f.oidcIssuerURL,
 		multiTenant: *w.f.authMultiTenant,
+		devMode:     *w.f.devMode,
 		production:  *w.f.production,
 		rps:         *w.f.rateLimitRPS,
 		burst:       *w.f.rateLimitBurst,
