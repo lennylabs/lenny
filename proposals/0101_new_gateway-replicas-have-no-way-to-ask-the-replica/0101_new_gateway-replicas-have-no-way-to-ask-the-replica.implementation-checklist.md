@@ -2,9 +2,9 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1, SPEC-2, SPEC-3, SPEC-4, SPEC-5, SPEC-6, SPEC-7. Lands their edits to spec/28, spec/10, spec/13, spec/29, spec/11, spec/12, and spec/27 as one commit. Bundled because these deliverables cite labels one another creates in a cycle (SPEC-1 and SPEC-5 cite §10.1.1 **Replica address:** from SPEC-2, SPEC-2 cites §29.3 **Forwarding.** from SPEC-5, SPEC-3 and SPEC-5 cite §10.3 NET-072 from SPEC-7, SPEC-7 cites SPEC-5, and SPEC-4 and SPEC-6 cite each other), and because the tier 0 §28.3-to-§28.8 bijection gate fails when SPEC-1's channel rows land without SPEC-4's matrix rows.
+- [x] **S1 · spec** — SPEC-1, SPEC-2, SPEC-3, SPEC-4, SPEC-5, SPEC-6, SPEC-7. Lands their edits to spec/28, spec/10, spec/13, spec/29, spec/11, spec/12, and spec/27 as one commit. Bundled because these deliverables cite labels one another creates in a cycle (SPEC-1 and SPEC-5 cite §10.1.1 **Replica address:** from SPEC-2, SPEC-2 cites §29.3 **Forwarding.** from SPEC-5, SPEC-3 and SPEC-5 cite §10.3 NET-072 from SPEC-7, SPEC-7 cites SPEC-5, and SPEC-4 and SPEC-6 cite each other), and because the tier 0 §28.3-to-§28.8 bijection gate fails when SPEC-1's channel rows land without SPEC-4's matrix rows.
       Tiers 0. Depends on: —
-- [ ] **S2 · spec** — SPEC-8. Lands the §18.19 bullet edit.
+- [x] **S2 · spec** — SPEC-8. Lands the §18.19 bullet edit.
       Tiers 0. Depends on: S1
 - [ ] **S3 · test** — TEST-7. Lands all of TEST-7.
       Tiers 0, 11. Depends on: S1, S2
