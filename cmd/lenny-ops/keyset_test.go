@@ -110,9 +110,9 @@ func TestBuildKeySetRecordsTheStartupKeySet(t *testing.T) {
 		MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
 		AliasToKey:    map[string]string{kms.AliasJWTSigning: "local-key-1"},
 	}
-	production := false
+	production, devMode := false, false
 	w := &opsWiring{
-		f:               &opsFlags{production: &production, bearerTrustHMACKeyFile: strPtr(""), kmsOpts: &opts},
+		f:               &opsFlags{production: &production, devMode: &devMode, bearerTrustHMACKeyFile: strPtr(""), kmsOpts: &opts},
 		opsWiringFields: opsWiringFields{ctx: context.Background()},
 	}
 	w.buildKeySet()
