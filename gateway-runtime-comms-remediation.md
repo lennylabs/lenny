@@ -3422,10 +3422,13 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     `PgBouncerPoolSaturated` cannot fire.
     Fixed in `2a170a61b`: the `DATABASE_URL` user is appended to `stats_users`, and the exporter reads the
     `pgbouncer` database on `127.0.0.1:5432`.
-  - [ ] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
+  - [x] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
     fail when `/tmp` is cleaned mid-run, which is the shared cause of T-4.7.19 to T-4.7.22. `lenny-test`
     exports a run-scoped `TMPDIR` and `GOTMPDIR`, and the tier-10 socket directory moves under a
     harness-owned root.
+    Fixed in `f224f1b0a`: `lenny-test` exports a root outside `/tmp` (`tests/testinfra/testtmp`), the build-once
+    sites and the tier-10 socket directory use it, and a tier-0 check holds the rule. T-4.7.19 to T-4.7.22 are
+    closed with it. A tier-10 conformance flake seen during the fix is filed as TEST-GAPS T-5.2.16.
   - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
     shares with the load and chaos tiers. The security tier gets its own budget.
   - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
