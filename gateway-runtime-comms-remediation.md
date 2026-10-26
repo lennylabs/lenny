@@ -3262,7 +3262,8 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [x] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
     Fixed in `0ae8a114e`: `Reconcile` returns an error naming each failed Redis write and retries both on the
     next pass, a failed removal before the Redis locks are read.
-  - [ ] **F-12.4.35** (Low): the `--redis-cluster-addrs` help text names the retired per-instance migration.
+  - [x] **F-12.4.35** (Low): the `--redis-cluster-addrs` help text names the retired per-instance migration.
+    Fixed in `6ff8ed783`: the help text describes the deployment's single Tier 3 Cluster.
   - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
     broadcast load first; a switch to sharded pub/sub is a direct fix.
 - New proposals, each after proposal 0097.

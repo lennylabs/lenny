@@ -517,7 +517,7 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
-		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient — the Tier 2→3 migration topology for the Quota/Rate Limiting instance. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
+		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient: the single Redis Cluster that serves every concern at Tier 3 under the §12.4 shared Redis topology, which a deployment reaches through the whole-deployment cutover of the §12.4 Redis Cluster migration pre-plan. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
 	f.capacityTier = flag.String("capacity-tier", envOr("LENNY_CAPACITY_TIER", "tier1"),
 		"§17.8.2 capacityPlanning.tier (tier1, tier2, tier3) the deployment is sized for. Drives the billingRedisStreamMaxLen default and the §17.8.2 RedisClusterRecommended startup warning. Override via LENNY_CAPACITY_TIER. F-17.8.5, F-17.8.7.")
 	f.singleTenantRedisTopology = flag.String("single-tenant-redis-topology", os.Getenv("LENNY_SINGLE_TENANT_REDIS_TOPOLOGY"),
