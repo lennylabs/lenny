@@ -3494,9 +3494,10 @@ below. §27.3, §27.3.1, and §13.3 already state the behaviour, so each is a di
 F-10.2.26 `jwt.OIDCVerifier`.
 
 - Direct-fix queue, after the direct-fix queue of F-25.4.33, F-17.9.25, and F-13.3.19 above.
-  - [ ] **F-27.3.14** (Medium): the playground `apiKey` mint verifies the pasted bearer with the Lenny key
+  - [x] **F-27.3.14** (Medium): the playground `apiKey` mint verifies the pasted bearer with the Lenny key
     set alone (`playground.Options.Verifier` is `w.jwtKeySet`), so it refuses the OIDC ID token §27.3 names.
     Pass the playground the composed bearer verifier the auth middleware uses.
+    Fixed in `83ab6a0c5`: the playground takes `w.bearerVerifier`.
   - [x] **F-27.3.15** (Medium): no gateway code calls `playground.NewHTTPOIDCExchanger`, so the default
     `oidc` mode's login and callback answer `503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE`. Wire the exchanger from
     `--oidc-issuer-url`, `--oidc-client-id`, and the issuer's discovery document, and validate the returned
