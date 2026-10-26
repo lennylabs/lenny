@@ -298,7 +298,7 @@ record that row states, and the store-only row requires no forwarding at all.
 (c) In the off-holder matrix, replace the row that begins "| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` |" with the following row. The row stays one physical line.
 
 ```markdown
-| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. When the forward is not delivered or its outcome is unknown, the serving replica fails closed with `TARGET_NOT_READY`, HTTP 409, and holds nothing, because the outstanding call is held in the coordinating replica's process alone | §29 |
+| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. When the forward is not delivered or its outcome is unknown, the serving replica fails closed with `TARGET_NOT_READY`, HTTP 409, and holds nothing | §29 |
 ```
 
 (d) In the off-holder matrix, replace the row that begins "| `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/deny`," with the following row. The row stays one physical line.
@@ -383,6 +383,12 @@ In the Ingress cell, insert the following text immediately after "`GET /internal
 
 ```markdown
 gateway pods (TCP `{{ .Values.gateway.interReplicaPort }}` — default 50054, mTLS, `CH-HOLDERFORWARD`, the only source the rule admits on that port, selector `lenny.dev/component: gateway`); 
+```
+
+(c) In §10.3, in the paragraph that begins "**Certificate authority:**", replace "a service mesh (Istio/Linkerd) is an optional alternative." with:
+
+```markdown
+a service mesh (Istio/Linkerd) is an optional alternative wherever NET-072 below does not require the gateway replica certificate.
 ```
 
 ### SPEC-8 · spec/18_build-sequence.md § 18.19 Phase 6 — Interactive sessions, SDKs
