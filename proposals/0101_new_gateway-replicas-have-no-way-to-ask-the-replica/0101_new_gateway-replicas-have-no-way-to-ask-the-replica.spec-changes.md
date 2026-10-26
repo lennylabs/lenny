@@ -46,7 +46,7 @@ The staged text owns each case below. The rule that decides each one is cited ra
 | `CH-BINDRELEASE` | None | `gateway-to-store` | Control | Gateway | Gateway | Redis | Binding-release requests for terminal sessions, fanned out to every gateway replica | None |
 ```
 
-(e) In the **Register-entry register**, in the row that begins "| `REG-COORDLEASE` |", replace the Semantics cell "One holder per tenant and session, on a compare-and-set with a 60 second expiry" with:
+(e) In the **Register-entry register**, in the row that begins "| `REG-COORDLEASE` |", replace the Store cell "Redis" with `Redis, and Postgres during a Redis outage ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Fallback:**)`, and replace the Semantics cell "One holder per tenant and session, on a compare-and-set with a 60 second expiry" with the text below. The Key cell is unchanged, and the row stays one physical line.
 
 ```markdown
 One holder per tenant and session, on a compare-and-set with a 60 second expiry. [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Replica address:** states the holder value

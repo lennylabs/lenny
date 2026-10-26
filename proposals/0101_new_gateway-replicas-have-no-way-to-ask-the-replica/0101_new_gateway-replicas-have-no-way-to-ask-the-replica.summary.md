@@ -83,6 +83,11 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 
 ## Open decisions for human to make
 
+- **OD1. Length of the no-deadline wait in the forward helper's unit test.** The forward helper bounds only the TCP dial and the TLS handshake, at 2 seconds, and adds no deadline to the forwarded request, because a request served on the coordinating replica runs with no gateway deadline either. A tier-1 test case (TEST-1 item 4) pins this by having a fake coordinator answer 35 seconds after it reads the request, for a message and for an interrupt, run in parallel, and asserting that the caller receives the response rather than a 409. Should the wait stay at 35 seconds or be shortened to about 3 seconds?
+  - Option A keeps 35 seconds. It is the only case that fails if a forward-only 30-second request bound is reintroduced, and it costs one parallel 35-second wait inside the unit-tier timeout.
+  - Option B shortens the wait to about 3 seconds. It runs faster but pins only that the 2-second dial context does not cover the request, so a reintroduced 30-second bound passes it.
+  - The non-spec loop applied Option A in the staged text as the default, citing the owner's standing preference for discriminating tests on failure paths. It recorded the choice as open for the owner to confirm.
+
 ## Defects in the shipped tree that this proposal does not stage
 
 - **NET-070 internal TLS listener.** No gateway code serves the listener, and its chart default port, 8443, collides with `llmProxyPort`, also 8443, in `charts/lenny/values.yaml`. It is out of scope because the forward uses its own port. The defect is to be filed in BUILD-GAPS.
@@ -91,6 +96,7 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 - **Upload route name.** The §29.3 upload row names `POST /v1/sessions/{id}/upload`, while the pod-touching mid-session upload in code is `/upload-to-session`. CODE-2 forwards the code route. Reconciling the names is left to a §15.1 route proposal.
 - **Unregistered fan-outs.** The credential revocation, deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28 register. This is a register-completeness defect outside the forward problem.
 - **Admin drain terminal write.** The admin drain's forced transition writes the terminal state on the replica that runs the drain, not on the holder. It remains a recorded departure for a later proposal.
+- **Request deadline unenforced.** No gateway code enforces the Request timeout or the Upload timeout of §11.3 (Timeouts and Cancellation). The REST `http.Server` in `cmd/lenny-gateway/httpsurface.go` sets only `ReadHeaderTimeout`, and no handler or middleware bounds the request context. Separately, `PodExecutor.Send` in `pkg/gateway/session/executor/pod.go` returns only after the agent turn's `response`, which departs from path 2 of §7.2 **Message delivery routing — seven paths:**. Both defects affect a request served on the coordinating replica and a forwarded request alike. They are to be filed in BUILD-GAPS, and a gateway-wide request deadline is left to a later proposal.
 
 ## Impacts on other proposals
 
@@ -104,7 +110,7 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 
 ## Deliverable index
 
-- SPEC-1 — spec/28_communication-channels.md — §28.3 `LNK-INTERREPLICA` row and paragraph deleted, `CH-HOLDERFORWARD` and `CH-BINDRELEASE` channel rows, and the `REG-COORDLEASE` holder-value pointer.
+- SPEC-1 — spec/28_communication-channels.md — §28.3 `LNK-INTERREPLICA` row and paragraph deleted, `CH-HOLDERFORWARD` and `CH-BINDRELEASE` channel rows, and the `REG-COORDLEASE` Store and Semantics cells.
 - SPEC-2 — spec/10_gateway-internals.md — §10.1.1 **Replica address:** bullet and **Fallback:** holder sentence, and the §10.1.8 barrier-target query.
 - SPEC-3 — spec/28_communication-channels.md — §28.5.4 lead, diagram, and `CH-HOLDERFORWARD` card.
 - SPEC-4 — spec/28_communication-channels.md — §28.5.7 lead, caption, and `CH-BINDRELEASE` card, the §28.6 sentences, and the §28.8 rows and closing paragraph.
@@ -112,7 +118,7 @@ The §11.4 binding-release fan-out that could carry that release is in no §28 r
 - SPEC-6 — spec/12_storage-architecture.md, spec/11_policy-and-controls.md — §12.8 drain publish, §12.4 key-table row and enumerations, §12.6 EventBus exclusion, and the §11.4 note and step-2 sentence.
 - SPEC-7 — spec/10_gateway-internals.md, spec/13_security-model.md — §10.3 NET-072 paragraph and **Certificate authority:** qualification, and the §13.2.4 Gateway row insertions.
 - SPEC-8 — spec/18_build-sequence.md — §18.19 bullet replaces the `ForwardMessage` mention.
-- CODE-1 — cmd/lenny-gateway, pkg/gateway/middleware/auth, pkg/gateway/middleware/idempotency, pkg/gateway/metrics/gatewaymetrics, pkg/gateway/sessionserver, docker-compose.yml, tests/testinfra/gateway, migrations/0164_coordination_lease.up.sql, pkg/gateway/coordination/coordlease — holder value, listener, mTLS, credential carriage, and forward helper core (R18).
+- CODE-1 — cmd/lenny-gateway, pkg/gateway/middleware/auth, pkg/gateway/middleware/idempotency, pkg/gateway/metrics/gatewaymetrics, pkg/gateway/sessionserver, pkg/gateway/mcpfabric/mcptools/mcptools.go, pkg/gateway/gatewaycontrol/platformtools, docker-compose.yml, tests/testinfra/gateway, migrations/0164_coordination_lease.up.sql, pkg/gateway/coordination/coordlease — holder value, listener, mTLS, credential carriage, and forward helper core (R18).
 - CODE-2 — pkg/gateway/sessionserver, pkg/gateway/mcpfabric/mcptools — forward at every forwarded route and MCP tool site, DLQ fallback, and receiver check (R19).
 - CODE-3 — pkg/gateway/externalapi/admin, cmd/lenny-gateway, tests/testinfra/lifecyclefence, tests/tier7a_load_local — the drain publishes its transitioned sessions on `CH-BINDRELEASE` (R21).
 - CODE-4 — pkg/gateway/podlifecycle, cmd/lenny-gateway, tests/tier3_contract/fullrevoke_release, tests/spec-map.json, scripts/refactor/manifest, pkg/gateway/ARCHITECTURE.md — rename the propagator package to `bindrelease` (R21).
