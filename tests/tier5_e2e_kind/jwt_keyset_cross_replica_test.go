@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -101,12 +102,65 @@ func mintKeySetImpersonation(t *testing.T, base string) string {
 	return tok
 }
 
-// requireOpsAccepts polls the chart-deployed lenny-ops GET /v1/admin/me
-// with bearer and no dev headers until it answers 200 with sub, within
-// keySetOpsAcceptBound.
-func requireOpsAccepts(t *testing.T, opsBase, what, bearer, sub string) {
+// opsPodSelector selects the lenny-ops pods. lenny-ops pods carry
+// app=lenny-ops rather than the lenny.dev/component label (§13.2.3).
+const opsPodSelector = "app=lenny-ops"
+
+// opsReadyTransitions lists, one line per Running lenny-ops pod, the Ready
+// condition's status and lastTransitionTime separated by a space.
+const opsReadyTransitions = `{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{" "}` +
+	`{.status.conditions[?(@.type=="Ready")].lastTransitionTime}{"\n"}{end}`
+
+// latestOpsReadyAt parses the opsReadyTransitions output and returns the
+// latest Ready transition among the pods whose Ready condition is True.
+// The latest one bounds every replica the Service can route a probe to.
+// No Ready pod, or an unparseable time, is an error.
+func latestOpsReadyAt(out string) (time.Time, error) {
+	var latest time.Time
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		status, at, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok || status != "True" {
+			continue
+		}
+		readyAt, err := time.Parse(time.RFC3339, strings.TrimSpace(at))
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parse lenny-ops Ready lastTransitionTime %q: %w", at, err)
+		}
+		if readyAt.After(latest) {
+			latest = readyAt
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, fmt.Errorf("no Running lenny-ops pod reports Ready=True in %q", out)
+	}
+	return latest, nil
+}
+
+// opsAcceptDeadline returns the moment by which the chart-deployed
+// lenny-ops must accept a Lenny-issued token: keySetOpsAcceptBound after
+// its pods became Ready, read from the Ready condition's
+// lastTransitionTime rather than from when the test reaches the probe.
+func opsAcceptDeadline(t *testing.T, c *kind.Cluster) time.Time {
 	t.Helper()
-	deadline := time.Now().Add(keySetOpsAcceptBound)
+	out, err := c.KubectlOut(t, "-n", t5SystemNS, "get", "pods", "-l", opsPodSelector,
+		"--field-selector=status.phase=Running", "-o", "jsonpath="+opsReadyTransitions)
+	if err != nil {
+		t.Fatalf("read lenny-ops pod Ready conditions: %v", err)
+	}
+	readyAt, err := latestOpsReadyAt(out)
+	if err != nil {
+		t.Fatalf("lenny-ops Ready time: %v", err)
+	}
+	return readyAt.Add(keySetOpsAcceptBound)
+}
+
+// requireOpsAccepts polls the chart-deployed lenny-ops GET /v1/admin/me
+// with bearer and no dev headers until it answers 200 with sub, or until
+// deadline, the shared bound measured from lenny-ops becoming Ready. The
+// first attempt always runs, so a probe that starts after the deadline
+// passes only when acceptance had already begun within the bound.
+func requireOpsAccepts(t *testing.T, opsBase string, deadline time.Time, what, bearer, sub string) {
+	t.Helper()
 	for {
 		code, body := keySetCall(t, http.MethodGet, opsBase+"/v1/admin/me", bearer, nil, nil)
 		identity, _ := body["identity"].(map[string]any)
@@ -114,7 +168,8 @@ func requireOpsAccepts(t *testing.T, opsBase, what, bearer, sub string) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Errorf("lenny-ops did not accept the %s within %s: status %d body %v", what, keySetOpsAcceptBound, code, body)
+			t.Errorf("lenny-ops did not accept the %s within %s of becoming Ready (deadline %s): status %d body %v",
+				what, keySetOpsAcceptBound, deadline.Format(time.RFC3339), code, body)
 			return
 		}
 		time.Sleep(time.Second)
@@ -166,9 +221,50 @@ func TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2(t *testing.T) {
 	if !t5DeploymentReady(t, c, "lenny-ops") {
 		t.Fatal("lenny-ops is not Ready on the e2e install")
 	}
+	deadline := opsAcceptDeadline(t, c)
 	opsBase, stopOps := c.PortForward(t, "svc/lenny-ops", t5SystemNS, opsHTTPPort)
 	defer stopOps()
-	requireOpsAccepts(t, opsBase, "gateway-minted impersonation bearer", minted, "alice@acme.com")
-	requireOpsAccepts(t, opsBase, "POST /v1/oauth/token token", exchanged, "alice@acme.com")
-	requireOpsAccepts(t, opsBase, "bootstrap admin credential", admin, "lenny-admin")
+	requireOpsAccepts(t, opsBase, deadline, "gateway-minted impersonation bearer", minted, "alice@acme.com")
+	requireOpsAccepts(t, opsBase, deadline, "POST /v1/oauth/token token", exchanged, "alice@acme.com")
+	requireOpsAccepts(t, opsBase, deadline, "bootstrap admin credential", admin, "lenny-admin")
+}
+
+// spec: 25.4 (The lenny-ops Service)
+// diagnosis: a failure means the acceptance deadline is not taken from the
+// latest Ready transition of the lenny-ops pods, so the tier-5 bound on
+// lenny-ops accepting a Lenny-issued token after becoming Ready is
+// measured from the wrong moment or from a pod that is not Ready.
+func TestOpsAcceptBoundAnchorsOnReadyTransition_spec_25_4(t *testing.T) {
+	early := "2026-10-26T10:00:00Z"
+	late := "2026-10-26T10:05:00Z"
+	cases := []struct {
+		name    string
+		out     string
+		want    string
+		wantErr bool
+	}{
+		{name: "single ready pod", out: "True " + early + "\n", want: early},
+		{name: "latest of two ready pods", out: "True " + late + "\nTrue " + early + "\n", want: late},
+		{name: "not-ready pod ignored", out: "False " + late + "\nTrue " + early + "\n", want: early},
+		{name: "no ready pod", out: "False " + early + "\n", wantErr: true},
+		{name: "empty listing", out: "", wantErr: true},
+		{name: "unparseable time", out: "True yesterday\n", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := latestOpsReadyAt(tc.out)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("latestOpsReadyAt(%q) = %s, want an error", tc.out, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("latestOpsReadyAt(%q): %v", tc.out, err)
+			}
+			if want, _ := time.Parse(time.RFC3339, tc.want); !got.Equal(want) {
+				t.Fatalf("latestOpsReadyAt(%q) = %s, want %s", tc.out, got, want)
+			}
+		})
+	}
 }

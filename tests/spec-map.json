@@ -6577,6 +6577,7 @@
         "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestSigningKeyRotationUnderLocal_spec_10_2",
         "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
         "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
+        "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestOpsAcceptBoundAnchorsOnReadyTransition_spec_25_4",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
