@@ -5,9 +5,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -119,15 +123,14 @@ func TestOpsRoleGateAppliesStoredAssignment_spec_10_2(t *testing.T) {
 	}
 }
 
-// TestOpsPlatformRoles_FailsClosedOnLookupError_spec_10_2 pins the wiring
-// opsPlatformRoles builds: no resolver without Postgres, so the claim
-// stays authoritative, and over a Postgres it cannot reach, a refusal of
-// a platform-admin token with the gateway's 500
-// platform_role_lookup_failed response rather than a fallback to the
-// claim.
+// TestOpsPlatformRoles_KeepsClaimWhenPostgresUnreachable_spec_25_4 pins
+// the wiring opsPlatformRoles builds: no resolver without Postgres, so the
+// claim stays authoritative, and over a Postgres it cannot reach, the
+// roles claim in force rather than a refusal, because §25.4 revocation
+// set rule 5 has lenny-ops accept a token while Postgres is unreachable.
 //
-// spec: 10.2 (Authentication) "Role assignment", 25.4 (The lenny-ops Service: Authentication)
-func TestOpsPlatformRoles_FailsClosedOnLookupError_spec_10_2(t *testing.T) {
+// spec: 25.4 (The lenny-ops Service: Authentication, revocation set rule 5), 10.2 (Authentication) "Role assignment"
+func TestOpsPlatformRoles_KeepsClaimWhenPostgresUnreachable_spec_25_4(t *testing.T) {
 	if r := opsPlatformRoles(nil); r != nil {
 		t.Fatalf("opsPlatformRoles(nil) = %T, want nil", r)
 	}
@@ -153,8 +156,66 @@ func TestOpsPlatformRoles_FailsClosedOnLookupError_spec_10_2(t *testing.T) {
 		t.Fatal("buildAuthConfig dropped the platform role resolver")
 	}
 	srv := opsserver.New(opsserver.Options{Locks: coordination.NewMemStore(), Auth: cfg})
-	got, reason := opsLocksStatus(t, srv, mintKeySetToken(t, signer, claimsFor("alice@acme.com")))
-	if got != http.StatusInternalServerError || reason != "platform_role_lookup_failed" {
-		t.Fatalf("status = %d reason %q, want 500 platform_role_lookup_failed", got, reason)
+	if got, reason := opsLocksStatus(t, srv, mintKeySetToken(t, signer, claimsFor("alice@acme.com"))); got != http.StatusOK {
+		t.Fatalf("status = %d reason %q, want 200 on the platform-admin claim", got, reason)
+	}
+}
+
+// failingResolver is a role resolver whose every lookup fails.
+type failingResolver struct{ calls atomic.Int64 }
+
+func (f *failingResolver) ResolveRoles(context.Context, string, string) ([]auth.Role, bool, error) {
+	f.calls.Add(1)
+	return nil, false, errors.New("postgres: connection refused")
+}
+
+// assignedResolver resolves every principal to an assigned user role.
+type assignedResolver struct{}
+
+func (assignedResolver) ResolveRoles(context.Context, string, string) ([]auth.Role, bool, error) {
+	return []auth.Role{auth.RoleUser}, true, nil
+}
+
+// TestClaimOnLookupError_spec_25_4 pins the adapter row by row: a
+// successful lookup passes through unchanged, a failed lookup reports no
+// assignment and no error, and failures within the log interval share one
+// log record while the clock decides when the next one is due.
+//
+// spec: 25.4 (The lenny-ops Service: Authentication, revocation set rule 5), 10.2 (Authentication) "Role assignment"
+func TestClaimOnLookupError_spec_25_4(t *testing.T) {
+	ctx := context.Background()
+	ok := &claimOnLookupError{next: assignedResolver{}}
+	roles, found, err := ok.ResolveRoles(ctx, "acme", "alice@acme.com")
+	if err != nil || !found || !slices.Equal(roles, []auth.Role{auth.RoleUser}) {
+		t.Fatalf("pass-through = %v %v %v, want [user] true nil", roles, found, err)
+	}
+	if ok.lastLog.Load() != 0 {
+		t.Error("a successful lookup logged a failure")
+	}
+
+	clock := time.Unix(1_000_000, 0)
+	failing := &failingResolver{}
+	r := &claimOnLookupError{next: failing, now: func() time.Time { return clock }}
+	for i := range 5 {
+		roles, found, err := r.ResolveRoles(ctx, "acme", "alice@acme.com")
+		if err != nil || found || roles != nil {
+			t.Fatalf("lookup %d = %v %v %v, want nil false nil", i, roles, found, err)
+		}
+	}
+	if got := r.lastLog.Load(); got != clock.UnixNano() {
+		t.Fatalf("lastLog = %d, want the first failure's time %d", got, clock.UnixNano())
+	}
+	clock = clock.Add(roleLookupLogInterval - time.Nanosecond)
+	_, _, _ = r.ResolveRoles(ctx, "acme", "alice@acme.com")
+	if got := r.lastLog.Load(); got != time.Unix(1_000_000, 0).UnixNano() {
+		t.Error("a failure inside the interval logged again")
+	}
+	clock = clock.Add(time.Nanosecond)
+	_, _, _ = r.ResolveRoles(ctx, "acme", "alice@acme.com")
+	if got := r.lastLog.Load(); got != clock.UnixNano() {
+		t.Error("a failure at the end of the interval did not log")
+	}
+	if failing.calls.Load() != 7 {
+		t.Errorf("next called %d times, want 7", failing.calls.Load())
 	}
 }

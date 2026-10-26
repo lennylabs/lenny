@@ -28,15 +28,16 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
-// spec: 10.2 (Authentication) "Role assignment", 25.4 (The lenny-ops Service: Authentication)
+// spec: 10.2 (Authentication) "Role assignment", 25.4 (The lenny-ops Service: Authentication, revocation set rule 5)
 // diagnosis: a downgraded user admitted on lenny-ops means lenny-ops
 // authorizes on the token's roles claim and does not consult the
 // platform-managed users row the gateway reads, so a removed
 // platform-admin role stays usable on the operability surface until the
 // token expires. A refusal of the user before the downgrade, or after
 // the assignment is removed, means lenny-ops applies a row that records
-// no assignment. A 200 after Postgres stops means the role lookup falls
-// back to the claim rather than failing closed.
+// no assignment. A refusal after Postgres stops means the role lookup
+// fails the request, which §25.4 revocation set rule 5 forbids on
+// lenny-ops during a Postgres outage.
 func TestOpsAppliesPlatformRoleDowngrade_spec_10_2(t *testing.T) {
 	opsprocess.SkipUnlessAvailable(t)
 	refs := map[string]string{kms.AliasJWTSigning: "local-key-1"}
@@ -87,11 +88,12 @@ func TestOpsAppliesPlatformRoleDowngrade_spec_10_2(t *testing.T) {
 		t.Fatalf("alice after the assignment is removed: %d %s, want 200", got.Status, got.Body)
 	}
 
-	// With Postgres gone the lookup cannot say whether an assignment
-	// exists, so lenny-ops refuses rather than trusting the claim.
+	// With Postgres gone lenny-ops keeps accepting a non-revoked token
+	// (§25.4 revocation set rule 5), so the failed role lookup leaves the
+	// claim in force rather than refusing the request.
 	pg.Stop(t)
-	if got := ops.Me(t, bob); got.Status != http.StatusInternalServerError || got.Reason != "platform_role_lookup_failed" {
-		t.Fatalf("bob with Postgres stopped: %d %s, want 500 platform_role_lookup_failed", got.Status, got.Body)
+	if got := ops.Me(t, bob); got.Status != http.StatusOK {
+		t.Fatalf("bob with Postgres stopped: %d %s, want 200 on the claim (§25.4 rule 5)", got.Status, got.Body)
 	}
 }
 
