@@ -389,7 +389,6 @@ prefixes:
   - tests/testinfra/stubs/kms/
   - tests/testinfra/stubs/llmprovider/
   - tests/testinfra/stubs/mcpserver/
-  - tests/testinfra/stubs/oidc/
   - tests/testinfra/stubs/runtime/
   - tests/testinfra/stubs/siem/
   - tests/testinfra/timectl/

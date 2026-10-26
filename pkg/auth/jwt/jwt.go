@@ -268,6 +268,11 @@ func decodeClaims(payloadB64 string, now time.Time) (Claims, error) {
 	if err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: "payload is not base64url"}
 	}
+	return decodeClaimsJSON(payload, now)
+}
+
+// decodeClaimsJSON is decodeClaims over an already-decoded JSON payload.
+func decodeClaimsJSON(payload []byte, now time.Time) (Claims, error) {
 	var claims Claims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("payload not JSON: %v", err)}

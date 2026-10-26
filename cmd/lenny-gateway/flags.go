@@ -60,6 +60,9 @@ type gatewayFlags struct {
 	tenantIDClaim                                 *string
 	oidcIssuerURL                                 *string
 	oidcClientID                                  *string
+	oidcJWKSRefreshInterval                       *time.Duration
+	oidcJWKSMinRefetchInterval                    *time.Duration
+	oidcFetchTimeout                              *time.Duration
 	devMode                                       *bool
 	tlsTerminatedUpstream                         *bool
 	sloValidated                                  *bool
@@ -427,6 +430,12 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§17.4 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.")
 	f.sloValidated = flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
 		"§16.5 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
+	f.oidcJWKSRefreshInterval = flag.Duration("oidc-jwks-refresh-interval", envDuration("LENNY_OIDC_JWKS_REFRESH_INTERVAL", jwt.DefaultOIDCKeyRefreshInterval),
+		"§10.2 how long the IdP signing keys fetched from the auth.oidc.issuerUrl discovery document's jwks_uri serve before the gateway fetches them again. Operator-tunable. Override via LENNY_OIDC_JWKS_REFRESH_INTERVAL.")
+	f.oidcJWKSMinRefetchInterval = flag.Duration("oidc-jwks-min-refetch-interval", envDuration("LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL", jwt.DefaultOIDCMinRefetchInterval),
+		"§10.2 minimum spacing between two fetches of the IdP signing keys. A bearer naming a kid the cached keys lack triggers at most one fetch per interval. Operator-tunable. Override via LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL.")
+	f.oidcFetchTimeout = flag.Duration("oidc-fetch-timeout", envDuration("LENNY_OIDC_FETCH_TIMEOUT", jwt.DefaultOIDCFetchTimeout),
+		"§10.2 timeout of one IdP discovery or signing-key request. Operator-tunable. Override via LENNY_OIDC_FETCH_TIMEOUT.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the §10.2 JWT key set. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.bearerExpectedIssuer = flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
