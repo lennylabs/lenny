@@ -57,9 +57,14 @@ services:
       timeout: 2s
       retries: 30
 
-  # Single MinIO container for §4.5 artifact storage.
+  # Single MinIO container for §4.5 artifact storage. The upstream
+  # minio/minio and minio/mc images are no longer pullable, so compose
+  # builds the server and mc from the upstream source at a pinned release
+  # (tests/testinfra/images/minio). The image carries both binaries.
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: lenny-minio:RELEASE.2025-04-22T22-12-26Z
+    build:
+      context: tests/testinfra/images/minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: lenny
@@ -79,7 +84,9 @@ services:
   # blobstore client does not create the bucket itself, so this runs
   # before the gateway.
   minio-setup:
-    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+    # The image the minio service builds; never pulled.
+    image: lenny-minio:RELEASE.2025-04-22T22-12-26Z
+    pull_policy: never
     depends_on:
       minio:
         condition: service_healthy

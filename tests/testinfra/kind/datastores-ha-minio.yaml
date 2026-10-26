@@ -30,6 +30,11 @@
 #               (same as the base manifest)
 #   Bucket      lenny-artifacts (created by the post-start bootstrap)
 #
+# The MinIO server and the bootstrap mc client run the lenny-minio image,
+# which install.sh builds from the upstream source
+# (tests/testinfra/images/minio) and loads onto the Kind nodes under the
+# e2e alias tag this overlay names.
+#
 # Distributed mode requires every pod to resolve every other pod's
 # stable DNS name; the headless Service is the discovery mechanism.
 ---
@@ -83,7 +88,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          image: lenny-minio:e2e
           args:
             - server
             - --address
@@ -175,7 +180,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: mc
-          image: minio/mc:RELEASE.2025-04-22T17-32-39Z
+          image: lenny-minio:e2e
           command:
             - sh
             - -c

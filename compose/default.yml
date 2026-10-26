@@ -143,8 +143,13 @@ services:
     container_name: lenny-redis-sentinel-3
     ports: ["26381:26379"]
 
+  # The upstream minio/minio image is no longer pullable, so the stack
+  # builds MinIO from the upstream source at a pinned release
+  # (tests/testinfra/images/minio).
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: lenny-minio:RELEASE.2025-04-22T22-12-26Z
+    build:
+      context: ../tests/testinfra/images/minio
     container_name: lenny-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:

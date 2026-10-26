@@ -47,6 +47,7 @@ A few subdirectories under `testinfra/` carry only YAML, fixtures, or a single s
 
 | Path | Contents |
 |:--|:--|
+| [`images/`](images/) | Test-infrastructure images built from upstream source because the upstream images are no longer pullable. `images/minio/` builds the MinIO server and the `mc` client at pinned releases into one `lenny-minio` image, which the Kind install (`IMAGE_SPECS` in `kind/install.sh`), both compose stacks, and the `containers.StartMinIO` helper use. |
 | [`k8s/`](k8s/) | Kubernetes manifests applied by the Kind install and cloud-load drivers: `datastores.yaml` (Postgres, Redis, MinIO fixtures) and `agent-workload-load.yaml.tmpl` (per-mode load runtime template). |
 | [`runtimes/`](runtimes/) | Conformance-fixture runtime images. `runtimes/conformance-fixtures/` carries intentionally-malformed runtimes (`blocked-stdin/`, `late-shutdown/`, `malformed-jsonl/`, `missing-heartbeat-ack/`, `oversize-payload/`, `unknown-message-type/`) the TESTING.md §12.10 conformance harness asserts against. Build with `go build -o ./bin/ ./tests/testinfra/runtimes/conformance-fixtures/...`. |
 | [`sdkhelper/`](sdkhelper/) | SDK conformance scaffolding. `sdkhelper/echo/` is a reference binary that implements the SDK contract helper protocol; Tier 3 SDK harness tests build and drive it. Real SDK helpers (`sdks/client/python/test-helper`, etc.) follow the same protocol over HTTP. |
