@@ -3436,9 +3436,11 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
     `--tier` with a discovery selector runs that selection restricted to the one tier, and the scoped unit
     run takes about 3 minutes.
-  - [ ] **F-12.4.37** (Medium), filed from the F-4.3.21 fix: on the Cluster topology the chart renders no
+  - [x] **F-12.4.37** (Medium), filed from the F-4.3.21 fix: on the Cluster topology the chart renders no
     `LENNY_REDIS_PASSWORD` or `LENNY_REDIS_TLS` for the gateway, `lenny-ops`, or the Token Service, so each
     refuses to start outside dev mode. Render both, and the Secret's `redis-password` key, on that topology.
+    Fixed in `bd2deba88`: the Secret renders `redis-password` for the Cluster provider, and the three
+    Deployments render `LENNY_REDIS_TLS` and `LENNY_REDIS_PASSWORD` on the Sentinel and Cluster topologies.
 - New proposals.
   - [ ] **Transaction-pooler compatibility proposal** (not yet written): **F-12.3.28** (Medium, the gateway's
     `LISTEN/NOTIFY` deny-list fallback connects through the transaction-mode PgBouncer and receives no
