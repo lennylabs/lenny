@@ -1405,11 +1405,13 @@ Every Lenny installation is described by a tuple of orthogonal choices. The cata
 
 | Dimension | Values | Drives |
 |---|---|---|
-| **Environment** | `local` \| `dev` \| `staging` \| `prod` | Alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, `acknowledgeNoPrometheus` default |
+| **Environment** | `local` \| `dev` \| `staging` \| `prod` | Production mode (see **Production mode.** below), alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, `acknowledgeNoPrometheus` default |
 | **Cluster type** | `laptop` (k3s/kind) \| `eks` \| `gke` \| `aks` \| `openshift` \| `vanilla` (generic k8s) | CNI assumptions, StorageClass defaults, cloud-provider IAM integration, LoadBalancer behavior |
 | **Backends** | `cloud-managed` \| `self-managed` \| `embedded` | Postgres (RDS/CloudSQL/Azure DB vs CloudNativePG/Patroni vs in-process in-memory store), Redis (ElastiCache/Memorystore/Azure Cache vs Sentinel/Cluster vs in-process in-memory store), object storage (S3/GCS/ABS vs MinIO vs in-process in-memory store) |
 | **Capacity tier** | `tier1` \| `tier2` \| `tier3` | Gateway replica counts, warm-pool baselines, controller rate limiters, Redis topology — see [§17.8.2](#1782-capacity-tier-reference) |
 | **Isolation profile** | `baseline` \| `sandboxed` (gVisor) \| `hypervisor` (Kata) | Default RuntimeClass for seeded runtimes, T4 webhook requirements |
+
+**Production mode.** A deployment runs in production mode when its Environment is `prod`. The Environment is carried by the `--environment` flag. The chart renders that flag from its single `environment` value on the gateway, the Token Service, lenny-ops, and the preflight Job. The gateway, the Token Service, and lenny-ops read the `LENNY_ENV` environment variable when started without the flag, and the flag takes precedence when both are set. The value is compared exactly, with no case folding and no whitespace trimming. The gateway, the Token Service, and lenny-ops refuse to start when the value is non-empty and is not one of `local`, `dev`, `staging`, or `prod`. An unset value means the deployment is not in production mode. `staging` is not production mode. Wherever this specification makes the behavior of a Lenny component depend on production mode, on running in production, or on a production deployment, that behavior applies when the Environment is `prod`. No other flag, environment variable, or chart value turns production mode on or off. Operator guidance addressed to production deployments in general does not depend on this definition.
 
 Each dimension has an independent default so that operators only need to override the axes that differ from the chart base. An `eks-small-team.yaml` answer file, for example, declares cluster type = `eks` and backends = `cloud-managed` but leaves environment and capacity tier to be specified separately.
 
