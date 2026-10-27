@@ -80,6 +80,13 @@
       "deferral_id": "R16"
     },
     {
+      "claim": "CH-BINDRELEASE binding-release fan-out",
+      "status": "WIRED",
+      "spec_anchor": "#2857-gateway-to-store",
+      "surface": "`cmd/lenny-gateway/adminrouter.go` propagator construction over `cmd/lenny-gateway/user_revocation.go` `podTerminateFanOut.TerminateUserSessions`",
+      "note": "the full_revoke handler releases the bindings its replica holds and publishes the session list, and each peer replica's subscriber releases the bindings of those sessions it holds without re-publishing"
+    },
+    {
       "claim": "CH-SUPERVISE launch and end of the runtime process",
       "status": "WIRED",
       "spec_anchor": "#2853-intra-pod",
@@ -185,13 +192,6 @@
       "note": "the rotation rewrites the addressed session's own /run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file is untouched; the pod-wide per-provider in-flight completion gate and its 300s ceiling run after that rewrite, inside rotateProviderFull, on Full-level runtimes only, and carry no session dimension"
     },
     {
-      "claim": "Cross-replica message forward",
-      "status": "ABSENT",
-      "spec_anchor": "#2854-inter-replica",
-      "surface": "no identifier, no RPC, no transport",
-      "deferral_id": "R19"
-    },
-    {
       "claim": "Dead-connection binding eviction",
       "status": "WIRED",
       "spec_anchor": "#register-entry-register",
@@ -226,13 +226,6 @@
       "surface": "`cmd/lenny-gateway/httpsurface.go:642-643`, `pkg/gateway/podlifecycle/prestop/prestop.go:390-451`"
     },
     {
-      "claim": "Gateway-to-gateway transport",
-      "status": "ABSENT",
-      "spec_anchor": "#link-register",
-      "surface": "four services declared, none gateway-to-gateway",
-      "deferral_id": "R18"
-    },
-    {
       "claim": "Idle suspension seals, checkpoints, and suspends an idle running session and releases its pod or slot",
       "status": "WIRED",
       "spec_anchor": "#2851-gateway-to-pod",
@@ -251,7 +244,16 @@
       "status": "ABSENT",
       "spec_anchor": "#2854-inter-replica",
       "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
-      "deferral_id": "R19"
+      "deferral_id": "R20",
+      "note": "the pending lenny/request_input call waits on the replica the pod's LNK-GWCONTROL connection reached, and no store carries it to another replica"
+    },
+    {
+      "claim": "Inter-replica forward listener with gateway peer validation (NET-072)",
+      "status": "ABSENT",
+      "spec_anchor": "#2854-inter-replica",
+      "deferral_id": "R18",
+      "surface": "no gateway listener serves gateway.holderForwardPort and no client dials a peer replica",
+      "note": "\u00a710.3 NET-072 has both replicas present the gateway replica certificate and the listener reject plaintext, one-way TLS, and any other cluster-CA certificate at handshake"
     },
     {
       "claim": "InterruptRequest.coordination_generation generation fence field",
@@ -291,10 +293,10 @@
     {
       "claim": "Lifecycle drain releases the pod of a session bound on another gateway replica before the drained scope's rows are erased",
       "status": "ABSENT",
-      "spec_anchor": "#2854-inter-replica",
+      "spec_anchor": "#2857-gateway-to-store",
       "deferral_id": "R21",
-      "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions`; spec \u00a712.8 Lifecycle fence and drain, Drain: a successful drain does not wait for the session's terminal steps or the release of its pod",
-      "note": "the drain writes the terminal row only; the binding replica's Sweeper releases the pod when it lists that row, and BUILD-GAPS.md F-12.8.43 records the residual when user erasure deletes the row first, owned by the inter-replica carrier proposal"
+      "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions` publishes its transitioned sessions on CH-BINDRELEASE through `bindReleaseFanOut.TerminateUserSessions`",
+      "note": "the drain writes the terminal row only and publishes nothing on CH-BINDRELEASE; the binding replica's Sweeper releases the pod when it lists that row, and BUILD-GAPS.md F-12.8.43 records the residual when user erasure deletes the row first, owned by the inter-replica carrier proposal"
     },
     {
       "claim": "Mirror seed at bind",
@@ -308,6 +310,14 @@
       "status": "WIRED",
       "spec_anchor": "#2855-pod-egress",
       "surface": "`pkg/adapter/checkpointtransport.go:76-117`"
+    },
+    {
+      "claim": "Off-holder request forward on CH-HOLDERFORWARD",
+      "status": "ABSENT",
+      "spec_anchor": "#2854-inter-replica",
+      "deferral_id": "R19",
+      "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`",
+      "note": "no forwarded route or MCP tool site replays an off-holder request to the coordinating replica yet"
     },
     {
       "claim": "Orphan-claim garbage collector",
@@ -373,6 +383,14 @@
       "spec_anchor": "#2857-gateway-to-store",
       "surface": "zero callers outside its package",
       "deferral_id": "R13"
+    },
+    {
+      "claim": "Replica address in the REG-COORDLEASE holder value",
+      "status": "ABSENT",
+      "spec_anchor": "#2854-inter-replica",
+      "deferral_id": "R18",
+      "surface": "`cmd/lenny-gateway/coordination_identity.go` `resolveReplicaID` supplies the holder value, which carries the replica identity and no address",
+      "note": "\u00a710.1.1 Replica address: has the holder value carry the replica's forward-listener address after its identity, and the Postgres fallback stores the same value"
     },
     {
       "claim": "ReportUsageRequest.coordination_generation generation fence field",
@@ -492,9 +510,9 @@
       "claim": "Session inbox redelivery",
       "status": "ABSENT",
       "spec_anchor": "#2854-inter-replica",
-      "surface": "`pkg/gateway/sessionserver/held_delivery.go` `deliverBuffered` dequeues the coordinating replica's own inbox; no path redelivers a message a non-coordinating replica holds in its in-process inbox under durableInbox: false",
+      "surface": "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EnqueueDLQ` holds a message the coordinating replica delivers; no off-holder path enqueues a message whose forward to the coordinator is not delivered",
       "deferral_id": "R19",
-      "note": "the coordinating replica delivers its own inbox at each delivery point, and a message a peer replica buffered in that peer's in-memory inbox is read by no other replica"
+      "note": "a message carrying no inReplyTo to a running or input_required session whose forward is not delivered is held in the session DLQ with the recovering-row TTL under \u00a729.3 Forwarding rule 6, and the coordinating replica delivers it at its next delivery point"
     },
     {
       "claim": "ShutdownRequest bind_attempt and unconditional_teardown teardown precondition",
@@ -622,13 +640,6 @@
       "status": "WIRED",
       "spec_anchor": "#register-entry-register",
       "surface": "`pkg/controller/warmpool/controller.go:248`, read at `pkg/gateway/session/orphansession/orphansession.go:50-55`"
-    },
-    {
-      "claim": "`coordinator_address` population",
-      "status": "UNWIRED",
-      "spec_anchor": "#2854-inter-replica",
-      "surface": "`InterReplicaAddress` never set",
-      "deferral_id": "R13"
     },
     {
       "claim": "`coordlease.GetBySession` routing read",

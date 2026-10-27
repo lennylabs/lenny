@@ -170,32 +170,59 @@ SURFACE_OVERRIDES = {
                 "that hands each response to the turn holding the stream, until the "
                 "binding is released, the stream is evicted, or the stream ends",
     },
-    # The coordinating replica now dequeues its own inbox through deliverBuffered,
-    # so the reference's "no dequeue path" no longer holds. What stays absent is
-    # the redelivery of a message a non-coordinating replica buffered in its own
-    # in-process inbox under durableInbox: false, which cross-replica message
-    # forwarding (R19) closes, and BUILD-GAPS.md F-29.3.2 records it.
+    # The coordinating replica dequeues its own inbox through deliverBuffered,
+    # and a message a non-coordinating replica receives is no longer buffered in
+    # that replica's in-process inbox. §29.3 Forwarding rule 6 holds a message
+    # carrying no inReplyTo whose forward is not delivered in the session's DLQ,
+    # which the coordinating replica already drains. No off-holder path enqueues
+    # that hold until cross-replica message forwarding (R19) lands, and
+    # BUILD-GAPS.md F-29.3.2 records it.
     "Session inbox redelivery": {
         "deferral_id": "R19",
-        "surface": "`pkg/gateway/sessionserver/held_delivery.go` `deliverBuffered` dequeues "
-                   "the coordinating replica's own inbox; no path redelivers a message a "
-                   "non-coordinating replica holds in its in-process inbox under "
-                   "durableInbox: false",
-        "note": "the coordinating replica delivers its own inbox at each delivery point, "
-                "and a message a peer replica buffered in that peer's in-memory inbox "
-                "is read by no other replica",
+        "surface": "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EnqueueDLQ` "
+                   "holds a message the coordinating replica delivers; no off-holder path "
+                   "enqueues a message whose forward to the coordinator is not delivered",
+        "note": "a message carrying no inReplyTo to a running or input_required session whose "
+                "forward is not delivered is held in the session DLQ with the recovering-row "
+                "TTL under §29.3 Forwarding rule 6, and the coordinating replica delivers it "
+                "at its next delivery point",
+    },
+    # A reply carrying inReplyTo resolves the pending lenny/request_input call
+    # only on the replica whose LNK-GWCONTROL connection received that call. The
+    # forward carries the reply there, and storing the input wait across
+    # replicas belongs to the message-plane durability step (R20) rather than to
+    # the forward.
+    "Input-wait resolution across replicas": {
+        "deferral_id": "R20",
+        "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
+        "note": "the pending lenny/request_input call waits on the replica the pod's "
+                "LNK-GWCONTROL connection reached, and no store carries it to another replica",
     },
 }
 
-# Mechanisms the frozen reference table still names whose capability the
-# platform removed rather than deferred. A retired mechanism carries no claim
-# to verify, so the seeding loop drops its row instead of re-emitting it from
-# the table. Proposal 0073 removed the duplicate slot address from the gRPC
-# leg, which is what retired the entry below: every session is bound to a slot
-# on every pod and the request names it by the session identifier, so there is
-# no slot-qualified dispatch left to defer.
+# Mechanisms the frozen reference table still names whose row the seeding loop
+# drops instead of re-emitting it from the table. A row is retired for one of
+# two reasons. Either the platform removed the capability rather than deferring
+# it, so the row carries no claim left to verify, or the specification restates
+# the claim under a different name or heading, so an EXPLICIT row below carries
+# the restated claim and SURFACE_OVERRIDES, which cannot rename or re-anchor a
+# generated row, has no way to carry it.
+#
+# Proposal 0073 removed the duplicate slot address from the gRPC leg: every
+# session is bound to a slot on every pod and the request names it by the
+# session identifier, so there is no slot-qualified dispatch left to defer.
+#
+# The three inter-replica rows are restated by §28.5.4 and §10.1.1. The
+# forward is the HTTP channel CH-HOLDERFORWARD, the coordinator's address is
+# carried in the REG-COORDLEASE holder value rather than in a
+# coordinator_address field, and the gateway-to-gateway transport is the
+# forward listener with NET-072 peer validation (§10.3). Each has an EXPLICIT
+# replacement row.
 RETIRED = {
     "Slot-qualified interrupt, deadline, usage, and barrier",
+    "Cross-replica message forward",
+    "`coordinator_address` population",
+    "Gateway-to-gateway transport",
 }
 
 # Rows the proposal writes explicitly, because no status table carries them.
@@ -510,25 +537,72 @@ EXPLICIT = [
     },
     # The lifecycle drain writes each scoped session's terminal row from the
     # replica that runs it, and the release of a pod bound on another replica
-    # waits for that replica's Sweeper to list the row. §28.5.4 places no
-    # channel between gateway replicas, so nothing tells the binding replica
-    # to release first, and user erasure can delete the row before the Sweeper
-    # lists it. R21, the off-holder eviction leg, is the step that releases a
-    # binding another replica holds. BUILD-GAPS.md F-12.8.43 records the
-    # residual, owned by the inter-replica carrier proposal.
+    # waits for that replica's Sweeper to list the row, which user erasure can
+    # delete first. §12.8 has the drain publish its transitioned sessions on the
+    # CH-BINDRELEASE fan-out §28.5.7 registers, and R21 is the step that lands
+    # the publish. BUILD-GAPS.md F-12.8.43 records the residual, owned by the
+    # inter-replica carrier proposal.
     {
         "claim": "Lifecycle drain releases the pod of a session bound on another gateway "
                  "replica before the drained scope's rows are erased",
         "status": "ABSENT",
-        "spec_anchor": "#2854-inter-replica",
+        "spec_anchor": "#2857-gateway-to-store",
         "deferral_id": "R21",
-        "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions`; spec §12.8 "
-                   "Lifecycle fence and drain, Drain: a successful drain does not wait for the "
-                   "session's terminal steps or the release of its pod",
-        "note": "the drain writes the terminal row only; the binding replica's Sweeper "
-                "releases the pod when it lists that row, and BUILD-GAPS.md F-12.8.43 records "
-                "the residual when user erasure deletes the row first, owned by the "
-                "inter-replica carrier proposal",
+        "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions` publishes its "
+                   "transitioned sessions on CH-BINDRELEASE through "
+                   "`bindReleaseFanOut.TerminateUserSessions`",
+        "note": "the drain writes the terminal row only and publishes nothing on "
+                "CH-BINDRELEASE; the binding replica's Sweeper releases the pod when it lists "
+                "that row, and BUILD-GAPS.md F-12.8.43 records the residual when user erasure "
+                "deletes the row first, owned by the inter-replica carrier proposal",
+    },
+    # The §11.4 binding-release fan-out, which §28.5.7 registers as
+    # CH-BINDRELEASE: the replica that handles a full_revoke releases the
+    # bindings it holds and publishes the session list over Redis pub/sub, and
+    # each peer's subscriber releases the bindings that peer holds.
+    {
+        "claim": "CH-BINDRELEASE binding-release fan-out",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`cmd/lenny-gateway/adminrouter.go` propagator construction over "
+                   "`cmd/lenny-gateway/user_revocation.go` `podTerminateFanOut.TerminateUserSessions`",
+        "note": "the full_revoke handler releases the bindings its replica holds and publishes "
+                "the session list, and each peer replica's subscriber releases the bindings of "
+                "those sessions it holds without re-publishing",
+    },
+    # The off-holder forward on CH-HOLDERFORWARD, which §28.5.4 states and §29.3
+    # Forwarding numbers the rules of. The serving replica replays the request
+    # it received to the coordinator the REG-COORDLEASE holder value names.
+    {
+        "claim": "Off-holder request forward on CH-HOLDERFORWARD",
+        "status": "ABSENT",
+        "spec_anchor": "#2854-inter-replica",
+        "deferral_id": "R19",
+        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`",
+        "note": "no forwarded route or MCP tool site replays an off-holder request to the "
+                "coordinating replica yet",
+    },
+    {
+        "claim": "Replica address in the REG-COORDLEASE holder value",
+        "status": "ABSENT",
+        "spec_anchor": "#2854-inter-replica",
+        "deferral_id": "R18",
+        "surface": "`cmd/lenny-gateway/coordination_identity.go` `resolveReplicaID` supplies "
+                   "the holder value, which carries the replica identity and no address",
+        "note": "§10.1.1 Replica address: has the holder value carry the replica's "
+                "forward-listener address after its identity, and the Postgres fallback "
+                "stores the same value",
+    },
+    {
+        "claim": "Inter-replica forward listener with gateway peer validation (NET-072)",
+        "status": "ABSENT",
+        "spec_anchor": "#2854-inter-replica",
+        "deferral_id": "R18",
+        "surface": "no gateway listener serves gateway.holderForwardPort and no client dials "
+                   "a peer replica",
+        "note": "§10.3 NET-072 has both replicas present the gateway replica certificate and "
+                "the listener reject plaintext, one-way TLS, and any other cluster-CA "
+                "certificate at handshake",
     },
     # The adapter's CH-SUPERVISE client and the supervised runtime: the launch
     # and end of each runtime process through the runtime supervisor, the one

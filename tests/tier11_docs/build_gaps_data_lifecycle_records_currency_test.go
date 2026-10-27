@@ -354,7 +354,8 @@ type claimRow struct {
 }
 
 // diagnosis: the claim register lost the row for the terminal-tail residual
-// of the lifecycle drain, or the row no longer names the inter-replica heading,
+// of the lifecycle drain, or the row no longer names the gateway-to-store
+// heading that registers the CH-BINDRELEASE fan-out the drain publishes on,
 // the off-holder eviction step, the drain, or the finding that records the
 // residual. Restore the row in scripts/seed-claim-register.py and regenerate
 // tests/claim-map.json; never edit the register by hand.
@@ -372,16 +373,19 @@ func TestClaimRegisterCarriesTheDrainTerminalTailResidual(t *testing.T) {
 	}
 	var rows []claimRow
 	for _, c := range doc.Claims {
-		if c.SpecAnchor == "#2854-inter-replica" && strings.Contains(c.Surface, "DrainSessions") {
+		if c.SpecAnchor == "#2857-gateway-to-store" && strings.Contains(c.Surface, "DrainSessions") {
 			rows = append(rows, c)
 		}
 	}
 	if len(rows) != 1 {
-		t.Fatalf("tests/claim-map.json carries %d inter-replica rows naming DrainSessions, want 1", len(rows))
+		t.Fatalf("tests/claim-map.json carries %d gateway-to-store rows naming DrainSessions, want 1", len(rows))
 	}
 	row := rows[0]
 	if row.Status != "ABSENT" || row.DeferralID != "R21" {
 		t.Errorf("terminal-tail row has status %q and deferral %q, want ABSENT and R21", row.Status, row.DeferralID)
+	}
+	if !strings.Contains(row.Surface, "CH-BINDRELEASE") {
+		t.Errorf("terminal-tail row surface %q does not name the CH-BINDRELEASE publish", row.Surface)
 	}
 	for _, want := range []string{"F-12.8.43", "inter-replica carrier proposal"} {
 		if !strings.Contains(row.Note, want) {
