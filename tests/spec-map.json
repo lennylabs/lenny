@@ -2284,7 +2284,8 @@
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
         "tests/tier7a_load_local/derive_failure_fence_race_test.go",
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordsCloseTheirMembers_spec_7_1",
-        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordParsers_spec_7_1"
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineRecordParsers_spec_7_1",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7"
       ],
       "packages": [
         "pkg/session"
@@ -2402,7 +2403,8 @@
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderInteractionResolutionWakesTheCoordinator_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3",
-        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3"
+        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3102,7 +3104,8 @@
         "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestSupersededCoordinatorForwardsTheDeleteAndTheAdopterReleasesOnce_spec_10_1_5",
         "charts/lenny/tests/holder-forward_test.yaml",
-        "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewayDeploymentAdvertisesHolderForwardAddress_spec_10_1_1"
+        "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewayDeploymentAdvertisesHolderForwardAddress_spec_10_1_1",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -4460,7 +4463,8 @@
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
         "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
-        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainWithoutTheFanOutLeavesThePeerBinding_spec_12_8"
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainWithoutTheFanOutLeavesThePeerBinding_spec_12_8",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7"
       ],
       "packages": [
         "pkg/store",
@@ -7785,7 +7789,9 @@
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardOnAReusedKeepAliveConnectionThatFailsOnWriteIsUnknown_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardRunsUnderTheCallersDeadlineWithNoBoundOfItsOwn_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3",
-        "tests/tier4_integration/holder_forward_routes_test.go::TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3"
+        "tests/tier4_integration/holder_forward_routes_test.go::TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1"
       ]
     },
     "28.7": {
