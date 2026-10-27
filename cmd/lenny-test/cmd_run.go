@@ -467,7 +467,7 @@ func tierSteps() map[string]tierStep {
 		},
 		tierSecurity: {
 			name: tierSecurity, exec: func(_ tierPlan) (string, string, *tierResult) {
-				return runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout, false)
+				return runTierArgs("security", securityTierArgs())
 			},
 			nextActionHint: "Fix security-tier failures before moving to higher tiers.",
 		},
@@ -1323,13 +1323,28 @@ func taggedTierArgs(tag, targetGlob string, timeout time.Duration, race bool) []
 
 // runTaggedTier runs `go test` over targetGlob under the supplied
 // build tag. Used for tiers whose tests are mostly skip-bearing
-// scaffolds — load, chaos, security — so the tier reports `pass`
+// scaffolds (load, chaos, and security) so the tier reports `pass`
 // (with skipped sub-tests) until the backing infrastructure lands.
 func runTaggedTier(tag, targetGlob string, timeout time.Duration, race bool) (string, string, *tierResult) {
+	return runTierArgs(tag, taggedTierArgs(tag, targetGlob, timeout, race))
+}
+
+// securityTierArgs is the `go test` argv of the security tier. It runs
+// the tier-9 package under its own budget, tierSecurityTimeout, rather
+// than the long-tier budget the load and chaos tiers share, because the
+// package's runtime under a loaded cluster exceeds that budget and
+// `go test -timeout` then aborts the whole binary (TEST-GAPS T-17.4.19).
+func securityTierArgs() []string {
+	return taggedTierArgs("security", "./tests/tier9_security/...", tierSecurityTimeout, false)
+}
+
+// runTierArgs runs `go test` with a tier's prepared argv and maps the
+// outcome to a tier status. tag names the suite in a failure message.
+func runTierArgs(tag string, args []string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	result, runErr := runGoTestJSON(taggedTierArgs(tag, targetGlob, timeout, race)...)
+	result, runErr := runGoTestJSON(args...)
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("%s suite failed: %v\n%s", tag, runErr, result.RawOut), result
 	}
