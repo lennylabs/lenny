@@ -302,12 +302,13 @@ func TestReleaseOfACrashedBindingRetiresTheRecyclingPod_spec_5_2(t *testing.T) {
 				name = "empty" + map[bool]string{true: "/crashed", false: "/unmarked"}[crashed]
 			}
 			t.Run(name, func(t *testing.T) {
+				ns := testNamespace(t)
 				rec := &recordingShutdownAdapter{}
 				srv := adapter.New("adapter-test")
 				srv.WorkspaceBase = t.TempDir()
 				srv.Runtime = &fakeRuntime{}
-				c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-				binder := newBinder(c, adapterDialer(t, srv))
+				c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+				binder := newBinder(ns, c, adapterDialer(t, srv))
 				armer := &fakeRecycleBoundary{}
 				binder.RecycleBoundary = armer
 				// A real bind creates the bound claim the release acts on;

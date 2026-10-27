@@ -171,11 +171,12 @@ func (f *claimWriteFaults) funcs() interceptor.Funcs {
 // seedBoundPod seeds an idle Sandbox and its per-pod claim in `bound`.
 func seedBoundPod(t *testing.T, c client.Client, name string) {
 	t.Helper()
-	seedObjects(t, c, idleSandbox(name, "10.244.9.9"), &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(name), Namespace: testNS},
+	ns := testNamespace(t)
+	seedObjects(t, c, idleSandbox(ns, name, "10.244.9.9"), &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(name), Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: name, TenantID: "acme"},
 	})
-	if err := podclaim.WriteBoundStatus(context.Background(), c, testNS, podclaim.ClaimName(name)); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, podclaim.ClaimName(name)); err != nil {
 		t.Fatalf("write bound on %s: %v", name, err)
 	}
 }
@@ -183,8 +184,9 @@ func seedBoundPod(t *testing.T, c client.Client, name string) {
 // claimPhase returns the claim's binding state, or "gone" when it is absent.
 func claimPhase(t *testing.T, c client.Client, name string) string {
 	t.Helper()
+	ns := testNamespace(t)
 	var sc lennyv1.SandboxClaim
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podclaim.ClaimName(name)}, &sc)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(name)}, &sc)
 	if apierrors.IsNotFound(err) {
 		return "gone"
 	}
@@ -211,16 +213,17 @@ type releaseCase struct {
 
 func runReleaseCase(t *testing.T, base client.WithWatch, idx int, tc *releaseCase) (*releaseAdapter, *claimWriteFaults) {
 	t.Helper()
+	ns := testNamespace(t)
 	name := fmt.Sprintf("sbx-rel-%d", idx)
 	seedBoundPod(t, base, name)
 	if tc.preDelete {
-		if err := podclaim.DeleteClaim(context.Background(), base, testNS, name); err != nil {
+		if err := podclaim.DeleteClaim(context.Background(), base, ns, name); err != nil {
 			t.Fatalf("pre-delete: %v", err)
 		}
 	}
 	a := &releaseAdapter{mode: tc.mode}
 	faults := &tc.faults
-	b := newBinder(interceptor.NewClient(base, faults.funcs()), nil)
+	b := newBinder(ns, interceptor.NewClient(base, faults.funcs()), nil)
 	armer := &fakeRecycleBoundary{}
 	b.RecycleBoundary = armer
 	res := &podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: name, Adapter: dialReleaseAdapter(t, a), Recycle: tc.recycle}

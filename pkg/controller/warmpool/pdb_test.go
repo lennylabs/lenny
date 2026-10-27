@@ -19,8 +19,9 @@ import (
 
 func getPDB(t *testing.T, c client.Client, name string) (policyv1.PodDisruptionBudget, bool) {
 	t.Helper()
+	ns := testNamespace(t)
 	var pdb policyv1.PodDisruptionBudget
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &pdb)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &pdb)
 	if apierrors.IsNotFound(err) {
 		return pdb, false
 	}
@@ -35,8 +36,9 @@ func getPDB(t *testing.T, c client.Client, name string) (policyv1.PodDisruptionB
 // minWarm-1 selecting idle pods, never maxUnavailable: 1 (which would
 // deadlock at disruptionsAllowed: 0 with no scale subresource).
 func TestReconcileCreatesWarmPodPDB(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 
 	reconcile(t, c, s)
 
@@ -63,8 +65,9 @@ func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 // single warm pod cannot be given one-at-a-time protection by an integer
 // minAvailable without deadlocking.
 func TestReconcileCreatesNoPDBBelowMinWarmTwo(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
@@ -79,12 +82,13 @@ func TestReconcileCreatesNoPDBBelowMinWarmTwo(t *testing.T) {
 // object and reconciling asserts the update replaces maxUnavailable: 1
 // with the integer minAvailable of minWarm-1.
 func TestReconcileConvergesMaxUnavailableToMinAvailable(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 
 	maxUnavailable := intstr.FromInt(1)
 	existing := &policyv1.PodDisruptionBudget{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool + "-warm", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testPool + "-warm", Namespace: ns},
 		Spec: policyv1.PodDisruptionBudgetSpec{
 			MaxUnavailable: &maxUnavailable,
 			Selector: &metav1.LabelSelector{
@@ -116,8 +120,9 @@ func TestReconcileConvergesMaxUnavailableToMinAvailable(t *testing.T) {
 // spec: §4.6.1 — a pool scaled to zero imposes no disruption budget, so
 // the PDB is torn down.
 func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 10))
+	c := newClient(t, s, template(ns), pool(ns, 2, 10))
 
 	reconcile(t, c, s)
 	pdb, ok := getPDB(t, c, testPool+"-warm")
@@ -130,7 +135,7 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 
 	// Scale the pool to zero and reconcile again.
 	var p lennyv1.SandboxWarmPool
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testPool}, &p); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: testPool}, &p); err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
 	p.Spec.MinWarm = 0
@@ -147,13 +152,14 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 // spec: §4.6.1 "Sandbox finalizers" — every Sandbox the controller
 // creates carries the session-cleanup finalizer.
 func TestCreateSandboxStampsFinalizer(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
 	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(testNS)); err != nil {
+	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
 	if len(sandboxes.Items) == 0 {

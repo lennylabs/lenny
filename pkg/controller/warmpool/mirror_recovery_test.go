@@ -57,14 +57,15 @@ func (m *recordingMirror) RecycleCounters(context.Context, string) (agentpodstat
 // the runnable re-lists every Sandbox in the agent namespaces and
 // converges the full mirror in one bulk ReconcileAll.
 func TestMirrorRecoveryReconcilesAllSandboxes(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 5), idleSandbox("pod-1"), idleSandbox("pod-2"))
+	c := newClient(t, s, template(ns), pool(ns, 2, 5), idleSandbox(ns, "pod-1"), idleSandbox(ns, "pod-2"))
 
 	mirror := &recordingMirror{}
 	m := &warmpool.MirrorReconciler{
 		Client:     c,
 		Mirror:     mirror,
-		Namespaces: []string{testNS},
+		Namespaces: []string{ns},
 	}
 	if err := m.ReconcileForTest(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -93,11 +94,12 @@ func TestMirrorRecoveryReconcilesAllSandboxes(t *testing.T) {
 // spec: §4.6.1 — with no live Sandboxes the recovery pass still runs
 // ReconcileAll (with an empty set), which prunes every stale mirror row.
 func TestMirrorRecoveryEmptyClusterPrunesMirror(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 5))
+	c := newClient(t, s, template(ns), pool(ns, 2, 5))
 
 	mirror := &recordingMirror{}
-	m := &warmpool.MirrorReconciler{Client: c, Mirror: mirror, Namespaces: []string{testNS}}
+	m := &warmpool.MirrorReconciler{Client: c, Mirror: mirror, Namespaces: []string{ns}}
 	if err := m.ReconcileForTest(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}

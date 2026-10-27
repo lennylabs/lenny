@@ -27,10 +27,11 @@ import (
 // counter without perturbing it.
 func resumeSlotFixture(t *testing.T, c client.Client, dial func(string) (*adapterclient.Client, error)) (*podsession.Binder, *miniredis.Miniredis) {
 	t.Helper()
+	ns := testNamespace(t)
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
-	b := newBinder(c, dial)
+	b := newBinder(ns, c, dial)
 	b.SlotCounter = slotcounter.New(rc)
 	return b, mr
 }
@@ -65,12 +66,13 @@ func resumeRequest(maxConcurrent int32) podsession.ResumeRequest {
 // and a reservation taken through the pool scan would increment a different
 // pod than the one the session resumes onto.
 func TestResumeReservesItsSlotOnTheClaimedPod_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	res, err := binder.Resume(context.Background(), resumeRequest(4))
@@ -98,11 +100,12 @@ func TestResumeReservesItsSlotOnTheClaimedPod_spec_5_2(t *testing.T) {
 // decrementing or disposing the claim, and hard-errors on a deployment with
 // no Redis.
 func TestResumeOntoAnExclusivePoolReservesNoSlot_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	res, err := binder.Resume(context.Background(), resumeRequest(1))
@@ -137,11 +140,12 @@ func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *tes
 		{"exclusive pool", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			srv := adapter.New("adapter-test")
 			srv.WorkspaceBase = t.TempDir()
 			srv.Runtime = &fakeRuntime{}
 
-			c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+			c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 			binder, _ := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 			req := resumeRequest(tc.maxConcurrent)
@@ -171,8 +175,9 @@ func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *tes
 // getResumePod reads the agent Pod backing a Sandbox.
 func getResumePod(t *testing.T, c client.Client, name string) corev1.Pod {
 	t.Helper()
+	ns := testNamespace(t)
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &pod); err != nil {
 		t.Fatalf("get pod %s: %v", name, err)
 	}
 	return pod
@@ -185,11 +190,12 @@ func getResumePod(t *testing.T, c client.Client, name string) corev1.Pod {
 // an unpopulated ResumeRequest.MaxPodUptimeSeconds is a silent no-op that
 // leaves the §5.2 uptime drain disabled on the pod for the rest of its life.
 func TestResumeStampsMaxPodUptimeOnTheReplacementPod_spec_4_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"), drainAgentPod("sbx-1"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), drainAgentPod(ns, "sbx-1"))
 	binder, _ := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	req := resumeRequest(4)
@@ -215,13 +221,14 @@ func TestResumeStampsMaxPodUptimeOnTheReplacementPod_spec_4_6_1(t *testing.T) {
 // claimOrphanTimeout.
 func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testing.T) {
 	t.Run("no co-tenant: the claim is disposed at occupancy zero", func(t *testing.T) {
+		ns := testNamespace(t)
 		srv := adapter.New("adapter-test")
 		// No workspace base: the adapter refuses the Resume after the
 		// handshake, which is the one failure that follows a completed
 		// reservation.
 		srv.Runtime = &fakeRuntime{}
 
-		c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+		c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 		if _, err := binder.Resume(context.Background(), resumeRequest(4)); err == nil {
@@ -236,10 +243,11 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 	})
 
 	t.Run("co-tenant sibling: the claim stays bound", func(t *testing.T) {
+		ns := testNamespace(t)
 		srv := adapter.New("adapter-test")
 		srv.Runtime = &fakeRuntime{}
 
-		c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+		c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 		// A sibling slot's occupancy, held by a co-tenant session that
 		// landed on the pod after connect's claim CREATE.
@@ -255,7 +263,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		}
 		var claim lennyv1.SandboxClaim
 		if err := c.Get(context.Background(),
-			client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+			client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 			t.Fatalf("the per-pod claim was disposed while a sibling slot remained: %v", err)
 		}
 		if claim.Status.Phase != "bound" {
@@ -270,11 +278,12 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 // for an increment that never landed. The decrement would take a co-tenant's
 // slot off the count and let the gateway over-assign past the bound.
 func TestResumeOntoAFullPodReservesAndReleasesNothing_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 	for i := 0; i < 2; i++ {
 		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", fmt.Sprintf("co-%d", i), 2); err != nil {

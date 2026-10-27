@@ -54,12 +54,13 @@ func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition,
 // SandboxTemplate `executionMode` enum no longer admits `concurrent`, so
 // no CRD template selects the warning branch. F-13.1.5.
 func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(
 		t, s,
 		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
-		template(), // default session-mode template
-		pool(1, 3),
+		template(ns), // default session-mode template
+		pool(ns, 1, 3),
 	)
 	reconcile(t, c, s)
 

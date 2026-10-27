@@ -83,6 +83,7 @@ const reapPod = "sbx-reap"
 
 func newReapFixture(t *testing.T, members ...string) *reapFixture {
 	t.Helper()
+	ns := testNamespace(t)
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
@@ -97,9 +98,9 @@ func newReapFixture(t *testing.T, members ...string) *reapFixture {
 		redis: mr,
 	}
 	kube := fake.NewClientBuilder().WithScheme(newScheme(t)).
-		WithObjects(concurrentIdleSandbox(reapPod, "10.244.3.9")).Build()
+		WithObjects(concurrentIdleSandbox(ns, reapPod, "10.244.3.9")).Build()
 	dial := podAdapterDialer(t, f.adp)
-	f.binder = newBinder(kube, func(addr string) (*adapterclient.Client, error) {
+	f.binder = newBinder(ns, kube, func(addr string) (*adapterclient.Client, error) {
 		f.dials++
 		return dial(addr)
 	})

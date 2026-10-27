@@ -72,8 +72,9 @@ func TestDerivePoolPhase(t *testing.T) {
 // spec §4.0, §16.6: the first observation of a pool sets the baseline
 // without emitting; only a phase change fires pool_state_changed.
 func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
@@ -91,7 +92,7 @@ func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 			t.Fatalf("set Sandbox %s idle: %v", sb.Name, err)
 		}
 	}
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err != nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("Reconcile after pods became idle: %v", err)
 	}
 
@@ -119,15 +120,16 @@ func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 // spec §4.0: a reconcile that does not change the derived phase emits
 // nothing.
 func TestReconcileNoEmitOnStablePhase(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10),
-		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10),
+		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
 
 	reconcileWith(t, r) // baseline: ready
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err != nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 
@@ -139,8 +141,9 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 // spec §4.0: a pool with minWarm > 0 and a maxWarm of 0 derives as
 // exhausted, and the emit carries severity=warning per the catalog.
 func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 0))
+	c := newClient(t, s, template(ns), pool(ns, 3, 0))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
@@ -148,7 +151,7 @@ func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 	// Two reconciles: baseline records exhausted; second is a no-op
 	// because the phase did not change.
 	reconcileWith(t, r)
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err != nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 
@@ -160,7 +163,7 @@ func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 	if err := c.Update(testContext(), &p); err != nil {
 		t.Fatalf("update pool maxWarm: %v", err)
 	}
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err != nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("Reconcile after maxWarm bump: %v", err)
 	}
 
@@ -184,10 +187,11 @@ func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 // normally and emits nothing. A baseline-test guard against breaking
 // the existing reconciler API.
 func TestReconcileWithoutEventsIsSilent(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
-	if _, err := r.Reconcile(testContext(), reconcileRequest()); err != nil {
+	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("Reconcile without Events: %v", err)
 	}
 }

@@ -47,13 +47,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-const (
-	testNS   = "lenny-agents"
-	testPool = "claude-worker"
-)
+const testPool = "claude-worker"
 
 // fakeRuntime satisfies adapter.RuntimeProcess for the adapter server
 // the binder's StartSession call drives.
@@ -94,11 +90,11 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func idleSandbox(name, podIP string) *lennyv1.Sandbox {
+func idleSandbox(ns, name, podIP string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
 		Status: lennyv1.SandboxStatus{Phase: "idle", PodIP: podIP},
@@ -112,11 +108,11 @@ func idleSandbox(name, podIP string) *lennyv1.Sandbox {
 // idle → claimed. This models the §4.6.1 scenario where the gateway's
 // Kubernetes-API view is degraded while the Postgres mirror still has
 // the pod.
-func unlabeledSandbox(name, podIP string) *lennyv1.Sandbox {
+func unlabeledSandbox(ns, name, podIP string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 		},
 		Status: lennyv1.SandboxStatus{Phase: "idle", PodIP: podIP},
 	}
@@ -212,8 +208,10 @@ func k8sClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	// envtest backs the client with a real kube-apiserver so the
 	// §4.6.3 SSA Apply path the gateway slot-claimer uses works.
 	// The fake client does not yet implement SSA
-	// (kubernetes/kubernetes#115598).
-	env := envtest.Start(t)
+	// (kubernetes/kubernetes#115598). Every test shares the package's
+	// one control plane (sharedEnv, stopped in TestMain) and isolates
+	// itself in the namespace testNamespace assigns it.
+	env := sharedEnv.Start(t)
 	s := newScheme(t)
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
@@ -222,12 +220,7 @@ func k8sClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	if err != nil {
 		t.Fatalf("client.NewWithWatch: %v", err)
 	}
-	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: testNS},
-	}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace %s: %v", testNS, err)
-	}
+	testNamespaces.Create(t, c)
 	seedObjects(t, c, objs...)
 	return c
 }
@@ -238,7 +231,13 @@ func k8sClient(t *testing.T, objs ...client.Object) client.WithWatch {
 func seedObjects(t *testing.T, c client.Client, objs ...client.Object) {
 	t.Helper()
 	ctx := context.Background()
+	ns := testNamespace(t)
 	for _, o := range objs {
+		// A fixture built for another test's namespace would land in a
+		// namespace nothing created, or among another test's objects.
+		if got := o.GetNamespace(); got != "" && got != ns {
+			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
+		}
 		var (
 			sbStatus  lennyv1.SandboxStatus
 			seedAfter func()
@@ -325,10 +324,10 @@ func adapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclie
 	}
 }
 
-func newBinder(c client.Client, dial func(string) (*adapterclient.Client, error)) *podsession.Binder {
+func newBinder(ns string, c client.Client, dial func(string) (*adapterclient.Client, error)) *podsession.Binder {
 	return &podsession.Binder{
 		Client:           c,
-		Namespace:        testNS,
+		Namespace:        ns,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      dial,
@@ -413,13 +412,14 @@ func (a *fakeAssigner) Release(leaseID string) error {
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -445,7 +445,7 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	// the claim. The session reaching `running` is a session-model state on
 	// the Postgres session row, not a CRD phase.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -460,12 +460,13 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 // (the pre-attached failure is a terminal claim disposition, §6.2)
 // rather than serving the session.
 func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -483,7 +484,7 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	// reclaims the pod by deleting its per-pod claim (§4.6.3); it does not
 	// write Sandbox.status.phase.
 	var claim lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after reclaim = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -493,12 +494,13 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 // level is admitted: a Basic-declared runtime observed at Basic binds and
 // reaches attached.
 func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -512,7 +514,7 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	// The gateway no longer writes Sandbox.status; the per-pod claim records
 	// the acquisition with binding state `bound`.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -525,13 +527,14 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 // latency budget. Each phase duration is non-negative and the recorded
 // phases cannot together exceed the overall Bind wall-clock.
 func TestBindRecordsPhaseTimings_spec_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	wallStart := time.Now()
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -569,13 +572,14 @@ func TestBindRecordsPhaseTimings_spec_6_3(t *testing.T) {
 }
 
 func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Resume(context.Background(), podsession.ResumeRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -606,7 +610,7 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	// claim records the acquisition with binding state `bound`, and the WPC
 	// projects the pod phase from it.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != "bound" {
@@ -615,8 +619,9 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 }
 
 func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
-	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
+	binder := newBinder(ns, k8sClient(t), adapterDialer(t, srv))
 
 	_, err := binder.Resume(context.Background(), podsession.ResumeRequest{
 		Pool: testPool, SessionID: "sess-1", CheckpointID: "ckpt-1",
@@ -632,15 +637,16 @@ func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 // §5.3 isolation profile so the §6.3 demotion-rate ratio per runtime
 // class is observable from telemetry.
 func TestBindRecordsWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	sb := idleSandbox("sbx-1", "10.244.1.7")
+	sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
 	sb.Spec.IsolationProfile = "standard" // → runc
 	c := k8sClient(t, sb)
-	binder := newBinder(c, adapterDialer(t, srv))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	var claims []struct {
 		Pool         string
 		RuntimeClass string
@@ -675,9 +681,10 @@ func TestBindRecordsWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
 // the claim. This matches the §6.3 SLO semantics: only
 // successful claim transitions are counted.
 func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.T) {
-	sb := idleSandbox("sbx-1", "") // no PodIP → connect fails on dial
+	ns := testNamespace(t)
+	sb := idleSandbox(ns, "sbx-1", "") // no PodIP → connect fails on dial
 	c := k8sClient(t, sb)
-	binder := newBinder(c, adapterDialer(t, adapter.New("adapter-test")))
+	binder := newBinder(ns, c, adapterDialer(t, adapter.New("adapter-test")))
 	var claims int
 	binder.ClaimAccepted = func(_, _ string) { claims++ }
 
@@ -696,15 +703,16 @@ func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.
 // rather than emitting an empty `runtime_class` series. The series
 // must stay low-cardinality and meaningful.
 func TestBindSkipsWarmpoolClaimOnUnknownIsolation_spec_6_3_F_6_3_6(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	sb := idleSandbox("sbx-1", "10.244.1.7")
+	sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
 	// IsolationProfile left empty: RuntimeClassName(empty) returns ok=false.
 	c := k8sClient(t, sb)
-	binder := newBinder(c, adapterDialer(t, srv))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	var claims int
 	binder.ClaimAccepted = func(_, _ string) { claims++ }
 
@@ -722,8 +730,9 @@ func TestBindSkipsWarmpoolClaimOnUnknownIsolation_spec_6_3_F_6_3_6(t *testing.T)
 }
 
 func TestBindReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
-	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
+	binder := newBinder(ns, k8sClient(t), adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1",
@@ -734,9 +743,10 @@ func TestBindReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 }
 
 func TestBindFailsWhenSandboxHasNoPodIP(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
-	c := k8sClient(t, idleSandbox("sbx-1", "")) // claimed pod has no IP recorded
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "")) // claimed pod has no IP recorded
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1",
@@ -747,13 +757,14 @@ func TestBindFailsWhenSandboxHasNoPodIP(t *testing.T) {
 }
 
 func TestBindFailsOnIncompatibleProtocolVersion(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.ProtocolVersions = []string{"9.9.9"} // no version the gateway accepts
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1",
@@ -764,12 +775,13 @@ func TestBindFailsOnIncompatibleProtocolVersion(t *testing.T) {
 }
 
 func TestReleaseDrainsTheSandbox(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
@@ -785,7 +797,7 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 	// write Sandbox.status.phase (§4.6.3). The WarmPoolController projects
 	// draining from the claim DELETE.
 	var claim lennyv1.SandboxClaim
-	err = c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	err = c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", err)
 	}
@@ -801,13 +813,14 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 // spec: §7.1 (Normal Flow, step 23), §7.3 (Credential leases on the
 // replacement pod).
 func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.CredentialsDir = t.TempDir()
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -837,12 +850,13 @@ func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 }
 
 func TestReleaseFailsWhenSandboxGone(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1",
 	})
@@ -851,7 +865,7 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	}
 
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if err := c.Delete(context.Background(), &sb); err != nil {
@@ -863,12 +877,13 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 }
 
 func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
+	ns := testNamespace(t)
 	// No WorkspaceRoot: the FinalizeWorkspace RPC in the §4.7 sequence
 	// fails, and Bind propagates that failure.
 	srv := adapter.New("adapter-test")
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1",
@@ -883,7 +898,7 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 	// draining then terminated from the claim DELETE, so the warm-pool sizer
 	// provisions a replacement.
 	var claim lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after a pre-attached RPC failure = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -948,13 +963,14 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 // state. The acquisition is recorded as a `bound` binding state on the
 // per-pod SandboxClaim instead.
 func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
-	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := recordingPhaseClient(k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
@@ -967,7 +983,7 @@ func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 		t.Errorf("gateway wrote Sandbox.status.phase %v, want none (the WPC projects occupancy from the claim)", phases)
 	}
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + res.SandboxName}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -983,13 +999,14 @@ func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 // disposition fact lives on the Postgres session row (§7.2 / §8.8), so the
 // gateway records no Sandbox condition. F-6.2.12.
 func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
-	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := recordingPhaseClient(k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
@@ -1006,12 +1023,12 @@ func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *test
 		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
 	}
 	var claim lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + res.SandboxName}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
 	}
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	// spec: §4.6.3 / §7.2 / §8.8 — the gateway writes no Sandbox condition for
@@ -1025,13 +1042,14 @@ func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *test
 // expired session's Release on a non-recycling pool deletes the per-pod claim
 // and writes no Sandbox.status field (§4.6.3).
 func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
-	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := recordingPhaseClient(k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
@@ -1048,12 +1066,12 @@ func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T)
 		t.Errorf("gateway wrote Sandbox.status.phase %v on Release, want none (claim DELETE drives the projection)", phases)
 	}
 	var claim lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + res.SandboxName}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Release = %v, want NotFound (claim deleted)", gerr)
 	}
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if len(sb.Status.Conditions) != 0 {
@@ -1068,13 +1086,14 @@ func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T)
 // disposition. The gateway writes no Sandbox.status field. spec: §6.2
 // (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
 func TestReleaseRecyclingPatchesClaimToRecycling_spec_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
-	c := recordingPhaseClient(k8sClient(t, idleSandbox("sbx-1", "10.244.1.7")), &phases)
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := recordingPhaseClient(k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), &phases)
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
@@ -1096,14 +1115,14 @@ func TestReleaseRecyclingPatchesClaimToRecycling_spec_6_2(t *testing.T) {
 	// The claim is NOT deleted: it is patched bound → recycling so the scrub
 	// report path can drive the disposition.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + res.SandboxName}, &claim); err != nil {
 		t.Fatalf("per-pod claim get after recycle Release = %v, want the claim to survive", err)
 	}
 	if claim.Status.Phase != string(claimstate.Recycling) {
 		t.Errorf("claim binding state = %q, want recycling", claim.Status.Phase)
 	}
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.SandboxName}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: res.SandboxName}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if len(sb.Status.Conditions) != 0 {
@@ -1123,12 +1142,13 @@ func (f *fakeRecycleBoundary) OnRecycling(podID string) { f.armed = append(f.arm
 // adapter is bounded by cleanupTimeoutSeconds plus a grace rather than the
 // much longer orphan-GC window. spec: §5.2 (missing-report timeout).
 func TestReleaseRecyclingArmsMissingReportTimeout_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	armer := &fakeRecycleBoundary{}
 	binder.RecycleBoundary = armer
 
@@ -1151,12 +1171,13 @@ func TestReleaseRecyclingArmsMissingReportTimeout_spec_5_2(t *testing.T) {
 // arm the missing-report timeout: there is no whole-pod scrub to await on a
 // retired pod. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	armer := &fakeRecycleBoundary{}
 	binder.RecycleBoundary = armer
 
@@ -1184,10 +1205,11 @@ func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_5_2(t *testing.T) {
 // claim binding state there observes the state at the moment the signal fires.
 // spec: §6.2 (claim state machine), §5.2 (recycle disposition, patch-then-scrub).
 func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 
 	// stateAtScrubSignal captures the claim binding state read at the moment
 	// the adapter Shutdown (the scrub signal) closes the runtime.
@@ -1195,7 +1217,7 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_6_2(t *testing.T) {
 	rt := &fakeRuntime{}
 	rt.onClose = func() {
 		var claim lennyv1.SandboxClaim
-		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 			stateAtScrubSignal = "get-error:" + err.Error()
 			return
 		}
@@ -1203,7 +1225,7 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_6_2(t *testing.T) {
 	}
 	srv.Runtime = rt
 
-	binder := newBinder(c, adapterDialer(t, srv))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
 	})
@@ -1225,12 +1247,13 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_6_2(t *testing.T) {
 // recycling: §6.2 require a failed session to always retire its
 // pod regardless of recycle settings. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDrainsNotRecycle_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
@@ -1244,7 +1267,7 @@ func TestReleaseRecyclingFailedDrainsNotRecycle_spec_5_2(t *testing.T) {
 
 	// A failed session always retires: the claim is deleted.
 	var claim lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-" + res.SandboxName}, &claim)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + res.SandboxName}, &claim)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after failed Release = %v, want NotFound (failed session retires the pod)", gerr)
 	}
@@ -1313,13 +1336,14 @@ func dialRecordingAdapter(t *testing.T, a *recordingShutdownAdapter) *adaptercli
 // spec: §5.2 (whole-pod scrub trigger, poolstore scrub config delivered on the
 // recycle Shutdown); §4.7 (Shutdown recycle disposition).
 func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	rec := &recordingShutdownAdapter{}
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.RecycleBoundary = &fakeRecycleBoundary{}
 
 	// Bind carries the scrub-config fields (folded through the mirror →
@@ -1377,9 +1401,10 @@ func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
 // against a shutdownAdapter that re-derives recycle from result.Recycle.
 // spec: §6.2 (failed/crashed session always retires); §5.2; §4.7.
 func TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	rec := &recordingShutdownAdapter{}
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, nil)
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, nil)
 	armer := &fakeRecycleBoundary{}
 	binder.RecycleBoundary = armer
 
@@ -1410,12 +1435,13 @@ func TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2(t *testing.T) {
 	}
 	// The retire path deletes the claim; it is never patched to recycling.
 	var claim lennyv1.SandboxClaim
-	if gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim); !apierrors.IsNotFound(gerr) {
+	if gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); !apierrors.IsNotFound(gerr) {
 		t.Errorf("claim get after failed Release = %v, want NotFound (retire deletes the claim, never patches recycling)", gerr)
 	}
 }
 
 func TestBindStagesUploadFile(t *testing.T) {
+	ns := testNamespace(t)
 	// A plan with an uploadFile source: Bind fetches the blob, streams
 	// it via PrepareWorkspace, and FinalizeWorkspace materializes it.
 	rt := &fakeRuntime{}
@@ -1434,8 +1460,8 @@ func TestBindStagesUploadFile(t *testing.T) {
 		t.Fatalf("put blob: %v", err)
 	}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -1492,6 +1518,7 @@ func tempGitRepo(t *testing.T) (dir, sha string) {
 }
 
 func TestBindClonesGitSource(t *testing.T) {
+	ns := testNamespace(t)
 	// A gitClone source: Bind clones the repository on the gateway's
 	// network path, streams the tree via PrepareWorkspace, and
 	// FinalizeWorkspace materializes it.
@@ -1502,8 +1529,8 @@ func TestBindClonesGitSource(t *testing.T) {
 	srv.WorkspaceBase = root
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -1529,6 +1556,7 @@ func TestBindClonesGitSource(t *testing.T) {
 }
 
 func TestBindRejectsAuthenticatedGitCloneWithNoResolver(t *testing.T) {
+	ns := testNamespace(t)
 	// spec: §14 — an authenticated gitClone needs a wired VCS
 	// credential resolver. With none, Bind fails with a clear error rather
 	// than cloning unauthenticated.
@@ -1536,8 +1564,8 @@ func TestBindRejectsAuthenticatedGitCloneWithNoResolver(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -1576,6 +1604,7 @@ func (s *stubVCSResolver) Resolve(_ context.Context, tenantID, gitURL, leaseScop
 }
 
 func TestBindClonesAuthenticatedGitClone(t *testing.T) {
+	ns := testNamespace(t)
 	// spec: §14 — an authenticated gitClone resolves its VCS
 	// credential on the gateway and clones on the gateway's network path.
 	// The local file:// remote ignores the injected HTTP header, so this
@@ -1587,8 +1616,8 @@ func TestBindClonesAuthenticatedGitClone(t *testing.T) {
 	srv.WorkspaceBase = root
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	resolver := &stubVCSResolver{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
 	binder.VCSCreds = resolver
 
@@ -1626,6 +1655,7 @@ func TestBindClonesAuthenticatedGitClone(t *testing.T) {
 }
 
 func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
+	ns := testNamespace(t)
 	// spec: §14 — a credential-resolution failure aborts the bind.
 	repo, sha := tempGitRepo(t)
 
@@ -1633,8 +1663,8 @@ func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.VCSCreds = &stubVCSResolver{err: errors.New("pool exhausted")}
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -1655,12 +1685,13 @@ func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
 }
 
 func TestBindFailsWhenUploadPlanHasNoBlobStore(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv)) // no Blobs configured
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv)) // no Blobs configured
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -1689,6 +1720,7 @@ func TestBindFailsWhenUploadPlanHasNoBlobStore(t *testing.T) {
 // fallback must return ErrNoIdlePod for the caller to surface as
 // WARM_POOL_EXHAUSTED.
 func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -1697,8 +1729,8 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	// The Sandbox exists by name but carries no pool label, so the
 	// normal label-selecting claim returns ErrNoIdlePod. The mirror
 	// still reports the pod idle, so the fallback claims it.
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 2}
 	binder.Fallback = mirror
 
@@ -1729,7 +1761,7 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	// binding state. The gateway no longer writes Sandbox.status.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		client.ObjectKey{Namespace: ns, Name: "claim-sbx-fb"}, &claim); err != nil {
 		t.Fatalf("the fallback did not create a per-pod SandboxClaim: %v", err)
 	}
 	if claim.Spec.SandboxRef != "sbx-fb" || claim.Spec.TenantID != "acme" {
@@ -1741,13 +1773,14 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 }
 
 func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Fallback = &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 1}
 
 	res, err := binder.Resume(context.Background(), podsession.ResumeRequest{
@@ -1769,18 +1802,19 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	// per-pod claim is named claim-<podName>.
 	var claim lennyv1.SandboxClaim
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: "claim-sbx-fb"}, &claim); err != nil {
+		client.ObjectKey{Namespace: ns, Name: "claim-sbx-fb"}, &claim); err != nil {
 		t.Errorf("the fallback did not create a per-pod SandboxClaim for Resume: %v", err)
 	}
 }
 
 func TestBindFallbackSkippedWhenMirrorIsStale(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	// The mirror has an idle pod, but its lag exceeds the default 10s
 	// freshness threshold, so the fallback must be skipped.
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 25}
@@ -1798,12 +1832,13 @@ func TestBindFallbackSkippedWhenMirrorIsStale(t *testing.T) {
 }
 
 func TestBindFallbackHonorsCustomMirrorLagThreshold(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	// A 4s lag would pass the default 10s threshold, but a configured
 	// 3s threshold rejects it.
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 4}
@@ -1822,11 +1857,12 @@ func TestBindFallbackHonorsCustomMirrorLagThreshold(t *testing.T) {
 }
 
 func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
+	binder := newBinder(ns, k8sClient(t), adapterDialer(t, srv))
 	// Fresh mirror, but no idle pod: the warm pool is genuinely
 	// exhausted, so the fallback returns ErrNoIdlePod for the caller to
 	// surface as WARM_POOL_EXHAUSTED.
@@ -1870,6 +1906,7 @@ func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
 // webhook's sibling List is not a timing-independent fence, so the
 // deterministic name is the guarantee under test.
 func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -1879,11 +1916,11 @@ func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
 	// name claim-sbx-fb. The pod carries no pool label, so the gateway's
 	// label-selecting API claim finds no idle pod and attempts the fallback.
 	existing := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("sbx-fb"), Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("sbx-fb"), Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-fb", TenantID: "acme"},
 	}
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"), existing)
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"), existing)
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	// The mirror is stale: it still reports sbx-fb idle even though the
 	// normal path already claimed it. This is the race the fence must survive.
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 1}
@@ -1902,7 +1939,7 @@ func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
 	// Exactly one SandboxClaim exists for sbx-fb: the original. The fallback
 	// created no second, differently-named claim.
 	var claims lennyv1.SandboxClaimList
-	if err := c.List(context.Background(), &claims, client.InNamespace(testNS)); err != nil {
+	if err := c.List(context.Background(), &claims, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list claims: %v", err)
 	}
 	n := 0
@@ -1920,12 +1957,13 @@ func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
 }
 
 func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	// No Fallback configured: the no-idle-pod result surfaces directly.
-	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
+	binder := newBinder(ns, k8sClient(t), adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -1939,12 +1977,13 @@ func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 // skips the fallback and records lenny_pod_claim_fallback_skipped_total
 // with reason mirror_stale.
 func TestBindFallbackSkipRecordsMirrorStale(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 99}
 	binder.Fallback = mirror
 	var skips []string
@@ -1968,12 +2007,13 @@ func TestBindFallbackSkipRecordsMirrorStale(t *testing.T) {
 // server reachability probe skips the fallback before locking a mirror
 // row and records reason apiserver_unreachable.
 func TestBindFallbackSkipRecordsAPIServerUnreachable(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, unlabeledSandbox(ns, "sbx-fb", "10.244.2.9"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	mirror := &fakeMirror{idle: map[string][]string{testPool: {"sbx-fb"}}, lag: 1}
 	binder.Fallback = mirror
 	binder.APIServerReachable = func(context.Context) error { return errors.New("apiserver down") }
@@ -2022,6 +2062,7 @@ func credEntries(t *testing.T, dir string) map[string]map[string]any {
 }
 
 func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -2029,8 +2070,8 @@ func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
 	srv.CredentialsDir = credDir
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -2073,13 +2114,14 @@ func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
 }
 
 func TestBindWithoutCredentialPoolsAssignsNothing(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -2099,13 +2141,14 @@ func TestBindWithoutCredentialPoolsAssignsNothing(t *testing.T) {
 }
 
 func TestBindWithoutCredentialServiceSkipsAssignment(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv)) // no Credentials wired
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv)) // no Credentials wired
 
 	// Even with credential pools named, a binder with no credential
 	// service assigns nothing rather than failing.
@@ -2120,13 +2163,14 @@ func TestBindWithoutCredentialServiceSkipsAssignment(t *testing.T) {
 }
 
 func TestBindFailsWhenCredentialAssignmentFails(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Credentials = &fakeAssigner{err: errors.New("pool exhausted")}
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -2298,9 +2342,10 @@ func (c *claimDeleteCounter) count() int {
 // its per-pod claim, and counts every SandboxClaim delete on counter.
 func claimedPodFakeClient(t *testing.T, counter *claimDeleteCounter) client.Client {
 	t.Helper()
-	sb := idleSandbox("sbx-1", "10.244.1.7")
+	ns := testNamespace(t)
+	sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
 	sb.Status.Phase = "claimed"
-	claim := &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS}}
+	claim := &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns}}
 	return fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(sb, claim).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
@@ -2317,8 +2362,9 @@ func claimedPodFakeClient(t *testing.T, counter *claimDeleteCounter) client.Clie
 // claimPresent reports whether the per-pod claim for sbx-1 still exists.
 func claimPresent(t *testing.T, c client.Client) bool {
 	t.Helper()
+	ns := testNamespace(t)
 	var claim lennyv1.SandboxClaim
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim)
 	if err != nil && !apierrors.IsNotFound(err) {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
@@ -2358,11 +2404,12 @@ func TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1(t *testing.T)
 	for _, stage := range []string{"FinalizeWorkspace", "RunSetup", "AssignCredentials"} {
 		for _, rf := range slotBindRefusalCases {
 			t.Run(stage+"/"+rf.name, func(t *testing.T) {
+				ns := testNamespace(t)
 				var deletes claimDeleteCounter
 				c := claimedPodFakeClient(t, &deletes)
 				a := &stageAdapter{errs: map[string]error{stage: slotBindRefusal(t, rf.code, rf.ec)}}
 				assigner := &fakeAssigner{}
-				b := newBinder(c, stageAdapterDialer(t, a))
+				b := newBinder(ns, c, stageAdapterDialer(t, a))
 				b.Credentials = assigner
 
 				err := prepareOnClaimedPod(b)
@@ -2381,10 +2428,11 @@ func TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1(t *testing.T)
 			})
 		}
 		t.Run(stage+"/ordinary_failure", func(t *testing.T) {
+			ns := testNamespace(t)
 			var deletes claimDeleteCounter
 			c := claimedPodFakeClient(t, &deletes)
 			a := &stageAdapter{errs: map[string]error{stage: status.Error(codes.Internal, "stage broke")}}
-			b := newBinder(c, stageAdapterDialer(t, a))
+			b := newBinder(ns, c, stageAdapterDialer(t, a))
 			b.Credentials = &fakeAssigner{}
 
 			err := prepareOnClaimedPod(b)
@@ -2422,11 +2470,12 @@ func TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			var deletes claimDeleteCounter
 			c := claimedPodFakeClient(t, &deletes)
 			a := &stageAdapter{errs: map[string]error{"StartSession": tc.err(t)}}
 			assigner := &fakeAssigner{}
-			b := newBinder(c, stageAdapterDialer(t, a))
+			b := newBinder(ns, c, stageAdapterDialer(t, a))
 			b.Credentials = assigner
 
 			_, err := b.Launch(context.Background(), podsession.BindRequest{
@@ -2463,6 +2512,7 @@ func TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1(t *testing.T) {
 // spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
 // §6.2 (pod state machine)
 func TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	var deletes claimDeleteCounter
 	c := claimedPodFakeClient(t, &deletes)
 	refusal := slotBindRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED)
@@ -2472,7 +2522,7 @@ func TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1(t *testi
 		}
 		return nil
 	}}
-	b := newBinder(c, stageAdapterDialer(t, a))
+	b := newBinder(ns, c, stageAdapterDialer(t, a))
 
 	errs := make([]error, 2)
 	var wg sync.WaitGroup
@@ -2664,10 +2714,11 @@ func uploadPlanBinder(t *testing.T, b *podsession.Binder) *adapterv1.WorkspacePl
 // spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
 // (pool configuration and execution modes); §6.2 (pod state machine)
 func TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	var deletes claimDeleteCounter
 	c := claimedPodFakeClient(t, &deletes)
 	a := &stageAdapter{}
-	b := newBinder(c, stageAdapterDialer(t, a))
+	b := newBinder(ns, c, stageAdapterDialer(t, a))
 	plan := uploadPlanBinder(t, b)
 	req := podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", SandboxName: "sbx-1",
@@ -2696,9 +2747,10 @@ func TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1(t *testing.T) {
 // spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
 // (pool configuration and execution modes); §6.2 (pod state machine)
 func TestResumeMintsItsOwnBindAttempt_spec_4_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	a := &stageAdapter{}
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"), idleSandbox("sbx-2", "10.244.1.8"))
-	b := newBinder(c, stageAdapterDialer(t, a))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), idleSandbox(ns, "sbx-2", "10.244.1.8"))
+	b := newBinder(ns, c, stageAdapterDialer(t, a))
 
 	var tokens []string
 	for _, sess := range []string{"sess-1", "sess-2"} {
@@ -2733,10 +2785,11 @@ func TestLaunchSendsNoBindAttempt_spec_4_7_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			var deletes claimDeleteCounter
 			c := claimedPodFakeClient(t, &deletes)
 			a := &stageAdapter{}
-			b := newBinder(c, stageAdapterDialer(t, a))
+			b := newBinder(ns, c, stageAdapterDialer(t, a))
 			res, err := b.Launch(context.Background(), podsession.BindRequest{
 				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1", PreConnect: tc.preConnect,
 			})
@@ -2772,9 +2825,10 @@ func TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			rec := &recordingShutdownAdapter{}
-			c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-			binder := newBinder(c, nil)
+			c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+			binder := newBinder(ns, c, nil)
 			binder.RecycleBoundary = &fakeRecycleBoundary{}
 			if tc.wantRecycle {
 				// A recycle release patches the per-pod claim, so it needs
@@ -2840,6 +2894,7 @@ func TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			var deletes claimDeleteCounter
 			c := claimedPodFakeClient(t, &deletes)
 			a := &stageAdapter{errs: map[string]error{}}
@@ -2850,7 +2905,7 @@ func TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
 			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme", 0)
 			assigner.calls, assigner.minted = nil, nil
 			assigner.failFrom = tc.failFrom
-			b := newBinder(c, stageAdapterDialer(t, a))
+			b := newBinder(ns, c, stageAdapterDialer(t, a))
 			b.Credentials = assigner
 			_, err := b.Prepare(context.Background(), podsession.BindRequest{
 				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1",
@@ -2883,7 +2938,8 @@ func TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
 // counter on a single idle pod, for the failed-resume cases.
 func resumeFailureBinder(t *testing.T, a *stageAdapter) (*podsession.Binder, client.Client) {
 	t.Helper()
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	ns := testNamespace(t)
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	b, _ := resumeSlotFixture(t, c, stageAdapterDialer(t, a))
 	return b, c
 }

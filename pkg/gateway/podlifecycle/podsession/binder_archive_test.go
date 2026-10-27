@@ -82,6 +82,7 @@ func putArchiveBlob(t *testing.T, blobs blobstore.Store, part string, data []byt
 // per-file sources, and the adapter materializes the extracted tree —
 // without the pod ever decompressing the archive. F-7.4.1, F-13.4.1.
 func TestBindExtractsUploadArchive(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
@@ -95,8 +96,8 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 		"docs/g.md":   "guide",
 	}))
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -132,6 +133,7 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 // strip-skip warning now originates gateway-side and rides back on the
 // bind result for SSE republish. F-7.4.15.
 func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
@@ -144,8 +146,8 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 		"keep/nested/f.txt": "kept",
 	}))
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -181,6 +183,7 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 // aborts the bind and increments lenny_upload_extraction_aborted_total
 // with the typed sub-code. F-7.4.11.
 func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -197,8 +200,8 @@ func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 	ref := putArchiveBlob(t, blobs, "arch-3", raw.Bytes())
 
 	var gotType string
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 	binder.ExtractionAbort = func(errorType string) { gotType = errorType }
 	binder.UploadGate = &subsystem.Subsystem{Name: "upload_handler", Limiter: &subsystem.Limiter{MaxConcurrent: 4}}
@@ -270,6 +273,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			rt := &fakeRuntime{}
 			srv := adapter.New("adapter-test")
 			srv.WorkspaceBase = t.TempDir()
@@ -279,8 +283,8 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 			ref := putArchiveBlob(t, blobs, "arch-mal-"+tc.name, tc.data)
 
 			var gotType string
-			c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-			binder := newBinder(c, adapterDialer(t, srv))
+			c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+			binder := newBinder(ns, c, adapterDialer(t, srv))
 			binder.Blobs = blobs
 			binder.ExtractionAbort = func(errorType string) { gotType = errorType }
 			binder.UploadGate = &subsystem.Subsystem{Name: "upload_handler", Limiter: &subsystem.Limiter{MaxConcurrent: 4}}
