@@ -61,12 +61,13 @@ var (
 	// 1800 seconds because pkg/gateway/podlifecycle/podsession started a
 	// fresh envtest control plane per test and ran for 1700 to 1960 seconds
 	// under the race detector on a loaded host. That package, together with
-	// pkg/gateway/podlifecycle/podclaim and pkg/controller/warmpool, now
-	// shares one control plane per test binary (TEST-GAPS T-17.4.22), and
-	// podsession passes in under a minute. The slowest package measured
-	// since is pkg/controller/sandbox, which still starts a control plane per
-	// test (TEST-GAPS T-17.4.26) and took 464 seconds inside a scoped
-	// unit-tier run. The budget stays at 1800 seconds because a whole
+	// pkg/gateway/podlifecycle/podclaim, pkg/controller/warmpool, and
+	// pkg/controller/sandbox, now shares one control plane per test binary
+	// (TEST-GAPS T-17.4.22 and T-17.4.26); podsession passes in under a
+	// minute and sandbox in about 20 seconds. The slowest package measured
+	// since is pkg/gateway/session/recycle, which still starts a control
+	// plane per test (TEST-GAPS T-17.4.28) and took 251 seconds inside a
+	// scoped unit-tier run. The budget stays at 1800 seconds because a whole
 	// `./...` run under load has not been measured since the change.
 	// Override: LENNY_TEST_UNIT_TIMEOUT.
 	tierUnitTimeout = tierTimeout("LENNY_TEST_UNIT_TIMEOUT", 1800*time.Second)
