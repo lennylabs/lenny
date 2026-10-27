@@ -41,12 +41,13 @@ import (
 // the only edge that would recycle the pod.
 
 func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-orig", "10.244.1.10"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-orig", "10.244.1.10"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-original", Runtime: "claude-code",
@@ -60,7 +61,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 	// WPC projects `claimed`. The session reaching `running` is a
 	// session-model state on the Postgres session row, not a CRD phase.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-orig"}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim after bind: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -76,7 +77,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 
 	// Gateway side: the per-pod claim is deleted so the WPC projection
 	// reclaims the pod. The gateway wrote no Sandbox.status.phase.
-	err = c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-orig"}, &claim)
+	err = c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("F-6.1.12: per-pod claim get after Release = %v, want NotFound (gateway deletes the claim)", err)
 	}

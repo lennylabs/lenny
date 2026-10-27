@@ -21,14 +21,15 @@ import (
 // makes that persist write `<base>/slots/{id}/current/slots/{id}/current`,
 // which the adapter's §7.3 step (d) guard rejects on every resume.
 func TestBindPathsCarryReportedWorkspaceBaseVerbatim_spec_6_4(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	base := t.TempDir()
 	srv.WorkspaceBase = base
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	req := podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -67,9 +68,10 @@ func TestBindPathsCarryReportedWorkspaceBaseVerbatim_spec_6_4(t *testing.T) {
 // carries, on the same member, so the one persist site derives the slot
 // root for both paths.
 func TestBindSlotCarriesReportedWorkspaceBase_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	a := newConcurrentAdapter()
 	a.workspaceBase = "/workspace"
-	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{

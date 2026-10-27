@@ -81,13 +81,14 @@ func claimAndPrepare(t *testing.T, binder *podsession.Binder, req podsession.Bin
 // binding, so the decomposed §7.1 lifecycle cannot reconnect to the pod and
 // pool exhaustion is not surfaced at /create.
 func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	claim, err := binder.Claim(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -107,7 +108,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 	}
 	// The pod is claimed: the per-pod occupancy claim records `bound`.
 	var sc lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc); err != nil {
 		t.Fatalf("get per-pod claim after Claim: %v", err)
 	}
 	if sc.Status.Phase != string(claimstate.Bound) {
@@ -124,13 +125,14 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 // held, so the durable-binding / coordinator-handoff guarantee (§4.6) does not
 // hold and a handoff mid-window would orphan the pod.
 func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	req := podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -170,13 +172,14 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 // credential lease, drifting the §4.9 pool's per-credential active counter up
 // until select.go reports exhaustion for idle credentials.
 func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &startFailRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -212,7 +215,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 	}
 	// The pod is reclaimed by deleting its per-pod claim.
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after launch failure = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -226,12 +229,13 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 // the pod or spuriously calls ReleaseSession for a session that never held a
 // lease.
 func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	// No WorkspaceRoot: FinalizeWorkspace fails before assignCredentials.
 	srv := adapter.New("adapter-test")
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -257,7 +261,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 	}
 	// The pod is still reclaimed by deleting its per-pod claim.
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after prepare failure = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -275,16 +279,17 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 // pod and the finalize-assigned lease on the live /start path, drifting the
 // §4.9 pool active counter and starving the warm pool.
 func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	// Claim dials once and Prepare dials once; fail the third dial so Launch's
 	// reconnect fails after Prepare assigned the lease.
-	binder := newBinder(c, dialerFailingAfter(2, adapterDialer(t, srv)))
+	binder := newBinder(ns, c, dialerFailingAfter(2, adapterDialer(t, srv)))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -320,7 +325,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 	}
 	// The pod is reclaimed by deleting its per-pod claim.
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Launch reconnect failure = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -335,14 +340,15 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 // create handler reserved, leaking warm-pool capacity until the orphan GC
 // collects it.
 func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 	// Claim dials once; fail the second dial so Prepare's reconnect fails.
-	binder := newBinder(c, dialerFailingAfter(1, adapterDialer(t, srv)))
+	binder := newBinder(ns, c, dialerFailingAfter(1, adapterDialer(t, srv)))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -366,7 +372,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 	}
 	// The pod claimed at /create is reclaimed by deleting its per-pod claim.
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Prepare reconnect failure = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -381,13 +387,14 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 // claimed pod or the finalize-assigned credential lease, because the
 // claimless reclaim entry point does not return both to the pool.
 func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -405,7 +412,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 	// The pod's per-pod claim is deleted, and the pod's phase then follows
 	// the §4.6.1 occupancy projection.
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after ReclaimClaimed = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -423,12 +430,13 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 // claimed at create when the session never reached finalize, leaving the warm
 // pod stranded.
 func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 
@@ -445,7 +453,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 	}
 
 	var sc lennyv1.SandboxClaim
-	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &sc)
+	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after ReclaimClaimed = %v, want NotFound (claim deleted)", gerr)
 	}
@@ -471,11 +479,12 @@ type createdTimeoutFixture struct {
 
 func newCreatedTimeoutFixture(t *testing.T) *createdTimeoutFixture {
 	t.Helper()
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
 	mr := miniredis.RunT(t)
@@ -627,12 +636,13 @@ func TestCreatedTimeoutReleasesClaimedPod_spec_15_1(t *testing.T) {
 // diagnosis: a failure means Prepare silently re-claims a pod when the binding
 // is missing, orphaning the pod the create handler reserved.
 func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Prepare(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -652,13 +662,14 @@ func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
 // reconnect path, so Prepare could drive RPCs against an adapter that does not
 // speak the gateway's protocol.
 func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.ProtocolVersions = []string{"9.9.9"} // no version the gateway accepts
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	// The pod exists and carries an IP, so reconnect resolves and dials it;
 	// only the handshake rejects the incompatible version.
@@ -678,13 +689,14 @@ func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
 // diagnosis: a failure means Prepare does not validate that the bound pod
 // still exists before reconnecting, so a stale binding silently proceeds.
 func TestPrepareFailsWhenBoundPodIsGone_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	// No Sandbox is seeded, so resolveSandbox cannot find the bound pod.
 	c := k8sClient(t)
-	binder := newBinder(c, adapterDialer(t, srv))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Prepare(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",

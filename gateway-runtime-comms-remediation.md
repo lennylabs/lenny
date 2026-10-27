@@ -3625,6 +3625,25 @@ credential gap surfaced during the review of 0104 and is filed with them.
     a proposal specifies its delivery path, which the owner noted would be an adapter or gateway API rather
     than an MCP tool.
 
+**Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
+`pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
+other test in that binary.
+
+- [x] **Direct fix: T-17.4.22** (Medium): `podsession` started a fresh envtest control plane per test and
+  ran for about 1700 to 1960 s under `-race`, at or over the 1800-second unit-tier budget. Fixed in
+  `49d4b019c` and `e89d988f9`: the package, and `pkg/controller/warmpool` and
+  `pkg/gateway/podlifecycle/podclaim` with it, starts one control plane per binary and isolates each test in
+  its own namespace. `podsession` fell from 1776.6 s to 46.0 s, `warmpool` from 791.0 s to 64.8 s, and
+  `podclaim` from 761.0 s to 19.7 s.
+- Direct-fix queue, filed from the T-17.4.22 survey.
+  - [ ] **T-17.4.26** (Medium): `pkg/controller/sandbox` starts a control plane in each test (345.9 s alone,
+    464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package.
+  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+    parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+  - [ ] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
+  - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
+  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s).
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A

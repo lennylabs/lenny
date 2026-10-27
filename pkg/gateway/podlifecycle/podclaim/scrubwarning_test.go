@@ -19,8 +19,8 @@ import (
 )
 
 // scrubWarningPod builds an agent Pod for the StampScrubWarning tests.
-func scrubWarningPod(name string) *corev1.Pod {
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+func scrubWarningPod(ns, name string) *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 }
 
 // TestStampScrubWarningStampsAnnotation verifies StampScrubWarning patches the
@@ -28,16 +28,17 @@ func scrubWarningPod(name string) *corev1.Pod {
 // stamp instant, the §5.2 warn-policy residual-state marker.
 // spec: 5.2 (warn policy returns the pod with a scrub_warning annotation), 6.2 (annotation persists through re-warm)
 func TestStampScrubWarningStampsAnnotation_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	cl := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(scrubWarningPod("pod-1")).
+		WithObjects(scrubWarningPod(ns, "pod-1")).
 		Build()
 	stampedAt := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	if err := podclaim.StampScrubWarning(context.Background(), cl, testNS, "pod-1", stampedAt); err != nil {
+	if err := podclaim.StampScrubWarning(context.Background(), cl, ns, "pod-1", stampedAt); err != nil {
 		t.Fatalf("StampScrubWarning: %v", err)
 	}
 	var got corev1.Pod
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
+	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pod-1"}, &got); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	if v := got.Annotations[lennyv1.AnnotationScrubWarning]; v != stampedAt.Format(time.RFC3339Nano) {
@@ -50,8 +51,9 @@ func TestStampScrubWarningStampsAnnotation_spec_5_2(t *testing.T) {
 // (a concurrent retirement) needs no residual-state marker.
 // spec: 5.2 (scrub_warning marker), 3.4 (nothing to mark for a gone pod)
 func TestStampScrubWarningToleratesMissingPod_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	cl := fake.NewClientBuilder().WithScheme(newScheme(t)).Build()
-	if err := podclaim.StampScrubWarning(context.Background(), cl, testNS, "ghost", time.Unix(0, 0)); err != nil {
+	if err := podclaim.StampScrubWarning(context.Background(), cl, ns, "ghost", time.Unix(0, 0)); err != nil {
 		t.Fatalf("StampScrubWarning on a missing pod: %v, want nil (NotFound tolerated)", err)
 	}
 }
@@ -61,16 +63,17 @@ func TestStampScrubWarningToleratesMissingPod_spec_3_4(t *testing.T) {
 // warn-policy pod never re-enters the pool with its marker silently dropped.
 // spec: 5.2 (warn-policy marker fails closed on a patch fault)
 func TestStampScrubWarningPropagatesPatchError_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	base := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(scrubWarningPod("pod-1")).
+		WithObjects(scrubWarningPod(ns, "pod-1")).
 		Build()
 	cl := interceptor.NewClient(base, interceptor.Funcs{
 		Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
 			return errors.New("apiserver unreachable")
 		},
 	})
-	if err := podclaim.StampScrubWarning(context.Background(), cl, testNS, "pod-1", time.Unix(0, 0)); err == nil {
+	if err := podclaim.StampScrubWarning(context.Background(), cl, ns, "pod-1", time.Unix(0, 0)); err == nil {
 		t.Error("StampScrubWarning patch error = nil, want non-nil")
 	}
 }

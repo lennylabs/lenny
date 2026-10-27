@@ -48,7 +48,8 @@ type postClaimEnv struct {
 // run; an exclusive path never touches it.
 func newPostClaimEnv(t *testing.T, dial func(string) (*adapterclient.Client, error)) *postClaimEnv {
 	t.Helper()
-	base := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	ns := testNamespace(t)
+	base := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
 	deletes := &atomic.Int32{}
 	kube := interceptor.NewClient(base, interceptor.Funcs{
 		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {

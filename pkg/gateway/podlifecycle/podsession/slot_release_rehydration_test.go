@@ -33,11 +33,12 @@ func (emptySlotSource) ListPodsWithActiveSlots(context.Context) ([]string, error
 // through ReleaseSlotReservation and one through Binder.ReleaseSlot each
 // record the event once with the pod and its warm-pool label.
 func TestSlotReleaseRecordsRehydrationOnce_spec_5_2(t *testing.T) {
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"), idleSandbox("sbx-2", "10.244.1.8"))
+	ns := testNamespace(t)
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), idleSandbox(ns, "sbx-2", "10.244.1.8"))
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
-	b := newBinder(c, nil)
+	b := newBinder(ns, c, nil)
 	b.SlotCounter = slotcounter.New(rc, slotcounter.WithSlotSource(emptySlotSource{}))
 	var mu sync.Mutex
 	var events []string

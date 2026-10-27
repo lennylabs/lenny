@@ -53,6 +53,7 @@ import (
 // spec: 4.6.1 (Host-node schedulability labeling; Node-informer re-reconcile
 // on cordon/uncordon), 6.2 (host-node schedulability precondition consumer)
 func TestPodReconcileHostSchedulableFollowsCordonUncordon_spec_4_6(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	env := envtest.Start(t)
 
@@ -62,9 +63,9 @@ func TestPodReconcileHostSchedulableFollowsCordonUncordon_spec_4_6(t *testing.T)
 	}
 	ctx := context.Background()
 	if err := setup.Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: ns},
 	}); err != nil {
-		t.Fatalf("create namespace %s: %v", testNS, err)
+		t.Fatalf("create namespace %s: %v", ns, err)
 	}
 
 	const nodeName = "worker-a"
@@ -74,7 +75,7 @@ func TestPodReconcileHostSchedulableFollowsCordonUncordon_spec_4_6(t *testing.T)
 	t.Cleanup(func() {
 		_ = setup.Delete(context.Background(), clusterNode(nodeName, false))
 	})
-	pod := managedPod("pod-cordon", nodeName, string(state.Idle), nil)
+	pod := managedPod(ns, "pod-cordon", nodeName, string(state.Idle), nil)
 	if err := setup.Create(ctx, pod); err != nil {
 		t.Fatalf("create pod: %v", err)
 	}
@@ -151,11 +152,12 @@ func setNodeUnschedulable(t *testing.T, c client.Client, name string, unschedula
 // nondeterministic latency in envtest.
 func waitForHostSchedulable(t *testing.T, c client.Client, podName, want, reason string) {
 	t.Helper()
+	ns := testNamespace(t)
 	deadline := time.Now().Add(20 * time.Second)
 	var last string
 	for time.Now().Before(deadline) {
 		var p corev1.Pod
-		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podName}, &p); err != nil {
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podName}, &p); err != nil {
 			t.Fatalf("get pod %s: %v", podName, err)
 		}
 		last = p.Labels[warmpool.LabelHostSchedulable]

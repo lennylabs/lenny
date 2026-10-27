@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -20,10 +19,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-const (
-	testNS   = "lenny-agents"
-	testPool = "claude-worker-small"
-)
+const testPool = "claude-worker-small"
 
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -85,27 +81,38 @@ func applyStatus(ctx context.Context, c client.Client, obj client.Object) error 
 	return nil
 }
 
-// newClient boots an envtest API server, pre-creates the
-// `lenny-agents` namespace, and seeds the supplied objects (Spec
-// then Status) so the reconciler observes them on first Reconcile.
-// envtest backs the controller-runtime client with a real
-// kube-apiserver so the §4.6.3 SSA Apply path the controllers use
-// works; the fake client does not yet implement SSA
+// newClient creates the test's namespace on an envtest API server and
+// seeds the supplied objects (Spec then Status) so the reconciler
+// observes them on first Reconcile. envtest backs the controller-runtime
+// client with a real kube-apiserver so the §4.6.3 SSA Apply path the
+// controllers use works; the fake client does not yet implement SSA
 // (kubernetes/kubernetes#115598).
+//
+// The API server is the package's shared control plane (sharedEnv),
+// isolated per test by namespace, unless objs holds a cluster-scoped
+// object. A Node, a RuntimeClass, or a Runtime is visible to every test on
+// a shared control plane, and the PodReconciler lists pods by node name
+// across namespaces, so a test seeding one gets a private control plane.
 func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.WithWatch {
 	t.Helper()
-	env := envtest.Start(t)
+	var env *envtest.Environment
+	if seedsClusterScoped(objs) {
+		env = envtest.Start(t)
+	} else {
+		env = sharedEnv.Start(t)
+	}
 	c, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: s})
 	if err != nil {
 		t.Fatalf("client.NewWithWatch: %v", err)
 	}
 	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: testNS},
-	}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace %s: %v", testNS, err)
-	}
+	ns := testNamespaces.Create(t, c)
 	for _, o := range objs {
+		// A fixture built for another test's namespace would land in a
+		// namespace nothing created, or among another test's objects.
+		if got := o.GetNamespace(); got != "" && got != ns {
+			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
+		}
 		// Capture and clear status before Create — the API server
 		// rejects status on Create, so we set it via a follow-up
 		// Status().Update.
@@ -157,9 +164,20 @@ func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Wi
 	return c
 }
 
-func template() *lennyv1.SandboxTemplate {
+// seedsClusterScoped reports whether objs holds an object with no
+// namespace. Every namespaced fixture in this package sets one.
+func seedsClusterScoped(objs []client.Object) bool {
+	for _, o := range objs {
+		if o.GetNamespace() == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func template(ns string) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: ns},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
@@ -168,9 +186,9 @@ func template() *lennyv1.SandboxTemplate {
 	}
 }
 
-func pool(minWarm, maxWarm int32) *lennyv1.SandboxWarmPool {
+func pool(ns string, minWarm, maxWarm int32) *lennyv1.SandboxWarmPool {
 	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS, Generation: 1},
+		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: ns, Generation: 1},
 		Spec: lennyv1.SandboxWarmPoolSpec{
 			TemplateRef: testPool,
 			MinWarm:     minWarm,
@@ -179,11 +197,11 @@ func pool(minWarm, maxWarm int32) *lennyv1.SandboxWarmPool {
 	}
 }
 
-func idleSandbox(name string) *lennyv1.Sandbox {
+func idleSandbox(ns, name string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
 		Status: lennyv1.SandboxStatus{Phase: "idle"},
@@ -192,9 +210,10 @@ func idleSandbox(name string) *lennyv1.Sandbox {
 
 func reconcile(t *testing.T, c client.Client, s *runtime.Scheme) {
 	t.Helper()
+	ns := testNamespace(t)
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testPool},
+		NamespacedName: client.ObjectKey{Namespace: ns, Name: testPool},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -209,14 +228,15 @@ func reconcilerWithEvents(c client.Client, s *runtime.Scheme, em warmpool.EventE
 // reconcileWith advances a pre-built reconciler one pass.
 func reconcileWith(t *testing.T, r *warmpool.Reconciler) {
 	t.Helper()
-	if _, err := r.Reconcile(context.Background(), reconcileRequest()); err != nil {
+	ns := testNamespace(t)
+	if _, err := r.Reconcile(context.Background(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 }
 
 // reconcileRequest is the canonical reconcile.Request for the test pool.
-func reconcileRequest() ctrl.Request {
-	return ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testPool}}
+func reconcileRequest(ns string) ctrl.Request {
+	return ctrl.Request{NamespacedName: client.ObjectKey{Namespace: ns, Name: testPool}}
 }
 
 // testContext returns the background context the warmpool tests pass to
@@ -225,9 +245,10 @@ func testContext() context.Context { return context.Background() }
 
 func poolSandboxes(t *testing.T, c client.Client) []lennyv1.Sandbox {
 	t.Helper()
+	ns := testNamespace(t)
 	var l lennyv1.SandboxList
 	if err := c.List(context.Background(), &l,
-		client.InNamespace(testNS),
+		client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: testPool}); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
@@ -236,9 +257,10 @@ func poolSandboxes(t *testing.T, c client.Client) []lennyv1.Sandbox {
 
 func getPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
 	t.Helper()
+	ns := testNamespace(t)
 	var p lennyv1.SandboxWarmPool
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: testPool}, &p); err != nil {
+		client.ObjectKey{Namespace: ns, Name: testPool}, &p); err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
 	return p
@@ -246,9 +268,10 @@ func getPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
 
 func getTemplate(t *testing.T, c client.Client) lennyv1.SandboxTemplate {
 	t.Helper()
+	ns := testNamespace(t)
 	var tm lennyv1.SandboxTemplate
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: testPool}, &tm); err != nil {
+		client.ObjectKey{Namespace: ns, Name: testPool}, &tm); err != nil {
 		t.Fatalf("get template: %v", err)
 	}
 	return tm
@@ -266,8 +289,9 @@ func warmingUpCondition(t *testing.T, tm lennyv1.SandboxTemplate) metav1.Conditi
 }
 
 func TestReconcileCreatesUpToMinWarm(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 
 	reconcile(t, c, s)
 
@@ -308,9 +332,10 @@ func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 }
 
 func TestReconcileAtTargetCreatesNothing(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10),
-		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10),
+		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
 
 	reconcile(t, c, s)
 
@@ -324,8 +349,9 @@ func TestReconcileAtTargetCreatesNothing(t *testing.T) {
 }
 
 func TestReconcileBelowTargetCreatesGap(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10), idleSandbox("sb-a"))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10), idleSandbox(ns, "sb-a"))
 
 	reconcile(t, c, s)
 
@@ -339,10 +365,11 @@ func TestReconcileBelowTargetCreatesGap(t *testing.T) {
 }
 
 func TestReconcileOverTargetDrainsExcess(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(2, 10),
-		idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"),
-		idleSandbox("sb-d"), idleSandbox("sb-e"))
+	c := newClient(t, s, template(ns), pool(ns, 2, 10),
+		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"),
+		idleSandbox(ns, "sb-d"), idleSandbox(ns, "sb-e"))
 
 	reconcile(t, c, s)
 
@@ -376,13 +403,14 @@ func TestReconcileOverTargetDrainsExcess(t *testing.T) {
 // spec requires) or does not emit the reserved-pods gauge the §16.1
 // catalog declares, leaving operators blind to held capacity.
 func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	// Two idle (claimable) pods plus two reserved-hold pods. The reserved
 	// pods are occupied: they must not count toward warm/ready inventory,
 	// so the pool is below its minWarm of 3 and creates one replacement.
-	c := newClient(t, s, template(), pool(3, 10),
-		idleSandbox("sb-a"), idleSandbox("sb-b"),
-		reservedSandbox("sb-r1"), reservedSandbox("sb-r2"))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10),
+		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"),
+		reservedSandbox(ns, "sb-r1"), reservedSandbox(ns, "sb-r2"))
 
 	warmpool.ForgetReservedPodsForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetReservedPodsForTest(testPool) })
@@ -412,8 +440,9 @@ func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
 }
 
 func TestReconcileMaxWarmCapsCreation(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(10, 4))
+	c := newClient(t, s, template(ns), pool(ns, 10, 4))
 
 	reconcile(t, c, s)
 
@@ -423,12 +452,13 @@ func TestReconcileMaxWarmCapsCreation(t *testing.T) {
 }
 
 func TestReconcileMissingTemplateErrors(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, pool(3, 10)) // no SandboxTemplate
+	c := newClient(t, s, pool(ns, 3, 10)) // no SandboxTemplate
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testPool},
+		NamespacedName: client.ObjectKey{Namespace: ns, Name: testPool},
 	})
 	if err == nil {
 		t.Fatal("Reconcile with a missing SandboxTemplate should error")
@@ -439,12 +469,13 @@ func TestReconcileMissingTemplateErrors(t *testing.T) {
 }
 
 func TestReconcilePoolNotFound(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(t, s)
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testPool},
+		NamespacedName: client.ObjectKey{Namespace: ns, Name: testPool},
 	})
 	if err != nil {
 		t.Fatalf("Reconcile of a deleted pool should not error: %v", err)
@@ -456,8 +487,9 @@ func TestReconcilePoolNotFound(t *testing.T) {
 
 func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	t.Run("provisioning while fresh pods warm", func(t *testing.T) {
+		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(), pool(3, 10))
+		c := newClient(t, s, template(ns), pool(ns, 3, 10))
 
 		reconcile(t, c, s)
 
@@ -468,9 +500,10 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	})
 
 	t.Run("available once idle pods exist", func(t *testing.T) {
+		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(), pool(3, 10),
-			idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
+		c := newClient(t, s, template(ns), pool(ns, 3, 10),
+			idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
 
 		reconcile(t, c, s)
 
@@ -481,10 +514,11 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	})
 
 	t.Run("drained when a hot pool has no pods at all", func(t *testing.T) {
+		ns := testNamespace(t)
 		s := newScheme(t)
 		// minWarm 3 with maxWarm 0: the ceiling caps creation at zero,
 		// leaving the hot pool with no idle and no warming pods.
-		c := newClient(t, s, template(), pool(3, 0))
+		c := newClient(t, s, template(ns), pool(ns, 3, 0))
 
 		reconcile(t, c, s)
 
@@ -499,8 +533,9 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 }
 
 func TestReconcileIsIdempotent(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(3, 10))
+	c := newClient(t, s, template(ns), pool(ns, 3, 10))
 
 	reconcile(t, c, s)
 	first := len(poolSandboxes(t, c))
@@ -518,13 +553,14 @@ func TestReconcileIsIdempotent(t *testing.T) {
 // Sandbox it creates so the Sandbox reconciler can read it on
 // createPod. Other template annotations stay on the template.
 func TestReconcilePropagatesEgressCaptureAnnotation(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	tmpl := template()
+	tmpl := template(ns)
 	tmpl.Annotations = map[string]string{
 		"lenny.dev/test-egress-capture-upstream": "api.openai.com:443",
 		"lenny.dev/unrelated":                    "ignore-me",
 	}
-	c := newClient(t, s, tmpl, pool(1, 1))
+	c := newClient(t, s, tmpl, pool(ns, 1, 1))
 
 	reconcile(t, c, s)
 

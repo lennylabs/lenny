@@ -63,10 +63,11 @@ func TestResumeReservationFailureLeavesClaimForGC_spec_5_2(t *testing.T) {
 		{name: "counter unreachable", counterDown: true, wantErr: "reserve slot via counter", claimRemains: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			srv := adapter.New("adapter-test")
 			srv.WorkspaceBase = t.TempDir()
 			srv.Runtime = &fakeRuntime{}
-			base := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+			base := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
 			claimed := &atomic.Bool{}
 			deletes := &atomic.Int32{}
 			kube := interceptor.NewClient(base, reservationFaults(tc, claimed, deletes))

@@ -96,14 +96,15 @@ func TestRequiresDemotionDecision_spec_6_1(t *testing.T) {
 // path stays SDK-warm: the binder points the pre-connected SDK at the
 // workspace (ConfigureWorkspace) and does not StartSession from cold.
 func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
 	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -134,13 +135,14 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 // path is demoted (DemoteSDK) before materialization and served via the
 // pod-warm StartSession path; the demotion metric increments.
 func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	var demotedPools []string
 	var teardownSeen bool
 	binder.SDKDemotion = func(pool string, teardownSeconds float64) {
@@ -182,14 +184,15 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 // (returns UNIMPLEMENTED) fails the session with SDK_DEMOTION_NOT_SUPPORTED
 // rather than serving it with stale SDK state.
 func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	// A plain fakeRuntime is pod-warm: its DemoteSDK returns Unimplemented.
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -209,13 +212,14 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 // spec: §6.1 — an empty sdkWarmBlockingPaths list keeps the pod
 // SDK-warm for every request (no demotion path checking).
 func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",

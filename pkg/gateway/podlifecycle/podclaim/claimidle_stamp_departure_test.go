@@ -25,8 +25,9 @@ import (
 // delete here would drain a pod a same-tenant sibling may already have
 // joined through the slot path.
 func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
-	base := newEnvtestClient(t, sandboxIn(testPool, "sbx-1", "idle"))
-	mustCreate(t, base, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	base := newEnvtestClient(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	mustCreate(t, base, agentPod(ns, "sbx-1", ""))
 	stampErr := errors.New("injected tenant stamp failure")
 	deletes := &atomic.Int32{}
 	kube := interceptor.NewClient(base, interceptor.Funcs{
@@ -43,7 +44,7 @@ func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
 			return c.Delete(ctx, obj, opts...)
 		},
 	})
-	claimer := &podclaim.Claimer{Client: kube, Namespace: testNS}
+	claimer := &podclaim.Claimer{Client: kube, Namespace: ns}
 
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -55,7 +56,7 @@ func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
 		t.Errorf("claim deletes = %d, want none", n)
 	}
 	var stored lennyv1.SandboxClaim
-	if err := base.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podclaim.ClaimName("sbx-1")}, &stored); err != nil {
+	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName("sbx-1")}, &stored); err != nil {
 		t.Fatalf("the claim is gone: %v", err)
 	}
 	if stored.Status.Phase != "bound" {

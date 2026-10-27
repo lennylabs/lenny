@@ -51,8 +51,9 @@ func slotMembers(t *testing.T, mr *miniredis.Miniredis, sandboxName string) []st
 // transient apiserver fault; nil lets the patch through.
 func reserveOnPodFixture(t *testing.T, patchFail func(body string) error) (*podclaim.SlotClaimer, client.WithWatch, *miniredis.Miniredis) {
 	t.Helper()
-	base := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
-	mustCreate(t, base, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	mustCreate(t, base, agentPod(ns, "sbx-1", ""))
 
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -74,22 +75,23 @@ func reserveOnPodFixture(t *testing.T, patchFail func(body string) error) (*podc
 			},
 		})
 	}
-	return &podclaim.SlotClaimer{Client: c, Namespace: testNS, Counter: counter}, base, mr
+	return &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}, base, mr
 }
 
 // seedPerPodClaim creates the live per-pod SandboxClaim the resume's connect
 // leaves behind, in binding state `bound`, without reserving any slot.
 func seedPerPodClaim(t *testing.T, c client.Client, sandboxName, tenantID string) *lennyv1.SandboxClaim {
 	t.Helper()
+	ns := testNamespace(t)
 	ctx := context.Background()
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + sandboxName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + sandboxName, Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
 	}
 	if err := c.Create(ctx, claim); err != nil {
 		t.Fatalf("seed per-pod claim for %s: %v", sandboxName, err)
 	}
-	if err := podclaim.WriteBoundStatus(ctx, c, testNS, claim.Name); err != nil {
+	if err := podclaim.WriteBoundStatus(ctx, c, ns, claim.Name); err != nil {
 		t.Fatalf("seed bound status for %s: %v", sandboxName, err)
 	}
 	return claim
@@ -222,11 +224,12 @@ func TestReserveSlotOnPodFailsClosedWhenThePerPodClaimIsGone_spec_4_6_1(t *testi
 
 	for _, phase := range []string{"released", "failed"} {
 		t.Run("terminal_"+phase, func(t *testing.T) {
+			ns := testNamespace(t)
 			claimer, c, mr := reserveOnPodFixture(t, nil)
 			claim := seedPerPodClaim(t, c, "sbx-1", "acme")
 			var stored lennyv1.SandboxClaim
 			if err := c.Get(context.Background(),
-				client.ObjectKey{Namespace: testNS, Name: claim.Name}, &stored); err != nil {
+				client.ObjectKey{Namespace: ns, Name: claim.Name}, &stored); err != nil {
 				t.Fatalf("get claim: %v", err)
 			}
 			stored.Status.Phase = phase
@@ -257,10 +260,11 @@ func TestReserveSlotOnPodFailsClosedWhenThePerPodClaimIsGone_spec_4_6_1(t *testi
 // counter-touching entry point fails closed.
 func TestReserveSlotOnPodFailsClosedWithNoSlotCounter_spec_12_4(t *testing.T) {
 	t.Run("nil counter", func(t *testing.T) {
-		c := newEnvtestClient(t, concurrentSandbox("sbx-1", "claimed", "acme"))
-		mustCreate(t, c, agentPod("sbx-1", ""))
+		ns := testNamespace(t)
+		c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+		mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 		seedPerPodClaim(t, c, "sbx-1", "acme")
-		claimer := &podclaim.SlotClaimer{Client: c, Namespace: testNS}
+		claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns}
 
 		if _, err := claimer.ReserveSlotOnPod(context.Background(), "sbx-1",
 			slotReq("sess-1", "acme", 4)); err == nil {
