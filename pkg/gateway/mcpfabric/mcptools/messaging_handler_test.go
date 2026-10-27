@@ -156,3 +156,34 @@ func TestSendMessageCrossTenantDenied_spec_7_2_268(t *testing.T) {
 		t.Errorf("foreign-tenant target must be CROSS_TENANT_MESSAGE_DENIED; code = %v", env["code"])
 	}
 }
+
+// TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3 pins that
+// the coordinator of a forwarded lenny/send_message does not charge the
+// sender-keyed per-minute and lifetime outbound limits, because the serving
+// replica already applied them before the forward. With both limits at 1,
+// two forwarded sends from one sender are delivered, the next unmarked send
+// from that sender is delivered, and the send after it is RATE_LIMITED. A
+// coordinator that also counted the forwarded sends would refuse the second
+// forwarded send and every unmarked one.
+// spec: 29.3 (Interactive message send) Forwarding rule 4, 8.3 (Delegation Policy and Lease)
+func TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3(t *testing.T) {
+	srv, store := newMCPMessaging(t, "", "", mcptools.MessagingRateLimit{MaxPerMinute: 1, MaxPerSession: 1})
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	mkSession(t, store, "sess_child", session.StateRunning, "sess_parent")
+	const args = `{"to":"sess_child","message":"hi","fromSessionId":"sess_parent"}`
+
+	forwarded := forwardedHandler(srv.Handler())
+	for i := range 2 {
+		if got := receiptFromResult(t, call(t, forwarded, "lenny/send_message", args)); got.Status != session.DeliveryStatusDelivered {
+			t.Fatalf("forwarded send %d: status = %q, want delivered (the coordinator must not charge the sender limits)", i+1, got.Status)
+		}
+	}
+
+	local := srv.Handler()
+	if got := receiptFromResult(t, call(t, local, "lenny/send_message", args)); got.Status != session.DeliveryStatusDelivered {
+		t.Fatalf("first unmarked send: status = %q, want delivered (forwarded sends must not have consumed the limits)", got.Status)
+	}
+	if got := receiptFromResult(t, call(t, local, "lenny/send_message", args)); got.Status != session.DeliveryStatusRateLimited {
+		t.Errorf("second unmarked send: status = %q, want rate_limited (maxPerMinute and maxPerSession are 1)", got.Status)
+	}
+}

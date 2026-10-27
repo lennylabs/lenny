@@ -2400,7 +2400,8 @@
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderHeldPodResumeIsWrittenByTheCoordinator_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderInteractionResolutionWakesTheCoordinator_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3",
+        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2665,7 +2666,8 @@
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
-        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3"
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
+        "pkg/gateway/mcpfabric/mcptools/messaging_handler_test.go::TestForwardedSendSkipsTheSenderLimitsOnTheCoordinator_spec_29_3"
       ],
       "packages": [
         "pkg/delegation/lease",
