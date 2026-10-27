@@ -49,10 +49,12 @@ const (
 // non-empty owner, and a delegated child's parent session row FOR SHARE on
 // tx, in that order. A missing tenant or user row leaves the matching Found
 // field false; any other read error is returned, so the caller's insert
-// fails closed. An empty parentSessionID reads no parent row, which is how
-// an ID reservation runs only the tenant and user rules.
+// fails closed. checkParent is true on the insert transaction and false on an
+// ID reservation, which runs only the tenant and user rules. On the insert
+// transaction a delegated child with an empty parentSessionID has no parent
+// row, so it counts as parent-terminal without a query.
 // spec: §12.8 (Lifecycle fence and drain).
-func readCreationMarkers(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID string, delegatedChild bool, parentSessionID string) (sessionstore.CreationMarkers, error) {
+func readCreationMarkers(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID string, delegatedChild, checkParent bool, parentSessionID string) (sessionstore.CreationMarkers, error) {
 	m := sessionstore.CreationMarkers{IsDelegatedChild: delegatedChild, ParentSessionID: parentSessionID}
 	err := tx.QueryRow(ctx, readTenantMarkersSQL, tenantID).Scan(&m.TenantSuspended, &m.TenantState)
 	switch {
@@ -73,7 +75,7 @@ func readCreationMarkers(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID s
 			m.UserFound = true
 		}
 	}
-	if delegatedChild && parentSessionID != "" {
+	if delegatedChild && checkParent {
 		terminal, err := readParentTerminal(ctx, tx, tenantID, parentSessionID)
 		if err != nil {
 			return m, err
@@ -84,8 +86,9 @@ func readCreationMarkers(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID s
 }
 
 // readParentTerminal reads a delegated child's parent session row FOR SHARE
-// on tx and reports whether the parent is terminal or has no row. A missing
-// row counts as terminal, so the refusal comes before the
+// on tx and reports whether the parent is terminal or has no row. An empty
+// parentSessionID names no row and counts as terminal without a query. A
+// missing row counts as terminal, so the refusal comes before the
 // parent_session_id foreign key's error. Any other read error is returned
 // wrapped, so the insert fails closed.
 //
@@ -98,6 +101,9 @@ func readCreationMarkers(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID s
 // primary, and a child whose read runs after the terminal commit is refused.
 // spec: §12.8 (Lifecycle fence and drain), §8.2 (Parent freshness).
 func readParentTerminal(ctx context.Context, tx pgx.Tx, tenantID, parentSessionID string) (bool, error) {
+	if parentSessionID == "" {
+		return true, nil
+	}
 	var state string
 	err := tx.QueryRow(ctx, readParentStateSQL, tenantID, parentSessionID).Scan(&state)
 	switch {
@@ -112,12 +118,12 @@ func readParentTerminal(ctx context.Context, tx pgx.Tx, tenantID, parentSessionI
 // fenceInsert runs the creation fence on tx: it reads the marker rows and
 // returns *sessionstore.CreationRefusal when they refuse a row ownerUserID
 // owns. The fence has no exemption: a row created terminal, such as the
-// derive-failure audit row, is fenced like any other. A non-empty
-// parentSessionID on a delegated child adds the parent rule; a reservation
-// passes an empty one.
+// derive-failure audit row, is fenced like any other. checkParent adds the
+// parent rule for a delegated child on the insert transaction; a
+// reservation passes false.
 // spec: §12.8 (Lifecycle fence and drain).
-func fenceInsert(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID string, delegatedChild bool, parentSessionID string) error {
-	m, err := readCreationMarkers(ctx, tx, tenantID, ownerUserID, delegatedChild, parentSessionID)
+func fenceInsert(ctx context.Context, tx pgx.Tx, tenantID, ownerUserID string, delegatedChild, checkParent bool, parentSessionID string) error {
+	m, err := readCreationMarkers(ctx, tx, tenantID, ownerUserID, delegatedChild, checkParent, parentSessionID)
 	if err != nil {
 		return err
 	}
@@ -185,7 +191,7 @@ func (s *Store) Reserve(ctx context.Context, tenantID, ownerUserID, sessionID st
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		// spec: §12.8 (Lifecycle fence and drain) — a reservation runs only
 		// the tenant and user rules, so it reads no parent row.
-		if err := fenceInsert(ctx, tx, tenantID, ownerUserID, delegatedChild, ""); err != nil {
+		if err := fenceInsert(ctx, tx, tenantID, ownerUserID, delegatedChild, false, ""); err != nil {
 			return err
 		}
 		if ownerUserID == "" {

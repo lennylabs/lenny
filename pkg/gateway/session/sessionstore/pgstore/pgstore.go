@@ -356,7 +356,7 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		// spec: §12.8 (Lifecycle fence and drain) — the fence reads the
 		// marker rows, and a delegated child's parent row, FOR SHARE before
 		// the INSERT, in this transaction.
-		if err := fenceInsert(ctx, tx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0, sess.ParentSessionID); err != nil {
+		if err := fenceInsert(ctx, tx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0, true, sess.ParentSessionID); err != nil {
 			return err
 		}
 		if before != nil {

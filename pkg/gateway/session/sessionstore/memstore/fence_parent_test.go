@@ -100,6 +100,46 @@ func TestMemstoreCreateFenceAbsentParentRefuses_spec_12_8(t *testing.T) {
 	requireNoRow(t, unfenced, crossTenant.ID)
 }
 
+// TestMemstoreCreateFenceDelegatedChildWithoutParentIDRefuses_spec_12_8
+// asserts that a row with delegation depth one and an empty parent session
+// ID is refused with DELEGATION_PARENT_REVOKED by Create and CreateReserved,
+// on a fenced store and on one without a marker reader, while its
+// reservation is admitted. Such a row names no parent row, so the parent
+// rule refuses it.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 8.2 (Parent freshness)
+// diagnosis: a failure means the insert path reads the parent only when the
+// parent ID is non-empty, so a delegated child with no parent ID escapes the
+// parent rule.
+func TestMemstoreCreateFenceDelegatedChildWithoutParentIDRefuses_spec_12_8(t *testing.T) {
+	ctx := context.Background()
+	orphan := func() sessionstore.Session {
+		c := delegatedChildOf("")
+		c.RootSessionID = ""
+		return c
+	}
+
+	f := newFenceFixture(t)
+	created := orphan()
+	ref := refusalOf(t, f.sessions.Create(ctx, created), sessionstore.RefusalDelegationParentRevoked)
+	if !reflect.DeepEqual(ref.Details, map[string]any{"parentSessionId": ""}) {
+		t.Fatalf("details = %v, want an empty parentSessionId", ref.Details)
+	}
+	requireNoRow(t, f.sessions, created.ID)
+
+	reserved := orphan()
+	if err := f.sessions.Reserve(ctx, fenceTenant, fenceOwner, reserved.ID, true); err != nil {
+		t.Fatalf("Reserve for a delegated child: %v, want admit (no parent rule)", err)
+	}
+	requireRefusal(t, f.sessions.CreateReserved(ctx, reserved), sessionstore.RefusalDelegationParentRevoked)
+	requireNoRow(t, f.sessions, reserved.ID)
+
+	unfenced := memstore.New()
+	bare := orphan()
+	requireRefusal(t, unfenced.Create(ctx, bare), sessionstore.RefusalDelegationParentRevoked)
+	requireNoRow(t, unfenced, bare.ID)
+}
+
 // TestMemstoreCreateFenceParentRuleScope_spec_12_8 asserts the rows the
 // parent rule leaves alone and its place in the refusal order: a depth-zero
 // row naming a terminal source (derive, replay) is admitted, a reservation

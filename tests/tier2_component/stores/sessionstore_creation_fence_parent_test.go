@@ -38,8 +38,8 @@ func (e *fenceEnv) childOf(parentID string) sessionstore.Session {
 
 // TestSessionStoreCreationFenceParentRow_spec_12_8 pins the parent rule of
 // the creation fence inside pgstore.Create against real Postgres: a terminal
-// parent and an absent parent each refuse a delegated child with
-// DELEGATION_PARENT_REVOKED and write no row, a parent in a live state other
+// parent, an absent parent, and an empty parent ID each refuse a delegated
+// child with DELEGATION_PARENT_REVOKED and write no row, a parent in a live state other
 // than running admits its child, a reservation reads no parent row, and a
 // parent-row read error fails the insert closed.
 //
@@ -47,7 +47,8 @@ func (e *fenceEnv) childOf(parentID string) sessionstore.Session {
 // diagnosis: a failure means pgstore.Create does not read the delegated
 // child's parent row inside its insert transaction, compares the parent
 // against running instead of the terminal set, lets the parent_session_id
-// foreign key answer an absent parent before the fence, applies the parent
+// foreign key answer an absent parent before the fence, skips the parent
+// read for a delegated child with an empty parent ID, applies the parent
 // rule to a reservation, or admits the insert when the parent read fails.
 func TestSessionStoreCreationFenceParentRow_spec_12_8(t *testing.T) {
 	ctx := context.Background()
@@ -74,6 +75,29 @@ func TestSessionStoreCreationFenceParentRow_spec_12_8(t *testing.T) {
 		requirePGRefusal(t, e.sessions.Create(ctx, child), sessionstore.RefusalDelegationParentRevoked)
 		if n := e.rowCount(t, child.ID); n != 0 {
 			t.Fatalf("refused child left %d rows", n)
+		}
+	})
+
+	t.Run("delegated child with no parent ID refuses", func(t *testing.T) {
+		e.addTenant(t)
+		child := e.childOf("")
+		child.RootSessionID = ""
+		ref := pgRefusalOf(t, e.sessions.Create(ctx, child), sessionstore.RefusalDelegationParentRevoked)
+		if ref.Details["parentSessionId"] != "" {
+			t.Fatalf("details = %v, want an empty parentSessionId", ref.Details)
+		}
+		if n := e.rowCount(t, child.ID); n != 0 {
+			t.Fatalf("refused child left %d rows", n)
+		}
+
+		reserved := e.childOf("")
+		reserved.RootSessionID = ""
+		if err := e.sessions.Reserve(ctx, e.tenant, "alice", reserved.ID, true); err != nil {
+			t.Fatalf("Reserve for a delegated child: %v, want admit (no parent rule)", err)
+		}
+		requirePGRefusal(t, e.sessions.CreateReserved(ctx, reserved), sessionstore.RefusalDelegationParentRevoked)
+		if n := e.rowCount(t, reserved.ID); n != 0 {
+			t.Fatalf("refused reserved child left %d rows", n)
 		}
 	})
 

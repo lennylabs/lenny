@@ -146,7 +146,7 @@ func (s *Store) CreateIfGeneration(ctx context.Context, sess sessionstore.Sessio
 // CreateWithTranscript. Callers hold s.mu. before runs after every check
 // and before the row is stored, so its error stores nothing.
 func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, before func(sessionstore.Session) error) error {
-	if err := s.fenceLocked(ctx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0, sess.ParentSessionID); err != nil {
+	if err := s.fenceLocked(ctx, sess.TenantID, sess.UserID, sess.DelegationDepth > 0, true, sess.ParentSessionID); err != nil {
 		return err
 	}
 	if _, ok := s.sessions[sess.ID]; ok {
