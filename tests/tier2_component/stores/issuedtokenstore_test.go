@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -868,9 +869,15 @@ func TestImpersonationIssuedTokensContract_spec_13_3(t *testing.T) {
 		owner := freshTenant(t, e.ctx, e.pg)
 		intruder := freshTenant(t, e.ctx, e.pg)
 		tok := e.mustRecord(t, impToken(t, owner, "bob", "alice", hour))
+		// The testcontainers pool connects as a superuser, which bypasses
+		// RLS, so each count drops to the gateway's production role
+		// lenny_app inside the transaction after the tenant context is set.
 		count := func(run func(func(pgx.Tx) error) error) int {
 			var n int
 			if err := run(func(tx pgx.Tx) error {
+				if _, err := tx.Exec(e.ctx, "SET LOCAL ROLE lenny_app"); err != nil {
+					return fmt.Errorf("set role lenny_app: %w", err)
+				}
 				return tx.QueryRow(e.ctx, `SELECT count(*) FROM issued_tokens WHERE jti = $1`, tok.JTI).Scan(&n)
 			}); err != nil {
 				t.Fatalf("count under RLS: %v", err)
