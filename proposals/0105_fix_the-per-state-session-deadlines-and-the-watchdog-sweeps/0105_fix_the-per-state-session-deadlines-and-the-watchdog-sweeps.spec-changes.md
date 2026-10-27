@@ -4,7 +4,7 @@
 
 - The session row carries `state_entered_at`, the instant the session entered its current state. Every per-state deadline in §6.2 that is measured from entry to a state reads it, apart from the two suspended deadlines, which read the instant recorded when the session moved into `suspended` (SPEC-1 Edit (a)).
 - The idle clock restarts on every entry to `running` (SPEC-1 Edit (b)).
-- `POST /v1/sessions/{id}/start` moves the session `ready → starting` before the runtime launch, so the `maxStartingTimeoutSeconds` watchdog bounds the launch and the ready watchdog no longer applies. A `/start` that fails after that write moves the session to `failed`, and the client retries by creating a new session (SPEC-2 Edits (a), (b), and (f) to (i)).
+- `POST /v1/sessions/{id}/start` moves the session `ready → starting` before the runtime launch, so the `maxStartingTimeoutSeconds` watchdog bounds the launch and the ready watchdog no longer applies. A `/start` that fails after that write moves the session to `failed`, and the client retries by creating a new session (SPEC-2 Edits (a), (b), (f) to (i), and (k)).
 - §7.2 **Terminal writes from any non-terminal state.** is the one home for the terminal writes that apply from every non-terminal state, and the §6.2 `resuming` enumeration excepts them (SPEC-2 Edits (c) and (d)). The `maxSessionAge` expiry is an edge per source state, from `starting`, `resume_pending`, and `resuming` (SPEC-2 Edits (a), (d), and (e)).
 - `perChildMaxAge` counts from the creation of the child session whose row stores it (SPEC-3).
 - §10.1.1 states which replica runs the watchdog sweeps and orphan cleanup, the locked-row rule for their writes, and per-row continuation past errors (SPEC-4).
@@ -43,7 +43,7 @@ with
 The `last_agent_activity_at` timestamp is updated in Postgres on each qualifying event and on each entry to `running`.
 ```
 
-### SPEC-2 · spec/07_session-lifecycle.md § 7.2 Interactive Session Model and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API
+### SPEC-2 · spec/07_session-lifecycle.md § 7.1 Normal Flow, § 7.2 Interactive Session Model, and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API
 
 **Edit (a) · §7.2 **Session state machine:** code block.** Replace the three lines
 
@@ -272,6 +272,18 @@ with
 **Pre-attach terminal collapse.** above governs `resume_pending` directly.
 ```
 
+**Edit (k) · §7.1 **Gateway-owned terminal writes:**.** Replace
+
+```markdown
+A terminal write runs on the writer's own context, except for two writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, and an administrative force-terminate together with its audit event. The gateway makes those two on a context it owns.
+```
+
+with
+
+```markdown
+A terminal write runs on the writer's own context, except for the writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, the `starting → failed` write a failed `POST /v1/sessions/{id}/start` makes, and an administrative force-terminate together with its audit event. The gateway makes those writes on a context it owns.
+```
+
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.2 Delegation Mechanism
 
 In the `LeaseSlice` field table, replace the row
@@ -297,7 +309,7 @@ Every replica likewise runs the session watchdog's other sweeps ([§6.2](06_warm
 ## Spec files touched
 
 - spec/06_warm-pod-model.md (SPEC-1; SPEC-2 Edits (d), (g), and (i))
-- spec/07_session-lifecycle.md (SPEC-2 Edits (a), (b), (c), (e), (h), and (j))
+- spec/07_session-lifecycle.md (SPEC-2 Edits (a), (b), (c), (e), (h), (j), and (k))
 - spec/08_recursive-delegation.md (SPEC-3)
 - spec/10_gateway-internals.md (SPEC-4)
 - spec/15_external-api-surface.md (SPEC-2 Edit (f))
