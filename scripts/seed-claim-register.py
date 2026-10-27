@@ -584,25 +584,27 @@ EXPLICIT = [
     },
     {
         "claim": "Replica address in the REG-COORDLEASE holder value",
-        "status": "ABSENT",
+        "status": "WIRED",
         "spec_anchor": "#2854-inter-replica",
-        "deferral_id": "R18",
-        "surface": "`cmd/lenny-gateway/coordination_identity.go` `resolveReplicaID` supplies "
-                   "the holder value, which carries the replica identity and no address",
-        "note": "§10.1.1 Replica address: has the holder value carry the replica's "
-                "forward-listener address after its identity, and the Postgres fallback "
-                "stores the same value",
+        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `HolderValue` builds the "
+                   "holder value, which `cmd/lenny-gateway/coordination_identity.go` "
+                   "`coordinationHolder` passes to every lease and mirror consumer",
+        "note": "§10.1.1 Replica address: the holder value carries the replica identity, a "
+                "per-process token, and the forward-listener address, and a gateway with a "
+                "lease store refuses to start without a valid advertise address",
     },
     {
         "claim": "Inter-replica forward listener with gateway peer validation (NET-072)",
-        "status": "ABSENT",
+        "status": "WIRED",
         "spec_anchor": "#2854-inter-replica",
-        "deferral_id": "R18",
-        "surface": "no gateway listener serves gateway.holderForwardPort and no client dials "
-                   "a peer replica",
-        "note": "§10.3 NET-072 has both replicas present the gateway replica certificate and "
-                "the listener reject plaintext, one-way TLS, and any other cluster-CA "
-                "certificate at handshake",
+        "surface": "`pkg/gateway/sessionserver/holder_forward_listener.go` "
+                   "`HolderForwardServerTLS` validates the gateway peer, and "
+                   "`cmd/lenny-gateway/holder_forward_listener.go` `buildHolderForwardServer` "
+                   "serves the listener on gateway.holderForwardPort",
+        "note": "§10.3 NET-072: both replicas present the gateway replica certificate, the "
+                "listener rejects plaintext, one-way TLS, and any other cluster-CA "
+                "certificate at handshake, and outside dev mode a gateway with a lease store "
+                "refuses to start without the material",
     },
     # The adapter's CH-SUPERVISE client and the supervised runtime: the launch
     # and end of each runtime process through the runtime supervisor, the one

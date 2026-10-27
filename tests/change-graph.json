@@ -55,6 +55,10 @@
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go"
       ]
     },
+    "tests/testinfra/gatewaypki/": {
+      "unit": ["tests/testinfra/gatewaypki/...", "pkg/gateway/sessionserver/...", "cmd/lenny-gateway/..."],
+      "security": ["tests/tier9_security/holder_forward_material_refusal_test.go"]
+    },
     "tests/testinfra/tcpfault/": {
       "unit": ["tests/testinfra/tcpfault/..."],
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
@@ -420,9 +424,9 @@
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
       "unit": ["cmd/lenny-gateway/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."],
-      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go"],
-      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/compose_mode/..."],
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go", "tests/tier4_integration/holder_forward_startup_test.go"],
+      "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/holder_forward_material_refusal_test.go"]
     },
     "pkg/gateway/operability/health": {
       "unit": ["pkg/gateway/operability/health/..."],

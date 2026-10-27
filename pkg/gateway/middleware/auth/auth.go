@@ -618,7 +618,9 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			p.Groups = append([]string(nil), groups...)
 		}
 	}
-	ctx := WithPrincipal(r.Context(), p)
+	// spec: §29.3 Forwarding rule 2 — record the verified credential so a
+	// forward to the coordinating replica relays it.
+	ctx := WithCredential(WithPrincipal(r.Context(), p), bearerCredential(r))
 	// Echo the resolved tenant via the dev header path so handlers
 	// that read the dev header (sessionserver in particular) see the
 	// authenticated tenant without depending on the context key.
@@ -662,7 +664,7 @@ func (m *middleware) serveServiceIdentity(w http.ResponseWriter, r *http.Request
 		CallerType: serviceCallerType,
 		Roles:      append([]auth.Role(nil), id.Roles...),
 	}
-	ctx := WithPrincipal(r.Context(), p)
+	ctx := WithCredential(WithPrincipal(r.Context(), p), bearerCredential(r))
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
 	if !m.runPreAuth(w, r, p) {
@@ -697,7 +699,7 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 		p.Roles = parseRolesHeader(r.Header.Get("X-Lenny-Roles"))
 		p.Groups = parseGroupsHeader(r.Header.Get("X-Lenny-Groups"))
 	}
-	ctx := WithPrincipal(r.Context(), p)
+	ctx := WithCredential(WithPrincipal(r.Context(), p), devHeaderCredential(r))
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
 	if !m.runPreAuth(w, r, p) {

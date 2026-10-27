@@ -19,6 +19,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -246,4 +247,20 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// spec: 10.1.1 (Stateless Replicas and Per-Session Coordination) Replica address
+// diagnosis: a failure means the Compose gateway, which configures Redis and
+// therefore a coordination lease store, does not advertise a valid forward
+// address. The gateway then refuses to start under §10.1.1, so Compose Mode
+// would not come up.
+func TestComposeGatewayAdvertisesForwardAddress_spec_10_1_1(t *testing.T) {
+	gw := loadCompose(t).Services["gateway"]
+	addr := gw.Environment["LENNY_HOLDER_FORWARD_ADVERTISE_ADDR"]
+	if addr != "gateway:50054" {
+		t.Fatalf("gateway env LENNY_HOLDER_FORWARD_ADVERTISE_ADDR=%q, want the service name and port 50054 (gateway:50054)", addr)
+	}
+	if _, err := sessionserver.HolderValue("gateway", addr); err != nil {
+		t.Errorf("advertise address %q does not build a holder value: %v", addr, err)
+	}
 }

@@ -86,7 +86,7 @@ func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, session
 // spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §7.3
 // (Resume driver)
 func (s *Server) coordinatesSession(ctx context.Context, tenantID, sessionID string) bool {
-	if s.leaseStore == nil || s.podBinder == nil || s.replicaID == "" {
+	if s.coordinatesEverySession() {
 		return true
 	}
 	lease, err := s.leaseStore.Get(ctx, tenantID, sessionID)
@@ -94,4 +94,15 @@ func (s *Server) coordinatesSession(ctx context.Context, tenantID, sessionID str
 		return false
 	}
 	return lease.Holder == s.replicaID
+}
+
+// coordinatesEverySession reports the single-gateway posture in which this
+// replica coordinates every session without reading a lease: no lease store
+// or no pod binder is wired, or the replica has no identity. It is the guard
+// that opens coordinatesSession, and the forward helper runs every request
+// locally under it.
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination)
+func (s *Server) coordinatesEverySession() bool {
+	return s.leaseStore == nil || s.podBinder == nil || s.replicaID == ""
 }

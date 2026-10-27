@@ -345,8 +345,24 @@ func maxRetriesFor(b RetryBudget, row sessionstore.Session) int {
 	return b.EffectiveMaxRetries(row)
 }
 
+// HolderForwarder forwards a tool call on a session to the session's
+// coordinating replica when a §29.3 forwarding row requires it, and returns
+// the coordinator's result or error as the calling handler's own.
+// *sessionserver.Server implements it through ForwardToolCall.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 2, §15.2 (MCP API)
+type HolderForwarder interface {
+	ForwardToolCall(ctx context.Context, row sessionstore.Session, kind sessionserver.ForwardKind, tool string, arguments json.RawMessage) (mcp.ToolResult, sessionserver.ForwardOutcome, error)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
+	// HolderForward forwards lenny/send_message and lenny/cancel_session to
+	// the session's coordinating replica. Nil makes each site run its local
+	// path, which the in-process harnesses that wire one replica rely on.
+	// Production wires *sessionserver.Server. spec: §29.3 Forwarding.
+	HolderForward HolderForwarder
+
 	// Store is the §4.2 session store.
 	Store sessionstore.Store
 
@@ -843,7 +859,7 @@ func Register(srv *mcp.Server, deps Deps) {
 	// interceptor chain over every tool result before it reaches the
 	// agent. A nil chain leaves the hook unset. spec: §4.8.
 	if ri := buildPreToolResultInterceptor(deps, tenant); ri != nil {
-		srv.SetResultInterceptor(ri)
+		srv.SetResultInterceptor(skipForwardedResults(ri))
 	}
 
 	// env carries the prologue values resolved above to each per-family
@@ -2497,4 +2513,20 @@ func elicitationOrGen(id string, gen func() string) string {
 		return id
 	}
 	return gen()
+}
+
+// skipForwardedResults wraps the §4.8 PreToolResult interceptor so it returns
+// the result unchanged on a forwarded tool call. The serving replica runs the
+// phase over the result it returns to its client, so the coordinator does not
+// run it a second time.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 4, §4.8 (Gateway
+// Policy Engine)
+func skipForwardedResults(ri mcp.ResultInterceptor) mcp.ResultInterceptor {
+	return func(ctx context.Context, callID, name string, result mcp.ToolResult) (mcp.ToolResult, error) {
+		if sessionserver.Forwarded(ctx) {
+			return result, nil
+		}
+		return ri(ctx, callID, name, result)
+	}
 }

@@ -32,6 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
@@ -573,6 +574,77 @@ func (s *Server) WriteLennyError(w http.ResponseWriter, id json.RawMessage, json
 		ID:      id,
 		Error:   &jsonRPCError{Code: jsonRPCCode, Message: message, Data: envelope},
 	})
+}
+
+// DecodeToolCallResponse decodes the body of a tools/call JSON-RPC response
+// that writeResult, toolErrorResult, or WriteLennyError wrote, and is their
+// inverse. A result whose isError is false returns the result and a nil tool
+// error. A result whose isError is true returns the §15.2.1 lenny error
+// envelope its lenny/error content block carries, and a JSON-RPC error
+// returns the envelope its data field carries, each as a *ToolError. A body
+// that is not such a response returns a non-nil error.
+//
+// A replica that forwards a tool call to the coordinating replica decodes
+// the coordinator's response with it, so the caller receives the
+// coordinator's result or error as the handler's own.
+//
+// spec: §15.2.1 (REST/MCP consistency contract) rule 3, §29.3 (Interactive
+// message send) Forwarding rule 2
+func DecodeToolCallResponse(body []byte) (ToolResult, *ToolError, error) {
+	var resp struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Result  json.RawMessage `json:"result"`
+		Error   *struct {
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ToolResult{}, nil, fmt.Errorf("decode tools/call response: %w", err)
+	}
+	if resp.JSONRPC != "2.0" {
+		return ToolResult{}, nil, fmt.Errorf("decode tools/call response: jsonrpc is %q, want \"2.0\"", resp.JSONRPC)
+	}
+	if resp.Error != nil {
+		te, err := decodeLennyError(resp.Error.Data)
+		if err != nil {
+			return ToolResult{}, nil, fmt.Errorf("decode tools/call error data: %w", err)
+		}
+		return ToolResult{}, te, nil
+	}
+	if len(resp.Result) == 0 {
+		return ToolResult{}, nil, errors.New("decode tools/call response: no result and no error")
+	}
+	var result ToolResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return ToolResult{}, nil, fmt.Errorf("decode tools/call result: %w", err)
+	}
+	if !result.IsError {
+		return result, nil, nil
+	}
+	for _, block := range result.Content {
+		if block.Type == LennyErrorContentType {
+			te, err := decodeLennyError(json.RawMessage(block.Text))
+			if err != nil {
+				return ToolResult{}, nil, fmt.Errorf("decode tools/call lenny/error block: %w", err)
+			}
+			return ToolResult{}, te, nil
+		}
+	}
+	return ToolResult{}, nil, errors.New("decode tools/call result: isError result carries no lenny/error block")
+}
+
+// decodeLennyError decodes a §15.2.1 lenny error envelope into a ToolError.
+// An envelope with no code is not one.
+func decodeLennyError(raw json.RawMessage) (*ToolError, error) {
+	var env LennyErrorDetail
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code == "" {
+		return nil, errors.New("lenny error envelope has no code")
+	}
+	return NewToolError(env.Code, env.Message, env.Details), nil
 }
 
 // internalError is kept for callers that need to signal a transport

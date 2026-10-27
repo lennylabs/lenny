@@ -168,6 +168,11 @@ type Server struct {
 	// renews the leases this replica acquires at bind. Empty disables the
 	// at-bind acquire. spec: §10.1.
 	replicaID string
+	// holderForward is the CH-HOLDERFORWARD client a replica that does not
+	// coordinate a session forwards the session's request with. Nil makes
+	// every forward not delivered. spec: §10.1.1 Replica address, §29.3
+	// Forwarding.
+	holderForward *http.Client
 	// coordLeaseTTL is the TTL the at-bind Acquire stamps on the lease. The
 	// coordination Sweeper renews it on its own cadence, so the TTL must
 	// exceed the sweep interval for a held lease not to lapse between
@@ -1071,6 +1076,16 @@ type Options struct {
 	// at-bind acquire. spec: §10.1.
 	ReplicaID string
 
+	// HolderForwardClient is the shared CH-HOLDERFORWARD client
+	// NewHolderForwardClient builds over the gateway replica certificate.
+	// A replica that does not coordinate a session forwards the session's
+	// request to the coordinating replica through it. Nil, the dev-mode
+	// posture without certificate material, makes every forward not
+	// delivered. spec: §10.1.1 (Stateless Replicas and Per-Session
+	// Coordination) Replica address, §10.3 (mTLS PKI) NET-072, §29.3
+	// (Interactive message send) Forwarding.
+	HolderForwardClient *http.Client
+
 	// CoordinationLeaseTTL is the TTL stamped on the at-bind lease acquire.
 	// A non-positive value falls through to DefaultCoordinationLeaseTTL. It
 	// must exceed the coordination Sweeper interval so a held lease does not
@@ -1687,6 +1702,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		fencer:                     opts.CoordinationFencer,
 		leaseStore:                 opts.CoordinationLeaseStore,
 		replicaID:                  opts.ReplicaID,
+		holderForward:              opts.HolderForwardClient,
 		coordLeaseTTL:              opts.CoordinationLeaseTTL,
 		agentNamespace:             opts.AgentNamespace,
 		admissionRL:                opts.AdmissionRateLimitCounter,

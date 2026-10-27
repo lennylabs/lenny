@@ -236,7 +236,7 @@ func (r coordinationReadopter) ReadoptAndFence(ctx context.Context, tenantID, se
 		sessions: r.w.sessions,
 		releaser: r.w.coordLeaseStore,
 		pools:    pools,
-	}, tenantID, sessionID, r.w.replica, generation)
+	}, tenantID, sessionID, r.w.coordHolder, generation)
 }
 
 // readoptSeams groups the collaborators readoptAndFence drives.

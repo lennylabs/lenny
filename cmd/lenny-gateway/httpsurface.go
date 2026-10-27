@@ -566,7 +566,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 			checkpointMeta = sessioncheckpointmeta.NewMemoryStore(nil)
 		}
 		barrierLister := &barrier.MirrorTargetLister{
-			ReplicaID: w.replica,
+			// spec: §10.1.8 — the barrier-target query filters the mirror
+			// on this replica's coordination holder value (§10.1.1 Replica
+			// address), which the Sweeper writes as coordinator_replica.
+			ReplicaID: w.coordHolder,
 			Mirror:    w.coordMirror,
 			Fallback: func() []barrier.Target {
 				bindings := w.podRegistry.Snapshot()
@@ -906,6 +909,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// F-10.2.21.
 	applyAuthPostureOptions(&authOpts, *devMode)
 	handler = authmw.Wrap(handler, authOpts)
+	// spec: §29.3 Forwarding rule 3 — the CH-HOLDERFORWARD listener
+	// authenticates a relayed credential with the REST listener's options.
+	w.restAuthOpts = authOpts
 
 	// §16.1 request metrics, wrapped before recovery so panics still
 	// surface in the request_total / request_duration histograms with

@@ -68,10 +68,18 @@ func TestOutstandingReservationSource_FoldsIntoLiveBytesSeam(t *testing.T) {
 // nil in the no-Redis config and skipped the startup rebuild entirely.
 func TestBuildRedisAndQuota_ComposesStorageSeamWithoutRedis(t *testing.T) {
 	empty := ""
+	devMode := false
 	w := &gatewayWiring{f: &gatewayFlags{
 		redisURL:           &empty,
 		redisSentinelAddrs: &empty,
 		redisClusterAddrs:  &empty,
+		// No lease store is wired, so the forward configuration is
+		// optional and the holder is the bare replica identity.
+		devMode:                    &devMode,
+		adapterTLSCert:             &empty,
+		adapterTLSKey:              &empty,
+		adapterCA:                  &empty,
+		holderForwardAdvertiseAddr: &empty,
 	}}
 	// A Postgres artifact catalog is wired (pgPool would be non-nil in
 	// production); Redis is not. The seam must still be composed.

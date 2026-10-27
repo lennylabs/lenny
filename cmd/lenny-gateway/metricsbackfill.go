@@ -77,7 +77,9 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 		w.coordFencer = coordfence.New(
 			sessionGenerationReader{store: w.sessions},
 			w.erasureLeaseStore,
-			w.replica,
+			// spec: §10.1.1 Replica address — the relinquish releases the
+			// lease by the coordination holder value.
+			w.coordHolder,
 			gwMetrics,
 			coordfence.Options{Logf: log.Printf},
 		)

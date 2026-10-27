@@ -36,8 +36,12 @@ type shutdownStep struct {
 // shutdownSequence holds the collaborators of the gateway's post-signal
 // shutdown. sessions is nil when no session server is built.
 type shutdownSequence struct {
-	timeout  time.Duration
-	http     contextShutdowner
+	timeout time.Duration
+	http    contextShutdowner
+	// forward is the CH-HOLDERFORWARD listener, stopped with the REST
+	// listener so no forwarded request starts after the stop; nil when the
+	// forward is not enabled.
+	forward  contextShutdowner
 	sessions terminalWorkServer
 	closers  []shutdownStep
 }
@@ -73,12 +77,18 @@ func (q shutdownSequence) run() {
 	}
 }
 
-// stopListener stops the HTTP listener on a shutdown-timeout context.
+// stopListener stops the HTTP listener, and the forward listener when one
+// runs, on a shutdown-timeout context.
 func (q shutdownSequence) stopListener() {
 	ctx, cancel := context.WithTimeout(context.Background(), q.timeout)
 	defer cancel()
 	if err := q.http.Shutdown(ctx); err != nil {
 		slog.Warn("lenny-gateway: HTTP listener shutdown", "error", err)
+	}
+	if q.forward != nil {
+		if err := q.forward.Shutdown(ctx); err != nil {
+			slog.Warn("lenny-gateway: holder-forward listener shutdown", "error", err)
+		}
 	}
 }
 
@@ -115,6 +125,9 @@ func (q shutdownSequence) waitTerminalWork() {
 // spec: §10.1.7 (Terminal pipelines at process exit.)
 func (w *gatewayWiring) shutdownSequence(timeout time.Duration) shutdownSequence {
 	q := shutdownSequence{timeout: timeout, http: w.httpSrv}
+	if w.holderForwardSrv != nil {
+		q.forward = w.holderForwardSrv
+	}
 	if w.sessionSrv != nil {
 		q.sessions = w.sessionSrv
 	}

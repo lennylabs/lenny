@@ -163,8 +163,8 @@ type interReplicaClaim struct {
 // under the names §28.5.4, §28.5.7, §10.1.1, and §10.3 give them.
 var interReplicaClaims = []interReplicaClaim{
 	{"Off-holder request forward on CH-HOLDERFORWARD", "ABSENT", "#2854-inter-replica", "R19"},
-	{"Replica address in the REG-COORDLEASE holder value", "ABSENT", "#2854-inter-replica", "R18"},
-	{"Inter-replica forward listener with gateway peer validation (NET-072)", "ABSENT", "#2854-inter-replica", "R18"},
+	{"Replica address in the REG-COORDLEASE holder value", "WIRED", "#2854-inter-replica", ""},
+	{"Inter-replica forward listener with gateway peer validation (NET-072)", "WIRED", "#2854-inter-replica", ""},
 	{"Session inbox redelivery", "ABSENT", "#2854-inter-replica", "R19"},
 	{"Input-wait resolution across replicas", "ABSENT", "#2854-inter-replica", "R20"},
 	{"Tool-approval resolution across replicas", "WIRED", "#2854-inter-replica", ""},

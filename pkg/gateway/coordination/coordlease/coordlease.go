@@ -11,7 +11,7 @@
 // §10.1.8 sources the barrier-target set from
 //
 //	SELECT session_id FROM coordination_lease
-//	WHERE coordinator_replica = $this_replica_id AND released_at IS NULL
+//	WHERE coordinator_replica = $this_holder_value AND released_at IS NULL
 //
 // because reading from Postgres observes coordinator handoffs that
 // occurred in the seconds before preStop: the in-memory cache can
@@ -47,7 +47,8 @@ import (
 type Lease struct {
 	TenantID  string
 	SessionID string
-	// CoordinatorReplica is the OTel service.instance.id of the holder.
+	// CoordinatorReplica is the coordination holder value of the replica
+	// that holds the lease (§10.1.1 Replica address).
 	CoordinatorReplica string
 	// CoordinationGeneration is the §4.2 fenced generation carried in
 	// the CheckpointBarrier message (§10.1.8).
