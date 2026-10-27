@@ -121,6 +121,18 @@ func (s forwardSend) accepted() bool {
 	return st == string(session.DeliveryStatusDelivered) || st == string(session.DeliveryStatusQueued)
 }
 
+// receiptMatchesOutcome reports whether the 2xx receipt of an accepted send
+// states its outcome before the DLQ drain. A delivered receipt requires a
+// delivery, because the hold outcome of §29.3 Forwarding rule 6 answers
+// queued and never delivered. A queued receipt requires a delivery or a DLQ
+// hold, because path-2 delivery may already have drained the hold.
+func receiptMatchesOutcome(s forwardSend, delivered int, held bool) bool {
+	if s.receipt() == string(session.DeliveryStatusDelivered) {
+		return delivered >= 1
+	}
+	return delivered >= 1 || held
+}
+
 // refused reports whether the answer is one of the refusals §29.3 Forwarding
 // rules 5 and 7 allow with or without a delivery.
 func (s forwardSend) refused() bool {
@@ -316,7 +328,8 @@ func checkDeliveryCount(t *testing.T, s forwardSend, handedOff bool, delivered i
 // settles it asserts that no send is delivered twice (classifyDeliveries
 // names the DLQ-held redelivery across a handoff that is blocked on
 // F-7.2.41), that no send that reached the runtime is still held in the DLQ,
-// that every 2xx receipt is a delivery or a DLQ hold, and that every answer
+// that every delivered receipt is a delivery and every queued receipt is a
+// delivery or a DLQ hold, and that every answer
 // is a 2xx receipt or a 409 or 500 refusal, which is accepted with or
 // without a delivery. It then sends one message on the coordinator, whose
 // path-2 delivery drains the DLQ first, and asserts that every accepted send
@@ -340,8 +353,8 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 		}
 		switch {
 		case s.accepted():
-			if delivered == 0 && !held[s.text] {
-				t.Errorf("%s was answered %d %s, but it was neither delivered nor held in the DLQ", s.text, s.code, s.receipt())
+			if !receiptMatchesOutcome(s, delivered, held[s.text]) {
+				t.Errorf("%s was answered %d %s, but it was delivered %d times and held in the DLQ is %v", s.text, s.code, s.receipt(), delivered, held[s.text])
 			}
 		case s.refused():
 		default:
@@ -451,6 +464,40 @@ func TestForwardCheckerFailsEveryDoubleDeliveryButTheBlockedHeldRedelivery_spec_
 	for _, c := range cases {
 		if got := classifyDeliveries(c.send, c.handedOff, c.count); got != c.want {
 			t.Errorf("%s: classifyDeliveries = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// spec: §29.3 (Interactive message send) Forwarding rule 6, §7.2 (Message
+// delivery routing — seven paths, path 6)
+// diagnosis: the interleaving checker accepted a 200 delivered receipt for a
+// send the runtime never received because the send sat in the DLQ, so a
+// receipt that misstates a hold as a delivery no longer fails the round; or it
+// failed a queued receipt whose send was held or already delivered.
+func TestForwardCheckerMatchesEachReceiptToItsOutcome_spec_29_3(t *testing.T) {
+	queued := forwardSend{text: "q", code: http.StatusOK, body: map[string]any{
+		"deliveryReceipt": map[string]any{"status": string(session.DeliveryStatusQueued)},
+	}}
+	delivered := forwardSend{text: "d", code: http.StatusOK, body: map[string]any{
+		"deliveryReceipts": []any{map[string]any{"status": string(session.DeliveryStatusDelivered)}},
+	}}
+	cases := []struct {
+		name      string
+		send      forwardSend
+		count     int
+		held      bool
+		wantMatch bool
+	}{
+		{"delivered receipt delivered", delivered, 1, false, true},
+		{"delivered receipt only held in the DLQ", delivered, 0, true, false},
+		{"delivered receipt neither delivered nor held", delivered, 0, false, false},
+		{"queued receipt held in the DLQ", queued, 0, true, true},
+		{"queued receipt already delivered", queued, 1, false, true},
+		{"queued receipt neither delivered nor held", queued, 0, false, false},
+	}
+	for _, c := range cases {
+		if got := receiptMatchesOutcome(c.send, c.count, c.held); got != c.wantMatch {
+			t.Errorf("%s: receiptMatchesOutcome = %v, want %v", c.name, got, c.wantMatch)
 		}
 	}
 }
