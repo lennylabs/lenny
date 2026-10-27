@@ -3445,7 +3445,10 @@
         "tests/tier4_integration/jwt_keyset_cross_process_test.go::TestOpsRevocationSetThroughPostgresOutage_spec_25_4",
         "tests/tier5_e2e_kind/jwt_keyset_cross_replica_test.go::TestLennyIssuedBearerVerifiesAcrossChartReplicas_spec_10_2",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
-        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2"
+        "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintAppliesStep1aToSubjectRow_spec_10_2",
+        "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintNilIssuedTokensSkipsRead_spec_10_2",
+        "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2"
       ],
       "packages": [
         "pkg/auth",
@@ -4806,7 +4809,19 @@
         "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3",
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestNotActiveErrorMatchesSentinel_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestRecordImpersonationRejectsMalformedInputWithoutWriting_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestCheckUserNotInvalidated_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/impersonation_test.go::TestInactiveImpersonationErrorClassifiesMiss_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceImpersonationErrorNamesRole_spec_13_3",
+        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestIssuedTokenSourceRefusal_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerRefusesImpersonationSource_spec_13_3",
+        "pkg/tokenservice/source_recheck_test.go::TestHandlerImpersonationRejectionAuditFailure_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestRecordImpersonationFencesOnUserRows_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestEndImpersonationSingleWinnerAndPredicate_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestListAndActorRevokeMatchActiveImpersonationRowsAcrossTenants_spec_13_3",
+        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestIssuanceRefusesImpersonationSource_spec_13_3"
       ],
       "packages": [
         "pkg/credential",

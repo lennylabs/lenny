@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
@@ -55,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -437,6 +440,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 			// spec: §27.3.1 — the oidc-mode authorization-code
 			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
 			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
+			// spec: §10.2 (Playground mint invariants, invariant 1) — the
+			// apiKey mint applies §13.3 step (1a) to the pasted subject's
+			// issued_tokens row.
+			IssuedTokens: playgroundIssuedTokens(w.pgPool),
 		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
@@ -1009,4 +1016,17 @@ func platformAdminServiceAccountRoles(accounts []string) map[string][]auth.Role 
 		out[a] = []auth.Role{auth.RolePlatformAdmin}
 	}
 	return out
+}
+
+// playgroundIssuedTokens returns the issued-token reader the playground
+// apiKey mint applies §13.3 step (1a) through, or a nil interface when the
+// gateway has no Postgres pool. Returning an untyped nil rather than a
+// *issuedtokenstore.Store over a nil pool keeps the handler's nil check
+// meaningful.
+// spec: §10.2 (Playground mint invariants, invariant 1).
+func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokenReader {
+	if pool == nil {
+		return nil
+	}
+	return issuedtokenstore.New(pool)
 }

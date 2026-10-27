@@ -156,16 +156,26 @@ type txStore struct {
 	// §13.3 step (1a) re-read, and sources records the list the handler
 	// passed on the last call.
 	revoked map[string]time.Time
-	sources []issuedtokenstore.SourceToken
+	// impersonation lists source jtis the fake reports as live
+	// platform-admin impersonation rows at the step (1a) re-read.
+	impersonation map[string]bool
+	sources       []issuedtokenstore.SourceToken
 }
 
 // fakeRecheck mirrors the issuedtokenstore step (1a) re-read: it returns
 // a *SourceRevokedError for the first listed source whose jti is in
-// revoked, checking sources in list order.
-func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time.Time) error {
+// revoked and, when none is revoked, a *SourceImpersonationError for the
+// first listed source whose jti is in impersonation, checking sources in
+// list order.
+func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time.Time, impersonation map[string]bool) error {
 	for _, src := range sources {
 		if at, ok := revoked[src.JTI]; ok && src.JTI != "" {
 			return &issuedtokenstore.SourceRevokedError{Role: src.Role, JTI: src.JTI, RevokedAt: at}
+		}
+	}
+	for _, src := range sources {
+		if impersonation[src.JTI] && src.JTI != "" {
+			return &issuedtokenstore.SourceImpersonationError{Role: src.Role, JTI: src.JTI}
 		}
 	}
 	return nil
@@ -184,7 +194,7 @@ func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.Issued
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
-	if err := fakeRecheck(sources, t.revoked); err != nil {
+	if err := fakeRecheck(sources, t.revoked, t.impersonation); err != nil {
 		return audit.Row{}, err
 	}
 	if t.failErr != nil {
