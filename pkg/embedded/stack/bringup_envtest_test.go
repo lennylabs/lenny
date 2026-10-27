@@ -17,7 +17,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 	"github.com/lennylabs/lenny/pkg/kms"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2 covers the §17.4
@@ -35,9 +34,15 @@ import (
 // spec: §10.2 (the gateway loads the dev HMAC key as a second verifier), §17.4
 // (the dev bearer-trust Secret is created before the gateway Deployment).
 func TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
+
+	// The product code fixes the Secret's namespace and name, so this test
+	// owns it on the package's shared control plane.
+	claimFixedObjects(t, cfg, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Namespace: stack.ControlPlaneNamespaceForTest(), Name: stack.DevBearerTrustSecretNameForTest(),
+	}})
 
 	keyFile := filepath.Join(t.TempDir(), "signing.key")
 	if err := os.WriteFile(keyFile, []byte(`{"keyId":"k1","secret":"AAAA"}`), 0o600); err != nil {
@@ -91,7 +96,7 @@ func TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2(t *testing.T) {
 //
 // spec: §17.4 (lenny up reports the gateway ready when its Deployment is ready).
 func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
@@ -99,7 +104,9 @@ func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	const ns = "default"
+	// waitDeploymentReady takes the namespace, so the test's Deployment lives
+	// in the test's own namespace on the shared control plane.
+	ns := createTestNamespace(t, cfg)
 	const name = "lenny-gateway"
 	replicas := int32(1)
 	dep := &appsv1.Deployment{
@@ -158,7 +165,7 @@ func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
 // up generates when the embedded cluster has none, so the key persists with
 // the substrate), §10.2 "Signing key and algorithm".
 func TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	cs, err := kubernetes.NewForConfig(cfg)
@@ -169,8 +176,10 @@ func TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4(t 
 	name := stack.DevKMSMasterKeySecretNameForTest()
 	key := stack.KMSMasterKeySecretKeyForTest()
 	secrets := cs.CoreV1().Secrets(ns)
-	// Sweep a Secret a killed earlier run may have left on a shared server.
-	_ = secrets.Delete(ctx, name, metav1.DeleteOptions{})
+	// The product code fixes the Secret's namespace and name, so this test
+	// owns it on the package's shared control plane; the claim also deletes
+	// a copy an earlier iteration left.
+	claimFixedObjects(t, cfg, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}})
 
 	if err := stack.CreateMasterKeySecretFromConfigForTest(ctx, cfg); err != nil {
 		t.Fatalf("create master key secret: %v", err)
