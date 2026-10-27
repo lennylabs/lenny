@@ -548,7 +548,6 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestSlotOccupancyIsAKeyedSetAtEverySite_spec_5_2",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1",
         "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go::TestOutageFailedReleaseStaysCounted_spec_12_4",
-        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
         "pkg/adapter/shutdown_demote_test.go::TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1",
         "tests/testinfra/lifecycleharness/slots_test.go::TestHeldPodsFollowTheHolderPredicate_spec_7_1",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestReseedAfterARecordedReleaseFreesTheSlot_spec_7_1",
@@ -3904,7 +3903,8 @@
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
         "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
-        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestBindReleaseSubscriberReleasesOnlyTerminalBindings_spec_28_5_7"
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestBindReleaseSubscriberReleasesOnlyTerminalBindings_spec_28_5_7",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -4433,11 +4433,11 @@
         "tests/testinfra/lifecyclefence/start_fault_test.go::TestStartFaultSurfacesAStartThatNeverReachedTheStore_spec_12_8",
         "tests/tier4_integration/tenant_deletion_phase4_test.go::TestTenantDeletionPhase4ClearsArchivedTreesAndCheckpoints_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestTenantSuspendDrainsSessionsOnTwoReplicas_spec_12_8",
-        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesClaimOnOtherReplica_spec_12_8",
+        "tests/tier5_e2e_kind/lifecycle_drain_kind_test.go::TestUserErasureReleasesTheRemoteBindingOnBindRelease_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestDrainBoundSharesOneDeadlineAcrossPods_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestDrainBoundPollsOnceAfterThePassedDeadline_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestSuspendReleaseBoundIsSweeperIntervalPlusSeal_spec_12_8",
-        "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestErasureReleaseBoundIsClaimOrphanTimeoutPlusOneGCPass_spec_12_8",
+        "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestErasureReleaseBoundIsBindReleaseWindowPlusSeal_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8",
         "tests/tier5_e2e_kind/lifecycle_drain_deadline_test.go::TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8",
         "tests/testinfra/kind/deployflag_test.go::TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout",
@@ -4744,7 +4744,8 @@
         "tests/tier5_e2e_kind/kms_egress_test.go::TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4",
         "charts/lenny/tests/holder-forward_test.yaml",
         "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewaySelfPeerPoliciesAdmitHolderForwardPort_spec_13_2_4",
-        "tests/tier11_docs/holder_forward_port_default_test.go::TestHolderForwardPortDefaultMatchesGatewayRow_spec_13_2_4"
+        "tests/tier11_docs/holder_forward_port_default_test.go::TestHolderForwardPortDefaultMatchesGatewayRow_spec_13_2_4",
+        "tests/tier9_security/network_policy_test.go::TestHolderForwardPortAdmitsOnlyGatewayPeers_spec_13_2_4"
       ],
       "chart_templates": [
         "charts/lenny/templates/system-network-policies.yaml",
@@ -7791,7 +7792,9 @@
         "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3",
         "tests/tier8_chaos/holder_forward_chaos_test.go::TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3",
-        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1"
+        "tests/tier8_chaos/holder_forward_chaos_test.go::TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1",
+        "tests/tier9_security/network_policy_test.go::TestHolderForwardPortAdmitsOnlyGatewayPeers_spec_13_2_4",
+        "tests/tier9_security/network_policy_test.go::TestPublicListenerDoesNotRunARequestAsTheCallingSession_spec_29_3"
       ]
     },
     "28.7": {
