@@ -653,10 +653,11 @@ type invalidationReport struct {
 // earlier one reported. A session-listing error leaves no session to cancel,
 // so the fan-out runs with none, which still revokes the user's tokens and
 // playground sessions. Every terminal claim the cancel writes opened has
-// ended on return.
+// ended on return. revokeImpersonations carries the caller's
+// platform-admin role into step 5's impersonation cascade.
 //
 // spec: §11.4 (User Invalidation: Full revoke propagation mechanism)
-func (r *Router) fullRevoke(ctx context.Context, tenantID, userID, reason string) invalidationReport {
+func (r *Router) fullRevoke(ctx context.Context, tenantID, userID, reason string, revokeImpersonations bool) invalidationReport {
 	var rep invalidationReport
 	defer func() { endRevokeClaims(rep.rev.revoked) }()
 	if r.sessions != nil {
@@ -666,7 +667,7 @@ func (r *Router) fullRevoke(ctx context.Context, tenantID, userID, reason string
 		}
 		rep.rev = rev
 	}
-	rep.fanOut = r.runFullRevokeFanOut(ctx, tenantID, userID, reason, rep.rev.revoked)
+	rep.fanOut = r.runFullRevokeFanOut(ctx, tenantID, userID, reason, rep.rev.revoked, revokeImpersonations)
 	// spec: §11.4 (Note) — the reported lease count is the number of
 	// leases step 1 returns.
 	rep.fanOut.leasesRevoked = rep.rev.leasesRevoked
@@ -787,14 +788,21 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 	// (the principal) and drops its cancellation; it has no overall
 	// deadline, as tenant suspension's drain does.
 	ctx := context.WithoutCancel(req.Context())
+	principal, _ := authmw.FromContext(ctx)
 	// soft_disable and hard_disable leave running sessions alone; they
-	// only gate new work.
+	// only gate new work. full_revoke runs only after users.Update has
+	// committed the invalidation level above, which the §13.3 impersonation
+	// recording fence depends on.
 	var rep invalidationReport
 	if body.Mode == InvalidateFullRevoke {
-		rep = r.fullRevoke(ctx, tenant, subject, body.Reason)
+		// spec: §13.3 (Platform-admin impersonation, rule 6) — the
+		// impersonation cascade is gated on the caller's platform-admin
+		// role alone. The user record's roles are not read: a bearer was
+		// minted under the role the user held then, and a demotion before
+		// the revoke must not skip the cascade.
+		rep = r.fullRevoke(ctx, tenant, subject, body.Reason, principal.HasRole(auth.RolePlatformAdmin))
 	}
 	fields := rep.fields()
-	principal, _ := authmw.FromContext(ctx)
 	r.emit(ctx, principal, "admin.user.invalidated", subject, withFields(fields, map[string]any{
 		"tenantId": tenant,
 		"mode":     body.Mode,

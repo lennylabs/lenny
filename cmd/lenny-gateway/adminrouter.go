@@ -897,7 +897,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		// store and the credential assigner.
 		userLeases = leaseRevoker
 		if w.pgPool != nil {
-			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
+			revoker := &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
+			// A nil *auditstore.Store must not reach the interface field:
+			// a typed nil would pass the revoker's nil-emitter guard.
+			if auditOpsStore != nil {
+				revoker.reads = auditOpsStore
+			}
+			userTokens = revoker
 		}
 		adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)
 	}

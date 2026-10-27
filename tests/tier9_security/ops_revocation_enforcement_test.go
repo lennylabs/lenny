@@ -133,6 +133,14 @@ func startOpsRevStack(t *testing.T) *opsRevStack {
 // and fails the test unless it answers want. It returns the decoded body.
 func (s *opsRevStack) admin(t *testing.T, method, path string, body any, want int) map[string]any {
 	t.Helper()
+	return s.adminAs(t, "carol@acme.com", "platform-admin", method, path, body, want)
+}
+
+// adminAs issues an admin request on the default tenant as user holding the
+// comma-separated roles, and fails the test unless it answers want. It
+// returns the decoded body.
+func (s *opsRevStack) adminAs(t *testing.T, user, roles, method, path string, body any, want int) map[string]any {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		raw, _ := json.Marshal(body)
@@ -146,8 +154,8 @@ func (s *opsRevStack) admin(t *testing.T, method, path string, body any, want in
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", auth.DefaultTenantID)
-	req.Header.Set("X-Lenny-User-ID", "carol@acme.com")
-	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	req.Header.Set("X-Lenny-User-ID", user)
+	req.Header.Set("X-Lenny-Roles", roles)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)

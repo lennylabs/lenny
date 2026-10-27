@@ -3820,7 +3820,9 @@
         "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeCheckFlagsLiveSession_spec_11_4",
         "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
+        "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -4821,7 +4823,9 @@
         "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestRecordImpersonationFencesOnUserRows_spec_13_3",
         "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestEndImpersonationSingleWinnerAndPredicate_spec_13_3",
         "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestListAndActorRevokeMatchActiveImpersonationRowsAcrossTenants_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestIssuanceRefusesImpersonationSource_spec_13_3"
+        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestIssuanceRefusesImpersonationSource_spec_13_3",
+        "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3"
       ],
       "packages": [
         "pkg/credential",
