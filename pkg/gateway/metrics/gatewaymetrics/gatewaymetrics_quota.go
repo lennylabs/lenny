@@ -60,8 +60,8 @@ type quotaMetrics struct {
 	// excludes it. F-12.3.13.
 	billingFlushPressure prometheus.Counter
 	// auditBatchingNoSIEM is the §12.3 AuditBatchingNoSIEM
-	// counter. The gateway increments it once at startup when
-	// LENNY_ENV=production has audit.batchingEnabled set but no SIEM
+	// counter. The gateway increments it once at startup when production
+	// mode (--environment=prod, §17.9.1) has audit.batchingEnabled set but no SIEM
 	// endpoint configured: buffered T2 audit events would be lost on a
 	// crash with no external durable copy to recover from. F-12.3.15.
 	auditBatchingNoSIEM prometheus.Counter

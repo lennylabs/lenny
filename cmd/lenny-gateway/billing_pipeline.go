@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingsink"
@@ -206,9 +206,10 @@ func (w *gatewayWiring) buildBillingPipeline(
 	// non-production deployment logs a warning and continues. This catches
 	// a SIEM endpoint accidentally removed from Helm values from silently
 	// invalidating a live compliance posture. F-11.7.2.
+	production := deployenv.IsProduction(f.kmsOpts.Environment)
 	if err := admin.ValidateSIEMForRegulatedTenants(context.Background(), tenants, *auditSIEMEndpoint != ""); err != nil {
 		if err.Error() == admin.SIEMStartupFatalMessage {
-			if os.Getenv("LENNY_ENV") == "production" {
+			if siemGateFatal(production, err) {
 				log.Fatalf("lenny-gateway: %s", err.Error())
 			}
 			log.Printf("lenny-gateway: WARNING: %s (non-production, continuing)", err.Error())
@@ -224,7 +225,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	pgauditConfigured := *auditPgauditEnabled && *auditPgauditSinkEndpoint != ""
 	if err := admin.ValidatePgauditForRegulatedTenants(context.Background(), tenants, pgauditConfigured); err != nil {
 		if err.Error() == admin.PgauditStartupFatalMessage {
-			if os.Getenv("LENNY_ENV") == "production" {
+			if pgauditGateFatal(production, err) {
 				log.Fatalf("lenny-gateway: %s", err.Error())
 			}
 			log.Printf("lenny-gateway: WARNING: %s (non-production, continuing)", err.Error())
@@ -242,7 +243,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 			regulatedPresent := admin.ValidatePgauditForRegulatedTenants(
 				context.Background(), tenants, false,
 			) != nil
-			if regulatedPresent && os.Getenv("LENNY_ENV") == "production" {
+			if pgauditPreflightFatal(production, regulatedPresent) {
 				log.Fatalf("lenny-gateway: FATAL: §11.7 pgaudit preflight failed with a regulated tenant present: %v", err)
 			}
 			log.Printf("lenny-gateway: WARNING: §11.7 pgaudit preflight failed: %v", err)

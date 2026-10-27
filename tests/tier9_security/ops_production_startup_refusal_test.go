@@ -3,10 +3,13 @@
 //go:build security
 
 // Tier-9 security test for the lenny-ops production startup refusals. The
-// real cmd/lenny-ops binary under --production must refuse to start on the
-// local KMS provider, whose key is derived in process, and must refuse the
-// dev embedded-OIDC trust hook, which would admit tokens signed with a
-// shared HMAC key. Each refusal exits non-zero before the listener starts.
+// real cmd/lenny-ops binary in §17.9.1 production mode (--environment=prod)
+// must refuse to start on the local KMS provider, whose key is derived in
+// process, and must refuse the dev embedded-OIDC trust hook, which would
+// admit tokens signed with a shared HMAC key. An --environment value outside
+// the §17.9.1 closed set, such as PROD, must refuse to start rather than run
+// outside production mode. Each refusal exits non-zero before the listener
+// starts.
 package tier9_security_test
 
 import (
@@ -80,29 +83,30 @@ func assertNotListening(t *testing.T, addr string) {
 	}
 }
 
-// spec: 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Startup and Readiness), 10.2 (Authentication)
-// diagnosis: a failure means a production lenny-ops started on the local KMS
-// provider, whose signing key is derived in process from a master key file,
-// so the production refusal of local that the gateway and Token Service apply
-// does not hold on lenny-ops. Check loadOpsKeySet's refusal before resolve.
+// spec: 17.9.1 (Composition Dimensions) "Production mode", 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Startup and Readiness), 10.2 (Authentication)
+// diagnosis: a failure means a lenny-ops in production mode (--environment=prod)
+// started on the local KMS provider, whose signing key is derived in process
+// from a master key file, so the production refusal of local that the gateway
+// and Token Service apply does not hold on lenny-ops. loadOpsKeySet calls
+// providerflags.Resolve, which returns ErrLocalForbidden in production mode.
 func TestOpsProductionRefusesLocalKMSProvider(t *testing.T) {
 	binary := opsprocess.Build(t)
-	for _, provider := range []string{"", "--kms-provider=local"} {
+	for _, provider := range []string{"", "--kms-provider=", "--kms-provider=local"} {
 		addr := opsLoopbackAddr(t)
-		args := []string{"--production"}
+		args := []string{"--environment=prod"}
 		if provider != "" {
 			args = append(args, provider)
 		}
 		logs := runOpsToExit(t, binary, addr, args...)
-		if !strings.Contains(logs, "--kms-provider=local is refused when --production is set") {
+		if !strings.Contains(logs, "--kms-provider=local is forbidden when --environment=prod") {
 			t.Errorf("args %v: log does not name the local-provider refusal\n%s", args, logs)
 		}
 		assertNotListening(t, addr)
 	}
 }
 
-// spec: 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Authentication)
-// diagnosis: a failure means a production lenny-ops accepted the dev
+// spec: 17.9.1 (Composition Dimensions) "Production mode", 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Authentication)
+// diagnosis: a failure means a lenny-ops in production mode accepted the dev
 // embedded-OIDC trust hook, so a holder of that shared HMAC key could mint
 // tokens the production operability surface accepts. Check checkDevTrustPosture,
 // which runs before the key set loads.
@@ -121,13 +125,34 @@ func TestOpsProductionRefusesDevTrustHook(t *testing.T) {
 	// trust-hook refusal fires before any KMS call, so no KMS is needed.
 	logs := runOpsToExit(
 		t, binary, addr,
-		"--production",
+		"--environment=prod",
+		"--dev-mode",
 		"--kms-provider=aws",
 		"--kms-aws-region=us-east-1",
 		"--bearer-trust-hmac-key-file="+key,
 	)
-	if !strings.Contains(logs, "--bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused when --production is set") {
+	if !strings.Contains(logs, "--bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused in production mode (--environment=prod)") {
 		t.Errorf("log does not name the trust-hook refusal\n%s", logs)
 	}
 	assertNotListening(t, addr)
+}
+
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
+// diagnosis: a failure means lenny-ops started with an --environment value
+// outside the §17.9.1 closed set. A case variant such as PROD would then run
+// outside production mode silently, with every production refusal off, while
+// the operator believed the deployment was production. The providerflags
+// finalizer validates the value through deployenv.Validate before any
+// subsystem is built.
+func TestOpsRefusesOffSetEnvironment_spec_17_9_1(t *testing.T) {
+	binary := opsprocess.Build(t)
+	for _, env := range []string{"PROD", "production"} {
+		addr := opsLoopbackAddr(t)
+		logs := runOpsToExit(t, binary, addr, "--environment="+env)
+		want := `environment "` + env + `" is not one of local, dev, staging, or prod`
+		if !strings.Contains(logs, want) {
+			t.Errorf("--environment=%s: log does not name the validation error %q\n%s", env, want, logs)
+		}
+		assertNotListening(t, addr)
+	}
 }

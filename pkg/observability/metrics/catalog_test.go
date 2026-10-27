@@ -258,3 +258,27 @@ func TestMetricNamesAreSorted(t *testing.T) {
 		}
 	}
 }
+
+// TestEnvProductionAlertSupportHelp_spec_16_5 pins the catalog entry of the
+// lenny_env_production gauge to the §17.9.1 production-mode definition, so
+// the catalog names --environment=prod rather than the retired LENNY_ENV
+// spelling.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow);
+// §17.9.1 (Composition Dimensions) "Production mode".
+func TestEnvProductionAlertSupportHelp_spec_16_5(t *testing.T) {
+	const want = "1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5)."
+	for _, m := range AlertSupportCatalog() {
+		if m.Name != "lenny_env_production" {
+			continue
+		}
+		if m.Type != TypeGauge {
+			t.Errorf("type = %q, want gauge", m.Type)
+		}
+		if m.Help != want {
+			t.Errorf("help = %q, want %q", m.Help, want)
+		}
+		return
+	}
+	t.Fatal("lenny_env_production missing from AlertSupportCatalog")
+}

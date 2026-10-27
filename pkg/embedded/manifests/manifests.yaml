@@ -2086,7 +2086,7 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: LENNY_ENV=production and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.
+                description: The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.
                 summary: Audit SIEM endpoint not configured in production
             - alert: AuditChainGap
               expr: increase(lenny_audit_chain_integrity_total{state="broken"}[15m]) > 0
@@ -2432,7 +2432,7 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: LENNY_ENV=production and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.
+                description: The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.
                 summary: Audit retention below 365 days without a SIEM
             - alert: PostgresWriteSaturation
               expr: lenny_postgres_write_iops / scalar(lenny_postgres_write_ceiling_iops) > 0.80
@@ -4770,7 +4770,10 @@ spec:
             - --gateway-sa-token-file=/var/run/secrets/lenny/gateway/token
             - --gateway-token-refresh-before-expiry=300s
             - --gateway-token-min-ttl=600s
-            - --production=false
+            # §25.4: tier2 and tier3 require Idempotency-Key on the
+            # non-convergent endpoints; the value also surfaces in
+            # GET /v1/admin/me.platform.tier.
+            - --platform-tier=tier1
             # §10.2 "Verifier key set and rotation": lenny-ops loads its key
             # set from the same KMS provider, aliases, and environment the
             # gateway and the Token Service sign with.
@@ -4782,7 +4785,7 @@ spec:
             # same global.devMode value the gateway's --dev-mode does. It
             # admits the dev trust hook, the X-Lenny-* identity headers,
             # and the dev roles; without it lenny-ops authenticates every
-            # request whatever ops.production says.
+            # request, in production mode (environment: prod) or not.
             - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
@@ -4820,8 +4823,9 @@ spec:
             # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
             # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
-            # without --dev-mode and under --production, so it renders only
-            # when global.devMode is true and ops.production is false.
+            # without --dev-mode and in production mode (environment: prod),
+            # so it renders only when global.devMode is true and environment
+            # is not prod.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps=20
@@ -4923,12 +4927,14 @@ spec:
             timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 — production readiness uses the permissive /healthz
+          # §25.4 — readiness in production mode (§17.9.1 environment:
+          # prod) uses the permissive /healthz
           # check, which passes when Postgres or the Kubernetes API is
           # reachable, so a Postgres outage does not remove every replica
           # from the Service and the §25.15 degraded mode stays reachable.
           # The strict ?strict=true form is a diagnostic check no probe
-          # uses. The non-production render keeps the /readyz report.
+          # uses. Outside production mode the render keeps the /readyz
+          # report.
           readinessProbe:
             httpGet:
               path: /readyz

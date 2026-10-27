@@ -77,9 +77,10 @@ Lenny-issued token.
 {{- $pg := .Values.postgres -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 {{- /* §17.4 "Dev mode guard rails": lenny-ops refuses the dev embedded-OIDC
-   trust hook without --dev-mode and under --production, so it renders only
-   when global.devMode is true and ops.production is false. */ -}}
-{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret .Values.global.devMode (not .Values.ops.production) -}}
+   trust hook without --dev-mode and in production mode (§17.9.1
+   environment: prod), so it renders only when global.devMode is true and
+   environment is not prod. The comparison is exact, as the binary's is. */ -}}
+{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret .Values.global.devMode (ne .Values.environment "prod") -}}
 {{- /* §17.4: under kms.provider=local lenny-ops mounts the master key Secret
    the gateway and the Token Service share, so its key set holds the same
    ES256 public key they sign with. */ -}}
@@ -198,7 +199,10 @@ spec:
             # system trust store for the admin-API TLS link. F-25.4.19.
             - --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
             {{- end }}
-            - --production={{ .Values.ops.production }}
+            # §25.4: tier2 and tier3 require Idempotency-Key on the
+            # non-convergent endpoints; the value also surfaces in
+            # GET /v1/admin/me.platform.tier.
+            - --platform-tier={{ .Values.global.deploymentTier | default "tier1" }}
             # §10.2 "Verifier key set and rotation": lenny-ops loads its key
             # set from the same KMS provider, aliases, and environment the
             # gateway and the Token Service sign with.
@@ -209,7 +213,7 @@ spec:
             # same global.devMode value the gateway's --dev-mode does. It
             # admits the dev trust hook, the X-Lenny-* identity headers,
             # and the dev roles; without it lenny-ops authenticates every
-            # request whatever ops.production says.
+            # request, in production mode (environment: prod) or not.
             - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
@@ -266,8 +270,9 @@ spec:
             {{- end }}
             {{- if $devTrust }}
             # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
-            # without --dev-mode and under --production, so it renders only
-            # when global.devMode is true and ops.production is false.
+            # without --dev-mode and in production mode (environment: prod),
+            # so it renders only when global.devMode is true and environment
+            # is not prod.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             {{- end }}
             # §25.4 per-service-account rate limiting. F-25.4.5.
@@ -472,15 +477,17 @@ spec:
             timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 — production readiness uses the permissive /healthz
+          # §25.4 — readiness in production mode (§17.9.1 environment:
+          # prod) uses the permissive /healthz
           # check, which passes when Postgres or the Kubernetes API is
           # reachable, so a Postgres outage does not remove every replica
           # from the Service and the §25.15 degraded mode stays reachable.
           # The strict ?strict=true form is a diagnostic check no probe
-          # uses. The non-production render keeps the /readyz report.
+          # uses. Outside production mode the render keeps the /readyz
+          # report.
           readinessProbe:
             httpGet:
-              {{- if .Values.ops.production }}
+              {{- if eq .Values.environment "prod" }}
               path: /healthz
               {{- else }}
               path: /readyz
