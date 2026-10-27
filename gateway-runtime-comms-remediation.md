@@ -3464,8 +3464,10 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     Fixed in `f224f1b0a`: `lenny-test` exports a root outside `/tmp` (`tests/testinfra/testtmp`), the build-once
     sites and the tier-10 socket directory use it, and a tier-0 check holds the rule. T-4.7.19 to T-4.7.22 are
     closed with it. A tier-10 conformance flake seen during the fix is filed as TEST-GAPS T-5.2.16.
-  - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
+  - [x] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
     shares with the load and chaos tiers. The security tier gets its own budget.
+    Fixed in `863631bd1`: `tierSecurityTimeout` defaults to 3600 seconds, about twice the slowest recorded
+    passing run of 1634 seconds, with the override `LENNY_TEST_SECURITY_TIMEOUT`.
   - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
     (about 55 minutes), because `selector.resolve` takes the `--tier` case before the change-selection case
     and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
