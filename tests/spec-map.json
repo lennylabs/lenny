@@ -3071,7 +3071,9 @@
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestPodlessSuspendedSessionNeedsNoCoordinator_spec_10_1_1",
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2",
         "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1"
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
+        "charts/lenny/tests/holder-forward_test.yaml",
+        "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewayDeploymentAdvertisesHolderForwardAddress_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -3529,7 +3531,8 @@
         "pkg/gateway/audit/jwtaudit/jwtaudit_test.go::TestCAObserverCountsAppendFailuresAndHonorsOptions",
         "tests/tier5_e2e_kind/mtls_test.go",
         "tests/tier9_security/tls_test.go",
-        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered"
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered",
+        "charts/lenny/tests/holder-forward_test.yaml"
       ],
       "packages": [
         "pkg/mtls",
@@ -4684,7 +4687,10 @@
         "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRefusesUnrestrictedCIDROnCloudProvider_spec_13_2_4",
         "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressRendersOneNarrowPeerPerPolicy_spec_13_2_4",
         "tests/tier9_security/kms_egress_render_test.go::TestKMSEgressAbsentUnderLocalProvider_spec_13_2_4",
-        "tests/tier5_e2e_kind/kms_egress_test.go::TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4"
+        "tests/tier5_e2e_kind/kms_egress_test.go::TestKMSEgressAbsentOnLocalProviderInstall_spec_13_2_4",
+        "charts/lenny/tests/holder-forward_test.yaml",
+        "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewaySelfPeerPoliciesAdmitHolderForwardPort_spec_13_2_4",
+        "tests/tier11_docs/holder_forward_port_default_test.go::TestHolderForwardPortDefaultMatchesGatewayRow_spec_13_2_4"
       ],
       "chart_templates": [
         "charts/lenny/templates/system-network-policies.yaml",

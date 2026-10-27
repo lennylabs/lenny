@@ -2080,7 +2080,11 @@ mtls:
   # enabled gates the §10.3 internal mTLS PKI templates. Leave true for
   # any cluster that runs gateway-to-pod mTLS through cert-manager. Set
   # false when a service mesh (Istio, Linkerd) supplies mTLS instead,
-  # in which case the mesh issues the identities (§10.3).
+  # in which case the mesh issues the identities (§10.3). Outside
+  # global.devMode the chart refuses to render mtls.enabled: false while
+  # Redis is configured, because the gateway's inter-replica forward
+  # listener needs the gateway replica certificate and the gateway
+  # refuses to start without it (§10.3 NET-072).
   enabled: true
   # currentCAID is the id of the CA that currently signs control-plane
   # leaves. It seeds the §10.3 CA-rotation state machine
@@ -2355,6 +2359,15 @@ gateway:
   # scrub-report RPCs. (Lease extension is an internal gateway operation
   # the GatewayControl service no longer hosts; see §8.6.)
   grpcPort: 50051
+  # holderForwardPort is the port of the gateway's inter-replica forward
+  # listener (CH-HOLDERFORWARD). A replica that does not coordinate a
+  # session forwards the session's request over mutual TLS to the
+  # coordinating replica at <pod IP>:<holderForwardPort>, the address it
+  # reads from that replica's coordination lease holder value (§10.1.1
+  # Replica address). The allow-gateway-egress and allow-gateway-ingress
+  # NetworkPolicies admit gateway pods, and only gateway pods, on this
+  # port (§13.2.4 Gateway row).
+  holderForwardPort: 50054
   # leaseExtension configures the §8.6 lease-extension control plane, now
   # an internal gateway operation the LLM Proxy drives in-process rather
   # than a GatewayControl RPC.

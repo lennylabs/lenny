@@ -1,0 +1,249 @@
+suite: gateway inter-replica forward listener (CH-HOLDERFORWARD)
+# spec: §10.1.1 (Stateless Replicas and Per-Session Coordination, Replica
+# address), §10.3 (mTLS PKI, Gateway ↔ Gateway mTLS peer validation
+# (NET-072)), §13.2.4 (`lenny-system` Namespace NetworkPolicies, Gateway
+# row). The gateway advertises <pod IP>:<gateway.holderForwardPort> in its
+# coordination lease holder value and serves the forward listener on that
+# port. allow-gateway-egress and allow-gateway-ingress admit gateway pods,
+# and only gateway pods, on the port. Outside dev mode the chart refuses
+# to render mtls.enabled=false while Redis is configured, because the
+# gateway refuses to start without the gateway replica certificate.
+#
+# Every rendering case sets gateway.holderForwardPort to 50099 rather than
+# the 50054 default, so each assertion shows that the env, the container
+# port, and both policy rules read the key.
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - gateway-deployment.yaml
+  - system-network-policies.yaml
+# §10.3 (NET-064): global.spiffeTrustDomain is a required chart value.
+set:
+  global.spiffeTrustDomain: cluster.local
+tests:
+  # spec: §10.1.1 Replica address — the advertise address interpolates the
+  # downward-API pod IP, which is declared first so $(LENNY_POD_IP) expands.
+  - it: renders the pod IP, advertise address, and listen address from holderForwardPort
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.holderForwardPort: 50099
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_HOLDER_FORWARD_ADVERTISE_ADDR
+            value: "$(LENNY_POD_IP):50099"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_HOLDER_FORWARD_LISTEN_ADDR
+            value: ":50099"
+
+  # spec: §10.1.1 Replica address — Kubernetes expands $(VAR) only for a
+  # variable declared earlier in the list, so LENNY_POD_IP precedes the
+  # advertise address.
+  - it: declares LENNY_POD_IP immediately before the advertise address
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: LENNY_POD_IP
+      - equal:
+          path: spec.template.spec.containers[0].env[3].name
+          value: LENNY_HOLDER_FORWARD_ADVERTISE_ADDR
+      - equal:
+          path: spec.template.spec.containers[0].env[3].value
+          value: "$(LENNY_POD_IP):50054"
+
+  # spec: §10.3 NET-072 — the forward listener's named container port.
+  - it: exposes the holder-forward container port from holderForwardPort
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      gateway.holderForwardPort: 50099
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: holder-forward
+            containerPort: 50099
+
+  # spec: §13.2.4 Gateway row, egress column — gateway pods on the forward
+  # port, selected by lenny.dev/component: gateway.
+  - it: admits egress to gateway pods on holderForwardPort in allow-gateway-egress
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    set:
+      gateway.holderForwardPort: 50099
+    asserts:
+      - contains:
+          path: spec.egress
+          count: 1
+          content:
+            to:
+              - podSelector:
+                  matchLabels:
+                    lenny.dev/component: gateway
+            ports:
+              - port: 50099
+                protocol: TCP
+
+  # spec: §13.2.4 Gateway row, ingress column — gateway pods are the only
+  # source the rule admits on the forward port.
+  - it: admits ingress from gateway pods on holderForwardPort in allow-gateway-ingress
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    set:
+      gateway.holderForwardPort: 50099
+    asserts:
+      - contains:
+          path: spec.ingress
+          count: 1
+          content:
+            from:
+              - podSelector:
+                  matchLabels:
+                    lenny.dev/component: gateway
+            ports:
+              - port: 50099
+                protocol: TCP
+
+  # spec: §13.2.4 Gateway row, ingress column — the forward port is the
+  # last ingress rule and the only port that rule names, and the rules
+  # before it keep their own ports, so no other source reaches the port.
+  - it: admits no other ingress source on holderForwardPort
+    template: system-network-policies.yaml
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    set:
+      gateway.holderForwardPort: 50099
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 6
+      - lengthEqual:
+          path: spec.ingress[5].ports
+          count: 1
+      - equal:
+          path: spec.ingress[5].ports[0].port
+          value: 50099
+      - notContains:
+          path: spec.ingress[0].ports
+          content: {port: 50099, protocol: TCP}
+      - notContains:
+          path: spec.ingress[1].ports
+          content: {port: 50099, protocol: TCP}
+      - notContains:
+          path: spec.ingress[2].ports
+          content: {port: 50099, protocol: TCP}
+      - notContains:
+          path: spec.ingress[3].ports
+          content: {port: 50099, protocol: TCP}
+      - notContains:
+          path: spec.ingress[4].ports
+          content: {port: 50099, protocol: TCP}
+
+  # spec: §10.3 NET-072 — a non-dev mesh install with external Redis would
+  # start a gateway with a lease store and no certificate, which refuses to
+  # start, so the render fails closed.
+  - it: refuses mtls.enabled=false outside dev mode with external Redis
+    template: gateway-deployment.yaml
+    set:
+      mtls.enabled: false
+      redis.url: "rediss://:pw@r.svc:6380/0"
+    asserts:
+      - failedTemplate:
+          errorPattern: "§10.3 NET-072: mtls.enabled=false is refused outside global.devMode while Redis is configured"
+
+  - it: refuses mtls.enabled=false outside dev mode with Redis Cluster
+    template: gateway-deployment.yaml
+    set:
+      mtls.enabled: false
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    asserts:
+      - failedTemplate:
+          errorPattern: "§10.3 NET-072: mtls.enabled=false is refused outside global.devMode while Redis is configured"
+
+  - it: refuses mtls.enabled=false outside dev mode with Redis Sentinel
+    template: gateway-deployment.yaml
+    set:
+      mtls.enabled: false
+      redis.provider: sentinel
+      redis.sentinels: ["s0:26379", "s1:26379"]
+      redis.sentinelMaster: lenny-master
+      redis.password: sentinel-data-pw
+    asserts:
+      - failedTemplate:
+          errorPattern: "§10.3 NET-072: mtls.enabled=false is refused outside global.devMode while Redis is configured"
+
+  # spec: §10.3 NET-072 — a mesh install without Redis has no lease store,
+  # so the gateway starts and the render succeeds.
+  - it: renders a mesh install with mtls.enabled=false and no Redis
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      mtls.enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: holder-forward
+            containerPort: 50054
+
+  # spec: §10.3 NET-072 — in dev mode a gateway without the certificate
+  # starts and takes the not-delivered outcome on every forward, so the
+  # render succeeds even with Redis configured.
+  - it: renders mtls.enabled=false with Redis under global.devMode
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      mtls.enabled: false
+      global.devMode: true
+      redis.url: "redis://redis.svc:6379"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: holder-forward
+            containerPort: 50054
+
+  # spec: §10.3 NET-072 — with mTLS on, Redis configured, and dev mode
+  # off, the default production posture renders.
+  - it: renders mtls.enabled=true with Redis outside dev mode
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      redis.url: "rediss://:pw@r.svc:6380/0"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_HOLDER_FORWARD_LISTEN_ADDR
+            value: ":50054"
