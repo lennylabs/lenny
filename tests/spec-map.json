@@ -3052,13 +3052,19 @@
       "title": "Stateless Replicas and Per-Session Coordination",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
-        "pkg/gateway/sessionserver/holder_forward_value_test.go::TestHolderValueCarriesIdentityTokenAndAddress_spec_10_1_1",
-        "pkg/gateway/sessionserver/holder_forward_value_test.go::TestHolderValueRejectsInvalidAdvertiseAddress_spec_10_1_1",
-        "pkg/gateway/sessionserver/holder_forward_value_test.go::TestHolderValueDrawsAFreshProcessTokenPerCall_spec_10_1_1",
-        "pkg/gateway/sessionserver/holder_forward_value_test.go::TestHolderAddressSplitsAtTheLastAt_spec_10_1_1",
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestForwardToHolderRunsLocallyWithoutADial_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestForwardToHolderNotDeliveredWithoutReachableHolder_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestForwardClassifiesFailuresByConnection_spec_29_3",
+        "tests/tier2_component/leases/composite_holder_pgstore_test.go::TestCompositeHolderValueRoundTripsThroughPostgres_spec_10_1_1",
+        "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestEveryLeaseAndMirrorConsumerReceivesTheHolderValue_spec_10_1_1",
+        "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestCrashTakeoverReadoptReleasesTheLeaseHeldUnderTheHolderValue_spec_10_1_1",
+        "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestCoordinationFencerRelinquishDropsTheLeaseHeldUnderTheHolderValue_spec_10_1_1",
+        "cmd/lenny-gateway/coordination_holder_wiring_test.go::TestRedisBuildStepComposesTheHolderValueAndKeepsTheReplicaIdentity_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardDialAndHandshakeEndTogetherAtTwoSeconds_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestHolderValueCarriesIdentityTokenAndAddress_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestHolderValueRejectsInvalidAdvertiseAddress_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestHolderValueDrawsAFreshProcessTokenPerCall_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestHolderAddressSplitsAtTheLastAt_spec_10_1_1",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardToHolderRunsLocallyWithoutADial_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardToHolderNotDeliveredWithoutReachableHolder_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardClassifiesFailuresByConnection_spec_29_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestCoordinationHolderCarriesTheAdvertiseAddress_spec_10_1_1",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestResolveCoordinationHolderEnablesTheForwardOnlyWithMaterial_spec_10_3",
         "tests/tier3_contract/compose_mode/compose_mode_test.go::TestComposeGatewayAdvertisesForwardAddress_spec_10_1_1",
@@ -3516,8 +3522,9 @@
       "title": "mTLS PKI",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3",
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestHolderForwardHandlerAcceptsNoOtherAssertedPrincipal_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardCertificateRotationReachesListenerAndClient_spec_10_3",
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3",
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardHandlerAcceptsNoOtherAssertedPrincipal_spec_29_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardMaterialRefusalOutsideDevMode_spec_10_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardTransportLoadsTheGatewayCertificate_spec_10_3",
         "tests/tier4_integration/holder_forward_startup_test.go::TestDevGatewayWithoutMaterialServesNoForwardListener_spec_10_3",
@@ -3751,6 +3758,7 @@
       "title": "Admission and Fairness",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerAppliesNoIdempotencyOrRateLimit_spec_29_3",
         "tests/tier11_docs/session_suspension_reader_doc_reconciliation_test.go",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "tests/tier2_component/ratelimit/...",
@@ -3890,9 +3898,12 @@
       "title": "Idempotency",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerAppliesNoIdempotencyOrRateLimit_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerMarksOnlyAGatedRefusal_spec_11_5",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardRefusalsStayOutOfTheIdempotencyCacheOnBothSurfaces_spec_11_5",
         "pkg/gateway/middleware/idempotency/gate_test.go::TestWrapDoesNotStoreAForwardRefusal_spec_11_5",
         "pkg/gateway/middleware/idempotency/gate_test.go::TestWrapStillStoresAnUnmarked409_spec_11_5",
-        "pkg/gateway/sessionserver/holder_forward_internal_test.go::TestForwardRefusalsAreNotStoredUnderIdempotency_spec_11_5",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardRefusalsAreNotStoredUnderIdempotency_spec_11_5",
         "pkg/idempotency/idempotency_test.go::TestMaxKeyLengthMatchesSpec",
         "pkg/idempotency/idempotency_test.go::TestTTLMatchesSpec",
         "pkg/idempotency/idempotency_test.go::TestKeyValidateAcceptsCanonical",
@@ -4788,6 +4799,7 @@
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
         "tests/tier4_integration/token_service_revocation_publish_test.go::TestTokenServiceRotationReachesPeersOverRedis_spec_13_3",
         "cmd/lenny-token-service/revocation_publish_test.go::TestTokenServiceRevocationPublisher_spec_13_3",
         "cmd/lenny-token-service/redis_topology_test.go::TestTokenServicePublishesRevocationsOnTheCachePubSubConcern_spec_13_3",
@@ -5203,6 +5215,8 @@
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardToolCallReturnsEachCoordinatorResponseToTheClient_spec_29_3",
         "tests/tier11_docs/resume_override_api_doc_reconciliation_test.go",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go",
@@ -7354,6 +7368,7 @@
       "title": "Web Playground \u2014 Authentication",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardCarriesTheRecordedCredentialOnEverySurface_spec_29_3",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
@@ -7732,6 +7747,19 @@
       ],
       "blocked_until_phase": "2",
       "notes": "The adapter-to-runtime JSONL contract: the canonical output-type registry, the per-slot frame demultiplexer, the degradation annotations an ingress attaches, and the crash record a runtime that exits non-zero produces."
+    },
+    "28.5.4": {
+      "title": "Inter-replica",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedToolCallFromAnMCPClientCarriesTheCredential_spec_28_5_4",
+        "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedPlatformToolCallCarriesTheCallingSession_spec_28_5_4",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedRESTRequestAndResponseCrossUnchanged_spec_28_5_4",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardOnAReusedKeepAliveConnectionThatFailsOnWriteIsUnknown_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardRunsUnderTheCallersDeadlineWithNoBoundOfItsOwn_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3"
+      ]
     },
     "28.7": {
       "title": "Wire-contract artifact register",

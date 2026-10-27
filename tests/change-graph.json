@@ -57,6 +57,7 @@
     },
     "tests/testinfra/gatewaypki/": {
       "unit": ["tests/testinfra/gatewaypki/...", "pkg/gateway/sessionserver/...", "cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/holderforward/..."],
       "security": ["tests/tier9_security/holder_forward_material_refusal_test.go"]
     },
     "tests/testinfra/tcpfault/": {
@@ -412,7 +413,8 @@
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/..."],
+      "component": ["tests/tier2_component/leases/composite_holder_pgstore_test.go"],
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/...", "tests/tier3_contract/holderforward/..."],
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go"],
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]

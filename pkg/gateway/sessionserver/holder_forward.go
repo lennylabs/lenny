@@ -393,12 +393,20 @@ func setForwardIdentity(ctx context.Context, h http.Header) {
 // sendForward sends req on the shared client and classifies a failure. A
 // failure before the client obtained a connection is not delivered; a
 // failure after it, including one on a reused keep-alive connection, has an
-// unknown outcome. The helper never retries.
+// unknown outcome. The forward is sent once. The HTTP transport re-sends a
+// request on another connection when its write failed on a reused keep-alive
+// connection before any byte was counted, so a second connection within one
+// attempt is closed before the request is written to it, and the attempt
+// fails with an unknown outcome.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 6, 7, and 8
 func (s *Server) sendForward(req *http.Request) (*http.Response, ForwardOutcome) {
 	var connected atomic.Bool
-	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+	trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		if connected.Swap(true) {
+			_ = info.Conn.Close()
+		}
+	}}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := s.holderForward.Do(req)
 	if err != nil {
@@ -423,7 +431,8 @@ var hopByHopHeaders = []string{
 // not copied. Only a live stream is flushed as it arrives; any other body is
 // copied without a flush, so the serving replica's §11.5 middleware buffers
 // and stores it as it stores a local response. A body that fails part-way
-// gives an unknown outcome; the status is already written then.
+// gives an unknown outcome; the status is already written then, so the
+// truncated response is kept out of the §11.5 cache instead.
 //
 // spec: §29.3 (Interactive message send) Forwarding rule 4, §11.5
 // (Idempotency) Mechanism
@@ -446,6 +455,7 @@ func copyForwardResponse(ctx context.Context, w http.ResponseWriter, resp *http.
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyBody(w, resp.Body, live); err != nil {
+		idemmw.DoNotStore(ctx)
 		return ForwardUnknown
 	}
 	return ForwardDelivered
@@ -630,8 +640,12 @@ func decodeToolForwardResponse(ctx context.Context, resp *http.Response) (mcp.To
 // spec: §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica
 // address, §10.3 (mTLS PKI) NET-072
 func NewHolderForwardClient(reloader *certreload.Reloader, roots *x509.CertPool) *http.Client {
-	return newHolderForwardClient(holderForwardClientTLS(reloader, roots), HolderForwardDialBound)
+	var d net.Dialer
+	return newHolderForwardClient(holderForwardClientTLS(reloader, roots), HolderForwardDialBound, d.DialContext)
 }
+
+// dialFunc opens the TCP connection of one forward attempt under ctx.
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // holderForwardClientTLS is the client side of NET-072 peer validation.
 func holderForwardClientTLS(reloader *certreload.Reloader, roots *x509.CertPool) *tls.Config {
@@ -644,13 +658,13 @@ func holderForwardClientTLS(reloader *certreload.Reloader, roots *x509.CertPool)
 }
 
 // newHolderForwardClient builds the client over cfg with the given dial and
-// handshake bound. A transport with DialTLSContext set ignores
-// TLSClientConfig and TLSHandshakeTimeout, so cfg is applied inside the dial
-// function, and one context bounds both steps.
-func newHolderForwardClient(cfg *tls.Config, bound time.Duration) *http.Client {
+// handshake bound, opening TCP connections with dial. A transport with
+// DialTLSContext set ignores TLSClientConfig and TLSHandshakeTimeout, so cfg
+// is applied inside the dial function, and one context bounds both steps.
+func newHolderForwardClient(cfg *tls.Config, bound time.Duration, dial dialFunc) *http.Client {
 	transport := &http.Transport{
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialHolderTLS(ctx, network, addr, cfg, bound)
+			return dialHolderTLS(ctx, network, addr, cfg, bound, dial)
 		},
 		MaxIdleConnsPerHost: 16,
 		IdleConnTimeout:     90 * time.Second,
@@ -663,13 +677,12 @@ func newHolderForwardClient(cfg *tls.Config, bound time.Duration) *http.Client {
 	}
 }
 
-// dialHolderTLS dials addr and completes the TLS handshake under one context
-// derived from ctx with the bound as its timeout.
-func dialHolderTLS(ctx context.Context, network, addr string, cfg *tls.Config, bound time.Duration) (net.Conn, error) {
+// dialHolderTLS dials addr with dial and completes the TLS handshake under
+// one context derived from ctx with the bound as its timeout.
+func dialHolderTLS(ctx context.Context, network, addr string, cfg *tls.Config, bound time.Duration, dial dialFunc) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
-	var d net.Dialer
-	raw, err := d.DialContext(ctx, network, addr)
+	raw, err := dial(ctx, network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial coordinating replica %s: %w", addr, err)
 	}
