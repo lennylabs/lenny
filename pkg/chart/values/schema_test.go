@@ -240,12 +240,28 @@ func TestKMSSignQuotaPerSecondMinimum_spec_17_8_2(t *testing.T) {
 	}
 }
 
-// TestAcceptsEmptyDeploymentTier guards the deliberate choice to leave
-// deploymentTier a free string: the chart sets it to "" to omit the
-// deployment_tier metric relabel, and the schema must not reject that.
-func TestAcceptsEmptyDeploymentTier(t *testing.T) {
-	if err := ValidateYAML(mustSchema(t), []byte("global:\n  deploymentTier: \"\"\n")); err != nil {
-		t.Errorf("expected an empty deploymentTier to pass: %v", err)
+// TestDeploymentTierClosedSet_spec_16_1_1 pins global.deploymentTier to the
+// §16.1.1 closed set: tier1, tier2, and tier3 pass, and every other value,
+// including the empty string, a case variant, and a typo, is refused. An
+// omitted key passes and keeps the values.yaml default tier1. The value
+// also renders the lenny-ops --platform-tier flag, where an off-set value
+// would drop the §25.4 Tier 2/3 required Idempotency-Key. F-25.4.38.
+//
+// spec: 16.1.1 (Attribute Naming) deployment_tier, 25.4 (The lenny-ops Service) Idempotency-Key, 17.6 (Packaging and Installation)
+func TestDeploymentTierClosedSet_spec_16_1_1(t *testing.T) {
+	schema := mustSchema(t)
+	for _, tier := range []string{"tier1", "tier2", "tier3"} {
+		if err := ValidateYAML(schema, []byte("global:\n  deploymentTier: "+tier+"\n")); err != nil {
+			t.Errorf("expected deploymentTier %q to pass: %v", tier, err)
+		}
+	}
+	for _, tier := range []string{`""`, "TIER2", "Tier3", "tier4", "tier0", "teir2", "2", `" tier2"`} {
+		if err := ValidateYAML(schema, []byte("global:\n  deploymentTier: "+tier+"\n")); err == nil {
+			t.Errorf("expected deploymentTier %s to be rejected", tier)
+		}
+	}
+	if err := ValidateYAML(schema, []byte("global:\n  devMode: false\n")); err != nil {
+		t.Errorf("expected an omitted deploymentTier to pass: %v", err)
 	}
 }
 

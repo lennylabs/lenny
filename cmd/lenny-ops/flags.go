@@ -4,6 +4,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/tierpromotion"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
@@ -538,9 +540,14 @@ func (f *opsFlags) registerWebhookFlags() {
 	// F-25.4.2.
 	f.installationID = flag.String("installation-id", os.Getenv("LENNY_INSTALLATION_ID"),
 		"§25.4: stable installation UUID surfaced in GET /v1/admin/me.platform.installationId. Override via LENNY_INSTALLATION_ID.")
-	f.platformTier = flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", ""),
-		"§25.16 deployment tier (tier1/tier2/tier3) surfaced in GET /v1/admin/me.platform.tier. "+
-			"tier2 and tier3 also select the §25.4 required Idempotency-Key. Override via LENNY_PLATFORM_TIER.")
+	// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The
+	// lenny-ops Service) Idempotency-Key. The value is one of tier1,
+	// tier2, or tier3, and validatePlatformTier refuses any other value
+	// at startup. Unset defaults to tier1, the chart default for
+	// global.deploymentTier, so an unset flag stays inside the closed set.
+	f.platformTier = flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", string(tierpromotion.Tier1)),
+		"§25.16 deployment tier (tier1 | tier2 | tier3; default tier1) surfaced in GET /v1/admin/me.platform.tier. "+
+			"tier2 and tier3 also select the §25.4 required Idempotency-Key. Any other value refuses startup. Override via LENNY_PLATFORM_TIER.")
 	f.opsServiceURL = flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
 		"§25.4: external lenny-ops URL surfaced in GET /v1/admin/me.platform.opsServiceURL. Override via LENNY_OPS_SERVICE_URL.")
 }
@@ -600,8 +607,25 @@ func (f *opsFlags) registerKMSFlags() {
 // "Dev mode guard rails".
 func (f *opsFlags) productionMode() bool { return deployenv.IsProduction(f.kmsOpts.Environment) }
 
+// validatePlatformTier refuses a --platform-tier value outside the §16.1.1
+// closed set tier1, tier2, and tier3, including the empty value. The
+// comparison is exact, so a case variant such as TIER2 is refused. Without
+// the refusal an off-set value would read as Tier 1 in
+// idempotencyKeyRequired and drop the §25.4 Tier 2/3 required
+// Idempotency-Key, and would surface an off-set platform.tier.
+//
+// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The lenny-ops
+// Service) Idempotency-Key.
+func validatePlatformTier(tier string) error {
+	if tierpromotion.Tier(tier).IsValid() {
+		return nil
+	}
+	return fmt.Errorf("--platform-tier %q is not one of tier1, tier2, or tier3 (§16.1.1, §25.4)", tier)
+}
+
 // idempotencyKeyRequired reports the §25.4 Tier 2/3 required-key posture
-// from --platform-tier. An empty or unrecognized tier reads as Tier 1.
+// from --platform-tier. main refuses an off-set tier at startup through
+// validatePlatformTier, so only tier1, tier2, and tier3 reach it.
 //
 // spec: §25.4 (The lenny-ops Service) Idempotency-Key.
 func (f *opsFlags) idempotencyKeyRequired() bool {

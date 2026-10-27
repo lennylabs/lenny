@@ -63,6 +63,11 @@ func main() {
 	if err := f.kmsFinalize(); err != nil {
 		log.Fatalf("lenny-ops: %v", err)
 	}
+	// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The
+	// lenny-ops Service) Idempotency-Key. Fail closed on an off-set tier.
+	if err := validatePlatformTier(*f.platformTier); err != nil {
+		log.Fatalf("lenny-ops: %v", err)
+	}
 	runOps(f)
 }
 

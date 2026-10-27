@@ -1343,6 +1343,36 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --platform-tier=tier1
 
+  # spec: §16.1.1 (Attribute Naming), §25.4 (The lenny-ops Service)
+  # Idempotency-Key — global.deploymentTier renders --platform-tier, and a
+  # value outside tier1, tier2, and tier3 is refused at schema validation
+  # rather than rendered, so a typo cannot drop the Tier 2/3 required
+  # Idempotency-Key. F-25.4.38.
+  - it: renders --platform-tier from each closed-set global.deploymentTier
+    set:
+      global.deploymentTier: tier3
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-tier=tier3
+
+  - it: refuses an off-set global.deploymentTier TIER2 at schema validation
+    set:
+      global.deploymentTier: TIER2
+    asserts:
+      - failedTemplate:
+          errorPattern: "deploymentTier.: value must be one of 'tier1', 'tier2', 'tier3'"
+
+  - it: refuses an off-set global.deploymentTier tier4 at schema validation
+    set:
+      global.deploymentTier: tier4
+    asserts:
+      - failedTemplate:
+          errorPattern: "deploymentTier.: value must be one of 'tier1', 'tier2', 'tier3'"
+
   # spec: §17.4 (Dev mode guard rails) — lenny-ops reads the same
   # global.devMode value the gateway's --dev-mode does. F-17.4.35.
   - it: renders --dev-mode on lenny-ops under global.devMode
