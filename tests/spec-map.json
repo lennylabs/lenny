@@ -3190,7 +3190,7 @@
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier7a_load_local/suspension_interleaving_test.go::TestIdleSuspensionRequiredPairs_spec_6_2",
         "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestSupersededCoordinatorEvictsAndTheAdopterReleasesOnce_spec_10_1_5",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestSupersededCoordinatorForwardsTheDeleteAndTheAdopterReleasesOnce_spec_10_1_5",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestOldCoordinatorDeleteAfterPeerResumeEvictsItsStaleBinding_spec_10_1_5"
       ],
       "packages": [
