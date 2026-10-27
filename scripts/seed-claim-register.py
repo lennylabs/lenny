@@ -536,25 +536,24 @@ EXPLICIT = [
                 "in suspended and the recovery states, with maxSessionAgeSeconds",
     },
     # The lifecycle drain writes each scoped session's terminal row from the
-    # replica that runs it, and the release of a pod bound on another replica
-    # waits for that replica's Sweeper to list the row, which user erasure can
-    # delete first. §12.8 has the drain publish its transitioned sessions on the
-    # CH-BINDRELEASE fan-out §28.5.7 registers, and R21 is the step that lands
-    # the publish. BUILD-GAPS.md F-12.8.43 records the residual, owned by the
-    # inter-replica carrier proposal.
+    # replica that runs it, and §12.8 has it publish its transitioned sessions
+    # on the CH-BINDRELEASE fan-out §28.5.7 registers, so the replica that holds
+    # a drained session's binding releases it before user erasure deletes the
+    # row. BUILD-GAPS.md F-12.8.43 records the resolution.
     {
         "claim": "Lifecycle drain releases the pod of a session bound on another gateway "
                  "replica before the drained scope's rows are erased",
-        "status": "ABSENT",
+        "status": "WIRED",
         "spec_anchor": "#2857-gateway-to-store",
-        "deferral_id": "R21",
         "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions` publishes its "
                    "transitioned sessions on CH-BINDRELEASE through "
                    "`bindReleaseFanOut.TerminateUserSessions`",
-        "note": "the drain writes the terminal row only and publishes nothing on "
-                "CH-BINDRELEASE; the binding replica's Sweeper releases the pod when it lists "
-                "that row, and BUILD-GAPS.md F-12.8.43 records the residual when user erasure "
-                "deletes the row first, owned by the inter-replica carrier proposal",
+        "note": "after its forced transitions the drain hands the transitioned session "
+                "identifiers to the binding-release fan-out, which releases the bindings this "
+                "replica holds and publishes the list so each peer's subscriber releases the "
+                "bindings it holds; the erasure, tenant-deletion, and tenant-suspension drains "
+                "share the one fan-out the full_revoke step uses, and a lost publish is not "
+                "redelivered",
     },
     # The §11.4 binding-release fan-out, which §28.5.7 registers as
     # CH-BINDRELEASE: the replica that handles a full_revoke releases the

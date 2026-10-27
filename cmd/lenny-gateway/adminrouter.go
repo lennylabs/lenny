@@ -505,6 +505,31 @@ func (w *gatewayWiring) buildAdminRouter(
 	if *llmSemanticCache {
 		erasureSemanticCache = semanticcache.NewInMemory(nil, 0, 0, clockinject.Now)
 	}
+	// bindReleaseProp carries the §11.4 step-2 binding-release request to
+	// peer replicas on CH-BINDRELEASE (§28.5.7) over Redis pub/sub so the
+	// bindings of sessions held on other replicas are released too. It is
+	// built once, before the erasure runner, so the one fan-out reaches the
+	// erasure drain, the tenant-deletion drain, the admin router's tenant
+	// suspension drain, and the §11.4 full_revoke step: each publishes on
+	// the same propagator, and its single Run subscriber is launched
+	// alongside the other revocation propagators. The pod terminator is
+	// wired only with warm-pod placement (--agent-namespace); without a pod
+	// registry userPods is nil and no drain publishes. F-11.4.3, F-12.8.43.
+	var (
+		bindReleaseProp *bindrelease.Propagator
+		userPods        admin.UserPodTerminator
+	)
+	if w.podRegistry != nil {
+		// spec: §11.4 step 2 — each binding is released through the
+		// session server's terminal binding release body.
+		fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}
+		fanOut.prop = bindrelease.New(fanOut, w.securityBus, w.replica,
+			bindrelease.WithErrorHandler(func(err error) {
+				log.Printf("lenny-gateway: §11.4/§12.8: publish binding-release request: %v", err)
+			}))
+		bindReleaseProp = fanOut.prop
+		userPods = fanOut
+	}
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
 	// Session-scoped stores (transcripts, artifacts) are erased per
@@ -544,7 +569,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			WithLifecycleMetrics(gwMetrics).
 			WithMaxConcurrentJobs(*f.erasureMaxConcurrentJobs).
 			WithSessionDrain(func(ctx context.Context, tenantID, userID string) error {
-				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, tenantID, userID)
+				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)
 				return err
 			}).
 			// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal
@@ -736,6 +761,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
 			Terminator: w.newTenantSessionTerminator(
 				sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal},
+				userPods,
 				*lifecycleTickBudget,
 			),
 			Clock: clockinject.Now,
@@ -863,31 +889,13 @@ func (w *gatewayWiring) buildAdminRouter(
 	// (--agent-namespace), the lease revoker only when the lease store
 	// exposes per-session lookup, and the token revoker only with a
 	// Postgres-backed issued-token index. A minimal gateway wires none
-	// of them and still soft/hard disables a user.
-	//
-	// bindReleaseProp carries the §11.4 step-2 binding-release request to
-	// peer replicas on CH-BINDRELEASE (§28.5.7) over Redis pub/sub so the
-	// bindings of a revoked user's sessions held on other replicas are
-	// released too. Its Run subscriber is launched alongside the other
-	// revocation propagators below. F-11.4.3.
-	var bindReleaseProp *bindrelease.Propagator
+	// of them and still soft/hard disables a user. The pod terminator is
+	// the binding-release fan-out built above the erasure runner.
 	{
 		var (
-			userPods   admin.UserPodTerminator
 			userLeases admin.UserLeaseRevoker
 			userTokens admin.UserTokenRevoker
 		)
-		if w.podRegistry != nil {
-			// spec: §11.4 step 2 — each binding is released through the
-			// session server's terminal binding release body.
-			fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}
-			fanOut.prop = bindrelease.New(fanOut, w.securityBus, w.replica,
-				bindrelease.WithErrorHandler(func(err error) {
-					log.Printf("lenny-gateway: §11.4 full_revoke: publish binding-release request: %v", err)
-				}))
-			bindReleaseProp = fanOut.prop
-			userPods = fanOut
-		}
 		// The §11.4 lease step built above, over the §4.9 credential-lease
 		// store and the credential assigner.
 		userLeases = leaseRevoker
@@ -1228,14 +1236,18 @@ func (w *gatewayWiring) erasureReleaseGate() func(ctx context.Context, tenantID,
 }
 
 // newTenantSessionTerminator returns the §12.8 Phase 2 session terminator
-// over w.sessions, draining through term under the per-drain budget and
-// holding Phase 2 while a session is in its §7.1 post-terminal window, with
-// the cap buildStores computed and the injected clock.
-// spec: §12.8 (Tenant deletion lifecycle), §7.1 (Post-terminal window)
-func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, budget time.Duration) tenantSessionTerminator {
+// over w.sessions, draining through term under the per-drain budget,
+// publishing the drained sessions on pods (the binding-release fan-out, nil
+// without a pod registry), and holding Phase 2 while a session is in its
+// §7.1 post-terminal window, with the cap buildStores computed and the
+// injected clock.
+// spec: §12.8 (Tenant deletion lifecycle), §7.1 (Post-terminal window),
+// §28.5.7 (Gateway-to-store)
+func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, pods admin.UserPodTerminator, budget time.Duration) tenantSessionTerminator {
 	return tenantSessionTerminator{
 		sessions: w.sessions,
 		term:     term,
+		pods:     pods,
 		budget:   budget,
 		cap:      w.postTerminalCap,
 		clock:    clockinject.Now,

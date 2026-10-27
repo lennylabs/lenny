@@ -161,6 +161,10 @@ func tenantEraserFunc(erasers []namedTenantEraser, name string) tenantEraseFunc 
 type tenantSessionTerminator struct {
 	sessions admin.DrainLister
 	term     admin.DrainTerminator
+	// pods is the binding-release fan-out the drain publishes its
+	// transitioned sessions on (CH-BINDRELEASE). Nil publishes nothing.
+	// spec: §12.8 (Lifecycle fence and drain), §28.5.7 (Gateway-to-store).
+	pods admin.UserPodTerminator
 	// budget bounds each drain. It is the operator-tunable
 	// --lifecycle-tick-budget, which the startup gate requires positive.
 	budget time.Duration
@@ -178,7 +182,7 @@ type tenantSessionTerminator struct {
 func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
 	tctx, cancel := context.WithTimeout(ctx, t.budget)
 	defer cancel()
-	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, tenantID, ""); err != nil {
+	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, ""); err != nil {
 		return fmt.Errorf("tenant deletion drain: %w", err)
 	}
 	pending, err := admin.ReleasePending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)

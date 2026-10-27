@@ -162,7 +162,7 @@ func runReplayErasureRound(t *testing.T, rng *rand.Rand, replays int) {
 	}); err != nil {
 		t.Fatalf("flag write: %v", err)
 	}
-	if _, err := admin.DrainSessions(ctx, s.sessions, storeTerminator{s.sessions}, tenant, "alice"); err != nil {
+	if _, err := admin.DrainSessions(ctx, s.sessions, storeTerminator{s.sessions}, nil, tenant, "alice"); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 	if _, err := s.orchestrator().DeleteByUser(ctx, tenant, "alice"); err != nil {

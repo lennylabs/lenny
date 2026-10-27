@@ -90,7 +90,7 @@ func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	term := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, time.Second)
+	term := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, nil, time.Second)
 	collect := func() int {
 		arts := &countingArtifacts{}
 		c := retentiongc.New(w.sessions, retentiongc.StaticTenants{"acme"}, []retentiongc.Artifact{arts.artifact()}, w.retentionGCOptions(time.Minute))
@@ -116,7 +116,7 @@ func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T)
 	if _, err := w.erasureReleaseGate()(ctx, "acme", "alice@acme.com"); !errors.Is(err, admin.ErrReleaseCapUnset) {
 		t.Errorf("erasure gate with no cap = %v, want ErrReleaseCapUnset", err)
 	}
-	if err := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, time.Second).TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrReleaseCapUnset) {
+	if err := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, nil, time.Second).TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrReleaseCapUnset) {
 		t.Errorf("tenant terminator with no cap = %v, want ErrReleaseCapUnset", err)
 	}
 	zeroArts := &countingArtifacts{}

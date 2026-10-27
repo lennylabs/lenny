@@ -356,6 +356,46 @@ func TestTenantSessionTerminatorReturnsDrainOutcome_spec_12_8(t *testing.T) {
 	}
 }
 
+// The Phase 2 drain publishes the sessions it transitioned on the terminator's
+// binding-release fan-out, with the tenant and an empty user.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain), §28.5.7 (Gateway-to-store)
+func TestTenantSessionTerminatorPublishesDrainedSessions_spec_12_8(t *testing.T) {
+	sessions := sessionmem.New()
+	ctx := context.Background()
+	for _, s := range []sessionstore.Session{
+		{ID: "sess-live", TenantID: "acme", UserID: "alice", State: apisession.StateRunning},
+		{ID: "sess-done", TenantID: "acme", UserID: "alice", State: apisession.StateCompleted},
+	} {
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	pods := &recordingUserPods{}
+	term := tenantSessionTerminator{sessions: sessions, term: &sleepyDrainTerminator{}, pods: pods, budget: time.Second, cap: time.Minute, clock: time.Now}
+	_ = term.TerminateTenantSessions(ctx, "acme")
+	if len(pods.calls) != 1 || pods.calls[0].tenantID != "acme" || pods.calls[0].userID != "" ||
+		strings.Join(pods.calls[0].ids, ",") != "sess-live" {
+		t.Fatalf("TerminateUserSessions calls = %+v, want one call for acme with [sess-live]", pods.calls)
+	}
+}
+
+// recordingUserPods is an admin.UserPodTerminator that records each call.
+type recordingUserPods struct {
+	calls []struct {
+		tenantID, userID string
+		ids              []string
+	}
+}
+
+func (p *recordingUserPods) TerminateUserSessions(_ context.Context, tenantID, userID string, ids []string) admin.UserTerminationResult {
+	p.calls = append(p.calls, struct {
+		tenantID, userID string
+		ids              []string
+	}{tenantID, userID, append([]string(nil), ids...)})
+	return admin.UserTerminationResult{}
+}
+
 // failingLister is a DrainLister whose listing always fails.
 type failingLister struct{}
 

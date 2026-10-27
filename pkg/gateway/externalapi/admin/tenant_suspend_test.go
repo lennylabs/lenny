@@ -235,6 +235,41 @@ func TestSuspendTenant_DrainsActiveSessions_spec_15_1_818(t *testing.T) {
 	}
 }
 
+// TestSuspendTenantDrainPublishesOnTheRouterFanOut_spec_12_8 pins that the
+// tenant-suspension drain publishes the sessions it moved to a terminal state
+// on the binding-release fan-out the router was given for §11.4 full_revoke,
+// with the tenant and an empty user, so a peer replica releases a suspended
+// session's binding. The pre-fix drain never reached the fan-out.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API), 28.5.7 (Gateway-to-store)
+func TestSuspendTenantDrainPublishesOnTheRouterFanOut_spec_12_8(t *testing.T) {
+	store := tenantstore.NewMemory()
+	seedSuspendTenant(t, store, tenantstore.Tenant{ID: "acme"})
+	sessions := memstore.New()
+	rows := map[string]sessionstore.Session{
+		"sess_run":  {ID: "sess_run", TenantID: "acme", State: session.StateRunning},
+		"sess_term": {ID: "sess_term", TenantID: "acme", State: session.StateCompleted},
+	}
+	for _, s := range rows {
+		if err := sessions.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed session %q: %v", s.ID, err)
+		}
+	}
+	pods := &recordingPods{}
+	h := newSuspendRouter(store, &recordingSink{}).WithSessions(sessions).
+		WithSessionAdmin(&fakeSessionAdmin{rows: rows}).
+		WithUserRevocation(pods, nil, nil).Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants/acme/suspend", nil)))
+
+	want := []publishCall{{tenantID: "acme", ids: []string{"sess_run"}}}
+	if len(pods.calls) != 1 || pods.calls[0].tenantID != "acme" || pods.calls[0].userID != "" ||
+		strings.Join(pods.calls[0].ids, ",") != "sess_run" {
+		t.Fatalf("TerminateUserSessions calls = %+v, want %+v (status %d)", pods.calls, want, rr.Code)
+	}
+}
+
 func TestResumeTenant_Success_spec_15_1_819(t *testing.T) {
 	store := tenantstore.NewMemory()
 	seedSuspendTenant(t, store, tenantstore.Tenant{

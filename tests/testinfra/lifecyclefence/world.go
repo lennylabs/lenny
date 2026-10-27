@@ -299,7 +299,7 @@ func (w *World) assertScopeDrained(ctx context.Context, user, when string) {
 // Drain runs the shared lifecycle drain over the scope through the World's
 // fault seams.
 func (w *World) Drain(ctx context.Context, user string) (admin.DrainResult, error) {
-	return admin.DrainSessions(ctx, w.Lister, w.Terminator, w.Tenant, user)
+	return admin.DrainSessions(ctx, w.Lister, w.Terminator, nil, w.Tenant, user)
 }
 
 // TerminalWriter ends a random admitted session the way a session's own

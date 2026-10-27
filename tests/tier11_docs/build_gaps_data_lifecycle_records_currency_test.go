@@ -353,54 +353,6 @@ type claimRow struct {
 	Note       string `json:"note"`
 }
 
-// diagnosis: the claim register lost the row for the terminal-tail residual
-// of the lifecycle drain, or the row no longer names the gateway-to-store
-// heading that registers the CH-BINDRELEASE fan-out the drain publishes on,
-// the off-holder eviction step, the drain, or the finding that records the
-// residual. Restore the row in scripts/seed-claim-register.py and regenerate
-// tests/claim-map.json; never edit the register by hand.
-func TestClaimRegisterCarriesTheDrainTerminalTailResidual(t *testing.T) {
-	root := repoRoot(t)
-	raw, err := os.ReadFile(filepath.Join(root, "tests", "claim-map.json"))
-	if err != nil {
-		t.Fatalf("read tests/claim-map.json: %v", err)
-	}
-	var doc struct {
-		Claims []claimRow `json:"claims"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse tests/claim-map.json: %v", err)
-	}
-	var rows []claimRow
-	for _, c := range doc.Claims {
-		if c.SpecAnchor == "#2857-gateway-to-store" && strings.Contains(c.Surface, "DrainSessions") {
-			rows = append(rows, c)
-		}
-	}
-	if len(rows) != 1 {
-		t.Fatalf("tests/claim-map.json carries %d gateway-to-store rows naming DrainSessions, want 1", len(rows))
-	}
-	row := rows[0]
-	if row.Status != "ABSENT" || row.DeferralID != "R21" {
-		t.Errorf("terminal-tail row has status %q and deferral %q, want ABSENT and R21", row.Status, row.DeferralID)
-	}
-	if !strings.Contains(row.Surface, "CH-BINDRELEASE") {
-		t.Errorf("terminal-tail row surface %q does not name the CH-BINDRELEASE publish", row.Surface)
-	}
-	for _, want := range []string{"F-12.8.43", "inter-replica carrier proposal"} {
-		if !strings.Contains(row.Note, want) {
-			t.Errorf("terminal-tail row note does not name %s", want)
-		}
-	}
-	if !declaresSymbol(parseGoFile(t, filepath.Join(root, filepath.FromSlash(drainFile))), "DrainSessions") {
-		t.Errorf("the terminal-tail row names DrainSessions, which %s no longer declares", drainFile)
-	}
-	f := requireFinding(t, buildGapsFindingsByID(t, root), "F-12.8.43")
-	if !f.open {
-		t.Errorf("BUILD-GAPS.md:%d %s\n  is closed while the claim register still carries its ABSENT row", f.line, f.heading)
-	}
-}
-
 // diagnosis: the probes above no longer read a plan item or a source file the
 // way the checks assume, so they pass or fail vacuously.
 func TestDataLifecycleRecordProbes(t *testing.T) {
@@ -556,7 +508,7 @@ var secondHalfNotes = []secondHalfNote{
 	{"F-11.4.10", true, []string{"**Resolution note (proposal 0095", "**Accepted departure (proposal 0093"}},
 	{"F-12.8.2", false, []string{"**Annotation (proposal 0095", "escrow bucket"}},
 	{"F-12.8.35", true, []string{"**Accepted departure (proposal 0095", "Bound:"}},
-	{"F-12.8.43", true, []string{"**Accepted departure (proposal 0095): user erasure deletes revoked registered credentials.**", "Bound:"}},
+	{"F-12.8.43", false, []string{"**Accepted departure (proposal 0095): user erasure deletes revoked registered credentials.**", "Bound:"}},
 	{"F-12.8.44", true, []string{"**Narrowed (proposal 0095", "Phase 1", "Owner: unassigned."}},
 	{"F-12.8.46", true, []string{"tenant-path prefix delete", "Owner: unassigned."}},
 }
