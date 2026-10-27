@@ -170,7 +170,11 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 	if err := s.checkCaller(ctx, req.CallerTenantID, req.CallerJTI); err != nil {
 		return Ticket{}, "", err
 	}
-	now := s.cfg.Clock().UTC()
+	// The JWT iat and exp are whole Unix seconds, so the issue instant is
+	// truncated before it fixes the started event time, the claims, and the
+	// row's issued_at and exp: the row then records the bearer's exp exactly.
+	// spec: §13.3 (Platform-admin impersonation, rule 1 (c); `exp` granularity).
+	now := s.cfg.Clock().UTC().Truncate(time.Second)
 	t := Ticket{
 		ID:             s.cfg.NewID(),
 		AdminSub:       req.AdminSub,
@@ -307,7 +311,7 @@ func impersonationRow(t Ticket, signed string, audience []string) issuedtokensto
 //
 // spec: §13.3 (Platform-admin impersonation, rules 3 and 7); §16.7; §12.3.
 func (s *Service) End(ctx context.Context, id, endedBy string) (EndResult, error) {
-	now := s.cfg.Clock().UTC()
+	now := s.cfg.Clock().UTC().Truncate(time.Second)
 	row, err := s.tokens.EndImpersonation(ctx, id, now)
 	if err != nil {
 		return EndResult{}, s.endMiss(ctx, err, endedBy)

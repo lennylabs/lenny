@@ -31,6 +31,7 @@ type recordedAppend struct {
 	tenantID  string
 	eventType string
 	payload   map[string]any
+	at        time.Time
 }
 
 // fakeAppender captures audit writes and returns errFor[eventType] when
@@ -41,14 +42,14 @@ type fakeAppender struct {
 	errFor map[string]error
 }
 
-func (a *fakeAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, _ time.Time) (audit.Row, error) {
+func (a *fakeAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	a.log.Add("audit.append:" + eventType)
 	if err := a.errFor[eventType]; err != nil {
 		return audit.Row{}, err
 	}
 	var p map[string]any
 	_ = json.Unmarshal(payload, &p)
-	a.rows = append(a.rows, recordedAppend{tenantID: tenantID, eventType: eventType, payload: p})
+	a.rows = append(a.rows, recordedAppend{tenantID: tenantID, eventType: eventType, payload: p, at: at})
 	return audit.Row{ID: "row-" + eventType}, nil
 }
 
@@ -189,6 +190,40 @@ func TestIssue_RecordsImpersonationRowAfterStartedAndSign_spec_13_3(t *testing.T
 	if !ok || started.tenantID != "platform" || started.payload["target_tenant_id"] != "acme" ||
 		started.payload["impersonation_session_id"] != ticket.ID || started.payload["ticket_id"] != "SUP-42" {
 		t.Fatalf("started event = %+v", started)
+	}
+}
+
+// TestIssue_RowWindowMatchesBearerWholeSecondClaims_spec_13_3 pins the
+// row to the bearer: with a clock carrying a fractional second, the
+// recorded issued_at and exp equal the minted iat and exp, so the active
+// predicate (revoked_at IS NULL AND exp > now) stops counting the session
+// at the instant every verifier starts refusing the bearer.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c); `exp` granularity)
+func TestIssue_RowWindowMatchesBearerWholeSecondClaims_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0.Add(750*time.Millisecond)), time.Hour)
+
+	ticket, _, err := h.svc.Issue(context.Background(), issueReq())
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	recs := h.tokens.Records()
+	if len(recs) != 1 {
+		t.Fatalf("RecordImpersonation calls = %d, want 1", len(recs))
+	}
+	row := recs[0].Token
+	if want := time.Unix(h.signer.claims.Expiry, 0); !row.ExpiresAt.Equal(want) {
+		t.Fatalf("row exp = %s, want the bearer exp %s", row.ExpiresAt, want)
+	}
+	if want := time.Unix(h.signer.claims.IssuedAt, 0); !row.IssuedAt.Equal(want) || !ticket.IssuedAt.Equal(want) {
+		t.Fatalf("row issued_at = %s, ticket issued = %s, want the bearer iat %s", row.IssuedAt, ticket.IssuedAt, want)
+	}
+	if !ticket.ExpiresAt.Equal(row.ExpiresAt) {
+		t.Fatalf("ticket exp = %s, want the row exp %s", ticket.ExpiresAt, row.ExpiresAt)
+	}
+	started, ok := h.app.byType("admin.impersonation_started")
+	if !ok || !started.at.Equal(row.IssuedAt) {
+		t.Fatalf("started event = %+v, want its time at the row issued_at %s", started, row.IssuedAt)
 	}
 }
 
