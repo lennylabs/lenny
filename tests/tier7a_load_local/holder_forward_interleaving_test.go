@@ -258,43 +258,71 @@ func runForwardRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Rand, 
 	return id, sends
 }
 
-// maxDeliveries is the number of times the checker lets send reach the
-// runtime. It is one for every send except a send answered 200 queued, and
-// so held in the DLQ, in a round whose lease ended on the peer; that send
-// may reach the runtime twice and the checker logs it.
+// deliveryVerdict classifies how many times one send reached the runtime.
+type deliveryVerdict int
+
+const (
+	// deliveredAtMostOnce is every count the invariant allows.
+	deliveredAtMostOnce deliveryVerdict = iota
+	// heldRedelivery is a send answered 200 queued, and so held in the DLQ,
+	// that reached the runtime exactly twice in a round whose lease ended on
+	// the peer.
+	heldRedelivery
+	// duplicateDelivery is every other count above one.
+	duplicateDelivery
+)
+
+// classifyDeliveries returns the verdict for send s, delivered times, in a
+// round that ended handed off or not.
 //
-// The gateway does not close that redelivery. §7.2 delivery path 6 Delivery
-// of held messages removes a held entry only after the runtime consumed it,
-// and the durable-inbox Explicit ACK row it cites makes that delivery
-// at-least-once: an entry consumed but not yet removed when the coordinating
-// replica changes is delivered again by the adopting replica, and the
-// adapter's delivered_message_ids set suppresses the duplicate before it
-// reaches the runtime. The gateway re-reads REG-COORDLEASE before each held
-// entry (ErrHeldDeliveryPreempted in
+// The checker fails a duplicateDelivery and ends the round with a skip
+// blocked on BUILD-GAPS F-7.2.41 for a heldRedelivery. §7.2 delivery path 6
+// Delivery of held messages removes a held entry only after the runtime
+// consumed it, so an entry consumed but not yet removed when the
+// coordinating replica changes is delivered again by the adopting replica,
+// and the adapter's delivered_message_ids set of the §7.2 Explicit ACK row
+// drops the duplicate before it reaches the runtime. The gateway re-reads
+// REG-COORDLEASE before each held entry (ErrHeldDeliveryPreempted in
 // pkg/gateway/sessionserver/held_delivery.go), which leaves only the window
-// between one entry's lease read and its removal, and the pod-side
-// coordination_generation stamp of §29.3 Forwarding rule 5 does not reject a
-// write that precedes the new coordinator's fence. The adapter's suppression
-// set is BUILD-GAPS finding F-7.2.41, which no code implements yet, so the
-// harness runtime sees the redelivery. When F-7.2.41 lands, maxDeliveries
-// returns one for every send.
-func maxDeliveries(s forwardSend, handedOff bool) int {
-	if handedOff && s.code == http.StatusOK && s.receipt() == string(session.DeliveryStatusQueued) {
-		return 2
+// between one entry's lease read and its removal. No code implements the
+// adapter's suppression set yet, which is F-7.2.41, so the harness runtime
+// sees that redelivery. The blocked skip keeps the case visible, and
+// TestBlockedSkipsNameOpenFindings_spec_7_2 fails once F-7.2.41 closes, at
+// which point the skip and the heldRedelivery verdict are removed.
+func classifyDeliveries(s forwardSend, handedOff bool, delivered int) deliveryVerdict {
+	switch {
+	case delivered <= 1:
+		return deliveredAtMostOnce
+	case delivered == 2 && handedOff && s.code == http.StatusOK && s.receipt() == string(session.DeliveryStatusQueued):
+		return heldRedelivery
+	default:
+		return duplicateDelivery
 	}
-	return 1
+}
+
+// checkDeliveryCount fails a duplicate delivery of s and records a held
+// redelivery in redelivered.
+func checkDeliveryCount(t *testing.T, s forwardSend, handedOff bool, delivered int, when string, redelivered map[string]bool) {
+	t.Helper()
+	switch classifyDeliveries(s, handedOff, delivered) {
+	case duplicateDelivery:
+		t.Errorf("%s (answered %d %v) reached the runtime %d times %s, want at most once", s.text, s.code, s.body, delivered, when)
+	case heldRedelivery:
+		redelivered[s.text] = true
+	}
 }
 
 // checkForwardSends is the round's invariant checker. After the round
-// settles it asserts that no send is delivered twice (maxDeliveries states
-// the one exception, a DLQ-held send across a handoff, which F-7.2.41
-// closes), that no send that reached the runtime is still held in the DLQ,
+// settles it asserts that no send is delivered twice (classifyDeliveries
+// names the DLQ-held redelivery across a handoff that is blocked on
+// F-7.2.41), that no send that reached the runtime is still held in the DLQ,
 // that every 2xx receipt is a delivery or a DLQ hold, and that every answer
 // is a 2xx receipt or a 409 or 500 refusal, which is accepted with or
 // without a delivery. It then sends one message on the coordinator, whose
 // path-2 delivery drains the DLQ first, and asserts that every accepted send
-// reached the runtime and that the DLQ is empty.
-func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sends []forwardSend) {
+// reached the runtime and that the DLQ is empty. It returns the sends that
+// were held redeliveries.
+func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sends []forwardSend) map[string]bool {
 	t.Helper()
 	h.Settle()
 	handedOff := leaseHolder(h, id) != h.Replicas[0]
@@ -303,13 +331,10 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 		texts[i] = s.text
 	}
 	held := heldTexts(t, h, id, texts)
+	redelivered := map[string]bool{}
 	for _, s := range sends {
 		delivered := countText(h, id, s.text)
-		if limit := maxDeliveries(s, handedOff); delivered > limit {
-			t.Errorf("%s (answered %d %v) reached the runtime %d times, want at most %d", s.text, s.code, s.body, delivered, limit)
-		} else if delivered > 1 {
-			t.Logf("%s (answered %d %s) reached the runtime %d times across the handoff (F-7.2.41)", s.text, s.code, s.receipt(), delivered)
-		}
+		checkDeliveryCount(t, s, handedOff, delivered, "after the round", redelivered)
 		if delivered >= 1 && held[s.text] {
 			t.Errorf("%s (answered %d %v) reached the runtime %d times and is still held in the DLQ", s.text, s.code, s.body, delivered)
 		}
@@ -339,9 +364,7 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 	h.Settle()
 	for _, s := range sends {
 		delivered := countText(h, id, s.text)
-		if limit := maxDeliveries(s, handedOff); delivered > limit {
-			t.Errorf("%s reached the runtime %d times after the DLQ drain, want at most %d", s.text, delivered, limit)
-		}
+		checkDeliveryCount(t, s, handedOff, delivered, "after the DLQ drain", redelivered)
 		if s.accepted() && delivered == 0 {
 			t.Errorf("%s was answered %s, but it never reached the runtime after the DLQ drain", s.text, s.receipt())
 		}
@@ -349,6 +372,7 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 	if n, err := h.DLQ.Len(context.Background(), lifecycleharness.Tenant, id); err != nil || n != 0 {
 		t.Errorf("the DLQ holds %d entries (%v) after the coordinator's path-2 delivery, want none", n, err)
 	}
+	return redelivered
 }
 
 // spec: §29.3 (Interactive message send) Forwarding rules 1, 2, 5, 6, and 7,
@@ -357,8 +381,8 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 // diagnosis: an off-holder message raced against a coordinator handoff or a
 // coordination lease expiry, with the lease holder refusing or dropping
 // forwarded connections, reached the runtime twice (a message held in the
-// DLQ may reach it twice across a completed handoff until the adapter's
-// duplicate suppression of BUILD-GAPS F-7.2.41 lands); was delivered and also
+// DLQ and delivered twice across a completed handoff skips the round as
+// blocked on the adapter's duplicate suppression of BUILD-GAPS F-7.2.41); was delivered and also
 // left held in the DLQ; was answered with a 2xx receipt although it was
 // neither delivered nor held, or was held but never delivered by the
 // coordinator's next path-2 delivery; or was answered with a status other
@@ -383,8 +407,50 @@ func TestOffHolderForwardInterleavingsDeliverEachMessageOnce_spec_29_3(t *testin
 		t.Run(fmt.Sprintf("round %d %s with %s", round, d, failure), func(t *testing.T) {
 			h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 8})
 			id, sends := runForwardRound(t, h, rand.New(rand.NewSource(roundSeed)), round, failure, d)
-			checkForwardSends(t, h, id, sends)
+			redelivered := checkForwardSends(t, h, id, sends)
 			h.Check(t)
+			if len(redelivered) > 0 {
+				t.Logf("held sends delivered twice across the handoff: %v", redelivered)
+				t.Skip("blocked: F-7.2.41 (owner: R20) a held message consumed but not yet removed at a coordinator handoff is delivered again by the adopting coordinator, and no adapter delivered_message_ids set suppresses it")
+			}
 		})
+	}
+}
+
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §29.3
+// (Interactive message send) Forwarding rules 5 and 6
+// diagnosis: the interleaving checker passed a send that reached the runtime
+// more than once, outside the one held redelivery across a completed handoff
+// that is blocked on BUILD-GAPS F-7.2.41, so a double delivery no longer fails
+// the round; or it failed that held redelivery instead of skipping it as
+// blocked.
+func TestForwardCheckerFailsEveryDoubleDeliveryButTheBlockedHeldRedelivery_spec_7_2(t *testing.T) {
+	queued := forwardSend{text: "q", code: http.StatusOK, body: map[string]any{
+		"deliveryReceipt": map[string]any{"status": string(session.DeliveryStatusQueued)},
+	}}
+	delivered := forwardSend{text: "d", code: http.StatusOK, body: map[string]any{
+		"deliveryReceipt": map[string]any{"status": string(session.DeliveryStatusDelivered)},
+	}}
+	refused := forwardSend{text: "r", code: http.StatusConflict}
+	cases := []struct {
+		name      string
+		send      forwardSend
+		handedOff bool
+		count     int
+		want      deliveryVerdict
+	}{
+		{"queued never delivered", queued, true, 0, deliveredAtMostOnce},
+		{"queued delivered once after a handoff", queued, true, 1, deliveredAtMostOnce},
+		{"queued delivered twice after a handoff", queued, true, 2, heldRedelivery},
+		{"queued delivered three times after a handoff", queued, true, 3, duplicateDelivery},
+		{"queued delivered twice without a handoff", queued, false, 2, duplicateDelivery},
+		{"delivered receipt delivered twice after a handoff", delivered, true, 2, duplicateDelivery},
+		{"refusal delivered twice after a handoff", refused, true, 2, duplicateDelivery},
+		{"refusal delivered once", refused, false, 1, deliveredAtMostOnce},
+	}
+	for _, c := range cases {
+		if got := classifyDeliveries(c.send, c.handedOff, c.count); got != c.want {
+			t.Errorf("%s: classifyDeliveries = %d, want %d", c.name, got, c.want)
+		}
 	}
 }
