@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
 )
@@ -78,5 +79,32 @@ func TestWriteBearerTrustKeyLoads(t *testing.T) {
 	var kf map[string]any
 	if err := json.Unmarshal(raw, &kf); err != nil || !strings.HasPrefix(kf["keyId"].(string), "stack") {
 		t.Fatalf("trust key %s: %v", raw, err)
+	}
+}
+
+// spec: 13.3 (Credential Flow) "Platform-admin impersonation", 10.2 (Authentication) "Verifier key set and rotation"
+// diagnosis: the user bearer a test presents as a subject_token in place of
+// an impersonation bearer does not verify under the stack's key set, does
+// not carry the tenant, subject, roles, and user_bearer type it was asked
+// for, or reuses a jti, so two exchanges from one test collide.
+func TestUserBearerVerifiesUnderTheStackKeySet(t *testing.T) {
+	refs := map[string]string{kms.AliasJWTSigning: "ref-a"}
+	ks, signer := Signer(t, MasterKeyFile(t), refs)
+	a := UserBearer(t, signer, "acme", "alice@acme.com", auth.RoleTenantAdmin)
+	b := UserBearer(t, signer, "acme", "alice@acme.com", auth.RoleTenantAdmin)
+	ca, err := ks.Verify(a)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	cb, err := ks.Verify(b)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if ca.TenantID != "acme" || ca.Subject != "alice@acme.com" || ca.Typ != auth.TokenUserBearer ||
+		len(ca.Roles) != 1 || ca.Roles[0] != auth.RoleTenantAdmin || ca.Expiry <= ca.IssuedAt {
+		t.Fatalf("claims = %+v", ca)
+	}
+	if ca.JWTID == "" || ca.JWTID == cb.JWTID {
+		t.Fatalf("jtis %q and %q, want two distinct ids", ca.JWTID, cb.JWTID)
 	}
 }

@@ -333,7 +333,10 @@ func TestJWTSigningKMSOutageBreakerAndRecovery(t *testing.T) {
 		return tok
 	}
 	preA := bearerOf(keySetChaosImpersonate(t, gw))
-	preB := bearerOf(keySetChaosImpersonate(t, gw))
+	// The subject_token is a user bearer for alice signed with the stub's
+	// key, because step (1a) of the §13.3 "Write-before-issue ordering"
+	// refuses an impersonation bearer as a subject_token.
+	preB := stackkey.UserBearer(t, stub.Signer(t), "acme", "alice@acme.com", auth.RoleUser)
 	if r := keySetChaosExchange(t, ts.BaseURL(), preA, preB); r.status != http.StatusOK {
 		t.Fatalf("pre-fault exchange: %d %v\n%s", r.status, r.body, ts.Logs())
 	}

@@ -28,11 +28,11 @@ func (f failingImpersonation) Issue(context.Context, impersonation.IssueRequest)
 	return impersonation.Ticket{}, "", f.issueErr
 }
 
-func (failingImpersonation) End(context.Context, string, string) (impersonation.Ticket, error) {
-	return impersonation.Ticket{}, impersonation.ErrNotFound
+func (failingImpersonation) End(context.Context, string, string) (impersonation.EndResult, error) {
+	return impersonation.EndResult{}, impersonation.ErrNotFound
 }
 
-func (failingImpersonation) ListActive(context.Context) ([]impersonation.Ticket, error) {
+func (failingImpersonation) ListActive(context.Context, string) ([]impersonation.Session, error) {
 	return nil, nil
 }
 

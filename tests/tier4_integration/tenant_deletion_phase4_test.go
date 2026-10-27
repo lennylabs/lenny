@@ -35,6 +35,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
@@ -54,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 	tokensvc "github.com/lennylabs/lenny/tests/testinfra/tokenservice"
 )
 
@@ -478,11 +480,16 @@ func mintImpersonationBearer(t *testing.T, base, tenant, subject string) string 
 // lennyIssuedProbes mints, through each replica, an impersonation bearer
 // and a Token Service bearer from POST /v1/oauth/token, and returns a probe
 // per bearer over every replica: each Lenny-issued bearer verifies on every
-// replica of the install, whichever process signed it.
+// replica of the install, whichever process signed it. The exchange's
+// subject_token is a user bearer for the same tenant and subject signed
+// with the stack's platform:jwt-signing key, because step (1a) refuses an
+// impersonation bearer as a subject_token; the impersonation bearer stays
+// the caller.
 //
-// spec: §10.2 (Authentication) "Signing topology", §4.3 (Token Service).
+// spec: §10.2 (Authentication) "Signing topology", §4.3 (Token Service), §13.3 (Credential Flow) "Platform-admin impersonation".
 func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) []bearerProbe {
 	t.Helper()
+	_, signer := stackkey.Signer(t, stackkey.MasterKeyFile(t), nil)
 	impersonation := make([]string, len(replicas))
 	out := make([]bearerProbe, 0, 2*len(replicas))
 	for i, base := range replicas {
@@ -494,9 +501,9 @@ func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) 
 		})
 	}
 	for i, base := range replicas {
-		// The subject is another replica's bearer, so the exchange is not a
+		// The subject is a distinct bearer, so the exchange is not a
 		// self-rotation and revokes nothing.
-		subjectToken := impersonation[(i+1)%len(replicas)]
+		subjectToken := stackkey.UserBearer(t, signer, tenant, subject, auth.RoleUser)
 		out = append(out, bearerProbe{
 			name:     fmt.Sprintf("%s Token Service (requested through replica %d)", tenant, i),
 			bearer:   mintExchanged(t, base, impersonation[i], subjectToken, ""),

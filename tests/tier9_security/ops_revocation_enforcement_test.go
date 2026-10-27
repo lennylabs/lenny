@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
@@ -57,6 +58,9 @@ type opsRevStack struct {
 	ops       *opsprocess.Process
 	opsOpts   opsprocess.Options
 	redisLink *tcpfault.Proxy
+	// subjects signs the user bearers the exchanges present as their
+	// subject_token, over the stack's platform:jwt-signing key.
+	subjects jwt.Signer
 	// owner is the top-level test. A lenny-ops process restarted inside a
 	// subtest is stopped at owner's cleanup, so it serves every later
 	// subtest of the same stack.
@@ -90,8 +94,8 @@ func (s *opsRevStack) restartOps(t *testing.T) {
 // startOpsRevStack starts the stack and seeds acme, globex, and initech.
 func startOpsRevStack(t *testing.T) *opsRevStack {
 	t.Helper()
-	stackkey.MasterKeyFile(t)
-	s := &opsRevStack{owner: t, pg: containers.StartPostgres(t, containers.PostgresOptions{
+	_, subjects := stackkey.Signer(t, stackkey.MasterKeyFile(t), map[string]string{kms.AliasJWTSigning: "local-key-1"})
+	s := &opsRevStack{owner: t, subjects: subjects, pg: containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})}
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -158,8 +162,12 @@ func (s *opsRevStack) admin(t *testing.T, method, path string, body any, want in
 	return decoded
 }
 
-// tenantAdmin creates subject as a tenant-admin of tenant and returns two
-// impersonation bearers for it, each with its own jti.
+// tenantAdmin creates subject as a tenant-admin of tenant and returns an
+// impersonation bearer for it and a user bearer for it signed with the
+// stack's key. Step (1a) of the §13.3 "Write-before-issue ordering"
+// refuses an impersonation bearer as a subject_token or as a pasted
+// playground subject, so the impersonation bearer serves as a caller and
+// the signed bearer as a subject.
 func (s *opsRevStack) tenantAdmin(t *testing.T, tenant, subject string) (string, string) {
 	t.Helper()
 	s.admin(t, http.MethodPost, "/v1/admin/users", map[string]any{
@@ -176,7 +184,7 @@ func (s *opsRevStack) tenantAdmin(t *testing.T, tenant, subject string) (string,
 		}
 		return tok
 	}
-	return mint(), mint()
+	return mint(), stackkey.UserBearer(t, s.subjects, tenant, subject, auth.RoleTenantAdmin)
 }
 
 // exchange mints a Token Service token through the gateway's
@@ -407,8 +415,10 @@ func TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4(t *testing.T) {
 	// The gateway mints the playground bearer from alice's tenant-admin
 	// user bearer, so it carries her tenant-admin role and the origin
 	// claim the gateway's playground mint stamps. It has no issued_tokens
-	// row, and its revocation key lives in Redis.
-	playground := s.mintPlayground(t, a)
+	// row, and its revocation key lives in Redis. The pasted bearer is the
+	// stack-signed one, because the playground mint refuses an
+	// impersonation bearer as its subject.
+	playground := s.mintPlayground(t, b)
 	s.requirePlaygroundAdmittedOnGateway(t, playground)
 
 	got := s.ops.Me(t, playground)

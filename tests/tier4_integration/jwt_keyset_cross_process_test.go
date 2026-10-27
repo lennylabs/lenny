@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -340,6 +341,12 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 
 	alice1 := mintImpersonationBearer(t, gwA.BaseURL(), "acme", "alice@acme.com")
 	alice2 := mintImpersonationBearer(t, gwB.BaseURL(), "acme", "alice@acme.com")
+	// Step (1a) of §13.3 "Write-before-issue ordering" refuses an
+	// impersonation bearer as a subject_token, so each exchange's subject is
+	// a user bearer for alice signed with the stack's platform:jwt-signing
+	// key; the impersonation bearers stay the callers.
+	_, stackSigner := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)
+	aliceSubject := stackkey.UserBearer(t, stackSigner, "acme", "alice@acme.com", auth.RoleUser)
 	dave := mintImpersonationBearer(t, gwB.BaseURL(), "acme", "dave@acme.com")
 
 	t.Run("gateway-minted bearers verify on every gateway replica", func(t *testing.T) {
@@ -361,13 +368,13 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 	})
 
 	t.Run("a POST /v1/oauth/token bearer verifies on every gateway replica", func(t *testing.T) {
-		tok := mintExchanged(t, gwA.BaseURL(), alice1, alice2, "lenny-gateway")
+		tok := mintExchanged(t, gwA.BaseURL(), alice1, aliceSubject, "lenny-gateway")
 		requireAdmittedOnGateways(t, "Token Service bearer", tok, gwA, gwB)
 	})
 
 	t.Run("each Token Service replica accepts the other's subject token", func(t *testing.T) {
-		fromTS1 := mintExchanged(t, ts1.BaseURL(), alice1, alice2, "lenny-gateway")
-		fromTS2 := mintExchanged(t, ts2.BaseURL(), alice2, alice1, "lenny-gateway")
+		fromTS1 := mintExchanged(t, ts1.BaseURL(), alice1, aliceSubject, "lenny-gateway")
+		fromTS2 := mintExchanged(t, ts2.BaseURL(), alice2, aliceSubject, "lenny-gateway")
 		if code, body := oauthExchange(t, ts2.BaseURL(), alice1, fromTS1, "lenny-gateway"); code != http.StatusOK {
 			t.Errorf("Token Service replica 1 refused replica 0's subject token: %d %v\n%s", code, body, ts2.Logs())
 		}
@@ -377,7 +384,7 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 	})
 
 	t.Run("a token survives a restart of its signer", func(t *testing.T) {
-		fromTS1 := mintExchanged(t, ts1.BaseURL(), alice1, alice2, "lenny-gateway")
+		fromTS1 := mintExchanged(t, ts1.BaseURL(), alice1, aliceSubject, "lenny-gateway")
 		ts1.Stop(t)
 		restartedTS := tokensvc.StartOpts(t, tokensvc.Options{Binary: tsBin, Args: keySetTokenServiceArgs(pg.DSN, refs)})
 		if code, body := oauthExchange(t, restartedTS.BaseURL(), alice1, fromTS1, "lenny-gateway"); code != http.StatusOK {
@@ -494,8 +501,11 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 
 	daveA := mintImpersonationBearer(t, gw.BaseURL(), "acme", "dave@acme.com")
 	daveB := mintImpersonationBearer(t, gw.BaseURL(), "acme", "dave@acme.com")
-	revoked := mintExchanged(t, gw.BaseURL(), daveA, daveB, "lenny-ops")
-	kept := mintExchanged(t, gw.BaseURL(), daveB, daveA, "lenny-ops")
+	// The subjects are user bearers for dave signed with the stack's key,
+	// because step (1a) refuses an impersonation bearer as a subject_token.
+	_, stackSigner := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)
+	revoked := mintExchanged(t, gw.BaseURL(), daveA, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", auth.RoleUser), "lenny-ops")
+	kept := mintExchanged(t, gw.BaseURL(), daveB, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", auth.RoleUser), "lenny-ops")
 	// A self-rotation of revoked revokes it in issued_tokens (§13.3).
 	mintExchanged(t, gw.BaseURL(), revoked, revoked, "lenny-ops")
 	// Both tokens are POST /v1/oauth/token tokens, which carry no roles

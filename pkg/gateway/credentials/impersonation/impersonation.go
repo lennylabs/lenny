@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: MIT
 
-// Package impersonation implements the §13.3 narrow platform-admin
-// impersonation code path: the distinct flow by which a platform-admin
-// acts as a tenant user. It is deliberately NOT routed through
-// /v1/oauth/token — that surface rejects cross-tenant exchanges (§13.3) — and is the sole producer of the §16.7
-// admin.impersonation_started / admin.impersonation_ended audit events.
+// Package impersonation implements the §13.3 "Platform-admin
+// impersonation" flow: the distinct code path by which a platform-admin
+// acts as a tenant user. It is not routed through /v1/oauth/token, which
+// rejects cross-tenant exchanges (§13.3), and it is the sole producer of
+// the §16.7 admin.impersonation_started and admin.impersonation_ended
+// audit events.
 //
-// An impersonation session is established by writing the
-// admin.impersonation_started audit row first and minting the
-// target-user bearer only after the audit commits, because the audit
-// record of a cross-tenant admin action MUST be durable before any
-// externally observable side effect (§11.7, §16.7). Both events are written under the platform tenant carrying the
+// An impersonation session is the issued_tokens row of the bearer it
+// mints, and the gateway keeps no other session state, so every gateway
+// replica lists and ends every session and a restart loses none. Issuance
+// checks the caller's own bearer, writes admin.impersonation_started, signs
+// the target-user bearer, and records it under the user-row fence. Ending
+// a session revokes the row in one conditional update, pushes the jti into
+// the revocation cache, and only then writes admin.impersonation_ended.
+// Both events are written under the platform tenant carrying
 // target_tenant_id, so the §11.7 CMP-058 platform-tenant audit residency
-// gate routes them to the target tenant's regional platform-Postgres; an
-// unresolvable target region fails the issuance closed with
-// PLATFORM_AUDIT_REGION_UNRESOLVABLE and establishes no session.
+// gate routes them to the target tenant's regional platform-Postgres.
 //
-// spec: §13.3; §16.7; §11.7; §12.8.
+// spec: §13.3; §16.7; §11.7; §12.3; §15.1.
 package impersonation
 
 import (
@@ -24,26 +26,13 @@ import (
 	"time"
 )
 
-// EndReason records why an impersonation session terminated, stamped on
-// the admin.impersonation_ended event.
-type EndReason string
-
-const (
-	// EndReasonExplicit is an operator-initiated end via
-	// DELETE /v1/admin/impersonation/{id}.
-	EndReasonExplicit EndReason = "explicit"
-	// EndReasonExpired is the sweep terminating a session whose minted
-	// bearer reached its impersonation_duration_seconds expiry.
-	EndReasonExpired EndReason = "expired"
-)
-
-// Ticket is one impersonation session. The minted bearer is short-lived
-// (bounded by Duration); the Ticket is the durable record the §16.7
-// ended event and the GET /v1/admin/impersonation listing read.
+// Ticket is one impersonation session as issuance establishes it. The
+// reason and the ticket reference travel only on the started audit event;
+// the issued_tokens row holds the rest.
 type Ticket struct {
-	// ID is the gateway-assigned impersonation session id (the jti of the
-	// minted bearer). Distinct from TicketRef, which is the operator's
-	// external justification reference.
+	// ID is the gateway-assigned impersonation session id, which is the
+	// jti of the minted bearer. Distinct from TicketRef, which is the
+	// operator's external justification reference.
 	ID string
 	// AdminSub is the impersonating platform-admin's OIDC sub.
 	AdminSub string
@@ -55,32 +44,56 @@ type Ticket struct {
 	TargetUserID string
 	// Reason is the operator-supplied impersonation_reason free text.
 	Reason string
-	// TicketRef is the external justification reference (e.g. a support
-	// ticket id), recorded as the §16.7 ticket_id payload field.
+	// TicketRef is the external justification reference (for example a
+	// support ticket id), recorded as the §16.7 ticket_id payload field.
 	TicketRef string
 	// Duration is the requested impersonation_duration_seconds.
 	Duration time.Duration
-	// IssuedAt / ExpiresAt bound the minted bearer's validity.
+	// IssuedAt and ExpiresAt bound the minted bearer's validity.
 	IssuedAt  time.Time
 	ExpiresAt time.Time
-	// EndedAt / EndedBy / EndReason are zero until the session terminates.
-	EndedAt   time.Time
-	EndedBy   string
-	EndReason EndReason
 }
 
-// Active reports whether the session has not yet ended.
-func (t Ticket) Active() bool { return t.EndedAt.IsZero() }
+// Session is one active impersonation session as the
+// GET /v1/admin/impersonation listing reports it: the fields the
+// issued_tokens row holds.
+//
+// spec: §15.1 (GET /v1/admin/impersonation); §13.3 (Platform-admin
+// impersonation, rule 2).
+type Session struct {
+	ID             string
+	AdminSub       string
+	TargetTenantID string
+	TargetUserID   string
+	IssuedAt       time.Time
+	ExpiresAt      time.Time
+}
+
+// EndResult is the outcome of a winning DELETE /v1/admin/impersonation/{id}.
+//
+// spec: §15.1 (DELETE /v1/admin/impersonation/{id}).
+type EndResult struct {
+	SessionID string
+	EndedAt   time.Time
+}
 
 // Errors the package returns.
 var (
-	// ErrNotFound is returned when no impersonation session matches the id.
+	// ErrNotFound is returned when no impersonation session has the id.
 	ErrNotFound = errors.New("impersonation: session not found")
-	// ErrAlreadyEnded is returned when ending a session that already ended.
-	ErrAlreadyEnded = errors.New("impersonation: session already ended")
-	// ErrInvalidDuration is returned when the requested duration is
-	// non-positive or exceeds the configured maximum.
+	// ErrAlreadyEnded is returned when the session's bearer is already
+	// revoked or expired. It wraps the store's *NotActiveError, so
+	// errors.As recovers the current state.
+	ErrAlreadyEnded = errors.New("impersonation: session not active")
+	// ErrInvalidDuration is returned when the requested duration is below
+	// the §15.1 minimum or above the configured maximum.
 	ErrInvalidDuration = errors.New("impersonation: duration out of range")
 	// ErrMissingField is returned when a required issue field is empty.
 	ErrMissingField = errors.New("impersonation: required field missing")
+	// ErrIssuanceRefused is returned when §13.3 "Platform-admin
+	// impersonation" rule 1 refuses the call: the caller's bearer is an
+	// impersonation bearer or is revoked, or the caller's or the target's
+	// user row records a hard disable or a full revoke. It wraps the
+	// refusal the store reported.
+	ErrIssuanceRefused = errors.New("impersonation: issuance refused")
 )
