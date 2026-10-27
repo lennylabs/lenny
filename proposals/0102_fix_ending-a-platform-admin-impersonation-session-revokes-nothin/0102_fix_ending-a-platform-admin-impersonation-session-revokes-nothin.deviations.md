@@ -4,7 +4,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Impersonation store methods live in a separate file
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S9 (CODE-2: issuedtokenstore impersonation queries, fenced record, step (1a) refusal, playground check).
 
@@ -18,7 +18,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: selectRevokedAt renamed to selectSourceStates
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S9 (CODE-2: issuedtokenstore impersonation queries, fenced record, step (1a) refusal, playground check).
 
@@ -32,7 +32,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: RecordImpersonation refuses an empty act_sub or a set parent
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S9 (CODE-2: issuedtokenstore impersonation queries, fenced record, step (1a) refusal, playground check).
 
@@ -50,12 +50,12 @@ The implementor owns this file. It stays empty until an implementation records a
 **Implemented instead:** The self-rotation subtest of `TestImpersonationBearerRefusals_spec_13_3` in `tests/tier9_security/ops_revocation_enforcement_test.go` asserts two refusals after the session ends. `requireCallerRevoked(t, a)` (helper at lines 531-542, called at line 593) asserts that the self-rotation of the ended bearer is refused at caller authentication with 401 `TOKEN_REVOKED`. `requireExchangeRefused(t, b, a, "subject_token_revoked")` (line 594) presents the ended bearer as `subject_token` under the target's live user bearer `b` as caller, and asserts `invalid_grant` with reason `subject_token_revoked`.
 **Why:** The judges established that §13.3 makes the proposal's sentence unreachable. Rule 5 under "Platform-admin impersonation" requires every gateway replica to refuse a revoked impersonation bearer through its revocation cache, and the "Client authentication on /v1/oauth/token" paragraph authenticates the caller bearer before the exchange runs. Step (1a) of "Write-before-issue ordering", which returns `subject_token_revoked` for a revoked `subject_token` jti, runs only inside the exchange transaction after the caller has authenticated. An ended bearer used as the caller is therefore refused with 401 `TOKEN_REVOKED` before step (1a). Changing the test to match the proposal's sentence would assert behavior that contradicts §13.3 and would fail against correct code. The fixer may not edit proposal files, so no legal code or test change closes the finding.
 **Consequence if the proposal is not corrected:** A later reader or implementor following TEST-2 would expect `invalid_grant` `subject_token_revoked` for a self-rotation of an ended bearer. That reader would treat the 401 `TOKEN_REVOKED` the test asserts as a defect, and could change the gateway or the test away from §13.3.
-**Suggested next step:** correct the proposal
+**Suggested next step:** correct the proposal. Done 2026-10-27: the TEST-2 bullet now states both refusals.
 **Evidence:** Commit 649d6d49c (round 2) changed only `tests/tier9_security/ops_revocation_enforcement_test.go` (+35/-13). It added `requireCallerRevoked` and moved the `subject_token_revoked` assertion under the live caller `b`. Rounds 3, 4, and 5 made no commit, and each review re-raised the finding with the framing that the code is right and the proposal text is wrong. Three judges, each at high confidence, classified the finding as unresolvable within the loop. They found the landed test consistent with §13.3, found that the remaining gap is a proposal-record defect that only a deviation entry or a correction to the TEST-2 bullet closes, and forecast that further rounds would repeat without a commit.
 
 ## Proposed: Nested impersonation subtest asserts no added session and provisions the target through the admin API
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S13 (TEST-2: two-replica integration and lenny-ops security tests).
 
@@ -69,7 +69,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: Invalidate section also states the tenant-admin caller case
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S14 (DOCS-1: operator guide, admin API reference, CMP-058 trims, BUILD-GAPS, tier-11 test).
 
@@ -83,7 +83,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 ## Proposed: POST impersonation 403 entry states which refusals write audit events
 
-**Status:** proposed
+**Status:** accepted (2026-10-27, orchestrator under the owner's delegation)
 
 **Reported by:** step S14 (DOCS-1: operator guide, admin API reference, CMP-058 trims, BUILD-GAPS, tier-11 test).
 
