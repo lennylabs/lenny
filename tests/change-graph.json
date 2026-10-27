@@ -13,6 +13,10 @@
     "tests/tier2_component/embedded/": {
       "component": ["tests/tier2_component/embedded/..."]
     },
+    "pkg/gateway/credentials/impersonation/impersonationtest/": {
+      "unit": ["pkg/gateway/credentials/impersonation/...", "pkg/gateway/externalapi/admin/..."],
+      "component": ["tests/tier2_component/tokensigning/..."]
+    },
     "pkg/kms/kmstest/": {
       "unit": ["pkg/kms/...", "pkg/auth/jwt/..."]
     },
