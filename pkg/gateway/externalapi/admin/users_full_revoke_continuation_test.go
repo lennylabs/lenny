@@ -124,7 +124,7 @@ type strictTokenRevoker struct {
 	calls int
 }
 
-func (s *strictTokenRevoker) RevokeUserTokens(ctx context.Context, _, _, _ string, _ time.Time) ([]string, error) {
+func (s *strictTokenRevoker) RevokeUserTokens(ctx context.Context, _, _, _ string, _ time.Time, _ bool) ([]string, error) {
 	s.calls++
 	if err := ctx.Err(); err != nil {
 		return nil, err

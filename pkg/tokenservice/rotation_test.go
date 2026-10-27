@@ -47,7 +47,7 @@ func (f *fakeRotationStore) RecordWithAudit(_ context.Context, tok issuedtokenst
 ) (audit.Row, error) {
 	f.recordWithAud++
 	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
-	if err := fakeRecheck(sources, f.revoked); err != nil {
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
 		return audit.Row{}, err
 	}
 	f.minted = append(f.minted, tok)
@@ -63,7 +63,7 @@ func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issue
 ) (string, bool, error) {
 	f.gotPrevJTI = prevJTI
 	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
-	if err := fakeRecheck(sources, f.revoked); err != nil {
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
 		return "", false, err
 	}
 	f.minted = append(f.minted, tok)

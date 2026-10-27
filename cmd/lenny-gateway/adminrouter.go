@@ -414,25 +414,21 @@ func (w *gatewayWiring) buildAdminRouter(
 	// baseline and emits the gateway.*/platform.*/deployment.* transition
 	// events under the operator's identity. F-8.2.5, F-9.2.10, F-17.2.8.
 	adminRouter = adminRouter.WithDeploymentConfig(deploymentConfig)
-	// §13.3 / §16.7 platform-admin impersonation: the distinct cross-tenant
-	// admin code path (not routed through /v1/oauth/token) that mints a
-	// target-user bearer and emits admin.impersonation_started/_ended. The
-	// started audit row is written under the platform tenant carrying
-	// target_tenant_id, so the auditstore CMP-058 residency gate routes it
-	// to the target's regional platform-Postgres before the bearer is
-	// minted. F-16.7.1.
-	impersonationSvc := impersonation.New(
-		impersonation.NewMemStore(), auditValidator, w.jwtSigner,
-		impersonation.Config{
-			PlatformTenantID: "platform",
-			MaxDuration:      time.Hour,
-			Issuer:           *bearerExpectedIssuer,
-			Audience:         w.expectedAuds,
-			Clock:            clockinject.Now,
-			NewID:            func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("imp-%x", b[:]) },
-		},
-	)
-	adminRouter = adminRouter.WithImpersonation(impersonationSvc)
+	// §13.3 "Platform-admin impersonation": the distinct cross-tenant admin
+	// code path (not routed through /v1/oauth/token). The service is built
+	// only when every collaborator is present, and is otherwise an untyped
+	// nil that leaves the routes unregistered.
+	// spec: §13.3; §16.7; §12.3. F-13.3.20.
+	adminRouter = adminRouter.WithImpersonation(newImpersonationService(impersonationCollaborators{
+		pool: w.pgPool, signer: w.jwtSigner, cache: revProp, audit: auditOpsStore, appender: auditValidator,
+	}, impersonation.Config{
+		PlatformTenantID: "platform",
+		MaxDuration:      time.Hour,
+		Issuer:           *bearerExpectedIssuer,
+		Audience:         w.expectedAuds,
+		Clock:            clockinject.Now,
+		NewID:            func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("imp-%x", b[:]) },
+	}))
 	// §6.2 / §11.3: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
@@ -892,7 +888,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		// store and the credential assigner.
 		userLeases = leaseRevoker
 		if w.pgPool != nil {
-			userTokens = &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
+			revoker := &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
+			// A nil *auditstore.Store must not reach the interface field:
+			// a typed nil would pass the revoker's nil-emitter guard.
+			if auditOpsStore != nil {
+				revoker.reads = auditOpsStore
+			}
+			userTokens = revoker
 		}
 		adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)
 	}
@@ -975,7 +977,6 @@ func (w *gatewayWiring) buildAdminRouter(
 	// wiring that the mux and the background-worker step add later mutate
 	// w.adminRouter in place.
 	w.adminRouter = adminRouter
-	w.impersonationSvc = impersonationSvc
 	w.kmsProbeLifecycle = kmsProbeLifecycle
 	w.recommendationStore = recommendationStore
 	w.userPodTerminateProp = userPodTerminateProp

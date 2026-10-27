@@ -77,7 +77,9 @@ type IssuedTokenAuditStore interface {
 // Both store methods take the exchange's source tokens and re-read their
 // revocation state under the §11.7 lock before any issuance statement
 // (§13.3 write-before-issue step 1a). A revoked source returns a
-// *issuedtokenstore.SourceRevokedError and commits nothing.
+// *issuedtokenstore.SourceRevokedError, and otherwise an impersonation
+// source returns a *issuedtokenstore.SourceImpersonationError; either way
+// the store commits nothing.
 type IssuedTokenRotationStore interface {
 	IssuedTokenAuditStore
 	RecordWithRotationAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error)
@@ -845,8 +847,8 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 // signed token is not handed to the caller until COMMIT succeeds. The
 // token was signed before this transaction opened, outside the lock.
 // When the in-lock re-read (step 1a) finds the subject or actor token
-// revoked, the signed token is discarded and the exchange is rejected
-// with 400 invalid_grant. It returns true once the record is durable.
+// revoked, or an impersonation bearer, the signed token is discarded and
+// the exchange is rejected with 400 invalid_grant. It returns true once the record is durable.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	rec := issuedRecord(jti, issued, signed, dialectCap, now)
@@ -865,12 +867,11 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 	sources := exchangeSources(subjectClaims, actorClaims)
 
 	err := s.commitIssued(r.Context(), rec, sources, isRotation, subjectClaims.JWTID, auditPayload)
-	var revokedErr *issuedtokenstore.SourceRevokedError
-	switch {
-	case errors.As(err, &revokedErr):
-		s.rejectRevokedSource(w, r, issued.TenantID, revokedErr, auditPayload, finish)
+	if reason, ok := sourceRefusalReason(err); ok {
+		s.rejectRevokedSource(w, r, issued.TenantID, reason, auditPayload, finish)
 		return false
-	case err != nil:
+	}
+	if err != nil {
 		writeIssueStoreError(w, finish, err)
 		return false
 	}
@@ -915,7 +916,9 @@ func exchangeSources(subjectClaims jwt.Claims, actorClaims *jwt.Claims) []issued
 // commitIssued routes the write-before-issue record between the rotation,
 // transactional-audit, in-memory dev, and test-only store paths. The two
 // Postgres paths re-read the sources under the §11.7 lock and return a
-// *issuedtokenstore.SourceRevokedError when one is revoked. The in-memory
+// *issuedtokenstore.SourceRevokedError when one is revoked, or a
+// *issuedtokenstore.SourceImpersonationError when one is an impersonation
+// bearer. The in-memory
 // paths hold no durable revocation state to re-read.
 // spec: §13.3.
 func (s *Server) commitIssued(ctx context.Context, rec issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken, isRotation bool, prevJTI string, auditPayload exchangeAuditPayload) error {
@@ -969,10 +972,27 @@ func (s *Server) commitIssued(ctx context.Context, rec issuedtokenstore.IssuedTo
 	}
 }
 
+// sourceRefusalReason reports the §13.3 step (1a) invalid_grant reason when
+// err is a source refusal: a *issuedtokenstore.SourceRevokedError or a
+// *issuedtokenstore.SourceImpersonationError.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering).
+func sourceRefusalReason(err error) (string, bool) {
+	var revokedErr *issuedtokenstore.SourceRevokedError
+	if errors.As(err, &revokedErr) {
+		return revokedErr.Reason(), true
+	}
+	var impErr *issuedtokenstore.SourceImpersonationError
+	if errors.As(err, &impErr) {
+		return impErr.Reason(), true
+	}
+	return "", false
+}
+
 // rejectRevokedSource renders the §13.3 step (1a) rejection. The signed
 // token is discarded by the caller and never returned. The rejection
-// token.exchanged audit row, with policy_result
-// rejected:subject_token_revoked or rejected:actor_token_revoked, is
+// token.exchanged audit row, with policy_result rejected:<reason> (one of
+// subject_token_revoked, actor_token_revoked, subject_token_impersonation,
+// or actor_token_impersonation), is
 // written through the Auditor, whose production implementation takes the
 // §11.7 lock and commits before it returns, so the client receives the
 // 400 invalid_grant only after the rejection audit is durable. A failed
@@ -980,8 +1000,7 @@ func (s *Server) commitIssued(ctx context.Context, rec issuedtokenstore.IssuedTo
 // intended reason in the description, matching the §13.3 rejected-exchange
 // discipline.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
-func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID string, revokedErr *issuedtokenstore.SourceRevokedError, accepted exchangeAuditPayload, finish func(string)) {
-	reason := revokedErr.Reason()
+func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID, reason string, accepted exchangeAuditPayload, finish func(string)) {
 	rejection := accepted
 	rejection.JTI = "" // The discarded token was never issued.
 	rejection.PolicyResult = "rejected:" + reason

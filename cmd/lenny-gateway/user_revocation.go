@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
@@ -142,19 +144,85 @@ func (p *podTerminateFanOut) releaseOne(ctx context.Context, tenantID, sessionID
 	return p.releaser.ReleaseRevokedBinding(callCtx, tenantID, sessionID)
 }
 
+// userTokenStore is the slice of the §13.3 issued-token store the §11.4
+// step 5 revoker needs. It is defined at the consumer so a unit test can
+// substitute a fake; the production wiring passes *issuedtokenstore.Store.
+type userTokenStore interface {
+	RevokeBySubject(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error)
+	RevokeImpersonationsByActor(ctx context.Context, actorSub, reason string, at time.Time) ([]string, error)
+}
+
+// crossTenantReadEmitter emits the §12.3 cross_tenant_read audit event.
+// *auditstore.Store satisfies it.
+type crossTenantReadEmitter interface {
+	EmitCrossTenantRead(ctx context.Context, r auditstore.CrossTenantRead) error
+}
+
+// Cross-tenant read vocabulary of the §13.3 rule 6 impersonation cascade.
+const (
+	impersonationReadCategory = "impersonation_session"
+	invalidateUserEndpoint    = "POST /v1/admin/users/{userId}/invalidate"
+)
+
+// errNoCrossTenantReadEmitter is returned when the impersonation cascade
+// is requested but no cross_tenant_read emitter is wired. Every query
+// that sets the all-tenants context emits one event (§13.3 rule 7), so
+// the cascade fails closed and runs no such query.
+var errNoCrossTenantReadEmitter = errors.New("impersonation bearers minted by the user were not revoked: no cross_tenant_read emitter is wired")
+
 // userTokenRevoker revokes a user's §13.3 issued tokens in the durable
 // issued-token index. It satisfies admin.UserTokenRevoker; the admin
 // router pushes the returned JTIs into the revocation cache so the
 // user's cached auth is invalidated and, through the cache's
-// propagator, the revocation reaches peer replicas.
+// propagator, the revocation reaches peer replicas. reads is nil when
+// the gateway has no audit store, which disables the impersonation
+// cascade fail-closed.
 type userTokenRevoker struct {
-	store *issuedtokenstore.Store
+	store userTokenStore
+	reads crossTenantReadEmitter
 }
 
 // RevokeUserTokens marks every not-yet-revoked token issued for the
-// user as revoked and returns the JTIs it revoked.
-func (u *userTokenRevoker) RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error) {
-	return u.store.RevokeBySubject(ctx, tenantID, subject, reason, at)
+// user as revoked. When revokeImpersonations is true it also revokes, in
+// every tenant, the live impersonation bearers the user minted and emits
+// one cross_tenant_read event for that query, even when the user's own
+// revocation failed or the cascade revoked nothing. It returns the JTIs
+// of every revocation that committed together with the join of every
+// error, so a failed step never hides another step's committed JTIs.
+//
+// spec: §11.4 step 5, §13.3 (Platform-admin impersonation, rules 6 and 7)
+func (u *userTokenRevoker) RevokeUserTokens(ctx context.Context, tenantID, subject, reason string, at time.Time, revokeImpersonations bool) ([]string, error) {
+	jtis, err := u.store.RevokeBySubject(ctx, tenantID, subject, reason, at)
+	if !revokeImpersonations {
+		return jtis, err
+	}
+	more, cascadeErr := u.revokeImpersonations(ctx, subject, reason, at)
+	return append(jtis, more...), errors.Join(err, cascadeErr)
+}
+
+// revokeImpersonations runs the §13.3 rule 6 cascade: it revokes the
+// actor's live impersonation rows under the all-tenants context and emits
+// exactly one cross_tenant_read event whose row count is the number of
+// rows the cascade revoked. A nil emitter fails closed before the query.
+func (u *userTokenRevoker) revokeImpersonations(ctx context.Context, actorSub, reason string, at time.Time) ([]string, error) {
+	if u.reads == nil {
+		return nil, errNoCrossTenantReadEmitter
+	}
+	more, err := u.store.RevokeImpersonationsByActor(ctx, actorSub, reason, at)
+	if err != nil {
+		err = fmt.Errorf("revoke impersonation bearers minted by %q: %w", actorSub, err)
+	}
+	principal, _ := authmw.FromContext(ctx)
+	emitErr := u.reads.EmitCrossTenantRead(ctx, auditstore.CrossTenantRead{
+		Category:      impersonationReadCategory,
+		RowCount:      len(more),
+		Endpoint:      invalidateUserEndpoint,
+		CallerSubject: principal.Subject,
+	})
+	if emitErr != nil {
+		emitErr = fmt.Errorf("emit cross_tenant_read for the impersonation cascade: %w", emitErr)
+	}
+	return more, errors.Join(err, emitErr)
 }
 
 // revocationPropagationObserver observes the §16.1

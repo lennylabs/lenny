@@ -30,6 +30,7 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation/impersonationtest"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -174,11 +175,12 @@ func newGatewayAdminRouter(t *testing.T, f *signingFixture) http.Handler {
 		t.Fatalf("create user: %v", err)
 	}
 	var ids atomic.Int64
-	imp := impersonation.New(impersonation.NewMemStore(), okAppender{}, f.signer, impersonation.Config{
-		PlatformTenantID: "platform",
-		MaxDuration:      time.Hour,
-		NewID:            func() string { return fmt.Sprintf("imp-%d", ids.Add(1)) },
-	})
+	imp := impersonation.New(&impersonationtest.IssuedTokens{}, &impersonationtest.RevocationCache{},
+		&impersonationtest.CrossTenantReads{}, okAppender{}, f.signer, impersonation.Config{
+			PlatformTenantID: "platform",
+			MaxDuration:      time.Hour,
+			NewID:            func() string { return fmt.Sprintf("imp-%d", ids.Add(1)) },
+		})
 	prov, err := admintoken.New(admintoken.Config{Namespace: "lenny-system", AdminTenant: "platform"},
 		f.signer, users, &memSecrets{}, nil, nil)
 	if err != nil {

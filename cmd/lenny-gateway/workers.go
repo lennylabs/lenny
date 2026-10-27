@@ -13,7 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause"
@@ -143,29 +142,6 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 			}
 		}(w.connectorStateStore)
 	}
-
-	// ----- §13.3 impersonation-session expiry sweep -----
-	// Emits admin.impersonation_ended (reason=expired) once a minted
-	// impersonation bearer reaches its impersonation_duration_seconds. The
-	// bearer self-expires (its exp claim); the sweep records the terminal
-	// audit event so the SIEM sees a matching end for every start.
-	// spec: §16.7.
-	go func(svc *impersonation.Service) {
-		tick := time.NewTicker(1 * time.Minute)
-		defer tick.Stop()
-		for {
-			select {
-			case <-w.watchdogCtx.Done():
-				return
-			case now := <-tick.C:
-				if n, err := svc.SweepExpired(w.watchdogCtx, now.UTC()); err != nil {
-					log.Printf("lenny-gateway: §13.3 impersonation expiry sweep: %v", err)
-				} else if n > 0 {
-					log.Printf("lenny-gateway: §13.3 impersonation expiry sweep ended %d session(s)", n)
-				}
-			}
-		}
-	}(w.impersonationSvc)
 
 	w.startReconcilerWorkers()
 	// ----- §25.11 ArtifactStore cross-region replication -----

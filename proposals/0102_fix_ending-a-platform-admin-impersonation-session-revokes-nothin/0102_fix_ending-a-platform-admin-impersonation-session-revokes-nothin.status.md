@@ -2,15 +2,15 @@
 proposal: 0102_fix_ending-a-platform-admin-impersonation-session-revokes-nothin
 title: Ending an impersonation session does not revoke its bearer
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-26
 drafted-by: change-proposal
 reviewed-date: 2026-10-26
 reviewed-by: change-proposal
 approved-date: 2026-10-26
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-27
+implemented-by: jaf
 ---
 
 ## Review history

@@ -24,6 +24,7 @@
 package playground
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // AuthMode is the §27.2 playground.authMode enum. It selects how a
@@ -331,9 +333,20 @@ type Handler struct {
 	tenants  TenantRegistry
 	sessions SessionStore
 	oidc     OIDCExchanger
+	issued   IssuedTokenReader
 	metrics  *Metrics
 	audit    AuditEmitter
 	now      func() time.Time
+}
+
+// IssuedTokenReader reads one issued_tokens row so the apiKey mint can
+// apply §13.3 "Write-before-issue ordering" step (1a) to the pasted
+// subject. *issuedtokenstore.Store satisfies it.
+// spec: §10.2 (Playground mint invariants, invariant 1).
+type IssuedTokenReader interface {
+	// Get returns the row for jti in tenantID, or
+	// issuedtokenstore.ErrNotFound when the token has no row.
+	Get(ctx context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error)
 }
 
 // Options configures New.
@@ -363,6 +376,14 @@ type Options struct {
 	// OIDC performs the authorization-code exchange with the
 	// configured provider. Required in oidc mode; ignored otherwise.
 	OIDC OIDCExchanger
+
+	// IssuedTokens reads the pasted subject's issued_tokens row so the
+	// apiKey mint refuses a subject that §13.3 step (1a) rejects: a
+	// revoked token or a platform-admin impersonation bearer. The gateway
+	// sets it whenever it has a Postgres pool. A nil reader skips the
+	// read; without the pool the gateway also registers no impersonation
+	// route, so no impersonation bearer exists to paste.
+	IssuedTokens IssuedTokenReader
 
 	// Metrics is the §27.8 metric set. A nil Metrics disables metric
 	// emission (the handler still serves).
@@ -394,6 +415,7 @@ func New(cfg Config, opts Options) *Handler {
 		tenants:  opts.Tenants,
 		sessions: opts.Sessions,
 		oidc:     opts.OIDC,
+		issued:   opts.IssuedTokens,
 		metrics:  opts.Metrics,
 		now:      now,
 	}

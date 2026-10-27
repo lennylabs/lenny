@@ -3164,7 +3164,21 @@
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "204": { "description": "Ended" } }
+        "responses": {
+          "200": {
+            "description": "Ended",
+            "content": { "application/json": { "schema": {
+              "type": "object",
+              "required": ["impersonationSessionId", "endedAt"],
+              "properties": {
+                "impersonationSessionId": { "type": "string" },
+                "endedAt": { "type": "string", "format": "date-time" }
+              }
+            } } }
+          },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Invalid state transition", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/v1/admin/interceptors": {

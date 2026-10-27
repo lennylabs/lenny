@@ -293,12 +293,14 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	}
 }
 
-// spec: 27.3.1 (apiKey mode rejects a non-user_bearer subject token)
+// spec: 27.3.1 (apiKey mode rejects a non-user_bearer subject token), 10.2 (Playground mint invariants, invariant 1)
 // diagnosis: A session_capability JWT pasted into the API-key form
 //
-//	was not rejected with LENNY_PLAYGROUND_BEARER_TYPE_REJECTED.
-//	The §10.2 playground mint invariant (subject typ ==
-//	user_bearer) is not enforced; inspect mintAPIKey.
+//	was not rejected with LENNY_PLAYGROUND_BEARER_TYPE_REJECTED, or
+//	the rejection does not carry details.subjectTyp, the key §10.2
+//	invariant 1 and the §15.1 catalog row name. The §10.2 playground
+//	mint invariant (subject typ == user_bearer) is not enforced or its
+//	details key drifted; inspect mintAPIKey.
 func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	signer := devSigner()
 	capToken, err := signer.Sign(jwt.Claims{
@@ -321,12 +323,19 @@ func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	}
 	var env struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &env)
 	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
 		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
+	}
+	if got := env.Error.Details["subjectTyp"]; got != string(auth.TokenSessionCapability) {
+		t.Fatalf("details.subjectTyp = %v, want %s; body=%s", got, auth.TokenSessionCapability, raw)
+	}
+	if _, ok := env.Error.Details["presentedTyp"]; ok {
+		t.Fatalf("details carries presentedTyp; §10.2 invariant 1 names subjectTyp; body=%s", raw)
 	}
 }
 
