@@ -253,7 +253,7 @@ tests:
           value: http
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /readyz
+          value: /healthz
 
   # spec: §25.4 — every probe in the non-production render sets
   # timeoutSeconds 3, above the 2s dependency probe bound, and no probe
@@ -304,10 +304,33 @@ tests:
   # which passes when Postgres or the Kubernetes API is reachable, so a
   # Postgres outage keeps replicas in the Service. Every probe sets
   # timeoutSeconds 3 and none uses the strict diagnostic check.
-  # spec: §17.9.1 "Production mode" — staging is not production mode, so
-  # a staging render keeps the /readyz readiness report. The comparison is
-  # exact, so PROD is not production mode either.
-  - it: keeps the /readyz readiness check when environment is staging
+  # spec: §25.4 "Probes" — F-25.4.37. §25.4 gives the readiness probe
+  # path /healthz unconditionally, so every environment, including the
+  # non-production values and the off-spelling PROD, renders /healthz and
+  # none renders the /readyz report.
+  - it: uses the permissive /healthz readiness check when environment is local
+    set:
+      environment: local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the permissive /healthz readiness check when environment is dev
+    set:
+      environment: dev
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+
+  - it: uses the permissive /healthz readiness check when environment is staging
     set:
       environment: staging
     documentSelector:
@@ -316,9 +339,9 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /readyz
+          value: /healthz
 
-  - it: keeps the /readyz readiness check when environment is PROD
+  - it: uses the permissive /healthz readiness check when environment is PROD
     set:
       environment: PROD
     documentSelector:
@@ -327,7 +350,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /readyz
+          value: /healthz
 
   - it: uses the either-dependency /healthz readiness check when environment is prod
     set:
@@ -1263,7 +1286,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /readyz
+          value: /healthz
       - contains:
           path: spec.template.spec.containers[0].args
           content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
