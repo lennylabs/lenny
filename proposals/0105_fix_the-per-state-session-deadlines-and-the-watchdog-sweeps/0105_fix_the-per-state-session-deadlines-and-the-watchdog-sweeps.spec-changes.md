@@ -20,6 +20,7 @@
 - A `perChildMaxAge` expiry keeps counting while the child is suspended or recovering (SPEC-3, with the existing §6.2 **`suspended → expired` trigger mechanism:**).
 - One tenant whose session listing fails, or one session whose write fails, is evaluated again on the next pass, and the other tenants and sessions are processed in the same pass (SPEC-4).
 - Two replicas that both find the same session due write it once, because the second write finds the locked row no longer meeting the deadline or no longer non-terminal (SPEC-4).
+- A session can stay `input_required` after its `lenny/request_input` call ended, and can be `running` while a call waits after an adapter reconnect (SPEC-2 Edit (l); non-spec CODE-7 item 3 rows 8 to 10).
 
 ## Staged edits
 
@@ -284,6 +285,28 @@ with
 A terminal write runs on the writer's own context, except for the writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, the `starting → failed` write a failed `POST /v1/sessions/{id}/start` makes, and an administrative force-terminate together with its audit event. The gateway makes those writes on a context it owns.
 ```
 
+**Edit (l) · §7.2, the `input_required` sub-state paragraph, and §6.2, the `input_required` row of the `maxClientIdleSeconds` clock table.** One insertion and one replacement.
+
+First, in the paragraph that begins "`input_required` is a **sub-state of `running`**", insert the following two sentences directly after the sentence "`input_required` is a **sub-state of `running`**: the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response." The paragraph stays one physical line.
+
+```markdown
+A session can stay `input_required` after its `lenny/request_input` call has ended, when the gateway's write that returns it to `running` fails or the gateway replica serving the call exits (see path 3 under **Message delivery routing — seven paths:** below). A session can also be `running` while a `lenny/request_input` call waits, when the adapter's `LNK-GWCONTROL` connection moved to another gateway replica during an earlier call and that earlier call's exit returned the session to `running` after the later call began; such a session is evaluated for idleness and its messages are routed as for a `running` session.
+```
+
+Second, in spec/06_warm-pod-model.md §6.2, in the `input_required` row of the table under the paragraph that begins "**`maxClientIdleSeconds` clock behavior across states.**", replace
+
+```markdown
+or the `lenny/request_input` call expires.
+```
+
+with
+
+```markdown
+or it leaves `input_required` ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+```
+
+The row stays one physical line.
+
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.2 Delegation Mechanism
 
 In the `LeaseSlice` field table, replace the row
@@ -308,8 +331,8 @@ Every replica likewise runs the session watchdog's other sweeps ([§6.2](06_warm
 
 ## Spec files touched
 
-- spec/06_warm-pod-model.md (SPEC-1; SPEC-2 Edits (d), (g), and (i))
-- spec/07_session-lifecycle.md (SPEC-2 Edits (a), (b), (c), (e), (h), (j), and (k))
+- spec/06_warm-pod-model.md (SPEC-1; SPEC-2 Edits (d), (g), (i), and (l))
+- spec/07_session-lifecycle.md (SPEC-2 Edits (a), (b), (c), (e), (h), (j), (k), and (l))
 - spec/08_recursive-delegation.md (SPEC-3)
 - spec/10_gateway-internals.md (SPEC-4)
 - spec/15_external-api-surface.md (SPEC-2 Edit (f))
