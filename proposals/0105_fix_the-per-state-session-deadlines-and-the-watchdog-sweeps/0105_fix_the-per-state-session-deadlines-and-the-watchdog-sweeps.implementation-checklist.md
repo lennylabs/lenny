@@ -23,12 +23,12 @@
 - [ ] **S10 · code** — CODE-6. Lands the `/start` path through `starting`, the session transition table, and the SDK single-attempt `Start`.
       Tiers 0, 1, 4, 7a, 8. Depends on: S2
 - [ ] **S11 · code** — CODE-7. Lands items 1 to 4.
-      Tiers 0, 1, 2, 4, 7a. Depends on: S1, S2, S5
+      Tiers 0, 1, 2, 4, 7a, 9. Depends on: S1, S2, S5
 - [ ] **S12 · code** — CODE-8. Lands the leader-gated orphan-session reconciler and the lag-series clear.
       Tiers 0, 1, 8. Depends on: S9
 - [ ] **S13 · test** — TEST-1. Lands the tests not already landed with S5 to S12 or S14 and the `tests/spec-map.json` entries.
-      Tiers 0, 1, 2, 4, 7a, 8. Depends on: S5, S6, S7, S8, S9, S10, S11, S12
-- [ ] **S14 · docs** — DOC-1 and TEST-1 item 24. Lands the error catalog row and the SDK **Retries** sentences.
+      Tiers 0, 1, 2, 4, 7a, 8, 9. Depends on: S5, S6, S7, S8, S9, S10, S11, S12
+- [ ] **S14 · docs** — DOC-1 and TEST-1 item 25.
       Tiers 0, 11. Depends on: S2, S10
 - [ ] **S15 · docs** — REC-1. Lands the BUILD-GAPS notes and entries and the P3 plan entry.
       Tiers 0, 11. Depends on: S13
