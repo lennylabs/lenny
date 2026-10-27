@@ -3498,10 +3498,15 @@ F-10.2.26 `jwt.OIDCVerifier`.
     set alone (`playground.Options.Verifier` is `w.jwtKeySet`), so it refuses the OIDC ID token §27.3 names.
     Pass the playground the composed bearer verifier the auth middleware uses.
     Fixed in `83ab6a0c5`: the playground takes `w.bearerVerifier`.
-  - [ ] **F-27.3.15** (Medium): no gateway code calls `playground.NewHTTPOIDCExchanger`, so the default
+  - [x] **F-27.3.15** (Medium): no gateway code calls `playground.NewHTTPOIDCExchanger`, so the default
     `oidc` mode's login and callback answer `503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE`. Wire the exchanger from
     `--oidc-issuer-url`, `--oidc-client-id`, and the issuer's discovery document, and validate the returned
     ID token with the F-10.2.26 verifier.
+    Fixed in `d588555a2`: `buildPlaygroundOIDC` wires the exchanger, which reads the endpoints from the
+    discovery document on first use. The per-process state-cookie key is filed as F-27.3.16.
+  - [ ] **F-27.3.16** (Medium), filed from the F-27.3.15 fix: the playground OIDC state cookie is signed with
+    a per-process key, so a callback served by another gateway replica fails with `oidc_state_invalid`. Sign
+    it with a key every replica shares.
   - [x] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
     key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders

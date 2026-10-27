@@ -174,6 +174,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	w.jwtKeySet = keySet
 	w.jwtSigner = jwtSigner
 	w.bearerVerifier = bearerVerifier
+	w.idpVerifier = idpVerifier
 	w.expectedAuds = expectedAuds
 }
 
