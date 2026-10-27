@@ -45,7 +45,7 @@ const adapterGRPCPort = 50051
 
 // buildPodLifecycle constructs the §15.1 pod-placement surfaces when
 // --agent-namespace is set: the cluster client, the §25.3 apiserver health
-// probe, the §10.2 SA-token verifier, the §5.2 slot counter, the reserved-hold
+// probe, the §10.3 SA-token verifier, the §5.2 slot counter, the reserved-hold
 // reserved-hold and recycle-boundary coordinators, the §4.7 pod binder, the
 // §4.6.1 Postgres-backed fallback claim, the §4.4/§12.5 checkpointer, and the
 // §7.1 seal-and-export sealer, recording each on the accumulator. Without
@@ -139,7 +139,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		kubeHealthzProbe func(context.Context) error
 		// saTokenVerifier validates the projected SA token's signature and
 		// audience on every pod→gateway GatewayControl request via a
-		// Kubernetes TokenReview (§10.2). It stays nil when there
+		// Kubernetes TokenReview (§10.3 "Projected SA token"). It stays nil when there
 		// is no in-cluster client or no configured audience, in which case
 		// the SA-token interceptor degrades to the audience-only decode.
 		saTokenVerifier leasecontrol.TokenVerifier
@@ -187,9 +187,9 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Fatalf("lenny-gateway: build apiserver /healthz probe: %v", err)
 		}
 		kubeHealthzProbe = probe
-		// spec: §10.2 — "Pods cannot forge or extend this token.
-		// The gateway validates the signature on every pod→gateway
-		// request." When an audience is configured the gateway validates
+		// spec: §10.3 (Projected SA token) — the gateway validates the
+		// token's signature, expiry, and audience on every pod→gateway
+		// request. When an audience is configured the gateway validates
 		// the projected SA token via a Kubernetes TokenReview (the
 		// apiserver checks the SA-issuer signature and expiry), binding the
 		// deployment-specific audience at the same time. Built from a
@@ -201,7 +201,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		if *saTokenAudience != "" || *adminSATokenAudience != "" {
 			cs, err := kubernetes.NewForConfig(cfg)
 			if err != nil {
-				log.Fatalf("lenny-gateway: §10.2 build TokenReview client: %v", err)
+				log.Fatalf("lenny-gateway: §10.3 build TokenReview client: %v", err)
 			}
 			verifier := leasecontrol.TokenReviewVerifier{
 				Reviews: cs.AuthenticationV1().TokenReviews(),

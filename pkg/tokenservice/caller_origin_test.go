@@ -140,12 +140,11 @@ func TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token", 8.2 (Delegation Mechanism)
+// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token"
 //
 // The origin check applies to the caller token only. A caller token
-// with no origin claim presenting a playground-origin subject_token,
-// as a delegation from a playground session does, receives an
-// access_token, which separates the caller-only refusal from an origin
+// with no origin claim presenting a playground-origin subject_token
+// receives an access_token, which separates the caller-only refusal from an origin
 // check in the verifier that also authenticates the subject_token.
 func TestPlaygroundOriginSubjectTokenAccepted_spec_13_3(t *testing.T) {
 	srv, signer := keySetServer(t)

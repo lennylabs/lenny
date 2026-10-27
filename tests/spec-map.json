@@ -2600,25 +2600,13 @@
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "tests/tier4_integration/delegation_child_materialization_test.go",
         "tests/tier9_security/credential_lookup_failclosed_test.go",
-        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
-        "pkg/tokenservice/caller_origin_test.go::TestPlaygroundOriginSubjectTokenAccepted_spec_13_3",
-        "tests/tier3_contract/oauth_token/oauth_token_caller_origin_test.go::TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3",
-        "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestSourceRevokedErrorNamesRole_spec_13_3",
-        "pkg/tokenservice/source_recheck_test.go::TestHandlerSourceRevokedAtInLockReRead_spec_13_3",
-        "pkg/tokenservice/rotation_test.go::TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/source_recheck_test.go::TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3",
-        "tests/tier3_contract/oauth_token/oauth_token_source_revoked_test.go::TestOAuthTokenSourceRevokedAtReReadIsInvalidGrant_spec_13_3",
-        "tests/tier7a_load_local/token_double_rotation_race_test.go::TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3",
-        "tests/tier9_security/token_source_revoked_refusal_test.go::TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3"
+        "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery"
       ],
       "packages": [
         "pkg/delegation/cycle",
         "pkg/delegation/lease",
         "pkg/gateway/mcpfabric/mcptools",
-        "pkg/gateway/externalapi/errorclassify",
-        "pkg/gateway/storage/issuedtokenstore",
-        "pkg/tokenservice",
-        "pkg/gateway/mcpfabric/delegation/childtoken"
+        "pkg/gateway/externalapi/errorclassify"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the \u00a78.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the \u00a78.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the \u00a78.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the \u00a78.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."

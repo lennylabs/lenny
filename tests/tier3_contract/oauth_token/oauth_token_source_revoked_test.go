@@ -112,7 +112,7 @@ func delegationRequest(t *testing.T, signer *jwt.HMACSigner) (caller string, req
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism), 15.1 (REST API)
+// spec: 13.3 (Credential Flow), 15.1 (REST API)
 // diagnosis: a failure means POST /v1/oauth/token did not answer a source
 // token revoked between the pre-check and the in-lock re-read with 400
 // invalid_grant carrying the role's reason, or it returned an

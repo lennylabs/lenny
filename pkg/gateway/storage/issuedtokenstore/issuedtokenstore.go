@@ -217,7 +217,7 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 // returned row carries the assigned sequence number and prev_hash so a
 // caller can trace the audit chain forward.
 //
-// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2,
+// spec: §13.3 (Credential Flow: Write-before-issue ordering),
 // §11.7.
 func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
 	var committed audit.Row

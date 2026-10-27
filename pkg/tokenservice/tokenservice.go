@@ -518,9 +518,8 @@ func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, fini
 	}
 	// spec: §13.3 "Client authentication on /v1/oauth/token" — a token
 	// carrying origin: "playground" is not a caller credential. Only the
-	// caller token is checked: §8.2 makes a playground bearer the
-	// subject_token of a delegation from a playground session, so the
-	// subject_token and actor_token take no origin check.
+	// caller token is checked; the subject_token and actor_token take no
+	// origin check.
 	if callerClaims.Origin == jwt.OriginPlayground {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "a playground-origin token is not a caller credential")
 		finish("invalid_client")
@@ -849,7 +848,7 @@ func (s *Server) mintToken(ctx context.Context, w http.ResponseWriter, issued to
 // When the in-lock re-read (step 1a) finds the subject or actor token
 // revoked, or an impersonation bearer, the signed token is discarded and
 // the exchange is rejected with 400 invalid_grant. It returns true once the record is durable.
-// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	rec := issuedRecord(jti, issued, signed, dialectCap, now)
 	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
@@ -904,7 +903,7 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 // re-reads under the lock: the subject_token and, on a delegation child
 // mint, the actor_token. The subject is listed first, so a token that
 // plays both roles is reported as the subject.
-// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func exchangeSources(subjectClaims jwt.Claims, actorClaims *jwt.Claims) []issuedtokenstore.SourceToken {
 	sources := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: subjectClaims.JWTID}}
 	if actorClaims != nil {
@@ -999,7 +998,7 @@ func sourceRefusalReason(err error) (string, bool) {
 // rejection audit write returns 500 token_exchange_failed with the
 // intended reason in the description, matching the §13.3 rejected-exchange
 // discipline.
-// spec: §13.3 (Credential Flow: Write-before-issue ordering), §8.2.
+// spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID, reason string, accepted exchangeAuditPayload, finish func(string)) {
 	rejection := accepted
 	rejection.JTI = "" // The discarded token was never issued.

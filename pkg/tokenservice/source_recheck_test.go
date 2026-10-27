@@ -81,7 +81,7 @@ func recheckClaims(jti string) jwt.Claims {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism) — the step
+// spec: 13.3 (Credential Flow) — the step
 // (1a) re-read rejects an exchange whose subject or actor token is
 // revoked between the pre-check and the in-lock re-read: the handler
 // returns 400 invalid_grant with the role's reason, discards the signed

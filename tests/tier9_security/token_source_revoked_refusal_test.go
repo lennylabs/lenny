@@ -134,7 +134,7 @@ func (h *sourceRevokedHarness) rotateAway(t *testing.T, tok string) {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism)
+// spec: 13.3 (Credential Flow)
 // diagnosis: a failure means a token revoked through rotation was accepted
 // as the subject_token or the actor_token of a delegation exchange, so a
 // rotated-away credential can still produce a child token. Check that

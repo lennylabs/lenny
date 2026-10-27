@@ -22,8 +22,8 @@ type SourceRole string
 const (
 	// SourceSubjectToken is the exchange's subject_token.
 	SourceSubjectToken SourceRole = "subject_token"
-	// SourceActorToken is the exchange's actor_token, present on a
-	// delegation child mint (§8.2).
+	// SourceActorToken is the exchange's actor_token, present on an
+	// a2a_delegation child mint (§13.3).
 	SourceActorToken SourceRole = "actor_token"
 )
 
@@ -112,7 +112,7 @@ func (t IssuedToken) isImpersonation() bool { return t.ActSubject != "" && t.Par
 // subject sees the first rotation's revoked_at stamp and fails.
 //
 // spec: §13.3 (Credential Flow: Write-before-issue ordering, Actor-token
-// freshness under concurrent rotation), §8.2, §11.7.
+// freshness under concurrent rotation), §11.7.
 func lockAndRecheck(ctx context.Context, tx pgx.Tx, tenantID string, sources []SourceToken) error {
 	if err := auditstore.AcquireLockInTx(ctx, tx, tenantID); err != nil {
 		return err

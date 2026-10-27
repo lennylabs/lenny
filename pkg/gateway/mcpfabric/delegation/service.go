@@ -99,19 +99,6 @@ type Request struct {
 	// blank.
 	UserID string
 
-	// ParentToken is the §8.2 RFC 8693 `actor_token` material —
-	// the parent session token the delegating pod presents. When set
-	// (and a ChildTokenMinter is wired), Delegate runs the in-process
-	// child-token exchange after admission: it mints the child session
-	// token with narrowed scope, the parent in the `act` chain,
-	// delegation_depth = parent + 1, and a capped exp, and reads the
-	// parent `jti` against the §13.3 revocation cache. A revoked parent
-	// rejects with ErrParentRevoked (DELEGATION_PARENT_REVOKED) and no
-	// child is created. Nil skips the exchange leg.
-	//
-	// spec: §8.2. F-8.1.2 / F-8.2.7.
-	ParentToken *ParentToken
-
 	// ApprovalMode is the §8.4 closed enum on the delegation lease.
 	// The empty string and "policy"/"approval" share the auto-approval
 	// path (with "approval" recorded verbatim on audit per the v1
@@ -189,13 +176,6 @@ type Result struct {
 
 	// Depth is the child's depth in the delegation tree (root = 0).
 	Depth int
-
-	// ChildToken is the §8.2 minted child session token (narrowed
-	// scope, `act` chain, capped exp, delegation_depth = parent + 1). Nil
-	// when no ChildTokenMinter is wired or the request carried no
-	// ParentToken. The gateway hands it to the child pod at materialization
-	// so the child runs with a parent-derived identity. F-8.1.2 / F-8.2.7.
-	ChildToken *ChildToken
 }
 
 // MetricsRecorder receives §8.2 delegation admission and cycle-gate
@@ -320,12 +300,6 @@ type Service struct {
 	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
 	treeBudget TreeBudgetReserver
-	// tokenMinter performs the §8.2 internal RFC 8693
-	// child-token exchange after admission passes: it narrows scope,
-	// builds the `act` chain, fixes delegation_depth at parent + 1,
-	// caps exp, and runs the §13.3 actor-token freshness check. Nil
-	// skips the exchange leg. F-8.1.2 / F-8.2.7.
-	tokenMinter ChildTokenMinter
 	// maxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap: the maximum count of live
 	// (non-terminal) delegated children a single user may hold across all
@@ -493,15 +467,6 @@ type Options struct {
 	// F-8.1.1.
 	TreeBudgetReserver TreeBudgetReserver
 
-	// ChildTokenMinter, when set, performs the §8.2 internal
-	// RFC 8693 child-token exchange on every admitted delegation: it
-	// mints the child session token with narrowed scope, a complete
-	// `act` chain, delegation_depth = parent + 1, and a capped exp, and
-	// runs the §13.3 actor-token freshness check. Nil skips the
-	// exchange leg, leaving the child without a parent-derived token
-	// (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
-	ChildTokenMinter ChildTokenMinter
-
 	// MaxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap. Before reserving tree
 	// budget, Delegate counts the owning user's live (non-terminal)
@@ -595,7 +560,6 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		exportMat:                    opts.ExportMaterializer,
 		exportScanResolver:           opts.ExportScanChainResolver,
 		treeBudget:                   opts.TreeBudgetReserver,
-		tokenMinter:                  opts.ChildTokenMinter,
 		maxActiveChildrenPerUser:     opts.MaxActiveChildrenPerUser,
 		leaseRegistrar:               opts.LeaseRegistrar,
 		sessionObjects:               opts.SessionObjects,
@@ -612,8 +576,8 @@ var (
 	ErrParentNotRunning = errors.New("delegation: parent session is not running")
 
 	// ErrParentNoUser — the parent session carries no authenticated
-	// user identity, so the §8.2 child-token exchange has no
-	// `subject_token` to bind the child to. The §11.2 quota gates,
+	// user identity, so the §8.2 child row has no owner to inherit:
+	// the child's identity is its session row. The §11.2 quota gates,
 	// §10.6 environment resolver, §11.7 audit attribution, and §9.2
 	// elicitation routing all key on a non-empty user_id; spawning a
 	// userless child would silently downgrade every one of those
@@ -866,8 +830,8 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (r
 	}
 
 	// Stage 4 (atomic child-session insert, §8.2): the lease-slice,
-	// per-user, and tree-budget gates, the export materialization and
-	// child-token mint, the child-row INSERT, and the §11.7 audit. The
+	// per-user, and tree-budget gates, the export materialization,
+	// the child-row INSERT, and the §11.7 audit. The
 	// budget reservation it takes is threaded back here so the deferred
 	// release above can return it on a later error.
 	return s.insertChildSession(ctx, tenantID, req, adm, &budgetReservation)
@@ -1179,8 +1143,8 @@ func (s *Service) checkDelegationDepth(req Request, adm admission) error {
 // It validates the lease slice against the parent's granted budget,
 // enforces the §11.1 per-user active-children cap, reserves the §8.2/§12.4
 // tree budget (threading the reservation back to Delegate's deferred
-// release through resvOut), materializes the §8.7 file export, mints the
-// §8.2 child token, builds and commits the child row, registers it with
+// release through resvOut), materializes the §8.7 file export, builds
+// and commits the child row, registers it with
 // the §8.6 lease budget source, observes the §16.1 depth metric, and
 // emits the §11.7 `delegation.spawned` audit. It returns the §8.5 Result.
 //
@@ -1205,10 +1169,8 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	}
 
 	// Build the child session row (id mint, §8.7 export materialization,
-	// §8.2 child-token exchange, struct assembly, and §10.7 experiment
-	// routing). The token is returned alongside the row for the audit and
-	// the Result.
-	child, childToken, reserved, err := s.buildChildSession(ctx, tenantID, req, adm, rootSessionID)
+	// struct assembly, and §10.7 experiment routing).
+	child, reserved, err := s.buildChildSession(ctx, tenantID, req, adm, rootSessionID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1233,8 +1195,8 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	if s.metrics != nil {
 		s.metrics.ObserveDelegationDepth(req.PoolRef, childDepth)
 	}
-	s.emitSpawnedAudit(ctx, req, parent, child, adm.decision, childToken, childDepth)
-	return Result{Child: child, Depth: childDepth, ChildToken: childToken}, nil
+	s.emitSpawnedAudit(ctx, req, parent, child, adm.decision, childDepth)
+	return Result{Child: child, Depth: childDepth}, nil
 }
 
 // reserveTreeBudget runs the §8.2 budget gates that precede the child-row
@@ -1362,13 +1324,12 @@ func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Se
 
 // buildChildSession assembles the §8.2 child session row after every
 // admission gate has passed. It mints the §12.6 child id, runs the §8.7
-// file-export materialization when the lease declares exports, runs the
-// §8.2 in-process child-token exchange when a minter and ParentToken are
-// present, builds the child Session row (stamping the resolved lease,
+// file-export materialization when the lease declares exports, builds the
+// child Session row (stamping the resolved lease,
 // content policy, visibility, tracing, and experiment context), and runs
 // the §10.7 ExperimentRouter for an independent-propagation child. It
-// returns the constructed (uncommitted) row, the minted child token, and
-// whether the child ID was reserved.
+// returns the constructed (uncommitted) row and whether the child ID was
+// reserved. The child's identity is its session row; no token is minted.
 //
 // When the lease declares exports, the child ID is reserved for its owner
 // before any export object is written under it, so the owner's erasure
@@ -1378,7 +1339,7 @@ func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Se
 //
 // spec: §8.2; §8.7; §8.9; §10.7; §12.8 (Lifecycle fence and drain).
 // F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
-func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (_ sessionstore.Session, _ *ChildToken, reserved bool, retErr error) {
+func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (_ sessionstore.Session, reserved bool, retErr error) {
 	parent := adm.parent
 	userID := req.UserID
 	if userID == "" {
@@ -1395,7 +1356,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// materialized child workspace. F-8.7.1 / F-8.7.5 / F-8.7.6.
 	childID, err := s.newChildID(rootSessionID)
 	if err != nil {
-		return sessionstore.Session{}, nil, reserved, err
+		return sessionstore.Session{}, reserved, err
 	}
 	var childPlan json.RawMessage
 	if len(req.FileExport) > 0 {
@@ -1403,7 +1364,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		// before the export writes objects under it. A fence refusal is
 		// returned unwrapped so delegate_task maps its code.
 		if err := s.store.Reserve(ctx, tenantID, userID, childID, true); err != nil {
-			return sessionstore.Session{}, nil, false, err
+			return sessionstore.Session{}, false, err
 		}
 		reserved = true
 		defer func() {
@@ -1413,37 +1374,9 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		}()
 		plan, err := s.materializeExport(ctx, tenantID, req, parent, childID, adm.effectivePolicy, adm.haveEffectivePolicy)
 		if err != nil {
-			return sessionstore.Session{}, nil, reserved, err
+			return sessionstore.Session{}, reserved, err
 		}
 		childPlan = plan
-	}
-	// §8.2: mint the child session token via the in-process
-	// RFC 8693 token exchange. This runs after every admission gate has
-	// passed (cycle, depth, budget, export) but before the child row is
-	// committed, so a revoked parent (the §13.3 actor-token freshness
-	// check) rejects with ErrParentRevoked and no child session is
-	// created. The minter narrows scope per the lease, builds the `act`
-	// chain naming the parent, fixes delegation_depth at parent + 1, and
-	// caps exp. A nil minter or a request without ParentToken skips the
-	// leg (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
-	var childToken *ChildToken
-	if s.tokenMinter != nil && req.ParentToken != nil {
-		minted, err := s.tokenMinter.MintChildToken(ctx, ChildTokenParams{
-			TenantID:              tenantID,
-			ChildSessionID:        childID,
-			ParentSessionID:       parent.ID,
-			ParentSubject:         req.ParentToken.Subject,
-			ParentJTI:             req.ParentToken.JTI,
-			ParentDelegationDepth: int(parent.DelegationDepth),
-			ParentScope:           req.ParentToken.Scope,
-			RequestedScope:        req.ParentToken.Scope,
-			ParentCallerType:      req.ParentToken.CallerType,
-			Now:                   now,
-		})
-		if err != nil {
-			return sessionstore.Session{}, nil, reserved, err
-		}
-		childToken = &minted
 	}
 	// rootSessionID was resolved above (the §12.4 budget counters are
 	// keyed by it). A child inherits its parent's RootSessionID rather
@@ -1529,10 +1462,10 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// rather than creating an unenrolled child.
 	if s.experimentRouter != nil && child.ExperimentContext == nil {
 		if err := s.experimentRouter.ApplyExperimentRouting(ctx, &child); err != nil {
-			return sessionstore.Session{}, nil, reserved, err
+			return sessionstore.Session{}, reserved, err
 		}
 	}
-	return child, childToken, reserved, nil
+	return child, reserved, nil
 }
 
 // commitChild inserts the child row: through CreateReserved when its ID
@@ -1584,13 +1517,11 @@ func (s *Service) undoChildExport(ctx context.Context, tenantID, childID string)
 // record after the child row commits, so audit consumers (billing, SIEM,
 // compliance) observe the same record the store now reflects. The detail
 // carries the §11.7 lineage attribution tuple, the §8.4 declared and
-// effective approval modes, and (when the §8.2 child-token exchange ran)
-// the minted `act` chain and child `jti` for the §13.3 recursive-revocation
-// link. A nil auditor skips the emission.
+// effective approval modes. A nil auditor skips the emission.
 //
 // spec: §11.7; §16.7 catalog; §8.4 (F-8.4.3); §8.2.
 // F-8.5.8, F-8.1.2, F-8.2.7.
-func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, child sessionstore.Session, decision cycle.Decision, childToken *ChildToken, childDepth int) {
+func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, child sessionstore.Session, decision cycle.Decision, childDepth int) {
 	if s.auditor == nil {
 		return
 	}
@@ -1615,15 +1546,6 @@ func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, chi
 		"is_self_recursive":       decision.IsSelfRecursive,
 		"approval_mode":           string(declaredMode),
 		"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
-	}
-	// §8.2 / §11.7: when the child-token exchange ran, the
-	// audit record carries the minted `act` chain and child `jti` so
-	// audit attribution and the §13.3 recursive-revocation path can
-	// follow the parent→child identity link. F-8.1.2 / F-8.2.7.
-	if childToken != nil {
-		detail["child_token_jti"] = childToken.JTI
-		detail["act_chain"] = childToken.Act
-		detail["delegation_token_scope"] = childToken.Scope
 	}
 	s.auditor.EmitDelegationEvent(ctx, "delegation.spawned", detail)
 }

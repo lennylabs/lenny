@@ -103,12 +103,11 @@ func TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token", 8.2 (Delegation Mechanism)
+// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token"
 // diagnosis: a non-playground caller presenting a playground-origin
-// subject_token was refused. §8.2 makes the playground bearer the
-// subject_token of a delegation from a playground session, so only the
-// caller token takes the origin check; an origin check that also reaches
-// the subject_token breaks that delegation.
+// subject_token was refused. §13.3 refuses a playground-origin token
+// only as the caller token; an origin check that also reaches the
+// subject_token refuses an exchange that narrows a playground bearer.
 func TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3(t *testing.T) {
 	ts, signer := newKeySetTestServer(t)
 	caller := mintKeySet(t, signer, "jti-caller", "")

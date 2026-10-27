@@ -287,7 +287,7 @@ func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 8.2 (Delegation Mechanism) — a retried
+// spec: 13.3 (Credential Flow) — a retried
 // rotation presents a subject token the first rotation already revoked.
 // The in-lock step (1a) re-read finds it revoked, so the exchange fails
 // with 400 invalid_grant subject_token_revoked, no second token is minted,
