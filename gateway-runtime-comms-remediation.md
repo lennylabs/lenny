@@ -3380,8 +3380,10 @@ refused-start audit entry is a follow-up to 0102's staged caller check rather th
 tree, so it is recorded as a follow-up rather than filed. The rest are filed in BUILD-GAPS and routed below.
 
 - Direct-fix queue, after the post-0097 direct-fix queue above.
-  - [ ] **F-11.7.24** (Low): `docs/operator-guide/agent-operability.md` says an operation that fails to audit
+  - [x] **F-11.7.24** (Low): `docs/operator-guide/agent-operability.md` says an operation that fails to audit
     is rolled back, which no section states and §11.7 item 6 contradicts. Delete or restate the sentence.
+    Fixed in `0dfbe8d25`: the sentence is restated to the §11.7 synchronous gateway writes and the item 6
+    deferred write.
   - [ ] **F-10.2.28** (Medium), after 0102's implementation: a rejected playground mint returns its error
     response whether or not the `playground.bearer_mint_rejected` row was written, because the playground
     emitter and `admin.AuditSink.EmitAdminEvent` return no error. Give the rejection path an error-returning
