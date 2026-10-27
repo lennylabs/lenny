@@ -10,15 +10,13 @@
 // spec: §6.2 (Pod State Machine), §6.2 (maxClientIdleSeconds clock behavior
 // across states), §7.2 (Message delivery routing — seven paths, path 6), §7.3
 // (Credential leases on the replacement pod), §10.1.5 (Stale Replica
-// Behavior)
+// Behavior), §29.3 (Interactive message send) Forwarding
 package tier7a_load_local_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -101,9 +99,13 @@ func answered(code int, body map[string]any) bool {
 }
 
 // spec: §6.2 (Pod State Machine), §7.2 (Message delivery routing — seven
-// paths, path 6), §6.2 (maxClientIdleSeconds clock behavior across states)
+// paths, path 6), §6.2 (maxClientIdleSeconds clock behavior across states),
+// §29.3 (Interactive message send) Forwarding
 // diagnosis: a message racing an idle suspension was left held by a podless
-// suspended session, reached the runtime twice, or was lost; a message
+// suspended session, reached the runtime twice, or was lost; a message the
+// replica that does not coordinate the session served was answered
+// EXECUTOR_FAILURE rather than forwarded over CH-HOLDERFORWARD to the
+// coordinator or held in the DLQ (F-7.2.38); a message
 // racing the suspension was delivered between the seal and the release, so
 // the release reached its runtime before the runtime wrote the response;
 // or a stale coordinator's idle suspension acted on a session a peer had
@@ -129,9 +131,6 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 						func() { r1.Server.SuspendIdle(context.Background(), row, lifecycleharness.IdleWindow) },
 						func() { code, body = h.Send(sender, id, text) })
 					h.Settle()
-					if sender != r1 && code == http.StatusInternalServerError && strings.Contains(fmt.Sprint(body), "not bound to a pod") {
-						t.Skip("blocked: F-7.2.38 (owner: R19) a message a non-coordinating replica serves for a running session answers EXECUTOR_FAILURE instead of being forwarded or held")
-					}
 					if !answered(code, body) {
 						t.Fatalf("the racing message was answered %d %v, want delivered or queued", code, body)
 					}

@@ -573,6 +573,7 @@
       ],
       "load_local": [
         "tests/tier7a_load_local/suspension_interleaving_test.go",
+        "tests/tier7a_load_local/holder_forward_interleaving_test.go",
         "tests/tier7a_load_local/stream_failure_release_race_test.go",
         "tests/tier7a_load_local/lifecycle_interleaving_test.go",
         "tests/tier7a_load_local/slot_release_paths_race_test.go",

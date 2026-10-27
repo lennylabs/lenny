@@ -517,22 +517,13 @@ func blockedFindingSkips(t testing.TB, root string, dirs ...string) map[string][
 	return out
 }
 
-// suspendResumeDeviations is the deviations record of the proposal that
-// added the off-holder running-row skip.
-const suspendResumeDeviations = "proposals/0092_new_write-the-session-suspend-and-resume-proposal-that-gateway/" +
-	"0092_new_write-the-session-suspend-and-resume-proposal-that-gateway.deviations.md"
-
 // diagnosis: a test skips with "blocked:" on a BUILD-GAPS finding that is
 // closed or absent, so the skip outlived its reason and hides a case that
-// now has to run; remove the skip. Or the off-holder running-row skip has
-// lost the deviations entry that records why a required case is skipped.
+// now has to run; remove the skip.
 func TestBlockedSkipsNameOpenFindings_spec_7_2(t *testing.T) {
 	root := repoRoot(t)
 	findings := buildGapsFindingsByID(t, root)
 	skips := blockedFindingSkips(t, root, "tests", "pkg", "cmd", "sdks")
-	if len(skips["F-7.2.38"]) == 0 {
-		t.Fatal("no test skips on F-7.2.38; the probe no longer reads the skip it was written for")
-	}
 	for id, files := range skips {
 		f, ok := findings[id]
 		switch {
@@ -541,9 +532,6 @@ func TestBlockedSkipsNameOpenFindings_spec_7_2(t *testing.T) {
 		case !f.open:
 			t.Errorf("%v skip on %s, which is closed (BUILD-GAPS.md:%d); remove the skip", files, id, f.line)
 		}
-	}
-	if !strings.Contains(readDocPage(t, filepath.Join(root, filepath.FromSlash(suspendResumeDeviations))), "F-7.2.38") {
-		t.Errorf("%s records no deviation for the F-7.2.38 skip", suspendResumeDeviations)
 	}
 }
 
@@ -571,8 +559,10 @@ func TestRemediationPlanRecordsTheSuspendResumeProposal_spec_7_3(t *testing.T) {
 // diagnosis: the probes above no longer read a skip reason or a selector the
 // way the checks assume, so they pass or fail vacuously.
 func TestSuspendResumeRecordProbes_spec_7_2(t *testing.T) {
-	if got := blockedOnFinding.FindStringSubmatch(`t.Skip("blocked: F-7.2.38 (owner: R19) x")`); len(got) < 2 || got[1] != "F-7.2.38" {
-		t.Errorf("blockedOnFinding read %v, want F-7.2.38", got)
+	// The specimen is split before "blocked:" so the file scan of
+	// TestBlockedSkipsNameOpenFindings_spec_7_2 does not read it as a skip.
+	if got := blockedOnFinding.FindStringSubmatch(`t.Skip("` + `blocked: F-1.2.3 (owner: R1) x")`); len(got) < 2 || got[1] != "F-1.2.3" {
+		t.Errorf("blockedOnFinding read %v, want F-1.2.3", got)
 	}
 	if blockedOnFinding.MatchString(`t.Skip("blocked: the e2e Postgres pod is not running")`) {
 		t.Error("blockedOnFinding matched an environment skip that names no finding")
