@@ -12,7 +12,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
 
@@ -156,75 +155,26 @@ func TestCrossReplicaFanOut_spec_11_4_step_2(t *testing.T) {
 	}
 }
 
-// primaryGatedTerminator is a peer replica's subscriber-side releaser
-// as §11.4 step 2 defines it: it holds bindings, reads each named
-// session's state from its primary row, releases only the bindings
-// whose row is terminal, and returns the credential leases of the
-// bindings it released.
-type primaryGatedTerminator struct {
-	mu       sync.Mutex
-	primary  map[string]session.State // session id -> primary row state
-	bindings map[string]bool          // session id -> binding held here
-	leases   map[string]string        // session id -> credential lease held
-	returned []string
-}
-
-func (g *primaryGatedTerminator) TerminateLocal(_ context.Context, req Request) Result {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	var res Result
-	for _, id := range req.SessionIDs {
-		if !g.bindings[id] || !session.IsTerminal(g.primary[id]) {
-			continue
-		}
-		delete(g.bindings, id)
-		if lease, ok := g.leases[id]; ok {
-			g.returned = append(g.returned, lease)
-			delete(g.leases, id)
-		}
-		res.PodsTerminated++
-	}
-	return res
-}
-
-func (g *primaryGatedTerminator) snapshot() (bindings map[string]bool, leases map[string]string, returned []string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	bindings, leases = map[string]bool{}, map[string]string{}
-	for k, v := range g.bindings {
-		bindings[k] = v
-	}
-	for k, v := range g.leases {
-		leases[k] = v
-	}
-	return bindings, leases, append([]string(nil), g.returned...)
-}
-
-// TestSubscriberReleasesOnlyTerminalPrimaryBindings_spec_28_5_7 drives a
+// TestSubscriberReceivesTheWholeSessionSet_spec_28_5_7 drives a
 // CH-BINDRELEASE request from replica A through replica B's subscriber
 // over a shared Redis. The request names a session whose primary row is
-// terminal and one whose primary row is running, both bound on B. The
-// propagator delivers the whole session set unfiltered, and B releases
-// only the terminal session's binding, leaves the running session's
-// binding and lease in place, and returns the released binding's
-// credential lease.
+// terminal and one whose primary row is still running. The propagator
+// reads no session state: it hands replica B's local releaser the whole
+// session set, in order, with the tenant and the user, and the
+// primary-row gate is left to the releaser (sessionserver's
+// ReleaseRevokedBinding, pinned at tier 1 in that package and end to end
+// by the tier-4 two-replica bind-release suite).
 //
-// spec: §28.5.7 (Gateway-to-store), §11.4 (User Invalidation), §12.8
-// (Compliance Interfaces)
-func TestSubscriberReleasesOnlyTerminalPrimaryBindings_spec_28_5_7(t *testing.T) {
+// spec: §28.5.7 (Gateway-to-store), §11.4 (User Invalidation)
+func TestSubscriberReceivesTheWholeSessionSet_spec_28_5_7(t *testing.T) {
 	mr := miniredis.RunT(t)
 	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
 
-	localB := &primaryGatedTerminator{
-		primary:  map[string]session.State{"run_done": session.StateFailed, "run_live": session.StateRunning},
-		bindings: map[string]bool{"run_done": true, "run_live": true},
-		leases:   map[string]string{"run_done": "lease_done", "run_live": "lease_live"},
-	}
-	recorder := &recordingTerminator{}
+	localB := &recordingTerminator{}
 	propA := New(&recordingTerminator{}, pubsub.New(clientA), "replica-A")
-	propB := New(teeTerminator{localB, recorder}, pubsub.New(clientB), "replica-B")
+	propB := New(localB, pubsub.New(clientB), "replica-B")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -233,38 +183,16 @@ func TestSubscriberReleasesOnlyTerminalPrimaryBindings_spec_28_5_7(t *testing.T)
 	req := Request{TenantID: "acme", UserID: "alice@acme.com", SessionIDs: []string{"run_done", "run_live"}}
 	waitForCondition(t, 3*time.Second, func() bool {
 		propA.Publish(ctx, req)
-		return len(recorder.applied()) > 0
+		return len(localB.applied()) > 0
 	})
 
-	got := recorder.applied()[0]
-	if len(got.SessionIDs) != 2 || got.TenantID != "acme" {
-		t.Errorf("replica B's subscriber received %+v, want both sessions of acme", got)
+	got := localB.applied()[0]
+	if got.TenantID != "acme" || got.UserID != "alice@acme.com" {
+		t.Errorf("replica B's subscriber received tenant %q user %q, want acme alice@acme.com", got.TenantID, got.UserID)
 	}
-	bindings, leases, returned := localB.snapshot()
-	if bindings["run_done"] {
-		t.Error("the binding of the session whose primary row is terminal was not released")
+	if len(got.SessionIDs) != 2 || got.SessionIDs[0] != "run_done" || got.SessionIDs[1] != "run_live" {
+		t.Errorf("replica B's subscriber received sessions %v, want [run_done run_live] unfiltered", got.SessionIDs)
 	}
-	if !bindings["run_live"] {
-		t.Error("the binding of the session whose primary row is running was released")
-	}
-	if len(returned) != 1 || returned[0] != "lease_done" {
-		t.Errorf("returned credential leases = %v, want [lease_done]", returned)
-	}
-	if leases["run_live"] != "lease_live" {
-		t.Errorf("the running session's lease = %q, want lease_live kept", leases["run_live"])
-	}
-}
-
-// teeTerminator applies a request to a releaser and records it.
-type teeTerminator struct {
-	release LocalTerminator
-	record  *recordingTerminator
-}
-
-func (t teeTerminator) TerminateLocal(ctx context.Context, req Request) Result {
-	res := t.release.TerminateLocal(ctx, req)
-	t.record.TerminateLocal(ctx, req)
-	return res
 }
 
 // TestRequestCarriesNoReason pins the §11.4 step-2 release request's JSON
