@@ -166,7 +166,7 @@ In the `ActorClaim` comments of the same block, replace "identifies the session'
 
 Edit (e). §15.1, in the paragraph that begins "**MCP endpoint boundary.**", in the `/mcp/runtimes/{runtime-name}` bullet, replace "authentication is a session-scoped token" with "authentication is the caller's bearer ([§10.2](10_gateway-internals.md#102-authentication))".
 
-### SPEC-5 · spec/04_system-components.md § 4.3, spec/05_runtime-registry-and-pool-model.md § 5.1, spec/07_session-lifecycle.md § 7.4, spec/10_gateway-internals.md § 10.7, spec/13_security-model.md § 13.3, spec/16_observability.md § 16.5 and § 16.7, spec/17_deployment-topology.md § 17.7 and § 17.8.2, spec/18_build-sequence.md § 18.2, § 18.23, and § 18.40, spec/23_competitive-landscape.md § 23.1, spec/27_web-playground.md § 27.3.1
+### SPEC-5 · spec/04_system-components.md § 4.3, spec/05_runtime-registry-and-pool-model.md § 5.1, spec/07_session-lifecycle.md § 7.4, spec/13_security-model.md § 13.3, spec/16_observability.md § 16.5 and § 16.7, spec/17_deployment-topology.md § 17.7 and § 17.8.2, spec/18_build-sequence.md § 18.2, § 18.23, and § 18.40, spec/27_web-playground.md § 27.3.1
 
 Edit (a). §4.3 Token Service, item 3 "**Canonical token endpoint**". Replace "Delegation child tokens, credential-lease tokens," with:
 
@@ -282,11 +282,7 @@ Edit (o). §7.4, in the paragraph that begins "**Upload authorization:**", repla
 
 Edit (p). §13.3, the code block under "**Connector credentials (OAuth):**". Replace "Gateway mints session context" with "Gateway creates the session", and replace "Pod receives: session context + projected SA token" with "Pod receives: projected SA token".
 
-Edit (q). §10.7, the **Caller** row of the table under "**Eval Submission Contract.**". Delete the sentence "This includes: the agent runtime itself (via its session credential), the session owner (user or service account), or a deployer-operated external scorer pipeline." The row stays one physical line.
-
-Edit (r). §23.1, under "Additional Platform Capabilities", item 12 "**Pull-based evaluation hooks.**". Delete " — agent runtime, session owner, or external scorer pipeline", so the sentence ends "from any authenticated principal ([Section 10.7](10_gateway-internals.md#107-experiment-primitives))."
-
-Edit (s). §13.3, delete the paragraph that begins "**Delegation-lifetime preservation.**".
+Edit (q). §13.3, delete the paragraph that begins "**Delegation-lifetime preservation.**".
 
 ## Spec files touched
 
@@ -301,5 +297,4 @@ Edit (s). §13.3, delete the paragraph that begins "**Delegation-lifetime preser
 - spec/16_observability.md (SPEC-5)
 - spec/17_deployment-topology.md (SPEC-5)
 - spec/18_build-sequence.md (SPEC-5)
-- spec/23_competitive-landscape.md (SPEC-5)
 - spec/27_web-playground.md (SPEC-5)
