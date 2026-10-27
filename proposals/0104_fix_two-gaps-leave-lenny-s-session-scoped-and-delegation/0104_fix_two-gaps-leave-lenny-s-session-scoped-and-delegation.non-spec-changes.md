@@ -106,14 +106,28 @@ Each table row stays one physical line. No page cites a spec section number.
 
 ### REC-1 · Records
 
-Targets: `BUILD-GAPS.md` F-10.2.25 and F-8.2.31; `TEST-GAPS.md` T-8.2.7 and T-10.2.2; `gateway-runtime-comms-remediation.md` §10.2, the F-10.2.25 and F-8.2.31 queue entries and the "session capability and delegation child token proposal" routing text. CODE-1 owns the `tests/spec-map.json` and `tests/registers/change-graph-coverage.yaml` removals.
+Targets: `BUILD-GAPS.md` F-10.2.25, F-8.2.31, and one new finding; `TEST-GAPS.md` T-8.2.7 and T-10.2.2; `gateway-runtime-comms-remediation.md` §10.2, the F-10.2.25 and F-8.2.31 queue entries, the "session capability and delegation child token proposal" routing text, and one new queue entry; `scripts/seed-claim-register.py` and `tests/claim-map.json`, one new claim-register row. CODE-1 owns the `tests/spec-map.json` and `tests/registers/change-graph-coverage.yaml` removals.
 
 - Close F-10.2.25. The session-creation mint is removed from §10.2, and the renewal half is moot under D1. Close F-8.2.31. Child identity is the session row, and the §12.8 fence enforces parent freshness. Each closure points to 0104 and replaces the stale **Suggested resolution:** text.
 - Close T-8.2.7 against the Testing section's **Fence rule model**, **Fence race**, and **Delegation flow** entries.
 - Close T-10.2.2. Its throttle and breaker half was already covered by 0097. Its `POST /v1/sessions` half has no spec basis after SPEC-1, and the Testing section's **KMS independence** entry pins that session creation succeeds while the breaker is open.
 - In the remediation plan, mark both entries resolved by 0104.
 - File, each only when the implementor confirms it, the findings in the summary's **Defects in the shipped tree that this proposal does not stage**.
-- The §28.4 claim register (`tests/claim-map.json`) carries no row for either removed mint, so no claim row changes.
+- The §28.4 claim register (`tests/claim-map.json`) carries no row for either removed mint, so no existing claim row changes. One row is added for the forwarded-call session binding (summary decision D11). The register is generator-produced, so add the row to the hand-written row list in `scripts/seed-claim-register.py`, with a comment above it in the style of its neighbours, and regenerate the register with `scripts/seed-claim-register.py --out tests/claim-map.json`. Do not edit `tests/claim-map.json` by hand: the tier-0 generator gate requires the committed file to match the generator output byte for byte. The row is:
+
+  ```
+  {
+      "claim": "Gateway binds a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call forwarded on LNK-GWCONTROL to a session assigned to the calling pod",
+      "status": "ABSENT",
+      "spec_anchor": "#2853-intra-pod",
+      "deferral_id": "R14",
+      "surface": "`pkg/gateway/gatewaycontrol/platformtools/platformtools.go` `Bridge.CallPlatformTool`, `pkg/gateway/connectors/connectortools/connectortools.go` `Bridge.CallConnectorTool`",
+      "note": "the gateway does not bind a forwarded call to a session assigned to the calling pod; it dispatches under the session id the adapter presents; BUILD-GAPS.md records the gap, routed to a dedicated proposal in gateway-runtime-comms-remediation.md §10.2; R14 supplies the agent-pod client identity such a binding keys on"
+  }
+  ```
+
+  The validator requires a row that is not `WIRED` to name a plan step that the remediation plan declares. No step owns the binding. R14 is the step whose pod client identity the binding needs, and the seeding script's own deferral rules map SPIFFE and client identity to R14. The comment above the row states that the row records a gap that §28 and §10.2 do not specify after SPEC-1 Edit (f), and that the dedicated proposal owns the specification.
+- File a new Medium finding in `BUILD-GAPS.md` for the absent binding, under the §10.2 group with the next free `F-10.2.N` identifier, following the BUILD-GAPS conventions for a new open finding (title line, **Gap:**, evidence, and **Suggested resolution:**). **Gap:** the gateway serves a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the session ID the adapter presents, with no check that the session is assigned to the calling pod, so a compromised adapter can act for another session. Evidence: `pkg/gateway/gatewaycontrol/platformtools/platformtools.go` (package comment and `Bridge.CallPlatformTool`) and `pkg/gateway/connectors/connectortools/connectortools.go` (`Bridge.CallConnectorTool`). **Suggested resolution:** a dedicated proposal specifies the binding, covering the `pod_assignment` invariant at every state edge, the RPCs it covers, the dev plaintext listener with no SPIFFE identity, assignment timing relative to the first forwarded call, and the refusal outcome. Owner: that proposal. Add an open queue entry for that proposal to `gateway-runtime-comms-remediation.md` §10.2, citing the new finding and the claim-register row.
 
 ## Testing
 
@@ -151,5 +165,5 @@ TEST-1 extends the existing harnesses named below. It adds no full-revoke race, 
 - `pkg/gateway/callercheck/` (new), `pkg/gateway/sessionserver/user_gate.go`, `sessionserver.go` (CODE-3)
 - `pkg/alerting/rules/rules.go`, `charts/lenny/files/alerting-rules.yaml`, `docs/alerting/rules.yaml`, `pkg/embedded/manifests/manifests.yaml` (CODE-4)
 - `docs/reference/error-catalog.md`, `docs/client-guide/authentication.md`, `docs/api/admin.md`, `docs/getting-started/architecture.md`, `docs/operator-guide/security.md`, `docs/client-guide/sdk-examples/curl.md`, `docs/reference/configuration.md`, `docs/tutorials/user-credentials.md`, `docs/operator-guide/observability.md`, `docs/runbooks/token-store-unavailable.md` (DOCS-1)
-- `BUILD-GAPS.md`, `TEST-GAPS.md`, `gateway-runtime-comms-remediation.md` (REC-1)
+- `BUILD-GAPS.md`, `TEST-GAPS.md`, `gateway-runtime-comms-remediation.md`, `scripts/seed-claim-register.py`, `tests/claim-map.json` (REC-1)
 - Test files named in the Testing section (TEST-1)

@@ -2,17 +2,17 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the §10.2 edits (a) to (f), after 0102's spec steps (summary **Impacts on other proposals**, row 0102).
+- [ ] **S1 · spec** — SPEC-1. Lands every SPEC-1 edit in §10.2, after 0102's spec steps (summary **Impacts on other proposals**, row 0102).
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-3. Lands the §12.8 creation-fence edits (a) to (c).
+- [ ] **S2 · spec** — SPEC-3. Lands every SPEC-3 edit in the §12.8 creation fence.
       Tiers 0, 11. Depends on: —
-- [ ] **S3 · spec** — SPEC-2. Lands the §8.2 paragraph replacement.
+- [ ] **S3 · spec** — SPEC-2. Lands the §8.1 and §8.2 edits.
       Tiers 0, 11. Depends on: S1, S2
-- [ ] **S4 · spec** — SPEC-4. Lands the §15.1 and shared-adapter-type edits (a) to (d).
+- [ ] **S4 · spec** — SPEC-4. Lands every SPEC-4 edit.
       Tiers 0, 11. Depends on: S2, S3
-- [ ] **S5 · spec** — SPEC-5. Lands the §4.3, §13.3, §16.5, §16.7, §17.7, §17.8.2, and §18 edits (a) to (l).
+- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit.
       Tiers 0, 11. Depends on: S1, S3
-- [ ] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore.
+- [ ] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore, and the cascade's primary read in sessionserver `usage.go`.
       Tiers 0, 1, 2, 7. Depends on: S2, S3, S4
 - [ ] **S7 · code** — CODE-1. Lands the deletion and the registry edits, in the same proposal merge as S6.
       Tiers 0, 1, 3. Depends on: S3, S4, S6
@@ -24,5 +24,5 @@
       Tiers 1, 2, 3, 7, 8, 9. Depends on: S6, S7, S8
 - [ ] **S11 · docs** — DOCS-1. Lands the docs edits.
       Tiers 11. Depends on: S1, S2, S3, S4, S5, S9
-- [ ] **S12 · docs** — REC-1. Lands the record closures.
-      Tiers 11. Depends on: S6, S7, S8, S9, S10, S11
+- [ ] **S12 · docs** — REC-1. Lands the record closures, the new BUILD-GAPS finding and queue entry, and the regenerated claim-register row.
+      Tiers 0, 11. Depends on: S6, S7, S8, S9, S10, S11

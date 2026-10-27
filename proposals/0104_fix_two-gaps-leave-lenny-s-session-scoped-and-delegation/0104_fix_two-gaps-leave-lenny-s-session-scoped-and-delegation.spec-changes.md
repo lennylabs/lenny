@@ -9,7 +9,6 @@ The edits establish these rules, each with one normative home:
 1. **Session-creation caller check.** Home: §10.2 "Signing topology" (SPEC-1 Edit (b)). §16.7 defines the audit row's `exchange_type: session_mint` value against it (SPEC-5 Edit (g)).
 2. **Child identity.** A delegated child's identity is its session row, and its delegation lease bounds what it may do. Home: §8.2 "Child identity" (SPEC-2).
 3. **Parent-terminal fence rule.** The transaction that inserts a delegated child row reads the parent session row under a shared lock and refuses the insert when the parent is terminal or absent, with `DELEGATION_PARENT_REVOKED`. Home: §12.8 "Lifecycle fence and drain", *Creation fence* (SPEC-3). §8.2 "Parent freshness" (SPEC-2) and the §15.1 catalog row (SPEC-4) cite it.
-4. **Forwarded-call session binding.** Home: §10.2, the paragraph SPEC-1 Edit (f) writes.
 
 The external `a2a_delegation` exchange on `POST /v1/oauth/token` with `actor_token` is unchanged. SPEC-4 and SPEC-5 retarget every site that named internal delegation minting to that exchange, or remove the site when only the internal mint applied.
 
@@ -19,7 +18,7 @@ The external `a2a_delegation` exchange on `POST /v1/oauth/token` with `actor_tok
 - **Parent row absent or unreadable.** An absent parent refuses the insert with `DELEGATION_PARENT_REVOKED`. A parent read that fails fails the insert (SPEC-3 Edit (a)).
 - **Reservation before the insert.** A delegated child's file export reserves the session ID under the tenant and user rules only. The parent rule runs in the insert transaction (SPEC-3 Edit (c)), so a parent that ends between reservation and insert still refuses the insert.
 - **Single-bearer revocation during a running session.** Revoking one bearer of the owner does not stop a running session's pod from delegating. A §11.4 full revoke is the cut-off for a delegation tree (SPEC-2 "Parent freshness").
-- **Pod-path delegation.** A child that a pod requests over `LNK-GWCONTROL` is outside the caller check (SPEC-1 Edit (b)). The parent session row governs it (SPEC-2 "Child identity").
+- **Pod-path delegation.** A child that a pod requests over `LNK-GWCONTROL` is outside the caller check (SPEC-1 Edit (b)). Its parent is the session whose ID the adapter presents with the request, and the parent session row governs it (SPEC-2 "Child identity"). The gateway does not bind that session ID to a session assigned to the calling pod. SPEC-1 Edit (f) states no such binding, and the gap is recorded as an `ABSENT` claim-register row (non-spec-changes.md REC-1).
 - **Client-facing `lenny/delegate_task` with an impersonation bearer.** The request is refused with `403 FORBIDDEN` after the rejection row is durable (SPEC-1 Edit (b)).
 - **KMS unavailable.** Session creation and internal delegation make no `Sign` call, so `KMS_SIGNING_UNAVAILABLE` does not reach either path.
 
@@ -71,24 +70,20 @@ Edit (e). In the paragraph that begins "**KMS signing failure mode:**", delete t
 A running session's own mints, such as a delegation child token, fail until signing recovers.
 ```
 
-Edit (f). Replace the whole paragraph that follows the "**KMS signing failure mode:**" paragraph:
+Edit (f). Delete the whole paragraph that follows the "**KMS signing failure mode:**" paragraph:
 
 ```
 Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request.
 ```
 
-with:
-
-```
-The gateway serves a platform-tool or connector-tool request forwarded over `LNK-GWCONTROL` ([§28.3](28_communication-channels.md#283-registers)) only when the session the request names is not in a terminal state and its pod assignment ([§4.2](04_system-components.md#42-session-manager)) is the pod that the caller's SPIFFE identity names ([§10.3](#103-mtls-pki)). It refuses every other such request before dispatch.
-```
+No sentence replaces it. The paragraph names a token that no pod holds after Edit (d), and the gateway validates no token signature on a pod request. The boundary table and §10.3 already state how a pod authenticates. The gateway does not bind a platform-tool or connector-tool call forwarded over `LNK-GWCONTROL` to a session assigned to the calling pod, and this edit does not specify such a binding. Non-spec-changes.md REC-1 records the gap as an `ABSENT` claim-register row and a BUILD-GAPS finding routed to its own proposal (summary decision D11).
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.1 and § 8.2
 
 Under item 2 of the numbered delegation flow, replace the three paragraphs whose bold labels are "**Child-token minting (internal RFC 8693 exchange).**", "**Actor-token freshness under concurrent parent rotation/revocation.**", and "**Retry semantics on `AUDIT_CONCURRENCY_TIMEOUT` during child minting.**" with the two paragraphs below. Keep the three-space indentation the replaced paragraphs carry, so the new paragraphs stay inside item 2.
 
 ```
-   **Child identity.** The gateway mints no token for a delegated child. The child session row carries the child's identity: the parent's user and `tenant_id`, `parent_session_id`, `root_session_id`, `delegation_depth` equal to the parent's plus one, and the granted `LeaseSlice` as its delegation lease, which bounds what the child may do ([§8.3](#83-delegation-policy-and-lease)). The child pod authenticates to the gateway as every pod does ([§10.2](10_gateway-internals.md#102-authentication)).
+   **Child identity.** The gateway mints no token for a delegated child. The child session row carries the child's identity: the parent's user and `tenant_id`, `parent_session_id`, `root_session_id`, `delegation_depth` equal to the parent's plus one, and the granted `LeaseSlice` as its delegation lease, which bounds what the child may do ([§8.3](#83-delegation-policy-and-lease)). The child pod authenticates to the gateway as every pod does ([§10.2](10_gateway-internals.md#102-authentication)). When a pod requests the child over `LNK-GWCONTROL` ([§28.3](28_communication-channels.md#283-registers)), the parent is the session whose ID the adapter presents with the request, and the gateway dispatches the request under that session ID. The [§28.4](28_communication-channels.md#284-claim-register) claim register records that the gateway does not bind that session ID to a session assigned to the calling pod.
 
    **Parent freshness.** The transaction that inserts a delegated child row runs the creation fence of [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Lifecycle fence and drain", which refuses the insert when the parent session is terminal or has no row and states how the insert serializes with the parent's terminal write. No child session is created and no child pod is allocated. A [§11.4](11_policy-and-controls.md#114-user-invalidation) full revoke cancels every session of the user, delegated children included, and the creation fence refuses a new child of a hard-disabled or fully revoked user.
 ```
