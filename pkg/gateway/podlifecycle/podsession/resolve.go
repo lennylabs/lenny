@@ -101,8 +101,9 @@ type PoolMatch struct {
 	SpiffeBinding string
 	// Recycle reports whether the pool's §5.2 sessionPolicy.recycle block
 	// is present, so the §7.1 scrubPolicy derivation knows the pod is
-	// reused across sessions. It is set from the SandboxTemplate's
-	// sessionPolicy.recycle presence.
+	// reused across sessions. It is the stored recycle.enabled when the pool
+	// has a poolstore mirror row (foldPoolPolicy), and otherwise falls back
+	// to the SandboxTemplate's sessionPolicy.recycle presence.
 	Recycle bool
 	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
 	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
@@ -199,9 +200,10 @@ type PoolPolicyMirror struct {
 	// in-place). The CRD pair carries the flag only implicitly, for the
 	// microvm cross-tenant scrub variants where a non-empty scrubProfile
 	// is itself an admission-enforced signal (§4.6.3 ownership); a
-	// standard-profile recycling pool sets no CRD field at all, so this
-	// gateway-enforced mirror is the only source foldPoolPolicy has for
-	// the common case. spec: §5.2 (Recycle lifecycle).
+	// standard-profile recycling pool sets no CRD field at all. When a
+	// mirror row exists, foldPoolPolicy takes this value over the CRD
+	// signal, which lags an admitted pool update. spec: §5.2 (Recycle
+	// lifecycle).
 	Recycle bool
 	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
 	AllowCrossTenantReuse bool
@@ -386,13 +388,19 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 		return nil
 	}
 	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
-	// spec: §5.2 (Recycle lifecycle) — the CRD only sets SessionPolicy.
-	// Recycle for the microvm cross-tenant scrub variants (a non-empty
-	// scrubProfile); a standard-profile recycling pool carries no CRD
-	// signal at all. OR in the mirror's Recycle rather than overwrite, so
-	// a CRD-derived true (the microvm case) is never downgraded by a
-	// mirror row that happens to omit the flag.
-	m.Recycle = m.Recycle || mirror.Recycle
+	// spec: §5.2 (Recycle lifecycle; Deployer acknowledgment (runtime
+	// process kept across sessions)), §7.1 (sessionIsolationLevel) — the
+	// stored recycle.enabled is authoritative whenever the pool has a mirror
+	// row, so it overwrites the CRD-derived signal rather than being ORed
+	// into it. The CRD's sessionPolicy.recycle block is only a proxy for
+	// recycle.enabled: the PoolScalingController renders it for a scrub
+	// profile, the in-place acknowledgment, or a runtime-process lifetime,
+	// and it lags an admitted pool update until the next reconcile. ORing it
+	// in kept Recycle true after an update to recycle.enabled: false, so a
+	// session created before the reconcile reported podReuse: true and
+	// recycled its pod at release while ReusesPods, read from the same
+	// mirror, already refused pod reuse.
+	m.Recycle = mirror.Recycle
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
 	// §5.2 process-reuse rule: whether an acquisition may admit a pod that
 	// has served a session, and whether it admits such a `keep` pod. A pool

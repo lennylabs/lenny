@@ -3709,6 +3709,22 @@ other test in that binary.
     approved a reset. Give each worktree its own database or namespace, or make `install.sh` refuse a
     database ahead of the branch, and document the reset procedure.
 
+**Direct fixes filed while verifying proposal 0102 (2026-10-27).** Both were found on the shared `lenny-e2e`
+cluster and predate 0102. They are fixed on `fix/kind-kubeconfig-and-t9-podreuse`, which branches from the
+proposal-b tip `fb88c8c2e`.
+
+- [x] **Direct fix: T-17.4.30** (Medium): `TestEtcdEncryption` created and deleted its dedicated kind
+  cluster against the inherited `$KUBECONFIG`, so a tier-5 run with `KUBECONFIG=~/.kube/lenny-e2e.yaml` left
+  that file with no current-context. The rewrite was first blamed on `install.sh`. The test now uses a
+  private kubeconfig through `kind.DedicatedClusterArgs`, a tier-1 guard rejects a bare `kind create cluster`
+  or `kind delete cluster` in `tests/`, and `install.sh` re-exports the kubeconfig on every run.
+- [x] **Direct fix: F-5.2.59** (Medium): pool resolution ORed the SandboxTemplate's `sessionPolicy.recycle`
+  block into the stored `recycle.enabled`, so a session created after an update to `recycle.enabled: false`,
+  and before the next reconcile, reported `podReuse: true` and recycled its pod at release. The stored
+  policy now decides whenever the pool has a mirror row. Verified at the envtest tier. The tier-9
+  `TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime/hold_ended_by_the_acquisition` rerun needs a
+  reinstall of the shared cluster from a tree carrying the fix.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A

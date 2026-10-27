@@ -203,30 +203,91 @@ func TestResolvePoolFoldsRecycleForStandardScrubProfile(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (Recycle lifecycle, Kata/microvm scrub variant) — the CRD
-// pair sets SessionPolicy.Recycle for a microvm cross-tenant-reuse pool
-// (a non-empty scrubProfile); TestResolvePoolFoldsPolicyMirror's mirror
-// carries no Recycle field (the zero value), so this pins the OR
-// combination: a CRD-derived true must never be downgraded by a mirror
-// row that omits the flag.
-func TestResolvePoolKeepsCRDRecycleWhenMirrorOmitsIt(t *testing.T) {
-	ns := testNamespace(t)
-	tmpl := serviceTemplate(ns, "microvm-reuse-tmpl", "microvm-reuse-runtime", "microvm", 1)
-	tmpl.Spec.ExecutionMode = "session"
-	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
-		Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"},
+// spec: §5.2 (Recycle lifecycle; Deployer acknowledgment (runtime process
+// kept across sessions)), §7.1 (sessionIsolationLevel) — podReuse is true
+// exactly when the pool's recycle.enabled is true, and the claim made at
+// session creation uses the same resolution as the isolation level. The
+// stored recycle.enabled (the poolstore mirror) therefore decides
+// PoolMatch.Recycle whenever the pool has a mirror row. The CRD's
+// sessionPolicy.recycle block is a proxy rendered for a scrub profile or a
+// runtime-process lifetime, and it lags an admitted pool update until the
+// PoolScalingController's next reconcile; it decides only when no mirror
+// row exists.
+//
+// diagnosis: a failure on a "stale CRD" row means a session created right
+// after an update to recycle.enabled: false reports podReuse: true and
+// recycles its pod at release, because the CRD block from before the update
+// overrode the stored policy (the tier-9
+// TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime symptom). A failure
+// on a "no mirror row" row means the Postgres-less posture lost its only
+// recycle signal.
+func TestResolvePoolRecycleFollowsStoredPolicyOverCRDBlock_spec_5_2(t *testing.T) {
+	keep := &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{RuntimeProcess: "keep"}}
+	vmRestart := &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"}}
+	cases := []struct {
+		name      string
+		isolation string
+		crd       *lennyv1.SessionPolicy
+		mirror    *podsession.PoolPolicyMirror // nil: the reader has no row for the pool
+		nilReader bool
+		want      bool
+	}{
+		{
+			name: "stale CRD keep block, stored recycle disabled", isolation: "standard",
+			crd: keep, mirror: &podsession.PoolPolicyMirror{Recycle: false}, want: false,
+		},
+		{
+			name: "stale CRD vm-restart block, stored recycle disabled", isolation: "microvm",
+			crd: vmRestart, mirror: &podsession.PoolPolicyMirror{AllowCrossTenantReuse: true}, want: false,
+		},
+		{
+			name: "CRD vm-restart block, stored recycle enabled", isolation: "microvm",
+			crd: vmRestart, mirror: &podsession.PoolPolicyMirror{Recycle: true, AllowCrossTenantReuse: true}, want: true,
+		},
+		{
+			name: "CRD not yet rendered, stored recycle enabled", isolation: "standard",
+			crd: nil, mirror: &podsession.PoolPolicyMirror{Recycle: true}, want: true,
+		},
+		{
+			name: "no CRD block, stored recycle disabled", isolation: "standard",
+			crd: nil, mirror: &podsession.PoolPolicyMirror{}, want: false,
+		},
+		{
+			name: "no mirror row falls back to the CRD block", isolation: "standard",
+			crd: keep, mirror: nil, want: true,
+		},
+		{
+			name: "no reader falls back to the CRD block", isolation: "microvm",
+			crd: vmRestart, nilReader: true, want: true,
+		},
+		{
+			name: "no reader and no CRD block", isolation: "standard",
+			crd: nil, nilReader: true, want: false,
+		},
 	}
-	c := k8sClient(t, warmPool(ns, "microvm-reuse-pool", "microvm-reuse-tmpl"), tmpl)
-	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
-		"microvm-reuse-pool": {AllowCrossTenantReuse: true},
-	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
+			tmpl := sandboxTemplate(ns, "recycle-tmpl", "recycle-runtime", tc.isolation)
+			tmpl.Spec.SessionPolicy = tc.crd
+			c := k8sClient(t, warmPool(ns, "recycle-pool", "recycle-tmpl"), tmpl)
+			var policy podsession.PoolPolicyReader
+			if !tc.nilReader {
+				mirrors := map[string]podsession.PoolPolicyMirror{}
+				if tc.mirror != nil {
+					mirrors["recycle-pool"] = *tc.mirror
+				}
+				policy = fakePolicyReader{mirrors: mirrors}
+			}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "microvm-reuse-runtime", "microvm", "")
-	if err != nil {
-		t.Fatalf("ResolvePool: %v", err)
-	}
-	if !got.Recycle {
-		t.Error("Recycle = false, want true (the CRD-derived scrubProfile signal must survive the fold)")
+			got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "recycle-runtime", tc.isolation, "")
+			if err != nil {
+				t.Fatalf("ResolvePool: %v", err)
+			}
+			if got.Recycle != tc.want {
+				t.Errorf("Recycle = %v, want %v", got.Recycle, tc.want)
+			}
+		})
 	}
 }
 
