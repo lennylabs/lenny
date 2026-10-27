@@ -3622,9 +3622,9 @@ credential gap surfaced during the review of 0104 and is filed with them.
   - [ ] **F-10.7.21** (Low): the §10.7 Eval Submission Contract Caller row says the agent runtime submits
     evals "via its session credential", and §23.1 item 12 lists the agent runtime as a caller, while no
     section defines a pod-held session credential and no code provides a pod-side eval path. The owner
-    decides whether runtime eval self-reporting exists. If it does not, the example is removed. If it does,
-    a proposal specifies its delivery path, which the owner noted would be an adapter or gateway API rather
-    than an MCP tool.
+    decided on 2026-10-27 that runtime eval self-reporting is not needed (section 10.3), so the fix removes the
+    agent-runtime example from §10.7, §23.1 item 12, and `docs/api/rest.md`. The spec edits ride with the next
+    proposal that edits §10.7 or §23.1, or with any text-corrections proposal.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
@@ -3788,6 +3788,12 @@ Answered on 2026-10-01 for the later phases:
     the §25 degraded-mode design is reachable in production. Deferring the probe fix was rejected.
   - Under the owner's delegation, `lenny-ops` reuses the gateway's revoked-token response, and the missing
     §15 catalog row is recorded as a defect.
+
+- Runtime eval self-reporting (owner, 2026-10-27): not needed. Lenny's eval offering is the runtime-native
+  eval platforms (tier 1 of the §10.7 two-tier model) and the built-in `POST /v1/sessions/{id}/eval` endpoint
+  called by the session owner or a deployer-operated scorer, with the results API and replay `evalRef`
+  (tier 2). The §10.7 and §23.1 agent-runtime caller example is removed (F-10.7.21). Had it been wanted, the
+  owner's direction was an adapter or gateway API rather than an MCP tool.
 
 ### 10.4 Related work outside this track
 
