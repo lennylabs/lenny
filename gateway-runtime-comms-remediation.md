@@ -3285,7 +3285,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
     broadcast load first; a switch to sharded pub/sub is a direct fix.
 - New proposals, each after proposal 0097.
-  - [x] **Impersonation revocation proposal** (done as a proposal; implementation pending), first after 0097:
+  - [x] **Impersonation revocation proposal** (implemented), first after 0097:
     **F-13.3.20** (High). Ending an impersonation session revokes nothing, the session store is replica-local,
     and a full revoke misses the bearer. No section states revocation on end, so the specification needs the
     rule.
@@ -3293,7 +3293,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       (`proposals/0102_fix_ending-a-platform-admin-impersonation-session-revokes-nothin/`) was approved
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
-      closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
+      closes F-13.3.20 as its DOCS-1 states, landed 2026-10-27 (merge `82c991f56`), with tiers 0 to 5, 8, and 9 green; its accepted deviations are recorded in the proposal. Its unstaged defects are filed below.
   - [x] **Production-mode spelling proposal** (implemented): **F-17.9.24**
     (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
     `LENNY_ENV`, so no value turns on every production gate.
