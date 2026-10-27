@@ -182,7 +182,7 @@
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_pools/runtime_process_wire_test.go"]
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/admin_impersonation/...", "tests/tier3_contract/rest_pools/runtime_process_wire_test.go"]
     },
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],

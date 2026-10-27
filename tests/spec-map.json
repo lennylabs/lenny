@@ -4820,10 +4820,8 @@
         "pkg/gateway/storage/issuedtokenstore/recheck_test.go::TestIssuedTokenSourceRefusal_spec_13_3",
         "pkg/tokenservice/source_recheck_test.go::TestHandlerRefusesImpersonationSource_spec_13_3",
         "pkg/tokenservice/source_recheck_test.go::TestHandlerImpersonationRejectionAuditFailure_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestRecordImpersonationFencesOnUserRows_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestEndImpersonationSingleWinnerAndPredicate_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestListAndActorRevokeMatchActiveImpersonationRowsAcrossTenants_spec_13_3",
-        "tests/tier2_component/issuedtokencascade/impersonation_test.go::TestIssuanceRefusesImpersonationSource_spec_13_3",
+        "tests/tier2_component/stores/issuedtokenstore_test.go::TestImpersonationIssuedTokensContract_spec_13_3",
+        "cmd/lenny-gateway/release_wiring_test.go::TestImpersonationRoutesRequireEveryCollaborator_spec_13_3",
         "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
         "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3"
       ],
@@ -5030,6 +5028,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/admin_impersonation/openapi_document_test.go::TestServedDocumentImpersonationDeleteResponses_spec_15_1",
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestErrorCatalogKMSSigningUnavailableRow_spec_15",
         "tests/tier11_docs/data_lifecycle_fence_drain_doc_reconciliation_test.go",
         "tests/tier7a_load_local/tenant_suspend_concurrent_test.go::TestTenantSuspendConcurrentFirstSuspendsDecideNewnessUnderLock_spec_15_1",
@@ -5676,6 +5675,7 @@
       "title": "Section 25 Audit Events",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "cmd/lenny-gateway/release_wiring_test.go::TestNoImpersonationSweepRuns_spec_16_7",
         "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
         "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
