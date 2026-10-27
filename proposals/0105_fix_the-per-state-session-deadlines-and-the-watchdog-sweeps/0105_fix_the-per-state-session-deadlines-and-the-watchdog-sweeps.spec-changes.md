@@ -6,6 +6,7 @@
 - The idle clock restarts on every entry to `running` (SPEC-1 Edit (b)).
 - `POST /v1/sessions/{id}/start` moves the session `ready → starting` before the runtime launch, so the `maxStartingTimeoutSeconds` watchdog bounds the launch and the ready watchdog no longer applies. A `/start` that fails after that write moves the session to `failed`, and the client retries by creating a new session (SPEC-2 Edits (a), (b), (f) to (i), and (k)).
 - §7.2 **Terminal writes from any non-terminal state.** is the one home for the terminal writes that apply from every non-terminal state, and the §6.2 `resuming` enumeration excepts them (SPEC-2 Edits (c) and (d)). The `maxSessionAge` expiry is an edge per source state, from `starting`, `resume_pending`, and `resuming` (SPEC-2 Edits (a), (d), and (e)).
+- Interrupt and terminate are admitted from `input_required` as from `running`, with the `input_required → suspended` and `input_required → completed` edges (SPEC-2 Edit (l)).
 - `perChildMaxAge` counts from the creation of the child session whose row stores it (SPEC-3).
 - §10.1.1 states which replica runs the watchdog sweeps and orphan cleanup, the locked-row rule for their writes, and per-row continuation past errors (SPEC-4).
 
@@ -20,7 +21,6 @@
 - A `perChildMaxAge` expiry keeps counting while the child is suspended or recovering (SPEC-3, with the existing §6.2 **`suspended → expired` trigger mechanism:**).
 - One tenant whose session listing fails, or one session whose write fails, is evaluated again on the next pass, and the other tenants and sessions are processed in the same pass (SPEC-4).
 - Two replicas that both find the same session due write it once, because the second write finds the locked row no longer meeting the deadline or no longer non-terminal (SPEC-4).
-- **Pending redesign.** The stale-wait and reconnect cases of a persisted `lenny/request_input` wait are redesigned under summary D13: the row names its newest wait, and the replica that accepts a pod process's `LNK-GWCONTROL` connection restores that pod's `input_required` rows that have no local pending wait. This bullet is rewritten by the redesign pass.
 
 ## Staged edits
 
@@ -44,7 +44,7 @@ with
 The `last_agent_activity_at` timestamp is updated in Postgres on each qualifying event and on each entry to `running`.
 ```
 
-### SPEC-2 · spec/07_session-lifecycle.md § 7.1 Normal Flow, § 7.2 Interactive Session Model, and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API
+### SPEC-2 · spec/07_session-lifecycle.md § 7.1 Normal Flow, § 7.2 Interactive Session Model, and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API; spec/29_communication-scenarios.md § 29.3 Interactive message send and § 29.4 Interrupt, terminate, and delete; spec/08_recursive-delegation.md § 8.8 TaskRecord and TaskResult Schema
 
 **Edit (a) · §7.2 **Session state machine:** code block.** Replace the three lines
 
@@ -285,23 +285,33 @@ with
 A terminal write runs on the writer's own context, except for the writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, the `starting → failed` write a failed `POST /v1/sessions/{id}/start` makes, and an administrative force-terminate together with its audit event. The gateway makes those writes on a context it owns.
 ```
 
-**Edit (l) · §7.2, the `input_required` sub-state paragraph, and §6.2, the `input_required` row of the `maxClientIdleSeconds` clock table.** Pending redesign.
+**Edit (l) · `input_required` interrupt and terminate.** Make the following insertions and replacements. Every table row stays one physical line.
 
-> **Pending redesign (summary D13).** The §7.2 insertion this edit staged is deleted. It enumerated the causes of a stale `input_required` row and made idle evaluation of a live wait legal, which D13 replaces with wait identity on the row and recovery at the `LNK-GWCONTROL` connection boundary. The redesign pass decides whether §7.2 needs any clause here, with no enumerated causes. The §6.2 replacement below stands until that pass.
+In the §7.2 **Session state machine:** code block, insert the following lines directly after the line that begins "input_required → running   (input provided via inReplyTo or request expires/cancelled)".
 
-In spec/06_warm-pod-model.md §6.2, in the `input_required` row of the table under the paragraph that begins "**`maxClientIdleSeconds` clock behavior across states.**", replace
-
-```markdown
-or the `lenny/request_input` call expires.
+```
+input_required → suspended (interrupt_request while awaiting input — acknowledged or timed out, as from running)
+input_required → completed (client POST /v1/sessions/{id}/terminate while awaiting input)
 ```
 
-with
+In the §6.2 **`input_required` sub-state:** code block, insert the following lines directly after the line "input_required → running   (input provided via inReplyTo, or request cancelled/expired)".
 
-```markdown
-or it leaves `input_required` ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+```
+input_required → suspended (interrupt_request while awaiting input, as from running)
+input_required → completed (terminate while awaiting input)
 ```
 
-The row stays one physical line.
+In the §8.8 **Lenny canonical task state machine:** code block, insert the following line directly after the line "input_required → expired               (deadline reached while awaiting input)".
+
+```
+input_required → completed             (client terminate while awaiting input)
+```
+
+In the §15.1 **State-mutating endpoint preconditions.** table, in the `POST /v1/sessions/{id}/interrupt` row, replace the precondition cell `running` with `running`, `input_required`, and delete "Only valid while the agent is actively executing. " from the Notes cell. In the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `suspended`" with "`starting`, `running`, `input_required`, `suspended`".
+
+In the §29.3 off-holder matrix, replace the beginning of the interrupt row, "| `POST /v1/sessions/{id}/interrupt` | `running` |", with "| `POST /v1/sessions/{id}/interrupt` | `running` and `input_required` |". In the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while" with "`starting`, `running`, `input_required`, `resume_pending`, and `awaiting_client_action`, and `suspended` while".
+
+In §29.4, in the **Preconditions.** paragraph, replace "the session to be `running`, which is the only state the interrupt endpoint's precondition table admits" with "the session to be in a state the interrupt endpoint's precondition table admits". In step 2, replace "which admits `running` and produces `suspended`." with "which produces `suspended`." In step 8, replace "`running → suspended` transition on the session row" with "transition to `suspended` on the session row".
 
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.2 Delegation Mechanism
 
@@ -329,6 +339,7 @@ Every replica likewise runs the session watchdog's other sweeps ([§6.2](06_warm
 
 - spec/06_warm-pod-model.md (SPEC-1; SPEC-2 Edits (d), (g), (i), and (l))
 - spec/07_session-lifecycle.md (SPEC-2 Edits (a), (b), (c), (e), (h), (j), (k), and (l))
-- spec/08_recursive-delegation.md (SPEC-3)
+- spec/08_recursive-delegation.md (SPEC-2 Edit (l); SPEC-3)
 - spec/10_gateway-internals.md (SPEC-4)
-- spec/15_external-api-surface.md (SPEC-2 Edit (f))
+- spec/15_external-api-surface.md (SPEC-2 Edits (f) and (l))
+- spec/29_communication-scenarios.md (SPEC-2 Edit (l))

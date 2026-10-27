@@ -4,7 +4,7 @@
 
 - [ ] **S1 · spec** — SPEC-1. Lands Edits (a) and (b) in §6.2.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands Edits (a) to (l) in §7.1, §7.2, §7.3, §6.2, and §15.1 in one commit.
+- [ ] **S2 · spec** — SPEC-2. Lands Edits (a) to (l) in §6.2, §7.1, §7.2, §7.3, §8.8, §15.1, §29.3, and §29.4 in one commit.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the §8.2 `LeaseSlice` row.
       Tiers 0, 11. Depends on: —
@@ -23,7 +23,7 @@
 - [ ] **S10 · code** — CODE-6. Lands the `/start` path through `starting`, the session transition table, and the SDK single-attempt `Start`.
       Tiers 0, 1, 4, 7a, 8. Depends on: S2
 - [ ] **S11 · code** — CODE-7. Lands items 1 to 4.
-      Tiers 0, 1, 4, 7a. Depends on: S1, S2
+      Tiers 0, 1, 2, 4, 7a. Depends on: S1, S2, S5
 - [ ] **S12 · code** — CODE-8. Lands the leader-gated orphan-session reconciler and the lag-series clear.
       Tiers 0, 1, 8. Depends on: S9
 - [ ] **S13 · test** — TEST-1. Lands the tests not already landed with S5 to S12 or S14 and the `tests/spec-map.json` entries.
