@@ -77,8 +77,18 @@ export EMBEDDED_MANIFEST_HEADER
 generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules + embedded manifests
 	@echo "  controller-gen object → pkg/apis DeepCopy"
 	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1alpha1/...
+	@# controller-gen leaves the meta/v1 import unaliased, and the tier-0
+	@# goimports check (which covers generated files) wants the alias, so the
+	@# generated file is formatted here rather than by hand (F-10.5.16).
+	@echo "  goimports → pkg/apis DeepCopy"
+	@PATH="$(GOPATH_BIN):$$PATH" goimports -w -local github.com/lennylabs/lenny pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go
 	@echo "  controller-gen crd → charts/lenny/crds"
+	@# The schema-version annotation and the top-level preserve-unknown
+	@# markers come from +kubebuilder markers on the root types, so the
+	@# output needs no hand edits (F-10.5.16).
 	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1alpha1/... output:crd:dir=charts/lenny/crds
+	@echo "  copy charts/lenny/crds → pkg/embedded/crds"
+	@cp charts/lenny/crds/*.yaml pkg/embedded/crds/
 	@echo "  gen-alerting-rules → charts/lenny/files/alerting-rules.yaml"
 	@go run ./cmd/gen-alerting-rules
 	@echo "  genopsschemas → pkg/gateway/externalapi/openapi/openapi.json (merge lenny-ops routes)"
