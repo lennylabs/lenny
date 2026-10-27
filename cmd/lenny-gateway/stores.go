@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	checkpointretentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention/pgstore"
@@ -262,8 +262,9 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		if billingAuditPool != nil {
 			ledgerPool = billingAuditPool
 		}
+		production := deployenv.IsProduction(f.kmsOpts.Environment)
 		if err := integrity.Verify(context.Background(), ledgerPool); err != nil {
-			if os.Getenv("LENNY_ENV") == "production" {
+			if auditIntegrityFatal(production, err) {
 				log.Fatalf("lenny-gateway: audit integrity check failed: %v", err)
 			}
 			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
