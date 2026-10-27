@@ -1814,6 +1814,11 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
+		// spec: §10.2 (Signing topology) — the caller check on the
+		// delegating bearer runs before every other delegation gate.
+		if err := requireDelegatingBearerAllowed(ctx, deps, env.clock()); err != nil {
+			return mcp.ToolResult{}, err
+		}
 		// spec: §11.4, §12.8 (Lifecycle fence and drain) — the early
 		// creation gate of the delegated child over the parent's owning
 		// user and the tenant, before any delegation work. The REST

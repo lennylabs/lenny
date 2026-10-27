@@ -417,6 +417,11 @@
       "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
+    "pkg/gateway/callercheck": {
+      "unit": ["pkg/gateway/callercheck/...", "pkg/gateway/sessionserver/...", "pkg/gateway/mcpfabric/mcptools/..."],
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/..."],
+      "security": ["tests/tier9_security/session_creation_impersonation_refusal_test.go"]
+    },
     "pkg/gateway/core/subsystem": {
       "unit": ["pkg/gateway/core/subsystem/..."],
       "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]

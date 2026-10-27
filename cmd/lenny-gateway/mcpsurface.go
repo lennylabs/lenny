@@ -243,6 +243,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Users:                      w.users,
+		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),
 		Runtimes:                   w.runtimes,
 		CapabilityOverrides:        w.capOverrides,
 		Environments:               environments,

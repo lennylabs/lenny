@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -403,6 +404,14 @@ type Deps struct {
 	// and service-token principals that were never provisioned through
 	// the admin user API. spec: §11.4; F-11.4.1.
 	Users userstore.Store
+
+	// CallerCheck carries the issued-token reader and the rejection
+	// auditor of the §10.2 "Signing topology" caller check that
+	// lenny/delegate_task applies to a client-facing caller's bearer
+	// before delegating. A zero value passes every caller, and a pod-path
+	// call carries no jti and passes without a store read.
+	// spec: §10.2 (Signing topology), §13.3.
+	CallerCheck callercheck.Deps
 
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
@@ -1411,6 +1420,33 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// requireDelegatingBearerAllowed applies the §10.2 session-creation caller
+// check to the bearer that calls lenny/delegate_task, through
+// callercheck.Check. A refusal answers the FORBIDDEN tool error once its
+// token.exchanged rejection row is durable; a failed issued_tokens read or
+// rejection write answers INTERNAL_ERROR. A pod-path call over
+// LNK-GWCONTROL carries no jti and passes. It runs before any admission,
+// reservation, export, or pod claim.
+// spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
+// ordering, step (1a)).
+func requireDelegatingBearerAllowed(ctx context.Context, deps Deps, now time.Time) error {
+	principal, ok := authmw.FromContext(ctx)
+	if !ok {
+		return nil
+	}
+	err := callercheck.Check(ctx, deps.CallerCheck, principal, now)
+	if err == nil {
+		return nil
+	}
+	var refused *callercheck.Refused
+	if errors.As(err, &refused) {
+		return mcp.NewToolError("FORBIDDEN",
+			"the presented bearer cannot create sessions: "+refused.Reason, nil)
+	}
+	return mcp.NewToolError("INTERNAL_ERROR",
+		"session-creation caller check failed: "+err.Error(), nil)
 }
 
 // requireActiveDelegator is the early creation gate of a delegated child.

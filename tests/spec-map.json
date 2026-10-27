@@ -3248,6 +3248,11 @@
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "pkg/gateway/callercheck/callercheck_test.go",
+        "pkg/gateway/sessionserver/caller_check_test.go",
+        "pkg/gateway/mcpfabric/mcptools/delegate_caller_check_test.go",
+        "cmd/lenny-gateway/caller_check_wiring_test.go",
+        "tests/tier9_security/session_creation_impersonation_refusal_test.go::TestSessionCreationRefusesImpersonationBearer_spec_10_2",
         "tests/tier4_integration/oidc_auth_test.go::TestLiveGatewayAuthenticatesUpstreamOIDCBearer_spec_10_2",
         "tests/tier3_contract/rest_auth/oidc_bearer_test.go::TestOIDCBearerAuthenticatesThroughDiscoveredJWKS_spec_10_2",
         "cmd/lenny-gateway/idp_verifier_test.go::TestBuildTokenSigningStoresTrustsTheUpstreamIdP_spec_10_2",
@@ -5224,6 +5229,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier3_contract/rest_mcp_consistency/caller_check_parity_test.go::TestCreateSessionCallerCheckParity_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier3_contract/rest_mcp_consistency/error_matrix_test.go",
         "tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go",

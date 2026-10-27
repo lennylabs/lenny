@@ -217,6 +217,7 @@ func (w *gatewayWiring) buildSessionServer(
 		ExternalProviders:  sessionserver.NewExternalProviderResolver(experimentProviders),
 		Usage:              usage,
 		Users:              w.users,
+		CallerCheck:        sessionCallerCheck(w.pgPool, w.auditValidator),
 		Billing:            w.billing,
 		Tenants:            w.tenants,
 		StorageQuota:       w.storageCounter,
