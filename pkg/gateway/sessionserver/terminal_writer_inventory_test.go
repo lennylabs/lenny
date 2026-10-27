@@ -88,6 +88,23 @@ var terminalStateNames = map[string]bool{
 	"StateCompleted": true, "StateFailed": true, "StateCancelled": true, "StateExpired": true,
 }
 
+// sessionStatePackage is the package qualifier that spells a session state.
+// Other packages reuse the terminal state names for unrelated state machines,
+// such as the issued-token store's impersonation row states, and a State
+// field set from one of those is not a terminal session-state write.
+const sessionStatePackage = "session"
+
+// isTerminalSessionState reports whether e is a session-package terminal
+// state selector, such as session.StateExpired.
+func isTerminalSessionState(e ast.Expr) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok || !terminalStateNames[sel.Sel.Name] {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == sessionStatePackage
+}
+
 type scannedFunc struct {
 	file string
 	decl *ast.FuncDecl
@@ -154,7 +171,7 @@ func parseRepoFuncs() (map[string]scannedFunc, *token.FileSet, error) {
 }
 
 // terminalAssignment reports the first position at which fn assigns a
-// terminal session state, by assignment to a State field, by a State key in
+// terminal session state (a session-package state selector), by assignment to a State field, by a State key in
 // a composite literal, or, for writeTerminal, by assigning its `to`
 // parameter.
 func terminalAssignment(fd *ast.FuncDecl) token.Pos {
@@ -172,7 +189,7 @@ func terminalAssignment(fd *ast.FuncDecl) token.Pos {
 				}
 				switch r := x.Rhs[i].(type) {
 				case *ast.SelectorExpr:
-					if terminalStateNames[r.Sel.Name] {
+					if isTerminalSessionState(r) {
 						at = x.Pos()
 					}
 				case *ast.Ident:
@@ -183,7 +200,7 @@ func terminalAssignment(fd *ast.FuncDecl) token.Pos {
 			}
 		case *ast.KeyValueExpr:
 			if k, ok := x.Key.(*ast.Ident); ok && k.Name == "State" {
-				if v, ok := x.Value.(*ast.SelectorExpr); ok && terminalStateNames[v.Sel.Name] {
+				if isTerminalSessionState(x.Value) {
 					at = x.Pos()
 				}
 			}
@@ -327,5 +344,40 @@ func TestTerminalContextTableCoversTheInventory_spec_7_1(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("terminal context table:\n  %s\nwant the inventory:\n  %s",
 			strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
+
+// TestTerminalAssignmentIgnoresOtherPackagesStateNames_spec_7_2 asserts that
+// the writer scan counts only session-package terminal states, so a State
+// field set from another package's identically named state, such as the
+// issued-token store's expired impersonation row, is not reported as a
+// terminal session writer, while a session-package state still is.
+//
+// spec: §7.2 (Interactive Session Model)
+func TestTerminalAssignmentIgnoresOtherPackagesStateNames_spec_7_2(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, body string
+		want       bool
+	}{
+		{"session key", `_ = &T{State: session.StateExpired}`, true},
+		{"session assign", `r.State = session.StateFailed`, true},
+		{"issued-token key", `_ = &issuedtokenstore.NotActiveError{State: issuedtokenstore.StateExpired}`, false},
+		{"issued-token assign", `e.State = issuedtokenstore.StateExpired`, false},
+		{"non-terminal session state", `r.State = session.StateRunning`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := "package p\nfunc f() {\n" + tc.body + "\n}\n"
+			f, err := parser.ParseFile(token.NewFileSet(), "p.go", src, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fd := f.Decls[0].(*ast.FuncDecl)
+			if got := terminalAssignment(fd).IsValid(); got != tc.want {
+				t.Errorf("terminalAssignment(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
 	}
 }
