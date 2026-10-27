@@ -23,6 +23,9 @@ type Received struct {
 	SessionID string
 	// Text is the message's first inline text part.
 	Text string
+	// FromKind and FromID are the message's §15.4 from-object as the
+	// gateway stamped it on the frame.
+	FromKind, FromID string
 	// Seq orders the message among every message any harness runtime
 	// received.
 	Seq int64
@@ -138,6 +141,10 @@ type inboundFrame struct {
 	Input     []struct {
 		Inline string `json:"inline"`
 	} `json:"input"`
+	From struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+	} `json:"from"`
 }
 
 // WriteEnvelope handles one inbound frame.
@@ -177,7 +184,10 @@ func (r *RecordingRuntime) receive(f inboundFrame) {
 		text = f.Input[0].Inline
 	}
 	r.mu.Lock()
-	m := Received{SessionID: f.SessionID, Text: text, Seq: receivedSeq.Add(1), binding: r.bindings[f.SessionID]}
+	m := Received{
+		SessionID: f.SessionID, Text: text, FromKind: f.From.Kind, FromID: f.From.ID,
+		Seq: receivedSeq.Add(1), binding: r.bindings[f.SessionID],
+	}
 	r.received = append(r.received, m)
 	r.handling[f.SessionID]++
 	held, delay := r.held, r.delay

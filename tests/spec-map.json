@@ -2394,7 +2394,13 @@
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "tests/testinfra/lifecycleharness/trace_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
-        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2"
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMessageToRunningIsDeliveredByTheCoordinator_spec_29_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMessageToInputRequiredIsBufferedOrHeld_spec_29_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderHeldPodResumeIsWrittenByTheCoordinator_spec_29_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderInteractionResolutionWakesTheCoordinator_spec_29_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2525,7 +2531,8 @@
         "pkg/adapter/staging_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/adapter/bindattempt_orderings_test.go",
-        "pkg/adapter/files_updated_test.go"
+        "pkg/adapter/files_updated_test.go",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderUploadAndInterruptAreForwarded_spec_29_3"
       ],
       "packages": [
         "pkg/upload"
@@ -2657,7 +2664,8 @@
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
         "tests/tier7a_load_local/credential_lookup_flapping_race_test.go",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -3926,7 +3934,9 @@
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary",
         "tests/tier2_component/stores/idempotencystore_test.go",
         "tests/tier7b_load_kind/credential_lifecycle_test.go::TestCredentialLifecycle",
-        "tests/tier7b_load_kind/scenarios/credential_lifecycle"
+        "tests/tier7b_load_kind/scenarios/credential_lifecycle",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5",
+        "pkg/gateway/mcpfabric/mcptools/holder_forward_sites_test.go::TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5"
       ],
       "packages": [
         "pkg/idempotency",
@@ -5199,7 +5209,10 @@
         "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
-        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery"
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderTerminateAndDeleteRunOnTheCoordinator_spec_29_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestForwardedCrossTenantTerminateIsNotFound_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestTerminateWithoutAHolderIsWrittenLocally_spec_29_3"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5224,7 +5237,9 @@
         "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go",
         "tests/tier5_e2e_kind/mcp_conformance_test.go",
         "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2",
-        "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestGoSDKMCPInterruptSessionReturnsTheRow_spec_15_2_1"
+        "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestGoSDKMCPInterruptSessionReturnsTheRow_spec_15_2_1",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3",
+        "pkg/gateway/mcpfabric/mcptools/holder_forward_sites_test.go::TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/mcp"
@@ -7761,7 +7776,8 @@
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardOnAReusedKeepAliveConnectionThatFailsOnWriteIsUnknown_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardRunsUnderTheCallersDeadlineWithNoBoundOfItsOwn_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3"
+        "pkg/gateway/sessionserver/holder_forward_listener_test.go::TestHolderForwardListenerValidatesTheGatewayPeer_spec_10_3",
+        "tests/tier4_integration/holder_forward_routes_test.go::TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3"
       ]
     },
     "28.7": {

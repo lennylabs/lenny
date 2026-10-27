@@ -5,10 +5,12 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -23,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
@@ -169,7 +174,13 @@ func forwardedSites() []siteCase {
 		{"terminate in held-pod suspended", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateSuspended, "pod-1")},
 		{"delete in running", http.MethodDelete, "/v1/sessions/sess-1", "", running},
 		{"delete in input_required", http.MethodDelete, "/v1/sessions/sess-1", "", siteRow(session.StateInputRequired, "pod-1")},
+		{"delete in resuming", http.MethodDelete, "/v1/sessions/sess-1", "", siteRow(session.StateResuming, "pod-1")},
+		{"delete in held-pod suspended", http.MethodDelete, "/v1/sessions/sess-1", "", siteRow(session.StateSuspended, "pod-1")},
+		{"terminate in starting", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateStarting, "pod-1")},
+		{"terminate in resume_pending", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateResumePending, "")},
+		{"terminate in awaiting_client_action", http.MethodPost, "/v1/sessions/sess-1/terminate", "", siteRow(session.StateAwaitingClientAction, "")},
 		{"interrupt in running", http.MethodPost, "/v1/sessions/sess-1/interrupt", "", running},
+		{"interrupt in input_required", http.MethodPost, "/v1/sessions/sess-1/interrupt", "", siteRow(session.StateInputRequired, "pod-1")},
 		{"upload-to-session in running", http.MethodPost, "/v1/sessions/sess-1/upload-to-session", `{"files":[{"path":"a.txt","content":"YQ=="}]}`, upload},
 		{"held-pod resume", http.MethodPost, "/v1/sessions/sess-1/resume", "", siteRow(session.StateSuspended, "pod-1")},
 		{"message in running", http.MethodPost, "/v1/sessions/sess-1/messages", `{"messages":[{"role":"user","content":"hi"}]}`, running},
@@ -288,25 +299,217 @@ func TestUndeliveredMessageIsHeldWithTheRecoveringTTL_spec_29_3(t *testing.T) {
 }
 
 // TestTerminateWithoutAHolderIsWrittenLocally_spec_29_3 pins the state gate:
-// a terminate in a state with no coordinating replica, ready or a suspended
-// session whose row names no pod, is written by the serving replica with no
-// lease read, although suspended is in the terminate set.
+// a terminate or a delete in a state with no coordinating replica, created,
+// finalizing, ready, or a suspended session whose row names no pod, is
+// written by the serving replica with no lease read and no 409, although
+// suspended is in the terminate set.
 //
 // spec: 29.3 (Interactive message send) the terminate row, 10.1.1 (Stateless
-// Replicas and Per-Session Coordination)
+// Replicas and Per-Session Coordination), 15.1 (REST API)
 func TestTerminateWithoutAHolderIsWrittenLocally_spec_29_3(t *testing.T) {
 	m := gatewaypki.Mint(t)
-	for _, row := range []sessionstore.Session{siteRow(session.StateReady, ""), siteRow(session.StateSuspended, "")} {
-		t.Run(string(row.State)+" pod "+row.PodAssignment, func(t *testing.T) {
-			r := newSiteRig(t, m, closedAddr(t), row)
+	rows := []sessionstore.Session{
+		siteRow(session.StateCreated, ""), siteRow(session.StateFinalizing, ""),
+		siteRow(session.StateReady, ""), siteRow(session.StateSuspended, ""),
+	}
+	routes := []struct{ name, method, path string }{
+		{"terminate", http.MethodPost, "/v1/sessions/sess-1/terminate"},
+		{"delete", http.MethodDelete, "/v1/sessions/sess-1"},
+	}
+	for _, row := range rows {
+		for _, route := range routes {
+			t.Run(route.name+" in "+string(row.State), func(t *testing.T) {
+				r := newSiteRig(t, m, closedAddr(t), row)
+				leases := r.srv.leaseStore.(*countingLeaseStore)
+				rec := r.do(route.method, route.path, "")
+				if rec.Code >= http.StatusBadRequest || !session.IsTerminal(r.row(t).State) {
+					t.Fatalf("%s = %d %s state %q, want a local terminal write", route.name, rec.Code, rec.Body.String(), r.row(t).State)
+				}
+				if n := leases.gets.Load(); n != 0 {
+					t.Errorf("lease reads = %d, want none", n)
+				}
+			})
+		}
+	}
+}
+
+// completingLeaseStore completes sess-1's row when the forward reads the
+// lease, so the session ends between the forward decision and the hold's
+// re-read, as a terminal transition racing the enqueue does.
+type completingLeaseStore struct {
+	*countingLeaseStore
+	store *memstore.Store
+}
+
+func (c *completingLeaseStore) Get(ctx context.Context, tenantID, sessionID string) (leasestore.Lease, error) {
+	_, _ = c.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		from := row.State
+		row.State = session.StateCompleted
+		sessionstore.MarkTerminated(row, from, time.Now())
+		return nil
+	})
+	return c.countingLeaseStore.Get(ctx, tenantID, sessionID)
+}
+
+// decodeReceipt decodes a message answer's delivery receipt.
+func decodeReceipt(t *testing.T, rec *httptest.ResponseRecorder) session.DeliveryReceipt {
+	t.Helper()
+	var resp MessageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode %d %s: %v", rec.Code, rec.Body.String(), err)
+	}
+	return resp.DeliveryReceipt
+}
+
+// TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3 pins the receipts
+// of the rule-6 hold on the REST message site beyond queued: an enqueue that
+// evicts an older entry under the DLQ cap answers dropped with dlq_overflow,
+// a DLQ write error answers error with inbox_unavailable and holds nothing,
+// and an enqueue racing a terminal transition removes the entry it enqueued
+// and answers TARGET_TERMINAL. In every case the serving replica sends
+// nothing to the pod.
+//
+// spec: 29.3 (Interactive message send) Forwarding rule 6, 7.2 (Message
+// delivery routing — seven paths, path 6) Enqueue racing a terminal
+// transition, dead-letter handling
+func TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3(t *testing.T) {
+	m := gatewaypki.Mint(t)
+	const body = `{"messages":[{"role":"user","content":"late"}]}`
+	t.Run("overflow", func(t *testing.T) {
+		r := newSiteRig(t, m, closedAddr(t), siteRow(session.StateInputRequired, "pod-1"))
+		for i := 0; i < 10; i++ {
+			msg := sessioninbox.Message{MessageID: fmt.Sprintf("msg_old%d", i), Payload: []byte(`{}`), EnqueuedAt: r.now.Add(-time.Minute)}
+			if _, _, err := r.srv.HoldMessage(context.Background(), "acme", "sess-1", msg); err != nil {
+				t.Fatalf("fill the DLQ: %v", err)
+			}
+		}
+		rec := r.do(http.MethodPost, "/v1/sessions/sess-1/messages", body)
+		got := decodeReceipt(t, rec)
+		if got.Status != session.DeliveryStatusDropped || got.Reason != session.DeliveryReasonDLQOverflow {
+			t.Errorf("receipt = %s/%s, want dropped/dlq_overflow", got.Status, got.Reason)
+		}
+		if n := len(r.dlqScores(t)); n != 10 {
+			t.Errorf("DLQ entries = %d, want the cap of 10 with the new message held", n)
+		}
+		if r.exec.sends != 0 {
+			t.Errorf("local sends = %d, want 0", r.exec.sends)
+		}
+	})
+	t.Run("DLQ write error", func(t *testing.T) {
+		r := newSiteRig(t, m, closedAddr(t), siteRow(session.StateRunning, "pod-1"))
+		r.mr.Close()
+		rec := r.do(http.MethodPost, "/v1/sessions/sess-1/messages", body)
+		got := decodeReceipt(t, rec)
+		if got.Status != session.DeliveryStatusError || got.Reason != session.DeliveryReasonInboxUnavailable {
+			t.Errorf("receipt = %s/%s, want error/inbox_unavailable", got.Status, got.Reason)
+		}
+		if r.exec.sends != 0 || r.row(t).State != session.StateRunning {
+			t.Errorf("sends %d state %q, want no local delivery or write", r.exec.sends, r.row(t).State)
+		}
+	})
+	t.Run("enqueue racing a terminal transition", func(t *testing.T) {
+		r := newSiteRig(t, m, closedAddr(t), siteRow(session.StateRunning, "pod-1"))
+		r.srv.leaseStore = &completingLeaseStore{countingLeaseStore: r.srv.leaseStore.(*countingLeaseStore), store: r.store}
+		rec := r.do(http.MethodPost, "/v1/sessions/sess-1/messages", body)
+		if rec.Code != http.StatusConflict || responseCode(t, rec) != "TARGET_TERMINAL" {
+			t.Fatalf("response = %d %s, want 409 TARGET_TERMINAL", rec.Code, rec.Body.String())
+		}
+		if n := len(r.dlqScores(t)); n != 0 {
+			t.Errorf("DLQ entries = %d after the terminal re-read, want the enqueued entry removed", n)
+		}
+		if r.exec.sends != 0 {
+			t.Errorf("local sends = %d, want 0", r.exec.sends)
+		}
+	})
+}
+
+// idempotentSite wraps the rig's session handler in the auth and §11.5
+// idempotency middleware, as the public REST listener serves it.
+func idempotentSite(r *siteRig) (http.Handler, *idemmw.MemoryStore) {
+	store := idemmw.NewMemoryStore()
+	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
+	return authmw.Wrap(idemmw.Wrap(r.srv.Handler(), store, idemmw.Options{}), dev), store
+}
+
+// keyedResume posts a held-pod resume with an Idempotency-Key through h.
+func keyedResume(h http.Handler, key string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5 runs
+// the idempotency cases of the forward helper against the wired held-pod
+// resume route: a keyed resume whose forward is not delivered, has an
+// unknown outcome, or reaches a replica that no longer coordinates the
+// session answers TARGET_NOT_READY, stores no idempotency row, and a
+// same-key retry reaches the forward again with no internal mark on the
+// client response. A delivered coordinator 409 without the mark is stored
+// and replayed.
+//
+// spec: 11.5 (Idempotency) Mechanism, 29.3 (Interactive message send)
+// Forwarding rules 5, 6, and 7
+func TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5(t *testing.T) {
+	m := gatewaypki.Mint(t)
+	row := siteRow(session.StateSuspended, "pod-1")
+	targets := []struct {
+		name string
+		addr func(t *testing.T) string
+	}{
+		{"not delivered", closedAddr},
+		{"unknown outcome", func(t *testing.T) string {
+			return startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), closingCoordinator())
+		}},
+		{"refused by a non-holder", func(t *testing.T) string { return nonHolderCoordinator(t, m, row) }},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			r := newSiteRig(t, m, target.addr(t), row)
+			h, store := idempotentSite(r)
 			leases := r.srv.leaseStore.(*countingLeaseStore)
-			rec := r.do(http.MethodPost, "/v1/sessions/sess-1/terminate", "")
-			if rec.Code != http.StatusOK || r.row(t).State != session.StateCompleted {
-				t.Fatalf("terminate = %d %s state %q, want 200 and a local completed write", rec.Code, rec.Body.String(), r.row(t).State)
+			for i := 0; i < 2; i++ {
+				rec := keyedResume(h, "resume-key")
+				if code := responseCode(t, rec); code != "TARGET_NOT_READY" {
+					t.Fatalf("attempt %d answered %d %s, want TARGET_NOT_READY", i, rec.Code, rec.Body.String())
+				}
+				if rec.Header().Get(forwardNoStoreHeader) != "" {
+					t.Errorf("attempt %d carries the internal no-store mark", i)
+				}
 			}
-			if n := leases.gets.Load(); n != 0 {
-				t.Errorf("lease reads = %d, want none", n)
+			if n := leases.gets.Load(); n != 2 {
+				t.Errorf("forward reached %d times, want 2: a same-key retry after a refusal runs again", n)
 			}
+			if _, ok, _ := store.Get(context.Background(), "acme", "resume-key"); ok {
+				t.Error("the refusal was stored in the idempotency cache")
+			}
+			r.assertNoLocalEffect(t, session.StateSuspended)
 		})
 	}
+	t.Run("a delivered coordinator 409 without the mark is stored", func(t *testing.T) {
+		var reached atomic.Int64
+		conflict := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			reached.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"TARGET_NOT_READY","message":"not suspended","details":{"currentState":"running"}}}`))
+		})
+		listener := NewHolderForwardHandler(conflict, authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}, callingSessions{})
+		r := newSiteRig(t, m, startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), listener), row)
+		h, store := idempotentSite(r)
+		for i := 0; i < 2; i++ {
+			if rec := keyedResume(h, "delivered-409"); rec.Code != http.StatusConflict {
+				t.Fatalf("attempt %d answered %d, want the coordinator's 409", i, rec.Code)
+			}
+		}
+		if n := reached.Load(); n != 1 {
+			t.Errorf("coordinator reached %d times, want 1: its own refusal is stored and replayed", n)
+		}
+		if _, ok, _ := store.Get(context.Background(), "acme", "delivered-409"); !ok {
+			t.Error("the coordinator's own 409 was not stored")
+		}
+	})
 }

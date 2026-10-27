@@ -5,16 +5,32 @@ package mcptools_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/mtls/certreload"
+	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
 // fakeForwarder is a HolderForwarder that answers each call with a fixed
@@ -249,4 +265,164 @@ func TestOffHolderCancelSessionReturnsTheForwardAnswer_spec_29_3(t *testing.T) {
 			t.Errorf("a terminal row was forwarded %d times, want the precondition refusal first", len(fwd.calls))
 		}
 	})
+}
+
+// countingLeases counts the lease reads of the wrapped store, one per
+// forward attempt that reaches the forward helper.
+type countingLeases struct {
+	leasestore.LeaseStore
+	gets atomic.Int64
+}
+
+func (c *countingLeases) Get(ctx context.Context, tenantID, sessionID string) (leasestore.Lease, error) {
+	c.gets.Add(1)
+	return c.LeaseStore.Get(ctx, tenantID, sessionID)
+}
+
+// devAuth is the dev-header auth transport the test surfaces run behind.
+var devAuth = authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
+
+// forwardMaterial is the gateway certificate material and the forward client
+// of one test.
+type forwardMaterial struct {
+	pki      *gatewaypki.Material
+	reloader *certreload.Reloader
+}
+
+func newForwardMaterial(t *testing.T) *forwardMaterial {
+	t.Helper()
+	m := gatewaypki.Mint(t)
+	reloader, err := certreload.New(m.CertFile, m.KeyFile)
+	if err != nil {
+		t.Fatalf("certreload: %v", err)
+	}
+	return &forwardMaterial{pki: m, reloader: reloader}
+}
+
+// serve serves h on a loopback CH-HOLDERFORWARD TLS listener and returns its
+// address.
+func (f *forwardMaterial) serve(t *testing.T, h http.Handler) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{Handler: h, TLSConfig: sessionserver.HolderForwardServerTLS(f.reloader, f.pki.CAPool), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.ServeTLS(lis, "", "") }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return lis.Addr().String()
+}
+
+// forwarder is a serving replica gw-a whose lease store names holder for
+// sess_t, with the real forward client.
+func (f *forwardMaterial) forwarder(t *testing.T, holder string) (*sessionserver.Server, *countingLeases) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	leases := &countingLeases{LeaseStore: leasestore.New(rc)}
+	if _, err := leases.Acquire(context.Background(), "acme", "sess_t", holder, time.Minute); err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	return sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:        true,
+		CoordinationLeaseStore: leases,
+		ReplicaID:              "gw-a.00@127.0.0.1:1",
+		HolderForwardClient:    sessionserver.NewHolderForwardClient(f.reloader, f.pki.CAPool),
+		PodBinder:              &podsession.Binder{},
+	}), leases
+}
+
+// closedListenerAddr is an address on which nothing listens.
+func closedListenerAddr(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := lis.Addr().String()
+	_ = lis.Close()
+	return addr
+}
+
+// hangUpAfterRead closes the connection with no response after it reads the
+// request.
+var hangUpAfterRead = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _ = io.ReadAll(r.Body)
+	if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+		_ = conn.Close()
+	}
+})
+
+// keyedCancel posts lenny/cancel_session for sess_t with an Idempotency-Key.
+func keyedCancel(h http.Handler, key string) *httptest.ResponseRecorder {
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/cancel_session","arguments":{"sessionId":"sess_t"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
+// runs the idempotency cases of the forward helper against the wired
+// lenny/cancel_session site behind the §11.5 middleware: a keyed call whose
+// forward is not delivered, has an unknown outcome, or reaches a replica
+// that no longer coordinates the session answers the tool error
+// TARGET_NOT_READY, stores no idempotency row, and a same-key retry reaches
+// the forward again with no internal mark on the client response; the
+// serving replica writes nothing.
+//
+// spec: 11.5 (Idempotency) Mechanism, 29.3 (Interactive message send)
+// Forwarding rules 5, 6, and 7, 15.2 (MCP API)
+func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5(t *testing.T) {
+	f := newForwardMaterial(t)
+	nonHolder := func(t *testing.T) string {
+		third, _ := f.forwarder(t, "gw-c.00@127.0.0.1:1")
+		coord, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = third })
+		mkSession(t, store, "sess_t", session.StateRunning, "")
+		return f.serve(t, sessionserver.NewHolderForwardHandler(coord.Handler(), devAuth, nil))
+	}
+	targets := []struct {
+		name string
+		addr func(t *testing.T) string
+	}{
+		{"not delivered", closedListenerAddr},
+		{"unknown outcome", func(t *testing.T) string { return f.serve(t, hangUpAfterRead) }},
+		{"refused by a non-holder", nonHolder},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			fwd, leases := f.forwarder(t, "gw-b.00@"+target.addr(t))
+			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd })
+			mkSession(t, store, "sess_t", session.StateRunning, "")
+			cache := idemmw.NewMemoryStore()
+			h := authmw.Wrap(idemmw.Wrap(srv.Handler(), cache, idemmw.Options{}), devAuth)
+			for i := 0; i < 2; i++ {
+				rec := keyedCancel(h, "cancel-key")
+				var resp map[string]any
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("attempt %d: decode %s: %v", i, rec.Body.String(), err)
+				}
+				if code := toolErrorCode(t, resp); code != "TARGET_NOT_READY" {
+					t.Fatalf("attempt %d answered %s, want TARGET_NOT_READY", i, rec.Body.String())
+				}
+				if rec.Header().Get("X-Lenny-Forward-No-Store") != "" {
+					t.Errorf("attempt %d carries the internal no-store mark", i)
+				}
+			}
+			if n := leases.gets.Load(); n != 2 {
+				t.Errorf("forward reached %d times, want 2: a same-key retry after a refusal runs again", n)
+			}
+			if _, ok, _ := cache.Get(context.Background(), "acme", "cancel-key"); ok {
+				t.Error("the refusal was stored in the idempotency cache")
+			}
+			if row, _ := store.Get(context.Background(), "acme", "sess_t"); row.State != session.StateRunning || !row.TerminatedAt.IsZero() {
+				t.Errorf("row = %q (terminated %v), want running and unwritten", row.State, row.TerminatedAt)
+			}
+		})
+	}
 }

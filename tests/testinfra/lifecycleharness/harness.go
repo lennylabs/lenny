@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -147,6 +148,11 @@ type Options struct {
 	// Leases, when set, wraps the harness's Redis lease store, so a
 	// scenario can put a failover lease store in front of it.
 	Leases func(leasestore.LeaseStore) leasestore.LeaseStore
+	// MidSessionUpload, when true, registers the harness runtime with
+	// capabilities.midSessionUpload and enables the deployer's mid-session
+	// upload policy on every replica, so POST /upload-to-session admits a
+	// running session (§7.4).
+	MidSessionUpload bool
 }
 
 // Harness is the shared world the replicas run in.
@@ -219,6 +225,9 @@ type Harness struct {
 	// msgLimit and interceptors configure every replica's MCP surface.
 	msgLimit     mcptools.MessagingRateLimit
 	interceptors *interceptor.Chain
+	// runtimes is the runtime registry every replica reads when
+	// Options.MidSessionUpload is set, and nil otherwise.
+	runtimes runtimestore.Store
 }
 
 // Replica is one gateway replica: a session server with its own pod
@@ -318,6 +327,9 @@ func New(t testing.TB, opts Options) *Harness {
 	if opts.Leases != nil {
 		h.Leases = opts.Leases(h.Leases)
 	}
+	if opts.MidSessionUpload {
+		h.runtimes = midSessionUploadRuntimes(t)
+	}
 	h.pki = gatewaypki.Mint(t)
 	reloader, err := certreload.New(h.pki.CertFile, h.pki.KeyFile)
 	if err != nil {
@@ -375,6 +387,21 @@ func New(t testing.TB, opts Options) *Harness {
 	}
 	t.Cleanup(h.Close)
 	return h
+}
+
+// midSessionUploadRuntimes is a runtime registry holding the harness
+// runtime with capabilities.midSessionUpload set. spec: §7.4 (Upload
+// Safety).
+func midSessionUploadRuntimes(t testing.TB) runtimestore.Store {
+	t.Helper()
+	rs := runtimestore.NewMemory()
+	if err := rs.Create(context.Background(), runtimestore.Runtime{
+		Name: RuntimeRef, Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{MidSessionUpload: true},
+	}); err != nil {
+		t.Fatalf("lifecycleharness: register the mid-session upload runtime: %v", err)
+	}
+	return rs
 }
 
 // NewMemStore returns the harness's default session store: an in-memory
@@ -449,6 +476,8 @@ func (h *Harness) AddReplica(name string) *Replica {
 		Pools:                      h.poolRegistry(),
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,
+		Runtimes:                   h.runtimes,
+		MidSessionUploadEnabled:    h.runtimes != nil,
 	})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
@@ -630,12 +659,23 @@ func (h *Harness) Row(id string) sessionstore.Session {
 // forward to the session's coordinating replica relays.
 func (h *Harness) Do(r *Replica, method, path string, body any) (int, map[string]any) {
 	h.T.Helper()
+	return h.DoAs(r, "", method, path, body)
+}
+
+// DoAs is Do with the X-Lenny-User-ID header naming user, so the request's
+// principal is that user, as a request resolving an interaction the user owns
+// needs. An empty user sends no header.
+func (h *Harness) DoAs(r *Replica, user, method, path string, body any) (int, map[string]any) {
+	h.T.Helper()
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	if user != "" {
+		req.Header.Set("X-Lenny-User-ID", user)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
