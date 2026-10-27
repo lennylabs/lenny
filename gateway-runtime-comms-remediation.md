@@ -3106,7 +3106,7 @@ Proposals, second wave:
     `delivered_message_ids`, beside TT-81 and TT-82), and R16 and R4 (adapter-side shutdown, beside the
     gateway shutdown of TT-6, which stays in P2).
   - **Drafting.** Under the drafting rules and the test instruction above.
-- [ ] **P3. Session timers and sweep ownership** (not yet written), beside P2.
+- [x] **P3. Session timers and sweep ownership** (done as a proposal; implementation pending), beside P2.
   - **Scope.** The per-state deadlines and the watchdog sweeps that enforce them: the timestamp each
     deadline is anchored on, the reason each expiry stamps, which replica runs each terminal sweep, how a
     sweep re-checks its listed row, how a sweep runs the hooks of the rows it ends, and which states each
@@ -3122,6 +3122,15 @@ Proposals, second wave:
     in flight.
   - **Overlapping plan steps.** R20 (the cross-replica input wait TT-39 needs).
   - **Drafting.** Under the drafting rules and the test instruction above.
+  - **Outcome.** Proposal 0105
+    (`proposals/0105_fix_the-per-state-session-deadlines-and-the-watchdog-sweeps/`) was approved 2026-10-27
+    (merge `f730122c4`). It measures each per-state deadline from a store-owned `state_entered_at`, makes
+    the sweeps re-check on the locked row, continue past errors, and run hooks off the pass, adds the
+    `/start` `ready → starting` edge, persists the `lenny/request_input` wait with a wait identity and
+    connection-boundary recovery (owner-delegated decision D13), and enforces `perChildMaxAge`. Its
+    implementation, which closes F-6.2.28, F-7.2.31, F-8.3.1, F-10.1.34, and F-11.3.37 to F-11.3.43 (the
+    sweep-write half of F-11.3.40) as its REC-1 states, is pending, and it runs after 0101 and 0102 merge,
+    because they share files. Its unstaged defects are filed below.
 
 Proposals, third wave:
 
@@ -3626,6 +3635,44 @@ credential gap surfaced during the review of 0104 and is filed with them.
     agent-runtime example from §10.7, §23.1 item 12, and `docs/api/rest.md`. The spec edits ride with the next
     proposal that edits §10.7 or §23.1, or with any text-corrections proposal.
 
+**Defects filed from proposal 0105's unstaged-defect list (2026-10-27).** Proposal 0105 (P3, approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree, and each BUILD-GAPS entry says it was filed ahead of REC-1, so 0105's
+implementor updates the entry rather than filing a duplicate. F-10.1.36 and F-5.2.57 were already tracked and
+keep their routing. F-7.2.43 named P3 as its owner, and 0105 does not stage it, so it is queued here.
+
+- Direct-fix queue, after 0105's implementation, which edits the same files.
+  - [ ] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
+    `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
+    process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
+    Record the warning on the row in a locked-row `Update` and send it only from the replica whose write
+    applied. F-11.3.46 is the expiry-warning half of F-11.3.40.
+  - [ ] **F-15.4.5** (Low): `lenny/request_input` accepts a caller-supplied `requestId`, while §15.4 says the
+    gateway generates it. Drop the argument and always generate the value. It lands after 0105 and 0101,
+    which both edit the handler.
+- Proposal routing.
+  - [ ] With P4: **F-8.2.32** (Medium, a delegated child that omits `perChildMaxAge` is unbounded by it,
+    because no `DelegationPolicy` default exists to store) and **F-7.2.45** (Low, the delegated child commit
+    writes `created → running`, an edge §7.2 and `state.ValidTransitions` do not list, through the `/start`
+    transition helper). P4 owns the materializer and the lease budget.
+  - [ ] **F-9.1.12** (Medium): the gateway-edge `/mcp` endpoint serves `lenny/request_input`, a platform MCP
+    server tool, so an edge caller can open a wait on a session. Which tools the edge serves needs spec text.
+    It can ride with the forwarded-call session binding proposal (F-10.2.29).
+  - [ ] **F-15.1.61** (Medium): the §15.1 upload and stale-derive precondition rows do not list
+    `input_required`, so once 0105 persists the sub-state a waiting session is refused both. It rides with
+    the next proposal that edits the §15.1 precondition table.
+  - [ ] **F-7.2.43** (Low): a created-state expiry ends the session `failed` while §15.1 names `expired`.
+    Owner unassigned since 0105 declined it. It rides with the next proposal that edits the §7.2 state
+    machine or the §15.1 state table, such as the one F-15.1.61 needs.
+  - [ ] **F-5.2.58** (Low): a by-name reclaim of a pre-running concurrent-workspace slot sends no
+    `Shutdown` and counts no leak, although a slot whose setup ran at `/start` has run a workspace RPC. It
+    rides with the next proposal that edits the §5.2 scrub model.
+  - [ ] Text corrections, with any text-corrections proposal: **F-7.1.32** (Low, the §7.1
+    `starting_timeout` row links §6.3 where §6.2 defines `STARTING_TIMEOUT`) and **F-15.1.62** (Low, the
+    Open Responses status mapping disagrees with `docs/api/open-responses.md`, and the specification states
+    no mapping).
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
@@ -3655,6 +3702,12 @@ other test in that binary.
   - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
   - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
+  - [ ] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
+    and `tests/testinfra/kind/install.sh` runs the installing branch's migrations against the shared
+    Postgres, so branches with different migration sets leave the database ahead of each other or dirty. On
+    2026-10-27, 0102's migration 0192 left it dirty and every kind-backed test skipped until the owner
+    approved a reset. Give each worktree its own database or namespace, or make `install.sh` refuse a
+    database ahead of the branch, and document the reset procedure.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
