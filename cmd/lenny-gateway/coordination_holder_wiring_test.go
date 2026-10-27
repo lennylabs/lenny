@@ -168,7 +168,7 @@ func identitySites(t *testing.T) map[string][]consumerSite {
 		"readoptAndFence":         4,
 		"coordinationOptions":     1,
 		"w.buildBillingPipeline":  5,
-		"podterminateprop.New":    2,
+		"bindrelease.New":         2,
 		"eventbuffer.NewEmitter":  1,
 		"cbmw.NewAuditReporter":   2,
 		"newGatewayControlServer": 11,
@@ -236,7 +236,7 @@ func TestEveryLeaseAndMirrorConsumerReceivesTheHolderValue_spec_10_1_1(t *testin
 		"w.buildBillingPipeline":  {"w.replica"},
 		"ServiceInstanceID":       {"w.replica", "replicaID"},
 		"eventbuffer.NewEmitter":  {"w.replica"},
-		"podterminateprop.New":    {"w.replica"},
+		"bindrelease.New":         {"w.replica"},
 		"cbmw.NewAuditReporter":   {"w.replica"},
 		"newGatewayControlServer": {"w.replica"},
 	}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package propagator
+package bindrelease
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 
 // recordingTerminator records every §11.4 pod-termination request a
 // propagator applies to it. It stands in for the gateway's
-// podTerminateFanOut over the per-replica podsession.Registry.
+// bindReleaseFanOut over the per-replica podsession.Registry.
 type recordingTerminator struct {
 	mu       sync.Mutex
 	requests []Request

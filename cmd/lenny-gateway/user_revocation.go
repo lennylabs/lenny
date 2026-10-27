@@ -13,15 +13,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// Compile-time assertion that podTerminateFanOut is the cross-replica
+// Compile-time assertion that bindReleaseFanOut is the cross-replica
 // §11.4 step-2 local releaser the binding-release propagator drives.
-var _ podterminateprop.LocalTerminator = (*podTerminateFanOut)(nil)
+var _ bindrelease.LocalTerminator = (*bindReleaseFanOut)(nil)
 
 // This file wires the §11.4 full_revoke fan-out dependencies the admin
 // router consumes. handleInvalidateUser raises the user's tombstone and
@@ -50,12 +50,13 @@ type revokedBindingReleaser interface {
 	ReleaseRevokedBinding(ctx context.Context, tenantID, sessionID string) (released bool, err error)
 }
 
-// podTerminateFanOut releases the pod bindings of a revoked user's
-// cancelled sessions. It reads the per-replica pod-session registry and
+// bindReleaseFanOut releases the pod bindings of a revoked user's
+// cancelled sessions and publishes the session list on CH-BINDRELEASE
+// (§28.5.7). It reads the per-replica pod-session registry and
 // releases the binding of every cancelled session this replica holds
 // through the session release, which sends the pod the §4.7 Shutdown RPC.
 // It satisfies admin.UserPodTerminator and, for the cross-replica path,
-// podterminateprop.LocalTerminator.
+// bindrelease.LocalTerminator.
 //
 // A pod binding lives in exactly one replica's registry, so the handling
 // replica reaches only the bindings it holds itself. prop fans the §11.4
@@ -64,10 +65,10 @@ type revokedBindingReleaser interface {
 // lost, a peer's coordination Sweeper releases the binding of every
 // terminal row it lists. prop is nil in a deployment with no Redis bus,
 // which is the single-replica posture. spec: §11.4 step 2.
-type podTerminateFanOut struct {
+type bindReleaseFanOut struct {
 	registry *podsession.Registry
 	releaser revokedBindingReleaser
-	prop     *podterminateprop.Propagator
+	prop     *bindrelease.Propagator
 }
 
 // TerminateUserSessions is the admin.UserPodTerminator entry the
@@ -77,8 +78,8 @@ type podTerminateFanOut struct {
 // reports only this replica's releases — the peer releases happen
 // asynchronously on each peer's subscriber, matching the §11.4 note that
 // propagation completes within seconds.
-func (p *podTerminateFanOut) TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) admin.UserTerminationResult {
-	req := podterminateprop.Request{
+func (p *bindReleaseFanOut) TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) admin.UserTerminationResult {
+	req := bindrelease.Request{
 		TenantID:   tenantID,
 		UserID:     userID,
 		SessionIDs: sessionIDs,
@@ -90,10 +91,10 @@ func (p *podTerminateFanOut) TerminateUserSessions(ctx context.Context, tenantID
 	return admin.UserTerminationResult{PodsTerminated: res.PodsTerminated, FailedSessions: res.FailedSessions}
 }
 
-// TerminateLocal is the podterminateprop.LocalTerminator entry the
+// TerminateLocal is the bindrelease.LocalTerminator entry the
 // cross-replica subscriber drives for a peer replica's request. It
 // releases only the bindings this replica holds and does not re-publish.
-func (p *podTerminateFanOut) TerminateLocal(ctx context.Context, req podterminateprop.Request) podterminateprop.Result {
+func (p *bindReleaseFanOut) TerminateLocal(ctx context.Context, req bindrelease.Request) bindrelease.Result {
 	return p.terminateLocal(ctx, req)
 }
 
@@ -111,12 +112,12 @@ func (p *podTerminateFanOut) TerminateLocal(ctx context.Context, req podterminat
 // release that has already removed the binding.
 //
 // spec: §11.4 step 2 (User Invalidation), §10.1.5 (Stale Replica Behavior)
-func (p *podTerminateFanOut) terminateLocal(ctx context.Context, req podterminateprop.Request) podterminateprop.Result {
+func (p *bindReleaseFanOut) terminateLocal(ctx context.Context, req bindrelease.Request) bindrelease.Result {
 	want := make(map[string]struct{}, len(req.SessionIDs))
 	for _, id := range req.SessionIDs {
 		want[id] = struct{}{}
 	}
-	var res podterminateprop.Result
+	var res bindrelease.Result
 	for _, bind := range p.registry.Snapshot() {
 		if _, ok := want[bind.SessionID]; !ok {
 			continue
@@ -136,7 +137,7 @@ func (p *podTerminateFanOut) terminateLocal(ctx context.Context, req podterminat
 
 // releaseOne runs one revoked-binding release on its own bounded, detached
 // call context.
-func (p *podTerminateFanOut) releaseOne(ctx context.Context, tenantID, sessionID string) (bool, error) {
+func (p *bindReleaseFanOut) releaseOne(ctx context.Context, tenantID, sessionID string) (bool, error) {
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), userTerminateRPCTimeout)
 	defer cancel()
 	return p.releaser.ReleaseRevokedBinding(callCtx, tenantID, sessionID)

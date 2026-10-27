@@ -56,7 +56,7 @@ func TestSlotSetRecoveryProbeRunsOnTheWatchdogContext_spec_12_4(t *testing.T) {
 // spec: §11.4 (User Invalidation), §4.9 (Credential Leasing)
 func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T) {
 	assertWired(t, []struct{ file, want, seam string }{
-		{"adminrouter.go", "fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
+		{"adminrouter.go", "fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
 		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
 		{"adminrouter.go", "leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)", "the lease revoker's credential assigner"},
 		{"adminrouter.go", "userLeases = leaseRevoker", "the lease revoker handed to the admin router"},

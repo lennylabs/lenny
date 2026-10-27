@@ -565,7 +565,7 @@ EXPLICIT = [
         "status": "WIRED",
         "spec_anchor": "#2857-gateway-to-store",
         "surface": "`cmd/lenny-gateway/adminrouter.go` propagator construction over "
-                   "`cmd/lenny-gateway/user_revocation.go` `podTerminateFanOut.TerminateUserSessions`",
+                   "`cmd/lenny-gateway/user_revocation.go` `bindReleaseFanOut.TerminateUserSessions`",
         "note": "the full_revoke handler releases the bindings its replica holds and publishes "
                 "the session list, and each peer replica's subscriber releases the bindings of "
                 "those sessions it holds without re-publishing",

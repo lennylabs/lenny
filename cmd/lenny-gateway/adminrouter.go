@@ -50,8 +50,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 	carotationpg "github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -865,12 +865,12 @@ func (w *gatewayWiring) buildAdminRouter(
 	// Postgres-backed issued-token index. A minimal gateway wires none
 	// of them and still soft/hard disables a user.
 	//
-	// userPodTerminateProp carries the §11.4 step-2 binding-release
-	// request to peer replicas over Redis pub/sub so the bindings of a
-	// revoked user's sessions held on other replicas are released too. Its
-	// Run subscriber is launched alongside the other revocation propagators
-	// below. F-11.4.3.
-	var userPodTerminateProp *podterminateprop.Propagator
+	// bindReleaseProp carries the §11.4 step-2 binding-release request to
+	// peer replicas on CH-BINDRELEASE (§28.5.7) over Redis pub/sub so the
+	// bindings of a revoked user's sessions held on other replicas are
+	// released too. Its Run subscriber is launched alongside the other
+	// revocation propagators below. F-11.4.3.
+	var bindReleaseProp *bindrelease.Propagator
 	{
 		var (
 			userPods   admin.UserPodTerminator
@@ -880,12 +880,12 @@ func (w *gatewayWiring) buildAdminRouter(
 		if w.podRegistry != nil {
 			// spec: §11.4 step 2 — each binding is released through the
 			// session server's terminal binding release body.
-			fanOut := &podTerminateFanOut{registry: w.podRegistry, releaser: sessionSrv}
-			fanOut.prop = podterminateprop.New(fanOut, w.securityBus, w.replica,
-				podterminateprop.WithErrorHandler(func(err error) {
+			fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}
+			fanOut.prop = bindrelease.New(fanOut, w.securityBus, w.replica,
+				bindrelease.WithErrorHandler(func(err error) {
 					log.Printf("lenny-gateway: §11.4 full_revoke: publish binding-release request: %v", err)
 				}))
-			userPodTerminateProp = fanOut.prop
+			bindReleaseProp = fanOut.prop
 			userPods = fanOut
 		}
 		// The §11.4 lease step built above, over the §4.9 credential-lease
@@ -978,7 +978,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	w.impersonationSvc = impersonationSvc
 	w.kmsProbeLifecycle = kmsProbeLifecycle
 	w.recommendationStore = recommendationStore
-	w.userPodTerminateProp = userPodTerminateProp
+	w.bindReleaseProp = bindReleaseProp
 	w.immediateGCSweep = immediateGCSweep
 	return connectorAuthorizer, connectorInvoker, ruStore, erasureSemanticCache
 }

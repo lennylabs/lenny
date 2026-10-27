@@ -3881,7 +3881,7 @@
         "cmd/lenny-gateway/user_revocation_test.go",
         "cmd/lenny-gateway/user_revocation_rotation_test.go",
         "pkg/gateway/credentials/leaserevoke/leaserevoke_test.go",
-        "pkg/gateway/podlifecycle/podterminate/propagator/propagator_test.go",
+        "pkg/gateway/podlifecycle/bindrelease/propagator_test.go",
         "tests/tier3_contract/fullrevoke_release/request_contract_test.go",
         "tests/tier3_contract/admin_user_invalidate/full_revoke_response_test.go",
         "tests/tier9_security/full_revoke_lease_return_test.go",
