@@ -4,16 +4,16 @@
 
 - [ ] **S1 · spec** — SPEC-1. Lands Edits (a) and (b) in §6.2.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands Edits (a) to (l) in §6.2, §7.1, §7.2, §7.3, §8.8, §15.1, §29.3, and §29.4 in one commit.
+- [ ] **S2 · spec** — SPEC-2. Lands Edits (a) to (l) in §6.2, §7.1, §7.2, §7.3, §8.8, §15.1, and §29.3 in one commit.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the §8.2 `LeaseSlice` row.
       Tiers 0, 11. Depends on: —
 - [ ] **S4 · spec** — SPEC-4. Lands the §10.1.1 **Primary:** sentences.
       Tiers 0, 11. Depends on: —
-- [ ] **S5 · code** — CODE-1.
+- [ ] **S5 · code** — CODE-1. Lands the store-owned `StateEnteredAt` column and stamp.
       Tiers 0, 1, 2. Depends on: S1
 - [ ] **S6 · code** — CODE-2. Lands the watchdog anchors, locked-row re-checks, and unconditional reasons.
-      Tiers 0, 1, 7a. Depends on: S1, S4, S5
+      Tiers 0, 1, 7a. Depends on: S1, S2, S4, S5
 - [ ] **S7 · code** — CODE-3. Lands the `perChildMaxAge` leg and the doc comments.
       Tiers 0, 1. Depends on: S2, S3, S6
 - [ ] **S8 · code** — CODE-5. Lands the orphan-cleanup anchor and stamp.
@@ -26,9 +26,9 @@
       Tiers 0, 1, 2, 4, 7a, 9. Depends on: S1, S2, S5
 - [ ] **S12 · code** — CODE-8. Lands the leader-gated orphan-session reconciler and the lag-series clear.
       Tiers 0, 1, 8. Depends on: S9
-- [ ] **S13 · test** — TEST-1. Lands the tests not already landed with S5 to S12 or S14 and the `tests/spec-map.json` entries.
-      Tiers 0, 1, 2, 4, 7a, 8, 9. Depends on: S5, S6, S7, S8, S9, S10, S11, S12
-- [ ] **S14 · docs** — DOC-1 and TEST-1 item 25.
+- [ ] **S13 · docs** — DOC-1. Lands the error-catalog row, the SDK **Retries** sentence, and the `input_required → completed` docs edges.
       Tiers 0, 11. Depends on: S2, S10
+- [ ] **S14 · test** — TEST-1. Lands the tests not already landed with S5 to S12, item 25, and the `tests/spec-map.json` entries.
+      Tiers 0, 1, 2, 4, 7a, 8, 9, 11. Depends on: S5, S6, S7, S8, S9, S10, S11, S12, S13
 - [ ] **S15 · docs** — REC-1. Lands the BUILD-GAPS notes and entries and the P3 plan entry.
-      Tiers 0, 11. Depends on: S13
+      Tiers 0, 11. Depends on: S14

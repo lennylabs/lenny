@@ -6,7 +6,7 @@
 - The idle clock restarts on every entry to `running` (SPEC-1 Edit (b)).
 - `POST /v1/sessions/{id}/start` moves the session `ready → starting` before the runtime launch, so the `maxStartingTimeoutSeconds` watchdog bounds the launch and the ready watchdog no longer applies. A `/start` that fails after that write moves the session to `failed`, and the client retries by creating a new session (SPEC-2 Edits (a), (b), (f) to (i), and (k)).
 - §7.2 **Terminal writes from any non-terminal state.** is the one home for the terminal writes that apply from every non-terminal state, and the §6.2 `resuming` enumeration excepts them (SPEC-2 Edits (c) and (d)). The `maxSessionAge` expiry is an edge per source state, from `starting`, `resume_pending`, and `resuming` (SPEC-2 Edits (a), (d), and (e)).
-- Interrupt and terminate are admitted from `input_required` as from `running`, with the `input_required → suspended` and `input_required → completed` edges (SPEC-2 Edit (l)).
+- Terminate is admitted from `input_required`, with the `input_required → completed` edge (SPEC-2 Edit (l)).
 - `perChildMaxAge` counts from the creation of the child session whose row stores it (SPEC-3).
 - §10.1.1 states which replica runs the watchdog sweeps and orphan cleanup, the locked-row rule for their writes, and per-row continuation past errors (SPEC-4).
 
@@ -44,7 +44,7 @@ with
 The `last_agent_activity_at` timestamp is updated in Postgres on each qualifying event and on each entry to `running`.
 ```
 
-### SPEC-2 · spec/07_session-lifecycle.md § 7.1 Normal Flow, § 7.2 Interactive Session Model, and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API; spec/29_communication-scenarios.md § 29.3 Interactive message send and § 29.4 Interrupt, terminate, and delete; spec/08_recursive-delegation.md § 8.8 TaskRecord and TaskResult Schema
+### SPEC-2 · spec/07_session-lifecycle.md § 7.1 Normal Flow, § 7.2 Interactive Session Model, and § 7.3 Retry and Resume; spec/06_warm-pod-model.md § 6.2 Pod State Machine; spec/15_external-api-surface.md § 15.1 REST API; spec/29_communication-scenarios.md § 29.3 Interactive message send; spec/08_recursive-delegation.md § 8.8 TaskRecord and TaskResult Schema
 
 **Edit (a) · §7.2 **Session state machine:** code block.** Replace the three lines
 
@@ -285,19 +285,17 @@ with
 A terminal write runs on the writer's own context, except for the writes that must not depend on the request that triggered them: the `finalizing → failed` write a failed finalize makes, the `starting → failed` write a failed `POST /v1/sessions/{id}/start` makes, and an administrative force-terminate together with its audit event. The gateway makes those writes on a context it owns.
 ```
 
-**Edit (l) · `input_required` interrupt and terminate.** Make the following insertions and replacements. Every table row stays one physical line.
+**Edit (l) · `input_required` terminate.** Make the following insertions and replacements. Every table row stays one physical line.
 
-In the §7.2 **Session state machine:** code block, insert the following lines directly after the line that begins "input_required → running   (input provided via inReplyTo or request expires/cancelled)".
+In the §7.2 **Session state machine:** code block, insert the following line directly after the line that begins "input_required → running   (input provided via inReplyTo or request expires/cancelled)".
 
 ```
-input_required → suspended (interrupt_request while awaiting input — acknowledged or timed out, as from running)
 input_required → completed (client POST /v1/sessions/{id}/terminate while awaiting input)
 ```
 
-In the §6.2 **`input_required` sub-state:** code block, insert the following lines directly after the line "input_required → running   (input provided via inReplyTo, or request cancelled/expired)".
+In the §6.2 **`input_required` sub-state:** code block, insert the following line directly after the line "input_required → running   (input provided via inReplyTo, or request cancelled/expired)".
 
 ```
-input_required → suspended (interrupt_request while awaiting input, as from running)
 input_required → completed (terminate while awaiting input)
 ```
 
@@ -307,11 +305,9 @@ In the §8.8 **Lenny canonical task state machine:** code block, insert the foll
 input_required → completed             (client terminate while awaiting input)
 ```
 
-In the §15.1 **State-mutating endpoint preconditions.** table, in the `POST /v1/sessions/{id}/interrupt` row, replace the precondition cell `running` with `running`, `input_required`, and delete "Only valid while the agent is actively executing. " from the Notes cell. In the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `suspended`" with "`starting`, `running`, `input_required`, `suspended`".
+In the §15.1 **State-mutating endpoint preconditions.** table, in the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `suspended`" with "`starting`, `running`, `input_required`, `suspended`".
 
-In the §29.3 off-holder matrix, replace the beginning of the interrupt row, "| `POST /v1/sessions/{id}/interrupt` | `running` |", with "| `POST /v1/sessions/{id}/interrupt` | `running` and `input_required` |". In the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while" with "`starting`, `running`, `input_required`, `resume_pending`, and `awaiting_client_action`, and `suspended` while".
-
-In §29.4, in the **Preconditions.** paragraph, replace "the session to be `running`, which is the only state the interrupt endpoint's precondition table admits" with "the session to be in a state the interrupt endpoint's precondition table admits". In step 2, replace "which admits `running` and produces `suspended`." with "which produces `suspended`." In step 8, replace "`running → suspended` transition on the session row" with "transition to `suspended` on the session row".
+In the §29.3 off-holder matrix, in the `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `resume_pending`, and `awaiting_client_action`, and `suspended` while" with "`starting`, `running`, `input_required`, `resume_pending`, and `awaiting_client_action`, and `suspended` while".
 
 ### SPEC-3 · spec/08_recursive-delegation.md § 8.2 Delegation Mechanism
 

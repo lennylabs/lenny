@@ -173,7 +173,7 @@ Targets:
    | A2 | R1 finds the named wait pending here: a wait on this connection whose W1 applied during the run, or a wait of the pod's earlier connection to this replica whose handler has not yet seen the close. The wait stays registered | Unchanged | That wait's W2 |
    | A3 | An R1 read or write fails, or the call's row names a pod other than the peer's | Unchanged | R1 again before the connection's next call carrying a session ID |
    | P1 | After K1 or X4, no later call of the pod process runs R1 | `input_required`, naming a wait no registry holds | The client's terminate or another §7.2 edge out of `input_required`, or `maxSessionAge`, whose timer runs in `input_required` (§6.2) |
-4. **State gates.** Each gate below admits `running` and not `input_required`. Persisting `input_required` changes what each gate sees for a waiting session, so each takes the decision in the table, and a test pins each decision (TEST-1 item 22).
+4. **State gates.** Each gate below reads `running` or `input_required` from the row. Persisting `input_required` changes what each gate sees for a waiting session, so each takes the decision in the table, and a test pins each decision (TEST-1 item 22).
 
    | Gate | Decision |
    |:--|:--|
@@ -184,6 +184,7 @@ Targets:
    | The post-send-error re-read in `pkg/gateway/mcpfabric/mcptools/send_delivery.go` and in `pkg/gateway/sessionserver/messages_delivery.go` | Keep. An `input_required` session is re-routed, and the router sends it to path 3. |
    | `deliverChildHeld` in `send_delivery.go` | Keep. It runs right after a child's task input, and a child in `input_required` keeps its held messages under §7.2 path 6. |
    | The mid-session upload and stale-derive rows of the precondition table in `pkg/api/v1/session/session.go` | Keep. The §15.1 precondition rows for `POST /v1/sessions/{id}/upload` and `POST /v1/sessions/{id}/derive` do not list `input_required`, and the code follows them. |
+   | The interrupt entry of the precondition table in `pkg/api/v1/session/session.go` | Drop `input_required`, so the interrupt of a waiting session answers `409 INVALID_STATE_TRANSITION` under the §15.1 interrupt row (summary D13). |
 
 ### CODE-8 · The orphan-session reconciler under the gateway leader gate
 
@@ -208,18 +209,17 @@ Targets: `BUILD-GAPS.md`; `gateway-runtime-comms-remediation.md` §10, the P3 en
 1. Add resolution notes to F-6.2.28 (the `resume_pending` and `awaiting_client_action` remainder, resolved without a code change: 0092's `ActiveAge` plus the §7.2 `→ expired` edges and the `DriveResume` refusal), F-7.2.31, F-8.3.1, F-10.1.34 (the reconciler leader-gating remainder), and F-11.3.37 through F-11.3.43, where the F-11.3.40 note resolves the sweep-write half and names the item 5 entry for the expiry-warning half.
 2. The F-8.3.1 note records that its "stored nowhere" premise was already false: `storeLeaseFromSlice` in `pkg/gateway/mcpfabric/delegation/service.go` persists the granted slice on the child row under F-8.2.2. The closing work is the enforcement in `sweepMaxAge` and the §8.2 text.
 3. The F-11.3.39 note records that CODE-7 emits `status_change(input_required)` and `status_change(running)` under CODE-7 item 2's W3, which discharges the deferral recorded in the F-7.1.11 and F-7.2.1 resolution notes.
-4. Rewrite the P3 plan entry: the watchdog and orphan cleanup run on every replica under the locked-row re-check, and only the §10.1.4 orphan-session reconciler is leader-gated. The specification gains `state_entered_at`, the §7.2 `/start` edges through `starting`, the §7.2 any-state terminal-write paragraph, the per-state `maxSessionAge` expiry edges, the §7.2 interrupt and terminate edges from `input_required`, and the §8.2 `perChildMaxAge` binding, with no new storage field. Record the R20 overlap as summary D13 resolves it. Record P3's position.
+4. Rewrite the P3 plan entry: the watchdog and orphan cleanup run on every replica under the locked-row re-check, and only the §10.1.4 orphan-session reconciler is leader-gated. The specification gains `state_entered_at`, the §7.2 `/start` edges through `starting`, the §7.2 any-state terminal-write paragraph, the per-state `maxSessionAge` expiry edges, the §7.2 terminate edge from `input_required`, and the §8.2 `perChildMaxAge` binding, with no new storage field. Record the R20 overlap as summary D13 resolves it. Record P3's position.
 5. File a new entry for each defect the summary's **Defects in the shipped tree that this proposal does not stage** lists.
 6. Leave F-10.1.36 and F-5.2.57 open.
 
 ### DOC-1 · Docs pages
 
-Targets: `docs/reference/error-catalog.md`, the `STARTING_FAILED` row of the TRANSIENT errors table; the **Retries** section and the method table of `docs/client-guide/sdk-examples/go.md`, `python.md`, and `typescript.md`; `docs/api/rest.md`; `docs/api/mcp.md`; `docs/client-guide/session-lifecycle.md`; `docs/client-guide/error-handling.md`; `docs/reference/state-machines.md`; and `docs/getting-started/concepts.md`.
+Targets: `docs/reference/error-catalog.md`, the `STARTING_FAILED` row of the TRANSIENT errors table; the **Retries** section of `docs/client-guide/sdk-examples/go.md`, `python.md`, and `typescript.md`; `docs/client-guide/session-lifecycle.md`; `docs/reference/state-machines.md`; and `docs/getting-started/concepts.md`.
 
 - Error catalog: replace "Retryable for the same reason as `SESSION_CREATION_FAILED`: a retry rebinds a fresh pod. | Retry after the `Retry-After` window." with "The session is `failed`, so a retry creates a new session, which binds a fresh pod. | Create a new session after the `Retry-After` window." The row stays one physical line.
 - SDK pages: in the paragraph that begins "The client retries a retryable error on its own", directly before its closing sentence that begins "Override the policy" and introduces the code block, add one sentence using the page's method name (`Start` or `start`): the method sends its request once and is not retried, because a start can fail after the session has left `ready`, and the caller reads the session and creates a new session when it is `failed`. Link `docs/reference/state-machines.md` and give no spec section number.
-- Interrupt precondition (SPEC-2 Edit (l)): state the interrupt as valid in `running` and `input_required` at the **Valid precondition states:** line of the `/interrupt` section of `docs/api/rest.md`; in the `interrupt_session` description and its `INVALID_STATE_TRANSITION` row in `docs/api/mcp.md`; in the sentence "Valid only when the session is `running`." and the `/interrupt` row of the precondition table in `docs/client-guide/session-lifecycle.md`; in the `Interrupt`/`interrupt` row of each sdk-examples method table; and in the illustrative `allowedStates` array of `docs/client-guide/error-handling.md`.
-- `input_required` edges (SPEC-2 Edit (l)): add `input_required → suspended` (interrupt) and `input_required → completed` (terminate) to the session diagram and the transition table of `docs/reference/state-machines.md`, to the session diagram of `docs/getting-started/concepts.md`, and to the sentence listing the transitions out of `input_required` in `docs/client-guide/session-lifecycle.md`. Add `input_required → completed` to the canonical task diagram of `docs/reference/state-machines.md`. Insert new diagram lines and leave the existing `input_required -->` lines unedited.
+- `input_required` edges (SPEC-2 Edit (l)): add `input_required → completed` (terminate) to the session diagram and the transition table of `docs/reference/state-machines.md`, to the session diagram of `docs/getting-started/concepts.md`, and to the sentence listing the transitions out of `input_required` in `docs/client-guide/session-lifecycle.md`. Add `input_required → completed` to the canonical task diagram of `docs/reference/state-machines.md`. Insert new diagram lines and leave the existing `input_required -->` lines unedited.
 
 ## Testing
 
@@ -266,7 +266,7 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 24. `tests/tier9_security/input_wait_recovery_pod_scope_test.go`: item 8's server with `clientCA` set and `trustDomain` empty, so the handshake does not check the URI SAN and every case reaches CODE-7 item 2 R1, over stale `input_required` rows of pods A and B whose waits no registry on the server holds. A call naming pod A's session leaves pod A's row `input_required` with its `InputWaitID` and publishes no `status_change` on a connection whose certificate carries pod B's agent SPIFFE URI, on one whose verified certificate carries an interceptor SPIFFE URI, on one whose certificate carries no URI SAN, and on a plaintext server. After the cross-pod call, that connection's next call naming pod B's session restores pod B's row; this is the assertion that catches a denied run marking the connection recovered. `// spec: §7.2, §28.3`.
 
 **Tier 11**
-25. `tests/tier11_docs/session_transition_doc_reconciliation_test.go`: the `STARTING_FAILED` row of `docs/reference/error-catalog.md` carries DOC-1's replacement text and no longer carries "a retry rebinds a fresh pod" (scope the check to that row, because the `SESSION_CREATION_FAILED` row keeps the phrase). The **Retries** paragraph of each of go.md, python.md, and typescript.md carries the DOC-1 sentence that `Start`/`start` sends its request once. The `/interrupt` **Valid precondition states:** line of `docs/api/rest.md` names `input_required`, and the transition table of `docs/reference/state-machines.md` carries `input_required` rows to `suspended` and to `completed`. `// spec: §7.2, §15.1, §15.6`.
+25. `tests/tier11_docs/session_transition_doc_reconciliation_test.go`: the `STARTING_FAILED` row of `docs/reference/error-catalog.md` carries DOC-1's replacement text and no longer carries "a retry rebinds a fresh pod" (scope the check to that row, because the `SESSION_CREATION_FAILED` row keeps the phrase). The **Retries** paragraph of each of go.md, python.md, and typescript.md carries the DOC-1 sentence that `Start`/`start` sends its request once. The transition table of `docs/reference/state-machines.md` carries an `input_required` row to `completed`. `// spec: §7.2, §15.1, §15.6`.
 
 ## Edge cases and accepted failure modes
 
@@ -296,9 +296,10 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 - cmd/lenny-gateway/gwcontrol_server.go, controlserver.go, shutdown.go
 - pkg/gateway/checkpoint/checkpointer/freshness.go
 - pkg/gateway/environment/translator/open_responses.go
+- pkg/api/v1/session/session.go, session_test.go; pkg/gateway/sessionserver/interrupt_primary_row_test.go
 - pkg/gateway/mcpfabric/delegation/service.go
 - pkg/gateway/metrics/gatewaymetrics/ (the `ClearAgentPodStateMirrorLag` emitter)
 - cmd/lenny-gateway/reconciler_workers.go, leader_sweeps.go
 - The test files TEST-1 names, and tests/spec-map.json
 - BUILD-GAPS.md, gateway-runtime-comms-remediation.md
-- docs/reference/error-catalog.md, docs/client-guide/sdk-examples/go.md, python.md, typescript.md, docs/api/rest.md, docs/api/mcp.md, docs/client-guide/session-lifecycle.md, docs/client-guide/error-handling.md, docs/reference/state-machines.md, docs/getting-started/concepts.md
+- docs/reference/error-catalog.md, docs/client-guide/sdk-examples/go.md, python.md, typescript.md, docs/client-guide/session-lifecycle.md, docs/reference/state-machines.md, docs/getting-started/concepts.md
