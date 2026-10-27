@@ -3429,7 +3429,7 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
     T-17.6.13 is corrected.
   - [x] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
     production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment. Fixed in
-    `42bb52ac1` and `a4fc41c0b`.
+    `42bb52ac1`, `a4fc41c0b`, and `7f2dce149`.
   - [x] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
     off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
     requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
