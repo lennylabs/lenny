@@ -614,7 +614,7 @@ func TestImpersonationBearerRefusals_spec_13_3(t *testing.T) {
 			"tenantId": "acme", "subject": "peggy@acme.com", "roles": []string{"user"},
 		}, http.StatusCreated)
 		outer := s.mintImpersonation(t, "acme", target)
-		s.listedImpersonations(t, outer)
+		before := s.listedImpersonations(t, outer)
 
 		code, body := spoofCall(t, http.MethodPost, s.gw.BaseURL()+"/v1/admin/impersonation", outer, nil, map[string]any{
 			"targetTenantId": "acme", "targetUserId": "peggy@acme.com",
@@ -634,6 +634,12 @@ func TestImpersonationBearerRefusals_spec_13_3(t *testing.T) {
 			if admin == target {
 				t.Errorf("GET /v1/admin/impersonation lists session %s started by the impersonated user", id)
 			}
+			if _, ok := before[id]; !ok {
+				t.Errorf("GET /v1/admin/impersonation lists session %s that the refused nested POST added", id)
+			}
+		}
+		if len(listed) != len(before) {
+			t.Errorf("GET /v1/admin/impersonation lists %d sessions after the refused nested POST, want the %d listed before it", len(listed), len(before))
 		}
 		if n := s.startedEventsBy(t, target); n != 0 {
 			t.Errorf("admin.impersonation_started rows with admin_sub %s = %d, want 0", target, n)
