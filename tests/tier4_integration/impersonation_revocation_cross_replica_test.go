@@ -225,8 +225,8 @@ func (r *impReplicas) startShortSession(t *testing.T, base, subject string) (str
 func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	r := startImpReplicas(t)
-	// The short session is started first so its exp has passed by the time
-	// the expiry case runs after the other cases.
+	// The short session is started first, and the expiry case runs last,
+	// so the other cases run while its exp approaches.
 	shortBearer, shortID, shortExp := r.startShortSession(t, r.gwA.BaseURL(), "olivia@acme.com")
 
 	t.Run("listing on the non-issuing replica", func(t *testing.T) {
@@ -300,24 +300,6 @@ func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 		r.requireEndedOnOtherReplica(t, "ivan@acme.com", cascadeRefusalBound, r.redisLinkA.Cut)
 	})
 
-	t.Run("expiry", func(t *testing.T) {
-		// The §13.3 exp check allows one second of skew.
-		if wait := time.Until(shortExp.Add(2 * time.Second)); wait > 0 {
-			time.Sleep(wait)
-		}
-		for _, base := range r.replicas() {
-			if code, _ := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", shortBearer, nil, nil); code != http.StatusUnauthorized {
-				t.Errorf("expired bearer on %s answered %d, want 401", base, code)
-			}
-			if got := r.listed(t, base); slices.Contains(got, shortID) {
-				t.Errorf("GET on %s still lists the expired session %s", base, shortID)
-			}
-		}
-		if n := r.endedEvents(t, shortID); n != 0 {
-			t.Errorf("admin.impersonation_ended rows for the expired session = %d, want 0", n)
-		}
-	})
-
 	t.Run("restart of the issuing replica", func(t *testing.T) {
 		bearer, id := r.session(t, r.gwA.BaseURL(), "mallory@acme.com")
 		r.gwA.Stop(t)
@@ -331,6 +313,25 @@ func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 		awaitRefusedOnReplicas(t, "mallory@acme.com", bearer, r.replicas())
 		if n := r.endedEvents(t, id); n != 1 {
 			t.Errorf("admin.impersonation_ended rows for %s = %d, want 1", id, n)
+		}
+	})
+
+	t.Run("expiry", func(t *testing.T) {
+		// The §13.3 exp check allows one second of skew.
+		if wait := time.Until(shortExp.Add(2 * time.Second)); wait > 0 {
+			t.Logf("waiting %s for the 60 s session to pass its exp", wait.Round(time.Second))
+			time.Sleep(wait)
+		}
+		for _, base := range r.replicas() {
+			if code, _ := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", shortBearer, nil, nil); code != http.StatusUnauthorized {
+				t.Errorf("expired bearer on %s answered %d, want 401", base, code)
+			}
+			if got := r.listed(t, base); slices.Contains(got, shortID) {
+				t.Errorf("GET on %s still lists the expired session %s", base, shortID)
+			}
+		}
+		if n := r.endedEvents(t, shortID); n != 0 {
+			t.Errorf("admin.impersonation_ended rows for the expired session = %d, want 0", n)
 		}
 	})
 }
