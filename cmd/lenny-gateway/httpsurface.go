@@ -421,14 +421,22 @@ func (w *gatewayWiring) buildHTTPSurface(
 		}
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 — Sign goes through the breaker so
-			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
-			// Verify uses the key set, which holds public keys only and
-			// never reaches KMS. F-10.2.6.
+			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE.
+			// F-10.2.6. spec: §27.3, §27.3.1 — the apiKey mint verifies
+			// the pasted bearer with the standard auth chain's verifier:
+			// the key set, which holds public keys only and never reaches
+			// KMS, joined by the upstream IdP member when
+			// --oidc-issuer-url and --oidc-client-id are set, so a pasted
+			// IdP ID token is admitted as it is on the Client → Gateway
+			// path. F-27.3.14.
 			Signer:   w.jwtSigner,
-			Verifier: w.jwtKeySet,
+			Verifier: w.bearerVerifier,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
+			// spec: §27.3.1 — the oidc-mode authorization-code
+			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
+			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
 		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
