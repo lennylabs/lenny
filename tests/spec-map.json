@@ -7754,6 +7754,8 @@
       "tests": [
         "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedToolCallFromAnMCPClientCarriesTheCredential_spec_28_5_4",
         "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedPlatformToolCallCarriesTheCallingSession_spec_28_5_4",
+        "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedRESTRequestAndCoordinator4xxCrossUnchanged_spec_28_5_4",
+        "tests/tier3_contract/holderforward/holderforward_test.go::TestForwardedRESTStreamedUploadResponseCrossesUnchanged_spec_28_5_4",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedRESTRequestAndResponseCrossUnchanged_spec_28_5_4",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardOnAReusedKeepAliveConnectionThatFailsOnWriteIsUnknown_spec_29_3",
