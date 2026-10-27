@@ -66,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/tierpromotion"
 )
 
 // parseRuntimeClassRequirements splits the comma-separated
@@ -521,6 +522,22 @@ func parseAcceptDowngrade(s string) map[string]bool {
 	return accepted
 }
 
+// validatePlatformTier refuses a --platform-tier value outside the §16.1.1
+// closed set tier1, tier2, and tier3, including the empty value, compared
+// exactly. An off-set value would otherwise read as Tier 1 in the §25.4
+// prometheus-reachability advisory and downgrade its Tier 2/3 WARN to an
+// INFO. The chart renders the flag from global.deploymentTier, which the
+// values schema already bounds to the same set.
+//
+// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The lenny-ops
+// Service) "Preflight validation".
+func validatePlatformTier(tier string) error {
+	if tierpromotion.Tier(tier).IsValid() {
+		return nil
+	}
+	return fmt.Errorf("--platform-tier %q is not one of tier1, tier2, or tier3 (§16.1.1, §25.4)", tier)
+}
+
 func main() {
 	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=preflight). F-16.4.1.
@@ -561,8 +578,8 @@ func main() {
 		"value of the monitoring.format chart value (prometheusrule | configmap | both); feeds the §16.9 R8 Prometheus Operator CRD-presence advisory")
 	prometheusURL := flag.String("prometheus-url", "",
 		"value of the ops.prometheus.url chart value; the §25.4 prometheus-reachability check probes it (non-blocking, tier-specific INFO/WARN). Empty means no Prometheus configured.")
-	platformTier := flag.String("platform-tier", "",
-		"value of the global.deploymentTier chart value (tier1 | tier2 | tier3); the §25.4 prometheus-reachability check emits INFO at Tier 1 and WARN at Tier 2/3")
+	platformTier := flag.String("platform-tier", "tier1",
+		"value of the global.deploymentTier chart value (tier1 | tier2 | tier3; default tier1); the §25.4 prometheus-reachability check emits INFO at Tier 1 and WARN at Tier 2/3. Any other value fails the Job.")
 	acknowledgeNoPrometheus := flag.Bool("acknowledge-no-prometheus", false,
 		"value of the monitoring.acknowledgeNoPrometheus chart value; suppresses the §25.4 Tier 2/3 Prometheus WARN when the operator intentionally runs without Prometheus")
 	// §17.9.3 / §17.6 — the preflight-job template passes
@@ -685,6 +702,13 @@ func main() {
 	skipNetworkProbes := flag.Bool("skip-network-probes", false,
 		"value of the preflight.skipNetworkProbes chart flag; skips the backend-reachability probes for air-gapped installs (§17.9.2)")
 	flag.Parse()
+
+	// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The
+	// lenny-ops Service) "Preflight validation". Fail closed on an off-set
+	// tier rather than reading it as Tier 1.
+	if err := validatePlatformTier(*platformTier); err != nil {
+		log.Fatalf("lenny-preflight: %v", err)
+	}
 
 	// MinIO credentials for the §12.5 SSE preflight are read
 	// from env vars so a Helm template can mount them via a secretKeyRef
