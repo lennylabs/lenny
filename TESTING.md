@@ -1309,6 +1309,15 @@ Pre-release only. Production images are signed with cosign; trivy reports zero c
 
 **External pen-test.** Pre-release ships an artifact bundle to the external pen-test partner. The pen-test driver under `tests/tier9_security/pentest/` is the harness for replaying the partner's findings against future builds.
 
+**Build tag and invocation.**
+
+```bash
+lenny-test --tier security
+go test -tags security -count=1 -timeout 1h ./tests/tier9_security/...
+```
+
+The tier runs under its own budget of one hour, which `LENNY_TEST_SECURITY_TIMEOUT` overrides with a Go duration such as `90m`. Several cases wait for a Ready agent workload on the Kind cluster, so the package runtime follows cluster load, and recorded whole-package runs range from about 70 seconds to about 1630 seconds. The load and chaos tiers share the separate 600-second long-tier budget that `LENNY_TEST_LONG_TIMEOUT` overrides.
+
 **Cadence.** Critical subset (12.9.1, 12.9.2, 12.9.3): PR. Full suite: nightly. External pen-test: per release.
 
 ### 12.10 Tier 10 — Conformance

@@ -3301,8 +3301,15 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
       Deployment, and how the gateway authenticates as that internal caller;
     - how the child token is delivered to the child pod.
-  - [ ] **Shared `uploadToken` key proposal** (not yet written): **F-7.1.31** (Medium), the per-process key
-    ring and consumed-token tracker. It may join the session capability token proposal.
+  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (Medium), the per-process
+    `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
+    OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
+    spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
+    names no platform KEK alias for it, and the §10.2 signing key is remote KMS since 0097). Direction
+    decided as owner: for F-27.3.16, keep the OIDC state and PKCE verifier server-side in Redis under a
+    platform-scoped, single-use, short-TTL key, mirroring the §9.3 connector OAuth `state` and the §12.4
+    `conn:oauth:state:{state}` row, rather than a chart HMAC Secret or a new KMS alias. Apply the same
+    reasoning to F-7.1.31 where it fits. Drafted after P3, under the one-change-proposal rule.
   - [ ] **Token audience and error-catalog proposal** (not yet written): **F-10.2.27** (Medium, no verifier
     enforces `aud` by default), **F-15.1.56** (Low, no §15 rows for the revoked-token and
     `token_validation_unavailable` responses), and **F-12.3.26** (Low, no `issued_tokens` row in the §12.3
@@ -3464,8 +3471,10 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     Fixed in `f224f1b0a`: `lenny-test` exports a root outside `/tmp` (`tests/testinfra/testtmp`), the build-once
     sites and the tier-10 socket directory use it, and a tier-0 check holds the rule. T-4.7.19 to T-4.7.22 are
     closed with it. A tier-10 conformance flake seen during the fix is filed as TEST-GAPS T-5.2.16.
-  - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
+  - [x] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
     shares with the load and chaos tiers. The security tier gets its own budget.
+    Fixed in `863631bd1`: `tierSecurityTimeout` defaults to 3600 seconds, about twice the slowest recorded
+    passing run of 1634 seconds, with the override `LENNY_TEST_SECURITY_TIMEOUT`.
   - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
     (about 55 minutes), because `selector.resolve` takes the `--tier` case before the change-selection case
     and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
@@ -3508,7 +3517,8 @@ F-10.2.26 `jwt.OIDCVerifier`.
     discovery document on first use. The per-process state-cookie key is filed as F-27.3.16.
   - [ ] **F-27.3.16** (Medium), filed from the F-27.3.15 fix: the playground OIDC state cookie is signed with
     a per-process key, so a callback served by another gateway replica fails with `oidc_state_invalid`. Sign
-    it with a key every replica shares.
+    it with a key every replica shares. Rerouted 2026-10-27 to the shared gateway key-source proposal above:
+    no existing key source has spec text for this use, so the fix needs a proposal.
   - [x] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
     key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders

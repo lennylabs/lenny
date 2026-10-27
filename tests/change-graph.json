@@ -12,6 +12,17 @@
         "cmd/lenny-ops/..."
       ]
     },
+    "pkg/embedded/k3s/": {
+      "unit": ["pkg/embedded/k3s/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "pkg/embedded/stack/": {
+      "unit": ["pkg/embedded/stack/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "tests/tier2_component/embedded/": {
+      "component": ["tests/tier2_component/embedded/..."]
+    },
     "pkg/kms/kmstest/": {
       "unit": ["pkg/kms/...", "pkg/auth/jwt/..."]
     },

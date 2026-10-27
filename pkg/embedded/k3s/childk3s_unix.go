@@ -45,12 +45,15 @@ type childSupervisor struct {
 	// can substitute a fake server without reaching GitHub releases,
 	// mirroring the runDocker injection on the Docker-backed launcher.
 	httpGet func(req *http.Request) (*http.Response, error)
+	// apiReady waits for the API server behind the kubeconfig to answer
+	// /readyz. It is a field so unit tests do not probe a real server.
+	apiReady apiReadyFunc
 }
 
 // newChildLauncher constructs the Linux child-process launcher. The
 // caller has already applied Config defaults via withDefaults.
 func newChildLauncher(cfg Config) Launcher {
-	return &childSupervisor{cfg: cfg, httpGet: http.DefaultClient.Do}
+	return &childSupervisor{cfg: cfg, httpGet: http.DefaultClient.Do, apiReady: waitAPIServerReady}
 }
 
 // BinaryPath returns the path the k3s binary is stored at.
@@ -130,7 +133,7 @@ func (s *childSupervisor) EnsureBinary(ctx context.Context) error {
 
 // Start downloads the k3s binary when absent and starts the k3s server
 // as a child process. It waits for the kubeconfig to be written and
-// for the API server to accept connections, up to ReadyTimeout.
+// for the API server to answer /readyz, up to ReadyTimeout.
 func (s *childSupervisor) Start(ctx context.Context) error {
 	if !SupportedPlatform() {
 		return unsupportedPlatformError()
@@ -157,9 +160,19 @@ func (s *childSupervisor) Start(ctx context.Context) error {
 	s.cmd = cmd
 	s.logFile = logFile
 
+	// One ReadyTimeout budget covers both the kubeconfig wait and the API
+	// server readiness wait.
+	deadline := time.Now().Add(s.cfg.ReadyTimeout)
 	if err := s.waitReady(ctx); err != nil {
 		_ = s.Stop()
 		return err
+	}
+	// k3s writes the kubeconfig before the API server serves, and a warm
+	// restart finds the previous run's kubeconfig already on disk, so wait
+	// for /readyz before reporting the substrate up. spec: §17.4.
+	if err := s.apiReady(ctx, s.KubeconfigPath(), deadline); err != nil {
+		_ = s.Stop()
+		return fmt.Errorf("%w (see %s)", err, s.LogPath())
 	}
 	return nil
 }
@@ -203,7 +216,8 @@ func (s *childSupervisor) serverArgs(asRoot bool) []string {
 }
 
 // waitReady blocks until the kubeconfig file exists or ReadyTimeout
-// elapses. k3s writes the kubeconfig once the API server is serving.
+// elapses. The file's presence does not mark API server readiness; Start
+// follows this wait with the /readyz wait in apiready.go.
 func (s *childSupervisor) waitReady(ctx context.Context) error {
 	deadline := time.Now().Add(s.cfg.ReadyTimeout)
 	for {
