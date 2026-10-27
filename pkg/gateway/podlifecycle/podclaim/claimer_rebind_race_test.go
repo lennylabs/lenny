@@ -38,12 +38,13 @@ var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Reso
 // claim error (so a racing client sees a spurious failure) or stalls on the
 // vanished reserved pod instead of acquiring a fresh idle one.
 func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	base := newEnvtestClient(
 		t,
-		reservedSandbox("sbx-held", "acme"),
-		lifetimePod(testPool, "sbx-held", "acme", "keep"),
-		sandboxIn(testPool, "sbx-idle", "idle"),
+		reservedSandbox(ns, "sbx-held", "acme"),
+		lifetimePod(ns, testPool, "sbx-held", "acme", "keep"),
+		sandboxIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, base, "sbx-held", "acme", now, 30*time.Second)
 
@@ -62,7 +63,7 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 	})
 
 	claimer := &podclaim.Claimer{
-		Client: raced, Namespace: testNS,
+		Client: raced, Namespace: ns,
 		Now: func() time.Time { return now.Add(5 * time.Second) }, // within the hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{

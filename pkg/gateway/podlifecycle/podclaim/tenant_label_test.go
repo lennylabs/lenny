@@ -23,11 +23,11 @@ import (
 // runtimeClass, when non-empty, is the §5.3 RuntimeClass the pod runs
 // under; the matching RuntimeClass object must already exist in the
 // cluster (envtest validates spec.runtimeClassName).
-func agentPod(name, runtimeClass string) *corev1.Pod {
+func agentPod(ns, name, runtimeClass string) *corev1.Pod {
 	p := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelManaged: "true", warmpool.LabelPool: testPool},
 		},
 		Spec: corev1.PodSpec{
@@ -60,8 +60,9 @@ func mustCreateRuntimeClass(t *testing.T, c client.Client, name string) {
 
 func getPod(t *testing.T, c client.Client, name string) corev1.Pod {
 	t.Helper()
+	ns := testNamespace(t)
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &pod); err != nil {
 		t.Fatalf("get pod %s: %v", name, err)
 	}
 	return pod
@@ -73,8 +74,9 @@ func getPod(t *testing.T, c client.Client, name string) corev1.Pod {
 // `unset → {tenant_id}` transition to guard. Before F-17.2.3 the
 // gateway stamped lenny.dev/tenant-id only on the Sandbox.
 func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
-	mustCreate(t, c, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	if _, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-1", "acme", 8)); err != nil {
@@ -91,8 +93,9 @@ func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
 // A second slot on an already-pinned pod re-stamps the same tenant pin
 // idempotently — the webhook treats unset→same-value as a no-op edge.
 func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
-	mustCreate(t, c, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	for i, sess := range []string{"sess-1", "sess-2"} {
 		if _, err := claimer.ClaimSlot(context.Background(),
@@ -110,8 +113,9 @@ func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
 // Session-mode warm-pool binding (Claimer.Claim) is also a "first
 // assignment" per §5.2, so it too lands the pin on the pod.
 func TestClaimStampsTenantLabelOnSessionPod_spec_17_2_3(t *testing.T) {
-	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
-	mustCreate(t, c, agentPod("sbx-1", ""))
+	ns := testNamespace(t)
+	claimer, c := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -129,7 +133,8 @@ func TestClaimStampsTenantLabelOnSessionPod_spec_17_2_3(t *testing.T) {
 // materialized) must not fail the claim: the pin stands on Sandbox.status
 // and the next assignment re-stamps it. The helper tolerates NotFound.
 func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
-	claimer, _, _ := slotClaimerFor(t, concurrentSandbox("sbx-1", "idle", ""))
+	ns := testNamespace(t)
+	claimer, _, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-1", "acme", 8))
@@ -147,14 +152,15 @@ func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
 // Kata-RuntimeClass pod and lands the §5.2 tenant pin on it. Kata's slot
 // binding was previously type-checked but never exercised by a test.
 func TestClaimSlotBindsKataMicrovmPod_spec_5_3_8(t *testing.T) {
-	sb := concurrentSandbox("kata-sbx-1", "idle", "")
+	ns := testNamespace(t)
+	sb := concurrentSandbox(ns, "kata-sbx-1", "idle", "")
 	sb.Spec.IsolationProfile = "microvm"
 	claimer, c, _ := slotClaimerFor(t, sb)
 
 	// A Kata pod references the `kata` RuntimeClass, which envtest's
 	// apiserver validates exists before admitting the pod.
 	mustCreateRuntimeClass(t, c, podspec.KataNodePoolValue)
-	kataPod := agentPod("kata-sbx-1", "kata")
+	kataPod := agentPod(ns, "kata-sbx-1", "kata")
 	mustCreate(t, c, kataPod)
 
 	res, err := claimer.ClaimSlot(context.Background(),
@@ -171,7 +177,7 @@ func TestClaimSlotBindsKataMicrovmPod_spec_5_3_8(t *testing.T) {
 
 	// The slot binding is persisted (the §6.2 slot is bound).
 	var stored lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: res.Claim.Name}, &stored); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: res.Claim.Name}, &stored); err != nil {
 		t.Fatalf("the SandboxClaim binding the Kata slot was not persisted: %v", err)
 	}
 

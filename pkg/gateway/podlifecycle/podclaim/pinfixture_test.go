@@ -27,11 +27,11 @@ import (
 
 // pinnedPod builds a minimal agent Pod backing the same-named Sandbox in
 // pool, carrying the §5.2 tenant pin label when tenant is non-empty.
-func pinnedPod(pool, name, tenant string) *corev1.Pod {
+func pinnedPod(ns, pool, name, tenant string) *corev1.Pod {
 	p := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelManaged: "true", warmpool.LabelPool: pool},
 		},
 		Spec: corev1.PodSpec{
@@ -46,8 +46,8 @@ func pinnedPod(pool, name, tenant string) *corev1.Pod {
 
 // lifetimePod builds a pinnedPod that carries the runtime-process lifetime
 // label lifetime; an empty lifetime leaves the label absent.
-func lifetimePod(pool, name, tenant, lifetime string) *corev1.Pod {
-	p := pinnedPod(pool, name, tenant)
+func lifetimePod(ns, pool, name, tenant, lifetime string) *corev1.Pod {
+	p := pinnedPod(ns, pool, name, tenant)
 	if lifetime != "" {
 		p.Labels[podclaim.LabelRuntimeProcess] = lifetime
 	}
@@ -56,8 +56,8 @@ func lifetimePod(pool, name, tenant, lifetime string) *corev1.Pod {
 
 // reservedIn builds a Sandbox in pool projecting the §6.2 `reserved` phase
 // for tenant.
-func reservedIn(pool, name, tenant string) *lennyv1.Sandbox {
-	sb := sandboxIn(pool, name, "reserved")
+func reservedIn(ns, pool, name, tenant string) *lennyv1.Sandbox {
+	sb := sandboxIn(ns, pool, name, "reserved")
 	sb.Status.TenantID = tenant
 	return sb
 }
@@ -66,9 +66,10 @@ func reservedIn(pool, name, tenant string) *lennyv1.Sandbox {
 // WarmPoolController field manager, as the occupancy projection would.
 func setSandboxPhase(t *testing.T, c client.Client, name, phase string) {
 	t.Helper()
+	ns := testNamespace(t)
 	patch := &lennyv1.Sandbox{
 		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1.GroupVersion.String(), Kind: "Sandbox"},
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Status:     lennyv1.SandboxStatus{Phase: phase},
 	}
 	if err := c.Status().Patch(context.Background(), patch, client.Apply,
@@ -80,7 +81,8 @@ func setSandboxPhase(t *testing.T, c client.Client, name, phase string) {
 // createBareClaim creates claim-<podName> for tenant with spec only.
 func createBareClaim(t *testing.T, c client.Client, podName, tenant string) {
 	t.Helper()
-	if _, err := podclaim.CreateClaim(context.Background(), c, testNS, podName,
+	ns := testNamespace(t)
+	if _, err := podclaim.CreateClaim(context.Background(), c, ns, podName,
 		podclaim.ClaimRequest{TenantID: tenant}); err != nil {
 		t.Fatalf("create claim for %s: %v", podName, err)
 	}
@@ -248,7 +250,8 @@ func errorMentions(r logRecord, substr string) bool {
 // claimAbsent reports whether claim-<podName> does not exist.
 func claimAbsent(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podclaim.ClaimName(podName)}, &lennyv1.SandboxClaim{})
+	ns := testNamespace(t)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &lennyv1.SandboxClaim{})
 	if apierrors.IsNotFound(err) {
 		return true
 	}
