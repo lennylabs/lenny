@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
@@ -19,7 +21,9 @@ import (
 var echoBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "executor-echo-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("executor-echo-*")
 	if err != nil {
 		panic("executor TestMain: mkdtemp: " + err.Error())
 	}
@@ -28,6 +32,7 @@ func TestMain(m *testing.M) {
 	echoBinary = filepath.Join(tmp, "echo")
 	cmd := exec.Command("go", "build", "-o", echoBinary, "./cmd/runtimes/echo")
 	cmd.Dir = repoRoot()
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("executor TestMain: build echo: " + err.Error())

@@ -59,7 +59,7 @@ only the env vars it can satisfy.
 {{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
 {{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
-{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasRedisPassword := and (or $useSentinel $hasRedisCluster) (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
 {{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
 {{- $hasCoordRedis := and $concerns (hasKey $concerns "coordinationUrl") (ne ($concerns.coordinationUrl | toString) "") -}}
@@ -1502,13 +1502,27 @@ spec:
             {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
                    addresses and master name are not secret (plain env);
                    the data AUTH password and the optional sentinel AUTH
-                   password are read from the datastore Secret. TLS is
-                   requested on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+                   password are read from the datastore Secret. TLS and the
+                   data password render in the block that follows. */}}
             {{- if $useSentinel }}
             - name: LENNY_REDIS_SENTINEL_ADDRS
               value: {{ join "," $redis.sentinels | quote }}
             - name: LENNY_REDIS_SENTINEL_MASTER
               value: {{ $redis.sentinelMaster | quote }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- /* §12.4 "Security" — AUTH and TLS are required on every
+                   Redis instance. The Sentinel and Cluster topologies carry
+                   no URL, so TLS is requested explicitly and the data AUTH
+                   password is read from the datastore Secret. The external
+                   topology carries both in its rediss:// URL. F-12.4.37. */}}
+            {{- if or $useSentinel $hasRedisCluster }}
             - name: LENNY_REDIS_TLS
               value: "true"
             {{- if $hasRedisPassword }}
@@ -1517,13 +1531,6 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: redis-password
-            {{- end }}
-            {{- if $hasSentinelPassword }}
-            - name: LENNY_REDIS_SENTINEL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: lenny-datastore-conn
-                  key: redis-sentinel-password
             {{- end }}
             {{- end }}
             {{- /* §12.4 — per-concern Redis URLs (logical

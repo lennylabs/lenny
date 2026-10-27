@@ -158,31 +158,63 @@ func durationOrDefault(seconds int, def time.Duration) time.Duration {
 }
 
 // authInputs carries what buildAuthConfig needs: the §10.2 key set, the
-// revocation set, and the authentication flags.
+// revocation set, the §10.2 platform-managed role resolver, and the
+// authentication flags.
 type authInputs struct {
 	keySet      *jwt.KeySet
 	revocations *opsRevocation
-	hmacKeyFile string
-	issuer      string
-	multiTenant bool
-	production  bool
-	rps         float64
-	burst       int
+	// platformRoles is the §10.2 platform-managed role resolver. Nil
+	// leaves the token's roles claim authoritative, which is the posture
+	// of a process with no Postgres.
+	platformRoles authmw.PlatformRoleResolver
+	hmacKeyFile   string
+	issuer        string
+	multiTenant   bool
+	devMode       bool
+	production    bool
+	rps           float64
+	burst         int
 }
 
 // errDevTrustInProduction refuses the dev embedded-OIDC trust hook under
 // --production.
 var errDevTrustInProduction = errors.New("§17.4: --bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused when --production is set")
 
-// checkDevTrustPosture refuses --bearer-trust-hmac-key-file under
-// --production. runOps calls it before the key set loads, so the refusal
-// does not wait on a KMS round trip, and buildAuthConfig repeats it.
+// errDevTrustWithoutDevMode refuses the dev embedded-OIDC trust hook when
+// --dev-mode (LENNY_DEV_MODE) is off, as the gateway does.
+var errDevTrustWithoutDevMode = errors.New("§17.4: --bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and requires --dev-mode (LENNY_DEV_MODE=true)")
+
+// devRelaxed reports whether lenny-ops admits its dev-mode security
+// relaxations: the X-Lenny-* identity headers, the dev roles, and the
+// unauthenticated surface when no trust hook is configured. §17.4 "Dev
+// mode guard rails" item 3 makes LENNY_DEV_MODE the single gate for every
+// dev-mode relaxation, so --dev-mode is required. --production never
+// admits a relaxation: a production process authenticates every request
+// through the §10.2 key set whether or not --dev-mode is set.
 //
 // spec: §17.4 "Dev mode guard rails"; §25.4 (The lenny-ops Service:
 // Authentication).
-func checkDevTrustPosture(production bool, hmacKeyFile string) error {
-	if production && hmacKeyFile != "" {
+func devRelaxed(devMode, production bool) bool {
+	return devMode && !production
+}
+
+// checkDevTrustPosture refuses --bearer-trust-hmac-key-file under
+// --production and without --dev-mode. runOps calls it before the key
+// set loads, so the refusal does not wait on a KMS round trip, and
+// buildAuthConfig repeats it. The production refusal takes precedence so
+// that a production process names the production rule.
+//
+// spec: §17.4 "Dev mode guard rails"; §25.4 (The lenny-ops Service:
+// Authentication).
+func checkDevTrustPosture(devMode, production bool, hmacKeyFile string) error {
+	if hmacKeyFile == "" {
+		return nil
+	}
+	if production {
 		return errDevTrustInProduction
+	}
+	if !devMode {
+		return errDevTrustWithoutDevMode
 	}
 	return nil
 }
@@ -190,37 +222,46 @@ func checkDevTrustPosture(production bool, hmacKeyFile string) error {
 // buildAuthConfig assembles the §25.4 authentication and role gate for
 // the operability surface.
 //
-// It returns a config whenever --production or
-// --bearer-trust-hmac-key-file is set. The verifier is the §10.2 key set,
-// composed with the dev trust member through a MultiVerifier when the
-// key file is set; --oidc-issuer-url wraps only the dev trust member,
-// because Lenny-issued tokens are accepted whatever their issuer and
-// audience. The revocation set applies to tokens the key set verifies and
-// never to dev trust-hook tokens (§25.4 rule 6). The per-service-account
-// rate limiter is always attached.
+// It returns a config in every posture except dev mode without the trust
+// hook. The verifier is the §10.2 key set, composed with the dev trust
+// member through a MultiVerifier when the key file is set;
+// --oidc-issuer-url wraps only the dev trust member, because
+// Lenny-issued tokens are accepted whatever their issuer and audience.
+// The revocation set applies to tokens the key set verifies and never to
+// dev trust-hook tokens (§25.4 rule 6). The platform-managed role
+// resolver applies to every authenticated principal, whichever member
+// verified its token, so a stored role assignment replaces the roles
+// claim as it does on the gateway (§10.2 "Role assignment"). The
+// per-service-account rate limiter is always attached.
 //
-// A non-production process without the key file serves the surface
-// unauthenticated. The key file under --production is an error the
-// caller treats as fatal.
+// The X-Lenny-* identity headers and the dev roles are honored only
+// under devRelaxed, and only devRelaxed without the key file serves the
+// surface unauthenticated. Outside dev mode, --production true or false,
+// every request authenticates through the key set. The key file under
+// --production or without --dev-mode is an error the caller treats as
+// fatal.
 //
 // spec: §25.4 (The lenny-ops Service: Authentication); §10.2
-// (Authentication) "Verifier key set and rotation"; §17.4.
+// (Authentication) "Verifier key set and rotation"; §17.4 "Dev mode guard
+// rails".
 func buildAuthConfig(in authInputs) (*opsserver.AuthConfig, error) {
-	if err := checkDevTrustPosture(in.production, in.hmacKeyFile); err != nil {
+	if err := checkDevTrustPosture(in.devMode, in.production, in.hmacKeyFile); err != nil {
 		return nil, err
 	}
-	if !in.production && in.hmacKeyFile == "" {
-		log.Printf("lenny-ops: §25.4 WARNING — no --production and no bearer trust key; the operability surface is UNAUTHENTICATED (dev only)")
+	relaxed := devRelaxed(in.devMode, in.production)
+	if relaxed && in.hmacKeyFile == "" {
+		log.Printf("lenny-ops: §25.4 WARNING — dev mode and no bearer trust key; the operability surface is UNAUTHENTICATED (dev only)")
 		return nil, nil
 	}
 	opts := authmw.Options{
 		Verifier:    in.keySet,
 		MultiTenant: in.multiTenant,
-		// Outside production the dev headers (X-Lenny-Tenant-ID /
+		// In dev mode the dev headers (X-Lenny-Tenant-ID /
 		// X-Lenny-User-ID / X-Lenny-Roles) remain a convenience
-		// transport; production anchors every claim to the bearer JWT.
-		AllowDevHeaders: !in.production,
-		AllowDevRoles:   !in.production,
+		// transport; outside it every claim is anchored to the bearer JWT.
+		AllowDevHeaders: relaxed,
+		AllowDevRoles:   relaxed,
+		PlatformRoles:   in.platformRoles,
 	}
 	if in.hmacKeyFile != "" {
 		dev, err := devTrustVerifier(in.hmacKeyFile, in.issuer)
@@ -284,6 +325,21 @@ func envBool(name string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+// envDevMode reads LENNY_DEV_MODE with the gateway's parsing
+// (cmd/lenny-gateway envFlag): 1, true, yes, or on in any case enables dev
+// mode, and every other value or an unset variable leaves it off, so one
+// LENNY_DEV_MODE value means the same thing to both binaries.
+//
+// spec: §17.4 "Dev mode guard rails".
+func envDevMode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LENNY_DEV_MODE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // splitAndTrim splits a comma-separated string and drops empty entries

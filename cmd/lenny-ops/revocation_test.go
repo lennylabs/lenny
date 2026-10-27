@@ -118,7 +118,7 @@ type revHarness struct {
 }
 
 // newRevHarness builds the chain buildAuthConfig returns for the given
-// posture: production, or non-production with the dev trust hook.
+// posture: production, or non-production dev mode with the dev trust hook.
 func newRevHarness(t *testing.T, production bool) *revHarness {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -126,7 +126,7 @@ func newRevHarness(t *testing.T, production bool) *revHarness {
 	keySet, signer := testKeySet(t, 0x42)
 	clock := &fakeClock{now: time.Unix(1_800_000_000, 0)}
 	rev := newOpsRevocation(revocation.WithClock(clock.Now))
-	in := authInputsFor(keySet, "", "", production)
+	in := authInputsFor(keySet, "", "", !production, production)
 	if !production {
 		in.hmacKeyFile = writeHMACKeyFile(t, devSecret)
 	}

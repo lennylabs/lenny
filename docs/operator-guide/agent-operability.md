@@ -326,7 +326,7 @@ Every agent action is logged in the OCSF-formatted audit stream with:
 - The canonical operation that fired
 - The before/after state for applicable operations
 
-Agents cannot suppress audit. An operation that succeeds but fails to audit is treated as failed and rolled back.
+Agents cannot suppress audit. The gateway writes its own audit events synchronously. During a Postgres outage, `lenny-ops` buffers the audit events it generates and, when Postgres recovers, inserts them into the audit log with their original timestamps. The operation that produced a buffered event is not undone.
 
 ---
 

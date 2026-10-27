@@ -158,6 +158,19 @@ subject is intact. The pattern is a helper called at the top of the test that li
 the fixture's name prefix or label, skips the ones this run created, deletes the rest, and logs each deletion
 without failing the test when the sweep itself errors.
 
+**7. Every image the environment needs can be built or pulled.** An image a fixture pulls from a public
+registry can disappear upstream, and a cluster or a Docker host that still caches it hides the loss until a
+fresh environment fails to install with `ImagePullBackOff` or `pull access denied`. MinIO is the known case:
+the community `minio/minio` and `minio/mc` images are no longer distributed, so the fixtures and the chart
+defaults run the maintained forks `pgsty/silo` (server) and `pgsty/mc` (client), each pinned by release tag
+and by the digest of its multi-arch index. `tests/testinfra/kind/minioimages.go` holds the references, and
+`TestMinIOImagePinsAgree` keeps `install.sh`, the data-store manifests, the compose files,
+`containers.StartMinIO`, and the chart defaults on the same references. The Kind install pulls both images on
+the host, loads them onto the nodes, and registers each digest-pinned name in the node's containerd, because
+the nodes cannot pull. `LENNY_MINIO_IMAGE` points `StartMinIO` at another copy of the server image. Do not
+repoint a fixture at a community MinIO image, because none can be pulled. To move to a new release, update
+the references in `minioimages.go` and every carrier the test names in the same change.
+
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
 skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to

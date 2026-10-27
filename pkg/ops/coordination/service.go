@@ -5,6 +5,8 @@ package coordination
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -50,6 +52,10 @@ type Service struct {
 	activeTier string
 	epoch      uint64 // tracked outage epoch stamped onto Tier 3 acquisitions
 	pgDown     bool   // true once a Postgres outage has been observed this cycle
+	// pendingRemovals holds the ids of losing split-brain Redis locks
+	// whose removal failed; the next reconciliation retries them before
+	// it reads the Redis locks. Only the leader-only Reconcile touches it.
+	pendingRemovals map[string]struct{}
 }
 
 // NewService returns a tiered remediation-lock service from opts.
@@ -375,11 +381,24 @@ func (s *Service) Reap(ctx context.Context) int {
 // lock_split_brain_detected audit event. It is a no-op without a Postgres
 // tier (nothing to reconcile to).
 //
-// spec: §25.4.
+// The two Redis writes that follow the Postgres transaction, mirroring the
+// reconciled epoch back to Redis and removing a losing Redis lock, can
+// fail after Postgres has committed. Reconcile still completes the pass
+// (the tracked epoch, the metric, and the audit event reflect the
+// committed outcome) and returns an error naming each failed write, which
+// the reconcile loop logs. The next pass retries both: it re-issues the
+// epoch mirror, and it retries each failed removal before reading the
+// Redis locks, so a removed loser is not reported as a second conflict.
+//
+// spec: §25.4 (The lenny-ops Service: Tier Transitions and Split-Brain
+// Prevention, "Outage epochs" and the deterministic split-brain
+// resolution rule "The Redis lock is removed").
 func (s *Service) Reconcile(ctx context.Context) error {
 	if s.pgRecon == nil {
 		return nil
 	}
+	remover, _ := s.redis.(redisLockRemover)
+	errs := s.retryPendingRemovals(ctx, remover)
 	var redisEpoch uint64
 	var redisLocks []Lock
 	if s.redis != nil {
@@ -397,7 +416,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	// On recovery the Postgres epoch becomes the reconciled MAX; mirror it
 	// back to Redis so both stores hold the same value (§25.4).
 	if s.redis != nil {
-		_ = s.redis.SetEpoch(ctx, out.Epoch)
+		if err := s.redis.SetEpoch(ctx, out.Epoch); err != nil {
+			errs = append(errs, fmt.Errorf("mirror reconciled epoch %d to Redis: %w", out.Epoch, err))
+		}
 	}
 	s.mu.Lock()
 	if out.Epoch > s.epoch {
@@ -407,7 +428,6 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	epoch := s.epoch
 	s.mu.Unlock()
 	s.metrics.SetOutageEpoch(epoch)
-	remover, _ := s.redis.(redisLockRemover)
 	for _, c := range out.Conflicts {
 		// §25.4: when the pre-outage Postgres holder wins over a
 		// still-active post-outage Redis lock, the losing Redis lock is
@@ -415,7 +435,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		// holder is separately notified with the split-brain 409 (recorded in
 		// ops_lock_conflicts) on its next heartbeat/list/release.
 		if remover != nil && c.Winner == "pre_outage" && c.LoserWasActive && c.LoserLockID != "" {
-			_ = remover.RemoveByID(ctx, c.LoserLockID)
+			if err := s.removeLoser(ctx, remover, c.LoserLockID); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		s.metrics.SplitBrainDetected(scopePattern(c.Scope))
 		if s.audit != nil {
@@ -427,7 +449,49 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			})
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("coordination: reconcile committed in Postgres but a Redis write failed and is retried on the next pass: %w", errors.Join(errs...))
+	}
 	return nil
+}
+
+// removeLoser removes the losing split-brain Redis lock id, recording it
+// as pending when the removal fails so the next pass retries it.
+func (s *Service) removeLoser(ctx context.Context, remover redisLockRemover, id string) error {
+	err := remover.RemoveByID(ctx, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		if s.pendingRemovals == nil {
+			s.pendingRemovals = map[string]struct{}{}
+		}
+		s.pendingRemovals[id] = struct{}{}
+		return fmt.Errorf("remove losing split-brain Redis lock %s: %w", id, err)
+	}
+	delete(s.pendingRemovals, id)
+	return nil
+}
+
+// retryPendingRemovals retries every removal an earlier pass failed and
+// returns the errors of those that fail again.
+func (s *Service) retryPendingRemovals(ctx context.Context, remover redisLockRemover) []error {
+	if remover == nil {
+		return nil
+	}
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.pendingRemovals))
+	for id := range s.pendingRemovals {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	sort.Strings(ids)
+	var errs []error
+	for _, id := range ids {
+		if err := s.removeLoser(ctx, remover, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // memTier adapts *MemStore to the Store interface so the Tier 3 store

@@ -1468,21 +1468,27 @@ metadata:
     app.kubernetes.io/component: pgbouncer
     lenny.dev/component: pgbouncer
 data:
-  # pgbouncer.ini fragment carrying the §4.2 connect_query sentinel
-  # and the §12.3 transaction-mode setting. Operators mount this at
-  # the PgBouncer pod's /etc/pgbouncer/pgbouncer.ini path (or
-  # equivalent) so every fresh server connection runs the
-  # connect_query before being handed to a client transaction.
+  # The §12.3 pgbouncer.ini. The deployed PgBouncer copies it into its
+  # writable config directory; operators who run their own PgBouncer
+  # mount it at /etc/pgbouncer/pgbouncer.ini.
   pgbouncer.ini: |
-    [pgbouncer]
-    pool_mode = transaction
-    # spec: §4.2 — fresh server connections begin with the
+    [databases]
+    # spec: §4.2 — every fresh server connection begins with the
     # SET sentinel so an unclaimed pooled connection is rejected by
     # the lenny_tenant_guard trigger and by RLS before tenant data
-    # could leak. The pgbouncer.ini INI parser wraps the value in
-    # single quotes and doubles any embedded single quote, so we
-    # transform `'` -> `''` from the values.yaml literal here.
-    connect_query = 'SET app.current_tenant = ''__unset__'''
+    # could leak. The connection-string parser takes a single-quoted
+    # value and a doubled embedded single quote, so `'` becomes `''`
+    # from the values.yaml literal here.
+    ; * = host=<postgres-host> port=5432 connect_query='SET app.current_tenant = ''__unset__'''
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 5432
+    unix_socket_dir =
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = transaction
+    ignore_startup_parameters = extra_float_digits
 
 ---
 # Source: lenny/templates/prometheusrule.yaml
@@ -4771,6 +4777,13 @@ spec:
             - --kms-provider=local
             - --environment=dev
             - --kms-master-key-file=/etc/lenny/kms/master-key
+            # §17.4 "Dev mode guard rails": LENNY_DEV_MODE is the single
+            # gate for every dev-mode relaxation, so lenny-ops reads the
+            # same global.devMode value the gateway's --dev-mode does. It
+            # admits the dev trust hook, the X-Lenny-* identity headers,
+            # and the dev roles; without it lenny-ops authenticates every
+            # request whatever ops.production says.
+            - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -4806,8 +4819,9 @@ spec:
             - --escalation-reconciliation-writes-per-second=20
             # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
-            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
-            # refuses it, so it renders only when ops.production is false.
+            # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
+            # without --dev-mode and under --production, so it renders only
+            # when global.devMode is true and ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps=20

@@ -67,7 +67,7 @@ Lenny-issued token.
 {{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
 {{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
-{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasRedisPassword := and (or $useSentinel $hasRedisCluster) (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
 {{- /* §12.4 Cache/Pub-Sub concern: the gateway publishes token.revoked
    there, so lenny-ops subscribes on the same instance (§25.4 revocation
@@ -76,9 +76,10 @@ Lenny-issued token.
 {{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
 {{- $pg := .Values.postgres -}}
 {{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
-{{- /* §17.4: the dev embedded-OIDC trust hook is refused by a production
-   lenny-ops, so it renders only when ops.production is false. */ -}}
-{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret (not .Values.ops.production) -}}
+{{- /* §17.4 "Dev mode guard rails": lenny-ops refuses the dev embedded-OIDC
+   trust hook without --dev-mode and under --production, so it renders only
+   when global.devMode is true and ops.production is false. */ -}}
+{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret .Values.global.devMode (not .Values.ops.production) -}}
 {{- /* §17.4: under kms.provider=local lenny-ops mounts the master key Secret
    the gateway and the Token Service share, so its key set holds the same
    ES256 public key they sign with. */ -}}
@@ -203,6 +204,13 @@ spec:
             # gateway and the Token Service sign with.
             {{- include "lenny.kmsArgs" . | nindent 12 }}
             {{- if .Values.global.devMode }}
+            # §17.4 "Dev mode guard rails": LENNY_DEV_MODE is the single
+            # gate for every dev-mode relaxation, so lenny-ops reads the
+            # same global.devMode value the gateway's --dev-mode does. It
+            # admits the dev trust hook, the X-Lenny-* identity headers,
+            # and the dev roles; without it lenny-ops authenticates every
+            # request whatever ops.production says.
+            - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -257,8 +265,9 @@ spec:
             - --oidc-issuer-url={{ .Values.security.oidc.issuerUrl }}
             {{- end }}
             {{- if $devTrust }}
-            # §17.4 dev embedded-OIDC trust hook; a production lenny-ops
-            # refuses it, so it renders only when ops.production is false.
+            # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
+            # without --dev-mode and under --production, so it renders only
+            # when global.devMode is true and ops.production is false.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             {{- end }}
             # §25.4 per-service-account rate limiting. F-25.4.5.
@@ -401,13 +410,27 @@ spec:
             {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
                    addresses and master name are not secret (plain env);
                    the data AUTH password and the optional sentinel AUTH
-                   password come from the datastore Secret. TLS is requested
-                   on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+                   password come from the datastore Secret. TLS and the data
+                   password render in the block that follows. */}}
             {{- if $useSentinel }}
             - name: LENNY_REDIS_SENTINEL_ADDRS
               value: {{ join "," $redis.sentinels | quote }}
             - name: LENNY_REDIS_SENTINEL_MASTER
               value: {{ $redis.sentinelMaster | quote }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- /* §12.4 "Security" — AUTH and TLS are required on every
+                   Redis instance. The Sentinel and Cluster topologies carry
+                   no URL, so TLS is requested explicitly and the data AUTH
+                   password is read from the datastore Secret. The external
+                   topology carries both in its rediss:// URL. F-12.4.37. */}}
+            {{- if or $useSentinel $hasRedisCluster }}
             - name: LENNY_REDIS_TLS
               value: "true"
             {{- if $hasRedisPassword }}
@@ -416,13 +439,6 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: redis-password
-            {{- end }}
-            {{- if $hasSentinelPassword }}
-            - name: LENNY_REDIS_SENTINEL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: lenny-datastore-conn
-                  key: redis-sentinel-password
             {{- end }}
             {{- end }}
           ports:

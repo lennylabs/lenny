@@ -55,6 +55,12 @@ func main() {
 		args = []string{"--help"}
 	}
 
+	// Keep every temp directory the run's processes create out of /tmp.
+	// A failure leaves the inherited environment in place.
+	if _, err := applyTestTempEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test: warning: test temp root: %v\n", err)
+	}
+
 	// Subcommands. Anything that does not match a known subcommand falls
 	// through to the run command (so `lenny-test --group pr` works without
 	// requiring `lenny-test run --group pr`).
@@ -148,7 +154,9 @@ Run flags:
                            nightly, pre-release, phase-3.5-gate).
   --tier <name>            A single tier (static, unit, component, contract,
                            integration, e2e_kind, e2e_cloud, load, chaos, security,
-                           conformance, docs).
+                           conformance, docs). With --changed, --since,
+                           --spec, or --pkg, runs that selection restricted to
+                           the one tier (unit keeps the selected packages).
   --max-tier <name>        Run all tiers up to and including <name>.
   --changed                Run tests affected by uncommitted changes (git diff).
   --spec <s1,s2,...>       Run tests covering the given spec sections.

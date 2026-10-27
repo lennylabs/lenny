@@ -24,6 +24,7 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -420,14 +421,22 @@ func (w *gatewayWiring) buildHTTPSurface(
 		}
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 — Sign goes through the breaker so
-			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
-			// Verify uses the key set, which holds public keys only and
-			// never reaches KMS. F-10.2.6.
+			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE.
+			// F-10.2.6. spec: §27.3, §27.3.1 — the apiKey mint verifies
+			// the pasted bearer with the standard auth chain's verifier:
+			// the key set, which holds public keys only and never reaches
+			// KMS, joined by the upstream IdP member when
+			// --oidc-issuer-url and --oidc-client-id are set, so a pasted
+			// IdP ID token is admitted as it is on the Client → Gateway
+			// path. F-27.3.14.
 			Signer:   w.jwtSigner,
-			Verifier: w.jwtKeySet,
+			Verifier: w.bearerVerifier,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
+			// spec: §27.3.1 — the oidc-mode authorization-code
+			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
+			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
 		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
 		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
@@ -831,11 +840,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// above: the §10.2 key set, so a token minted by any gateway replica
 	// or by POST /v1/oauth/token on any Token Service replica verifies
 	// here, plus the embedded OIDC provider's key when
-	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode.
+	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode, plus
+	// the deployer's upstream IdP, through its discovered JWK Set, when
+	// --oidc-issuer-url and --oidc-client-id are set (buildIdPVerifier).
 	authOpts := authmw.Options{
 		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
 		// IdP-key members read the configured `auth.tenantIdClaim`
-		// (embeddedHMACVerifier) and the key-set member keeps
+		// (embeddedHMACVerifier, composeBearerVerifier) and the key-set member keeps
 		// `tenant_id`. F-10.2.9.
 		Verifier:    w.bearerVerifier,
 		Revocations: revProp,
@@ -853,7 +864,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// overrides OIDC-derived roles. The userstore-backed adapter
 		// returns the user's stored Roles when the row exists; missing
 		// rows fall through to the JWT claim. F-10.2.3.
-		PlatformRoles: userstorePlatformRoles{store: w.users},
+		PlatformRoles: userstore.PlatformRoles{Store: w.users},
 		// spec: §10.6 — real-time group check. The introspection
 		// verifier reads each tenant's identityProvider record; a tenant
 		// that leaves introspectionEnabled off pays nothing beyond a cached

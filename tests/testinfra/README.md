@@ -17,7 +17,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`chaos/`](chaos/) | Fault-injection driver for Tier 8 (chaos-mesh adapter, network partition, pod kill, clock skew, toxiproxy bridge). |
 | [`cloud/`](cloud/) | Tier 6 cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
 | [`compose/`](compose/) | `docker compose` lifecycle wrapper for Tier 4 integration tests (gateway, stores, and mocks on a single host). |
-| [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. |
+| [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. `StartMinIO` runs `pgsty/silo`, the maintained fork of the MinIO server, pinned by tag and index digest; `LENNY_MINIO_IMAGE` replaces it. |
 | [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. |
 | [`envtest/`](envtest/) | controller-runtime envtest harness for Tier 2 K8s API-server interactions. |
 | [`fixtures/`](fixtures/) | Seed-data loaders for the canonical tenants, layers, runtimes, and OAuth providers used across tiers. Subpackages: `generators/`, `seed/`. |

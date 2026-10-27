@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/compliance"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/outputpartfidelity"
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
@@ -83,7 +85,9 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 	}
 	artifactsOnce.Do(func() {
 		root := repoRoot(t)
-		dir, err := os.MkdirTemp("", "tier10-conformance-*")
+		// The shared builds live under the harness temp root rather than
+		// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+		dir, err := testtmp.MkdirTemp("tier10-conformance-*")
 		if err != nil {
 			artifactsErr = err
 			return
@@ -95,6 +99,7 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 			bin := filepath.Join(dir, name)
 			cmd := exec.Command("go", "build", "-o", bin, pkg)
 			cmd.Dir = root
+			cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(dir))...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				artifactsErr = &buildError{pkg: pkg, output: string(out), err: err}
 				return ""

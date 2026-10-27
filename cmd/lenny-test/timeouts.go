@@ -38,11 +38,23 @@ const (
 
 var (
 	// tierLongTimeout caps how long a long-running tier (load,
-	// chaos, security) may take per invocation. Production CI
+	// chaos) may take per invocation. Production CI
 	// configures the surrounding workflow timeout to a larger
 	// value so a hung tier surfaces as a tier failure rather than
 	// a workflow timeout. Override: LENNY_TEST_LONG_TIMEOUT.
 	tierLongTimeout = tierTimeout("LENNY_TEST_LONG_TIMEOUT", 600*time.Second)
+
+	// tierSecurityTimeout caps the security tier. The tier-9 package is one
+	// binary of roughly two hundred top-level tests, several of which wait
+	// up to 120 seconds each for a Ready agent workload on the Kind
+	// cluster, so its runtime tracks cluster load rather than test count.
+	// Recorded whole-package runs on the development host range from about
+	// 70 seconds on an idle cluster to 1634 seconds under load (passing
+	// runs of 1616, 1631, and 1634 seconds), and runs under the shared
+	// 600-second long-tier budget were aborted at 600 seconds with no
+	// per-test failure. The default is a little over twice the slowest
+	// recorded passing run. Override: LENNY_TEST_SECURITY_TIMEOUT.
+	tierSecurityTimeout = securityTierTimeout()
 
 	// tierUnitTimeout caps each package in the unit tier. Without it Go's
 	// own ten-minute per-package default applies, and
@@ -91,6 +103,20 @@ var (
 	// LENNY_TEST_DOCS_TIMEOUT.
 	tierDocsTimeout = tierTimeout("LENNY_TEST_DOCS_TIMEOUT", 60*time.Second)
 )
+
+// securityTimeoutEnv names the environment override for the security
+// tier's go-test budget, and defaultSecurityTimeout is the budget that
+// applies when the override is unset or unparseable.
+const (
+	securityTimeoutEnv     = "LENNY_TEST_SECURITY_TIMEOUT"
+	defaultSecurityTimeout = 3600 * time.Second
+)
+
+// securityTierTimeout resolves the security tier's go-test budget from
+// securityTimeoutEnv, falling back to defaultSecurityTimeout.
+func securityTierTimeout() time.Duration {
+	return tierTimeout(securityTimeoutEnv, defaultSecurityTimeout)
+}
 
 // tierTimeout resolves a per-tier go-test budget. It returns the
 // duration parsed from the named environment variable when that value

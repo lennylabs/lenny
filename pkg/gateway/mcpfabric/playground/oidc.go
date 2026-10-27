@@ -4,6 +4,7 @@ package playground
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
 // OIDCSubject is the validated set of standard Lenny claims §27.3.1
@@ -62,8 +66,10 @@ func (e *OIDCError) Error() string {
 type OIDCExchanger interface {
 	// AuthorizationURL returns the provider authorization-endpoint URL
 	// the browser is redirected to. state is the anti-CSRF token and
-	// challenge is the PKCE S256 code_challenge.
-	AuthorizationURL(state, challenge, redirectURI string) string
+	// challenge is the PKCE S256 code_challenge. An error means the
+	// provider's endpoints cannot be resolved, for example because its
+	// discovery document is unreachable.
+	AuthorizationURL(ctx context.Context, state, challenge, redirectURI string) (string, error)
 
 	// Exchange performs the PKCE-protected token exchange and
 	// validates the returned ID token (signature, iss, aud, exp, nbf).
@@ -77,10 +83,19 @@ type OIDCExchanger interface {
 // wires in oidc mode.
 type HTTPOIDCConfig struct {
 	// AuthorizationEndpoint and TokenEndpoint are the provider OIDC
-	// endpoints (discovered from the provider's well-known document by
-	// the gateway, or configured directly).
+	// endpoints. When either is empty, both are read from IssuerURL's
+	// discovery document.
 	AuthorizationEndpoint string
 	TokenEndpoint         string
+
+	// IssuerURL is the provider issuer (`auth.oidc.issuerUrl`). When the
+	// endpoints are not configured, the exchanger reads
+	// IssuerURL + "/.well-known/openid-configuration" on first use,
+	// requires its `issuer` to equal IssuerURL (OIDC Discovery 1.0
+	// section 4.3), and caches the endpoints once a read succeeds. A
+	// failed read is retried on the next login, so the gateway starts
+	// while the provider is unreachable.
+	IssuerURL string
 
 	// ClientID and ClientSecret identify the playground to the
 	// provider. ClientSecret is empty for a public client; the flow is
@@ -118,6 +133,12 @@ type HTTPOIDCConfig struct {
 // httpOIDCExchanger is the HTTP-backed OIDCExchanger.
 type httpOIDCExchanger struct {
 	cfg HTTPOIDCConfig
+
+	// mu guards authEndpoint and tokenEndpoint, which are empty until
+	// the endpoints are configured or a discovery read succeeds.
+	mu            sync.Mutex
+	authEndpoint  string
+	tokenEndpoint string
 }
 
 // NewHTTPOIDCExchanger returns an OIDCExchanger that drives the
@@ -138,11 +159,79 @@ func NewHTTPOIDCExchanger(cfg HTTPOIDCConfig) OIDCExchanger {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &httpOIDCExchanger{cfg: cfg}
+	x := &httpOIDCExchanger{cfg: cfg}
+	if cfg.AuthorizationEndpoint != "" && cfg.TokenEndpoint != "" {
+		x.authEndpoint, x.tokenEndpoint = cfg.AuthorizationEndpoint, cfg.TokenEndpoint
+	}
+	return x
+}
+
+// oidcDiscovery is the subset of the OIDC Discovery 1.0 provider metadata
+// the authorization-code flow reads.
+type oidcDiscovery struct {
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+}
+
+// endpoints returns the authorization and token endpoints, reading the
+// discovery document when they are not yet known.
+//
+// spec: §27.3.1 — login redirects to "the configured OIDC provider's
+// authorization endpoint" and the callback exchanges the code with the
+// provider.
+func (x *httpOIDCExchanger) endpoints(ctx context.Context) (authEndpoint, tokenEndpoint string, err error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.authEndpoint != "" && x.tokenEndpoint != "" {
+		return x.authEndpoint, x.tokenEndpoint, nil
+	}
+	issuer := strings.TrimSpace(x.cfg.IssuerURL)
+	if issuer == "" {
+		return "", "", errors.New("playground oidc: no issuer URL and no configured endpoints")
+	}
+	doc, err := x.discover(ctx, issuer)
+	if err != nil {
+		return "", "", err
+	}
+	x.authEndpoint, x.tokenEndpoint = doc.AuthorizationEndpoint, doc.TokenEndpoint
+	return x.authEndpoint, x.tokenEndpoint, nil
+}
+
+// discover reads and checks issuer's discovery document.
+func (x *httpOIDCExchanger) discover(ctx context.Context, issuer string) (oidcDiscovery, error) {
+	var doc oidcDiscovery
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(issuer, "/")+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return doc, fmt.Errorf("playground oidc: discovery request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := x.cfg.HTTPClient.Do(req)
+	if err != nil {
+		return doc, fmt.Errorf("playground oidc: discovery: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return doc, fmt.Errorf("playground oidc: discovery: status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
+		return doc, fmt.Errorf("playground oidc: discovery: %w", err)
+	}
+	if doc.Issuer != issuer {
+		return doc, fmt.Errorf("playground oidc: discovery: issuer %q, want %q", doc.Issuer, issuer)
+	}
+	if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
+		return doc, errors.New("playground oidc: discovery: no authorization_endpoint or token_endpoint")
+	}
+	return doc, nil
 }
 
 // AuthorizationURL implements OIDCExchanger.
-func (x *httpOIDCExchanger) AuthorizationURL(state, challenge, redirectURI string) string {
+func (x *httpOIDCExchanger) AuthorizationURL(ctx context.Context, state, challenge, redirectURI string) (string, error) {
+	authEndpoint, _, err := x.endpoints(ctx)
+	if err != nil {
+		return "", err
+	}
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", x.cfg.ClientID)
@@ -152,16 +241,20 @@ func (x *httpOIDCExchanger) AuthorizationURL(state, challenge, redirectURI strin
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
 	sep := "?"
-	if strings.Contains(x.cfg.AuthorizationEndpoint, "?") {
+	if strings.Contains(authEndpoint, "?") {
 		sep = "&"
 	}
-	return x.cfg.AuthorizationEndpoint + sep + q.Encode()
+	return authEndpoint + sep + q.Encode(), nil
 }
 
 // Exchange implements OIDCExchanger.
 func (x *httpOIDCExchanger) Exchange(ctx context.Context, code, verifier, redirectURI string) (OIDCSubject, error) {
 	if x.cfg.IDTokenValidator == nil {
 		return OIDCSubject{}, &OIDCError{Code: "oidc_misconfigured", Detail: "no ID-token validator wired"}
+	}
+	_, tokenEndpoint, err := x.endpoints(ctx)
+	if err != nil {
+		return OIDCSubject{}, &OIDCError{Code: "oidc_exchange_failed", Detail: err.Error()}
 	}
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
@@ -172,7 +265,7 @@ func (x *httpOIDCExchanger) Exchange(ctx context.Context, code, verifier, redire
 	if x.cfg.ClientSecret != "" {
 		form.Set("client_secret", x.cfg.ClientSecret)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, x.cfg.TokenEndpoint,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
 		strings.NewReader(form.Encode()))
 	if err != nil {
 		return OIDCSubject{}, &OIDCError{Code: "oidc_exchange_failed", Detail: err.Error()}
@@ -206,6 +299,40 @@ func (x *httpOIDCExchanger) Exchange(ctx context.Context, code, verifier, redire
 		return OIDCSubject{}, &OIDCError{Code: "oidc_id_token_invalid", Detail: err.Error()}
 	}
 	return x.extractSubject(claims, tok.RefreshToken)
+}
+
+// IDTokenValidatorFromVerifier returns an HTTPOIDCConfig.IDTokenValidator
+// that checks the ID token with v (the gateway passes the §10.2
+// jwt.OIDCVerifier, which checks the signature against the issuer's JWK
+// Set, `iss`, `aud`, `exp`, and `nbf`) and then returns the token's full
+// claim set, so extractSubject can read the configured tenant, user, and
+// caller-type claims. The payload is decoded only after v accepts the
+// signature. A nil v refuses every token.
+//
+// spec: §27.3.1 — the callback "validates the returned ID token
+// (signature, `iss`, `aud`, `exp`, `nbf`)".
+func IDTokenValidatorFromVerifier(v jwt.Verifier) func(ctx context.Context, idToken string) (map[string]any, error) {
+	return func(_ context.Context, idToken string) (map[string]any, error) {
+		if v == nil {
+			return nil, errors.New("playground oidc: no ID-token verifier configured")
+		}
+		if _, err := v.Verify(idToken); err != nil {
+			return nil, err
+		}
+		parts := strings.Split(idToken, ".")
+		if len(parts) != 3 {
+			return nil, errors.New("playground oidc: ID token is not a compact JWS")
+		}
+		payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("playground oidc: ID token payload: %w", err)
+		}
+		claims := map[string]any{}
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			return nil, fmt.Errorf("playground oidc: ID token payload: %w", err)
+		}
+		return claims, nil
+	}
 }
 
 // extractSubject maps validated ID-token claims to an OIDCSubject. A

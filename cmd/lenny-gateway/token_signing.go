@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -143,20 +144,23 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s); embedded tokens must carry aud=dev.local",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
-	// spec: §10.2 — wrap the verifier so the standard auth
+	// spec: §10.2 — wrap the Lenny-issued member so the standard auth
 	// chain enforces iss / aud alongside signature / exp / nbf when an
 	// operator configures the expected values. An unset flag skips
 	// the corresponding check so dev deployments retain their existing
-	// posture.
+	// posture. The upstream IdP member joins after this wrap, because it
+	// checks its own iss and aud against auth.oidc.issuerUrl and
+	// auth.oidc.clientId.
 	expectedAuds := splitCSV(*bearerExpectedAudiences)
 	if *bearerExpectedIssuer != "" || len(expectedAuds) > 0 {
-		bearerVerifier = jwt.NewClaimChecker(bearerVerifier, jwt.ExpectedClaims{
-			Issuer:    *bearerExpectedIssuer,
-			Audiences: expectedAuds,
-		})
 		log.Printf("lenny-gateway: §10.2 bearer iss/aud enforced iss=%q audiences=%v",
 			*bearerExpectedIssuer, expectedAuds)
 	}
+	idpVerifier := buildIdPVerifier(f)
+	bearerVerifier = composeBearerVerifier(bearerVerifier, jwt.ExpectedClaims{
+		Issuer:    *bearerExpectedIssuer,
+		Audiences: expectedAuds,
+	}, idpVerifier, *tenantIDClaim)
 	// spec: §4.1 — record the §7.1 uploadToken, §4 KMS, and §10.2 / §10.3
 	// signing and verification surfaces on the accumulator for the
 	// credential-assignment step and the run loop.
@@ -170,6 +174,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	w.jwtKeySet = keySet
 	w.jwtSigner = jwtSigner
 	w.bearerVerifier = bearerVerifier
+	w.idpVerifier = idpVerifier
 	w.expectedAuds = expectedAuds
 }
 
@@ -263,4 +268,61 @@ func embeddedHMACVerifier(trusted jwt.Verifier, tenantClaim string) jwt.Verifier
 	return jwt.NewTenantClaimVerifier(jwt.NewClaimChecker(trusted, jwt.ExpectedClaims{
 		Audiences: []string{embeddedOIDCAudience},
 	}), tenantClaim)
+}
+
+// buildIdPVerifier returns the §10.2 verifier of bearers the deployer's
+// upstream OIDC identity provider issues, or nil when the gateway has no
+// IdP to trust. It needs both §10.3 OIDC keys: the issuer names the
+// discovery document and the expected `iss`, and the client id is the
+// audience every IdP token must carry. Outside dev mode the startup
+// validation already requires both; in dev mode an issuer without a
+// client id cannot be audience-checked, so the gateway trusts no IdP and
+// says so.
+//
+// spec: §10.2 (Authentication) the Client → Gateway boundary and the
+// `user_bearer` type; §10.3 (Gateway startup configuration validation)
+// `auth.oidc.issuerUrl` and `auth.oidc.clientId`.
+func buildIdPVerifier(f *gatewayFlags) jwt.Verifier {
+	issuer := strings.TrimSpace(*f.oidcIssuerURL)
+	clientID := strings.TrimSpace(*f.oidcClientID)
+	if issuer == "" {
+		return nil
+	}
+	if clientID == "" {
+		log.Printf("lenny-gateway: §10.2 --oidc-issuer-url is set without --oidc-client-id; IdP-issued bearers are refused because their audience cannot be checked")
+		return nil
+	}
+	v, err := jwt.NewOIDCVerifier(jwt.OIDCConfig{
+		IssuerURL:          issuer,
+		Audience:           clientID,
+		KeyRefreshInterval: *f.oidcJWKSRefreshInterval,
+		MinRefetchInterval: *f.oidcJWKSMinRefetchInterval,
+		FetchTimeout:       *f.oidcFetchTimeout,
+	})
+	if err != nil {
+		log.Fatalf("lenny-gateway: §10.2 OIDC verifier: %v", err)
+	}
+	log.Printf("lenny-gateway: §10.2 trusting IdP-issued bearers from %s (aud %s)", issuer, clientID)
+	return v
+}
+
+// composeBearerVerifier assembles the §10.2 bearer verifier from the
+// Lenny-issued member (the key set, joined by the §17.4 embedded key when
+// the dev trust hook is set), the optional operator iss / aud check on
+// that member, and the optional upstream IdP member. The Lenny-issued
+// member is tried first, so its rejection reason is the one surfaced when
+// no member accepts a token. The IdP member takes its tenant from
+// auth.tenantIdClaim, because a token an IdP key verified resolves its
+// tenant from the configured claim.
+//
+// spec: §10.2 (Authentication) the Client → Gateway boundary, "`tenant_id`
+// extraction", and "Verifier key set and rotation".
+func composeBearerVerifier(lenny jwt.Verifier, expected jwt.ExpectedClaims, idp jwt.Verifier, tenantClaim string) jwt.Verifier {
+	if expected.Issuer != "" || len(expected.Audiences) > 0 {
+		lenny = jwt.NewClaimChecker(lenny, expected)
+	}
+	if idp == nil {
+		return lenny
+	}
+	return jwt.NewMultiVerifier(lenny, jwt.NewTenantClaimVerifier(idp, tenantClaim))
 }

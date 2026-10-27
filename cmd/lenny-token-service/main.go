@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc"
@@ -100,6 +101,16 @@ func envInt(name string, def int) int {
 		return def
 	}
 	return out
+}
+
+// envBool resolves a bool from the named env var, falling back to def
+// when unset or unparseable.
+func envBool(name string, def bool) bool {
+	v, err := strconv.ParseBool(os.Getenv(name))
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 // envDuration resolves a time.Duration from the named env var,

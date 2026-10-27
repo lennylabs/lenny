@@ -37,6 +37,37 @@ tests:
           path: spec.template.metadata.labels["lenny.dev/component"]
           value: minio
 
+  # spec: §17.9.5 — the default server image is the maintained,
+  # anonymously pullable MinIO fork pinned by tag and index digest, so a
+  # fresh self-managed install can pull it and an air-gap install can
+  # mirror it.
+  - it: defaults the server image to pgsty/silo pinned by tag and digest
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
+
+  - it: renders repository:tag when the image digest is empty
+    set:
+      minio.deploy: true
+      minio.tls.secretName: lenny-minio-tls
+      minio.image.repository: registry.acme.com/mirror/silo
+      minio.image.tag: "RELEASE.2026-10-26T00-00-00Z"
+      minio.image.digest: ""
+    documentSelector:
+      path: kind
+      value: StatefulSet
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "registry.acme.com/mirror/silo:RELEASE.2026-10-26T00-00-00Z"
+
   # spec: §17.8 — >=4 nodes start MinIO in distributed mode, which
   # auto-enables erasure coding. The server arg carries the {0...N-1}
   # ellipsis the distributed set expands.

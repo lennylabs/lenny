@@ -90,7 +90,16 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(stateCookieTTL.Seconds()),
 	})
-	http.Redirect(w, r, h.oidc.AuthorizationURL(state, challenge, h.callbackURL(r)), http.StatusFound)
+	authURL, err := h.oidc.AuthorizationURL(r.Context(), state, challenge, h.callbackURL(r))
+	if err != nil {
+		// The provider's endpoints cannot be resolved, for example
+		// because its discovery document is unreachable. The login is
+		// retryable once the provider answers.
+		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
+			"the playground OIDC provider is unavailable", nil)
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // handleCallback serves GET /playground/auth/callback: the OIDC

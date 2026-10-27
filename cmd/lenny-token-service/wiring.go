@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
@@ -56,16 +57,18 @@ func runTokenService(f *tokenServiceFlags) {
 		defer w.pgPool.Close()
 	}
 
-	// §13.3 NTP drift self-monitor, then the §13.3 token-exchange Server.
-	w.buildDriftMonitor()
-	w.buildServer()
-
-	// §4.0 EventEmitter (local buffer plus optional §25.5 Redis stream) and
-	// the §4.3 Redis-backed encrypted access-token cache.
+	// §4.0 EventEmitter (local buffer plus optional §25.5 Redis stream),
+	// the §4.3 Redis-backed encrypted access-token cache, and the §13.3
+	// revocation bus. Built before the Server, which publishes a revoked
+	// jti on the bus.
 	w.buildEventEmitterAndCache()
 	if w.redisCleanup != nil {
 		defer w.redisCleanup()
 	}
+
+	// §13.3 NTP drift self-monitor, then the §13.3 token-exchange Server.
+	w.buildDriftMonitor()
+	w.buildServer()
 
 	// §13.3 HTTP, §16.1 metrics, and §4.3 gRPC listeners.
 	w.buildHTTPSurface()
@@ -143,6 +146,10 @@ type tokenServiceWiring struct {
 	opsEmitter   events.EventEmitter
 	accessCache  *tokencache.Cache
 	redisCleanup func()
+	// revocationBus carries a revoked jti to every gateway replica and
+	// lenny-ops (§13.3) on the §12.4 Cache/Pub-Sub concern client. Nil
+	// without a Redis topology flag.
+	revocationBus *pubsub.Bus
 
 	// §13.3 HTTP, §16.1 metrics, and §4.3 gRPC listeners.
 	httpSrv    *http.Server

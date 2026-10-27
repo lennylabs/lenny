@@ -683,6 +683,84 @@ tests:
           content:
             name: LENNY_REDIS_SENTINEL_ADDRS
 
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" (AUTH and TLS are
+  # required on every Redis instance), §17.9.3 — the Cluster topology
+  # requests TLS and reads the AUTH password from the datastore Secret, so
+  # the binary passes the §12.4 startup invariant outside dev mode. F-12.4.37.
+  - it: requests TLS and reads the AUTH password on the cluster topology
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+      redis.password: cluster-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — with no password
+  # the Cluster topology still requests TLS and reads no Secret key, so the
+  # binary refuses to start with the §12.4 AUTH error rather than a missing
+  # Secret key. F-12.4.37.
+  - it: requests TLS and reads no password key on the cluster topology without a password
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — the external
+  # topology carries AUTH and TLS in the rediss:// URL, so a stray password
+  # renders neither env entry. F-12.4.37.
+  - it: renders no Redis password or TLS env on the external topology
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@r.svc:6380/0"
+      redis.password: stray
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+          any: true
+
   # spec: §17.9.3 / §12.4 — the Sentinel topology wires the
   # discovery env (addresses and master are plain env) plus the data AUTH
   # password from the datastore Secret, and requests TLS so §12.4 AUTH+TLS
@@ -1124,6 +1202,7 @@ tests:
   # renders neither the flag nor its key volume and mount.
   - it: omits the dev trust hook flag, volume, and mount when ops.production is true
     set:
+      global.devMode: true
       ops.production: true
       security.oidc.bearerTrustKeySecret: oidc-trust
     documentSelector:
@@ -1144,8 +1223,9 @@ tests:
             name: oidc-bearer-trust-key
           any: true
 
-  - it: renders the dev trust hook flag, volume, and mount when ops.production is false
+  - it: renders the dev trust hook flag, volume, and mount under global.devMode when ops.production is false
     set:
+      global.devMode: true
       ops.production: false
       security.oidc.bearerTrustKeySecret: oidc-trust
     documentSelector:
@@ -1165,6 +1245,72 @@ tests:
           content:
             name: oidc-bearer-trust-key
           any: true
+
+  # spec: §17.4 (Dev mode guard rails) item 3 — LENNY_DEV_MODE is the
+  # single gate for every lenny-ops dev-mode relaxation. Without
+  # global.devMode the trust hook does not render on lenny-ops even when
+  # the secret is set and ops.production is false, because lenny-ops
+  # refuses it without --dev-mode. F-17.4.35.
+  - it: omits the dev trust hook flag, volume, and mount without global.devMode
+    set:
+      global.devMode: false
+      ops.production: false
+      security.oidc.bearerTrustKeySecret: oidc-trust
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-bearer-trust-key
+          any: true
+
+  # spec: §17.4 (Dev mode guard rails), §25.4 — a default render, which
+  # leaves ops.production false, renders no --dev-mode, so lenny-ops
+  # authenticates every request and ignores the X-Lenny-* identity
+  # headers. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --production=false
+
+  # spec: §17.4 (Dev mode guard rails) — lenny-ops reads the same
+  # global.devMode value the gateway's --dev-mode does. F-17.4.35.
+  - it: renders --dev-mode on lenny-ops under global.devMode
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
+
+  # spec: §17.4 (Dev mode guard rails) — ops.production does not stand in
+  # for dev mode: a production render without global.devMode renders no
+  # --dev-mode. F-17.4.35.
+  - it: renders no --dev-mode on lenny-ops when ops.production is true without global.devMode
+    set:
+      ops.production: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-mode
 
   # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
   # lenny-ops mounts the shared master key Secret (never optional) and

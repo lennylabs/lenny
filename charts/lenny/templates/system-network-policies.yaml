@@ -415,7 +415,9 @@ spec:
 allow-pgbouncer re-admits the §13.2 PgBouncer flows the lenny-system
 default-deny otherwise blocks (§13.2.3, self-managed profile):
 ingress from the gateway, Token Service, controller, and lenny-ops
-pods on 5432, and egress to Postgres and kube-system CoreDNS. lenny-ops
+pods on 5432, and egress to Postgres (the postgres.cidr block, and the
+CloudNativePG pods when postgres.deploy renders them) and kube-system
+CoreDNS. lenny-ops
 pods carry app: lenny-ops (the §13.2.3 selector exception), so that peer
 pairs the label with the release-namespace selector; lenny-ops reads its
 §25.4 revocation set and its audit, backup, and upgrade state through
@@ -456,6 +458,16 @@ spec:
     - to:
         - ipBlock:
             cidr: {{ .Values.postgres.cidr | quote }}
+        {{- if .Values.postgres.deploy }}
+        # §17.9.5 — the CloudNativePG pods the [databases] entry and
+        # the readiness probe reach. A CNI need not match a pod address
+        # against an ipBlock, so the in-cluster Postgres is named by
+        # its component label, the peer allow-postgres-self-managed
+        # admits.
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: postgres
+        {{- end }}
       ports:
         - port: 5432
           protocol: TCP
