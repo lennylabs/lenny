@@ -6008,7 +6008,9 @@
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsRefusesOffSetEnvironment_spec_17_9_1",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
-        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook"
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
+        "tests/tier0_static/production_mode_carrier_test.go::TestProductionModeHasOneCarrier",
+        "tests/tier0_static/production_mode_carrier_test.go::TestProductionCarrierScannerFindsDirectRead"
       ],
       "packages": [
         "pkg/deployenv",
