@@ -511,7 +511,7 @@ func ensureMinIOBucket(t *testing.T, c *kind.Cluster) {
 	if out, err := c.KubectlOut(
 		t,
 		"-n", lennySystemNamespace, "run", "chaos-minio-mb",
-		"--image=minio/mc:RELEASE.2024-09-16T17-43-14Z",
+		"--image=lenny-minio:e2e",
 		"--image-pull-policy=IfNotPresent", "--restart=Never",
 		"--attach", "--rm", "--quiet", "--command", "--",
 		"/bin/sh", "-c", script,

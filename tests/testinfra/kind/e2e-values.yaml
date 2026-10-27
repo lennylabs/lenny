@@ -420,6 +420,12 @@ minio:
   tls:
     enabled: true
     caBundleConfigMap: lenny-minio-ca
+  # The bucket-lifecycle Job's mc image. The chart default (minio/mc:latest)
+  # is no longer pullable, so the overlay names the lenny-minio image
+  # install.sh builds from the upstream source and loads; the generated
+  # image-tag overlay replaces the e2e alias tag with the content tag.
+  lifecycle:
+    image: lenny-minio:e2e
 
 # §13.2 NET-071 — the object-store artifact backend and its agent-pod
 # checkpoint-egress allow-list. The e2e MinIO is an out-of-band self-managed
