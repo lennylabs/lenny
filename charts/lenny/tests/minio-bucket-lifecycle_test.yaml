@@ -209,6 +209,65 @@ tests:
             name: SSL_CERT_DIR
             value: /etc/lenny/minio-ca
 
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add` as uid 1000 on a
+  # read-only root filesystem with no home directory, so mc's config directory
+  # must sit on a writable emptyDir in every mode. Without it, a production
+  # render fails at `mkdir /.mc` and the lifecycle rules are never applied.
+  - it: gives mc a writable config directory outside dev mode
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: false
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: mc-config
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: mc-config
+            emptyDir: {}
+
+  - it: keeps the mc config directory alongside the MinIO CA bundle mount
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: true
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          caBundleConfigMap: lenny-minio-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 2
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 2
+
   - it: §12.5 — render fails when minio.tls.enabled=false with a regulated complianceProfile
     template: gateway-deployment.yaml
     set:
