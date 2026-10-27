@@ -6006,6 +6006,8 @@
         "cmd/lenny-ops/flags_test.go::TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1",
         "cmd/lenny-ops/flags_test.go::TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
+        "tests/tier9_security/gateway_production_mode_test.go::TestGatewayEnvironmentProdIsProductionMode_spec_17_9_1",
+        "tests/tier9_security/gateway_production_mode_test.go::TestGatewayRefusesOffSetEnvironment_spec_17_9_1",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsRefusesOffSetEnvironment_spec_17_9_1",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook",
