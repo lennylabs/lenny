@@ -5993,6 +5993,18 @@
       "blocked_until_phase": "14",
       "notes": "Answer-file format that lenny-ctl install consumes. Phase 14 ships the parser and the lenny-ctl subcommand."
     },
+    "17.9.1": {
+      "title": "Composition Dimensions",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [
+        "pkg/deployenv/deployenv_test.go::TestValidateAndIsProductionExactClosedSet_spec_17_9_1"
+      ],
+      "packages": [
+        "pkg/deployenv"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Environment dimension and production mode: the closed set local, dev, staging, and prod, exact matching, and production mode only for prod."
+    },
     "18": {
       "title": "Build Sequence",
       "spec_file": "spec/18_build-sequence.md",
