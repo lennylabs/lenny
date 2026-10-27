@@ -15,10 +15,11 @@ import (
 // TestBuildAuthConfig_DevModeGatesRelaxations pins §17.4 "Dev mode guard
 // rails" item 3 on lenny-ops: --dev-mode (LENNY_DEV_MODE) is the single
 // gate for the dev bearer-trust hook, the X-Lenny-* identity headers, the
-// dev roles, and the unauthenticated fallback. --production does not
-// widen anything: without dev mode every posture authenticates through
-// the §10.2 key set and ignores the identity headers, and --production
-// keeps its refusal of the trust hook even with dev mode on.
+// dev roles, and the unauthenticated fallback. Production mode
+// (--environment=prod) does not widen anything: without dev mode every
+// posture authenticates through the §10.2 key set and ignores the identity
+// headers, and production mode keeps its refusal of the trust hook even
+// with dev mode on.
 //
 // spec: 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Authentication)
 func TestBuildAuthConfig_DevModeGatesRelaxations(t *testing.T) {
@@ -98,8 +99,9 @@ func TestBuildAuthConfig_DevModeGatesRelaxations(t *testing.T) {
 }
 
 // TestOpsSurfaceRefusesDevIdentityHeadersWithoutDevMode is the F-17.4.35
-// regression: with dev mode off and --production false, the default
-// posture of a chart install that leaves ops.production unset, a request
+// regression: with dev mode off and outside production mode
+// (--environment other than prod), the default posture of a chart
+// install that leaves environment at dev, a request
 // that names a tenant, a user, and the platform-admin role through the
 // X-Lenny-* headers and carries no bearer is refused with 401 rather than
 // served.

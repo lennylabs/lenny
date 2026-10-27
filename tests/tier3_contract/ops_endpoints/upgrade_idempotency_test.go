@@ -78,9 +78,9 @@ func statusPhaseString(t *testing.T, body map[string]any) string {
 // is not wired on the upgrade lifecycle endpoints.
 func TestPlatformUpgradeProceedReplayDoesNotDoubleAdvance(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{
-		Upgrade:     upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
-		Idempotency: opsidem.NewMemoryStore(),
-		Production:  true,
+		Upgrade:                upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
+		Idempotency:            opsidem.NewMemoryStore(),
+		IdempotencyKeyRequired: true,
 	})
 	startUpgradeKeyed(t, srv, "start-key")
 
@@ -142,10 +142,10 @@ func TestPlatformUpgradeProceedKeyHonoredUnderLongRunningTTL(t *testing.T) {
 	origin := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
 	clk := clockstep.New(origin)
 	srv := opsserver.New(opsserver.Options{
-		Upgrade:        upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
-		Idempotency:    opsidem.NewMemoryStore(),
-		Production:     true,
-		IdempotencyNow: clk.Now,
+		Upgrade:                upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
+		Idempotency:            opsidem.NewMemoryStore(),
+		IdempotencyKeyRequired: true,
+		IdempotencyNow:         clk.Now,
 		// Leave the TTLs at the §25.4 built-ins (24h standard, 7d
 		// long-running) so 25h is a genuine crossing of the standard window.
 	})

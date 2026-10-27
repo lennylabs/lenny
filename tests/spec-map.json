@@ -5823,7 +5823,7 @@
         "pkg/kms/local_signing_internal_test.go::TestLocalSigningKeySeparatedFromKEKMaterial_spec_10_2",
         "pkg/kms/providerflags/signingref_test.go::TestResolveLocalPassesJWTAliasReferences_spec_10_2",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_ProductionRefusesDevTrustHook",
-        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule6ExcludesDevTrustTokens",
         "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
@@ -6002,11 +6002,18 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "cmd/lenny-gateway/production_gates_test.go::TestGatewayProductionGatesReadFinalizedEnvironment_spec_17_9_1",
-        "pkg/deployenv/deployenv_test.go::TestValidateAndIsProductionExactClosedSet_spec_17_9_1"
+        "pkg/deployenv/deployenv_test.go::TestValidateAndIsProductionExactClosedSet_spec_17_9_1",
+        "cmd/lenny-ops/flags_test.go::TestOpsProductionModeAndRequiredKeyAreIndependent_spec_17_9_1",
+        "cmd/lenny-ops/flags_test.go::TestOpsProductionGatesReadFinalizedEnvironment_spec_17_9_1",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsRefusesOffSetEnvironment_spec_17_9_1",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesLocalKMSProvider",
+        "tests/tier9_security/ops_production_startup_refusal_test.go::TestOpsProductionRefusesDevTrustHook"
       ],
       "packages": [
         "pkg/deployenv",
-        "cmd/lenny-gateway"
+        "cmd/lenny-gateway",
+        "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
       "notes": "Environment dimension and production mode: the closed set local, dev, staging, and prod, exact matching, and production mode only for prod."
@@ -6506,6 +6513,8 @@
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "pkg/ops/opsserver/idempotency_test.go::TestServerRequiredKeyFollowsTierNotProductionMode_spec_25_4",
+        "tests/tier4_integration/ops_service_e2e_test.go::TestOpsServiceRemediationLockPersistenceE2E",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedLoserRemoval_spec_25_4",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileRetryKeepsFailingRemovalPending_spec_25_4",
         "pkg/ops/coordination/reconcile_errors_test.go::TestReconcileReportsAndRetriesFailedEpochMirror_spec_25_4",
@@ -6624,7 +6633,7 @@
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_DevWithoutKeyIsOpen",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_WithKeyAndIssuer",
         "cmd/lenny-ops/auth_config_test.go::TestBuildAuthConfig_BadKeyFileErrors",
-        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProduction",
+        "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1",
         "cmd/lenny-ops/keyset_test.go::TestLoadOpsKeySetFailureIsFatalInEveryMode",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1PeriodicReadReplacesSet",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule1FailedReadLogsAtErrorLevel",

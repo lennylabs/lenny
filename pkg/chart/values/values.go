@@ -71,7 +71,7 @@ type Root struct {
 	MinIO                      Object     `json:"minio,omitempty"`
 	GC                         Object     `json:"gc,omitempty"`
 	KMS                        KMS        `json:"kms,omitempty" open:"true"`
-	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
+	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, staging, or prod): prod is production mode, which turns on every production gate in every Lenny binary; staging is not production mode. Also sets alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
 	Monitoring                 Monitoring `json:"monitoring,omitempty" open:"true"`
 	SLO                        Object     `json:"slo,omitempty"`
 	Observability              Object     `json:"observability,omitempty"`

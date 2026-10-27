@@ -99,8 +99,8 @@ func authInputsFor(keySet *jwt.KeySet, hmacKeyFile, issuer string, devMode, prod
 	}
 }
 
-// TestBuildAuthConfig_ProductionRequiresKey pins that --production
-// without --bearer-trust-hmac-key-file authenticates through the §10.2
+// TestBuildAuthConfig_ProductionRequiresKey pins that production mode
+// (--environment=prod) without --bearer-trust-hmac-key-file authenticates through the §10.2
 // key set: buildAuthConfig returns a config whose verifier is the key set
 // and which accepts a Lenny-issued token. It previously refused to start
 // because it required an HMAC key no component signs with.
@@ -134,8 +134,8 @@ func TestBuildAuthConfig_ProductionRequiresKey(t *testing.T) {
 }
 
 // TestBuildAuthConfig_ProductionRefusesDevTrustHook pins that the dev
-// embedded-OIDC trust hook is fatal under --production, even with
-// --dev-mode set.
+// embedded-OIDC trust hook is fatal in production mode
+// (--environment=prod), even with --dev-mode set.
 //
 // spec: 25.4 (The lenny-ops Service: Authentication), 17.4 (Dev mode guard rails)
 func TestBuildAuthConfig_ProductionRefusesDevTrustHook(t *testing.T) {
