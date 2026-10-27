@@ -72,6 +72,12 @@ func newDockerLauncherForTest(t *testing.T, fd *fakeDocker) *dockerLauncher {
 		t.Fatalf("newDockerLauncher returned %T, want *dockerLauncher", d)
 	}
 	d.runDocker = fd.run
+	// The fake docker serves a canned kubeconfig that names no live API
+	// server, so the /readyz wait is stubbed to report ready. The tests in
+	// apiready_test.go cover the wait itself, and
+	// TestDockerStartReportsAPIServerNotReady covers Start's handling of
+	// its failure.
+	d.apiReady = func(context.Context, string, time.Time) error { return nil }
 	return d
 }
 
@@ -447,8 +453,7 @@ func TestDockerLauncherStartFailsWhenKubeconfigExtractionErrors(t *testing.T) {
 	fd.handlers["exec"] = func([]string) ([]byte, error) {
 		execCalls++
 		if execCalls == 1 {
-			// First read (waitReady) sees a kubeconfig: the API server is
-			// serving.
+			// First read (waitReady) sees a kubeconfig.
 			return []byte("    server: https://127.0.0.1:6443\n"), nil
 		}
 		// Second read (extractKubeconfig) fails.
@@ -800,4 +805,105 @@ func hasArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// spec: §17.4 (lenny up installs the CRDs against the embedded k3s; a warm
+// lenny up restarts the persisted substrate). k3s writes its kubeconfig
+// before the API server serves, and a persisted container already holds
+// one, so Start must wait for /readyz after extracting the kubeconfig on
+// both the fresh-provision and the warm-restart path. The readiness wait
+// receives the rewritten kubeconfig, which exists by then, and a deadline
+// inside the ReadyTimeout budget.
+func TestDockerStartWaitsForAPIServerReadiness_spec_17_4(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		persisted bool
+	}{
+		{"fresh provision", false},
+		{"warm restart of a persisted container", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withLookPathDocker(t, true)
+			fd := newFakeDocker()
+			fd.handlers["inspect"] = func(args []string) ([]byte, error) {
+				if hasArg(args, "{{.State.Status}}") && !tc.persisted {
+					return []byte("\n"), nil
+				}
+				if hasArg(args, "{{.State.Status}}") {
+					return []byte("exited\n"), nil
+				}
+				return []byte("true\n"), nil
+			}
+			fd.handlers["exec"] = func([]string) ([]byte, error) {
+				return []byte("clusters:\n- cluster:\n    server: https://127.0.0.1:6443\n"), nil
+			}
+			d := newDockerLauncherForTest(t, fd)
+			d.cfg.ReadyTimeout = time.Minute
+			var calls int
+			var gotPath string
+			var gotDeadline time.Time
+			before := time.Now()
+			d.apiReady = func(_ context.Context, path string, deadline time.Time) error {
+				calls++
+				gotPath, gotDeadline = path, deadline
+				if _, err := os.Stat(path); err != nil {
+					t.Errorf("readiness wait ran before the kubeconfig was written: %v", err)
+				}
+				return nil
+			}
+			if err := d.Start(context.Background()); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("readiness wait calls = %d, want 1", calls)
+			}
+			if gotPath != d.KubeconfigPath() {
+				t.Errorf("readiness wait kubeconfig = %q, want %q", gotPath, d.KubeconfigPath())
+			}
+			if gotDeadline.Before(before) || gotDeadline.After(time.Now().Add(time.Minute)) {
+				t.Errorf("readiness deadline %v is outside the ReadyTimeout budget", gotDeadline)
+			}
+			if tc.persisted && len(fd.callsFor("start")) != 1 {
+				t.Errorf("warm path issued %d docker start calls, want 1", len(fd.callsFor("start")))
+			}
+		})
+	}
+}
+
+// spec: §17.4 (an unavailable substrate makes lenny up report the
+// failure). When the API server never becomes ready, Start fails with the
+// readiness error, names the container, and removes it, matching the
+// handling of the other readiness failures.
+func TestDockerStartReportsAPIServerNotReady_spec_17_4(t *testing.T) {
+	withLookPathDocker(t, true)
+	fd := newFakeDocker()
+	fd.handlers["inspect"] = func(args []string) ([]byte, error) {
+		if hasArg(args, "{{.State.Status}}") {
+			return []byte("\n"), nil
+		}
+		return []byte("true\n"), nil
+	}
+	fd.handlers["exec"] = func([]string) ([]byte, error) {
+		return []byte("    server: https://127.0.0.1:6443\n"), nil
+	}
+	d := newDockerLauncherForTest(t, fd)
+	notReady := errors.New("embedded k3s: API server not ready by the readiness deadline: GET /readyz: HTTP 503: apiserver not ready")
+	d.apiReady = func(context.Context, string, time.Time) error { return notReady }
+
+	err := d.Start(context.Background())
+	if !errors.Is(err, notReady) {
+		t.Fatalf("Start = %v, want the readiness error", err)
+	}
+	if !strings.Contains(err.Error(), d.name) {
+		t.Errorf("error %q does not name container %s", err, d.name)
+	}
+	removed := false
+	for _, c := range fd.callsFor("rm") {
+		if hasArg(c, "-f") && hasArg(c, d.name) {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Error("Start did not remove the container after the readiness failure")
+	}
 }
