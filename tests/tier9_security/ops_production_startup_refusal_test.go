@@ -156,3 +156,22 @@ func TestOpsRefusesOffSetEnvironment_spec_17_9_1(t *testing.T) {
 		assertNotListening(t, addr)
 	}
 }
+
+// spec: 16.1.1 (Attribute Naming) deployment_tier, 25.4 (The lenny-ops Service) Idempotency-Key
+// diagnosis: a failure means lenny-ops started with a --platform-tier value
+// outside tier1, tier2, and tier3. The value would read as Tier 1, so a Tier 2
+// or Tier 3 install with a typo in global.deploymentTier would silently drop the
+// §25.4 required Idempotency-Key and surface an off-set platform.tier. main
+// calls validatePlatformTier before runOps builds any subsystem.
+func TestOpsRefusesOffSetPlatformTier_spec_25_4(t *testing.T) {
+	binary := opsprocess.Build(t)
+	for _, tier := range []string{"TIER2", "tier4", ""} {
+		addr := opsLoopbackAddr(t)
+		logs := runOpsToExit(t, binary, addr, "--platform-tier="+tier)
+		want := `--platform-tier "` + tier + `" is not one of tier1, tier2, or tier3`
+		if !strings.Contains(logs, want) {
+			t.Errorf("--platform-tier=%q: log does not name the refusal %q\n%s", tier, want, logs)
+		}
+		assertNotListening(t, addr)
+	}
+}

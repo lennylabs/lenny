@@ -120,6 +120,69 @@ func (c SIEMEndpointCheck) Decide() Decision {
 	}
 }
 
+// EtcdSecretEncryptionWarning is the §17.6 etcd Secret encryption warning
+// text, verbatim from the preflight check table row.
+//
+// spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)"
+const EtcdSecretEncryptionWarning = "WARNING: Kubernetes does not encrypt Secrets in etcd by default. Credential pool API keys stored in Kubernetes Secrets (secretRef) are readable in plaintext from etcd snapshots or backups unless EncryptionConfiguration is enabled. Production deployments MUST configure EncryptionConfiguration with aescbc/aesgcm/kms for the 'secrets' resource type. Cloud-managed clusters: enable envelope encryption via AWS KMS (EKS), GCP Cloud KMS (GKE), or Azure Key Vault (AKS). Self-managed clusters: verify with 'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'. See Section 4.9."
+
+// NodeDiskEncryptionWarning is the §17.6 node disk encryption warning text,
+// verbatim from the preflight check table row.
+//
+// spec: §17.6 (Packaging and Installation) "Node disk encryption (warning)"
+const NodeDiskEncryptionWarning = "WARNING: Node-level disk encryption (LUKS/dm-crypt or cloud-provider encrypted volumes) is required for production deployments (Section 6.4) but cannot be verified by Lenny — it depends on the underlying node pool configuration. Verify manually: AWS (EBS encryption on launch template), GCP (CMEK or default encryption on boot/scratch disks), Azure (SSE on managed disks). For T4 workloads, use Kata or gVisor isolation profiles with encrypted scratch volumes."
+
+// EtcdSecretEncryptionCheck is the §17.6 etcd Secret encryption advisory.
+// The preflight Job has no etcd access, so it cannot verify that the
+// cluster encrypts Secrets at rest. In production mode the check emits the
+// §17.6 warning that the control is unverified; outside production it is
+// silent. It always passes, because the §17.6 row makes it non-blocking.
+//
+// spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)",
+// §17.9.1 (Composition Dimensions) "Production mode".
+type EtcdSecretEncryptionCheck struct {
+	// Environment is the chart `environment` value, read through
+	// deployenv.IsProduction.
+	Environment string
+}
+
+// Decide evaluates the §17.6 etcd Secret encryption advisory.
+func (c EtcdSecretEncryptionCheck) Decide() Decision {
+	return productionOnlyWarning(c.Environment, EtcdSecretEncryptionWarning)
+}
+
+// NodeDiskEncryptionCheck is the §17.6 node disk encryption advisory.
+// Node-level disk encryption depends on the node pool configuration, which
+// Lenny cannot inspect, so in production mode the check emits the §17.6
+// warning that the control is unverified; outside production it is silent.
+// It always passes, because the §17.6 row makes it non-blocking. It is
+// distinct from the §12.9 volume-encryption check, which audits the
+// Postgres and Redis volumes.
+//
+// spec: §17.6 (Packaging and Installation) "Node disk encryption (warning)",
+// §17.9.1 (Composition Dimensions) "Production mode".
+type NodeDiskEncryptionCheck struct {
+	// Environment is the chart `environment` value, read through
+	// deployenv.IsProduction.
+	Environment string
+}
+
+// Decide evaluates the §17.6 node disk encryption advisory.
+func (c NodeDiskEncryptionCheck) Decide() Decision {
+	return productionOnlyWarning(c.Environment, NodeDiskEncryptionWarning)
+}
+
+// productionOnlyWarning returns a passing Decision that carries warning
+// when env is production mode, and a silent pass otherwise.
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"
+func productionOnlyWarning(env, warning string) Decision {
+	if !deployenv.IsProduction(env) {
+		return Decision{Passed: true}
+	}
+	return Decision{Passed: true, Reason: warning}
+}
+
 // StorageRouterRegion names one data-residency region the chart declares
 // and the backends configured for it. A region with no Postgres or
 // object-storage backend cannot satisfy the §12.6 StorageRouter routing

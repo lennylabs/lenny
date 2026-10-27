@@ -167,3 +167,52 @@ func TestBillingTriggerCheck_spec_17_6_489(t *testing.T) {
 		t.Fatalf("prober error should fail, got %q", d.Reason)
 	}
 }
+
+// TestUnverifiableEncryptionWarnings_spec_17_6 pins the §17.6 etcd Secret
+// encryption and node disk encryption rows: production mode emits the
+// row's warning text verbatim, every other environment value is silent,
+// and the check never blocks.
+//
+// spec: 17.6 (Packaging and Installation) "etcd Secret encryption (warning)", "Node disk encryption (warning)"
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
+func TestUnverifiableEncryptionWarnings_spec_17_6(t *testing.T) {
+	checks := []struct {
+		name    string
+		decide  func(env string) Decision
+		warning string
+	}{
+		{"etcd-secret-encryption", func(env string) Decision { return EtcdSecretEncryptionCheck{Environment: env}.Decide() }, EtcdSecretEncryptionWarning},
+		{"node-disk-encryption", func(env string) Decision { return NodeDiskEncryptionCheck{Environment: env}.Decide() }, NodeDiskEncryptionWarning},
+	}
+	for _, c := range checks {
+		t.Run(c.name, func(t *testing.T) {
+			if !strings.HasPrefix(c.warning, "WARNING: ") {
+				t.Fatalf("warning text must carry the §17.6 WARNING prefix, got %q", c.warning)
+			}
+			d := c.decide("prod")
+			if !d.Passed {
+				t.Fatalf("prod: the warning must not block, got passed=false reason=%q", d.Reason)
+			}
+			if d.Reason != c.warning {
+				t.Fatalf("prod: want the §17.6 warning verbatim, got %q", d.Reason)
+			}
+			// Production mode is the exact value prod (§17.9.1): every other
+			// closed-set value, the empty value, the retired "production"
+			// spelling, and case or whitespace variants are silent.
+			for _, env := range []string{"", "local", "dev", "staging", "production", "PROD", "Prod", " prod", "prod "} {
+				if d := c.decide(env); !d.Passed || d.Reason != "" {
+					t.Errorf("env %q: want silent pass, got passed=%v reason=%q", env, d.Passed, d.Reason)
+				}
+			}
+		})
+	}
+	// The two texts are the two distinct §17.6 rows.
+	if !strings.Contains(EtcdSecretEncryptionWarning, "does not encrypt Secrets in etcd") ||
+		!strings.Contains(EtcdSecretEncryptionWarning, "'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'") {
+		t.Errorf("etcd warning text drifted from §17.6: %q", EtcdSecretEncryptionWarning)
+	}
+	if !strings.Contains(NodeDiskEncryptionWarning, "Node-level disk encryption (LUKS/dm-crypt") ||
+		!strings.Contains(NodeDiskEncryptionWarning, "encrypted scratch volumes.") {
+		t.Errorf("node disk warning text drifted from §17.6: %q", NodeDiskEncryptionWarning)
+	}
+}

@@ -3434,13 +3434,26 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
 
 - Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
   because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
-  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
-    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
-  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
-    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
-  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+  - [x] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13. Fixed in `450ef8a47`:
+    `EtcdSecretEncryptionCheck` and `NodeDiskEncryptionCheck` warn in production mode and never block, and
+    T-17.6.13 is corrected.
+  - [x] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment. Fixed in
+    `42bb52ac1`, `a4fc41c0b`, and `7f2dce149`.
+  - [x] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
     off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
     requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+    Fixed in `0b66ec19c`: `lenny-ops` refuses an off-set tier at startup (unset defaults to `tier1`, the
+    chart default), and `global.deploymentTier` carries the enum.
+  - [x] **F-25.4.39** (Low): `lenny-preflight --platform-tier` accepts any string, so an off-set tier reads as
+    Tier 1 in the §25.4 Prometheus advisory. Filed from the F-25.4.38 fix (2026-10-27) and fixed in
+    `32ae0c7ce`: the Job refuses a value outside `tier1`, `tier2`, and `tier3`.
+  - [ ] **F-10.5.16** (Low): `make generate` strips the hand-applied CRD additions (the `lenny.dev/schema-version`
+    annotation and the top-level preserve-unknown markers) and rewrites a DeepCopy import, and the tier-0 CRD
+    drift check normalizes the difference away. Filed from the F-25.4.37 fix (2026-10-27). Move the additions
+    into kubebuilder markers or a post-generate patch step so `make generate` is idempotent, and add a tier-0
+    check that a fresh `make generate` leaves the tree clean.
 - Proposal routing.
   - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
     SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when

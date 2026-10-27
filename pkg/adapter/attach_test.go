@@ -418,25 +418,39 @@ func TestAttachStampsInboundSessionID_spec_6_4(t *testing.T) {
 	wg.Wait()
 
 	// Both inbound envelopes reached the shared runtime, each stamped with
-	// its session's sessionId. Wait briefly for the concurrent writes to
-	// land.
+	// its session's sessionId. The runtime also records the session_start
+	// frame each StartSession wrote above (§28.5.3, Inbound:
+	// session_start), so only the message envelopes are counted: counting
+	// every recorded envelope passed on the two session_start frames
+	// before either message landed, and failed with three or four when a
+	// message landed before the first snapshot. Wait briefly for the
+	// concurrent writes to land.
+	// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §6.4
+	messages := func() [][]byte {
+		var out [][]byte
+		for _, env := range rt.envelopesSnapshot() {
+			if frameTypeOf(env) == "message" {
+				out = append(out, env)
+			}
+		}
+		return out
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	var envs [][]byte
 	for time.Now().Before(deadline) {
-		envs = rt.envelopesSnapshot()
-		if len(envs) >= 2 {
+		if envs = messages(); len(envs) >= 2 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if len(envs) != 2 {
-		t.Fatalf("runtime received %d envelopes, want 2 (one per slot)", len(envs))
+		t.Fatalf("runtime received %d message envelopes, want 2 (one per slot): %q", len(envs), envs)
 	}
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, env := range envs {
-		seen[frameSessionIDForTest(t, env)] = true
+		seen[frameSessionIDForTest(t, env)]++
 	}
-	if !seen["sess-a"] || !seen["sess-b"] {
-		t.Errorf("stamped session addresses = %v, want both sess-a and sess-b", seen)
+	if seen["sess-a"] != 1 || seen["sess-b"] != 1 {
+		t.Errorf("stamped session addresses = %v, want one message each for sess-a and sess-b", seen)
 	}
 }

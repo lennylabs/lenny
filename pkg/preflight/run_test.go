@@ -137,6 +137,46 @@ func TestRunEmitsVolumeEncryptionCheck_spec_12_9_1050(t *testing.T) {
 	}
 }
 
+// TestRunEmitsUnverifiableEncryptionWarnings_spec_17_6 checks that Run
+// reports the §17.6 etcd Secret encryption and node disk encryption
+// checks, that a production install carries both warnings without failing
+// the check, and that a non-production install carries neither.
+//
+// spec: 17.6 (Packaging and Installation) "etcd Secret encryption (warning)", "Node disk encryption (warning)"
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
+func TestRunEmitsUnverifiableEncryptionWarnings_spec_17_6(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+	want := map[string]string{
+		"etcd-secret-encryption": preflight.EtcdSecretEncryptionWarning,
+		"node-disk-encryption":   preflight.NodeDiskEncryptionWarning,
+	}
+	for _, env := range []string{"prod", "staging", "dev", "local", ""} {
+		report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS, Environment: env})
+		for name, text := range want {
+			found := false
+			for _, r := range report {
+				if r.Name != name {
+					continue
+				}
+				found = true
+				if !r.Decision.Passed {
+					t.Errorf("env %q: %s must never block, got reason=%q", env, name, r.Decision.Reason)
+				}
+				wantReason := ""
+				if env == "prod" {
+					wantReason = text
+				}
+				if r.Decision.Reason != wantReason {
+					t.Errorf("env %q: %s reason = %q, want %q", env, name, r.Decision.Reason, wantReason)
+				}
+			}
+			if !found {
+				t.Errorf("env %q: report carries no %q check", env, name)
+			}
+		}
+	}
+}
+
 func TestRunFailsOnFailOpenWebhook(t *testing.T) {
 	// preflight runs before the chart's main phase, so a not-yet-deployed
 	// webhook is not a gap. The genuine fail-open gap the inventory check

@@ -108,7 +108,12 @@
       "additionalProperties": false,
       "properties": {
         "deploymentTier": {
-          "description": "Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1.",
+          "description": "Static metric tier label and lenny-ops platform tier: tier1, tier2, or tier3. §16.1.1, §25.4.",
+          "enum": [
+            "tier1",
+            "tier2",
+            "tier3"
+          ],
           "type": "string"
         },
         "devMode": {

@@ -4927,17 +4927,15 @@ spec:
             timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 — readiness in production mode (§17.9.1 environment:
-          # prod) uses the permissive /healthz
-          # check, which passes when Postgres or the Kubernetes API is
-          # reachable, so a Postgres outage does not remove every replica
-          # from the Service and the §25.15 degraded mode stays reachable.
-          # The strict ?strict=true form is a diagnostic check no probe
-          # uses. Outside production mode the render keeps the /readyz
-          # report.
+          # §25.4 — readiness uses the permissive /healthz check in every
+          # environment, which passes when Postgres or the Kubernetes API
+          # is reachable, so a Postgres outage does not remove every
+          # replica from the Service and the §25.15 degraded mode stays
+          # reachable. The strict ?strict=true form and the /readyz report
+          # are diagnostic checks no probe uses. F-25.4.37.
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /healthz
               port: http
             timeoutSeconds: 3
             initialDelaySeconds: 5
