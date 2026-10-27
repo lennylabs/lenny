@@ -28,6 +28,9 @@ type reserveStore struct {
 	createErr         error
 	createReservedErr error
 	calls             []string
+	// beforeChildInsert runs before the child row's insert reaches the
+	// wrapped store, after every admission gate passed.
+	beforeChildInsert func()
 }
 
 func (r *reserveStore) note(name string) {
@@ -58,6 +61,9 @@ func (r *reserveStore) Reserve(ctx context.Context, tenantID, owner, id string, 
 
 func (r *reserveStore) Create(ctx context.Context, s sessionstore.Session) error {
 	r.note("Create")
+	if s.ID == "sess_child" && r.beforeChildInsert != nil {
+		r.beforeChildInsert()
+	}
 	if r.createErr != nil && s.ID == "sess_child" {
 		return r.createErr
 	}
@@ -66,6 +72,9 @@ func (r *reserveStore) Create(ctx context.Context, s sessionstore.Session) error
 
 func (r *reserveStore) CreateReserved(ctx context.Context, s sessionstore.Session) error {
 	r.note("CreateReserved")
+	if r.beforeChildInsert != nil {
+		r.beforeChildInsert()
+	}
 	if r.createReservedErr != nil {
 		return r.createReservedErr
 	}

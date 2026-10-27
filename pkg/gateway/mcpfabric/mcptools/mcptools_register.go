@@ -626,7 +626,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				archiveCancelled(sctx, deps.TreeArchive, root, row, clock())
 			}
 		}
-		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all, deps.Terminal, signals, clock)
+		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, deps.Terminal, signals, clock)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}

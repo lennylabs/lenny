@@ -1540,6 +1540,9 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 // insert, and through Create otherwise. A fence refusal of a reserved
 // child deletes the export objects and releases the reservation. Any
 // other insert error keeps both, because it can follow a committed insert.
+// An unreserved child has no export, and nothing is written under its ID
+// before the insert, so a refusal there, DELEGATION_PARENT_REVOKED included,
+// has nothing to undo.
 // spec: §12.8 (Lifecycle fence and drain).
 func (s *Service) commitChild(ctx context.Context, child sessionstore.Session, reserved bool) error {
 	if !reserved {

@@ -1439,6 +1439,9 @@ func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessio
 		return mcp.NewToolError("INTERNAL_ERROR",
 			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
+	// The early gate reads no parent row and leaves ParentTerminal unset, so
+	// the child's insert transaction is the only producer of
+	// DELEGATION_PARENT_REVOKED. spec: §12.8 (Lifecycle fence and drain).
 	m.IsDelegatedChild = true
 	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
 		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
@@ -2263,6 +2266,12 @@ type Terminal interface {
 // running because the spec models that mode as "let children outlive
 // the terminated parent".
 //
+// The walk is breadth-first, one level at a time. After a level's cancel
+// writes return, it lists the tenant from the primary once and queues the
+// next level from that listing, so a delegated child the creation fence
+// admitted before its parent's terminal write is reached. The caller's
+// pre-write listing serves only authorization and the tree root.
+//
 // Each cancel is a hook-path terminal write: it opens the session's terminal
 // claim before its Update, writes cancelled only over a non-terminal locked
 // row, records the Terminated fact in the write, and runs the post-terminal
@@ -2277,50 +2286,67 @@ type Terminal interface {
 // actually transitioned, sorted for a deterministic result.
 //
 // spec: §8.5 (cancel_child cascades per policy); §8.10 (cascadeOnFailure
-// modes); §7.2 (Interactive Session Model). F-8.5.19.
+// modes); §7.2 (Interactive Session Model); §12.8 (Lifecycle fence and
+// drain). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, all []sessionstore.Session, terminal Terminal,
+	child sessionstore.Session, terminal Terminal,
 	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) ([]string, error) {
-	byParent := map[string][]sessionstore.Session{}
-	for _, s := range all {
-		if s.ParentSessionID != "" {
-			byParent[s.ParentSessionID] = append(byParent[s.ParentSessionID], s)
-		}
-	}
 	var cancelled []string
 	seen := map[string]bool{child.ID: true}
-	queue := []sessionstore.Session{child}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if session.IsTerminal(cur.State) {
-			continue
-		}
-		applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
-		if err != nil {
-			sort.Strings(cancelled)
-			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
-		}
-		if !applied {
-			continue
-		}
-		cancelled = append(cancelled, cur.ID)
-		// §8.10: queue this node's children only when its cascade policy
-		// is `cancel_all`. `await_completion` and `detach` leave
-		// descendants running per the spec semantics.
-		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
-			for _, c := range byParent[cur.ID] {
-				if seen[c.ID] {
-					continue
-				}
-				seen[c.ID] = true
-				queue = append(queue, c)
+	level := []sessionstore.Session{child}
+	for len(level) > 0 {
+		var parents []string
+		for _, cur := range level {
+			if session.IsTerminal(cur.State) {
+				continue
+			}
+			applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
+			if err != nil {
+				sort.Strings(cancelled)
+				return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
+			}
+			if !applied {
+				continue
+			}
+			cancelled = append(cancelled, cur.ID)
+			// §8.10: queue this node's children only when its cascade policy
+			// is `cancel_all`. `await_completion` and `detach` leave
+			// descendants running per the spec semantics.
+			if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+				parents = append(parents, cur.ID)
 			}
 		}
+		if len(parents) == 0 {
+			break
+		}
+		// spec: §12.8 (Lifecycle fence and drain), §8.10 — list after this
+		// level's terminal writes committed, from the primary.
+		byParent, err := sessionstore.ChildrenByParent(ctx, store, tenant)
+		if err != nil {
+			sort.Strings(cancelled)
+			return cancelled, err
+		}
+		level = nextCascadeLevel(parents, byParent, seen)
 	}
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// nextCascadeLevel returns the children of parents in byParent that seen does
+// not hold, marking each one seen.
+func nextCascadeLevel(parents []string, byParent map[string][]sessionstore.Session, seen map[string]bool) []sessionstore.Session {
+	var next []sessionstore.Session
+	for _, p := range parents {
+		for _, c := range byParent[p] {
+			if seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			next = append(next, c)
+		}
+	}
+	return next
 }
 
 // cancelNode makes one hook-path cancel write and reports whether it
