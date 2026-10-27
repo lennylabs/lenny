@@ -401,6 +401,16 @@ else
   kind create cluster --name "${CLUSTER}" --config "${KIND_CONFIG}"
 fi
 
+# Re-export the cluster's kubeconfig on every run, including a run that
+# reuses an existing cluster. `kind export kubeconfig` merges the
+# cluster's entries into the file $KUBECONFIG names (or ~/.kube/config)
+# and sets current-context to kind-${CLUSTER}, so a kubeconfig whose
+# current-context another process cleared is repaired by the next
+# install. A dedicated cluster created and deleted against the same file
+# clears it: kind removes the deleted cluster's entries and unsets the
+# current-context that named it.
+kind export kubeconfig --name "${CLUSTER}"
+
 # kubectl from here on targets the Kind cluster's context explicitly so
 # the script does not depend on the caller's current-context.
 KCTX="kind-${CLUSTER}"
