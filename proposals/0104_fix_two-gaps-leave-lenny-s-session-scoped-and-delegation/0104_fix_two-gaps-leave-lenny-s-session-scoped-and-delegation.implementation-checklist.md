@@ -12,7 +12,7 @@
       Tiers 0, 11. Depends on: S2, S3
 - [ ] **S5 · spec** — SPEC-5. Lands the restatement edits across the remaining spec files.
       Tiers 0, 11. Depends on: S1, S3
-- [ ] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore, and the cascade's primary read in sessionserver `usage.go`.
+- [ ] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore, and the cascade walks' primary read in sessionserver `usage.go` and mcptools `mcptools.go`.
       Tiers 0, 1, 2, 7. Depends on: S2, S3, S4
 - [ ] **S7 · code** — CODE-1, in the same proposal merge as S6.
       Tiers 0, 1, 3, 11. Depends on: S1, S3, S4, S5, S6
@@ -21,7 +21,7 @@
 - [ ] **S9 · code** — CODE-4. Lands the alert description and the regenerated rule files.
       Tiers 0, 1, 11. Depends on: S5
 - [ ] **S10 · test** — TEST-1. Lands the tests in the Testing section, after 0102 CODE-3 item 3.
-      Tiers 1, 2, 3, 7, 8, 9. Depends on: S6, S7, S8
+      Tiers 0, 1, 2, 3, 7, 8, 9. Depends on: S6, S7, S8
 - [ ] **S11 · docs** — DOCS-1. Lands the docs edits.
       Tiers 11. Depends on: S1, S2, S3, S4, S5, S9
 - [ ] **S12 · docs** — REC-1. Lands the record closures and the new BUILD-GAPS finding and queue entry.
