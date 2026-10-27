@@ -95,6 +95,9 @@ type mcpSend struct {
 	tenant    string
 	messageID string
 	senderID  string
+	// inReplyTo is the message's inReplyTo, which selects the §29.3
+	// Forwarding rule 6 outcome of a message this replica did not deliver.
+	inReplyTo string
 	content   sessionrecord.MessageContent
 	modified  bool
 	clock     func() time.Time
@@ -310,9 +313,27 @@ func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (
 	return res, nil
 }
 
+// notCoordinating answers a message whose held delivery found that another
+// replica now holds the target's REG-COORDLEASE. Nothing of the message was
+// sent, so this replica applies the not-delivered outcome of §29.3
+// Forwarding rule 6 itself, as rule 5 states for a replica that does not
+// hold the lease: a message with no inReplyTo is held as holdUndelivered
+// holds it, and a message carrying inReplyTo returns the TARGET_NOT_READY
+// tool error.
+// spec: §29.3 (Interactive message send) Forwarding rules 5 and 6, §7.2
+// (Message delivery routing — seven paths, path 6)
+func (m *mcpSend) notCoordinating(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
+	if m.inReplyTo != "" {
+		return mcp.ToolResult{}, sessionserver.RefuseToolForward(ctx, row)
+	}
+	return m.holdUndelivered(ctx, row)
+}
+
 // sendNow is §7.2 path 2: the session's held messages are delivered first,
 // and then the message is sent. An error of either is an error of the send,
-// except the adapter's sealed refusal, which routes the message again.
+// except the adapter's sealed refusal, which routes the message again, and a
+// held delivery that found another replica holding the lease, which
+// notCoordinating answers.
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §6.2 (Pod
 // State Machine)
 func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
@@ -326,6 +347,9 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 			}
 			if errors.Is(err, executor.ErrNotBound) {
 				return m.rerouteUnbound(ctx, row, err)
+			}
+			if errors.Is(err, sessionserver.ErrHeldDeliveryPreempted) {
+				return m.notCoordinating(ctx, row)
 			}
 			return mcp.ToolResult{}, err
 		}

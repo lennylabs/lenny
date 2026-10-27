@@ -387,7 +387,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		}
 		sm := &mcpSend{
 			deps: deps, tenant: tenant, messageID: messageID, senderID: senderID,
-			content: content, modified: modified, clock: clock,
+			inReplyTo: in.InReplyTo, content: content, modified: modified, clock: clock,
 		}
 		if undelivered {
 			return sm.holdUndelivered(ctx, row)

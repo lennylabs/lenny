@@ -259,15 +259,25 @@ func runForwardRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Rand, 
 }
 
 // maxDeliveries is the number of times the checker lets send reach the
-// runtime. It is one, except for a send held in the DLQ in a round that
-// handed the session to the peer. A held entry is removed only after the
-// runtime consumed it (§7.2 delivery path 6 Delivery of held messages), so a
-// former coordinator that read its own lease just before the handoff can
-// deliver an entry that the new coordinator's takeover delivery also reads
-// before the removal. The gateway re-reads the lease before each held entry,
-// which leaves only that read-to-removal window, and the pod-side
-// coordination_generation stamp of §29.3 Forwarding rule 5 does not close a
-// write that precedes the new coordinator's fence.
+// runtime. It is one for every send except a send answered 200 queued, and
+// so held in the DLQ, in a round whose lease ended on the peer; that send
+// may reach the runtime twice and the checker logs it.
+//
+// The gateway does not close that redelivery. §7.2 delivery path 6 Delivery
+// of held messages removes a held entry only after the runtime consumed it,
+// and the durable-inbox Explicit ACK row it cites makes that delivery
+// at-least-once: an entry consumed but not yet removed when the coordinating
+// replica changes is delivered again by the adopting replica, and the
+// adapter's delivered_message_ids set suppresses the duplicate before it
+// reaches the runtime. The gateway re-reads REG-COORDLEASE before each held
+// entry (ErrHeldDeliveryPreempted in
+// pkg/gateway/sessionserver/held_delivery.go), which leaves only the window
+// between one entry's lease read and its removal, and the pod-side
+// coordination_generation stamp of §29.3 Forwarding rule 5 does not reject a
+// write that precedes the new coordinator's fence. The adapter's suppression
+// set is BUILD-GAPS finding F-7.2.41, which no code implements yet, so the
+// harness runtime sees the redelivery. When F-7.2.41 lands, maxDeliveries
+// returns one for every send.
 func maxDeliveries(s forwardSend, handedOff bool) int {
 	if handedOff && s.code == http.StatusOK && s.receipt() == string(session.DeliveryStatusQueued) {
 		return 2
@@ -277,7 +287,8 @@ func maxDeliveries(s forwardSend, handedOff bool) int {
 
 // checkForwardSends is the round's invariant checker. After the round
 // settles it asserts that no send is delivered twice (maxDeliveries states
-// the one exception), that no send is both delivered and held in the DLQ,
+// the one exception, a DLQ-held send across a handoff, which F-7.2.41
+// closes), that no send that reached the runtime is still held in the DLQ,
 // that every 2xx receipt is a delivery or a DLQ hold, and that every answer
 // is a 2xx receipt or a 409 or 500 refusal, which is accepted with or
 // without a delivery. It then sends one message on the coordinator, whose
@@ -294,13 +305,13 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 	held := heldTexts(t, h, id, texts)
 	for _, s := range sends {
 		delivered := countText(h, id, s.text)
-		switch {
-		case delivered > maxDeliveries(s, handedOff):
-			t.Errorf("%s (answered %d %v) reached the runtime %d times, want at most %d", s.text, s.code, s.body, delivered, maxDeliveries(s, handedOff))
-		case delivered > 1:
-			t.Logf("%s (answered %d %s) reached the runtime %d times across the handoff", s.text, s.code, s.receipt(), delivered)
-		case delivered == 1 && held[s.text]:
-			t.Errorf("%s (answered %d %v) was delivered and is still held in the DLQ", s.text, s.code, s.body)
+		if limit := maxDeliveries(s, handedOff); delivered > limit {
+			t.Errorf("%s (answered %d %v) reached the runtime %d times, want at most %d", s.text, s.code, s.body, delivered, limit)
+		} else if delivered > 1 {
+			t.Logf("%s (answered %d %s) reached the runtime %d times across the handoff (F-7.2.41)", s.text, s.code, s.receipt(), delivered)
+		}
+		if delivered >= 1 && held[s.text] {
+			t.Errorf("%s (answered %d %v) reached the runtime %d times and is still held in the DLQ", s.text, s.code, s.body, delivered)
 		}
 		switch {
 		case s.accepted():
@@ -346,7 +357,8 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 // diagnosis: an off-holder message raced against a coordinator handoff or a
 // coordination lease expiry, with the lease holder refusing or dropping
 // forwarded connections, reached the runtime twice (a message held in the
-// DLQ may reach it twice across a completed handoff); was delivered and also
+// DLQ may reach it twice across a completed handoff until the adapter's
+// duplicate suppression of BUILD-GAPS F-7.2.41 lands); was delivered and also
 // left held in the DLQ; was answered with a 2xx receipt although it was
 // neither delivered nor held, or was held but never delivered by the
 // coordinator's next path-2 delivery; or was answered with a status other
@@ -356,8 +368,10 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 // applied on a former holder (forwardTarget in
 // pkg/gateway/sessionserver/holder_forward.go), or at a former coordinator
 // delivering held entries after its lease was handed off
-// (heldDeliveryPreempted in pkg/gateway/sessionserver/held_delivery.go). Replay a failing run with
-// LENNY_LIFECYCLE_SEED set to the logged seed.
+// (heldDeliveryPreempted in pkg/gateway/sessionserver/held_delivery.go). A
+// 500 answer to a message whose held delivery was preempted points at
+// restDelivery.notCoordinating in the same package. Replay a failing run
+// with LENNY_LIFECYCLE_SEED set to the logged seed.
 func TestOffHolderForwardInterleavingsDeliverEachMessageOnce_spec_29_3(t *testing.T) {
 	seed := lifecycleSeed(t)
 	t.Logf("seed %d", seed)

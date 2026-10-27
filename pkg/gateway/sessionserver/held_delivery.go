@@ -17,14 +17,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
-// errHeldDeliveryPreempted is the error deliverBuffered returns when a
+// ErrHeldDeliveryPreempted is the error deliverBuffered returns when a
 // readable REG-COORDLEASE shows that this replica no longer coordinates the
 // session: the lease is absent or names another holder. The entries stay in
-// place for the coordinating replica, and a path-2 caller fails its own
-// message as it fails one the pod rejects on the coordination generation.
+// place for the coordinating replica. Nothing of the caller's path-2 message
+// reached the runtime, so a REST or MCP path-2 caller applies the
+// not-delivered outcome of §29.3 Forwarding rule 6 itself, as rule 5 states
+// for a replica that does not hold the lease: a message with no inReplyTo is
+// held in the session DLQ and answered with its receipt, and any other
+// message is refused with TARGET_NOT_READY.
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §29.3
-// (Interactive message send) Forwarding rule 5
-var errHeldDeliveryPreempted = errors.New("sessionserver: another replica coordinates the session; held messages are left to it")
+// (Interactive message send) Forwarding rules 5 and 6
+var ErrHeldDeliveryPreempted = errors.New("sessionserver: another replica coordinates the session; held messages are left to it")
 
 // heldEntry is one held message the delivery of held messages takes: the
 // decoded inbox or DLQ entry and the handle that removes exactly it.
@@ -49,7 +53,7 @@ type heldEntry struct {
 // that row is terminal it returns nil and leaves the entry in place, and a
 // read error is logged and the loop continues. It then reads the session's
 // REG-COORDLEASE; when the lease is absent or names another holder it returns
-// errHeldDeliveryPreempted and leaves the entry in place, because only the
+// ErrHeldDeliveryPreempted and leaves the entry in place, because only the
 // coordinating replica delivers held messages, and a replica whose lease was
 // handed off mid-delivery would otherwise deliver an entry the new
 // coordinator's takeover delivery also takes. A lease read error is not
@@ -77,7 +81,7 @@ func (s *Server) deliverBuffered(ctx context.Context, row sessionstore.Session) 
 			return nil
 		}
 		if s.heldDeliveryPreempted(ctx, row) {
-			return errHeldDeliveryPreempted
+			return ErrHeldDeliveryPreempted
 		}
 		entry, ok, err := s.oldestHeld(ctx, row)
 		if err != nil {

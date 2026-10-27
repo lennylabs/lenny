@@ -312,7 +312,9 @@ func (d *restDelivery) immediate(deliverIdx []int) bool {
 // first, so a new message never reaches the runtime ahead of a held entry
 // this replica can read, and then the batch is sent. An error of either is
 // an error of the send and answers EXECUTOR_FAILURE, except the adapter's
-// sealed refusal, which routes the batch's undelivered messages again.
+// sealed refusal, which routes the batch's undelivered messages again, and a
+// held delivery that found another replica holding the lease, which
+// notCoordinating answers.
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §6.2 (Pod
 // State Machine)
 func (d *restDelivery) deliverNow(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
@@ -324,6 +326,9 @@ func (d *restDelivery) deliverNow(row sessionstore.Session, msgs []executor.Mess
 		}
 		if errors.Is(err, executor.ErrNotBound) {
 			return d.rerouteUnbound(row, msgs, deliverIdx, err)
+		}
+		if errors.Is(err, ErrHeldDeliveryPreempted) {
+			return d.notCoordinating(row, deliverIdx)
 		}
 		return d.executorFailure(err)
 	}
@@ -419,6 +424,33 @@ func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.
 	}
 	d.rerouted = true
 	return d.route(fresh, msgs, deliverIdx)
+}
+
+// notCoordinating answers a batch whose held delivery found that another
+// replica now holds the session's REG-COORDLEASE. This replica sent nothing
+// of the batch, so it applies the not-delivered outcome of §29.3 Forwarding
+// rule 6 itself, as rule 5 states for a replica that does not hold the
+// lease: a batch with no inReplyTo is held in the session DLQ with the TTL
+// of the §7.2 dead-letter table's recovering-state row and answered with the
+// hold's receipt (queued, dropped with dlq_overflow, TARGET_TERMINAL, or
+// error with inbox_unavailable), and a batch carrying inReplyTo answers 409
+// TARGET_NOT_READY. The new coordinator delivers a held batch at its next
+// delivery point.
+// spec: §29.3 (Interactive message send) Forwarding rules 5 and 6, §7.2
+// (Message delivery routing — seven paths, path 6)
+func (d *restDelivery) notCoordinating(row sessionstore.Session, deliverIdx []int) (deliveryOutcome, bool) {
+	s := d.s
+	kind := messageForwardKind(d.req)
+	if kind != ForwardKindMessageNoReplyTo {
+		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered)
+		return deliveryOutcome{}, false
+	}
+	outcome, terminal := s.holdOutcomeWithTTL(d.r.Context(), row, d.req, deliverIdx, s.recoveringDLQTTL(row))
+	if terminal != "" {
+		s.writeTargetTerminal(d.w, terminal)
+		return deliveryOutcome{}, false
+	}
+	return outcome, true
 }
 
 // executorFailure answers a failed send with EXECUTOR_FAILURE. The send ran

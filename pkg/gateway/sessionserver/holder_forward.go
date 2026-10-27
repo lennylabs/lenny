@@ -536,23 +536,23 @@ func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, 
 	case outcome == ForwardNotDelivered && kind == ForwardKindMessageNoReplyTo:
 		return mcp.ToolResult{}, ForwardNotDelivered, nil
 	case outcome != forwardDial:
-		return mcp.ToolResult{}, outcome, refuseToolForward(ctx, row)
+		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)
 	}
 	req, err := newToolForwardRequest(ctx, addr, tool, arguments)
 	if err != nil {
-		return mcp.ToolResult{}, ForwardNotDelivered, refuseToolForward(ctx, row)
+		return mcp.ToolResult{}, ForwardNotDelivered, RefuseToolForward(ctx, row)
 	}
 	resp, outcome := s.sendForward(req)
 	if outcome != ForwardDelivered {
 		if outcome == ForwardNotDelivered && kind == ForwardKindMessageNoReplyTo {
 			return mcp.ToolResult{}, ForwardNotDelivered, nil
 		}
-		return mcp.ToolResult{}, outcome, refuseToolForward(ctx, row)
+		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	result, te, ok := decodeToolForwardResponse(ctx, resp)
 	if !ok {
-		return mcp.ToolResult{}, ForwardUnknown, refuseToolForward(ctx, row)
+		return mcp.ToolResult{}, ForwardUnknown, RefuseToolForward(ctx, row)
 	}
 	if te != nil {
 		return mcp.ToolResult{}, ForwardDelivered, te
@@ -560,11 +560,13 @@ func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, 
 	return result, ForwardDelivered, nil
 }
 
-// refuseToolForward returns the TARGET_NOT_READY tool error carrying
-// currentState and keeps the refusal out of the §11.5 idempotency cache.
+// RefuseToolForward returns the TARGET_NOT_READY tool error carrying
+// currentState and keeps the refusal out of the §11.5 idempotency cache. The
+// MCP message path also returns it for a message carrying inReplyTo that a
+// replica which lost the lease mid-delivery did not deliver.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 6 and 7
-func refuseToolForward(ctx context.Context, row sessionstore.Session) error {
+func RefuseToolForward(ctx context.Context, row sessionstore.Session) error {
 	idemmw.DoNotStore(ctx)
 	return mcp.NewToolError("TARGET_NOT_READY",
 		"the session's coordinating gateway replica could not be reached; retry the tool call",
