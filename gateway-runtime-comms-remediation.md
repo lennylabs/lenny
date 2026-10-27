@@ -3075,7 +3075,12 @@ Proposal 0087 part 1 (Phase 2 above) follows P1 and P5. P5b follows P1 and P5 an
 
 Proposals, second wave:
 
-- [ ] **P2. Terminal pipeline completeness** (not yet written), after P1.
+- [ ] **P2. Terminal pipeline completeness** (split; P2a implemented, P2b not yet written), after P1.
+  - **Outcome (P2a).** Proposal 0100 (`proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/`)
+    was implemented 2026-10-27 and merged into this branch (`8d0f2c7ea`). It lands the bounded terminal pipeline
+    context, the seal and release ordering, the post-terminal window, and the release marker. Its unstaged defects
+    are filed below. P2b (held messages, emission, and translators) remains, drafted after proposal 0071 is
+    re-derived per the split seam below.
   - **Scope.** What happens between a terminal write and the end of its hook: the context the pipeline
     runs on, the seal and its relabel, the held-message drain and the lifetime of DLQ and inbox keys, the
     ordering of session-stream events after a terminal, the row returned to the caller, one terminal-signal
@@ -3280,15 +3285,21 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
       by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
       closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
-  - [x] **Production-mode spelling proposal** (done as a proposal; implementation pending): **F-17.9.24**
+  - [x] **Production-mode spelling proposal** (implemented): **F-17.9.24**
     (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
     `LENNY_ENV`, so no value turns on every production gate.
     - **Outcome.** Proposal 0103
       (`proposals/0103_fix_production-mode-has-two-spellings-so-no-single-setting/`) was approved
       2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
-      every gate reads through one predicate. Its implementation, which closes F-17.9.24, is pending. Its
-      unstaged defects are filed below.
-  - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
+      every gate reads through one predicate. Implemented 2026-10-27 (merge `83ab31257`), closing F-17.9.24.
+      Its unstaged defects are filed below.
+  - [x] **Session capability and delegation child token proposal** (done as a proposal; implementation pending), the follow-up 0097
+    - **Outcome.** Proposal 0104 (`proposals/0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation/`) was
+      approved 2026-10-27 (merge `56a8699ff`). It resolves the open points the other way: pods hold no
+      Lenny-issued JWT, so the session-creation mint and the internal child-token exchange are dropped, and the
+      creation fence refuses a delegated child of a terminal or absent parent. The forwarded-call session binding
+      is split out (F-10.2.29). Its spec edits rewrite sentences proposal 0102 adds, so its implementation runs
+      after 0102 merges. It closes F-10.2.25 and F-8.2.31. Its unstaged defects are filed below.
     names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
     **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
     joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
