@@ -41,7 +41,7 @@ The Job is enabled when:
    roots. */ -}}
 {{- $minioCABundle := (default "" $tls.caBundleConfigMap) -}}
 {{- $noncurrentDays := default 1 $lifecycle.noncurrentExpirationDays -}}
-{{- $mcImage := default "minio/mc:latest" $lifecycle.image -}}
+{{- $mcImage := default "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8" $lifecycle.image -}}
 apiVersion: batch/v1
 kind: Job
 metadata:

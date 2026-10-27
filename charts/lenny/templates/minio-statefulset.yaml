@@ -101,7 +101,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          image: "{{ $m.image.repository }}:{{ $m.image.tag }}"
+          image: "{{ $m.image.repository }}:{{ $m.image.tag }}{{ with $m.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ $m.image.pullPolicy }}
           args:
             - server

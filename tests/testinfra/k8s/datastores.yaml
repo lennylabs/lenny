@@ -383,10 +383,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          # lenny-minio is built from the upstream MinIO source
-          # (tests/testinfra/images/minio); install.sh replaces the e2e
-          # alias tag with the content tag it built and loaded.
-          image: lenny-minio:e2e
+          # pgsty/silo, the maintained fork of the MinIO server, pinned by
+          # tag and index digest. install.sh pulls it on the host, loads it
+          # onto the nodes, and registers the digest-pinned name.
+          image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
           imagePullPolicy: IfNotPresent
           args:
             - server
@@ -462,8 +462,9 @@ spec:
         # missing, so this loop is what keeps tier-5 node-drain
         # exercisable across the lifetime of the cluster.
         - name: bucket-init
-          # The same lenny-minio image carries mc.
-          image: lenny-minio:e2e
+          # pgsty/mc, the maintained fork of the MinIO client, pinned by
+          # tag and index digest; install.sh loads it like the server image.
+          image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
           imagePullPolicy: IfNotPresent
           # The mc client writes its config to $HOME/.mc; the image's
           # default HOME is `/` which is unwritable for uid 1000.

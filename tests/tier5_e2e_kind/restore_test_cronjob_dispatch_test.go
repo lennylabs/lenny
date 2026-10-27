@@ -190,7 +190,7 @@ spec:
   terminationGracePeriodSeconds: 1
   containers:
     - name: mc
-      image: lenny-minio:e2e
+      image: ` + kind.MinIOClientImage + `
       imagePullPolicy: IfNotPresent
       env:
         - name: MINIO_ACCESS_KEY

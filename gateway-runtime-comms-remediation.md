@@ -3528,12 +3528,14 @@ backend provisioning without filing it, and no open finding covered the images, 
 endpoint, KMS error codes, or the `lenny-ops` probe.
 
 - Direct-fix queue, at high priority ahead of the direct-fix queues above.
-  - [ ] **F-17.9.26** (High): the chart's default MinIO image (`quay.io/minio/minio`, pinned tag) and the
+  - [x] **F-17.9.26** (High): the chart's default MinIO image (`quay.io/minio/minio`, pinned tag) and the
     lifecycle Job's `minio/mc:latest` cannot be pulled anonymously, so a self-managed install that deploys
     MinIO, and any install whose lifecycle hook runs, fails. Pin a maintained image by digest in the chart
     and the test harness: the project's own source-built MinIO copy (in progress on branch
     `infra/minio-local-copy`) or the maintained fork `pgsty/silo` with `pgsty/mc`. The `mc` lifecycle Job is
     replaced by a Go job later, under the proposal below.
+    Fixed in `b643b181c`: the chart and the test harness run `pgsty/silo` and `pgsty/mc`, pinned by tag
+    and index digest, and the source-built `lenny-minio` image is retired. The Kind tiers were not run.
 - New proposals.
   - [ ] **S3-compatible object-store capability profile proposal** (not yet written): **F-12.8.63** (Medium,
     the escrow object lock is unimplemented and §12.8's `COMPLIANCE` mode cannot be released on hold clear),

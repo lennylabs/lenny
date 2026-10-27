@@ -30,10 +30,10 @@
 #               (same as the base manifest)
 #   Bucket      lenny-artifacts (created by the post-start bootstrap)
 #
-# The MinIO server and the bootstrap mc client run the lenny-minio image,
-# which install.sh builds from the upstream source
-# (tests/testinfra/images/minio) and loads onto the Kind nodes under the
-# e2e alias tag this overlay names.
+# The MinIO server runs pgsty/silo and the bootstrap client runs pgsty/mc,
+# the maintained forks of the MinIO server and client, each pinned by tag
+# and index digest. install.sh loads both onto the Kind nodes and registers
+# the digest-pinned names this overlay uses.
 #
 # Distributed mode requires every pod to resolve every other pod's
 # stable DNS name; the headless Service is the discovery mechanism.
@@ -88,7 +88,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: minio
-          image: lenny-minio:e2e
+          image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
           args:
             - server
             - --address
@@ -180,7 +180,14 @@ spec:
         runAsGroup: 1000
       containers:
         - name: mc
-          image: lenny-minio:e2e
+          image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
+          # mc writes its configuration under $HOME/.mc unless MC_CONFIG_DIR
+          # names another directory. uid 1000 has no home directory in the
+          # image, so HOME is / and unwritable, and the pgsty/mc image sets
+          # no MC_CONFIG_DIR default.
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
           command:
             - sh
             - -c

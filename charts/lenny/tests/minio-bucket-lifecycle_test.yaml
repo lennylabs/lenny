@@ -29,6 +29,52 @@ tests:
           path: metadata.annotations["helm.sh/hook"]
           value: post-install,post-upgrade
 
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add`; its default
+  # image is the maintained, anonymously pullable mc fork pinned by tag and
+  # index digest, so the hook can pull it on a fresh install.
+  - it: defaults the lifecycle Job image to pgsty/mc pinned by tag and digest
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: falls back to the pinned mc image when minio.lifecycle.image is empty
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: honours an operator-supplied lifecycle Job image
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+
   - it: emits the post-install hook with the §12.5 versioning + lifecycle commands
     template: minio-bucket-lifecycle-job.yaml
     set:
