@@ -225,8 +225,9 @@ func (r *impReplicas) startShortSession(t *testing.T, base, subject string) (str
 func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	r := startImpReplicas(t)
-	// The short session is started first, and the expiry case runs last,
-	// so the other cases run while its exp approaches.
+	// The short session is started first so the other cases run while its
+	// exp approaches. The restart case runs last: gateway.StartWith ties the
+	// new replica A to that subtest's cleanup, so A stops when it ends.
 	shortBearer, shortID, shortExp := r.startShortSession(t, r.gwA.BaseURL(), "olivia@acme.com")
 
 	t.Run("listing on the non-issuing replica", func(t *testing.T) {
@@ -300,22 +301,6 @@ func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 		r.requireEndedOnOtherReplica(t, "ivan@acme.com", cascadeRefusalBound, r.redisLinkA.Cut)
 	})
 
-	t.Run("restart of the issuing replica", func(t *testing.T) {
-		bearer, id := r.session(t, r.gwA.BaseURL(), "mallory@acme.com")
-		r.gwA.Stop(t)
-		r.gwA = gateway.StartWith(t, r.argsA...)
-		if got := r.listed(t, r.gwB.BaseURL()); !slices.Contains(got, id) {
-			t.Fatalf("GET on B after A restarted lists %v, want %s", got, id)
-		}
-		if code, body := r.end(t, r.gwB.BaseURL(), id); code != http.StatusOK {
-			t.Fatalf("DELETE on B after A restarted: status %d body %v, want 200", code, body)
-		}
-		awaitRefusedOnReplicas(t, "mallory@acme.com", bearer, r.replicas())
-		if n := r.endedEvents(t, id); n != 1 {
-			t.Errorf("admin.impersonation_ended rows for %s = %d, want 1", id, n)
-		}
-	})
-
 	t.Run("expiry", func(t *testing.T) {
 		// The §13.3 exp check allows one second of skew.
 		if wait := time.Until(shortExp.Add(2 * time.Second)); wait > 0 {
@@ -332,6 +317,22 @@ func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
 		}
 		if n := r.endedEvents(t, shortID); n != 0 {
 			t.Errorf("admin.impersonation_ended rows for the expired session = %d, want 0", n)
+		}
+	})
+
+	t.Run("restart of the issuing replica", func(t *testing.T) {
+		bearer, id := r.session(t, r.gwA.BaseURL(), "mallory@acme.com")
+		r.gwA.Stop(t)
+		r.gwA = gateway.StartWith(t, r.argsA...)
+		if got := r.listed(t, r.gwB.BaseURL()); !slices.Contains(got, id) {
+			t.Fatalf("GET on B after A restarted lists %v, want %s", got, id)
+		}
+		if code, body := r.end(t, r.gwB.BaseURL(), id); code != http.StatusOK {
+			t.Fatalf("DELETE on B after A restarted: status %d body %v, want 200", code, body)
+		}
+		awaitRefusedOnReplicas(t, "mallory@acme.com", bearer, r.replicas())
+		if n := r.endedEvents(t, id); n != 1 {
+			t.Errorf("admin.impersonation_ended rows for %s = %d, want 1", id, n)
 		}
 	})
 }
