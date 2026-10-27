@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -416,11 +418,17 @@ var hopByHopHeaders = []string{
 }
 
 // copyForwardResponse copies the coordinator's status, headers other than
-// hop-by-hop headers, and streamed body to w. A response carrying the forward
+// hop-by-hop headers, and body to w. A response carrying the forward
 // listener's no-store mark is kept out of the §11.5 cache, and the mark is
-// not copied. A body that fails part-way gives an unknown outcome; the status
-// is already written then.
+// not copied. Only a live stream is flushed as it arrives; any other body is
+// copied without a flush, so the serving replica's §11.5 middleware buffers
+// and stores it as it stores a local response. A body that fails part-way
+// gives an unknown outcome; the status is already written then.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 4, §11.5
+// (Idempotency) Mechanism
 func copyForwardResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response) ForwardOutcome {
+	live := isLiveStream(resp)
 	h := resp.Header.Clone()
 	if h.Get(forwardNoStoreHeader) != "" {
 		idemmw.DoNotStore(ctx)
@@ -437,10 +445,29 @@ func copyForwardResponse(ctx context.Context, w http.ResponseWriter, resp *http.
 		w.Header()[name] = values
 	}
 	w.WriteHeader(resp.StatusCode)
-	if err := streamBody(w, resp.Body); err != nil {
+	if err := copyBody(w, resp.Body, live); err != nil {
 		return ForwardUnknown
 	}
 	return ForwardDelivered
+}
+
+// isLiveStream reports whether the coordinator's response is a live stream:
+// an event stream, or a chunked body with no declared length.
+func isLiveStream(resp *http.Response) bool {
+	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mt == "text/event-stream" {
+		return true
+	}
+	return resp.ContentLength < 0 && slices.Contains(resp.TransferEncoding, "chunked")
+}
+
+// copyBody copies src to w, streaming with a flush per chunk when live is
+// set and copying in one pass otherwise.
+func copyBody(w http.ResponseWriter, src io.Reader, live bool) error {
+	if live {
+		return streamBody(w, src)
+	}
+	_, err := io.Copy(w, src)
+	return err
 }
 
 // streamBody copies src to w, flushing after each chunk so a streamed

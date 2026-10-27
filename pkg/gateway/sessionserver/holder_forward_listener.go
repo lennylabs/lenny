@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
@@ -100,15 +101,24 @@ func serveCallingSession(w http.ResponseWriter, r *http.Request, next http.Handl
 	next.ServeHTTP(w, r)
 }
 
-// writeListenerError answers a calling-session resolution failure.
+// writeListenerError answers a calling-session resolution failure. An
+// unknown session is unauthenticated. A transient failure to read the
+// session is the catalog's SERVICE_UNAVAILABLE with Retry-After, and it
+// carries the no-store mark so the forwarding replica keeps the refusal out
+// of its §11.5 cache.
+//
+// spec: §15.1 (SERVICE_UNAVAILABLE), §11.5 (Idempotency) Mechanism, §29.3
+// (Interactive message send) Forwarding rule 3
 func writeListenerError(w http.ResponseWriter, err error) {
 	if errors.Is(err, leasecontrol.ErrSessionNotFound) {
 		writeErrorEnvelope(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"the calling session of the forwarded tool call does not exist", nil)
 		return
 	}
-	writeErrorEnvelope(w, http.StatusServiceUnavailable, "TARGET_NOT_READY",
-		"the calling session of the forwarded tool call could not be read", nil)
+	w.Header().Set(forwardNoStoreHeader, "1")
+	w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+	writeErrorEnvelope(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+		"the calling session of the forwarded tool call could not be read; retry", nil)
 }
 
 // forwardedMarker marks each request as forwarded, installs the §11.5

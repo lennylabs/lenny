@@ -678,3 +678,120 @@ func TestHolderForwardHandlerAcceptsNoOtherAssertedPrincipal_spec_29_3(t *testin
 		t.Errorf("unknown calling session answered %d, want 401", rec.Code)
 	}
 }
+
+// spec: 29.3 (Interactive message send) Forwarding rule 4, 11.5 (Idempotency) Mechanism
+func TestDeliveredForwardIsStoredAndReplayedUnderIdempotency_spec_11_5(t *testing.T) {
+	m := gatewaypki.Mint(t)
+	var calls atomic.Int64
+	coordinator := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"state":"running"}`))
+	})
+	listener := NewHolderForwardHandler(coordinator, authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}, callingSessions{})
+	addr := startTLSServer(t, serverTLSFor(t, m, gatewaypki.LeafFiles{CertFile: m.CertFile, KeyFile: m.KeyFile}), listener)
+
+	row := forwardRow()
+	row.State = session.StateSuspended
+	serving := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serving.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
+	})
+	store := idemmw.NewMemoryStore()
+	wrapped := authmw.Wrap(idemmw.Wrap(handler, store, idemmw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", bytes.NewReader([]byte("{}")))
+		req.Header.Set("Idempotency-Key", "resume-key")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Body.String() != `{"state":"running"}` {
+			t.Fatalf("attempt %d answered %d %q, want the coordinator's 200", i, rec.Code, rec.Body.String())
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("coordinator reached %d times, want 1: a same-key retry of a delivered forward replays the stored response", n)
+	}
+	if _, ok, _ := store.Get(context.Background(), "acme", "resume-key"); !ok {
+		t.Error("the delivered forward was not stored in the idempotency cache")
+	}
+}
+
+// spec: 29.3 (Interactive message send) Forwarding rule 4, 11.5 (Idempotency) Mechanism
+func TestForwardResponseFlushesOnlyALiveStream_spec_29_3(t *testing.T) {
+	cases := []struct {
+		name      string
+		header    http.Header
+		length    int64
+		encodings []string
+		live      bool
+	}{
+		{"event stream", http.Header{"Content-Type": {"text/event-stream; charset=utf-8"}}, -1, nil, true},
+		{"chunked without a length", http.Header{"Content-Type": {"application/json"}}, -1, []string{"chunked"}, true},
+		{"JSON with a length", http.Header{"Content-Type": {"application/json"}}, 12, nil, false},
+		{"no content type and no encoding", http.Header{}, -1, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: http.StatusOK, Header: tc.header, ContentLength: tc.length,
+				TransferEncoding: tc.encodings, Body: io.NopCloser(strings.NewReader("{\"ok\":true}\n")),
+			}
+			rec := httptest.NewRecorder()
+			if out := copyForwardResponse(context.Background(), rec, resp); out != ForwardDelivered {
+				t.Fatalf("outcome = %v, want delivered", out)
+			}
+			if rec.Flushed != tc.live {
+				t.Errorf("flushed = %v, want %v", rec.Flushed, tc.live)
+			}
+			if rec.Body.String() != "{\"ok\":true}\n" {
+				t.Errorf("body = %q, want the coordinator's body", rec.Body.String())
+			}
+		})
+	}
+}
+
+// failingSessions fails every read with a transient error.
+type failingSessions struct{}
+
+func (failingSessions) GetByID(context.Context, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errors.New("store unavailable")
+}
+
+// spec: 15.1 (SERVICE_UNAVAILABLE), 11.5 (Idempotency) Mechanism, 29.3 (Interactive message send) Forwarding rule 3
+func TestHolderForwardListenerAnswersATransientCallingSessionReadAsServiceUnavailable_spec_29_3(t *testing.T) {
+	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the handler ran without a resolved calling session")
+	})
+	h := NewHolderForwardHandler(inner, authmw.Options{RequireAuth: true}, failingSessions{})
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set(CallingSessionHeader, "sess-parent")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var env errorEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || env.Error.Code != "SERVICE_UNAVAILABLE" {
+		t.Errorf("transient read answered %d %s, want 503 SERVICE_UNAVAILABLE", rec.Code, env.Error.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("the 503 carries no Retry-After")
+	}
+	if rec.Header().Get(forwardNoStoreHeader) == "" {
+		t.Error("the refusal carries no no-store mark")
+	}
+
+	// End to end, the forwarding replica returns the catalog code to the
+	// agent and keeps the refusal out of its §11.5 cache.
+	m := gatewaypki.Mint(t)
+	addr := startTLSServer(t, serverTLSFor(t, m, gatewaypki.LeafFiles{CertFile: m.CertFile, KeyFile: m.KeyFile}), h)
+	s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
+	ctx := idemmw.WithGate(authmw.WithPrincipal(context.Background(), authmw.Principal{SessionID: "sess-parent", TenantID: "acme", CallerType: "agent"}))
+	_, out, err := s.ForwardToolCall(ctx, forwardRow(), ForwardKindTerminate, "lenny/ok", nil)
+	assertToolError(t, out, ForwardDelivered, err, "SERVICE_UNAVAILABLE")
+	if !idemmw.NotStored(ctx) {
+		t.Error("the transient refusal was left storable (§11.5)")
+	}
+}
