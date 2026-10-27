@@ -128,9 +128,12 @@ func userMessage(text, inReplyTo string) map[string]any {
 }
 
 // dlqExpiries returns how far past now each DLQ entry of the session
-// expires, from the entries' scores.
+// expires, from the entries' scores. A score holds whole milliseconds, so
+// now is truncated to the millisecond before the subtraction; an untruncated
+// now would put an expiry of exactly the TTL up to a millisecond short.
 func dlqExpiries(t *testing.T, h *lifecycleharness.Harness, id string, now time.Time) []time.Duration {
 	t.Helper()
+	now = now.Truncate(time.Millisecond)
 	key := sessioninbox.DLQKey(lifecycleharness.Tenant, id)
 	if !h.Redis.Exists(key) {
 		return nil
