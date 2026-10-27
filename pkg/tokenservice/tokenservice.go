@@ -119,11 +119,14 @@ type Auditor interface {
 // any replica can serve any request.
 // spec: §4.3.
 type Server struct {
-	signer       jwt.Signer
-	verifier     jwt.Verifier
-	issuer       string
-	perDialect   map[string]time.Duration
-	issuedTokens IssuedTokenStore
+	signer   jwt.Signer
+	verifier jwt.Verifier
+	// callerVerifier authenticates the §13.3 caller credential. It is
+	// verifier unless Options.CallerVerifier is set.
+	callerVerifier jwt.Verifier
+	issuer         string
+	perDialect     map[string]time.Duration
+	issuedTokens   IssuedTokenStore
 
 	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds
 	// default lifetime of a token requested without expires_in.
@@ -160,7 +163,16 @@ type Options struct {
 	// Verifier authenticates the caller, subject, and actor tokens. It
 	// is required; production passes the §10.2 key set.
 	Verifier jwt.Verifier
-	Issuer   string
+
+	// CallerVerifier, when set, authenticates the caller credential in
+	// place of Verifier. §13.3 admits two caller credentials: an upstream
+	// OIDC ID token from the deployer's IdP (the bootstrap credential)
+	// and a previously issued Lenny access token. Production passes the
+	// key set joined by the IdP verifier when the IdP is configured. The
+	// subject_token and actor_token stay on Verifier, because §13.3 names
+	// the IdP token as a caller credential only. Nil uses Verifier.
+	CallerVerifier jwt.Verifier
+	Issuer         string
 
 	// PerDialectCap is the §13.3 per-dialect lifetime ceiling keyed
 	// by audience. Empty map means no cap (the validator falls
@@ -255,10 +267,12 @@ func NewServer(opts Options) (*Server, error) {
 		opts.Metrics = NoMetrics{}
 	}
 	s := &Server{
-		signer:     opts.Signer,
-		verifier:   opts.Verifier,
-		issuer:     opts.Issuer,
-		perDialect: opts.PerDialectCap,
+		signer:   opts.Signer,
+		verifier: opts.Verifier,
+
+		callerVerifier: opts.CallerVerifier,
+		issuer:         opts.Issuer,
+		perDialect:     opts.PerDialectCap,
 
 		capabilityTokenTTL: opts.CapabilityTokenTTL,
 		now:                opts.Now,
@@ -268,6 +282,9 @@ func NewServer(opts Options) (*Server, error) {
 		driftDegraded:      opts.DriftDegraded,
 
 		revocationPropagator: opts.RevocationPropagator,
+	}
+	if s.callerVerifier == nil {
+		s.callerVerifier = s.verifier
 	}
 	if !opts.RateLimit.IsZero() {
 		s.rateLimiter = NewRateLimiter(opts.RateLimit, opts.Now)
@@ -478,8 +495,12 @@ func (s *Server) checkDrift(w http.ResponseWriter, finish func(string)) bool {
 }
 
 // authenticateCaller verifies the §13.3 Authorization: Bearer caller
-// token. It returns the caller claims and true on success; on a missing
-// or invalid token it writes 401 invalid_client and returns false.
+// token with the caller verifier, which admits the upstream IdP ID token
+// beside a Lenny-issued token when the IdP is configured. It returns the
+// caller claims and true on success; on a missing or invalid token it
+// writes 401 invalid_client and returns false.
+//
+// spec: §13.3 "Client authentication on /v1/oauth/token".
 func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, finish func(string)) (jwt.Claims, bool) {
 	callerToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if callerToken == "" {
@@ -487,7 +508,7 @@ func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, fini
 		finish("invalid_client")
 		return jwt.Claims{}, false
 	}
-	callerClaims, err := s.verifier.Verify(callerToken)
+	callerClaims, err := s.callerVerifier.Verify(callerToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
 		finish("invalid_client")

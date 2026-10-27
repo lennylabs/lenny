@@ -700,3 +700,45 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --redis-allow-insecure
+
+  # spec: §13.3 (Credential Flow) "Client authentication on /v1/oauth/token",
+  # §10.2 (Authentication) "`tenant_id` extraction" — the Token Service
+  # admits the upstream IdP's ID token as the bootstrap caller credential, so
+  # it receives the same IdP issuer, client id, and tenant claim the gateway
+  # does. F-13.3.21.
+  - it: passes the IdP issuer, client id, and tenant claim from auth.*
+    set:
+      auth.oidc.issuerUrl: "https://idp.acme.com"
+      auth.oidc.clientId: lenny-gateway
+      auth.tenantIdClaim: "https://acme.example/tenant"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer-url=https://idp.acme.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-client-id=lenny-gateway
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenant-id-claim=https://acme.example/tenant
+
+  - it: passes no IdP issuer or client id when auth.oidc is unset
+    set:
+      auth.oidc.issuerUrl: ""
+      auth.oidc.clientId: ""
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer-url=
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-client-id=
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenant-id-claim=tenant_id
