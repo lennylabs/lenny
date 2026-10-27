@@ -729,6 +729,10 @@ type Deps struct {
 //     ctx, and returns its release. The lock is not reentrant.
 //   - HoldMessage holds a message in the session's DLQ and re-reads the
 //     primary row, answering queued, dropped, or terminal.
+//   - HoldUndeliveredForward holds a message whose forward to the
+//     session's coordinating replica was not delivered, with the TTL of
+//     the dead-letter table's recovering-state row, answering as
+//     HoldMessage does.
 //   - DeliverHeld delivers the held messages of a session its caller found
 //     `running` with the lock held, reading no row.
 //   - ResumeSuspended resumes a `suspended` session a message is held for;
@@ -738,10 +742,11 @@ type Deps struct {
 //     lookup or count error.
 //
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
-// (Resume admission)
+// (Resume admission), §29.3 (Interactive message send) Forwarding rule 6
 type SessionDelivery interface {
 	LockDelivery(ctx context.Context, sessionID string) (func(), error)
 	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
+	HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
 	DeliverHeld(ctx context.Context, row sessionstore.Session) error
 	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
 	AdmitResume(ctx context.Context, row sessionstore.Session) error

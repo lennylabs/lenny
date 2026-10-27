@@ -287,6 +287,49 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			return mcp.ToolResult{}, mcp.NewToolError("CROSS_TENANT_MESSAGE_DENIED",
 				"target session belongs to a different tenant (§7.2)", nil)
 		}
+		senderID := callerSessionID(ctx, in.FromSessionID)
+		// spec: §15.4 — the gateway assigns a `msg_` prefix
+		// id when the sender omits one so every receipt is
+		// correlatable. F-7.2.10.
+		messageID := in.MessageID
+		if messageID == "" {
+			messageID = "msg_" + idFn()
+		}
+		// spec: §7.2 + §8.3 — the per-sender outbound and lifetime limits
+		// run on the serving replica, before the forward, and not on the
+		// coordinator of a forwarded call (§29.3 Forwarding rule 4). An
+		// exceeded limit returns a RATE_LIMITED delivery receipt rather
+		// than a tool error, so the sender can react. F-7.2.6.
+		if !sessionserver.Forwarded(ctx) {
+			allowed, err := msgLimiter.allowSender(ctx, tenant, senderID, clock())
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("messaging rate limit: %w", err)
+			}
+			if !allowed {
+				return textResult(buildSendMessageReceiptStatus(messageID, session.DeliveryStatusRateLimited, clock())), nil
+			}
+		}
+		// spec: §29.3 Forwarding rules 1, 2, and 6 — in running and
+		// input_required, a replica that does not coordinate the target
+		// forwards the tools/call before the scope check, the inbound
+		// limit, the inReplyTo resolution, and PreMessageDelivery, so the
+		// coordinator runs each of them once. A message carrying no
+		// inReplyTo whose forward is not delivered runs those steps here
+		// and is then held in the DLQ.
+		undelivered := false
+		if deps.HolderForward != nil {
+			kind := sessionserver.ForwardKindMessageNoReplyTo
+			if in.InReplyTo != "" {
+				kind = sessionserver.ForwardKindMessage
+			}
+			res, outcome, ferr := deps.HolderForward.ForwardToolCall(ctx, row, kind, "lenny/send_message", args)
+			switch {
+			case outcome == sessionserver.ForwardNotDelivered && kind == sessionserver.ForwardKindMessageNoReplyTo:
+				undelivered = true
+			case outcome != sessionserver.ForwardLocal:
+				return res, ferr
+			}
+		}
 		// spec: §7.2 messagingScope and parent
 		// asymmetry — restrict the target to the sender's direct
 		// parent/child, and to a sibling only when the effective scope
@@ -294,7 +337,6 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// canonical sender id; the legacy `fromSessionId` field is the
 		// transport fallback for callers that have not yet bound a
 		// principal. F-7.2.6, F-7.2.22, F-8.5.16.
-		senderID := callerSessionID(ctx, in.FromSessionID)
 		if senderID != "" {
 			sender, err := deps.Store.Get(ctx, tenant, senderID)
 			if err != nil {
@@ -307,19 +349,9 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 						in.To, senderID, msgScope.OrDefault()), nil)
 			}
 		}
-		// spec: §15.4 — the gateway assigns a `msg_` prefix
-		// id when the sender omits one so every receipt is
-		// correlatable. F-7.2.10.
-		messageID := in.MessageID
-		if messageID == "" {
-			messageID = "msg_" + idFn()
-		}
-		// spec: §7.2 + §8.3 — per-sender
-		// outbound + lifetime and per-target inbound aggregate rate
-		// limits, evaluated before delivery. An exceeded limit returns a
-		// RATE_LIMITED delivery receipt (§7.2, §8.3)
-		// rather than a tool error, so the sender can react. F-7.2.6.
-		allowed, err := msgLimiter.allow(ctx, tenant, senderID, in.To, clock())
+		// spec: §7.2 + §8.3 — the per-target inbound aggregate limit,
+		// evaluated before delivery. F-7.2.6.
+		allowed, err := msgLimiter.allowTarget(ctx, tenant, in.To, clock())
 		if err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("messaging rate limit: %w", err)
 		}
@@ -356,6 +388,9 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		sm := &mcpSend{
 			deps: deps, tenant: tenant, messageID: messageID, senderID: senderID,
 			content: content, modified: modified, clock: clock,
+		}
+		if undelivered {
+			return sm.holdUndelivered(ctx, row)
 		}
 		return sm.deliver(ctx, row)
 	})
@@ -410,6 +445,17 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"state":%q,"reason":%q}`, in.SessionID, row.State, in.Reason)), nil
 			}
 			return mcp.ToolResult{}, errPrecondition(perr)
+		}
+		// spec: §29.3 Forwarding rule 1 — in a state in which the session
+		// holds REG-COORDLEASE, a replica that does not hold it forwards the
+		// call, and the coordinator writes cancelled. The forward's answer
+		// returns under every reason, before the playground_client_closed
+		// path below can turn a refusal into an accepted hint.
+		if deps.HolderForward != nil {
+			res, outcome, ferr := deps.HolderForward.ForwardToolCall(ctx, row, sessionserver.ForwardKindTerminate, "lenny/cancel_session", args)
+			if outcome != sessionserver.ForwardLocal {
+				return res, ferr
+			}
 		}
 		updated, err := cancelSession(ctx, deps, tenant, in.SessionID, clock)
 		if err != nil {

@@ -212,6 +212,25 @@ func (m *mcpSend) enqueueInbox(ctx context.Context, row sessionstore.Session) (m
 // error with inbox_unavailable.
 // spec: §7.2 (Message delivery routing — seven paths, path 6)
 func (m *mcpSend) hold(ctx context.Context, row sessionstore.Session) (res mcp.ToolResult, held bool, err error) {
+	return m.holdIn(ctx, row, false)
+}
+
+// holdUndelivered holds a message whose forward to the session's
+// coordinating replica was not delivered, with the TTL of the §7.2
+// dead-letter table's recovering-state row, and answers as hold does. It
+// runs after the scope check, the inbound limit, and the PreMessageDelivery
+// phase, in place of the classification.
+// spec: §29.3 (Interactive message send) Forwarding rule 6, §7.2 (Message
+// delivery routing — seven paths, path 6)
+func (m *mcpSend) holdUndelivered(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
+	res, _, err := m.holdIn(ctx, row, true)
+	return res, err
+}
+
+// holdIn holds the message through the delivery seam's HoldMessage, or its
+// HoldUndeliveredForward when undelivered is set, and maps the outcome to
+// the answer hold states.
+func (m *mcpSend) holdIn(ctx context.Context, row sessionstore.Session, undelivered bool) (res mcp.ToolResult, held bool, err error) {
 	if m.deps.Delivery == nil {
 		return m.receipt(session.DeliveryStatusError, session.DeliveryReasonInboxUnavailable), false, nil
 	}
@@ -219,7 +238,13 @@ func (m *mcpSend) hold(ctx context.Context, row sessionstore.Session) (res mcp.T
 	if err != nil {
 		return mcp.ToolResult{}, false, err
 	}
-	outcome, state, err := m.deps.Delivery.HoldMessage(ctx, m.tenant, row.ID, msg)
+	var outcome sessionserver.HoldOutcome
+	var state session.State
+	if undelivered {
+		outcome, state, err = m.deps.Delivery.HoldUndeliveredForward(ctx, row, msg)
+	} else {
+		outcome, state, err = m.deps.Delivery.HoldMessage(ctx, m.tenant, row.ID, msg)
+	}
 	switch {
 	case err != nil:
 		return m.receipt(session.DeliveryStatusError, session.DeliveryReasonInboxUnavailable), false, nil

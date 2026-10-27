@@ -3,17 +3,21 @@
 package sessionserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -21,17 +25,28 @@ import (
 )
 
 // parseMessageBatch decodes the §15.4 MessageRequest, rejects an empty
-// batch and an unknown `delivery` enum value, resolves the §7.2 path-1
-// inReplyTo replies directly against the inputwait registry, and projects
-// the remaining payloads to the executor.Message text form. It returns the
-// decoded request, the projected messages, and the indexes of the payloads
-// still to deliver, writing the §15.1 error envelope and returning ok=false
-// on a malformed body or invalid enum. spec: §15.4, §7.2 paths 1/7. F-7.2.14.
+// batch and an unknown `delivery` enum value, forwards the batch to the
+// session's coordinating replica when this replica does not coordinate it,
+// resolves the §7.2 path-1 inReplyTo replies directly against the inputwait
+// registry, and projects the remaining payloads to the executor.Message text
+// form. It returns the decoded request, the projected messages, and the
+// indexes of the payloads still to deliver. It returns ok=false once the
+// request is answered: the §15.1 error envelope on a malformed body or
+// invalid enum, the coordinator's response or the forward refusal, or the
+// receipt of a batch held because its forward was not delivered.
+//
+// The body is read to bytes once, decoded from those bytes, and forwarded as
+// the same bytes. The forward runs before the inReplyTo resolve loop, so a
+// reply resolved here is never forwarded and delivered a second time.
+//
+// spec: §15.4, §7.2 paths 1/7, §29.3 (Interactive message send) Forwarding
+// rules 1, 2, and 6. F-7.2.14.
 func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row sessionstore.Session) (MessageRequest, []executor.Message, []int, bool) {
 	var req MessageRequest
 	body := jsonReader(w, r)
 	defer body.Close()
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
+	raw, err := io.ReadAll(body)
+	if err != nil || json.Unmarshal(raw, &req) != nil {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return MessageRequest{}, nil, nil, false
 	}
@@ -53,6 +68,10 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 				map[string]any{"messageIndex": i, "delivery": m.Delivery})
 			return MessageRequest{}, nil, nil, false
 		}
+	}
+
+	if !s.forwardMessageBatch(w, r, row, req, raw) {
+		return MessageRequest{}, nil, nil, false
 	}
 
 	// spec: §7.2 — when a payload's `inReplyTo`
@@ -78,6 +97,69 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 		msgs = append(msgs, projectMessage(req.Messages[i]))
 	}
 	return req, msgs, deliverIdx, true
+}
+
+// messageForwardKind is the forwarding kind of a message batch: a batch in
+// which any message carries inReplyTo fails closed when its forward is not
+// delivered, and any other batch is held in the DLQ.
+// spec: §29.3 (Interactive message send) Forwarding rule 6.
+func messageForwardKind(req MessageRequest) ForwardKind {
+	for _, m := range req.Messages {
+		if m.InReplyTo != "" {
+			return ForwardKindMessage
+		}
+	}
+	return ForwardKindMessageNoReplyTo
+}
+
+// forwardMessageBatch forwards the batch, as the raw bytes the client sent,
+// to the session's coordinating replica when this replica does not
+// coordinate it, and reports whether this replica delivers the batch itself.
+// A batch with no inReplyTo whose forward is not delivered is held in the
+// session's DLQ with the TTL of the §7.2 dead-letter table's recovering-state
+// row and answered with the hold's receipt: queued, dropped with
+// dlq_overflow, TARGET_TERMINAL, or error with inbox_unavailable. Every other
+// outcome other than local delivery has already been answered.
+//
+// spec: §29.3 (Interactive message send) Forwarding rules 1, 6, and 7, §7.2
+// (Message delivery routing — seven paths, path 6)
+func (s *Server) forwardMessageBatch(w http.ResponseWriter, r *http.Request, row sessionstore.Session, req MessageRequest, raw []byte) bool {
+	kind := messageForwardKind(req)
+	switch s.forwardToHolder(w, r, row, kind, bytes.NewReader(raw)) {
+	case ForwardLocal:
+		return true
+	case ForwardNotDelivered:
+		if kind == ForwardKindMessageNoReplyTo {
+			s.holdUndeliveredForward(w, r, row, req)
+		}
+	}
+	return false
+}
+
+// holdUndeliveredForward holds a batch whose forward was not delivered in
+// the session's DLQ with the recovering-state row's TTL, and writes the
+// receipt, or TARGET_TERMINAL when the hold found the session ended.
+// spec: §29.3 (Interactive message send) Forwarding rule 6, §7.2 (Message
+// delivery routing — seven paths, path 6)
+func (s *Server) holdUndeliveredForward(w http.ResponseWriter, r *http.Request, row sessionstore.Session, req MessageRequest) {
+	all := make([]int, len(req.Messages))
+	for i := range all {
+		all[i] = i
+	}
+	outcome, terminal := s.holdOutcomeWithTTL(r.Context(), row, req, all, s.recoveringDLQTTL(row))
+	if terminal != "" {
+		s.writeTargetTerminal(w, terminal)
+		return
+	}
+	s.writeDeliveryReceipt(w, req, outcome)
+}
+
+// recoveringDLQTTL is the TTL of the §7.2 dead-letter table's
+// recovering-state row for row: the session's maxResumeWindowSeconds, or the
+// deployer's resume window when the session sets none.
+// spec: §7.2 (Interactive Session Model) dead-letter handling.
+func (s *Server) recoveringDLQTTL(row sessionstore.Session) time.Duration {
+	return watchdog.EffectiveMaxResumeWindow(row, s.resumePendingCap())
 }
 
 // projectMessage projects one §15.4 message payload onto the executor's
@@ -182,7 +264,12 @@ type restDelivery struct {
 }
 
 // route classifies row and runs the path the classification selects for
-// msgs, the payloads deliverIdx indexes.
+// msgs, the payloads deliverIdx indexes. The batch reaches route only after
+// parseMessageBatch forwarded it or found that this replica serves it, so
+// every path here, the path-3 inbox buffer of an input_required session
+// included, runs on the coordinating replica or in a single-gateway
+// deployment. spec: §7.2 paths 1-7, §29.3 (Interactive message send)
+// Forwarding.
 func (d *restDelivery) route(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	s := d.s
 	inputRequired := row.State == session.StateInputRequired ||
@@ -334,7 +421,9 @@ func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.
 	return d.route(fresh, msgs, deliverIdx)
 }
 
-// executorFailure answers a failed send with EXECUTOR_FAILURE.
+// executorFailure answers a failed send with EXECUTOR_FAILURE. The send ran
+// on the coordinating replica or in a single-gateway deployment, because an
+// off-holder replica forwards the batch before any delivery path runs.
 func (d *restDelivery) executorFailure(err error) (deliveryOutcome, bool) {
 	// spec: §16.3 / §16 error taxonomy — the executor (the pod) rejected
 	// the prompt; UPSTREAM marks it a downstream dependency failure on the
@@ -507,6 +596,12 @@ func (s *Server) bufferOutcome(ctx context.Context, row sessionstore.Session, re
 // and maps its outcome to the receipt. spec: §7.2 (Message delivery routing
 // — seven paths, path 6).
 func (s *Server) holdOutcomeFor(ctx context.Context, row sessionstore.Session, req MessageRequest, deliverIdx []int) (deliveryOutcome, session.State) {
+	return s.holdOutcomeWithTTL(ctx, row, req, deliverIdx, 0)
+}
+
+// holdOutcomeWithTTL is holdOutcomeFor with an explicit DLQ TTL; a
+// non-positive ttl selects the DLQ default.
+func (s *Server) holdOutcomeWithTTL(ctx context.Context, row sessionstore.Session, req MessageRequest, deliverIdx []int, ttl time.Duration) (deliveryOutcome, session.State) {
 	msgs, err := s.inboxMessages(req.Messages, deliverIdx)
 	if err != nil {
 		return deliveryOutcome{status: session.DeliveryStatusError, reason: session.DeliveryReasonInboxUnavailable}, ""
@@ -514,7 +609,7 @@ func (s *Server) holdOutcomeFor(ctx context.Context, row sessionstore.Session, r
 	if s.messaging == nil {
 		return deliveryOutcome{status: session.DeliveryStatusError, reason: session.DeliveryReasonInboxUnavailable}, ""
 	}
-	outcome, state, err := s.holdMessage(ctx, row.TenantID, row.ID, msgs, 0)
+	outcome, state, err := s.holdMessage(ctx, row.TenantID, row.ID, msgs, ttl)
 	switch {
 	case err != nil:
 		return deliveryOutcome{status: session.DeliveryStatusError, reason: session.DeliveryReasonInboxUnavailable}, ""

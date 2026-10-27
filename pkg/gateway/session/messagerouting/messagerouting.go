@@ -45,7 +45,10 @@ const (
 	// ActionBufferInbox buffers the message in the session inbox for
 	// FIFO redelivery when the runtime next reaches `ready_for_input`
 	// (§7.2 path 3 input_required and path 5 runtime-busy). The receipt
-	// is `queued`.
+	// is `queued`. The REST and MCP message paths forward a message to
+	// the session's coordinating replica before they classify it, so this
+	// action runs on the coordinating replica, or in a single-gateway
+	// deployment (§29.3 Forwarding).
 	ActionBufferInbox
 
 	// ActionBufferDLQ holds the message in the dead-letter queue (§7.2

@@ -115,31 +115,33 @@ func assertSurfaceDeclared(t *testing.T, root, claim, surface string) {
 	}
 }
 
-// diagnosis: the "Session inbox redelivery" claim row no longer records what
-// remains absent. A message a non-coordinating replica receives is not
+// diagnosis: the "Session inbox redelivery" claim row no longer records the
+// off-holder hold. A message a non-coordinating replica receives is not
 // buffered in that replica's in-process inbox: §29.3 Forwarding rule 6 holds a
 // message whose forward is not delivered in the session DLQ, which the
-// coordinating replica drains. The row stays ABSENT under R19 until an
-// off-holder path enqueues that hold. Correct the SURFACE_OVERRIDES entry in
-// scripts/seed-claim-register.py and regenerate.
+// coordinating replica drains, and the REST and MCP message sites enqueue that
+// hold. The row is WIRED and names the declared hold. Correct the
+// SURFACE_OVERRIDES entry in scripts/seed-claim-register.py and regenerate.
 //
 // spec: 29.3 (Interactive message send), 7.2 (Interactive Session Model)
-func TestSessionInboxRedeliveryRowStaysAbsentUnderForwarding_spec_29_3(t *testing.T) {
+func TestSessionInboxRedeliveryRowNamesTheForwardHold_spec_29_3(t *testing.T) {
 	root := repoRoot(t)
 	row, ok := claimRows(t, root)["Session inbox redelivery"]
 	if !ok {
 		t.Fatal("tests/claim-map.json has no row \"Session inbox redelivery\"")
 	}
-	if row["status"] != "ABSENT" || row["deferral_id"] != "R19" {
-		t.Errorf("status %q deferral %q, want ABSENT under R19", row["status"], row["deferral_id"])
+	if row["status"] != "WIRED" || row["deferral_id"] != "" {
+		t.Errorf("status %q deferral %q, want WIRED with no deferral", row["status"], row["deferral_id"])
 	}
-	for _, stale := range []string{"no dequeue path", "durableInbox: false", "in-process inbox"} {
+	for _, stale := range []string{"no dequeue path", "durableInbox: false", "in-process inbox", "no off-holder path"} {
 		if strings.Contains(row["surface"], stale) {
 			t.Errorf("surface %q still names %q, which the DLQ hold replaced", row["surface"], stale)
 		}
 	}
-	if !strings.Contains(row["surface"], "EnqueueDLQ") {
-		t.Errorf("surface %q does not name the session DLQ enqueue", row["surface"])
+	for _, want := range []string{"forwardMessageBatch", "HoldUndeliveredForward"} {
+		if !strings.Contains(row["surface"], want) {
+			t.Errorf("surface %q does not name %s", row["surface"], want)
+		}
 	}
 	for _, want := range []string{"DLQ", "Forwarding rule 6", "recovering-row TTL"} {
 		if !strings.Contains(row["note"], want) {
@@ -162,10 +164,10 @@ type interReplicaClaim struct {
 // interReplicaClaims are the rows that restate the inter-replica mechanisms
 // under the names §28.5.4, §28.5.7, §10.1.1, and §10.3 give them.
 var interReplicaClaims = []interReplicaClaim{
-	{"Off-holder request forward on CH-HOLDERFORWARD", "ABSENT", "#2854-inter-replica", "R19"},
+	{"Off-holder request forward on CH-HOLDERFORWARD", "WIRED", "#2854-inter-replica", ""},
 	{"Replica address in the REG-COORDLEASE holder value", "WIRED", "#2854-inter-replica", ""},
 	{"Inter-replica forward listener with gateway peer validation (NET-072)", "WIRED", "#2854-inter-replica", ""},
-	{"Session inbox redelivery", "ABSENT", "#2854-inter-replica", "R19"},
+	{"Session inbox redelivery", "WIRED", "#2854-inter-replica", ""},
 	{"Input-wait resolution across replicas", "ABSENT", "#2854-inter-replica", "R20"},
 	{"Tool-approval resolution across replicas", "WIRED", "#2854-inter-replica", ""},
 	{"CH-BINDRELEASE binding-release fan-out", "WIRED", "#2857-gateway-to-store", ""},
@@ -183,8 +185,9 @@ var retiredInterReplicaClaims = []string{
 
 // diagnosis: the claim register no longer carries the inter-replica rows at the
 // status, heading, and step the specification's landing gives them, still
-// carries a generated row the restated rows replace, or the WIRED
-// CH-BINDRELEASE row names a fan-out the tree no longer declares. Correct
+// carries a generated row the restated rows replace, or a WIRED
+// CH-BINDRELEASE or off-holder forward row names a symbol the tree no longer
+// declares. Correct
 // RETIRED, SURFACE_OVERRIDES, or EXPLICIT in scripts/seed-claim-register.py and
 // regenerate tests/claim-map.json; do not hand-edit the register.
 //
@@ -216,6 +219,8 @@ func TestInterReplicaClaimRowsCarryTheForwardAndBindingRelease_spec_28_5_4(t *te
 		t.Errorf("CH-BINDRELEASE surface %q does not name the propagator construction in cmd/lenny-gateway/adminrouter.go", fanOut["surface"])
 	}
 	assertSurfaceDeclared(t, root, "CH-BINDRELEASE binding-release fan-out", fanOut["surface"])
+	forward := rows["Off-holder request forward on CH-HOLDERFORWARD"]
+	assertSurfaceDeclared(t, root, "Off-holder request forward on CH-HOLDERFORWARD", forward["surface"])
 }
 
 // closedSuspendResumeFinding is a finding the suspend and resume work closed

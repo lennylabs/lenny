@@ -181,6 +181,19 @@ func (s *Server) HoldMessage(ctx context.Context, tenantID, sessionID string, ms
 	return s.holdMessage(ctx, tenantID, sessionID, []sessioninbox.Message{msg}, 0)
 }
 
+// HoldUndeliveredForward holds one inter-session message whose forward to
+// the session's coordinating replica was not delivered, for the MCP message
+// path. The entry takes the TTL of the §7.2 dead-letter table's
+// recovering-state row, and the hold answers as holdMessage does.
+// spec: §29.3 (Interactive message send) Forwarding rule 6, §7.2 (Message
+// delivery routing — seven paths, path 6)
+func (s *Server) HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (HoldOutcome, session.State, error) {
+	if s.messaging == nil {
+		return HoldQueued, "", sessioninbox.ErrMessagingUnavailable
+	}
+	return s.holdMessage(ctx, row.TenantID, row.ID, []sessioninbox.Message{msg}, s.recoveringDLQTTL(row))
+}
+
 // LockDelivery takes the session's delivery lock, honoring ctx, for the MCP
 // message path and the lenny/delegate_task held delivery, and returns its
 // release. The lock is not reentrant. spec: §7.2 (Message delivery routing

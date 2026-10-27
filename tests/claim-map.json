@@ -312,11 +312,10 @@
     },
     {
       "claim": "Off-holder request forward on CH-HOLDERFORWARD",
-      "status": "ABSENT",
+      "status": "WIRED",
       "spec_anchor": "#2854-inter-replica",
-      "deferral_id": "R19",
-      "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`",
-      "note": "no forwarded route or MCP tool site replays an off-holder request to the coordinating replica yet"
+      "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`, called by `handleTerminalWrite`, `handleInterrupt`, `handleUploadToSession`, `resumeHeldPodRequest`, and `parseMessageBatch`, and `ForwardToolCall`, called by the lenny/send_message and lenny/cancel_session handlers in `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` `registerSessionLifecycleTools`",
+      "note": "each forwarded route and MCP tool site replays an off-holder request to the coordinating replica after its entry read and precondition and before any write, and answers 409 TARGET_NOT_READY when the forward is not delivered or its outcome is unknown"
     },
     {
       "claim": "Orphan-claim garbage collector",
@@ -506,10 +505,9 @@
     },
     {
       "claim": "Session inbox redelivery",
-      "status": "ABSENT",
+      "status": "WIRED",
       "spec_anchor": "#2854-inter-replica",
-      "surface": "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EnqueueDLQ` holds a message the coordinating replica delivers; no off-holder path enqueues a message whose forward to the coordinator is not delivered",
-      "deferral_id": "R19",
+      "surface": "`pkg/gateway/sessionserver/messages_delivery.go` `forwardMessageBatch` and `pkg/gateway/sessionserver/held_delivery.go` `HoldUndeliveredForward` hold a message whose forward to the coordinator is not delivered in the session DLQ",
       "note": "a message carrying no inReplyTo to a running or input_required session whose forward is not delivered is held in the session DLQ with the recovering-row TTL under \u00a729.3 Forwarding rule 6, and the coordinating replica delivers it at its next delivery point"
     },
     {

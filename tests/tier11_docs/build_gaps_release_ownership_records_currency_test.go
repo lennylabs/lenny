@@ -159,7 +159,6 @@ type annotatedReleaseFinding struct {
 var annotatedReleaseFindings = []annotatedReleaseFinding{
 	{"F-4.6.29", "**Accepted departures (proposal 0093"},
 	{"F-10.1.21", "**Accepted departures (proposal 0093"},
-	{"F-10.1.33", "**Accepted departure (proposal 0093"},
 	{"F-11.4.10", "**Accepted departure (proposal 0093"},
 }
 

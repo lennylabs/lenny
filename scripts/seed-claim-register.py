@@ -174,14 +174,14 @@ SURFACE_OVERRIDES = {
     # and a message a non-coordinating replica receives is no longer buffered in
     # that replica's in-process inbox. §29.3 Forwarding rule 6 holds a message
     # carrying no inReplyTo whose forward is not delivered in the session's DLQ,
-    # which the coordinating replica already drains. No off-holder path enqueues
-    # that hold until cross-replica message forwarding (R19) lands, and
-    # BUILD-GAPS.md F-29.3.2 records it.
+    # which the coordinating replica already drains. The REST and MCP message
+    # sites enqueue that hold with the recovering-row TTL, which closes
+    # BUILD-GAPS.md F-29.3.2.
     "Session inbox redelivery": {
-        "deferral_id": "R19",
-        "surface": "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EnqueueDLQ` "
-                   "holds a message the coordinating replica delivers; no off-holder path "
-                   "enqueues a message whose forward to the coordinator is not delivered",
+        "status": "WIRED",
+        "surface": "`pkg/gateway/sessionserver/messages_delivery.go` `forwardMessageBatch` and "
+                   "`pkg/gateway/sessionserver/held_delivery.go` `HoldUndeliveredForward` hold a "
+                   "message whose forward to the coordinator is not delivered in the session DLQ",
         "note": "a message carrying no inReplyTo to a running or input_required session whose "
                 "forward is not delivered is held in the session DLQ with the recovering-row "
                 "TTL under §29.3 Forwarding rule 6, and the coordinating replica delivers it "
@@ -575,12 +575,17 @@ EXPLICIT = [
     # it received to the coordinator the REG-COORDLEASE holder value names.
     {
         "claim": "Off-holder request forward on CH-HOLDERFORWARD",
-        "status": "ABSENT",
+        "status": "WIRED",
         "spec_anchor": "#2854-inter-replica",
-        "deferral_id": "R19",
-        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`",
-        "note": "no forwarded route or MCP tool site replays an off-holder request to the "
-                "coordinating replica yet",
+        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`, called by "
+                   "`handleTerminalWrite`, `handleInterrupt`, `handleUploadToSession`, "
+                   "`resumeHeldPodRequest`, and `parseMessageBatch`, and `ForwardToolCall`, "
+                   "called by the lenny/send_message and lenny/cancel_session handlers in "
+                   "`pkg/gateway/mcpfabric/mcptools/mcptools_register.go` `registerSessionLifecycleTools`",
+        "note": "each forwarded route and MCP tool site replays an off-holder request to the "
+                "coordinating replica after its entry read and precondition and before any "
+                "write, and answers 409 TARGET_NOT_READY when the forward is not delivered or "
+                "its outcome is unknown",
     },
     {
         "claim": "Replica address in the REG-COORDLEASE holder value",

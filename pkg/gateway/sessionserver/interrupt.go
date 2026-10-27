@@ -34,6 +34,11 @@ const DefaultInterruptDeadline = 5 * time.Second
 // elapses (STATUS_INTERRUPT_TIMEOUT, §7.2). A STATUS_BUSY response or a transport error leaves the
 // row in `running` so the client can retry per §4.7.
 //
+// A replica that does not coordinate the session forwards the interrupt to
+// the coordinating replica before it drives an adapter or writes a state, and
+// answers the coordinator's response, or 409 TARGET_NOT_READY when the
+// forward is not delivered or its outcome is unknown.
+//
 // When the gateway holds no live pod binding for the session (single-
 // replica without a pod, or a coordinator handoff has not re-bound the
 // session on this replica), the handler falls back to the row-only
@@ -42,7 +47,8 @@ const DefaultInterruptDeadline = 5 * time.Second
 // podRegistry so the adapter call lands.
 //
 // spec: §7.2; §4.7 InterruptResponse.Status; §15.1
-// /v1/sessions/{id}/interrupt endpoint.
+// /v1/sessions/{id}/interrupt endpoint; §29.3 (Interactive message send)
+// Forwarding.
 func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -60,6 +66,12 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 		CurrentState: row.State,
 	}); err != nil {
 		s.writePreconditionError(w, err)
+		return
+	}
+	// spec: §29.3 (Interactive message send) Forwarding rule 1 — a replica
+	// that does not coordinate the session forwards the interrupt before it
+	// drives any adapter or writes suspended.
+	if s.forwardToHolder(w, r, row, ForwardKindInterrupt, r.Body) != ForwardLocal {
 		return
 	}
 

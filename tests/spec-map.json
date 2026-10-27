@@ -2386,7 +2386,7 @@
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestFiledSuspendResumeFindingsMatchTheTree_spec_7_2",
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestBlockedSkipsNameOpenFindings_spec_7_2",
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeRecordProbes_spec_7_2",
-        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSessionInboxRedeliveryRowStaysAbsentUnderForwarding_spec_29_3",
+        "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestSessionInboxRedeliveryRowNamesTheForwardHold_spec_29_3",
         "tests/tier11_docs/build_gaps_suspend_resume_records_currency_test.go::TestOffHolderInboxFindingCrossReferencesTheForwardFinding_spec_29_3",
         "tests/tier7a_load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
         "tests/tier4_integration/slot_holder_pgstore_test.go",

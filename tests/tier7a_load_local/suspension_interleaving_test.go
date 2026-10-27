@@ -114,12 +114,15 @@ func TestIdleSuspensionRequiredPairs_spec_6_2(t *testing.T) {
 			h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 24, CredentialPool: true})
 			r1, r2 := h.Replicas[0], h.Replicas[1]
 
-			for _, sender := range []*lifecycleharness.Replica{r1, r2} {
-				t.Run("message on "+sender.ID+" racing the zero-hold release", func(t *testing.T) {
+			for i, sender := range []*lifecycleharness.Replica{r1, r2} {
+				// The subtest is named for the sender's position, because a
+				// replica's holder value differs on every run.
+				position := "replica " + strconv.Itoa(i+1)
+				t.Run("message on "+position+" racing the zero-hold release", func(t *testing.T) {
 					id := h.StartSession(r1)
 					idleWindowElapsed()
 					row := h.Row(id)
-					text := "race-" + sender.ID
+					text := "race-replica-" + strconv.Itoa(i+1)
 					var code int
 					var body map[string]any
 					race(first,

@@ -66,7 +66,9 @@ const uploadToSessionMaxTotalBytes = UploadMaxBodyBytes
 // the bytes into the session's staging tree and FinalizeWorkspace(midSession)
 // overlays them onto that session's current tree and signals the runtime once
 // promotion completes, so the agent never sees partially-written files.
-// spec: §7.4 — F-7.4.6.
+// A replica that does not coordinate the session forwards the request to the
+// coordinating replica before it reads the body.
+// spec: §7.4 — F-7.4.6; §29.3 (Interactive message send) Forwarding.
 func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenantID := s.resolveTenant(r)
@@ -95,6 +97,12 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 		Capabilities: caps,
 	}); err != nil {
 		s.writePreconditionError(w, err)
+		return
+	}
+	// spec: §29.3 (Interactive message send) Forwarding rule 1 — a replica
+	// that does not coordinate the running session forwards the upload, its
+	// body unread, so the coordinator pushes the files to the pod.
+	if s.forwardToHolder(w, r, row, ForwardKindUpload, r.Body) != ForwardLocal {
 		return
 	}
 
