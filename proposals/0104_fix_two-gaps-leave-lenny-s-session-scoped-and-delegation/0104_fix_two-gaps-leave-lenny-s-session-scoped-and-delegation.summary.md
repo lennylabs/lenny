@@ -5,7 +5,7 @@
 **Problem statement.** The specification states two Lenny-issued tokens that nothing consumes, and it contradicts itself on whether pods hold Lenny-issued JWTs. §10.2 states a `session_capability` mint on session creation that pods present back to the gateway, while the §10.2 boundary table and §13.3 give pods mTLS and a projected SA token only. The code follows the boundary table and mints nothing. §8.2 routes delegation through an internal token exchange whose code returns an unsigned token, records nothing, and checks no parent freshness on the pod path. A child admitted just before its parent's terminal write can therefore escape the §8.10 cascade, and `DELEGATION_PARENT_REVOKED` never fires. Proposal 0102 attaches its impersonation refusal to the session-creation mint that does not exist.
 
 **What changes.**
-- §10.2 drops the session-creation mint, the pod-presented-token claims, and the false statement that the gateway validates a token signature on every pod request, and it anchors the 0102 step (1a) caller check on session creation itself (SPEC-1). CODE-3 builds the check in one function called by `requireActiveUser` and client-facing `lenny/delegate_task`.
+- §10.2 drops the session-creation mint and the pod-presented-token claims and anchors the 0102 step (1a) caller check on session creation itself, and §10.3 states that the gateway validates the projected SA token's signature (SPEC-1). CODE-3 builds the check in one function called by `requireActiveUser` and client-facing `lenny/delegate_task`.
 - §8.2 replaces the child-token exchange with child-row identity and a parent-freshness rule (SPEC-2). CODE-1 deletes the unsigned minter, the audit-contention path, and their registry entries.
 - The §12.8 creation fence gains a parent-terminal rule for delegated children (SPEC-3), built in CODE-2 for pgstore and memstore.
 - Every other restatement of the removed mints is dropped or retargeted (SPEC-4, SPEC-5). CODE-4 regenerates the alert description.
@@ -22,7 +22,7 @@
 - **D8.** Revocation reaches a delegated tree through session-tree mechanisms: a §11.4 full revoke cancels every session of the user, the creation fence refuses a child of a hard-disabled or fully revoked owner, and the §8.10 cascade cancels descendants. A single-bearer revocation does not stop a running session from delegating, as for every other in-session action.
 - **D9.** `DELEGATION_AUDIT_CONTENTION`, the §8.2 audit-contention retry paragraph, and `ErrAuditContention` are deleted. They exist only for the deleted exchange, and production never wired the audit lock.
 - **D10.** 0104 lands after 0102's spec steps and after 0102 CODE-2 item 7 (see **Impacts on other proposals**).
-- **D11.** The forwarded-call session binding is split out of 0104. SPEC-1 Edit (f) deletes the false §10.2 paragraph ("Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request.") and adds no binding rule in its place. Specifying the binding whole needs the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal), the set of `LNK-GWCONTROL` RPCs it covers, a posture for the dev plaintext listener that carries no SPIFFE identity, the timing of assignment relative to the first forwarded call, and the refusal outcome. That work is disproportionate to 0104. The code enforces no binding today: the platform-tool bridge dispatches under the session ID the adapter presents. Removing the false sentence therefore regresses nothing. REC-1 records the gap as an `ABSENT` claim-register row and a Medium BUILD-GAPS finding routed to its own proposal in the remediation plan §10.2. SPEC-2 "Child identity" states that a pod-path child's parent is the session ID the adapter presents. Rejected: the one-sentence binding the review loop wrote and patched in rounds 3 and 8, which left the dev listener, assignment timing, RPC coverage, the refusal outcome, and `pod_assignment` across suspend, resume, and recycle unaddressed.
+- **D11.** The forwarded-call session binding is split out of 0104. SPEC-1 Edit (f) deletes the §10.2 paragraph ("Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request."), moves its signature check to the §10.3 projected SA token, and adds no binding rule. Specifying the binding whole needs the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal), the set of `LNK-GWCONTROL` RPCs it covers, a posture for the dev plaintext listener that carries no SPIFFE identity, the timing of assignment relative to the first forwarded call, and the refusal outcome. That work is disproportionate to 0104. The code enforces no binding today: the platform-tool bridge dispatches under the session ID the adapter presents. Removing the paragraph therefore regresses nothing. REC-1 records the gap as an `ABSENT` claim-register row and a Medium BUILD-GAPS finding routed to its own proposal in the remediation plan §10.2. SPEC-2 "Child identity" states that a pod-path child's parent is the session ID the adapter presents. Rejected: the one-sentence binding the review loop wrote and patched in rounds 3 and 8, which left the dev listener, assignment timing, RPC coverage, the refusal outcome, and `pod_assignment` across suspend, resume, and recycle unaddressed.
 - **D12.** Runtime self-submission of evals is dropped. §10.7 lists "the agent runtime itself (via its session credential)" as an eval caller of `POST /v1/sessions/{id}/eval`, and §23.1 item 12 repeats it. A pod holds no Lenny-issued credential (D1), and no code implements a pod-side eval path, so SPEC-5 Edits (q) and (r) remove both statements. A later proposal may add runtime eval submission through a platform tool.
 
 **Watch out for.**
@@ -71,13 +71,12 @@
 
 ## Open decisions for human to make
 
-None at drafting time. The review loops write this section.
+- **Does REC-1 keep the `ABSENT` claim-register row for the forwarded-call session binding?** REC-1 stages a row in `scripts/seed-claim-register.py`, regenerated into `tests/claim-map.json`, recording that the gateway does not bind a call forwarded on `LNK-GWCONTROL` to a session assigned to the calling pod (D11). The §28.4 claim register defines `ABSENT` as "specified and not implemented", and after SPEC-1 Edit (f) no spec text specifies that binding, so the row falls outside the status definition. REC-1's comment above the row already says it records an unspecified gap. The options are to keep the row, as the current staging does, or to record the gap only in the Medium BUILD-GAPS finding and the remediation plan §10.2 queue entry, which removes the `scripts/seed-claim-register.py` and `tests/claim-map.json` touches from REC-1. The spec loop kept the row because D11 settled it and derived no recommendation between the two; it noted that dropping the row is more consistent with §28.4 and that a binding must not be specified in 0104 to resolve the tension.
 
 ## Defects in the shipped tree that this proposal does not stage
 
 - **`ErrParentNotRunning` is unmapped in `lenny/delegate_task`.** Admission's not-running sentinel reaches the tool caller without a catalogued code. It concerns non-terminal parent states, outside the parent-terminal race. REC-1 files it once confirmed.
 - **The Token Service's external `a2a_delegation` record omits `parent_jti` and `act_sub`.** `RevokeCascade` then cannot reach an external delegation child. It concerns the external path, outside the validated problem. REC-1 files it once confirmed.
-- **§13.3 "Delegation-lifetime preservation" is not enforced on the external path.** `pkg/tokenservice` reads no delegation-lease budget (`maxTokenBudget`, `maxChildrenTotal`) when it mints an `a2a_delegation` child. It concerns the external exchange, which 0104 leaves unchanged. REC-1 files it once confirmed.
 
 ## Impacts on other proposals
 
@@ -90,13 +89,13 @@ None at drafting time. The review loops write this section.
 
 ## Deliverable index
 
-- SPEC-1 — spec/10_gateway-internals.md — remove the session-creation mint and pod-presented-token claims; anchor the step (1a) caller check on session creation; delete the pod-request signature statement
-- SPEC-2 — spec/08_recursive-delegation.md — replace the child-token exchange with child identity and parent freshness
+- SPEC-1 — spec/10_gateway-internals.md — remove the session-creation mint and pod-presented-token claims; anchor the step (1a) caller check on session creation; move the pod-request signature check to the §10.3 projected SA token
+- SPEC-2 — spec/08_recursive-delegation.md — replace the §8.2 child-token exchange with child identity and parent freshness, and drop the Token Service from the §8.1 enforcement clause
 - SPEC-3 — spec/12_storage-architecture.md — the creation fence gains the parent-terminal rule
 - SPEC-4 — spec/15_external-api-surface.md — error catalog, token-endpoint row, the `CallerIdentity.Act` and `ActorClaim` comments, and the MCP endpoint boundary
 - SPEC-5 — spec/04, 05, 07, 10, 13, 16, 17, 18, 23, and 27 — drop internal delegation minting and the session mint from every restatement
 - CODE-1 — pkg/gateway/mcpfabric/delegation/ — delete the unsigned child-token minter and the audit-contention path
-- CODE-2 — pkg/gateway/session/sessionstore/ — the fence refuses a delegated child of a terminal or absent parent
+- CODE-2 — pkg/gateway/session/sessionstore/ and pkg/gateway/sessionserver/usage.go — the fence refuses a delegated child of a terminal or absent parent, and the cascade lists children from the primary
 - CODE-3 — pkg/gateway/callercheck/ — session creation and client-facing delegation apply the step (1a) caller check
 - CODE-4 — pkg/alerting/rules/rules.go — the `TokenStoreUnavailable` description drops delegation minting
 - TEST-1 — tests/ and package tests — parent freshness, the caller check, and KMS independence across tiers

@@ -26,7 +26,7 @@ The external `a2a_delegation` exchange on `POST /v1/oauth/token` with `actor_tok
 
 Several targets are already edited by proposal 0102 SPEC-2. Each edit below locates its target by heading and quoted text as the text reads after 0102 SPEC-2 lands.
 
-### SPEC-1 · spec/10_gateway-internals.md § 10.2 Authentication
+### SPEC-1 · spec/10_gateway-internals.md § 10.2 Authentication and § 10.3 mTLS PKI
 
 Edit (a). In the paragraph that begins "**Session capability context:**", keep the bold label and replace the first sentence "After authentication, the gateway mints a **signed JWT** via a pluggable `JWTSigner` interface." with:
 
@@ -76,14 +76,20 @@ Edit (f). Delete the whole paragraph that follows the "**KMS signing failure mod
 Pods cannot forge or extend this token. The gateway validates the signature on every pod→gateway request.
 ```
 
-No sentence replaces it. The paragraph names a token that no pod holds after Edit (d), and the gateway validates no token signature on a pod request. The boundary table and §10.3 already state how a pod authenticates. The gateway does not bind a platform-tool or connector-tool call forwarded over `LNK-GWCONTROL` to a session assigned to the calling pod, and this edit does not specify such a binding. Non-spec-changes.md REC-1 records the gap as an `ABSENT` claim-register row and a BUILD-GAPS finding routed to its own proposal (summary decision D11).
+Then, in §10.3, in the paragraph that begins "**Projected SA token:**", replace "The gateway validates the audience claim on every pod→gateway request." with:
+
+```
+The gateway validates the token's signature, expiry, and audience claim on every pod→gateway request.
+```
+
+No sentence at the §10.2 site replaces the deleted paragraph, and this edit specifies no forwarded-call binding (summary decision D11).
 
 ### SPEC-2 · spec/08_recursive-delegation.md § 8.1 and § 8.2
 
 Under item 2 of the numbered delegation flow, replace the three paragraphs whose bold labels are "**Child-token minting (internal RFC 8693 exchange).**", "**Actor-token freshness under concurrent parent rotation/revocation.**", and "**Retry semantics on `AUDIT_CONCURRENCY_TIMEOUT` during child minting.**" with the two paragraphs below. Keep the three-space indentation the replaced paragraphs carry, so the new paragraphs stay inside item 2.
 
 ```
-   **Child identity.** The gateway mints no token for a delegated child. The child session row carries the child's identity: the parent's user and `tenant_id`, `parent_session_id`, `root_session_id`, `delegation_depth` equal to the parent's plus one, and the granted `LeaseSlice` as its delegation lease, which bounds what the child may do ([§8.3](#83-delegation-policy-and-lease)). The child pod authenticates to the gateway as every pod does ([§10.2](10_gateway-internals.md#102-authentication)). When a pod requests the child over `LNK-GWCONTROL` ([§28.3](28_communication-channels.md#283-registers)), the parent is the session whose ID the adapter presents with the request, and the gateway dispatches the request under that session ID. The [§28.4](28_communication-channels.md#284-claim-register) claim register records that the gateway does not bind that session ID to a session assigned to the calling pod.
+   **Child identity.** The gateway mints no token for a delegated child. The child session row carries the child's identity: the parent's user and `tenant_id`, `parent_session_id`, `root_session_id`, `delegation_depth` equal to the parent's plus one, and the granted `LeaseSlice` as its delegation lease, which bounds what the child may do ([§8.3](#83-delegation-policy-and-lease)). The child pod authenticates to the gateway as every pod does ([§10.2](10_gateway-internals.md#102-authentication)). When a pod requests the child over `LNK-GWCONTROL` ([§28.3](28_communication-channels.md#283-registers)), the parent is the session whose ID the adapter presents with the request, and the gateway dispatches the request under that session ID.
 
    **Parent freshness.** The transaction that inserts a delegated child row runs the creation fence of [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Lifecycle fence and drain", which refuses the insert when the parent session is terminal or has no row and states how the insert serializes with the parent's terminal write. No child session is created and no child pod is allocated. A [§11.4](11_policy-and-controls.md#114-user-invalidation) full revoke cancels every session of the user, delegated children included, and the creation fence refuses a new child of a hard-disabled or fully revoked user.
 ```
@@ -279,6 +285,8 @@ Edit (p). §13.3, the code block under "**Connector credentials (OAuth):**". Rep
 Edit (q). §10.7, the **Caller** row of the table under "**Eval Submission Contract.**". Delete the sentence "This includes: the agent runtime itself (via its session credential), the session owner (user or service account), or a deployer-operated external scorer pipeline." The row stays one physical line.
 
 Edit (r). §23.1, under "Additional Platform Capabilities", item 12 "**Pull-based evaluation hooks.**". Delete " — agent runtime, session owner, or external scorer pipeline", so the sentence ends "from any authenticated principal ([Section 10.7](10_gateway-internals.md#107-experiment-primitives))."
+
+Edit (s). §13.3, delete the paragraph that begins "**Delegation-lifetime preservation.**".
 
 ## Spec files touched
 

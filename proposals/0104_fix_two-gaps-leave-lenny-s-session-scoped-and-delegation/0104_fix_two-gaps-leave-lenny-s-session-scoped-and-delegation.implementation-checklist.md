@@ -2,15 +2,15 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands every SPEC-1 edit in §10.2, after 0102's spec steps (summary **Impacts on other proposals**, row 0102).
+- [ ] **S1 · spec** — SPEC-1. Lands the §10.2 and §10.3 edits, after 0102's spec steps (summary **Impacts on other proposals**, row 0102).
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-3. Lands every SPEC-3 edit in the §12.8 creation fence.
+- [ ] **S2 · spec** — SPEC-3. Lands the §12.8 *Creation fence* edits.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-2. Lands the §8.1 and §8.2 edits.
       Tiers 0, 11. Depends on: S1, S2
-- [ ] **S4 · spec** — SPEC-4. Lands every SPEC-4 edit.
+- [ ] **S4 · spec** — SPEC-4. Lands the §15 edits.
       Tiers 0, 11. Depends on: S2, S3
-- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit.
+- [ ] **S5 · spec** — SPEC-5. Lands the restatement edits across the remaining spec files.
       Tiers 0, 11. Depends on: S1, S3
 - [ ] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore, and the cascade's primary read in sessionserver `usage.go`.
       Tiers 0, 1, 2, 7. Depends on: S2, S3, S4
