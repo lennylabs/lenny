@@ -37,7 +37,6 @@ require (
 	github.com/launchdarkly/go-server-sdk/v6 v6.2.1
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/moby/moby/api v1.54.1
-	github.com/moby/moby/client v0.4.0
 	github.com/open-feature/go-sdk v1.17.2
 	github.com/open-feature/go-sdk-contrib/providers/launchdarkly v0.1.6
 	github.com/open-feature/go-sdk-contrib/providers/statsig v0.0.4
@@ -76,6 +75,8 @@ require (
 	sigs.k8s.io/controller-runtime v0.19.4
 	sigs.k8s.io/yaml v1.4.0
 )
+
+require github.com/moby/moby/client v0.4.0 // indirect
 
 require (
 	cel.dev/expr v0.25.1 // indirect

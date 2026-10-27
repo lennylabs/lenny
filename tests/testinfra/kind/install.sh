@@ -123,6 +123,19 @@ MINIO_BUCKET="lenny-artifacts"
 MINIO_ACCESS_KEY="lennyminio"
 MINIO_SECRET_KEY="lennyminio123"
 
+# The e2e data-store S3 server and client images. The community
+# minio/minio and minio/mc images are no longer distributed, so the
+# fixtures run the maintained forks pgsty/silo and pgsty/mc, each pinned by
+# release tag and by the digest of its multi-arch index. datastores.yaml,
+# the HA overlay, the tier-5 and tier-8 one-shot mc pods
+# (tests/testinfra/kind/kind.go), and the chart's bucket-lifecycle Job
+# default name the same references. The Kind nodes cannot pull, so Step 2
+# pulls each image on the host and loads it, and Step 2c registers its
+# digest-pinned name on every node.
+MINIO_SERVER_IMAGE="pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
+MINIO_CLIENT_IMAGE="pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+EXTERNAL_IMAGES=("${MINIO_SERVER_IMAGE}" "${MINIO_CLIENT_IMAGE}")
+
 # IMAGE_SPECS is the image inventory, one image per line, in the format
 # tests/testinfra/kind/imagetag parses:
 #
@@ -209,13 +222,6 @@ lenny-runtime-supervise-probe cmd/runtimes/supervise-probe/Dockerfile
 # supervised scrub's setup-residue case runs in the adapter container
 # (§5.2 Supervised scrub sequence).
 lenny-adapter cmd/runtimes/supervise-probe/adapter-overlay.Dockerfile --context=cmd/runtimes/supervise-probe BASE_IMAGE=@lenny-adapter-base PROBE_IMAGE=@lenny-runtime-supervise-probe
-
-# The e2e data-store MinIO server and the mc client, one image built from
-# the upstream source at a pinned release (tests/testinfra/images/minio).
-# The upstream minio/minio and minio/mc images are no longer pullable, so
-# datastores.yaml, the bucket bootstrap pod below, and the chart's
-# bucket-lifecycle Job all run this image.
-lenny-minio tests/testinfra/images/minio/Dockerfile --context=tests/testinfra/images/minio
 SPECS
 
 log() { printf '==> %s\n' "$*"; }
@@ -582,11 +588,21 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
     done
   fi
 
-  # The chart references no external prebuilt image on this overlay. The
-  # MinIO client the bucket-lifecycle Job runs is the lenny-minio image in
-  # IMAGE_SPECS, which the image-tag overlay below names as
-  # minio.lifecycle.image.
-  #
+  # External prebuilt images: the S3 server and client the data-store
+  # fixtures and the chart's bucket-lifecycle Job run. Each is pulled by
+  # its digest-pinned reference, tagged locally as <repo>:<tag> (a pull by
+  # digest leaves the image untagged, and `kind load` loads by name), and
+  # loaded onto the nodes that lack it. Step 2c registers the
+  # digest-pinned name on every node.
+  for img in "${EXTERNAL_IMAGES[@]}"; do
+    if ! docker image inspect "${img}" >/dev/null 2>&1; then
+      log "pulling external image ${img}"
+      docker pull "${img}"
+    fi
+    docker tag "${img}" "${img%@*}"
+    kind load docker-image --name "${CLUSTER}" "${img%@*}"
+  done
+
   # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
   # deliberately absent: e2e-values sets coredns.deploy=false, so the chart
   # renders no agent-dns Deployment. The image bundles the coredns-ratelimit
@@ -674,6 +690,15 @@ RUNTIME_DIGEST_REFS=(
   "${SUPERVISE_PROBE_IMAGE}"
 )
 for node in $(kind get nodes --name "${CLUSTER}"); do
+  # The external images are loaded as docker.io/<repo>:<tag>, and the
+  # fixtures name them as <repo>:<tag>@sha256:<index digest>, which the
+  # kubelet looks up as docker.io/<repo>@sha256:<index digest>.
+  for ref in "${EXTERNAL_IMAGES[@]}"; do
+    docker exec "${node}" ctr -n k8s.io images tag --force \
+      "docker.io/${ref%@*}" \
+      "docker.io/${ref%%:*}@${ref#*@}" >/dev/null 2>&1 || \
+      log "WARNING: could not tag ${ref%%:*}@${ref#*@} on ${node}; the pod may ImagePullBackOff"
+  done
   for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
     # ref is `<repo>:<tag>@sha256:<id>`; the source tag is the part before
     # `@`, and the digest-pinned target containerd needs is
@@ -768,10 +793,7 @@ kc -n ingress-nginx wait --for=condition=Available deploy/ingress-nginx-controll
 # the MinIO bucket creation ignores an existing bucket.
 # ---------------------------------------------------------------------
 log "applying the in-cluster data-store manifests"
-# datastores.yaml names the MinIO image by its e2e alias tag; the deployed
-# reference is this install's content tag, so a rebuilt image rolls the
-# lenny-minio Deployment.
-sed "s|image: lenny-minio:e2e|image: $(image_ref lenny-minio)|" "${DATASTORES_MANIFEST}" | kc apply -f -
+kc apply -f "${DATASTORES_MANIFEST}"
 
 # §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
 # exception to backends: embedded only; the e2e MinIO is a non-embedded
@@ -852,7 +874,7 @@ kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
 # verification). The gateway and the chart's bucket-lifecycle Job verify the
 # cert properly against the mounted CA; this throwaway bootstrap pod does not.
 kc -n lenny-system run lenny-e2e-minio-mb \
-  --image="$(image_ref lenny-minio)" \
+  --image="${MINIO_CLIENT_IMAGE}" \
   --image-pull-policy=IfNotPresent \
   --restart=Never \
   --attach \
@@ -1473,7 +1495,7 @@ bootstrap:
     tag: $(image_tag lenny-ctl)
 minio:
   lifecycle:
-    image: $(image_ref lenny-minio)
+    image: ${MINIO_CLIENT_IMAGE}
 EOF
 
 # --server-side=false forces client-side apply. Helm 4 defaults to

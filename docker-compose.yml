@@ -57,14 +57,13 @@ services:
       timeout: 2s
       retries: 30
 
-  # Single MinIO container for §4.5 artifact storage. The upstream
-  # minio/minio and minio/mc images are no longer pullable, so compose
-  # builds the server and mc from the upstream source at a pinned release
-  # (tests/testinfra/images/minio). The image carries both binaries.
+  # Single MinIO-compatible container for §4.5 artifact storage. The
+  # community minio/minio and minio/mc images are no longer distributed,
+  # so compose runs pgsty/silo, the maintained fork of the MinIO server,
+  # pinned by tag and index digest. The silo image also carries mc, which
+  # the healthcheck runs.
   minio:
-    image: lenny-minio:RELEASE.2025-04-22T22-12-26Z
-    build:
-      context: tests/testinfra/images/minio
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: lenny
@@ -84,9 +83,9 @@ services:
   # blobstore client does not create the bucket itself, so this runs
   # before the gateway.
   minio-setup:
-    # The image the minio service builds; never pulled.
-    image: lenny-minio:RELEASE.2025-04-22T22-12-26Z
-    pull_policy: never
+    # pgsty/mc, the maintained fork of the MinIO client, pinned by tag and
+    # index digest.
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
     depends_on:
       minio:
         condition: service_healthy

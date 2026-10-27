@@ -6,50 +6,32 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
-	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	miniocreds "github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// defaultMinIOImage is the MinIO image used by tests: the image
-// tests/testinfra/images/minio builds from the upstream MinIO source at a
-// pinned release. The upstream minio/minio images are no longer pullable,
-// so StartMinIO builds this image locally when the Docker daemon does not
-// already hold it. The tag names the server release the Dockerfile pins and
-// is the tag the compose stacks build, so either one reuses the other's
-// build. A caller pins another image with MinIOOptions.Image, and the
-// MinIOImageEnv environment variable replaces the default for every caller.
-const defaultMinIOImage = "lenny-minio:RELEASE.2025-04-22T22-12-26Z"
+// defaultMinIOImage is the S3 server image used by tests: pgsty/silo, the
+// maintained fork of the MinIO server, pinned by release tag and by the
+// digest of its multi-arch index. The community minio/minio images are no
+// longer distributed. Silo keeps the MinIO environment variables, the
+// built-in single-key KMS, and the /minio/health endpoints, and its
+// entrypoint maps the `server` argument onto the silo binary. The compose
+// stacks run the same reference. A caller pins another image with
+// MinIOOptions.Image, and the MinIOImageEnv environment variable replaces
+// the default for every caller.
+const defaultMinIOImage = "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
 
 // MinIOImageEnv names the environment variable that replaces
 // defaultMinIOImage, for example with a copy of the image in a reachable
-// registry. StartMinIO neither builds nor checks an image named this way.
+// registry.
 const MinIOImageEnv = "LENNY_MINIO_IMAGE"
-
-// minioImageDir is the build context of defaultMinIOImage, relative to the
-// repository root.
-const minioImageDir = "tests/testinfra/images/minio"
-
-// minioBuildTimeout bounds the one-time source build of defaultMinIOImage,
-// which clones and compiles the MinIO server and mc.
-const minioBuildTimeout = 20 * time.Minute
-
-var (
-	minioImageOnce sync.Once
-	minioImageErr  error
-)
 
 // minioTestCredentials are the root credentials the test container
 // runs with. They are test-only and never used outside the container.
@@ -118,13 +100,6 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 			opts.Image = v
 		} else {
 			opts.Image = defaultMinIOImage
-		}
-	}
-	if opts.Image == defaultMinIOImage {
-		minioImageOnce.Do(func() { minioImageErr = ensureDefaultMinIOImage() })
-		if minioImageErr != nil {
-			t.Fatalf("StartMinIO: image %s: %v (set %s to use another MinIO image)",
-				defaultMinIOImage, minioImageErr, MinIOImageEnv)
 		}
 	}
 	if opts.Bucket == "" {
@@ -219,66 +194,5 @@ func (m *MinIO) Stop(t testing.TB) {
 	defer cancel()
 	if err := m.container.Terminate(ctx); err != nil {
 		t.Fatalf("MinIO.Stop: terminate: %v", err)
-	}
-}
-
-// ensureDefaultMinIOImage builds defaultMinIOImage from its Dockerfile when
-// the Docker daemon does not hold it. The build runs once per test process;
-// later StartMinIO calls reuse the image.
-func ensureDefaultMinIOImage() error {
-	ctx, cancel := context.WithTimeout(context.Background(), minioBuildTimeout)
-	defer cancel()
-	provider, err := testcontainers.NewDockerProvider()
-	if err != nil {
-		return fmt.Errorf("docker provider: %w", err)
-	}
-	defer provider.Close()
-	if _, err := provider.Client().ImageInspect(ctx, defaultMinIOImage); err == nil {
-		return nil
-	}
-	dir, err := minioImageContext()
-	if err != nil {
-		return err
-	}
-	repo, tag, _ := strings.Cut(defaultMinIOImage, ":")
-	_, err = provider.BuildImage(ctx, &testcontainers.ContainerRequest{
-		FromDockerfile: testcontainers.FromDockerfile{
-			Context:        dir,
-			Repo:           repo,
-			Tag:            tag,
-			KeepImage:      true,
-			BuildLogWriter: io.Discard,
-			// testcontainers lowercases Repo and Tag, and the release tag
-			// carries uppercase letters, so the build names the image
-			// exactly instead.
-			BuildOptionsModifier: func(o *client.ImageBuildOptions) {
-				o.Tags = []string{defaultMinIOImage}
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("build from %s: %w", dir, err)
-	}
-	return nil
-}
-
-// minioImageContext finds the image's build context by walking up from the
-// working directory, which go test sets to the package directory, to the
-// directory that holds it.
-func minioImageContext() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		candidate := filepath.Join(dir, filepath.FromSlash(minioImageDir))
-		if st, err := os.Stat(filepath.Join(candidate, "Dockerfile")); err == nil && !st.IsDir() {
-			return candidate, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", errors.New("no " + minioImageDir + "/Dockerfile above the working directory")
-		}
-		dir = parent
 	}
 }

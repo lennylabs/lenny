@@ -17,7 +17,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`chaos/`](chaos/) | Fault-injection driver for Tier 8 (chaos-mesh adapter, network partition, pod kill, clock skew, toxiproxy bridge). |
 | [`cloud/`](cloud/) | Tier 6 cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
 | [`compose/`](compose/) | `docker compose` lifecycle wrapper for Tier 4 integration tests (gateway, stores, and mocks on a single host). |
-| [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. |
+| [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. `StartMinIO` runs `pgsty/silo`, the maintained fork of the MinIO server, pinned by tag and index digest; `LENNY_MINIO_IMAGE` replaces it. |
 | [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. |
 | [`envtest/`](envtest/) | controller-runtime envtest harness for Tier 2 K8s API-server interactions. |
 | [`fixtures/`](fixtures/) | Seed-data loaders for the canonical tenants, layers, runtimes, and OAuth providers used across tiers. Subpackages: `generators/`, `seed/`. |
@@ -47,7 +47,6 @@ A few subdirectories under `testinfra/` carry only YAML, fixtures, or a single s
 
 | Path | Contents |
 |:--|:--|
-| [`images/`](images/) | Test-infrastructure images built from upstream source because the upstream images are no longer pullable. `images/minio/` builds the MinIO server and the `mc` client at pinned releases into one `lenny-minio` image, which the Kind install (`IMAGE_SPECS` in `kind/install.sh`), both compose stacks, and the `containers.StartMinIO` helper use. |
 | [`k8s/`](k8s/) | Kubernetes manifests applied by the Kind install and cloud-load drivers: `datastores.yaml` (Postgres, Redis, MinIO fixtures) and `agent-workload-load.yaml.tmpl` (per-mode load runtime template). |
 | [`runtimes/`](runtimes/) | Conformance-fixture runtime images. `runtimes/conformance-fixtures/` carries intentionally-malformed runtimes (`blocked-stdin/`, `late-shutdown/`, `malformed-jsonl/`, `missing-heartbeat-ack/`, `oversize-payload/`, `unknown-message-type/`) the TESTING.md §12.10 conformance harness asserts against. Build with `go build -o ./bin/ ./tests/testinfra/runtimes/conformance-fixtures/...`. |
 | [`sdkhelper/`](sdkhelper/) | SDK conformance scaffolding. `sdkhelper/echo/` is a reference binary that implements the SDK contract helper protocol; Tier 3 SDK harness tests build and drive it. Real SDK helpers (`sdks/client/python/test-helper`, etc.) follow the same protocol over HTTP. |
