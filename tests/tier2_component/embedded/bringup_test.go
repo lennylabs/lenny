@@ -83,7 +83,9 @@ func requireDockerDaemon(t *testing.T) {
 //	(check `docker logs` for the lenny-embedded-k3s container,
 //	or the published API port is already bound), or the
 //	host-rewritten kubeconfig does not reach the in-container API
-//	server. Run `docker info` to confirm the daemon is up.
+//	server. Run `docker info` to confirm the daemon is up. A CRD
+//	install failing with "apiserver not ready" or "starting" means
+//	Start returned before the k3s API server answered /readyz.
 func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 	requireDockerDaemon(t)
 
@@ -95,7 +97,20 @@ func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 		ReadyTimeout: 3 * time.Minute,
 	}
 	launcher := k3s.NewDockerLauncher(cfg)
-	t.Cleanup(func() { _ = launcher.Stop() })
+	// The container name derives from the state directory's base name, and
+	// t.TempDir yields the same base name on every run, so a container left
+	// by an earlier run (Stop persists it, and a killed run skips cleanup)
+	// carries this run's name. Start would restart it as a warm substrate
+	// rather than provisioning fresh. Sweep it at start, and remove rather
+	// than persist the container at exit, so each run provisions its own.
+	// The sweep is best-effort: RemoveContainer ignores an absent container.
+	if named, ok := launcher.(interface{ ContainerName() string }); ok {
+		if k3s.ContainerRunning(named.ContainerName()) {
+			t.Logf("removing running container %s left by an earlier run", named.ContainerName())
+		}
+		k3s.RemoveContainer(named.ContainerName())
+	}
+	t.Cleanup(func() { _ = launcher.Remove() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -146,6 +161,21 @@ func TestDockerBackedBringUpInstallsCRDs(t *testing.T) {
 	// Idempotency: a second install does not error (Up is idempotent).
 	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
 		t.Errorf("second CRD install errored; bring-up is not idempotent: %v", err)
+	}
+
+	// Warm restart: lenny down persists the container and a later lenny up
+	// restarts it. The persisted container already holds a kubeconfig, so
+	// Start returns only once the restarted API server answers /readyz, and
+	// the CRD install that follows must succeed on its first attempt.
+	// spec: §17.4 (a warm lenny up restarts the persisted substrate).
+	if err := launcher.Stop(); err != nil {
+		t.Fatalf("Stop before the warm restart: %v", err)
+	}
+	if err := launcher.Start(ctx); err != nil {
+		t.Fatalf("warm restart of the persisted k3s container did not come up: %v", err)
+	}
+	if err := stack.InstallCRDs(ctx, kubeconfig); err != nil {
+		t.Errorf("CRD install after the warm restart failed; Start returned before the API server was ready: %v", err)
 	}
 }
 
