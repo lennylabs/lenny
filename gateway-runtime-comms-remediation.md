@@ -3449,11 +3449,12 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
   - [x] **F-25.4.39** (Low): `lenny-preflight --platform-tier` accepts any string, so an off-set tier reads as
     Tier 1 in the §25.4 Prometheus advisory. Filed from the F-25.4.38 fix (2026-10-27) and fixed in
     `32ae0c7ce`: the Job refuses a value outside `tier1`, `tier2`, and `tier3`.
-  - [ ] **F-10.5.16** (Low): `make generate` strips the hand-applied CRD additions (the `lenny.dev/schema-version`
+  - [x] **F-10.5.16** (Low): `make generate` strips the hand-applied CRD additions (the `lenny.dev/schema-version`
     annotation and the top-level preserve-unknown markers) and rewrites a DeepCopy import, and the tier-0 CRD
-    drift check normalizes the difference away. Filed from the F-25.4.37 fix (2026-10-27). Move the additions
-    into kubebuilder markers or a post-generate patch step so `make generate` is idempotent, and add a tier-0
-    check that a fresh `make generate` leaves the tree clean.
+    drift check normalizes the difference away. Filed from the F-25.4.37 fix (2026-10-27) and fixed in
+    `d96ce8485`: kubebuilder markers on the root types emit the annotation and the markers, the `generate`
+    target runs goimports over the DeepCopy file and copies the CRDs into `pkg/embedded/crds/`, and the tier-0
+    checks compare the controller-gen and DeepCopy output byte for byte.
 - Proposal routing.
   - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
     SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
@@ -3636,8 +3637,13 @@ other test in that binary.
   its own namespace. `podsession` fell from 1776.6 s to 46.0 s, `warmpool` from 791.0 s to 64.8 s, and
   `podclaim` from 761.0 s to 19.7 s.
 - Direct-fix queue, filed from the T-17.4.22 survey.
-  - [ ] **T-17.4.26** (Medium): `pkg/controller/sandbox` starts a control plane in each test (345.9 s alone,
-    464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package.
+  - [x] **T-17.4.26** (Medium): `pkg/controller/sandbox` starts a control plane in each test (345.9 s alone,
+    464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package. Fixed in `229f9d829`: the
+    package shares one control plane, and each test gets its own namespace and a `Runtime` named after it.
+    The package fell from 378.4 s to 18.7 s.
+  - [ ] **T-17.4.28** (Medium): `pkg/gateway/session/recycle` starts a control plane in each of its 21
+    envtest-backed tests and, at 251.5 s in a scoped unit-tier run, is now the slowest measured unit-tier
+    package. Filed from the T-17.4.26 fix (2026-10-27).
   - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
   - [ ] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
