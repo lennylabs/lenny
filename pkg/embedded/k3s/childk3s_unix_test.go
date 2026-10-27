@@ -6,6 +6,7 @@ package k3s
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -454,6 +455,81 @@ func TestChildWaitReady(t *testing.T) {
 		cancel()
 		if err := s.waitReady(ctx); err == nil {
 			t.Error("waitReady with a cancelled context = nil, want the context error")
+		}
+	})
+}
+
+// fakeK3sWritingKubeconfig installs a fake k3s binary that writes the
+// kubeconfig at its --write-kubeconfig argument and then keeps running,
+// which is what real k3s does before its API server serves.
+func fakeK3sWritingKubeconfig(s *childSupervisor) {
+	script := "#!/bin/sh\n" +
+		"while [ $# -gt 0 ]; do\n" +
+		"  if [ \"$1\" = \"--write-kubeconfig\" ]; then echo 'apiVersion: v1' > \"$2\"; fi\n" +
+		"  shift\n" +
+		"done\n" +
+		"exec sleep 30\n"
+	s.httpGet = func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(script))}, nil
+	}
+}
+
+// spec: §17.4 (lenny up installs the CRDs against the embedded k3s once it
+// is up). k3s writes its kubeconfig before the API server serves, so Start
+// does not return on the kubeconfig's presence: it runs the /readyz wait
+// against the written kubeconfig, and when that wait fails Start returns
+// its error, names the log, and stops the child.
+func TestChildStartWaitsForAPIServerReadiness_spec_17_4(t *testing.T) {
+	if !SupportedPlatform() {
+		t.Skip("blocked: precondition not met: host does not support the child launcher, and Start rejects on the platform gate")
+	}
+
+	t.Run("not ready", func(t *testing.T) {
+		s := newChild(t)
+		fakeK3sWritingKubeconfig(s)
+		s.cfg.ReadyTimeout = 10 * time.Second
+		notReady := errors.New("embedded k3s: API server not ready by the readiness deadline: GET /readyz: HTTP 503: starting")
+		var gotPath string
+		s.apiReady = func(_ context.Context, path string, _ time.Time) error {
+			gotPath = path
+			return notReady
+		}
+		err := s.Start(context.Background())
+		if !errors.Is(err, notReady) {
+			t.Fatalf("Start = %v, want the readiness error", err)
+		}
+		if !strings.Contains(err.Error(), s.LogPath()) {
+			t.Errorf("error %q does not name the k3s log %s", err, s.LogPath())
+		}
+		if gotPath != s.KubeconfigPath() {
+			t.Errorf("readiness wait kubeconfig = %q, want %q", gotPath, s.KubeconfigPath())
+		}
+		if s.Running() {
+			t.Error("Start left the k3s process running after the readiness failure")
+		}
+	})
+
+	t.Run("ready", func(t *testing.T) {
+		s := newChild(t)
+		fakeK3sWritingKubeconfig(s)
+		s.cfg.ReadyTimeout = 10 * time.Second
+		var calls int
+		s.apiReady = func(_ context.Context, path string, _ time.Time) error {
+			calls++
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("readiness wait ran before the kubeconfig was written: %v", err)
+			}
+			return nil
+		}
+		if err := s.Start(context.Background()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		t.Cleanup(func() { _ = s.Stop() })
+		if calls != 1 {
+			t.Errorf("readiness wait calls = %d, want 1", calls)
+		}
+		if !s.Running() {
+			t.Error("Start returned but the k3s process is not running")
 		}
 	})
 }

@@ -51,6 +51,21 @@ lenny-test --tier unit
 lenny-test --group pr-fast
 ```
 
+## Per-tier timeouts
+
+Each tier passes a `go test -timeout` budget. `go test` aborts the whole package binary when the budget runs out, so each default sits above the tier's recorded runtime with margin. An environment variable overrides each budget with a Go duration such as `45m`; an unparseable value is logged and the default applies. `timeouts.go` records the basis of each default.
+
+| Tier | Default | Override |
+|:-----|:--------|:---------|
+| unit (per package) | 30m | `LENNY_TEST_UNIT_TIMEOUT` |
+| component | 10m | `LENNY_TEST_COMPONENT_TIMEOUT` |
+| integration | 30m | `LENNY_TEST_INTEGRATION_TIMEOUT` |
+| e2e_kind | 60m | `LENNY_TEST_E2E_KIND_TIMEOUT` |
+| e2e_cloud | 30m | `LENNY_TEST_E2E_CLOUD_TIMEOUT` |
+| load_local, load_kind, chaos, load_cloud | 10m | `LENNY_TEST_LONG_TIMEOUT` |
+| security | 60m | `LENNY_TEST_SECURITY_TIMEOUT` |
+| docs | 1m | `LENNY_TEST_DOCS_TIMEOUT` |
+
 ## Files
 
 | File | Purpose |

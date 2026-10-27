@@ -147,7 +147,8 @@ type tokenServiceWiring struct {
 	accessCache  *tokencache.Cache
 	redisCleanup func()
 	// revocationBus carries a revoked jti to every gateway replica and
-	// lenny-ops (§13.3). Nil without --redis-url.
+	// lenny-ops (§13.3) on the §12.4 Cache/Pub-Sub concern client. Nil
+	// without a Redis topology flag.
 	revocationBus *pubsub.Bus
 
 	// §13.3 HTTP, §16.1 metrics, and §4.3 gRPC listeners.

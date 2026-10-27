@@ -151,9 +151,12 @@ tests:
           content:
             name: pgbouncer-run
             emptyDir: {}
-      - equal:
+      - matchRegex:
           path: spec.template.spec.containers[0].command[2]
-          value: cp /etc/pgbouncer-config/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini && exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+          pattern: 'cp /etc/pgbouncer-config/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini'
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini'
       - equal:
           path: spec.template.spec.containers[0].ports[0].containerPort
           value: 5432
@@ -296,3 +299,44 @@ tests:
             name: metrics
             port: 9127
             targetPort: metrics
+
+  # spec: §12.3 (Postgres HA Requirements) "Connection pooling" Monitoring,
+  # §16.5 PgBouncerPoolSaturated — the exporter reads the PgBouncer admin
+  # console, so the DATABASE_URL user is a stats_users entry and the
+  # exporter connects to the pgbouncer database on the pod's own listener.
+  # F-12.3.29.
+  - it: appends the DATABASE_URL user to stats_users before PgBouncer starts
+    set:
+      pgbouncer.deploy: true
+      postgres.deploy: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: 'stats_users = %s'
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: '(?s)stats_users.*exec /entrypoint.sh'
+
+  - it: points the exporter at the PgBouncer admin console rather than the upstream Postgres
+    set:
+      pgbouncer.deploy: true
+      postgres.deploy: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[?(@.name == "pgbouncer-exporter")].args
+          content: --pgBouncer.connectionString=$(DATABASE_URL)
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name == "pgbouncer-exporter")].command[2]
+          pattern: '@127\.0\.0\.1:5432/pgbouncer\?sslmode=disable'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name == "pgbouncer-exporter")].command[2]
+          pattern: 'export PGBOUNCER_EXPORTER_CONNECTION_STRING'
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name == "pgbouncer-exporter")].command[2]
+          pattern: 'exec /bin/pgbouncer_exporter --web.listen-address=:9127'

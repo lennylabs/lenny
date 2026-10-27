@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 // Package tlsredis starts an in-process Redis that requires AUTH and
-// serves TLS on a self-signed certificate, the §12.4 posture a process
-// without a --redis-allow-insecure opt-out (the Token Service) insists
-// on. A test hands the URL to every process of its stack and reads the
-// pub/sub traffic through Client.
+// serves TLS on a self-signed certificate, the §12.4 posture every process
+// insists on unless --redis-allow-insecure is set. A test hands the URL
+// to every process of its stack and reads the pub/sub traffic through
+// Client.
 package tlsredis
 
 import (

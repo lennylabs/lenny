@@ -516,12 +516,14 @@ redis:
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
   # password is the §12.4 Redis AUTH credential applied to the data
-  # connection on the Sentinel path (the external/url path carries the
-  # credential inline in the rediss:// URL instead). Rendered into the
-  # lenny-datastore-conn Secret and read by the gateway via
-  # LENNY_REDIS_PASSWORD. §12.4 requires AUTH; an empty value on a
-  # sentinel-provider install fails the gateway startup invariant unless
-  # --redis-allow-insecure is set. Honored only when provider=sentinel.
+  # connection on the Sentinel and Cluster paths (the external/url path
+  # carries the credential inline in the rediss:// URL instead). Rendered
+  # into the lenny-datastore-conn Secret and read by the gateway, lenny-ops,
+  # and the Token Service via LENNY_REDIS_PASSWORD; those topologies also
+  # render LENNY_REDIS_TLS=true. §12.4 requires AUTH; an empty value on a
+  # sentinel or cluster install fails each binary's startup invariant
+  # unless --redis-allow-insecure is set. Honored only when
+  # provider=sentinel or provider=cluster.
   password: ""
   # sentinels is the §12.4 list of Redis Sentinel host:port endpoints the
   # gateway discovers the master through. Honored only when
@@ -761,10 +763,17 @@ minio:
   # managed minio.deploy render warns (does not block, §17.6)
   # when nodes < 4 because erasure coding is then unavailable.
   nodes: 4
-  # image is the MinIO server container image.
+  # image is the MinIO-compatible server container image. The default is
+  # pgsty/silo, the maintained fork of the MinIO server, because the
+  # community MinIO images are no longer distributed. Silo keeps the
+  # MinIO arguments, environment variables, and health endpoints the
+  # StatefulSet uses. digest pins the multi-arch index the tag names; the
+  # StatefulSet renders repository:tag@digest, and an empty digest renders
+  # repository:tag. An air-gap install mirrors this reference.
   image:
-    repository: quay.io/minio/minio
-    tag: "RELEASE.2024-10-13T13-34-11Z"
+    repository: pgsty/silo
+    tag: "RELEASE.2026-10-26T00-00-00Z"
+    digest: "sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
     pullPolicy: IfNotPresent
   # consolePort is the MinIO web-console port the StatefulSet exposes
   # alongside the API. Reachable only in-cluster (no Service by default).
@@ -795,10 +804,11 @@ minio:
     # versions live before the bucket-wide lifecycle rule deletes them.
     # spec: §12.5 default is 1.
     noncurrentExpirationDays: 1
-    # mc image runs the configuration Job. The default tracks the
-    # latest stable mc release; pin to a digest in answers for
-    # reproducible installs.
-    image: "minio/mc:latest"
+    # image runs the configuration Job and must carry mc and /bin/sh.
+    # The default is pgsty/mc, the maintained fork of the MinIO client,
+    # pinned by release tag and by the digest of its multi-arch index,
+    # because the community minio/mc image is no longer distributed.
+    image: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
   # artifactBackup configures the §25.11 ArtifactStore continuous
   # off-cluster replication (single-region form). When enabled, the
   # gateway runs the §25.11 runtime residency preflight and emits the

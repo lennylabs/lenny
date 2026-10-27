@@ -41,7 +41,7 @@ The Job is enabled when:
    roots. */ -}}
 {{- $minioCABundle := (default "" $tls.caBundleConfigMap) -}}
 {{- $noncurrentDays := default 1 $lifecycle.noncurrentExpirationDays -}}
-{{- $mcImage := default "minio/mc:latest" $lifecycle.image -}}
+{{- $mcImage := default "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8" $lifecycle.image -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -93,15 +93,12 @@ spec:
                   key: minio-secret-key
             - name: MC_HOST_lenny
               value: "{{ $scheme }}://$(MINIO_ACCESS_KEY):$(MINIO_SECRET_KEY)@{{ $minio.endpoint }}"
-            {{- if $.Values.global.devMode }}
-            # Dev-only: mc writes its config under $HOME/.mc by default; with
+            # mc writes its config under $HOME/.mc by default; with
             # readOnlyRootFilesystem and no home dir for uid 1000 that mkdir
             # fails ("/.mc: read-only file system"). Point the config at the
-            # writable emptyDir mounted below. Gated to devMode so production
-            # rendering is unchanged.
+            # writable emptyDir mounted below, in every mode.
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
-            {{- end }}
             {{- if $minioCABundle }}
             # §12.5 — add the operator-supplied MinIO CA directory to mc's
             # Go trust pool so it verifies the HTTPS endpoint against the CA
@@ -136,12 +133,9 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
-          {{- if or $.Values.global.devMode $minioCABundle }}
           volumeMounts:
-            {{- if $.Values.global.devMode }}
             - name: mc-config
               mountPath: /tmp
-            {{- end }}
             {{- if $minioCABundle }}
             # §12.5 — the operator-supplied MinIO CA bundle (key ca.crt),
             # added to mc's Go trust pool via SSL_CERT_DIR above.
@@ -149,13 +143,9 @@ spec:
               mountPath: /etc/lenny/minio-ca
               readOnly: true
             {{- end }}
-          {{- end }}
-      {{- if or $.Values.global.devMode $minioCABundle }}
       volumes:
-        {{- if $.Values.global.devMode }}
         - name: mc-config
           emptyDir: {}
-        {{- end }}
         {{- if $minioCABundle }}
         - name: lenny-minio-ca
           configMap:
@@ -164,5 +154,4 @@ spec:
               - key: ca.crt
                 path: ca.crt
         {{- end }}
-      {{- end }}
 {{- end }}

@@ -190,7 +190,7 @@ spec:
   terminationGracePeriodSeconds: 1
   containers:
     - name: mc
-      image: minio/mc:latest
+      image: ` + kind.MinIOClientImage + `
       imagePullPolicy: IfNotPresent
       env:
         - name: MINIO_ACCESS_KEY

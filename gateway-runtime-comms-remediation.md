@@ -3006,6 +3006,7 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
     | `cmd/lenny-controller` | met | met | n/a | n/a | n/a | n/a: a direct-address client for the §25.5 stream emitter, and the chart wires no Redis to the controller |
     | `cmd/lenny-gateway` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): each per-concern URL passes through `redistopology.Build` |
     | `cmd/lenny-ops` | met | met | n/a | n/a | n/a | n/a: `lenny-ops` connects through its own `--redis-url`, `--redis-sentinel-addrs`, and `--redis-cluster-addrs` flags |
+    | `cmd/lenny-token-service` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): the Cache/Pub-Sub concern URL that carries the revocation publish passes through `redistopology.Build` (added by the F-4.3.21 direct fix, 2026-10-26) |
     | `pkg/connectoroauth` | met | met | met: the single-use OAuth `state` context has no coordination role | met: a `Consume` error returns 400 `CONNECTOR_OAUTH_STATE_UNKNOWN`, and the flow restarts (§9.3) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/billing/billingstore/failover/redisstream` | met | met | met: staged billing entries replay idempotently into Postgres and have no coordination role | met: a Redis error moves the event to the bounded in-memory buffer, and a full buffer returns `ErrBufferFull`, which maps to 503 (§11.2.1) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/eventbuffer` | met | met | met: the §25.5 event stream has no coordination role | met: an `XADD` error keeps the event in the local buffer (§25.5) | n/a | unmet (F-12.4.32) |
@@ -3250,30 +3251,65 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
   - [x] **F-13.3.19** (Medium): the Token Service never sets `RevocationPropagator`, so rotations propagate
     only at the next 30-second read. Fixed in `d3ef3232e`: with `--redis-url` the Token Service publishes the
     revoked `jti` on the `token:revocations` channel the gateway replicas and `lenny-ops` apply.
-  - [ ] **F-4.3.21** (High), next: the chart passes the Token Service neither `--postgres-dsn` nor
+  - [x] **F-4.3.21** (High): the chart passes the Token Service neither `--postgres-dsn` nor
     `--redis-url`, so in a chart install the F-13.3.19 publish and issued-token rotation do nothing. Filed
     2026-10-26 and routed in the block on the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 below.
+    Fixed in `9141366c4`: the chart renders the Postgres DSN and the gateway's Redis connection into the Token
+    Service, which publishes revocations on the Cache/Pub-Sub concern.
   - [x] **F-10.2.26** (High): no production verifier accepts an upstream IdP-issued bearer (no OIDC discovery
     or JWKS verifier). It lands with TEST-GAPS T-10.2.1 and joins 0097's key set. Fixed in `079b3e3d0`: the
     gateway verifies IdP bearers through the issuer's discovery document and JWK Set and normalizes them to
     `user_bearer`; T-10.2.1 is closed with it.
-  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`; route
-    the mint through the Token Service exchange §8.2 names. Coordinate with F-10.2.25.
-  - [ ] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
-  - [ ] **F-12.4.35** (Low): the `--redis-cluster-addrs` help text names the retired per-instance migration.
+  - [ ] **F-8.2.31** (Medium): delegation child tokens are unsigned and absent from `issued_tokens`. Moved
+    out of this queue on 2026-10-26: it needs a proposal, and it joins F-10.2.25 in the **session capability
+    and delegation child token proposal** below.
+  - [x] **F-25.4.35** (Low): the split-brain reconciliation discards the `RemoveByID` and `SetEpoch` errors.
+    Fixed in `0ae8a114e`: `Reconcile` returns an error naming each failed Redis write and retries both on the
+    next pass, a failed removal before the Redis locks are read.
+  - [x] **F-12.4.35** (Low): the `--redis-cluster-addrs` help text names the retired per-instance migration.
+    Fixed in `6ff8ed783`: the help text describes the deployment's single Tier 3 Cluster.
   - [ ] **F-12.4.33** (Low): the EventBus publishes with classic `PUBLISH` on a Cluster. Measure Tier 3
     broadcast load first; a switch to sharded pub/sub is a direct fix.
 - New proposals, each after proposal 0097.
-  - [ ] **Impersonation revocation proposal** (not yet written), first after 0097: **F-13.3.20** (High).
-    Ending an impersonation session revokes nothing, the session store is replica-local, and a full revoke
-    misses the bearer. No section states revocation on end, so the specification needs the rule.
-  - [ ] **Production-mode spelling proposal** (not yet written): **F-17.9.24** (High). §17.9.1 says `prod`,
-    §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no `LENNY_ENV`, so no value turns
-    on every production gate.
-  - [ ] **Session capability token proposal** (not yet written), the follow-up 0097 names: **F-10.2.25**
-    (Medium), the session-creation mint and the gateway-to-pod renewal path.
-  - [ ] **Shared `uploadToken` key proposal** (not yet written): **F-7.1.31** (Medium), the per-process key
-    ring and consumed-token tracker. It may join the session capability token proposal.
+  - [x] **Impersonation revocation proposal** (done as a proposal; implementation pending), first after 0097:
+    **F-13.3.20** (High). Ending an impersonation session revokes nothing, the session store is replica-local,
+    and a full revoke misses the bearer. No section states revocation on end, so the specification needs the
+    rule.
+    - **Outcome.** Proposal 0102
+      (`proposals/0102_fix_ending-a-platform-admin-impersonation-session-revokes-nothin/`) was approved
+      2026-10-26 (merge `1b4ff8637`). It records the impersonation bearer in `issued_tokens`, ends the session
+      by revoking that row, and adds the platform-admin cascade to a full revoke. Its implementation, which
+      closes F-13.3.20 as its DOCS-1 states, is pending. Its unstaged defects are filed below.
+  - [x] **Production-mode spelling proposal** (done as a proposal; implementation pending): **F-17.9.24**
+    (High). §17.9.1 says `prod`, §11.7, §16.5, and §17.6 say `LENNY_ENV=production`, and the chart sets no
+    `LENNY_ENV`, so no value turns on every production gate.
+    - **Outcome.** Proposal 0103
+      (`proposals/0103_fix_production-mode-has-two-spellings-so-no-single-setting/`) was approved
+      2026-10-26 (merge `f7a1c54e4`). Production mode becomes Environment `prod` on `--environment`, which
+      every gate reads through one predicate. Its implementation, which closes F-17.9.24, is pending. Its
+      unstaged defects are filed below.
+  - [ ] **Session capability and delegation child token proposal** (not yet written), the follow-up 0097
+    names: **F-10.2.25** (Medium, the session-creation mint and the gateway-to-pod renewal path) and
+    **F-8.2.31** (Medium, delegation child tokens are unsigned claim records absent from `issued_tokens`),
+    joined on 2026-10-26 because the delegation exchange takes the session-creation token as its
+    `actor_token`. §8.2 names the exchange and its parameters, and the proposal settles the points it
+    leaves open:
+    - the `actor_token` source for a root parent, whose session-creation token is never minted today;
+    - the `subject_token` source at delegation time, because §8.2 sets it to the authenticated user's JWT
+      and the gateway holds no user bearer while serving `lenny/delegate_task` from the parent pod;
+    - which process signs the child token and writes its `issued_tokens` and `token.exchanged` rows, since
+      §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
+      Deployment, and how the gateway authenticates as that internal caller;
+    - how the child token is delivered to the child pod.
+  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (Medium), the per-process
+    `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
+    OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
+    spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
+    names no platform KEK alias for it, and the §10.2 signing key is remote KMS since 0097). Direction
+    decided as owner: for F-27.3.16, keep the OIDC state and PKCE verifier server-side in Redis under a
+    platform-scoped, single-use, short-TTL key, mirroring the §9.3 connector OAuth `state` and the §12.4
+    `conn:oauth:state:{state}` row, rather than a chart HMAC Secret or a new KMS alias. Apply the same
+    reasoning to F-7.1.31 where it fits. Drafted after P3, under the one-change-proposal rule.
   - [ ] **Token audience and error-catalog proposal** (not yet written): **F-10.2.27** (Medium, no verifier
     enforces `aud` by default), **F-15.1.56** (Low, no §15 rows for the revoked-token and
     `token_validation_unavailable` responses), and **F-12.3.26** (Low, no `issued_tokens` row in the §12.3
@@ -3343,6 +3379,69 @@ T-25.4.18 (with T-25.4.20) and is not refiled. The rest are filed in BUILD-GAPS 
     revocation, mTLS deny list, credential renewal, and EventBus Redis pub/sub fan-outs appear in no §28
     register.
 
+**Defects filed from proposal 0102's unstaged-defect list (2026-10-26).** Proposal 0102 (the impersonation
+revocation proposal) lists defects in the shipped tree that it does not stage. None was already tracked in
+BUILD-GAPS or TEST-GAPS: F-12.8.47 covers the session, tenant, and user stores but not `issued_tokens`, and the
+closed F-15.1.24 concerned the missing issued-token listing rather than the unspecified revoke route. The
+refused-start audit entry is a follow-up to 0102's staged caller check rather than a defect in the shipped
+tree, so it is recorded as a follow-up rather than filed. The rest are filed in BUILD-GAPS and routed below.
+
+- Direct-fix queue, after the post-0097 direct-fix queue above.
+  - [x] **F-11.7.24** (Low): `docs/operator-guide/agent-operability.md` says an operation that fails to audit
+    is rolled back, which no section states and §11.7 item 6 contradicts. Delete or restate the sentence.
+    Fixed in `0dfbe8d25`: the sentence is restated to the §11.7 synchronous gateway writes and the item 6
+    deferred write.
+  - [ ] **F-10.2.28** (Medium), after 0102's implementation: a rejected playground mint returns its error
+    response whether or not the `playground.bearer_mint_rejected` row was written, because the playground
+    emitter and `admin.AuditSink.EmitAdminEvent` return no error. Give the rejection path an error-returning
+    emit and answer the §13.3 `500` with the intended reason in `detail`, which also covers the step (1a)
+    branch 0102's CODE-2 adds.
+- Proposal routing.
+  - [ ] **F-15.1.59** (Low), with the **token audience and error-catalog proposal** (not yet written, with
+    F-10.2.27, F-15.1.56, F-15.1.58, and F-12.3.26): the gateway serves
+    `POST /v1/admin/issued-tokens/{jti}/revoke`, and no section names it. The proposal adds the §15.1 row.
+  - [ ] **Data-residency storage routing proposal** (not yet written): **F-12.8.62** (Medium, the
+    `issued_tokens` store opens on the single default pool) with **F-12.8.47** (Medium, filed unassigned on
+    2026-10-21, the session, tenant, and user stores). The per-tenant routing is code against §12.8 item 2,
+    and the proposal states how the revocation-set loads and the all-tenant reads span regional backends.
+  - [ ] **§15.1 list `etag` coverage proposal** (not yet written): **F-15.1.60** (Low). §15.1 requires a
+    per-item `etag` on every admin list, while lists over unversioned rows such as `issued_tokens` carry none,
+    and the `GET /v1/admin/tenants/{id}/users` row omits the `etag` the code returns.
+- Follow-up.
+  - [ ] **Refused impersonation start audit.** Under 0102's staged §13.3 rule 1, a `POST /v1/admin/impersonation`
+    that the caller check refuses (an impersonation bearer as the caller, or a revoked caller bearer) writes no
+    audit row, while 0102's D22 audits the session-creation, `/v1/oauth/token`, and playground refusals. A
+    follow-up decides whether a refused impersonation start is audited under the §13.3 rejected-exchange
+    discipline (owner's delegate, 2026-10-26). It applies once 0102's implementation lands.
+
+**Defects filed from proposal 0103's unstaged-defect list (2026-10-26).** Proposal 0103 (the production-mode
+spelling proposal) lists defects in the shipped tree that it does not stage. None was already tracked in
+BUILD-GAPS or TEST-GAPS. The closed F-17.6.1 deferred the etcd warning and counted the §12.9 volume audit as
+the node disk warning, and TEST-GAPS T-17.6.13 records both warnings as unit-covered; neither tracks the
+missing checks, so they are filed as F-17.6.25, and T-17.6.13 is corrected when that fix lands. All six
+re-confirm against the tree and are filed in BUILD-GAPS and routed below.
+
+- Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
+  because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
+  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
+  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
+  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+    off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
+    requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+- Proposal routing.
+  - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
+    SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
+    the tenant listing fails, even in production mode. The proposal states the listing-failure posture and
+    its interaction with a Postgres outage at startup, after 0103's implementation.
+  - [ ] **Dev-mode guard-rail statement proposal** (not yet written): **F-17.4.36** (Low). `lenny-ops`
+    refuses the dev trust hook and suppresses its dev relaxations in production, and §17.4 item 3 names only
+    the gateway's hook. The proposal states both `lenny-ops` gates, after 0103's implementation.
+  - [ ] **§17.6 text-corrections proposal** (not yet written): **F-17.6.26** (Low). The §17.6 installer
+    "Target environment" question omits `staging`, which §17.9.1 and the wizard admit. It can ride with any
+    later §17.6 edit, including the dev-mode guard-rail statement proposal.
+
 **Defects filed from the direct fixes of F-25.4.33, F-17.9.25, and F-13.3.19 (2026-10-26).** The three
 direct fixes surfaced defects that no record tracked. Two were already tracked and are not refiled: the
 session-level advisory lock in `issuedtokenstore.WithSubjectLock` behind the transaction-mode pooler
@@ -3352,26 +3451,40 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
 
 - Direct-fix queue, in this order. F-4.3.21 also stands next in the post-0097 direct-fix queue above, ahead
   of F-10.2.26, because without it rotation and revocation publishing do nothing in a chart install.
-  - [ ] **F-4.3.21** (High): `token-service-deployment.yaml` passes neither `--postgres-dsn` nor
+  - [x] **F-4.3.21** (High): `token-service-deployment.yaml` passes neither `--postgres-dsn` nor
     `--redis-url` and renders no `env` block. The Token Service therefore issues tokens with no
     `issued_tokens` row or durable audit row, accepts a revoked source token, performs no issued-token
     rotation, and records `postgres_only` for every revocation. Render the DSN from `lenny-datastore-conn`
     and the Redis connection of the gateway's Cache/Pub-Sub concern, and give the binary the Sentinel,
     Cluster, or concern-URL options the chart topologies need.
-  - [ ] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
+    Fixed in `9141366c4`; the Cluster topology's missing Redis password and TLS setting, shared with the
+    gateway and `lenny-ops`, is filed as F-12.4.37 and queued after T-17.4.19.
+  - [x] **F-12.3.29** (Medium): the PgBouncer exporter sidecar reads the upstream Postgres `DATABASE_URL`
     rather than the PgBouncer admin console, and `pgbouncer.ini` names no `stats_users`, so
     `PgBouncerPoolSaturated` cannot fire.
-  - [ ] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
+    Fixed in `2a170a61b`: the `DATABASE_URL` user is appended to `stats_users`, and the exporter reads the
+    `pgbouncer` database on `127.0.0.1:5432`.
+  - [x] **T-4.7.23** (Medium): tests that build fixture binaries or sockets in the default temp directory
     fail when `/tmp` is cleaned mid-run, which is the shared cause of T-4.7.19 to T-4.7.22. `lenny-test`
     exports a run-scoped `TMPDIR` and `GOTMPDIR`, and the tier-10 socket directory moves under a
     harness-owned root.
-  - [ ] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
+    Fixed in `f224f1b0a`: `lenny-test` exports a root outside `/tmp` (`tests/testinfra/testtmp`), the build-once
+    sites and the tier-10 socket directory use it, and a tier-0 check holds the rule. T-4.7.19 to T-4.7.22 are
+    closed with it. A tier-10 conformance flake seen during the fix is filed as TEST-GAPS T-5.2.16.
+  - [x] **T-17.4.19** (Medium): the tier-9 security package exceeds the 600-second `tierLongTimeout` it
     shares with the load and chaos tiers. The security tier gets its own budget.
+    Fixed in `863631bd1`: `tierSecurityTimeout` defaults to 3600 seconds, about twice the slowest recorded
+    passing run of 1634 seconds, with the override `LENNY_TEST_SECURITY_TIMEOUT`.
   - [x] **T-17.4.20** (Low): `lenny-test run --tier unit --since <ref>` runs every package under `-race`
     (about 55 minutes), because `selector.resolve` takes the `--tier` case before the change-selection case
     and drops the diff. A changed `go.mod` or a widely imported package is not the cause. Fixed in 43c2eeb37:
     `--tier` with a discovery selector runs that selection restricted to the one tier, and the scoped unit
     run takes about 3 minutes.
+  - [x] **F-12.4.37** (Medium), filed from the F-4.3.21 fix: on the Cluster topology the chart renders no
+    `LENNY_REDIS_PASSWORD` or `LENNY_REDIS_TLS` for the gateway, `lenny-ops`, or the Token Service, so each
+    refuses to start outside dev mode. Render both, and the Secret's `redis-password` key, on that topology.
+    Fixed in `bd2deba88`: the Secret renders `redis-password` for the Cluster provider, and the three
+    Deployments render `LENNY_REDIS_TLS` and `LENNY_REDIS_PASSWORD` on the Sentinel and Cluster topologies.
 - New proposals.
   - [ ] **Transaction-pooler compatibility proposal** (not yet written): **F-12.3.28** (Medium, the gateway's
     `LISTEN/NOTIFY` deny-list fallback connects through the transaction-mode PgBouncer and receives no
@@ -3383,6 +3496,74 @@ branch). The rest are filed in BUILD-GAPS and TEST-GAPS and routed below.
     The §17.7 Postgres failover and PgBouncer pool saturation entries and their runbooks connect on port
     6432 as a `pgbouncer` admin user the chart does not configure, set pool-size values the chart does not
     have, and name a `postgres-credentials` Secret the chart does not create.
+    F-12.3.29's fix (2026-10-26) made the `DATABASE_URL` user a `stats_users` entry on port 5432, so the
+    proposal can name that user, or add a dedicated console user, when it corrects the entries.
+
+**Defects filed from the direct fix of F-10.2.26 (2026-10-26).** The F-10.2.26 resolution names three
+residual defects in the IdP-token paths that no record tracked. Each is filed in BUILD-GAPS and routed
+below. §27.3, §27.3.1, and §13.3 already state the behaviour, so each is a direct fix that reuses the
+F-10.2.26 `jwt.OIDCVerifier`.
+
+- Direct-fix queue, after the direct-fix queue of F-25.4.33, F-17.9.25, and F-13.3.19 above.
+  - [x] **F-27.3.14** (Medium): the playground `apiKey` mint verifies the pasted bearer with the Lenny key
+    set alone (`playground.Options.Verifier` is `w.jwtKeySet`), so it refuses the OIDC ID token §27.3 names.
+    Pass the playground the composed bearer verifier the auth middleware uses.
+    Fixed in `83ab6a0c5`: the playground takes `w.bearerVerifier`.
+  - [x] **F-27.3.15** (Medium): no gateway code calls `playground.NewHTTPOIDCExchanger`, so the default
+    `oidc` mode's login and callback answer `503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE`. Wire the exchanger from
+    `--oidc-issuer-url`, `--oidc-client-id`, and the issuer's discovery document, and validate the returned
+    ID token with the F-10.2.26 verifier.
+    Fixed in `d588555a2`: `buildPlaygroundOIDC` wires the exchanger, which reads the endpoints from the
+    discovery document on first use. The per-process state-cookie key is filed as F-27.3.16.
+  - [ ] **F-27.3.16** (Medium), filed from the F-27.3.15 fix: the playground OIDC state cookie is signed with
+    a per-process key, so a callback served by another gateway replica fails with `oidc_state_invalid`. Sign
+    it with a key every replica shares. Rerouted 2026-10-27 to the shared gateway key-source proposal above:
+    no existing key source has spec text for this use, so the fix needs a proposal.
+  - [x] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
+    key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
+    Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
+    from `auth.oidc.*`.
+    Fixed in `6e0607410`: `tokenservice.Options.CallerVerifier` carries the key set joined by the IdP
+    verifier, built from `--oidc-issuer-url`, `--oidc-client-id`, and `--tenant-id-claim`. The Token
+    Service's NetworkPolicy egress to the IdP, which §13.2 does not name, is filed as F-13.2.25.
+- Proposal routing, from the F-13.3.21 fix.
+  - [ ] **F-13.2.25** (Medium), with a **Token Service IdP egress proposal** (not yet written): the §13.2
+    Token Service egress row and `allow-token-service` admit no path to the IdP, so the bootstrap caller
+    verification fails with `jwks_unavailable` under NetworkPolicy enforcement.
+
+**Object-store dependency (2026-10-26).** A review of the MinIO dependency found six defects. Each was
+re-confirmed against the tree and filed in BUILD-GAPS. None was already tracked: F-12.8.52 covers the
+per-region escrow clients and not the escrow object lock, the F-12.8.2 resolution named the lock as residual
+backend provisioning without filing it, and no open finding covered the images, replication targets, S3
+endpoint, KMS error codes, or the `lenny-ops` probe.
+
+- Direct-fix queue, at high priority ahead of the direct-fix queues above.
+  - [x] **F-17.9.26** (High): the chart's default MinIO image (`quay.io/minio/minio`, pinned tag) and the
+    lifecycle Job's `minio/mc:latest` cannot be pulled anonymously, so a self-managed install that deploys
+    MinIO, and any install whose lifecycle hook runs, fails. Pin a maintained image by digest in the chart
+    and the test harness: the project's own source-built MinIO copy (in progress on branch
+    `infra/minio-local-copy`) or the maintained fork `pgsty/silo` with `pgsty/mc`. The `mc` lifecycle Job is
+    replaced by a Go job later, under the proposal below.
+    Fixed in `b643b181c`: the chart and the test harness run `pgsty/silo` and `pgsty/mc`, pinned by tag
+    and index digest, and the source-built `lenny-minio` image is retired. The Kind tiers were not run.
+- New proposals.
+  - [ ] **S3-compatible object-store capability profile proposal** (not yet written): **F-12.8.63** (Medium,
+    the escrow object lock is unimplemented and §12.8's `COMPLIANCE` mode cannot be released on hold clear),
+    **F-25.11.24** (Medium, §25.11 promises MinIO replication to AWS S3, GCS, or Azure, and the only driver is
+    MinIO-specific), **F-12.5.33** (Medium, the T4 KMS-unavailable classification matches MinIO's `kms:` code
+    only), **F-12.5.32** (Medium, the aws-sdk `s3` backend takes no endpoint and no path-style setting; §17.9.3
+    gives the `s3` provider no endpoint key, so it needs the proposal), and **F-25.6.8** (Low, the `lenny-ops`
+    probe GETs `/minio/health/live` and passes on any non-5xx answer). The proposal covers the following.
+    - A capability list in §12.5 that states what Lenny requires of an object-store backend.
+    - A backend-neutral KMS-unavailable classification with each provider's error codes.
+    - A replication driver for each backend, and a corrected §25.11 destination list.
+    - A Go bucket-setup job in place of the `mc` lifecycle Job.
+    - An authenticated `HeadBucket` probe in `lenny-ops`.
+    - The escrow restated as an Object Lock legal hold on a lock-enabled escrow bucket, and implemented.
+    - Metric and alert renames from `lenny_minio_*` and `MinIO*` to backend-neutral names.
+
+    Owner decisions it lists: whether the `minio.*` Helm keys are renamed to backend-neutral keys, and
+    whether the metric and alert renames ship with aliases for the old names or without them.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

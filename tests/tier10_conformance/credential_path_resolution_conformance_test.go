@@ -41,6 +41,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
@@ -451,12 +453,12 @@ func startCredRotationAdapter(t *testing.T) *credRotationAdapter {
 	t.Helper()
 	// The Unix socket path is capped at 108 bytes, which a test temp
 	// directory under a long TMPDIR overruns, so the socket lives in its
-	// own short directory.
-	sockDir, err := os.MkdirTemp("/tmp", "lenny-credrot-")
+	// own directory under the short harness-owned home root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	sockDir, err := testtmp.ShortDir(t, "lenny-credrot-")
 	if err != nil {
 		t.Fatalf("create socket dir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	sock := filepath.Join(sockDir, "runtimeops.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {

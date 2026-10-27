@@ -85,10 +85,28 @@ spec:
           # The ConfigMap's pgbouncer.ini is copied into the writable
           # emptyDir, where the image entrypoint also writes the auth
           # file, before the entrypoint execs PgBouncer on it.
+          #
+          # spec: §12.3 "Connection pooling" Monitoring. The
+          # pgbouncer_exporter sidecar runs SHOW commands on the admin
+          # console, which PgBouncer opens only to a stats_users or
+          # admin_users entry. The DATABASE_URL user is the one user the
+          # auth file holds, so the command appends it to stats_users,
+          # which grants the read-only SHOW commands and nothing else. The
+          # user is parsed as the image entrypoint parses it for the auth
+          # file: the text between the scheme and the last '@', up to the
+          # first ':'. The append lands in [pgbouncer] because that section
+          # ends the rendered pgbouncer.ini (pgbouncer-config.yaml).
+          # The ConfigMap itself carries no stats_users entry, since the
+          # user name lives only in the Secret. F-12.3.29.
           command:
             - /bin/sh
             - -c
-            - cp /etc/pgbouncer-config/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini && exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+            - |
+              set -e
+              cp /etc/pgbouncer-config/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
+              stats_user="$(printf '%s' "$DATABASE_URL" | sed -e 's#^[^:]*://##' -e 's#@[^@]*$##' -e 's#:.*##')"
+              if [ -n "$stats_user" ]; then printf '\nstats_users = %s\n' "$stats_user" >> /etc/pgbouncer/pgbouncer.ini; fi
+              exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
           ports:
             - name: pgbouncer
               containerPort: {{ $pb.port }}
@@ -140,12 +158,28 @@ spec:
         # pgbouncer_pools_client_maxwait_seconds (the §16.5
         # PgBouncerPoolSaturated alert numerator) and the pool-utilization
         # gauges. F-12.3.11.
+        #
+        # The exporter reads PgBouncer's admin console: the virtual
+        # pgbouncer database on this pod's own listener, logged in as the
+        # DATABASE_URL user the PgBouncer command adds to stats_users. The
+        # command keeps DATABASE_URL's scheme and credentials, replaces
+        # everything after the last '@' with 127.0.0.1, pgbouncer.port, and
+        # the pgbouncer database, and disables TLS, because the console
+        # connection never leaves the pod and PgBouncer serves no client
+        # TLS. It passes the result through the exporter's
+        # PGBOUNCER_EXPORTER_CONNECTION_STRING variable so the password
+        # stays out of the process arguments. F-12.3.29.
         - name: pgbouncer-exporter
           image: "{{ $pb.exporter.image.repository }}:{{ $pb.exporter.image.tag }}"
           imagePullPolicy: {{ $pb.exporter.image.pullPolicy }}
-          args:
-            - --web.listen-address=:{{ $pb.exporter.port }}
-            - --pgBouncer.connectionString=$(DATABASE_URL)
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              PGBOUNCER_EXPORTER_CONNECTION_STRING="$(printf '%s' "$DATABASE_URL" | sed -e 's#@[^@]*$#@127.0.0.1:{{ $pb.port }}/pgbouncer?sslmode=disable#')"
+              export PGBOUNCER_EXPORTER_CONNECTION_STRING
+              exec /bin/pgbouncer_exporter --web.listen-address=:{{ $pb.exporter.port }}
           env:
             - name: DATABASE_URL
               valueFrom:

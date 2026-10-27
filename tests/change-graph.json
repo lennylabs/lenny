@@ -2,6 +2,17 @@
   "version": 1,
   "description": "Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. The lenny-test harness walks this graph when invoked with --changed to determine the minimal test set. CI runs `lenny-test validate-maps` on every PR.",
   "globs": {
+    "pkg/embedded/k3s/": {
+      "unit": ["pkg/embedded/k3s/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "pkg/embedded/stack/": {
+      "unit": ["pkg/embedded/stack/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "tests/tier2_component/embedded/": {
+      "component": ["tests/tier2_component/embedded/..."]
+    },
     "pkg/kms/kmstest/": {
       "unit": ["pkg/kms/...", "pkg/auth/jwt/..."]
     },
@@ -18,6 +29,12 @@
         "tests/tier9_security/tenant_deletion_isolation_test.go",
         "tests/tier9_security/token_revocation_propagation_alert_test.go"
       ]
+    },
+    "tests/testinfra/testtmp/": {
+      "static": ["tests/tier0_static/test_fixture_temp_root_test.go"],
+      "unit": ["tests/testinfra/testtmp/...", "cmd/lenny-test/...", "cmd/lenny-compliance/...", "pkg/adapter/...", "pkg/gateway/session/executor/..."],
+      "contract": ["tests/tier3_contract/adapter_jsonl/...", "tests/tier3_contract/adapter_supervise/..."],
+      "conformance": ["tests/tier10_conformance/..."]
     },
     "tests/testinfra/stackkey/": {
       "unit": ["tests/testinfra/stackkey/..."],
@@ -757,11 +774,11 @@
     "cmd/lenny-token-service": {
       "unit": ["cmd/lenny-token-service/..."],
       "contract": ["tests/tier3_contract/oauth_token/..."],
-      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go"]
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
     },
     "tests/testinfra/tlsredis/": {
       "unit": ["cmd/lenny-token-service/..."],
-      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go"]
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
     },
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
@@ -788,6 +805,7 @@
         "tests/tier0_static/self_managed_postgres_path_render_test.go"
       ],
       "component": ["tests/tier2_component/pgbouncerchart/..."],
+      "integration": ["tests/tier4_integration/token_service_chart_datastores_test.go"],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/admission_inventory_test.go",
