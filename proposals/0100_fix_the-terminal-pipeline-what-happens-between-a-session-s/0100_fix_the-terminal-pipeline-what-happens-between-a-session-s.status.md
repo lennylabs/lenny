@@ -2,15 +2,15 @@
 proposal: 0100_fix_the-terminal-pipeline-what-happens-between-a-session-s
 title: Terminal pipeline completeness: seal and writer context
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-24
 drafted-by: change-proposal
 reviewed-date: 2026-10-25
 reviewed-by: jaf
 approved-date: 2026-10-25
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-27
+implemented-by: jaf
 ---
 
 ## Review history
