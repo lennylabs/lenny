@@ -22,7 +22,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // envtestScheme registers lenny.dev/v1alpha1 and corev1 so the envtest
@@ -39,20 +38,25 @@ func envtestScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// newEnvtestClient boots an envtest API server, creates the agent
-// namespace, and seeds the supplied objects.
+// newEnvtestClient returns a client on the package's shared envtest control
+// plane (sharedEnv, stopped in TestMain), creates the test's namespace, and
+// seeds the supplied objects. Every test shares the one control plane and
+// isolates itself in the namespace testNamespace assigns it, so a fixture
+// built for another namespace is refused rather than seeded among another
+// test's objects.
 func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	c, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: envtestScheme(t)})
 	if err != nil {
 		t.Fatalf("client.NewWithWatch: %v", err)
 	}
+	ns := testNamespaces.Create(t, c)
 	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace %s: %v", testNS, err)
-	}
 	for _, o := range objs {
+		if got := o.GetNamespace(); got != ns {
+			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
+		}
 		if err := c.Create(ctx, o); err != nil {
 			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
 		}
@@ -65,18 +69,19 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 // patches from.
 func seedRecyclingClaim(t *testing.T, c client.Client, podID string) string {
 	t.Helper()
+	ns := testNamespace(t)
 	name := podclaim.ClaimName(podID)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: "acme"},
 	}
 	if err := c.Create(context.Background(), claim); err != nil {
 		t.Fatalf("create claim %s: %v", name, err)
 	}
-	if err := podclaim.WriteBoundStatus(context.Background(), c, testNS, name); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, name); err != nil {
 		t.Fatalf("seed bound: %v", err)
 	}
-	if err := podclaim.WriteRecyclingStatus(context.Background(), c, testNS, name, nil); err != nil {
+	if err := podclaim.WriteRecyclingStatus(context.Background(), c, ns, name, nil); err != nil {
 		t.Fatalf("seed recycling: %v", err)
 	}
 	return name
@@ -84,8 +89,9 @@ func seedRecyclingClaim(t *testing.T, c client.Client, podID string) string {
 
 func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim {
 	t.Helper()
+	ns := testNamespace(t)
 	var got lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
 	return &got
@@ -100,11 +106,12 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 // pinned tenant after recycle, so a back-to-back same-tenant session re-acquires
 // a pod instead of rebinding the reserved claim.
 func TestClaimDispositionRecycleNonPreConnectReserves_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Client: c, Namespace: ns, HoldTTL: 10 * time.Second,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -145,12 +152,13 @@ func (r *captureRegistrar) Hold(podID string, hold podclaim.ReservedHold) {
 // expiry timer is armed, so the pod is held until the slower orphan GC reclaims
 // it rather than returning to idle at holdExpiresAt plus the local grace.
 func TestClaimDispositionRecycleNonPreConnectRegistersHold_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	reg := &captureRegistrar{}
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Client: c, Namespace: ns, HoldTTL: 10 * time.Second,
 		Now:   func() time.Time { return now },
 		Holds: reg,
 	})
@@ -184,12 +192,13 @@ func TestClaimDispositionRecycleNonPreConnectRegistersHold_spec_3_2(t *testing.T
 // claim has even entered reserved, so the timer would delete a recycling claim
 // mid-re-warm.
 func TestClaimDispositionRecyclePreConnectDoesNotRegisterHold_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	reg := &captureRegistrar{}
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return now }, Holds: reg,
+		Client: c, Namespace: ns, Now: func() time.Time { return now }, Holds: reg,
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -213,15 +222,16 @@ func TestClaimDispositionRecyclePreConnectDoesNotRegisterHold_spec_3_2(t *testin
 // reclaim a reserved claim on expiry, so a recycled pod never returns to idle
 // without the slower orphan GC.
 func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	// Reserve the claim and capture the real hold token.
-	hold, err := podclaim.WriteReservedStatus(context.Background(), c, testNS, name, time.Second, func() time.Time { return now })
+	hold, err := podclaim.WriteReservedStatus(context.Background(), c, ns, name, time.Second, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("WriteReservedStatus: %v", err)
 	}
-	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: testNS})
+	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: ns})
 	if err != nil {
 		t.Fatalf("NewHoldCoordinator: %v", err)
 	}
@@ -234,7 +244,7 @@ func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var got lennyv1.SandboxClaim
-		err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got)
+		err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got)
 		if apierrors.IsNotFound(err) {
 			return // the claim was deleted: the pod returns to idle
 		}
@@ -258,20 +268,21 @@ func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing
 // reserved-patch resourceVersion, so a hold-expiry timer would delete a claim
 // a same-tenant session already rebound, dropping a live session's pod.
 func TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
-	hold, err := podclaim.WriteReservedStatus(context.Background(), c, testNS, name, time.Second, func() time.Time { return now })
+	hold, err := podclaim.WriteReservedStatus(context.Background(), c, ns, name, time.Second, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("WriteReservedStatus: %v", err)
 	}
 	// A rebind lands first (any replica), changing the resourceVersion the
 	// stale hold token carries.
-	if err := podclaim.WriteRebindStatus(context.Background(), c, testNS, name, nil); err != nil {
+	if err := podclaim.WriteRebindStatus(context.Background(), c, ns, name, nil); err != nil {
 		t.Fatalf("WriteRebindStatus: %v", err)
 	}
 
-	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: testNS})
+	hc, err := recycle.NewHoldCoordinator(recycle.HoldCoordinatorOptions{Client: c, Namespace: ns})
 	if err != nil {
 		t.Fatalf("NewHoldCoordinator: %v", err)
 	}
@@ -283,7 +294,7 @@ func TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer_spec_3_2(t *test
 	// and remain bound.
 	time.Sleep(recycle.HoldExpiryGracePeriod + 500*time.Millisecond)
 	var got lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("rebound claim must survive a stale expiry DELETE, got: %v", err)
 	}
 	if got.Status.Phase != string(claimstate.Bound) {
@@ -300,11 +311,12 @@ func TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer_spec_3_2(t *test
 // the SDK re-warm watchdog, breaking the invariant that every reserved pod in
 // a preConnect pool is SDK-warm.
 func TestClaimDispositionRecyclePreConnectStampsRewarm_spec_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return now },
+		Client: c, Namespace: ns, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -329,10 +341,11 @@ func TestClaimDispositionRecyclePreConnectStampsRewarm_spec_6_2(t *testing.T) {
 // not write the released terminal, so the WarmPoolController never drains the
 // pod and it lingers as occupied.
 func TestClaimDispositionRetireReleased_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+		Client: c, Namespace: ns, Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -353,10 +366,11 @@ func TestClaimDispositionRetireReleased_spec_3_4(t *testing.T) {
 // rather than failed, conflating a for-cause termination with a lifecycle
 // limit in the projection's drain reason and the audit trail.
 func TestClaimDispositionRetireFailed_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	c := newEnvtestClient(t)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+		Client: c, Namespace: ns, Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -374,8 +388,9 @@ func TestClaimDispositionRetireFailed_spec_3_4(t *testing.T) {
 // reuse or cordon-drain.
 func scrubWarningStamped(t *testing.T, c client.Client, podID string) bool {
 	t.Helper()
+	ns := testNamespace(t)
 	var got corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podID}, &got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podID}, &got); err != nil {
 		t.Fatalf("get pod %s: %v", podID, err)
 	}
 	return got.Annotations[lennyv1.AnnotationScrubWarning] != ""
@@ -392,15 +407,16 @@ func scrubWarningStamped(t *testing.T, c client.Client, podID string) bool {
 // cannot tell its prior cleanup failed and the §5.2 warn contract is silently
 // dropped.
 func TestClaimDispositionRecycleNonPreConnectStampsScrubWarning_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Client: c, Namespace: ns, HoldTTL: 10 * time.Second,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -427,15 +443,16 @@ func TestClaimDispositionRecycleNonPreConnectStampsScrubWarning_spec_5_2(t *test
 // with no residual-state marker, violating the §6.2 invariant that the
 // scrub_warning persists through the re-warm.
 func TestClaimDispositionRecyclePreConnectStampsScrubWarning_spec_6_2(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return now },
+		Client: c, Namespace: ns, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -459,15 +476,16 @@ func TestClaimDispositionRecyclePreConnectStampsScrubWarning_spec_6_2(t *testing
 // diagnosis: a failure means every recycled pod is marked scrub_warning even on
 // a clean scrub, so the marker no longer distinguishes residual-state risk.
 func TestClaimDispositionRecycleCleanScrubLeavesNoMarker_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
 	seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Client: c, Namespace: ns, HoldTTL: 10 * time.Second,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -491,14 +509,15 @@ func TestClaimDispositionRecycleCleanScrubLeavesNoMarker_spec_5_2(t *testing.T) 
 // unschedulable host loses its residual-state marker, so the audit trail cannot
 // tell the drained pod was carrying a failed-cleanup warning.
 func TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning_spec_6_39(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+		Client: c, Namespace: ns, Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -523,14 +542,15 @@ func TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning_spec_6_39(
 // residual-state warning, conflating a lifecycle limit with a failed cleanup in
 // the audit trail.
 func TestClaimDispositionRetireLimitLeavesNoMarker_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
 	name := seedRecyclingClaim(t, c, "pod-1")
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
+		Client: c, Namespace: ns, Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
@@ -555,11 +575,12 @@ func TestClaimDispositionRetireLimitLeavesNoMarker_spec_3_4(t *testing.T) {
 // against a real apiserver — the Pod Get, label decode, or uptime computation
 // regressed, so the disposition cannot be computed in production.
 func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pod-1",
-			Namespace: testNS,
+			Namespace: ns,
 			Labels: map[string]string{
 				warmpool.LabelPool:            "agents",
 				warmpool.LabelHostSchedulable: "true",
@@ -577,7 +598,7 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 	// creation time by reading it back and asserting a non-negative value.
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client:    c,
-		Namespace: testNS,
+		Namespace: ns,
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 			"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 				Enabled: true, MaxSessionsPerPod: 50,
@@ -629,10 +650,11 @@ func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
 		{"standard", runtimestore.MicrovmScrubStandard, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-1",
-					Namespace: testNS,
+					Namespace: ns,
 					Labels: map[string]string{
 						warmpool.LabelPool:            "agents",
 						warmpool.LabelHostSchedulable: "true",
@@ -644,7 +666,7 @@ func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
 			seedRecyclingClaim(t, c, "pod-1")
 			insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 				Client:    c,
-				Namespace: testNS,
+				Namespace: ns,
 				Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 					"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
 						Enabled: true, MaxSessionsPerPod: 50,
@@ -674,8 +696,9 @@ func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
 // the claim while the agent Pod object survives.
 func deleteClaim(t *testing.T, c client.Client, podID string) {
 	t.Helper()
+	ns := testNamespace(t)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: ns},
 	}
 	if err := c.Delete(context.Background(), claim); err != nil && !apierrors.IsNotFound(err) {
 		t.Fatalf("delete claim for %s: %v", podID, err)
@@ -687,8 +710,9 @@ func deleteClaim(t *testing.T, c client.Client, podID string) {
 // share.
 func newDispositionDriver(t *testing.T, c client.Client) leasecontrol.ClaimDispositionDriver {
 	t.Helper()
+	ns := testNamespace(t)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS,
+		Client: c, Namespace: ns,
 		Now: func() time.Time { return time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
@@ -708,8 +732,9 @@ func newDispositionDriver(t *testing.T, c client.Client) leasecontrol.ClaimDispo
 // the §4.6.1 orphan GC errors instead of skipping against a real apiserver, so
 // the adapter sees a failed ReportPodScrub for a pod whose claim was reclaimed.
 func TestClaimDispositionRecycleNonPreConnectClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
@@ -731,8 +756,9 @@ func TestClaimDispositionRecycleNonPreConnectClaimGoneAgainstApiserver_spec_3_4(
 // reclaim errors instead of skipping, mapping to an Internal RPC error for a
 // pod whose claim no longer exists.
 func TestClaimDispositionRecyclePreConnectClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
@@ -754,8 +780,9 @@ func TestClaimDispositionRecyclePreConnectClaimGoneAgainstApiserver_spec_3_4(t *
 // reclaim of a recycling claim errors instead of skipping, so a coordinator
 // crash that left a recycling claim for the GC surfaces as a failed report.
 func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) {
+	ns := testNamespace(t)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: ns},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
 	}
 	c := newEnvtestClient(t, pod)
@@ -777,11 +804,12 @@ func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) 
 // real apiserver, so it advances counters and runs the disposition against a
 // claim the orphan GC or a hold-expiry DELETE already reclaimed.
 func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pod-1",
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: "agents"},
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
@@ -791,7 +819,7 @@ func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testin
 	deleteClaim(t, c, "pod-1")
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client:    c,
-		Namespace: testNS,
+		Namespace: ns,
 		Pools: fakePoolReader{pools: map[string]poolstore.Pool{
 			"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 				Enabled: true, MaxSessionsPerPod: 50,
@@ -817,11 +845,11 @@ func TestInspectForRecycleClaimGonePodPresentAgainstApiserver_spec_4_7(t *testin
 // The envtest API server validates the Pod spec (a container is required) and
 // drops any status set at create (there is no kubelet), so the Ready condition
 // is written separately via setPodReady.
-func agentPodWithContainer(name, pool string) *corev1.Pod {
+func agentPodWithContainer(ns, name, pool string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: testNS,
+			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: pool},
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "img"}}},
@@ -833,8 +861,9 @@ func agentPodWithContainer(name, pool string) *corev1.Pod {
 // to flip readiness).
 func setPodReady(t *testing.T, c client.Client, name string) {
 	t.Helper()
+	ns := testNamespace(t)
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &pod); err != nil {
 		t.Fatalf("get pod %s: %v", name, err)
 	}
 	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
@@ -874,14 +903,15 @@ func boundaryPoolReader(pool string, cleanupTimeoutSeconds int) fakePoolReader {
 // `recycling` after the SDK re-warm completes, never reaching `reserved`, so the
 // pod is drained by the orphan GC instead of being held for its pinned tenant.
 func TestRecycleBoundaryPreConnectReachesReserved_spec_3_4(t *testing.T) {
-	c := newEnvtestClient(t, agentPodWithContainer("pod-1", "agents"))
+	ns := testNamespace(t)
+	c := newEnvtestClient(t, agentPodWithContainer(testNamespace(t), "pod-1", "agents"))
 	setPodReady(t, c, "pod-1")
 	name := seedRecyclingClaim(t, c, "pod-1")
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 
 	boundary, err := recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
 		Client:       c,
-		Namespace:    testNS,
+		Namespace:    ns,
 		Pools:        boundaryPoolReader("agents", 60),
 		HoldTTL:      10 * time.Second,
 		PollInterval: 10 * time.Millisecond,
@@ -893,7 +923,7 @@ func TestRecycleBoundaryPreConnectReachesReserved_spec_3_4(t *testing.T) {
 	defer boundary.Stop()
 
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
-		Client: c, Namespace: testNS, HoldTTL: 10 * time.Second,
+		Client: c, Namespace: ns, HoldTTL: 10 * time.Second,
 		Now: func() time.Time { return now }, Boundary: boundary,
 	})
 	if err != nil {
@@ -927,7 +957,8 @@ func TestRecycleBoundaryPreConnectReachesReserved_spec_3_4(t *testing.T) {
 // until the 5-minute orphan GC rather than being retired at
 // cleanupTimeoutSeconds plus a grace.
 func TestRecycleBoundaryMissingReportRetires_spec_3_4(t *testing.T) {
-	c := newEnvtestClient(t, agentPodWithContainer("pod-1", "agents"))
+	ns := testNamespace(t)
+	c := newEnvtestClient(t, agentPodWithContainer(testNamespace(t), "pod-1", "agents"))
 	name := seedRecyclingClaim(t, c, "pod-1")
 
 	// A tiny GracePeriod and the smallest positive pool cleanupTimeoutSeconds
@@ -935,7 +966,7 @@ func TestRecycleBoundaryMissingReportRetires_spec_3_4(t *testing.T) {
 	// under the test deadline, exercising the production time.AfterFunc path.
 	boundary, err := recycle.NewRecycleBoundaryCoordinator(recycle.RecycleBoundaryCoordinatorOptions{
 		Client:      c,
-		Namespace:   testNS,
+		Namespace:   ns,
 		Pools:       boundaryPoolReader("agents", 1),
 		GracePeriod: 10 * time.Millisecond,
 	})
@@ -957,10 +988,11 @@ func TestRecycleBoundaryMissingReportRetires_spec_3_4(t *testing.T) {
 // returning true once it reaches want.
 func waitForClaimPhase(t *testing.T, c client.Client, name string, want claimstate.State) bool {
 	t.Helper()
+	ns := testNamespace(t)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		var got lennyv1.SandboxClaim
-		if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err == nil {
+		if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err == nil {
 			if got.Status.Phase == string(want) {
 				return true
 			}
