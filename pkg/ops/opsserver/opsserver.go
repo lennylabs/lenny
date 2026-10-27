@@ -258,9 +258,13 @@ type Options struct {
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
 	// the endpoint reporting the log proxy unavailable.
 	PodLogs PodLogReader
-	// Production reports whether this deployment is production, which
-	// gates the §25.11 confirm requirement for a full backup.
+	// Production reports §17.9.1 production mode, which gates the §25.11
+	// confirm requirement for a full backup.
 	Production bool
+	// IdempotencyKeyRequired reports the §25.4 Tier 2/3 posture: a
+	// required endpoint rejects a request without Idempotency-Key and
+	// fails closed on an idempotency-store outage.
+	IdempotencyKeyRequired bool
 	// DiagnosticsAudit, when non-nil, enables §25.9 diagnostics-audit
 	// emission with per-resource coalescing and a per-service-account
 	// rate cap on the §25.6 diagnostic endpoints. A nil value leaves the
@@ -384,13 +388,13 @@ func New(opts Options) *Server {
 		s.rateLimiter = opts.Auth.RateLimiter
 	}
 	// §25.4 idempotency: caller_id is the verified principal's OIDC sub
-	// (callerIdentity), and Production reports the Tier 2/3 required-key
-	// posture so required endpoints reject a missing key and fail closed
-	// on a store outage.
+	// (callerIdentity), and IdempotencyKeyRequired carries the Tier 2/3
+	// required-key posture so required endpoints reject a missing key and
+	// fail closed on a store outage.
 	if opts.Idempotency != nil {
 		s.idem = opsidem.New(opts.Idempotency, opsidem.Config{
 			CallerID:   callerIdentity,
-			Production: opts.Production,
+			Production: opts.IdempotencyKeyRequired,
 			// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}:
 			// a zero value lets opsidem.New apply the built-in 24h/7d. F-25.4.9.
 			StandardTTL:    opts.IdempotencyStandardTTL,
@@ -586,8 +590,9 @@ func degradedHealthDeps(results map[string]probe.Result) []string {
 // handleReadyz serves the §25.4 /readyz dependency report. It returns
 // 200 while the process is serving and reports each dependency probe
 // result in the body, so an operator or agent reading the endpoint sees
-// which dependency is down. The non-production chart render probes it
-// for readiness; the production render probes the permissive /healthz.
+// which dependency is down. The chart probes it for readiness outside
+// production mode (environment: prod); in production mode it probes the
+// permissive /healthz.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
 	body := map[string]any{

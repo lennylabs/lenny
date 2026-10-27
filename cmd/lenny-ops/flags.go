@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
@@ -63,7 +64,6 @@ type opsFlags struct {
 	webhookRetentionDays             *int
 	webhookFailuresRetentionDays     *int
 	memoryLimitBytes                 *int64
-	production                       *bool
 	devMode                          *bool
 	releaseChannelKeyPath            *string
 	releaseChannelKeyID              *string
@@ -266,17 +266,14 @@ func (f *opsFlags) registerEventFlags() {
 	f.memoryLimitBytes = flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
-	f.production = flag.Bool("production", envBool("LENNY_PRODUCTION", false),
-		"§25.11: when set, a full backup requires confirm:true; it also refuses the local KMS "+
-			"provider and the dev trust hook, and suppresses every dev-mode relaxation. "+
-			"Override via LENNY_PRODUCTION.")
 	// spec: §17.4 "Dev mode guard rails" item 3 — LENNY_DEV_MODE is the
 	// single gate for every dev-mode security relaxation, on lenny-ops as
 	// on the gateway, which reads the same variable through --dev-mode.
 	f.devMode = flag.Bool("dev-mode", envDevMode(),
 		"§17.4: enable the lenny-ops dev-mode relaxations: the dev bearer-trust hook, the "+
 			"X-Lenny-* identity headers and dev roles, and the unauthenticated surface when no "+
-			"trust hook is configured. Ignored under --production. Override via LENNY_DEV_MODE.")
+			"trust hook is configured. Ignored in production mode (--environment=prod). "+
+			"Override via LENNY_DEV_MODE.")
 }
 
 // registerUpgradeFlags registers the §25.8 release-channel, registry, and
@@ -461,8 +458,9 @@ func (f *opsFlags) registerAuthFlags() {
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"§17.4: path to the embedded OIDC provider's HMAC key file, the dev trust hook "+
 			"lenny-ops accepts bearers from alongside the §10.2 key set. Refused when "+
-			"--production is set or --dev-mode is not. Without it, under --dev-mode and "+
-			"without --production, the operability surface is unauthenticated. "+
+			"production mode (--environment=prod) or without --dev-mode. Without it, under "+
+			"--dev-mode and outside production mode (--environment=prod), the operability "+
+			"surface is unauthenticated. "+
 			"Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.authMultiTenant = flag.Bool("auth-multi-tenant", envBool("LENNY_AUTH_MULTI_TENANT", false),
 		"§10.2: when true, lenny-ops extracts the tenant identifier from the JWT tenant claim "+
@@ -541,7 +539,8 @@ func (f *opsFlags) registerWebhookFlags() {
 	f.installationID = flag.String("installation-id", os.Getenv("LENNY_INSTALLATION_ID"),
 		"§25.4: stable installation UUID surfaced in GET /v1/admin/me.platform.installationId. Override via LENNY_INSTALLATION_ID.")
 	f.platformTier = flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", ""),
-		"§25.16 deployment tier (tier1/tier2/tier3) surfaced in GET /v1/admin/me.platform.tier. Override via LENNY_PLATFORM_TIER.")
+		"§25.16 deployment tier (tier1/tier2/tier3) surfaced in GET /v1/admin/me.platform.tier. "+
+			"tier2 and tier3 also select the §25.4 required Idempotency-Key. Override via LENNY_PLATFORM_TIER.")
 	f.opsServiceURL = flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
 		"§25.4: external lenny-ops URL surfaced in GET /v1/admin/me.platform.opsServiceURL. Override via LENNY_OPS_SERVICE_URL.")
 }
@@ -592,4 +591,20 @@ func (f *opsFlags) registerKMSFlags() {
 	f.kmsOpts, f.kmsFinalize = providerflags.Bind(flag.CommandLine, os.Getenv, providerflags.Options{
 		Provider: providerflags.ProviderLocal,
 	})
+}
+
+// productionMode reports §17.9.1 production mode from the finalized
+// --environment value. Call it only after kmsFinalize has returned nil.
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §25.11; §17.4
+// "Dev mode guard rails".
+func (f *opsFlags) productionMode() bool { return deployenv.IsProduction(f.kmsOpts.Environment) }
+
+// idempotencyKeyRequired reports the §25.4 Tier 2/3 required-key posture
+// from --platform-tier. An empty or unrecognized tier reads as Tier 1.
+//
+// spec: §25.4 (The lenny-ops Service) Idempotency-Key.
+func (f *opsFlags) idempotencyKeyRequired() bool {
+	t := *f.platformTier
+	return t == "tier2" || t == "tier3"
 }

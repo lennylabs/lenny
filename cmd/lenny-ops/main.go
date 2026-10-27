@@ -176,9 +176,9 @@ type authInputs struct {
 	burst         int
 }
 
-// errDevTrustInProduction refuses the dev embedded-OIDC trust hook under
-// --production.
-var errDevTrustInProduction = errors.New("§17.4: --bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused when --production is set")
+// errDevTrustInProduction refuses the dev embedded-OIDC trust hook in
+// production mode (--environment=prod).
+var errDevTrustInProduction = errors.New("§17.4: --bearer-trust-hmac-key-file is the dev embedded-OIDC trust hook and is refused in production mode (--environment=prod)")
 
 // errDevTrustWithoutDevMode refuses the dev embedded-OIDC trust hook when
 // --dev-mode (LENNY_DEV_MODE) is off, as the gateway does.
@@ -188,8 +188,8 @@ var errDevTrustWithoutDevMode = errors.New("§17.4: --bearer-trust-hmac-key-file
 // relaxations: the X-Lenny-* identity headers, the dev roles, and the
 // unauthenticated surface when no trust hook is configured. §17.4 "Dev
 // mode guard rails" item 3 makes LENNY_DEV_MODE the single gate for every
-// dev-mode relaxation, so --dev-mode is required. --production never
-// admits a relaxation: a production process authenticates every request
+// dev-mode relaxation, so --dev-mode is required. Production mode
+// (--environment=prod) never admits a relaxation: a production process authenticates every request
 // through the §10.2 key set whether or not --dev-mode is set.
 //
 // spec: §17.4 "Dev mode guard rails"; §25.4 (The lenny-ops Service:
@@ -198,8 +198,8 @@ func devRelaxed(devMode, production bool) bool {
 	return devMode && !production
 }
 
-// checkDevTrustPosture refuses --bearer-trust-hmac-key-file under
-// --production and without --dev-mode. runOps calls it before the key
+// checkDevTrustPosture refuses --bearer-trust-hmac-key-file in production
+// mode (--environment=prod) and without --dev-mode. runOps calls it before the key
 // set loads, so the refusal does not wait on a KMS round trip, and
 // buildAuthConfig repeats it. The production refusal takes precedence so
 // that a production process names the production rule.
@@ -236,10 +236,10 @@ func checkDevTrustPosture(devMode, production bool, hmacKeyFile string) error {
 //
 // The X-Lenny-* identity headers and the dev roles are honored only
 // under devRelaxed, and only devRelaxed without the key file serves the
-// surface unauthenticated. Outside dev mode, --production true or false,
-// every request authenticates through the key set. The key file under
-// --production or without --dev-mode is an error the caller treats as
-// fatal.
+// surface unauthenticated. Outside dev mode, in production mode or not,
+// every request authenticates through the key set. The key file in
+// production mode (--environment=prod) or without --dev-mode is an error
+// the caller treats as fatal.
 //
 // spec: §25.4 (The lenny-ops Service: Authentication); §10.2
 // (Authentication) "Verifier key set and rotation"; §17.4 "Dev mode guard

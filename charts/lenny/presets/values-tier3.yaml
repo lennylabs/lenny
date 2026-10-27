@@ -14,7 +14,6 @@
 #   controller.replicas              — warm-pool controller replica count
 #   tokenService.replicas            — token service replica count
 #   ops.replicas                     — lenny-ops replica count
-#   ops.production                   — enables the §25.11 backup confirm guard
 #   ops.selfHealth.checkIntervalSeconds — §17.8.4 self-monitor cadence
 #   ops.events.streamMaxLen          — §17.8.4 ops:events:stream MAXLEN
 #   billing.redisStreamMaxLen        — §17.8.2 footnote ⁵ Tier 3 default
@@ -134,9 +133,6 @@ tokenService:
 # failure.
 ops:
   replicas: 3
-  # Tier 3 is a production posture. Enabling ops.production turns on the
-  # §25.11 confirm:true requirement for full backups.
-  production: true
   # §25.4 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
   # catch fast failure-and-recovery cycles.
   selfHealth:

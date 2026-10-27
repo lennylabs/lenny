@@ -60,8 +60,8 @@ func startIdemPostgres(t *testing.T) *pgxpool.Pool {
 
 // idemServer wires an opsserver with a §25.11 backup service and the
 // §25.4 idempotency middleware backed by the durable pgstore over pool,
-// in the given Tier posture (production reports Tier 2/3).
-func idemServer(t *testing.T, pool *pgxpool.Pool, production bool) *opsserver.Server {
+// in the given §25.4 posture (keyRequired reports Tier 2/3).
+func idemServer(t *testing.T, pool *pgxpool.Pool, keyRequired bool) *opsserver.Server {
 	t.Helper()
 	svc, err := backup.NewService(backup.Config{
 		Store:           backup.NewMemStore(),
@@ -75,9 +75,9 @@ func idemServer(t *testing.T, pool *pgxpool.Pool, production bool) *opsserver.Se
 		t.Fatalf("NewService: %v", err)
 	}
 	return opsserver.New(opsserver.Options{
-		Backups:     svc,
-		Production:  production,
-		Idempotency: pgstore.New(pool),
+		Backups:                svc,
+		IdempotencyKeyRequired: keyRequired,
+		Idempotency:            pgstore.New(pool),
 	})
 }
 

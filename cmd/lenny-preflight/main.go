@@ -556,7 +556,7 @@ func main() {
 	cosignVerify := flag.Bool("feature-cosign-verify", false,
 		"value of the imageVerification.cosign.enabled chart flag; a production/staging install with it false gets a §5.3 advisory")
 	environment := flag.String("environment", "",
-		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 cosign-production advisory")
+		"value of the chart `environment` value (local | dev | staging | prod); feeds the §5.3 cosign-production advisory")
 	monitoringFormat := flag.String("monitoring-format", "",
 		"value of the monitoring.format chart value (prometheusrule | configmap | both); feeds the §16.9 R8 Prometheus Operator CRD-presence advisory")
 	prometheusURL := flag.String("prometheus-url", "",

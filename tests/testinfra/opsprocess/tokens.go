@@ -48,8 +48,8 @@ const readFailedRecord = "revocation set read failed"
 // AuthArgs returns the flags that make a dev-mode lenny-ops authenticate
 // its requests: the §17.4 dev bearer-trust hook over a fresh key, which
 // lenny-ops admits only under LENNY_DEV_MODE (StartOpts sets it). A
-// dev-mode lenny-ops started without them, and without --production,
-// serves its surface unauthenticated, so a test that asserts a token
+// dev-mode lenny-ops started without them, and outside production mode
+// (--environment=prod), serves its surface unauthenticated, so a test that asserts a token
 // outcome on it passes these.
 func AuthArgs(t testing.TB) []string {
 	t.Helper()

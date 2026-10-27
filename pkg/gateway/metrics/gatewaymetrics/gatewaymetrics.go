@@ -2004,8 +2004,8 @@ func (m *Metrics) SetAuditRetentionDays(days int) {
 	m.auditRetentionDays.Set(float64(days))
 }
 
-// SetEnvProduction emits the §16.5 lenny_env_production gauge: 1 when
-// LENNY_ENV=production, 0 otherwise. The production-only audit alerts gate
+// SetEnvProduction emits the §16.5 lenny_env_production gauge: 1 in
+// production mode (--environment=prod, §17.9.1), 0 otherwise. The production-only audit alerts gate
 // on `lenny_env_production == 1` so they stay inert in dev and staging.
 // F-16.4.9.
 func (m *Metrics) SetEnvProduction(production bool) {

@@ -3484,6 +3484,29 @@ tests:
             name: LENNY_LOG_LEVEL
             value: info
 
+  # spec: §17.9.1 "Production mode" — --environment is the one carrier of
+  # production mode; the chart sets no environment variable that names it.
+  - it: carries production mode on --environment with no LENNY_ENV or LENNY_PRODUCTION env
+    set:
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=prod
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
+
   # spec: §17.9.3 (F-17.9.4) — provider=sentinel wires the
   # Sentinel discovery env; addresses and master are plain env, the data
   # AUTH password is read from the datastore Secret, and TLS is requested.

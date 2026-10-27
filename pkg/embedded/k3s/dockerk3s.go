@@ -85,6 +85,10 @@ type dockerLauncher struct {
 	// runDocker runs the docker CLI and returns its combined output. It is
 	// a field so unit tests can substitute a fake without invoking docker.
 	runDocker func(ctx context.Context, args ...string) ([]byte, error)
+	// apiReady waits for the API server behind the rewritten kubeconfig to
+	// answer /readyz. It is a field so unit tests that fake docker do not
+	// probe a real server.
+	apiReady apiReadyFunc
 }
 
 // newDockerLauncher constructs the Docker-backed launcher. The caller has
@@ -94,6 +98,7 @@ func newDockerLauncher(cfg Config) Launcher {
 		cfg:       cfg,
 		name:      containerName(cfg.Dir),
 		runDocker: runDocker,
+		apiReady:  waitAPIServerReady,
 	}
 }
 
@@ -140,8 +145,9 @@ func (d *dockerLauncher) GatewayHost() string {
 // images); on a fresh provision it runs a new detached container that
 // publishes the API server on the host port with the same cluster-disabling
 // flag set the Linux launcher builds. Either way it waits for the
-// in-container API server to write its kubeconfig, then extracts that
-// kubeconfig and rewrites its server URL to the published host port. On an
+// in-container k3s to write its kubeconfig, extracts that kubeconfig and
+// rewrites its server URL to the published host port, and then waits for
+// the API server to answer /readyz through the rewritten kubeconfig. On an
 // unsupported host (a non-Linux host without Docker) it fails closed with
 // the platform diagnostic so the stack routes around the absent cluster.
 //
@@ -173,6 +179,9 @@ func (d *dockerLauncher) Start(ctx context.Context) error {
 	} else if out, err := d.runDocker(runCtx, d.runArgs()...); err != nil {
 		return fmt.Errorf("embedded k3s: docker run k3s: %w: %s", err, bytes.TrimSpace(out))
 	}
+	// One ReadyTimeout budget covers both the kubeconfig wait and the API
+	// server readiness wait, so Start stays bounded by ReadyTimeout.
+	deadline := time.Now().Add(d.cfg.ReadyTimeout)
 	if err := d.waitReady(ctx); err != nil {
 		_ = d.Remove()
 		return err
@@ -180,6 +189,15 @@ func (d *dockerLauncher) Start(ctx context.Context) error {
 	if err := d.extractKubeconfig(ctx); err != nil {
 		_ = d.Remove()
 		return err
+	}
+	// k3s writes its kubeconfig before the API server serves, and a
+	// persisted container already holds one, so the kubeconfig's presence
+	// does not mean the API server is ready. Wait for /readyz through the
+	// rewritten kubeconfig, which also proves the host-port publish works.
+	// spec: §17.4.
+	if err := d.apiReady(ctx, d.KubeconfigPath(), deadline); err != nil {
+		_ = d.Remove()
+		return fmt.Errorf("%w (container %s)", err, d.name)
 	}
 	return nil
 }
@@ -271,8 +289,9 @@ func (d *dockerLauncher) serverArgs() []string {
 }
 
 // waitReady blocks until the in-container k3s has written its admin
-// kubeconfig or ReadyTimeout elapses. k3s writes the kubeconfig once the
-// API server is serving, so the file's presence marks readiness. The
+// kubeconfig or ReadyTimeout elapses. The kubeconfig's presence does not
+// mark API server readiness (k3s writes it before the API server serves);
+// Start follows this wait with the /readyz wait in apiready.go. The
 // check reads the in-container path with `docker exec cat`; it tolerates
 // the transient errors while k3s is still bootstrapping and the file is
 // absent.

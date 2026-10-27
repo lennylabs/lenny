@@ -973,7 +973,12 @@ kms:
 # environment is the §17.9.1 composition dimension naming the target
 # deployment environment (local | dev | staging | prod). The chart
 # renders it into --environment on lenny-gateway, lenny-token-service, and
-# lenny-ops; production refuses to start with kms.provider=local. The value also drives gateway log verbosity through
+# lenny-ops. The value prod is production mode (§17.9.1): it controls every
+# production gate in every Lenny binary, including the refusal to start
+# with kms.provider=local, the regulated-tenant audit refusals, and the
+# lenny-ops full-backup confirmation and /healthz readiness behavior.
+# staging is not production mode. A value outside the set makes the
+# binaries refuse to start. The value also drives gateway log verbosity through
 # the lenny.gatewayLogLevel helper: local and dev render
 # LENNY_LOG_LEVEL=debug, staging and prod render info. spec: §17.9.1, F-4.3.11 / F-17.5.2 / F-17.9.9.
 environment: "dev"
@@ -3417,15 +3422,6 @@ ops:
   # listener as the HTTP surface (httpPort), so the Service maps the
   # metrics port to that listener.
   metricsPort: 9090
-  # production gates the §25.11 confirm:true requirement on full
-  # backups, and lenny-ops refuses the local KMS provider and the dev
-  # trust hook under it. It does not control the dev-mode relaxations
-  # (the dev trust hook, the X-Lenny-* identity headers, and the
-  # unauthenticated surface): global.devMode is their single gate
-  # (§17.4), and with global.devMode false lenny-ops authenticates every
-  # request whether production is true or false. Set true on staging and
-  # production installs.
-  production: false
   # service carries the lenny-ops Service overrides. §25.4
   # pins sessionAffinity: ClientIP with a 3h client-IP timeout so SSE
   # consumers reconnecting after a network blip return to the replica
@@ -3734,9 +3730,10 @@ security:
     # /etc/lenny/oidc and trust that bearer through
     # --bearer-trust-hmac-key-file, wrapped in the dev.local audience check.
     # The gateway refuses the flag unless global.devMode is true. lenny-ops
-    # refuses it without global.devMode and under ops.production: true, so
-    # the chart renders it on lenny-ops only when global.devMode is true
-    # and ops.production is false. Leave it empty outside dev. Lenny-issued JWTs verify through
+    # refuses it without global.devMode and in production mode
+    # (environment: prod), so the chart renders it on lenny-ops only when
+    # global.devMode is true and environment is not prod. Leave it empty
+    # outside dev. Lenny-issued JWTs verify through
     # the ES256 key set the kms block configures, not through this key.
     bearerTrustKeySecret: ""
     # tokenRefreshBeforeExpirySeconds is the §25.4 pre-emptive

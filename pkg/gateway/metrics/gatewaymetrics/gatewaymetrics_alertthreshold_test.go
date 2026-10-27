@@ -230,3 +230,26 @@ func TestScalarGaugesAreSafeUnderConcurrentSetters(t *testing.T) {
 		}
 	}
 }
+
+// TestEnvProductionGaugeHelp_spec_16_5 pins the exposition HELP text of the
+// lenny_env_production gauge to the §17.9.1 production-mode definition, so
+// a scrape names --environment=prod rather than the retired LENNY_ENV
+// spelling.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow);
+// §17.9.1 (Composition Dimensions) "Production mode".
+func TestEnvProductionGaugeHelp_spec_16_5(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	const want = "# HELP lenny_env_production 1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5).\n"
+	if !strings.Contains(rr.Body.String(), want) {
+		t.Errorf("/metrics missing HELP line %q", want)
+	}
+	if strings.Contains(rr.Body.String(), "LENNY_ENV=production") {
+		t.Error("/metrics names the retired LENNY_ENV=production spelling")
+	}
+}

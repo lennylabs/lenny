@@ -81,7 +81,10 @@ tests:
           path: spec.hard["requests.memory"]
           value: "10Ti"
 
-  - it: tier2 preset enables the production posture on lenny-ops
+  # spec: §25.4, §17.9.1 "Production mode" — the tier2 preset sets the
+  # §25.4 platform tier on lenny-ops, which selects the required
+  # Idempotency-Key; capacity tier does not select production mode.
+  - it: tier2 preset renders the tier2 platform tier on lenny-ops
     values:
       - ../presets/values-tier2.yaml
     template: ops-deployment.yaml
@@ -89,9 +92,30 @@ tests:
       path: kind
       value: Deployment
     asserts:
-      - contains:
+      - notContains:
           path: spec.template.spec.containers[0].args
           content: --production=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-tier=tier2
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+
+  - it: tier3 preset renders the tier3 platform tier on lenny-ops
+    values:
+      - ../presets/values-tier3.yaml
+    template: ops-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --production=true
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-tier=tier3
 
   # Tier 3 preset.
   - it: tier3 preset sizes the gateway Deployment to 5 replicas
