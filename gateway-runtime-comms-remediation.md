@@ -3565,6 +3565,42 @@ endpoint, KMS error codes, or the `lenny-ops` probe.
     Owner decisions it lists: whether the `minio.*` Helm keys are renamed to backend-neutral keys, and
     whether the metric and alert renames ship with aliases for the old names or without them.
 
+**Defects filed from proposal 0104's unstaged-defect list (2026-10-27).** Proposal 0104 (approved
+2026-10-27, implementation pending) lists defects in the shipped tree that it does not stage, and its REC-1
+files them once confirmed. They are filed now, ahead of REC-1, because no defect is dropped. Each was
+re-confirmed against the tree, none was already tracked, and each BUILD-GAPS entry says it was filed ahead of
+REC-1, so 0104's implementor updates the entry rather than filing a duplicate. The §10.7 runtime eval
+credential gap surfaced during the review of 0104 and is filed with them.
+
+- Direct-fix queue, after 0104's implementation.
+  - [ ] **F-13.3.22** (Medium): the Token Service's `issuedRecord` sets neither `ParentJTI` nor `ActSubject`
+    on an external `a2a_delegation` child, so `RevokeCascade` cannot reach the child from its parent. Record
+    the `actor_token`'s `jti` and `sub` on an actor-bearing exchange. After 0104 deletes the internal minter,
+    this is the only delegation-child issuance path.
+- Proposal routing.
+  - [ ] **F-8.5.26** (Low): `lenny/delegate_task` returns admission's `ErrParentNotRunning` (and
+    `ErrParentNotFound`) bare, so the caller receives `INTERNAL_ERROR`, which is `TRANSIENT` and retryable.
+    No §15.1 code covers a live parent that is not `running`, so the choice of code needs the proposal
+    pipeline unless an existing row is judged to fit. It can ride with any later §8.5 or §15.1 proposal, and
+    it lands after 0104, which edits the same handler.
+  - [ ] **Forwarded-call session binding proposal** (not yet written), after R14: **F-10.2.29** (Medium). The
+    gateway dispatches a `CH-MCP-PLATFORM` or `CH-MCP-CONNECTOR` call forwarded on `LNK-GWCONTROL` under the
+    session ID the adapter presents, with no check that the session is assigned to the calling pod
+    (0104 D11). It depends on R14, which gives the agent pod its client identity. The proposal covers:
+    - the `pod_assignment` invariant at every state edge (suspend, resume, recycle, and terminal);
+    - the RPCs the binding covers, and why `ListPlatformTools` and the scrub reports are excluded;
+    - the posture of the dev plaintext listener, which carries no SPIFFE identity;
+    - the timing of assignment relative to the first forwarded call;
+    - pods that serve concurrent sessions;
+    - the refusal outcome.
+- Awaiting an owner decision.
+  - [ ] **F-10.7.21** (Low): the §10.7 Eval Submission Contract Caller row says the agent runtime submits
+    evals "via its session credential", and §23.1 item 12 lists the agent runtime as a caller, while no
+    section defines a pod-held session credential and no code provides a pod-side eval path. The owner
+    decides whether runtime eval self-reporting exists. If it does not, the example is removed. If it does,
+    a proposal specifies its delivery path, which the owner noted would be an adapter or gateway API rather
+    than an MCP tool.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
