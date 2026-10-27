@@ -733,7 +733,10 @@ func (t resumeTail) events() {
 	mode := s.classifyResumeWithAdapter(t.ctx, r, t.out.mode)
 	s.emitResumedEvent(t.ctx, r, mode)
 	if s.partialManifestCleaner != nil {
-		if cerr := s.partialManifestCleaner.CleanupAfterResume(t.ctx, r.TenantID, r.ID); cerr != nil {
+		// spec: §10.1.7 (Cleanup.) — scope the cleanup by the committed
+		// resume row's generation, so a live seal or checkpoint intent row
+		// written by this incarnation survives.
+		if cerr := s.partialManifestCleaner.CleanupAfterResume(t.ctx, r.TenantID, r.ID, r.CoordinationGeneration); cerr != nil {
 			slog.Warn("sessionserver: partial-manifest cleanup after resume", "session_id", r.ID, "error", cerr)
 		}
 	}

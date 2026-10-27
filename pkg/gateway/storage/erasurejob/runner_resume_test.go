@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
@@ -110,6 +113,9 @@ func TestRunnerMissingHookFailsJob_spec_12_8(t *testing.T) {
 	}{
 		{"no drain hook", func(r *erasurejob.Runner) { r.WithSessionDrain(nil) }, erasurejob.ErrSessionDrainUnwired},
 		{"no hold-check hook", func(r *erasurejob.Runner) { r.WithHoldCheck(nil) }, erasurejob.ErrHoldCheckUnwired},
+		// spec: §12.8 (Lifecycle fence and drain) — a runner with no
+		// post-terminal release gate fails the job before DeleteByUser.
+		{"no release gate", func(r *erasurejob.Runner) { r.WithReleaseGate(nil) }, erasurejob.ErrReleaseGateUnwired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newRunHarness(t)
@@ -359,4 +365,146 @@ func TestRunnerInitiatedFailures_spec_12_8(t *testing.T) {
 			t.Errorf("phase = %s, want completed", got.Phase)
 		}
 	})
+}
+
+// TestRunnerWaitsForThePostTerminalRelease_spec_12_8 pins the §12.8
+// store-deletion gate in the erasure runner. A gate that reports a session
+// still in its §7.1 post-terminal window leaves the job in store_deleting
+// with no eraser call, no job write, and no failure observation, and Run
+// returns ErrReleasePending; on the pre-fix runner DeleteByUser runs at
+// once. A gate error leaves the job in progress the same way. The next run
+// with an empty gate completes, and a job resumed in store_deleting runs the
+// gate before DeleteByUser.
+//
+// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
+func TestRunnerWaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pending []string
+		gateErr error
+		want    error
+	}{
+		{name: "a session in its window", pending: []string{"sess_sealing"}, want: erasurejob.ErrReleasePending},
+		{name: "a gate error", gateErr: errors.New("primary unreachable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newRunHarness(t)
+			h.set(func() { h.releasePending, h.releaseErr = tc.pending, tc.gateErr })
+			j := h.start("acme", "alice", nil)
+			err := h.runner.Run(context.Background(), j.ID)
+			if err == nil {
+				t.Fatal("Run = nil, want the job left in progress")
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Errorf("Run = %v, want %v", err, tc.want)
+			}
+			if tc.gateErr != nil && !errors.Is(err, tc.gateErr) {
+				t.Errorf("Run = %v, want it to wrap the gate error", err)
+			}
+			waiting := h.job(j.ID)
+			if waiting.Phase != erasurejob.PhaseStoreDeleting {
+				t.Fatalf("phase = %s, want store_deleting", waiting.Phase)
+			}
+			if n := h.count("delete:acme"); n != 0 {
+				t.Errorf("DeleteByUser ran %d times, want 0", n)
+			}
+			if f := h.failureCount(); len(f) != 0 {
+				t.Errorf("failures = %v, want none", f)
+			}
+			if err := h.runner.Run(context.Background(), j.ID); err == nil {
+				t.Fatal("second Run with the gate unchanged = nil, want the job still waiting")
+			}
+			if again := h.job(j.ID); !reflect.DeepEqual(again, waiting) {
+				t.Errorf("a waiting run wrote the job:\nbefore %+v\nafter  %+v", waiting, again)
+			}
+
+			h.set(func() { h.releasePending, h.releaseErr = nil, nil })
+			if err := h.runner.Run(context.Background(), j.ID); err != nil {
+				t.Fatalf("Run with an empty gate = %v, want completion", err)
+			}
+			if got := h.job(j.ID); got.Phase != erasurejob.PhaseCompleted {
+				t.Errorf("phase = %s, want completed", got.Phase)
+			}
+			ev := h.order()
+			if g, d := lastIndexOf(ev, "release:acme"), indexOf(ev, "delete:acme"); g < 0 || d < 0 || g > d {
+				t.Errorf("the release gate did not precede DeleteByUser: %v", ev)
+			}
+		})
+	}
+}
+
+// TestRunnerResumedInStoreDeletingRunsTheGate_spec_12_8 pins the gate on a
+// job resumed in store_deleting: the gate runs before DeleteByUser, and a
+// pending release keeps the eraser from running.
+//
+// spec: §12.8 (Erasure job phase field (crash recovery)), §7.1 (Post-terminal window)
+func TestRunnerResumedInStoreDeletingRunsTheGate_spec_12_8(t *testing.T) {
+	h := newRunHarness(t)
+	j := h.start("acme", "alice", nil)
+	h.moveTo(j.ID, erasurejob.PhaseStoreDeleting, nil)
+	h.set(func() { h.releasePending = []string{"sess_sealing"} })
+	if err := h.runner.Run(context.Background(), j.ID); !errors.Is(err, erasurejob.ErrReleasePending) {
+		t.Fatalf("Run = %v, want ErrReleasePending", err)
+	}
+	if h.count("drain:acme") != 0 || h.count("release:acme") != 1 || h.count("delete:acme") != 0 {
+		t.Errorf("events = %v, want only the release gate", h.order())
+	}
+	h.set(func() { h.releasePending = nil })
+	if err := h.runner.Run(context.Background(), j.ID); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	ev := h.order()
+	if g, d := lastIndexOf(ev, "release:acme"), indexOf(ev, "delete:acme"); g < 0 || d < 0 || g > d {
+		t.Errorf("the release gate did not precede DeleteByUser: %v", ev)
+	}
+}
+
+// lastIndexOf returns the index of the last element of ev equal to want, or
+// -1.
+func lastIndexOf(ev []string, want string) int {
+	for i := len(ev) - 1; i >= 0; i-- {
+		if ev[i] == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestRunPendingLogsAReleaseWaitAtInfo_spec_12_8 pins the sweep's log level
+// for a job waiting on a drained session's release: the wait ends by itself
+// within the post-terminal window cap, so it is logged at Info rather than
+// as a run that did not complete.
+//
+// spec: §12.8 (Erasure job phase field (crash recovery)), §7.1 (Post-terminal window)
+func TestRunPendingLogsAReleaseWaitAtInfo_spec_12_8(t *testing.T) {
+	h := newRunHarness(t)
+	var buf strings.Builder
+	var mu sync.Mutex
+	h.runner.WithLogger(slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h.set(func() { h.releasePending = []string{"sess_sealing"} })
+	h.start("acme", "alice", nil)
+	if err := h.runner.RunPending(context.Background()); err != nil {
+		t.Fatalf("RunPending: %v", err)
+	}
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "pod release") {
+		t.Errorf("log = %q, want an Info line naming the release wait", out)
+	}
+	if strings.Contains(out, "level=WARN") {
+		t.Errorf("log = %q, want no warning for the release wait", out)
+	}
+}
+
+// lockedWriter serializes writes to w under mu.
+type lockedWriter struct {
+	w  *strings.Builder
+	mu *sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

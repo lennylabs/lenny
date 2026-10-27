@@ -11,8 +11,10 @@ import (
 // reached a terminal state. The gateway invokes it as the
 // seal-and-export step of session completion.
 type Sealer interface {
-	// Seal snapshots the session's final workspace. An implementation
-	// is expected to no-op for a session that never ran on a pod.
+	// Seal snapshots the session's final workspace. The seal step calls
+	// it only while this replica holds a binding for the session; an
+	// error after the binding is removed is classified as the permanent
+	// outcome. spec: §7.1 (Seal-and-export invariant).
 	Seal(ctx context.Context, tenantID, sessionID string) error
 }
 

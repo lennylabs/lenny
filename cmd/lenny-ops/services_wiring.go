@@ -126,7 +126,7 @@ func (w *opsWiring) buildOpsServices() {
 	if err != nil {
 		log.Fatalf("lenny-ops: §12.8 per-region backup config: %v", err)
 	}
-	w.backupSvc, w.backupJobs = buildBackupService(*w.f.production, backupDeps{
+	w.backupSvc, w.backupJobs = buildBackupService(w.f.productionMode(), backupDeps{
 		Pool:            w.pgPool,
 		Clientset:       backupClientset,
 		Locks:           w.lockSvc,

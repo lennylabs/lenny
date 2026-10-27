@@ -633,6 +633,16 @@ var prodMigrationSchema = []struct {
 	// admission reads before admitting recycle.runtimeProcess: restart.
 	// spec: §5.1, §5.2.
 	{migration: "0189", table: "runtime_definitions", columns: []string{"restartable"}},
+	// 0190 adds sessions.last_write_id, the §12.3 per-write identifier the
+	// session store's Update stores and reads back from the primary after a
+	// lost commit acknowledgement. spec: §12.3.
+	{migration: "0190", table: "sessions", columns: []string{"last_write_id"}},
+	// 0191 adds sessions.pod_released_at, the §7.1 release marker that ends
+	// a terminal session's post-terminal window, and the
+	// idx_sessions_unreleased_terminal_by_pod index of the terminal arm of
+	// the pod-holder predicate. The index and its drop are asserted directly
+	// in TestPodReleasedAtMigration_spec_7_1. spec: §7.1.
+	{migration: "0191", table: "sessions", columns: []string{"pod_released_at"}},
 }
 
 // spec: 12.2, 18.5
@@ -800,6 +810,47 @@ func TestPodlessSuspendedIndexMigration_spec_7_2(t *testing.T) {
 	if got := indexDef(t, ctx, pg, "idx_sessions_podless_suspended"); got != "" {
 		t.Errorf("after rolling 0183 back the index still exists: %q", got)
 	}
+}
+
+// podReleasedAtPriorVersion is the schema version immediately below the
+// release-marker migration.
+const podReleasedAtPriorVersion = 190
+
+// spec: 7.1 (Post-terminal window), 5.2 (Post-recovery rehydration atomicity)
+// diagnosis: migration 0191 did not add sessions.pod_released_at or did not
+//
+//	create idx_sessions_unreleased_terminal_by_pod as a (terminated_at,
+//	pod_assignment) index restricted to unreleased terminal rows that name a
+//	pod, or its .down.sql did not drop both. Without the index the terminal
+//	arm of the §5.2 rehydration seed and the §12.4 capacity gate scans every
+//	terminal row the deployment keeps.
+func TestPodReleasedAtMigration_spec_7_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if got := columnType(t, ctx, pg, "sessions", "pod_released_at"); got != "timestamp with time zone" {
+		t.Errorf("sessions.pod_released_at type = %q, want timestamp with time zone", got)
+	}
+	def := indexDef(t, ctx, pg, "idx_sessions_unreleased_terminal_by_pod")
+	for _, want := range []string{
+		"(terminated_at, pod_assignment)", "pod_assignment <> ''", "pod_released_at IS NULL",
+		"'completed'", "'failed'", "'cancelled'", "'expired'",
+	} {
+		if !strings.Contains(def, want) {
+			t.Errorf("idx_sessions_unreleased_terminal_by_pod = %q, want it to contain %q", def, want)
+		}
+	}
+	if got := indexDef(t, ctx, pg, "idx_sessions_active_by_pod"); got == "" {
+		t.Errorf("idx_sessions_active_by_pod is gone after 0191; the non-terminal arm needs it")
+	}
+
+	pg.MigrateTo(t, dir, podReleasedAtPriorVersion)
+	if got := indexDef(t, ctx, pg, "idx_sessions_unreleased_terminal_by_pod"); got != "" {
+		t.Errorf("after rolling 0191 back the index still exists: %q", got)
+	}
+	mustNotHaveColumn(t, ctx, pg, "sessions", "pod_released_at")
 }
 
 // spec: 9.2 (Elicitation Chain)

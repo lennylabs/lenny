@@ -59,7 +59,7 @@ only the env vars it can satisfy.
 {{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
 {{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
-{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasRedisPassword := and (or $useSentinel $hasRedisCluster) (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
 {{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
 {{- $hasCoordRedis := and $concerns (hasKey $concerns "coordinationUrl") (ne ($concerns.coordinationUrl | toString) "") -}}
@@ -109,18 +109,22 @@ only the env vars it can satisfy.
 {{- end -}}
 {{- /* §5.2 (Slot assignment atomicity) — the stale-slot reaper's terminal
    age, controller.claimOrphanTimeoutSeconds, must be at least one second
-   more than the largest post-terminal slot activity window: the seal
-   window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) and the
-   gateway defaults of the finalizing (600s) and resuming (300s) deadlines,
-   which the chart does not render. The gateway's startup gate is the
-   complete check, because an operator can change those two deadlines
+   more than the largest post-terminal slot activity window: the §7.1
+   terminal pipeline budget, which is the seal window
+   (gateway.workspaceSealMaxDurationSeconds, 300 when 0) plus the gateway's
+   30s release allowance (--stream-failure-report-timeout), and the gateway
+   defaults of the finalizing (600s) and resuming (300s) deadlines. The
+   chart renders none of the allowance, the finalizing deadline, or the
+   resuming deadline, so it uses their defaults. The gateway's startup gate
+   is the complete check, because an operator can change those three values
    through their environment variables. */ -}}
 {{- $sealWindow := int (.Values.gateway.workspaceSealMaxDurationSeconds | default 0) -}}
 {{- if le $sealWindow 0 -}}{{- $sealWindow = 300 -}}{{- end -}}
-{{- $reaperFloor := add1 (max $sealWindow 600 300) -}}
+{{- $pipelineBudget := add $sealWindow 30 -}}
+{{- $reaperFloor := add1 (max $pipelineBudget 600 300) -}}
 {{- $claimOrphanTimeout := int (.Values.controller.claimOrphanTimeoutSeconds | default 900) -}}
 {{- if lt $claimOrphanTimeout (int $reaperFloor) -}}
-{{- fail (printf "§5.2: controller.claimOrphanTimeoutSeconds=%d must be at least %d, one second more than the largest of the seal window (%ds) and the gateway's finalizing (600s) and resuming (300s) deadlines." $claimOrphanTimeout (int $reaperFloor) $sealWindow) -}}
+{{- fail (printf "§5.2: controller.claimOrphanTimeoutSeconds=%d must be at least %d, one second more than the largest of the terminal pipeline budget (%ds: the seal window of %ds plus the gateway's 30s release allowance, --stream-failure-report-timeout) and the gateway's finalizing (600s) and resuming (300s) deadlines." $claimOrphanTimeout (int $reaperFloor) (int $pipelineBudget) $sealWindow) -}}
 {{- end -}}
 {{- if le (int (.Values.gateway.slotReaper.ratePerSecond | default 0)) 0 -}}
 {{- fail (printf "§5.2: gateway.slotReaper.ratePerSecond=%v must be a positive releases/sec ceiling." .Values.gateway.slotReaper.ratePerSecond) -}}
@@ -1498,13 +1502,27 @@ spec:
             {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
                    addresses and master name are not secret (plain env);
                    the data AUTH password and the optional sentinel AUTH
-                   password are read from the datastore Secret. TLS is
-                   requested on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+                   password are read from the datastore Secret. TLS and the
+                   data password render in the block that follows. */}}
             {{- if $useSentinel }}
             - name: LENNY_REDIS_SENTINEL_ADDRS
               value: {{ join "," $redis.sentinels | quote }}
             - name: LENNY_REDIS_SENTINEL_MASTER
               value: {{ $redis.sentinelMaster | quote }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- /* §12.4 "Security" — AUTH and TLS are required on every
+                   Redis instance. The Sentinel and Cluster topologies carry
+                   no URL, so TLS is requested explicitly and the data AUTH
+                   password is read from the datastore Secret. The external
+                   topology carries both in its rediss:// URL. F-12.4.37. */}}
+            {{- if or $useSentinel $hasRedisCluster }}
             - name: LENNY_REDIS_TLS
               value: "true"
             {{- if $hasRedisPassword }}
@@ -1513,13 +1531,6 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: redis-password
-            {{- end }}
-            {{- if $hasSentinelPassword }}
-            - name: LENNY_REDIS_SENTINEL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: lenny-datastore-conn
-                  key: redis-sentinel-password
             {{- end }}
             {{- end }}
             {{- /* §12.4 — per-concern Redis URLs (logical

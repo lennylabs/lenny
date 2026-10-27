@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/redis/go-redis/v9"
 
@@ -262,15 +264,16 @@ func (h *Harness) occupiedPods(ctx context.Context) map[string]bool {
 func (h *Harness) Concurrent() bool { return h.maxConcurrent > 1 }
 
 // slotInvariants evaluates the concurrent-pool invariants over every pod
-// the cluster holds: each pod's slot set holds exactly the non-terminal
-// sessions whose row names the pod plus its leaked: members (slot set); no
-// pod whose set is empty and that no non-terminal row names keeps a bound
-// claim (empty pod); and no member was removed twice in one reservation
-// episode (single removal).
+// the cluster holds: each pod's slot set holds every non-terminal session
+// whose row names the pod, may hold a session that names the pod in its §7.1
+// post-terminal window, and holds nothing else but leaked: members (slot
+// set); no pod whose set is empty and that no session holds under the
+// holder predicate keeps a bound claim (empty pod); and no member was
+// removed twice in one reservation episode (single removal).
 //
 // spec: §5.2 (Slot assignment atomicity, Slot-holder predicate), §6.2
 // (leaked slot semantics), §4.6.3 (SandboxClaim: a release that ends the
-// occupancy without reuse)
+// occupancy without reuse), §7.1 (Post-terminal window)
 func (h *Harness) slotInvariants(ctx context.Context, rows map[string]sessionRow, held map[string]bool) []Invariant {
 	if !h.Concurrent() {
 		return nil
@@ -293,7 +296,7 @@ func (h *Harness) slotInvariants(ctx context.Context, rows map[string]sessionRow
 		}
 		sets.Violations = append(sets.Violations, h.slotSetViolations(p.Name, members, rows)...)
 		if len(members) == 0 && !held[p.Name] && bound[p.Name] && !h.RelaxEmptySetClaims {
-			empty.Violations = append(empty.Violations, fmt.Sprintf("claim on %s is bound, but its slot set is empty and no non-terminal row names the pod", p.Name))
+			empty.Violations = append(empty.Violations, fmt.Sprintf("claim on %s is bound, but its slot set is empty and no session holds the pod", p.Name))
 		}
 	}
 	once := Invariant{Name: "each member removed at most once"}
@@ -305,9 +308,12 @@ func (h *Harness) slotInvariants(ctx context.Context, rows map[string]sessionRow
 
 // slotSetViolations compares one pod's slot set with the session rows: a
 // non-terminal row naming the pod must be a member, and every plain member
-// must be such a session. Under RelaxStaleSlotMembers a plain member whose
-// session is terminal is accepted, because a release no replica performs
-// leaves it counted until the stale-slot reaper or the orphan GC.
+// must be a session that holds the pod under the §7.1 holder predicate: a
+// non-terminal row naming the pod, or a terminal row naming it in its
+// post-terminal window, which a rehydration seed counts. Under
+// RelaxStaleSlotMembers a plain member whose session is terminal is accepted
+// past its window too, because a release no replica performs leaves it
+// counted until the stale-slot reaper or the orphan GC.
 func (h *Harness) slotSetViolations(pod string, members []string, rows map[string]sessionRow) []string {
 	var out []string
 	present := map[string]bool{}
@@ -321,6 +327,7 @@ func (h *Harness) slotSetViolations(pod string, members []string, rows map[strin
 		case !ok:
 			out = append(out, fmt.Sprintf("%s's slot set holds %s, which no tracked session is", pod, m))
 		case row.err != nil:
+		case row.window && row.pod == pod:
 		case session.IsTerminal(row.state) && h.RelaxStaleSlotMembers:
 		case session.IsTerminal(row.state):
 			out = append(out, fmt.Sprintf("%s's slot set holds %s, whose session is %s", pod, m, row.state))
@@ -335,4 +342,55 @@ func (h *Harness) slotSetViolations(pod string, members []string, rows map[strin
 	}
 	sort.Strings(out)
 	return out
+}
+
+// LoseSlotSet deletes the pod's slot set and its rehydration sentinels, as a
+// Redis restart that loses its data does, so the next reservation or release
+// on the pod reseeds the set from the session store.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
+func (h *Harness) LoseSlotSet(ctx context.Context, pod string) error {
+	return slotcounter.New(h.rc).Reset(ctx, pod)
+}
+
+// FillPod starts as many sessions on r as the pool has slots per pod and
+// requires them to share one pod, which it returns with the sessions.
+func (h *Harness) FillPod(t testing.TB, r *Replica) (string, []string) {
+	t.Helper()
+	ids := make([]string, h.maxConcurrent)
+	for i := range ids {
+		ids[i] = h.StartSession(r)
+	}
+	pod := h.Row(ids[0]).PodAssignment
+	for _, id := range ids {
+		if got := h.Row(id).PodAssignment; got != pod {
+			t.Fatalf("session %s runs on %q, want the shared pod %q", id, got, pod)
+		}
+	}
+	return pod, ids
+}
+
+// EndWithRelease DELETEs the session on r and waits until its slot is
+// released and the release-marker write has run. With failMarker set the
+// marker write fails and the row must stay terminal with no marker, in its
+// §7.1 post-terminal window; otherwise the row must record the release.
+//
+// spec: §7.1 (Post-terminal window), §5.2 (Slot assignment atomicity)
+func (h *Harness) EndWithRelease(t testing.TB, r *Replica, pod, id string, failMarker bool) {
+	t.Helper()
+	h.WatchReleaseMarker(failMarker)
+	if code, body := h.Do(r, http.MethodDelete, "/v1/sessions/"+id, nil); code >= http.StatusBadRequest {
+		t.Fatalf("DELETE %s on %s = %d %v", id, r.ID, code, body)
+	}
+	h.AwaitReleaseMarkerWrite(t, id)
+	if n := h.Slots.Removals(pod, id); n != 1 {
+		t.Fatalf("removals of %s's member = %d after its release, want 1", id, n)
+	}
+	row := h.Row(id)
+	if !session.IsTerminal(row.State) {
+		t.Fatalf("ended session %s = %s, want terminal", id, row.State)
+	}
+	if released := !row.PodReleasedAt.IsZero(); released == failMarker {
+		t.Fatalf("PodReleasedAt of %s = %v with the marker write failing %v", id, row.PodReleasedAt, failMarker)
+	}
 }

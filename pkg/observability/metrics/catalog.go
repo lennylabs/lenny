@@ -428,7 +428,7 @@ var alertSupportCatalog = []MetricSpec{
 	// alert reads these to gate or suppress firing on a configuration or
 	// lifecycle posture.
 	{"lenny_audit_siem_configured", TypeGauge, "1 when audit.siem.endpoint is configured; suppresses AuditSIEMNotConfigured / AuditRetentionLow"},
-	{"lenny_env_production", TypeGauge, "1 when the deployment runs in production mode (LENNY_ENV)"},
+	{"lenny_env_production", TypeGauge, "1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5)."},
 	{"lenny_warmpool_fill_grace_active", TypeGauge, "1 while a pool is inside its initial-fill grace period; suppresses WarmPoolExhausted"},
 	{"lenny_pool_warming_up", TypeGauge, "1 while a pool is in bootstrap warm-up, read by WarmPoolBootstrapping"},
 	{"lenny_rate_limit_failopen_active", TypeGauge, "1 when a replica is in quota fail-open mode, read by RateLimitDegraded"},

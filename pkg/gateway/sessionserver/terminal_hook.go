@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -47,29 +48,58 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     with no binder call, so the later steps send the peer's pod nothing.
 //  3. Seal and export the workspace when a Sealer is wired; a seal failure
 //     relabels the row failed through failWorkspaceSeal, whose returned row
-//     replaces sess. With no local binding the Sealer returns nil.
+//     replaces sess. With no local binding the seal step skips the
+//     Sealer; with one, it marks the binding closing and evicts its
+//     cached Attach stream first.
 //  4. Drain the session's inbox and DLQ, sending message_expired.
 //  5. On a terminal row, emit one status_change carrying the row's state and
 //     one session_complete, then run signals.
 //  6. Release the pod under the session's slot-accounting lock
 //     (releaseAfterTerminal): a pre-running claim by name, otherwise the
-//     executor's binding with the disposition of the row's state.
+//     executor's binding with the failed disposition after a failed seal
+//     and the disposition of the row's state otherwise.
 //  7. Expire the pending elicitations the session's pod raised.
 //
 // Every step is best-effort and none fails the terminal write. The hook
 // writes no row except failWorkspaceSeal's relabel. It returns the row the
 // later steps saw.
 //
-// spec: §7.1 (Normal Flow), §7.2 (Interactive Session Model), §7.3 (Resume
-// driver), §9.2 (Elicitation Chain), §10.1.5 (Stale Replica Behavior), §29.4
-// (Interrupt, terminate, and delete)
+// Every step runs on the gateway-owned terminal context (terminalContext):
+// ctx detached from the writer's cancellation and bounded by what remains of
+// the terminal pipeline budget counted from the row's TerminatedAt. A writer
+// request that ends mid-seal therefore does not cut the pipeline, and no
+// writer passes an unbounded context into it.
+//
+// spec: §7.1 (Normal Flow), §7.1 (Terminal pipeline context), §7.2
+// (Interactive Session Model), §7.3 (Resume driver), §9.2 (Elicitation
+// Chain), §10.1.5 (Stale Replica Behavior), §29.4 (Interrupt, terminate, and
+// delete)
 func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
+	signals func(context.Context, sessionstore.Session),
+) sessionstore.Session {
+	ctx, cancel := s.terminalContext(ctx, sess.TerminatedAt)
+	defer cancel()
+	return s.afterTerminalWrite(ctx, fromState, sess, signals)
+}
+
+// afterTerminalWrite is the body of the post-terminal hook. It runs on the
+// context it is handed; AfterTerminalWrite and recordSessionCompleted bound
+// that context once before calling it. spec: §7.1 (Terminal pipeline
+// context)
+func (s *Server) afterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
 	signals func(context.Context, sessionstore.Session),
 ) sessionstore.Session {
 	s.CancelResumeAttempt(sess.ID)
 	s.settleStaleBinding(fromState, sess)
+	// spec: §7.1 (Seal-and-export invariant) — a failed seal releases with
+	// the failed disposition whether or not the relabel committed, so the
+	// hook records the failure itself rather than reading it back from the
+	// relabel's returned row, which is the input row when the relabel's
+	// store write errors.
+	sealFailed := false
 	if s.sealer != nil {
 		if err := s.sealWorkspace(ctx, sess); err != nil {
+			sealFailed = true
 			sess = s.failWorkspaceSeal(ctx, sess, err)
 		}
 	}
@@ -83,11 +113,22 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 	if signals != nil {
 		signals(ctx, sess)
 	}
-	s.releaseAfterTerminal(ctx, fromState, sess)
+	s.releaseAfterTerminal(ctx, fromState, sess, releaseDisposition(sess.State, sealFailed))
 	// spec: §9.2 (Elicitation Chain) — last, after the pod release, so the
 	// runtime on the released pod cannot raise again after the expiry.
 	s.expireRaisedElicitations(ctx, sess)
 	return sess
+}
+
+// releaseDisposition is the executor disposition the post-terminal hook
+// releases with: failed after a failed seal, whatever state the row holds,
+// and the disposition of the row's terminal state otherwise. spec: §7.1
+// (Seal-and-export invariant), §6.2.
+func releaseDisposition(st session.State, sealFailed bool) executor.Disposition {
+	if sealFailed {
+		return executor.DispositionFailed
+	}
+	return dispositionForState(st)
 }
 
 // releaseAfterTerminal is the post-terminal hook's release step. It takes
@@ -105,11 +146,12 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 // once the funnel unlocks. When the wait ends because the server is shutting
 // down, the step is skipped and logged, and the claim, slot, and binding
 // stay, as they do when the process exits between the terminal write and
-// the release. The release itself keeps the writer's
-// context: Binder.Release and the keyed slot release make their claim and
-// slot writes on a detached context, so a writer context that ends during
-// the release cuts only the adapter Shutdown, and a slot whose Shutdown was
-// cut stays counted through its leaked member.
+// the release. The release itself runs on the hook's terminal context, which
+// the writer's cancellation does not end: Binder.Release and the keyed slot
+// release make their claim and slot writes on a detached context, so a
+// terminal context that reaches the terminal pipeline budget during the
+// release cuts only the adapter Shutdown, and a slot whose Shutdown was cut
+// stays counted through its leaked member.
 //
 // The seal runs before this step and outside the lock, because a seal can
 // run for the whole seal window and would block the funnel for that long.
@@ -118,7 +160,9 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 //
 // spec: §5.2 (whole-pod replacement trigger), §7.3 (Resume flow after pod
 // failure), §7.2 (Interactive Session Model)
-func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
+func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session,
+	disposition executor.Disposition,
+) {
 	unlock, err := s.slotAccountLocks.Lock(s.lifetime(), sess.ID)
 	if err != nil {
 		slog.Warn("sessionserver: post-terminal release skipped; the server is shutting down",
@@ -129,11 +173,17 @@ func (s *Server) releaseAfterTerminal(ctx context.Context, fromState session.Sta
 	if s.terminalReclaimPreRunning(ctx, fromState, sess) || s.executor == nil {
 		return
 	}
-	if err := releaseExecutor(ctx, s.executor, sess.ID, dispositionForState(sess.State)); err != nil {
+	_, bound := s.lookupBinding(sess.ID)
+	if err := releaseExecutor(ctx, s.executor, sess.ID, disposition); err != nil {
 		// The release is best-effort, but a failed teardown leaves a claim
 		// or slot counted, so it is logged for an operator.
 		slog.Warn("sessionserver: post-terminal executor release failed",
 			"session_id", sess.ID, "state", string(sess.State), "error", err)
+	}
+	// spec: §7.1 (Post-terminal window) — a binding was held, so the
+	// executor release ran on it; record the release whatever its error.
+	if bound {
+		s.recordPodRelease(ctx, sess)
 	}
 }
 

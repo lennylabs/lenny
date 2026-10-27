@@ -40,15 +40,19 @@ func TestKubernetesVersionCheck_spec_17_6_503(t *testing.T) {
 }
 
 // spec: §17.6. F-17.6.1.
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
 func TestSIEMEndpointCheck_spec_17_6_517(t *testing.T) {
 	// Production with no endpoint warns (still passes — non-blocking).
 	d := SIEMEndpointCheck{Environment: "prod", SIEMEndpoint: ""}.Decide()
 	if !d.Passed || !strings.Contains(d.Reason, "audit.siem.endpoint is not configured") {
 		t.Fatalf("prod-no-siem: want non-blocking warning, got passed=%v reason=%q", d.Passed, d.Reason)
 	}
-	// "production" spelling matches LENNY_ENV=production too.
-	if d := (SIEMEndpointCheck{Environment: "production"}).Decide(); d.Reason == "" {
-		t.Fatalf("production spelling should warn")
+	// Production mode is the exact value prod (§17.9.1): the retired
+	// "production" spelling and a case variant are silent, as is staging.
+	for _, env := range []string{"production", "PROD", "staging"} {
+		if d := (SIEMEndpointCheck{Environment: env}).Decide(); !d.Passed || d.Reason != "" {
+			t.Fatalf("%s-no-siem: want silent pass, got reason=%q", env, d.Reason)
+		}
 	}
 	// Production with an endpoint: silent pass.
 	if d := (SIEMEndpointCheck{Environment: "prod", SIEMEndpoint: "https://siem.acme:443"}).Decide(); !d.Passed || d.Reason != "" {

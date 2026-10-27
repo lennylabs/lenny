@@ -22,40 +22,54 @@ func stubResolver(provider kms.Provider, calls *int) kmsResolver {
 	}
 }
 
-// TestLoadOpsKeySetRefusesLocalInProduction pins that --production
-// refuses a provider that resolves to local, including an unset
-// --kms-provider, before anything is resolved, whatever --environment says.
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §17.4 (Dev mode guard rails); §25.4 (The lenny-ops Service: Startup and Readiness)
 //
-// spec: 17.4 (Dev mode guard rails), 25.4 (The lenny-ops Service: Startup and Readiness)
-func TestLoadOpsKeySetRefusesLocalInProduction(t *testing.T) {
-	for _, provider := range []string{"", "local", " LOCAL "} {
-		t.Run("provider="+provider, func(t *testing.T) {
-			calls := 0
-			opts := providerflags.Options{Provider: provider, Environment: "staging"}
-			_, err := loadOpsKeySet(context.Background(), opts, true, stubResolver(nil, &calls))
-			if !errors.Is(err, errLocalProviderInProduction) {
-				t.Fatalf("err = %v, want errLocalProviderInProduction", err)
+// TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1 pins that in
+// production mode (--environment=prod) the key-set load refuses a provider
+// that resolves to local, including an unset --kms-provider, with
+// providerflags.ErrLocalForbidden, and that staging is not production mode
+// and admits local. lenny-ops has no refusal of its own: the providerflags
+// resolver it calls holds the one refusal.
+func TestLoadOpsKeySetRefusesLocalInProductionMode_spec_17_9_1(t *testing.T) {
+	for _, provider := range []string{"", "local"} {
+		t.Run("prod/provider="+provider, func(t *testing.T) {
+			opts := providerflags.Options{
+				Provider:      provider,
+				Environment:   "prod",
+				MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
 			}
-			if calls != 0 {
-				t.Errorf("resolver called %d times, want 0", calls)
+			_, err := loadOpsKeySet(context.Background(), opts, providerflags.Resolve)
+			if !errors.Is(err, providerflags.ErrLocalForbidden) {
+				t.Fatalf("err = %v, want providerflags.ErrLocalForbidden", err)
 			}
 		})
 	}
+	t.Run("staging admits local", func(t *testing.T) {
+		opts := providerflags.Options{
+			Provider:      providerflags.ProviderLocal,
+			Environment:   "staging",
+			MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
+			AliasToKey:    map[string]string{kms.AliasJWTSigning: "local-key-1"},
+		}
+		if _, err := loadOpsKeySet(context.Background(), opts, providerflags.Resolve); err != nil {
+			t.Fatalf("staging with the local provider: %v, want a loaded key set", err)
+		}
+	})
 }
 
 // TestLoadOpsKeySetFailureIsFatalInEveryMode pins that a key set that
-// cannot load is an error with and without --production.
+// cannot load is an error in every environment.
 //
 // spec: 10.2 (Authentication) "Verifier key set and rotation", 25.4 (The lenny-ops Service: Startup and Readiness)
 func TestLoadOpsKeySetFailureIsFatalInEveryMode(t *testing.T) {
-	for _, production := range []bool{false, true} {
+	for _, env := range []string{"", "dev", "staging", "prod"} {
 		stub := kmsstub.New(t)
 		stub.SetPublicKeyError(kms.ErrUnknownKEK)
 		calls := 0
-		opts := providerflags.Options{Provider: providerflags.ProviderAWS}
-		_, err := loadOpsKeySet(context.Background(), opts, production, stubResolver(stub.AsProvider(), &calls))
+		opts := providerflags.Options{Provider: providerflags.ProviderAWS, Environment: env}
+		_, err := loadOpsKeySet(context.Background(), opts, stubResolver(stub.AsProvider(), &calls))
 		if !errors.Is(err, kms.ErrUnknownKEK) {
-			t.Errorf("production=%v: err = %v, want the PublicKey error", production, err)
+			t.Errorf("environment=%q: err = %v, want the PublicKey error", env, err)
 		}
 	}
 }
@@ -67,7 +81,7 @@ func TestLoadOpsKeySetFailureIsFatalInEveryMode(t *testing.T) {
 func TestLoadOpsKeySetResolveFailureIsFatal(t *testing.T) {
 	want := errors.New("no credentials")
 	resolve := func(context.Context, providerflags.Options) (kms.Provider, error) { return nil, want }
-	if _, err := loadOpsKeySet(context.Background(), providerflags.Options{Provider: "aws"}, true, resolve); !errors.Is(err, want) {
+	if _, err := loadOpsKeySet(context.Background(), providerflags.Options{Provider: "aws"}, resolve); !errors.Is(err, want) {
 		t.Fatalf("err = %v, want the resolve error", err)
 	}
 }
@@ -84,11 +98,11 @@ func TestLoadOpsKeySetSharesTheGatewayKeyUnderLocal(t *testing.T) {
 		MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
 		AliasToKey:    map[string]string{kms.AliasJWTSigning: "local-key-1"},
 	}
-	opsKeySet, err := loadOpsKeySet(context.Background(), opts, false, providerflags.Resolve)
+	opsKeySet, err := loadOpsKeySet(context.Background(), opts, providerflags.Resolve)
 	if err != nil {
 		t.Fatalf("loadOpsKeySet: %v", err)
 	}
-	gatewayKeySet, err := loadOpsKeySet(context.Background(), opts, false, providerflags.Resolve)
+	gatewayKeySet, err := loadOpsKeySet(context.Background(), opts, providerflags.Resolve)
 	if err != nil {
 		t.Fatalf("second load: %v", err)
 	}
@@ -110,16 +124,16 @@ func TestBuildKeySetRecordsTheStartupKeySet(t *testing.T) {
 		MasterKeyFile: filepath.Join(t.TempDir(), "master.key"),
 		AliasToKey:    map[string]string{kms.AliasJWTSigning: "local-key-1"},
 	}
-	production := false
+	devMode := false
 	w := &opsWiring{
-		f:               &opsFlags{production: &production, bearerTrustHMACKeyFile: strPtr(""), kmsOpts: &opts},
+		f:               &opsFlags{devMode: &devMode, bearerTrustHMACKeyFile: strPtr(""), kmsOpts: &opts},
 		opsWiringFields: opsWiringFields{ctx: context.Background()},
 	}
 	w.buildKeySet()
 	if w.jwtKeySet == nil {
 		t.Fatal("buildKeySet recorded no key set")
 	}
-	want, err := loadOpsKeySet(context.Background(), opts, false, providerflags.Resolve)
+	want, err := loadOpsKeySet(context.Background(), opts, providerflags.Resolve)
 	if err != nil {
 		t.Fatalf("loadOpsKeySet: %v", err)
 	}

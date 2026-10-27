@@ -50,8 +50,8 @@ type alertThresholdMetrics struct {
 	// and AuditRetentionLow alerts read. auditSIEMConfigured is 1 when
 	// audit.siem.endpoint is set (the SIEM-configured suppression term),
 	// auditRetentionDays is the resolved §16.4 audit.retentionDays
-	// window, and envProduction is 1 when LENNY_ENV=production. The
-	// alerts gate on `lenny_env_production == 1` so they stay inert
+	// window, and envProduction is 1 in production mode
+	// (--environment=prod, §17.9.1). The alerts gate on `lenny_env_production == 1` so they stay inert
 	// outside production. F-16.4.9; F-16.4.10.
 	auditSIEMConfigured prometheus.Gauge
 	auditRetentionDays  prometheus.Gauge
@@ -141,7 +141,7 @@ func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, 
 	// indicator the AuditSIEMNotConfigured and AuditRetentionLow alerts
 	// read. The gateway main sets them at startup from audit.siem.endpoint,
 	// the resolved audit.retentionDays / audit.retentionPreset, and
-	// LENNY_ENV. F-16.4.9; F-16.4.10.
+	// production mode (--environment=prod, §17.9.1). F-16.4.9; F-16.4.10.
 	auditSIEMConfigured, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_audit_siem_configured",
 		Help: "1 when audit.siem.endpoint is configured, 0 otherwise; suppresses AuditSIEMNotConfigured / AuditRetentionLow (§16.4 / §16.5).",
@@ -158,7 +158,7 @@ func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, 
 	}
 	envProduction, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_env_production",
-		Help: "1 when LENNY_ENV=production, 0 otherwise; gates the production-only audit alerts (§16.5).",
+		Help: "1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5).",
 	}, nil)
 	if err != nil {
 		return m, err

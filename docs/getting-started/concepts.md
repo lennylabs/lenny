@@ -84,7 +84,7 @@ stateDiagram-v2
 
 **awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
-**completed** -- The agent has finished its work normally. The workspace has been sealed (exported to durable storage). This is a terminal state.
+**completed** -- The agent has finished its work normally. The gateway then exports the final workspace to durable storage. When the export does not finish within `maxWorkspaceSealDurationSeconds`, the gateway records the session as `failed` with reason `workspace_seal_timeout`. This is a terminal state.
 
 **failed** -- The session encountered an unrecoverable error: a non-retryable failure occurred, an internal error occurred, or all credential keys expired. This is a terminal state.
 

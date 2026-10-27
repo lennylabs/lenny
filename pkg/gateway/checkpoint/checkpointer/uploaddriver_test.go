@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,6 +58,22 @@ type chunkedAdapter struct {
 	// store is the object store the adapter "PUTs" into: it records the
 	// object so the gateway's Stat confirm observes it.
 	store *blobstore.MemoryStore
+	// stall, while set, makes the adapter hold the stream open after
+	// stallAfterChunks chunks commit (zero holds it right after the Probe)
+	// until the gateway ends the attempt, standing in for a producer that
+	// never reaches its summary before the attempt's deadline.
+	stall            atomic.Bool
+	stallAfterChunks int
+}
+
+// holdUntilCancelled blocks until the gateway ends the stream when the
+// adapter is stalling at this point of the attempt.
+func (a *chunkedAdapter) holdUntilCancelled(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse], committed int) (bool, error) {
+	if !a.stall.Load() || committed != a.stallAfterChunks {
+		return false, nil
+	}
+	<-stream.Context().Done()
+	return true, stream.Context().Err()
 }
 
 func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
@@ -78,6 +95,9 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 	}
 	var total int64
 	for i, ln := range a.chunkLens {
+		if held, err := a.holdUntilCancelled(stream, i); held {
+			return err
+		}
 		if err := stream.Send(&adapterv1.CheckpointResponse{
 			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ln}},
 		}); err != nil {
@@ -119,6 +139,9 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 				}},
 			})
 		}
+	}
+	if held, err := a.holdUntilCancelled(stream, len(a.chunkLens)); held {
+		return err
 	}
 	return stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
@@ -1520,5 +1543,97 @@ func TestDriverSupersedeLookupScopedToTenantAndSession_spec_10_1(t *testing.T) {
 		if !rec.ReservationReleasedAt.IsZero() {
 			t.Errorf("neighbouring row %s/%s had its reservation released; the supersede lookup reached outside (tenant_id, session_id)", n.tenantID, n.checkpointID)
 		}
+	}
+}
+
+// TestSealIntentRowCarriesTheSealWindowDeadline_spec_10_1_7 pins the intent
+// row's checkpoint_timeout_at on a seal attempt: with Checkpointer.Deadline
+// zero, as production leaves it, the row records the deadline of the
+// context the seal runs on. Before the fix the row recorded its own start
+// time, so the §12.5 backstop could reclaim a live seal's row and chunks.
+// spec: 10.1.7 (preStop Hook Drain), 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 7.1 (Normal Flow)
+func TestSealIntentRowCarriesTheSealWindowDeadline_spec_10_1_7(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, truncateAfter: -1}, 1<<30)
+	h.cp.Deadline = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+	defer cancel()
+	want, _ := ctx.Deadline()
+
+	if err := h.cp.Seal(ctx, "acme", sid); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	if d := rec.CheckpointTimeoutAt.Sub(want); d < -time.Second || d > time.Second {
+		t.Fatalf("checkpoint_timeout_at = %v, want the seal context deadline %v (started %v)",
+			rec.CheckpointTimeoutAt, want, rec.CheckpointStartedAt)
+	}
+}
+
+// TestPeriodicIntentRowDeadlineIsTheCheckpointTimeout_spec_4_4_3 pins the
+// deadline of a periodic attempt on a context with no deadline and a zero
+// Checkpointer.Deadline: the attempt runs under the §4.4 60-second
+// checkpoint timeout and its intent row records start plus 60 s. Before the
+// fix the row's deadline equalled its start.
+// spec: 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 10.1.7 (preStop Hook Drain), 12.5 (Artifact Store)
+func TestPeriodicIntentRowDeadlineIsTheCheckpointTimeout_spec_4_4_3(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, truncateAfter: -1}, 1<<30)
+	h.cp.Deadline = 0
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	got := rec.CheckpointTimeoutAt.Sub(rec.CheckpointStartedAt)
+	if got <= checkpoint.CheckpointTimeout-time.Second || got > checkpoint.CheckpointTimeout {
+		t.Fatalf("checkpoint_timeout_at - checkpoint_started_at = %v, want the %v checkpoint timeout",
+			got, checkpoint.CheckpointTimeout)
+	}
+}
+
+// TestDeadlineCutAttemptRetainsItsRowForTheNextSupersede_spec_4_4_3 pins
+// the deadline-fire arm on an attempt bounded by its context rather than by
+// Checkpointer.Deadline: the cut attempt finalises its row timeout with the
+// row and its chunks retained, and the next attempt's supersede step
+// reclaims them.
+// spec: 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 10.1.7 (preStop Hook Drain), 12.5 (Artifact Store)
+func TestDeadlineCutAttemptRetainsItsRowForTheNextSupersede_spec_4_4_3(t *testing.T) {
+	adapter := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, stallAfterChunks: 1}
+	adapter.stall.Store(true)
+	h, sid := newDriverHarness(t, adapter, 1<<30)
+	h.cp.Deadline = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := h.cp.Checkpoint(ctx, "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded though the adapter stalled past the attempt deadline")
+	}
+	cut, err := h.manifests.LatestActive(context.Background(), "acme", sid)
+	if err != nil {
+		t.Fatalf("the deadline-cut row is not active: %v", err)
+	}
+	if cut.ManifestReason != partialmanifeststore.ReasonTimeout || !cut.Partial {
+		t.Fatalf("deadline-cut row = partial %v reason %q, want partial timeout", cut.Partial, cut.ManifestReason)
+	}
+	if !cut.DeletedAt.IsZero() {
+		t.Fatal("deadline-cut row was soft-deleted; a deadline fire retains its row for resume")
+	}
+	if h.release.listedCheckpoint(cut.CheckpointID) {
+		t.Fatal("the deadline-cut attempt swept its own chunks; a deadline fire retains them")
+	}
+
+	adapter.stall.Store(false)
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("next Checkpoint: %v", err)
+	}
+	superseded, err := h.manifests.Get(context.Background(), "acme", cut.CheckpointID)
+	if err != nil {
+		t.Fatalf("Get superseded row: %v", err)
+	}
+	if superseded.DeletedAt.IsZero() && superseded.ManifestReason != partialmanifeststore.ReasonSuperseded {
+		t.Fatalf("deadline-cut row after the next attempt = reason %q deleted %v, want it superseded",
+			superseded.ManifestReason, superseded.DeletedAt)
+	}
+	if !h.release.listedCheckpoint(cut.CheckpointID) {
+		t.Error("the next attempt's supersede did not reclaim the deadline-cut row's chunks")
 	}
 }

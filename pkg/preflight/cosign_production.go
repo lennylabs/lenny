@@ -2,21 +2,7 @@
 
 package preflight
 
-import "strings"
-
-// productionLikeEnvironments are the deployment-posture values
-// (chart value `environment`, rendered onto --environment) for which
-// §5.3 makes image provenance verification a prerequisite:
-// "Image provenance verification (signing, attestation) is a
-// prerequisite for any production or staging deployment." A dev
-// install renders without the signing material configured, so it is
-// not warned.
-var productionLikeEnvironments = map[string]struct{}{
-	"prod":       {},
-	"production": {},
-	"staging":    {},
-	"stage":      {},
-}
+import "github.com/lennylabs/lenny/pkg/deployenv"
 
 // CheckCosignProduction emits the §5.3 advisory for a
 // production-or-staging install that ships with cosign image-signature
@@ -34,10 +20,15 @@ var productionLikeEnvironments = map[string]struct{}{
 // a production install that completes with no signature verification now
 // surfaces an operator notification instead of completing silently.
 //
-// spec: §5.3.
-func CheckCosignProduction(environment string, cosignEnabled bool) Decision {
-	env := strings.ToLower(strings.TrimSpace(environment))
-	if _, productionLike := productionLikeEnvironments[env]; !productionLike {
+// The advisory applies to the chart `environment` value (rendered onto
+// --environment) when it is production mode or staging, which is §5.3's
+// "production or staging". Production mode is the exact value prod, read
+// through deployenv.IsProduction, and staging is the exact value staging;
+// the value is neither case-folded nor trimmed.
+//
+// spec: §5.3, §17.9.1 (Composition Dimensions) "Production mode".
+func CheckCosignProduction(env string, cosignEnabled bool) Decision {
+	if !deployenv.IsProduction(env) && env != deployenv.Staging {
 		return Decision{Passed: true}
 	}
 	if cosignEnabled {

@@ -60,6 +60,9 @@ type gatewayFlags struct {
 	tenantIDClaim                                 *string
 	oidcIssuerURL                                 *string
 	oidcClientID                                  *string
+	oidcJWKSRefreshInterval                       *time.Duration
+	oidcJWKSMinRefetchInterval                    *time.Duration
+	oidcFetchTimeout                              *time.Duration
 	devMode                                       *bool
 	tlsTerminatedUpstream                         *bool
 	sloValidated                                  *bool
@@ -427,6 +430,12 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§17.4 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.")
 	f.sloValidated = flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
 		"§16.5 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
+	f.oidcJWKSRefreshInterval = flag.Duration("oidc-jwks-refresh-interval", envDuration("LENNY_OIDC_JWKS_REFRESH_INTERVAL", jwt.DefaultOIDCKeyRefreshInterval),
+		"§10.2 how long the IdP signing keys fetched from the auth.oidc.issuerUrl discovery document's jwks_uri serve before the gateway fetches them again. Operator-tunable. Override via LENNY_OIDC_JWKS_REFRESH_INTERVAL.")
+	f.oidcJWKSMinRefetchInterval = flag.Duration("oidc-jwks-min-refetch-interval", envDuration("LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL", jwt.DefaultOIDCMinRefetchInterval),
+		"§10.2 minimum spacing between two fetches of the IdP signing keys. A bearer naming a kid the cached keys lack triggers at most one fetch per interval. Operator-tunable. Override via LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL.")
+	f.oidcFetchTimeout = flag.Duration("oidc-fetch-timeout", envDuration("LENNY_OIDC_FETCH_TIMEOUT", jwt.DefaultOIDCFetchTimeout),
+		"§10.2 timeout of one IdP discovery or signing-key request. Operator-tunable. Override via LENNY_OIDC_FETCH_TIMEOUT.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the §10.2 JWT key set. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.bearerExpectedIssuer = flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
@@ -500,15 +509,15 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.redisSentinelMaster = flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when --redis-sentinel-addrs is set.")
 	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password applied to both direct and Sentinel modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
+		"Redis AUTH password applied to the direct, Sentinel, and Cluster modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
 	f.redisSentinelPassword = flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
 		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
 	f.redisTLS = flag.Bool("redis-tls", envFlag("LENNY_REDIS_TLS"),
-		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel topology back into TLS. Override via LENNY_REDIS_TLS.")
+		"§12.4 request TLS on the Sentinel and Cluster paths. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set, in which case this flag opts a dev Sentinel or Cluster topology back into TLS. Override via LENNY_REDIS_TLS.")
 	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envFlag("LENNY_REDIS_ALLOW_INSECURE"),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. The spec requires both on every Redis instance, so this defaults off and a missing password or plaintext connection fails startup. Set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
 	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
-		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient — the Tier 2→3 migration topology for the Quota/Rate Limiting instance. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
+		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient: the single Redis Cluster that serves every concern at Tier 3 under the §12.4 shared Redis topology, which a deployment reaches through the whole-deployment cutover of the §12.4 Redis Cluster migration pre-plan. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
 	f.capacityTier = flag.String("capacity-tier", envOr("LENNY_CAPACITY_TIER", "tier1"),
 		"§17.8.2 capacityPlanning.tier (tier1, tier2, tier3) the deployment is sized for. Drives the billingRedisStreamMaxLen default and the §17.8.2 RedisClusterRecommended startup warning. Override via LENNY_CAPACITY_TIER. F-17.8.5, F-17.8.7.")
 	f.singleTenantRedisTopology = flag.String("single-tenant-redis-topology", os.Getenv("LENNY_SINGLE_TENANT_REDIS_TOPOLOGY"),
@@ -575,7 +584,7 @@ func (f *gatewayFlags) registerStorageFlags() {
 		"§5.2 stale-slot reaper rate: the most slot set members the reaper releases per second, and the most pods whose release is in flight at once. Must be positive. Default 50. Override via LENNY_SLOT_REAPER_RATE.")
 	f.slotReaperTerminalAge = flag.Duration("slot-reaper-terminal-age",
 		envDuration("LENNY_SLOT_REAPER_TERMINAL_AGE", slotreaper.DefaultTerminalAge),
-		"§5.2 stale-slot reaper terminal age: the gateway's copy of claimOrphanTimeout. A slot set member is released once its session row has been terminal for longer than this. It must equal the controller's --claim-orphan-timeout, and it must be at least one second more than the largest of --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and --workspace-seal-max-duration-seconds (the post-terminal slot activity invariant), which the gateway checks at startup. Default 15m. Override via LENNY_SLOT_REAPER_TERMINAL_AGE.")
+		"§5.2 stale-slot reaper terminal age: the gateway's copy of claimOrphanTimeout. A slot set member is released once its session row has been terminal for longer than this. It must equal the controller's --claim-orphan-timeout, and it must be at least one second more than the largest of --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and the §7.1 terminal pipeline budget, which is --workspace-seal-max-duration-seconds plus --stream-failure-report-timeout (the post-terminal slot activity invariant), which the gateway checks at startup. Default 15m. Override via LENNY_SLOT_REAPER_TERMINAL_AGE.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	// spec: §15.5 item 1 + docs/api/index.md — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
@@ -851,7 +860,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§6.2 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
 	f.maxResumingSeconds = flag.Int("max-resuming-seconds",
 		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
-		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. The controller's --claim-orphan-timeout, and the gateway's --slot-reaper-terminal-age, must be at least one second more than the largest of this value, --max-finalizing-state-timeout-seconds, and --workspace-seal-max-duration-seconds (the §5.2 post-terminal slot activity invariant), which the gateway checks at startup.")
+		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. The controller's --claim-orphan-timeout, and the gateway's --slot-reaper-terminal-age, must be at least one second more than the largest of this value, --max-finalizing-state-timeout-seconds, and the §7.1 terminal pipeline budget, which is --workspace-seal-max-duration-seconds plus --stream-failure-report-timeout (the §5.2 post-terminal slot activity invariant), which the gateway checks at startup.")
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),

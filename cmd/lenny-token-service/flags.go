@@ -41,6 +41,29 @@ type tokenServiceFlags struct {
 	tlsCA           *string
 	secretNamespace *string
 
+	// §17.9.3 Redis topology and §12.4 Cache/Pub-Sub concern. The chart
+	// renders the same connection the gateway uses, so the Token Service
+	// publishes revocations on the instance the gateway replicas and
+	// lenny-ops subscribe on. registerRedisFlags binds them.
+	redisSentinelAddrs    *string
+	redisSentinelMaster   *string
+	redisSentinelPassword *string
+	redisClusterAddrs     *string
+	redisTLS              *bool
+	redisAllowInsecure    *bool
+	redisCachePubSubURL   *string
+
+	// §13.3 bootstrap caller credential: the deployer's upstream OIDC
+	// IdP. registerIdPFlags binds them; the names and env variables match
+	// the gateway's, and the chart renders them from auth.oidc.* and
+	// auth.tenantIdClaim.
+	oidcIssuerURL              *string
+	oidcClientID               *string
+	tenantIDClaim              *string
+	oidcJWKSRefreshInterval    *time.Duration
+	oidcJWKSMinRefetchInterval *time.Duration
+	oidcFetchTimeout           *time.Duration
+
 	// capabilityTokenTTL is the §10.2 auth.capabilityTokenTtlSeconds value
 	// in seconds: the default lifetime of a token requested without
 	// expires_in.
@@ -66,6 +89,8 @@ func parseFlags() *tokenServiceFlags {
 	f := &tokenServiceFlags{}
 	f.registerListenerFlags()
 	f.registerIssuerAndStateFlags()
+	f.registerRedisFlags()
+	f.registerIdPFlags()
 	f.registerRateLimitFlags()
 	f.registerLifetimeFlags()
 	f.registerTLSFlags()
@@ -85,8 +110,8 @@ func (f *tokenServiceFlags) registerListenerFlags() {
 }
 
 // registerIssuerAndStateFlags registers the issuer claim, the §13.3
-// write-before-issue Postgres DSN, the §25.5 Redis event-stream URL, and the
-// §4.9 RBAC live-probe secret namespace. spec: §13.3, §25.5, §4.9.
+// write-before-issue Postgres DSN, and the §4.9 RBAC live-probe secret
+// namespace. spec: §13.3, §4.9.
 func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	f.issuer = flag.String("issuer", "https://lenny.dev.local/token",
 		"iss claim stamped on issued tokens. Override via LENNY_TOKEN_ISSUER.")
@@ -95,13 +120,6 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	}
 	f.postgresDSN = flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the §13.3 write-before-issue path persists issued-token metadata to the issued_tokens table and writes `token.exchanged` audit rows to audit_log under the §11.7 per-tenant advisory lock. When empty, the Token Service runs without durable issued-token or audit state (dev mode).")
-	f.redisURL = flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
-		"Redis connection URL for the §25.5 operational event stream. When set, the Token "+
-			"Service's EventEmitter writes to ops:events:stream alongside the gateway and the "+
-			"controllers; when empty, events stay in the local in-memory buffer. Override via "+
-			"LENNY_REDIS_URL.")
-	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password. Override via LENNY_REDIS_PASSWORD.")
 	// §4.9 admin-time RBAC live-probe namespace. The probe's
 	// SelfSubjectAccessReview and Secret get target this namespace, where
 	// credentialPool secretRef Secrets are mounted. Defaults to the
@@ -109,6 +127,69 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	// API), falling back to lenny-system.
 	f.secretNamespace = flag.String("secret-namespace", envOr("POD_NAMESPACE", "lenny-system"),
 		"namespace the §4.9 RBAC live-probe checks for credentialPool secretRef Secrets.")
+}
+
+// registerIdPFlags registers the upstream OIDC IdP whose ID tokens §13.3
+// admits as the bootstrap caller credential on /v1/oauth/token. The flags
+// mirror the gateway's flags of the same names. With no issuer, or an
+// issuer without a client id, the Token Service trusts no IdP and admits
+// only Lenny-issued caller tokens.
+//
+// spec: §13.3 "Client authentication on /v1/oauth/token"; §10.2
+// (Authentication) "`tenant_id` extraction".
+func (f *tokenServiceFlags) registerIdPFlags() {
+	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
+		"§13.3 auth.oidc.issuerUrl: the OIDC issuer whose ID tokens the Token Service admits as the bootstrap caller credential. Empty admits only Lenny-issued caller tokens. Override via LENNY_OIDC_ISSUER_URL.")
+	f.oidcClientID = flag.String("oidc-client-id", os.Getenv("LENNY_OIDC_CLIENT_ID"),
+		"§13.3 auth.oidc.clientId: the audience every IdP caller token must carry. Required with --oidc-issuer-url. Override via LENNY_OIDC_CLIENT_ID.")
+	f.tenantIDClaim = flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
+		"§10.2 claim an IdP caller token carries its tenant identifier in. Mirrors the auth.tenantIdClaim Helm value. Override via LENNY_TENANT_ID_CLAIM.")
+	f.oidcJWKSRefreshInterval = flag.Duration("oidc-jwks-refresh-interval", envDuration("LENNY_OIDC_JWKS_REFRESH_INTERVAL", jwt.DefaultOIDCKeyRefreshInterval),
+		"§10.2 how long the IdP signing keys serve before the Token Service fetches them again. Operator-tunable. Override via LENNY_OIDC_JWKS_REFRESH_INTERVAL.")
+	f.oidcJWKSMinRefetchInterval = flag.Duration("oidc-jwks-min-refetch-interval", envDuration("LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL", jwt.DefaultOIDCMinRefetchInterval),
+		"§10.2 minimum spacing between two fetches of the IdP signing keys. Operator-tunable. Override via LENNY_OIDC_JWKS_MIN_REFETCH_INTERVAL.")
+	f.oidcFetchTimeout = flag.Duration("oidc-fetch-timeout", envDuration("LENNY_OIDC_FETCH_TIMEOUT", jwt.DefaultOIDCFetchTimeout),
+		"§10.2 timeout of one IdP discovery or signing-key request. Operator-tunable. Override via LENNY_OIDC_FETCH_TIMEOUT.")
+}
+
+// registerRedisFlags registers the §17.9.3 Redis topology flags (a direct
+// URL, Sentinel, or Cluster, mutually exclusive), the §12.4 AUTH-and-TLS
+// settings and dev opt-out, and the §12.4 Cache/Pub-Sub concern URL. They
+// mirror the gateway and lenny-ops flags of the same names, so the chart
+// renders one connection into all three binaries. The base connection
+// carries the §25.5 event stream and the §4.3 access-token cache; the
+// revocation publish rides the Cache/Pub-Sub concern, which falls back to
+// the base connection when no concern URL is set.
+//
+// spec: §17.9.3, §12.4, §13.3, §25.5, §4.3.
+func (f *tokenServiceFlags) registerRedisFlags() {
+	f.redisURL = flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis connection URL. When set, the Token Service streams §25.5 operational events "+
+			"to ops:events:stream, caches §4.3 access tokens, and publishes §13.3 revocations; "+
+			"when no Redis flag is set, events stay in the local buffer and revocations record "+
+			"postgres_only. Mutually exclusive with --redis-sentinel-addrs and "+
+			"--redis-cluster-addrs. Override via LENNY_REDIS_URL.")
+	f.redisSentinelAddrs = flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
+		"Comma-separated §17.9.3 Redis Sentinel host:port pairs. Requires --redis-sentinel-master. "+
+			"Override via LENNY_REDIS_SENTINEL_ADDRS.")
+	f.redisSentinelMaster = flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
+		"§17.9.3 Redis Sentinel monitored master name. Override via LENNY_REDIS_SENTINEL_MASTER.")
+	f.redisSentinelPassword = flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
+		"Redis Sentinel AUTH password. Override via LENNY_REDIS_SENTINEL_PASSWORD.")
+	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
+		"Comma-separated §12.4 Redis Cluster seed nodes (host:port). Override via LENNY_REDIS_CLUSTER_ADDRS.")
+	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password for the URL, Sentinel, and Cluster paths. Override via LENNY_REDIS_PASSWORD.")
+	f.redisTLS = flag.Bool("redis-tls", envBool("LENNY_REDIS_TLS", false),
+		"§12.4 request TLS on the Sentinel and Cluster paths; the URL path takes TLS from the rediss:// "+
+			"scheme. TLS is mandatory unless --redis-allow-insecure is set. Override via LENNY_REDIS_TLS.")
+	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envBool("LENNY_REDIS_ALLOW_INSECURE", false),
+		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. Set only for a dev Redis; "+
+			"the chart renders it only under global.devMode. Override via LENNY_REDIS_ALLOW_INSECURE.")
+	f.redisCachePubSubURL = flag.String("redis-cache-pubsub-url", os.Getenv("LENNY_REDIS_CACHE_PUBSUB_URL"),
+		"§12.4 Cache/Pub-Sub concern Redis URL, the instance the gateway replicas and lenny-ops subscribe "+
+			"to token:revocations on. Empty publishes on the base connection. Requires a base connection. "+
+			"Override via LENNY_REDIS_CACHE_PUBSUB_URL.")
 }
 
 // registerRateLimitFlags registers the §13.3 /v1/oauth/token rate

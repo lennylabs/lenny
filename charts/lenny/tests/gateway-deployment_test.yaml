@@ -2891,6 +2891,84 @@ tests:
             name: LENNY_REDIS_CLUSTER_ADDRS
             value: "10.0.0.1:6379,10.0.0.2:6379"
 
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" (AUTH and TLS are
+  # required on every Redis instance), §17.9.3 — the Cluster topology
+  # requests TLS and reads the AUTH password from the datastore Secret, so
+  # the binary passes the §12.4 startup invariant outside dev mode. F-12.4.37.
+  - it: requests TLS and reads the AUTH password on the cluster topology
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+      redis.password: cluster-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — with no password
+  # the Cluster topology still requests TLS and reads no Secret key, so the
+  # binary refuses to start with the §12.4 AUTH error rather than a missing
+  # Secret key. F-12.4.37.
+  - it: requests TLS and reads no password key on the cluster topology without a password
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — the external
+  # topology carries AUTH and TLS in the rediss:// URL, so a stray password
+  # renders neither env entry. F-12.4.37.
+  - it: renders no Redis password or TLS env on the external topology
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@r.svc:6380/0"
+      redis.password: stray
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+          any: true
+
   # spec: §12.4 — per-concern Redis URLs render from the
   # datastore Secret; an unset concern wires no env var. F-12.4.16.
   - it: wires per-concern Redis URL env from the datastore Secret
@@ -3405,6 +3483,29 @@ tests:
           content:
             name: LENNY_LOG_LEVEL
             value: info
+
+  # spec: §17.9.1 "Production mode" — --environment is the one carrier of
+  # production mode; the chart sets no environment variable that names it.
+  - it: carries production mode on --environment with no LENNY_ENV or LENNY_PRODUCTION env
+    set:
+      environment: prod
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --environment=prod
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
 
   # spec: §17.9.3 (F-17.9.4) — provider=sentinel wires the
   # Sentinel discovery env; addresses and master are plain env, the data

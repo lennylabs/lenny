@@ -32,6 +32,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/supervisorselftest"
@@ -105,7 +107,10 @@ func supervisorBinary(t *testing.T, build string) (bin, root string) {
 		t.Skipf("blocked: unshare not on PATH: %v", err)
 	}
 	buildOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "supervise-contract-")
+		// The supervisor builds live under the harness temp root rather
+		// than /tmp, which a host cleanup can empty mid-run (TEST-GAPS
+		// T-4.7.23).
+		dir, err := testtmp.MkdirTemp("supervise-contract-")
 		if err != nil {
 			buildErr = err
 			return

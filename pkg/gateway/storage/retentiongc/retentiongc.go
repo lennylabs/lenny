@@ -106,6 +106,13 @@ type Collector struct {
 	interval  time.Duration
 	clock     func() time.Time
 	metrics   MetricsSink
+	// retentionFor resolves a session's §7.1 retention window. Nil leaves
+	// every row ineligible.
+	retentionFor func(context.Context, sessionstore.Session) (time.Duration, error)
+	// postTerminalCap is the cap of the §7.1 post-terminal window; a
+	// non-positive value refuses every terminal row that names a pod and
+	// records no release.
+	postTerminalCap time.Duration
 }
 
 // Options configures a Collector. A zero field selects its default.
@@ -117,6 +124,20 @@ type Options struct {
 	// Metrics, when set, receives the §12.5 ll. 321 retention-GC
 	// observability signals (runs/artifacts/errors/duration).
 	Metrics MetricsSink
+	// RetentionFor resolves the §7.1 artifact-retention window of a
+	// session; the gateway passes (*sessionserver.Server).RetentionWindow.
+	// A row is collected only once that window has elapsed from its
+	// TerminatedAt. A nil RetentionFor, or one that returns an error,
+	// leaves the row ineligible for that pass. spec: §7.1 (Artifact
+	// retention).
+	RetentionFor func(ctx context.Context, sess sessionstore.Session) (time.Duration, error)
+	// PostTerminalCap is the cap of the §7.1 post-terminal window, the
+	// terminal pipeline budget. A row in its window is not collected,
+	// because a seal may still be uploading under its prefix. A
+	// non-positive cap refuses every terminal row that names a pod and
+	// records no release, so an unwired cap fails closed. spec: §7.1
+	// (Post-terminal window).
+	PostTerminalCap time.Duration
 }
 
 // New returns a Collector. artifacts is the ordered set of per-session
@@ -129,6 +150,9 @@ func New(store sessionstore.Store, tenants TenantLister, artifacts []Artifact, o
 		interval:  opts.Interval,
 		clock:     opts.Clock,
 		metrics:   opts.Metrics,
+
+		retentionFor:    opts.RetentionFor,
+		postTerminalCap: opts.PostTerminalCap,
 	}
 	if c.interval <= 0 {
 		c.interval = DefaultSweepInterval
@@ -140,13 +164,39 @@ func New(store sessionstore.Store, tenants TenantLister, artifacts []Artifact, o
 }
 
 // eligible reports whether a session is due for artifact collection at
-// now: it must be terminal, past a set retention deadline, and not
-// under a §12.8 legal hold.
-func eligible(s sessionstore.Session, now time.Time) bool {
+// now: it must be terminal, not under a §12.8 legal hold, past a set
+// retention deadline, stamped with a TerminatedAt, outside its §7.1
+// post-terminal window, and past its retention window counted from
+// TerminatedAt. The last check makes the deadline the terminal roll writes
+// a best-effort step: a create-time deadline left by a lost roll cannot
+// shorten retention. A terminal row with a zero TerminatedAt stays
+// ineligible, matching the stale-slot reaper's ListStaleTerminalSessions.
+// The window is resolved only for a row already past its deadline.
+// spec: §7.1 (Artifact retention)
+func (c *Collector) eligible(ctx context.Context, s sessionstore.Session, now time.Time) bool {
 	if !session.IsTerminal(s.State) || s.LegalHold {
 		return false
 	}
-	return !s.RetentionExpiresAt.IsZero() && !s.RetentionExpiresAt.After(now)
+	if s.RetentionExpiresAt.IsZero() || s.RetentionExpiresAt.After(now) || s.TerminatedAt.IsZero() {
+		return false
+	}
+	if c.inPostTerminalWindow(s, now) || c.retentionFor == nil {
+		return false
+	}
+	w, err := c.retentionFor(ctx, s)
+	return err == nil && !s.TerminatedAt.Add(w).After(now)
+}
+
+// inPostTerminalWindow reports whether s is in its post-terminal window
+// under the collector's cap. With no positive cap it reports true for every
+// row that names a pod and records no release, so an unwired cap fails
+// closed rather than collect the chunks of a seal still uploading.
+// spec: §7.1 (Post-terminal window)
+func (c *Collector) inPostTerminalWindow(s sessionstore.Session, now time.Time) bool {
+	if c.postTerminalCap <= 0 {
+		return s.PodAssignment != "" && s.PodReleasedAt.IsZero()
+	}
+	return sessionstore.InPostTerminalWindow(s, now, c.postTerminalCap)
 }
 
 // Tick runs one sweep at now and returns the count of sessions whose
@@ -236,7 +286,7 @@ func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Tim
 	}
 	collected := 0
 	for _, row := range rows {
-		if !eligible(row, now) {
+		if !c.eligible(ctx, row, now) {
 			continue
 		}
 		// Re-read the row immediately before the irreversible artifact
@@ -246,7 +296,7 @@ func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Tim
 		if err != nil {
 			return collected, err
 		}
-		if !eligible(fresh, now) {
+		if !c.eligible(ctx, fresh, now) {
 			continue
 		}
 		for _, a := range c.artifacts {

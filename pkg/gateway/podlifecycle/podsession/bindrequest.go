@@ -257,6 +257,15 @@ type BindResult struct {
 	// of the session is a new BindResult. spec: §5.2 (Pool Configuration
 	// and Execution Modes), §28.5.1 (Gateway-to-pod).
 	crashed atomic.Bool
+	// closing records that the session's terminal seal has begun on this
+	// binding. From the mark on, the executor opens no Attach stream over the
+	// binding and the Checkpointer starts no non-seal attempt on it, so no
+	// turn and no periodic or eviction checkpoint runs while the export
+	// reads the workspace. No site clears it: a later binding of the session
+	// is a new BindResult. It is distinct from the idle-suspension seal
+	// epochs, which carry adapter-grant semantics and are cleared on unseal.
+	// spec: §7.1 (Delivery and checkpoints during the seal).
+	closing atomic.Bool
 	// sealEpoch counts the binding's seal transitions: it is odd while the
 	// binding is marked sealed and even otherwise, and every mark and every
 	// clear moves it by one. The mark is set before the gateway asks the
@@ -357,6 +366,15 @@ func (r *BindResult) MarkCrashed() { r.crashed.Store(true) }
 
 // Crashed reports whether MarkCrashed was called on the binding.
 func (r *BindResult) Crashed() bool { return r.crashed.Load() }
+
+// MarkClosing records that the session's terminal seal has begun on the
+// binding. The mark is never cleared. spec: §7.1 (Delivery and checkpoints
+// during the seal).
+func (r *BindResult) MarkClosing() { r.closing.Store(true) }
+
+// Closing reports whether MarkClosing was called on the binding. spec: §7.1
+// (Delivery and checkpoints during the seal).
+func (r *BindResult) Closing() bool { return r.closing.Load() }
 
 // SetupCommandFailure wraps a §7.5 setup-command failure with the partial
 // captured output the adapter returned before the abort. The gateway

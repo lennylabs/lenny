@@ -6,11 +6,13 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
@@ -49,9 +51,13 @@ func (w *controllerWiring) buildStores() {
 		}
 		w.pgPool = pgPool
 		w.mirror = agentpodstatepg.New(pgPool)
-		// The §4.6.1 orphan-claim GC checks Postgres for an active session
-		// backing each candidate claim before reclaiming it.
-		w.sessionLookup = &sessionActiveLookup{store: sessionstorepg.New(pgPool)}
+		// The §4.6.1 orphan-claim GC checks Postgres for a session holding
+		// each candidate claim's pod before reclaiming it. The store caps
+		// the §7.1 post-terminal window at the orphan timeout the GC loop
+		// applies, which §5.2 keeps above the gateway's terminal pipeline
+		// budget, so the controller needs no copy of that budget.
+		// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+		w.sessionLookup = newSessionLookup(pgPool, f.claimOrphanTimeout)
 		// §5.1 Runtime CRD mirror: the RuntimeReconciler writes the
 		// declarative Runtime resources into the same runtime_definitions
 		// registry the gateway reads at session creation. Requires the
@@ -66,6 +72,15 @@ func (w *controllerWiring) buildStores() {
 	// its controller, so the lenny_controller_workqueue_depth gauge is
 	// labeled per controller.
 	w.queueFactory = controllermetrics.NewQueueFactory(f.workqueueMaxDepth)
+}
+
+// newSessionLookup builds the §4.6.1 orphan-claim session lookup over the
+// Postgres session store, with the §7.1 post-terminal cap set to the orphan
+// timeout the GC loop applies for claimOrphanTimeout.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+func newSessionLookup(pool *pgxpool.Pool, claimOrphanTimeout time.Duration) *sessionActiveLookup {
+	window := warmpool.ResolveClaimOrphanTimeout(claimOrphanTimeout)
+	return &sessionActiveLookup{store: sessionstorepg.New(pool, sessionstorepg.WithPostTerminalCap(window))}
 }
 
 // buildOpsEmitter constructs the §16.6 / §25.5 operational-event emitter the

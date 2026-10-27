@@ -18,11 +18,35 @@ import (
 
 var gcClock = time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 
+// testRetention is the retention window the tests' RetentionFor returns.
+const testRetention = 24 * time.Hour
+
+// fixedRetention is a RetentionFor that returns testRetention.
+func fixedRetention(context.Context, sessionstore.Session) (time.Duration, error) {
+	return testRetention, nil
+}
+
+// withRetention returns opts with RetentionFor set to fixedRetention when
+// the caller left it nil, so a test that pins another behavior seeds rows
+// whose retention window has elapsed.
+func withRetention(opts retentiongc.Options) retentiongc.Options {
+	if opts.RetentionFor == nil {
+		opts.RetentionFor = fixedRetention
+	}
+	return opts
+}
+
+// seed creates s under tenant acme. A terminal row with no TerminatedAt is
+// stamped two retention windows before gcClock, so its window from the
+// terminal transition has elapsed.
 func seed(t *testing.T, store sessionstore.Store, s sessionstore.Session) {
 	t.Helper()
 	s.TenantID = "acme"
 	if s.State == "" {
 		s.State = session.StateCompleted
+	}
+	if session.IsTerminal(s.State) && s.TerminatedAt.IsZero() {
+		s.TerminatedAt = gcClock.Add(-2 * testRetention)
 	}
 	if err := store.Create(context.Background(), s); err != nil {
 		t.Fatalf("seed session %q: %v", s.ID, err)
@@ -47,7 +71,7 @@ func (a *recordingArtifact) artifact() retentiongc.Artifact {
 }
 
 func collector(store sessionstore.Store, arts ...retentiongc.Artifact) *retentiongc.Collector {
-	return retentiongc.New(store, retentiongc.StaticTenants{"acme"}, arts, retentiongc.Options{})
+	return retentiongc.New(store, retentiongc.StaticTenants{"acme"}, arts, withRetention(retentiongc.Options{}))
 }
 
 func TestTickCollectsExpiredSession(t *testing.T) {
@@ -215,7 +239,7 @@ func TestTickEmitsSuccessMetrics(t *testing.T) {
 	sink := &fakeMetricsSink{}
 	c := retentiongc.New(store, retentiongc.StaticTenants{"acme"},
 		[]retentiongc.Artifact{transcripts.artifact(), blobs.artifact()},
-		retentiongc.Options{Metrics: sink})
+		withRetention(retentiongc.Options{Metrics: sink}))
 
 	if _, err := c.Tick(context.Background(), gcClock); err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -253,7 +277,7 @@ func TestTickEmitsErrorMetrics(t *testing.T) {
 	}
 	sink := &fakeMetricsSink{}
 	c := retentiongc.New(store, retentiongc.StaticTenants{"acme"},
-		[]retentiongc.Artifact{failing}, retentiongc.Options{Metrics: sink})
+		[]retentiongc.Artifact{failing}, withRetention(retentiongc.Options{Metrics: sink}))
 
 	if _, err := c.Tick(context.Background(), gcClock); err == nil {
 		t.Fatal("Tick should propagate an artifact-deleter error")

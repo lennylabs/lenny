@@ -40,8 +40,8 @@ type fakeOIDC struct {
 	lastVerif   string
 }
 
-func (f *fakeOIDC) AuthorizationURL(state, challenge, redirectURI string) string {
-	return "https://provider.example/authorize?state=" + state + "&code_challenge=" + challenge
+func (f *fakeOIDC) AuthorizationURL(_ context.Context, state, challenge, _ string) (string, error) {
+	return "https://provider.example/authorize?state=" + state + "&code_challenge=" + challenge, nil
 }
 
 func (f *fakeOIDC) Exchange(_ context.Context, code, verifier, _ string) (OIDCSubject, error) {

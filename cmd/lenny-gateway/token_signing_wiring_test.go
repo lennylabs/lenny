@@ -22,12 +22,19 @@ import (
 func tokenSigningFlags(masterKeyFile, hmacKeyFile, issuer, audiences string) *gatewayFlags {
 	devMode := true
 	tenantClaim := "tenant_id"
+	noIssuer, noClient := "", ""
+	refresh, refetch, timeout := jwt.DefaultOIDCKeyRefreshInterval, jwt.DefaultOIDCMinRefetchInterval, jwt.DefaultOIDCFetchTimeout
 	return &gatewayFlags{
-		devMode:                 &devMode,
-		tenantIDClaim:           &tenantClaim,
-		bearerTrustHMACKeyFile:  &hmacKeyFile,
-		bearerExpectedIssuer:    &issuer,
-		bearerExpectedAudiences: &audiences,
+		devMode:                    &devMode,
+		oidcIssuerURL:              &noIssuer,
+		oidcClientID:               &noClient,
+		oidcJWKSRefreshInterval:    &refresh,
+		oidcJWKSMinRefetchInterval: &refetch,
+		oidcFetchTimeout:           &timeout,
+		tenantIDClaim:              &tenantClaim,
+		bearerTrustHMACKeyFile:     &hmacKeyFile,
+		bearerExpectedIssuer:       &issuer,
+		bearerExpectedAudiences:    &audiences,
 		kmsOpts: &providerflags.Options{
 			Provider:      providerflags.ProviderLocal,
 			MasterKeyFile: masterKeyFile,

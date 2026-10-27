@@ -36,15 +36,16 @@ controller:
   # on (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
   # claimOrphanTimeoutSeconds is the §4.6.1 claimOrphanTimeout: a live or
-  # empty-status SandboxClaim older than this with no active session is an
-  # orphan the controller's GC reclaims, and a concurrent-workspace slot
+  # empty-status SandboxClaim older than this whose pod no session holds is
+  # an orphan the controller's GC reclaims, and a concurrent-workspace slot
   # set member whose session row has been terminal for longer than this
   # is released by the gateway's §5.2 stale-slot reaper. The chart renders
   # this one value into both the controller's --claim-orphan-timeout and
   # the gateway's --slot-reaper-terminal-age, so the two copies cannot
   # differ. It must be at least one second more than the largest of the
-  # seal window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) and
-  # the gateway's finalizing (600s) and resuming (300s) deadlines;
+  # seal window (gateway.workspaceSealMaxDurationSeconds, 300 when 0) plus
+  # the gateway's 30 s release allowance (--stream-failure-report-timeout)
+  # and the gateway's finalizing (600s) and resuming (300s) deadlines;
   # rendering fails otherwise. Default 900 (15 minutes).
   claimOrphanTimeoutSeconds: 900
   # adapterImage is the lenny-adapter sidecar image the §4.7 Sandbox
@@ -516,12 +517,14 @@ redis:
   # Memorystore, 6380 for Azure Cache for Redis.
   gatewayEgressPort: 6379
   # password is the §12.4 Redis AUTH credential applied to the data
-  # connection on the Sentinel path (the external/url path carries the
-  # credential inline in the rediss:// URL instead). Rendered into the
-  # lenny-datastore-conn Secret and read by the gateway via
-  # LENNY_REDIS_PASSWORD. §12.4 requires AUTH; an empty value on a
-  # sentinel-provider install fails the gateway startup invariant unless
-  # --redis-allow-insecure is set. Honored only when provider=sentinel.
+  # connection on the Sentinel and Cluster paths (the external/url path
+  # carries the credential inline in the rediss:// URL instead). Rendered
+  # into the lenny-datastore-conn Secret and read by the gateway, lenny-ops,
+  # and the Token Service via LENNY_REDIS_PASSWORD; those topologies also
+  # render LENNY_REDIS_TLS=true. §12.4 requires AUTH; an empty value on a
+  # sentinel or cluster install fails each binary's startup invariant
+  # unless --redis-allow-insecure is set. Honored only when
+  # provider=sentinel or provider=cluster.
   password: ""
   # sentinels is the §12.4 list of Redis Sentinel host:port endpoints the
   # gateway discovers the master through. Honored only when
@@ -761,10 +764,17 @@ minio:
   # managed minio.deploy render warns (does not block, §17.6)
   # when nodes < 4 because erasure coding is then unavailable.
   nodes: 4
-  # image is the MinIO server container image.
+  # image is the MinIO-compatible server container image. The default is
+  # pgsty/silo, the maintained fork of the MinIO server, because the
+  # community MinIO images are no longer distributed. Silo keeps the
+  # MinIO arguments, environment variables, and health endpoints the
+  # StatefulSet uses. digest pins the multi-arch index the tag names; the
+  # StatefulSet renders repository:tag@digest, and an empty digest renders
+  # repository:tag. An air-gap install mirrors this reference.
   image:
-    repository: quay.io/minio/minio
-    tag: "RELEASE.2024-10-13T13-34-11Z"
+    repository: pgsty/silo
+    tag: "RELEASE.2026-10-26T00-00-00Z"
+    digest: "sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
     pullPolicy: IfNotPresent
   # consolePort is the MinIO web-console port the StatefulSet exposes
   # alongside the API. Reachable only in-cluster (no Service by default).
@@ -795,10 +805,11 @@ minio:
     # versions live before the bucket-wide lifecycle rule deletes them.
     # spec: §12.5 default is 1.
     noncurrentExpirationDays: 1
-    # mc image runs the configuration Job. The default tracks the
-    # latest stable mc release; pin to a digest in answers for
-    # reproducible installs.
-    image: "minio/mc:latest"
+    # image runs the configuration Job and must carry mc and /bin/sh.
+    # The default is pgsty/mc, the maintained fork of the MinIO client,
+    # pinned by release tag and by the digest of its multi-arch index,
+    # because the community minio/mc image is no longer distributed.
+    image: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
   # artifactBackup configures the §25.11 ArtifactStore continuous
   # off-cluster replication (single-region form). When enabled, the
   # gateway runs the §25.11 runtime residency preflight and emits the
@@ -962,7 +973,12 @@ kms:
 # environment is the §17.9.1 composition dimension naming the target
 # deployment environment (local | dev | staging | prod). The chart
 # renders it into --environment on lenny-gateway, lenny-token-service, and
-# lenny-ops; production refuses to start with kms.provider=local. The value also drives gateway log verbosity through
+# lenny-ops. The value prod is production mode (§17.9.1): it controls every
+# production gate in every Lenny binary, including the refusal to start
+# with kms.provider=local, the regulated-tenant audit refusals, and the
+# lenny-ops full-backup confirmation and /healthz readiness behavior.
+# staging is not production mode. A value outside the set makes the
+# binaries refuse to start. The value also drives gateway log verbosity through
 # the lenny.gatewayLogLevel helper: local and dev render
 # LENNY_LOG_LEVEL=debug, staging and prod render info. spec: §17.9.1, F-4.3.11 / F-17.5.2 / F-17.9.9.
 environment: "dev"
@@ -1257,23 +1273,24 @@ tracing:
     # to the trace volume.
     resources: {}
 
-# pgbouncer configures the §4.2 / §12.3 PgBouncer connect_query
-# sentinel ConfigMap. The chart does not deploy PgBouncer itself
-# (the pooler is operator-managed: self-hosted on a separate workload
-# or an out-of-cluster managed offering such as AWS RDS Proxy or
-# Cloud SQL Connectors). What it does render is a ConfigMap carrying
-# the pgbouncer.ini fragment that sets connect_query to the §4.2 sentinel: every fresh server connection PgBouncer opens
-# to Postgres begins with SET app.current_tenant = '__unset__', so a
-# pooled connection that has not yet been claimed by a tenant-aware
-# transaction cannot leak prior context.
+# pgbouncer configures the §12.3 PgBouncer pooler. The ConfigMap
+# (pgbouncer-config.yaml) carries a complete pgbouncer.ini: TCP
+# listening on `port`, the auth file the PgBouncer image writes from
+# DATABASE_URL, the §12.3 pool mode, and a [databases] entry that routes
+# to the upstream Postgres with the §4.2 connect_query sentinel. PgBouncer
+# accepts connect_query only on a database entry, so every fresh server
+# connection PgBouncer opens begins with
+# SET app.current_tenant = '__unset__', and a pooled connection that a
+# tenant-aware transaction has not yet claimed cannot leak prior context.
 #
-# Operators mount this ConfigMap onto their PgBouncer pod (typical
-# path: /etc/pgbouncer/pgbouncer.ini) and trust the values from the
-# `pgbouncer` block here to be the source of truth.
+# With `deploy: true` the chart runs PgBouncer on this ConfigMap (the
+# self-managed profile). Otherwise operators who run their own PgBouncer
+# mount the ConfigMap onto it.
 #
 # spec: §4.2 ("PgBouncer's connect_query is configured to
 # set a sentinel value (SET app.current_tenant = '__unset__') on
-# every fresh connection checkout")
+# every fresh connection checkout"); §12.3; §13.2 (PgBouncer clients
+# connect on TCP 5432).
 pgbouncer:
   # enabled gates rendering of the ConfigMap. Leave true so the
   # connect_query sentinel always ships with the chart; deployers
@@ -1320,15 +1337,31 @@ pgbouncer:
     repository: edoburu/pgbouncer
     tag: "v1.23.1-p3"
     pullPolicy: IfNotPresent
-  # port is the PgBouncer client listen port the Service and gateway
-  # connect to.
-  port: 6432
+  # port is the PgBouncer client listen port the Service, the rendered
+  # pgbouncer.ini, and every client NetworkPolicy use. §13.2 admits
+  # PgBouncer clients on TCP 5432 and the chart's policies render that
+  # port, so the deployed PgBouncer refuses to render on any other value.
+  port: 5432
+  # authType is the PgBouncer auth_type, and the PgBouncer image writes
+  # the DATABASE_URL credentials into the auth file in the matching
+  # format. scram-sha-256 stores the password as given, which lets
+  # PgBouncer authenticate both to its clients and to Postgres.
+  authType: "scram-sha-256"
+  # upstream is the Postgres the [databases] entry routes to. An empty
+  # host resolves to the CloudNativePG lenny-postgres-rw Service when
+  # postgres.deploy is true; set it when PgBouncer fronts an out-of-band
+  # Postgres. The deployed PgBouncer refuses to render with no upstream.
+  upstream:
+    host: ""
+    port: 5432
   # databaseURLSecret/databaseURLKey inject a DATABASE_URL env into the
-  # PgBouncer container. The readiness probe runs SELECT 1 through this
-  # DSN to verify backend Postgres connectivity (§12.3), and the
-  # edoburu image derives its upstream from it. Leave the secret empty to
-  # manage the upstream entirely via the mounted ConfigMap; the default
-  # readiness probe then falls back to a TCP check of the listen port.
+  # PgBouncer container. The PgBouncer image writes its user and password
+  # into the auth file, so clients and PgBouncer authenticate with those
+  # credentials, and the readiness probe runs SELECT 1 through it to
+  # verify backend Postgres connectivity (§12.3). An empty secret
+  # resolves to the CloudNativePG app Secret (lenny-postgres-app, key
+  # uri) when postgres.deploy is true. The deployed PgBouncer refuses to
+  # render with neither.
   databaseURLSecret: ""
   databaseURLKey: "url"
   # exporter is the §12.3 pgbouncer_exporter sidecar. It scrapes
@@ -1344,9 +1377,9 @@ pgbouncer:
     port: 9127
   # readiness verifies backend Postgres connectivity, not just process
   # liveness (§12.3). The default exec probe runs SELECT 1
-  # through the local PgBouncer port via the injected DATABASE_URL; set
-  # databaseURLSecret for it to work, or override `command` for a
-  # different image. periodSeconds/failureThreshold/timeoutSeconds match
+  # against the upstream Postgres through the injected DATABASE_URL
+  # (databaseURLSecret, or the CloudNativePG app Secret); override
+  # `command` for a different image. periodSeconds/failureThreshold/timeoutSeconds match
   # the §12.3 recommended settings.
   readiness:
     command:
@@ -1385,9 +1418,12 @@ postgres:
   # (the gateway's connection target): cloud-managed and external
   # self-managed deployments leave `deploy` false and point `dsn` at a
   # provider endpoint or an out-of-band Postgres; a chart-managed
-  # self-managed deployment sets `deploy: true` and points `dsn` at the
-  # rendered `<release>-postgres-rw` Service using the operator-minted
-  # app secret. spec: §17.9.5, §17.3, §12.3.
+  # self-managed deployment sets `deploy: true` and `pgbouncer.deploy:
+  # true`, and points `dsn` at the `lenny-pgbouncer` Service on port 5432
+  # with the credentials of the operator-minted lenny-postgres-app
+  # secret. PgBouncer routes to the `lenny-postgres-rw` Service, and
+  # §13.2 admits the Lenny clients to Postgres only through PgBouncer.
+  # spec: §17.9.5, §17.3, §12.3, §13.2.
   deploy: false
   # selfManaged configures the deployed Postgres workload.
   selfManaged:
@@ -3386,9 +3422,6 @@ ops:
   # listener as the HTTP surface (httpPort), so the Service maps the
   # metrics port to that listener.
   metricsPort: 9090
-  # production gates the §25.11 confirm:true requirement on full
-  # backups. Set true on staging and production installs.
-  production: false
   # service carries the lenny-ops Service overrides. §25.4
   # pins sessionAffinity: ClientIP with a 3h client-IP timeout so SSE
   # consumers reconnecting after a network blip return to the replica
@@ -3696,9 +3729,11 @@ security:
     # bearer with (§17.4). When set, the gateway and lenny-ops mount it at
     # /etc/lenny/oidc and trust that bearer through
     # --bearer-trust-hmac-key-file, wrapped in the dev.local audience check.
-    # The gateway refuses the flag unless global.devMode is true, and a
-    # production lenny-ops (ops.production: true) refuses it, so the chart
-    # does not render it on lenny-ops there. Leave it empty outside dev. Lenny-issued JWTs verify through
+    # The gateway refuses the flag unless global.devMode is true. lenny-ops
+    # refuses it without global.devMode and in production mode
+    # (environment: prod), so the chart renders it on lenny-ops only when
+    # global.devMode is true and environment is not prod. Leave it empty
+    # outside dev. Lenny-issued JWTs verify through
     # the ES256 key set the kms block configures, not through this key.
     bearerTrustKeySecret: ""
     # tokenRefreshBeforeExpirySeconds is the §25.4 pre-emptive

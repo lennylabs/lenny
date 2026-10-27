@@ -12,7 +12,7 @@
 // object-store path.
 //
 // The §16.1 workspace-seal metric now carries an `outcome="permanent"` arm for
-// a seal that failed on a permanent adapter error and returned immediately
+// a seal that ended on a permanent condition and returned immediately
 // without retrying, and the `WorkspaceSealStuck` alert fires on the
 // `outcome="timeout"` arm alone. The metrics.md row and the
 // workspace-seal-stuck.md runbook must reflect both.
@@ -114,8 +114,8 @@ func TestCheckpointPresignedCapabilityMirroredIn131(t *testing.T) {
 // diagnosis: the metrics.md workspace-seal row or the workspace-seal-stuck.md
 //
 //	runbook disagree with the amended §16.1 on the seal-outcome enum. The spec
-//	added an `outcome="permanent"` arm for a seal that failed on a permanent
-//	adapter error and returned immediately without retrying, and scoped the
+//	added an `outcome="permanent"` arm for a seal that ended on a permanent
+//	condition and returned immediately without retrying, and scoped the
 //	WorkspaceSealStuck alert to the `outcome="timeout"` arm alone. A failure
 //	here means the operator reference still enumerates only success/timeout, or
 //	the runbook does not tell the responder that a permanent-outcome seal fails
@@ -133,7 +133,7 @@ func TestWorkspaceSealPermanentOutcomeMirroredIn161(t *testing.T) {
 	}
 	requireAllContain(t, "metrics.md workspace-seal row", sealRow, []string{
 		"`success`, `timeout`, `permanent`",
-		"failed on a permanent adapter error and returned immediately without retrying",
+		"ended on a permanent condition (a permanent adapter error, a session binding lost during the seal, or a deleted session row) and returned immediately without retrying",
 		"`outcome=\"timeout\"` arm alone",
 	})
 

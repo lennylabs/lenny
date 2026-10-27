@@ -297,7 +297,9 @@ func (s *sleepyDrainTerminator) terminated() []string {
 func TestTenantSessionTerminatorBudgetExpiryKeepsPhase2_spec_12_8(t *testing.T) {
 	runner, tenants, sessions, _, _ := newDeletionRunner(t)
 	slow := &sleepyDrainTerminator{delay: 200 * time.Millisecond}
-	runner.reconciler.Terminator = tenantSessionTerminator{sessions: sessions, term: slow, budget: 20 * time.Millisecond}
+	runner.reconciler.Terminator = tenantSessionTerminator{
+		sessions: sessions, term: slow, budget: 20 * time.Millisecond, cap: time.Minute, clock: time.Now,
+	}
 	ctx := context.Background()
 	for _, id := range []string{"acme", "globex"} {
 		if err := tenants.Create(ctx, tenantstore.Tenant{ID: id, State: tenantstore.TenantStateDisabling}); err != nil {
@@ -344,7 +346,7 @@ func TestTenantSessionTerminatorReturnsDrainOutcome_spec_12_8(t *testing.T) {
 	if err := sessions.Create(ctx, sessionstore.Session{ID: "sess-1", TenantID: "acme", UserID: "alice", State: apisession.StateCompleted}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	ok := tenantSessionTerminator{sessions: sessions, term: &sleepyDrainTerminator{}, budget: time.Second}
+	ok := tenantSessionTerminator{sessions: sessions, term: &sleepyDrainTerminator{}, budget: time.Second, cap: time.Minute, clock: time.Now}
 	if err := ok.TerminateTenantSessions(ctx, "acme"); err != nil {
 		t.Fatalf("drain over terminal sessions = %v, want nil", err)
 	}
@@ -374,5 +376,54 @@ func TestValidateLifecycleTickBudget_spec_12_8(t *testing.T) {
 	}
 	if err := validateLifecycleTickBudget(time.Minute); err != nil {
 		t.Errorf("validateLifecycleTickBudget(1m) = %v, want nil", err)
+	}
+}
+
+// TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8 pins the
+// §12.8 tenant-deletion hold on the §7.1 post-terminal window: a pass whose
+// drain verifies but whose tenant still has a session in its window stays at
+// Phase 2 in disabling with BlockedReason set, and the next pass after the
+// release is recorded advances to Phase 3. On the pre-fix terminator the
+// first pass advances at once. With no cap the terminator returns an error
+// wrapping ErrReleaseCapUnset.
+//
+// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
+func TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
+	runner, tenants, sessions, _, _ := newDeletionRunner(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	runner.reconciler.Terminator = tenantSessionTerminator{
+		sessions: sessions, term: &sleepyDrainTerminator{}, budget: time.Second,
+		cap: 10 * time.Minute, clock: func() time.Time { return now },
+	}
+	ctx := context.Background()
+	if err := tenants.Create(ctx, tenantstore.Tenant{ID: "acme", State: tenantstore.TenantStateDisabling}); err != nil {
+		t.Fatalf("Create tenant: %v", err)
+	}
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "sess-sealing", TenantID: "acme", UserID: "alice", State: apisession.StateCompleted,
+		PodAssignment: "pod-a", TerminatedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	drive(ctx, runner, 2)
+	job, _ := runner.reconciler.Jobs.Get(ctx, "acme")
+	if job.Phase != tenantdeletion.PhaseTerminateSessions || job.State != tenantdeletion.TenantDisabling {
+		t.Fatalf("job = %q/%q (%s), want terminate_sessions/disabling", job.Phase, job.State, job.Failure)
+	}
+	if !strings.Contains(job.BlockedReason, "post-terminal window") {
+		t.Errorf("BlockedReason = %q, want the post-terminal wait", job.BlockedReason)
+	}
+	if err := sessionstore.RecordPodRelease(ctx, sessions, "acme", "sess-sealing", now); err != nil {
+		t.Fatalf("record release: %v", err)
+	}
+	drive(ctx, runner, 1)
+	job, _ = runner.reconciler.Jobs.Get(ctx, "acme")
+	if job.Phase != tenantdeletion.PhaseRevokeCredentials {
+		t.Errorf("phase after the release = %q (%s), want revoke_credentials", job.Phase, job.Failure)
+	}
+
+	unwired := tenantSessionTerminator{sessions: sessions, term: &sleepyDrainTerminator{}, budget: time.Second, clock: time.Now}
+	if err := unwired.TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrReleaseCapUnset) {
+		t.Errorf("terminator with no cap = %v, want ErrReleaseCapUnset", err)
 	}
 }

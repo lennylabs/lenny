@@ -2,6 +2,27 @@
   "version": 1,
   "description": "Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. The lenny-test harness walks this graph when invoked with --changed to determine the minimal test set. CI runs `lenny-test validate-maps` on every PR.",
   "globs": {
+    "pkg/deployenv": {
+      "unit": [
+        "pkg/deployenv/...",
+        "pkg/kms/providerflags/...",
+        "pkg/preflight/...",
+        "pkg/ctlcli/...",
+        "cmd/lenny-gateway/...",
+        "cmd/lenny-ops/..."
+      ]
+    },
+    "pkg/embedded/k3s/": {
+      "unit": ["pkg/embedded/k3s/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "pkg/embedded/stack/": {
+      "unit": ["pkg/embedded/stack/..."],
+      "component": ["tests/tier2_component/embedded/..."]
+    },
+    "tests/tier2_component/embedded/": {
+      "component": ["tests/tier2_component/embedded/..."]
+    },
     "pkg/kms/kmstest/": {
       "unit": ["pkg/kms/...", "pkg/auth/jwt/..."]
     },
@@ -19,6 +40,12 @@
         "tests/tier9_security/token_revocation_propagation_alert_test.go"
       ]
     },
+    "tests/testinfra/testtmp/": {
+      "static": ["tests/tier0_static/test_fixture_temp_root_test.go"],
+      "unit": ["tests/testinfra/testtmp/...", "cmd/lenny-test/...", "cmd/lenny-compliance/...", "pkg/adapter/...", "pkg/gateway/session/executor/..."],
+      "contract": ["tests/tier3_contract/adapter_jsonl/...", "tests/tier3_contract/adapter_supervise/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
     "tests/testinfra/stackkey/": {
       "unit": ["tests/testinfra/stackkey/..."],
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
@@ -33,6 +60,11 @@
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
       "security": ["tests/tier9_security/ops_revocation_enforcement_test.go"]
+    },
+    "tests/testinfra/commitfault/": {
+      "unit": ["tests/testinfra/commitfault/..."],
+      "component": ["tests/tier2_component/stores/sessionstore_commit_ack_test.go"],
+      "chaos": ["tests/tier8_chaos/session_commit_ack_lost_test.go"]
     },
     "supervisor/": {
       "static": ["tests/tier0_static/supervisor_binary_test.go"],
@@ -166,7 +198,7 @@
     "pkg/gateway/middleware/auth": {
       "unit": ["pkg/gateway/middleware/auth/..."],
       "contract": ["tests/tier3_contract/rest_auth/..."],
-      "integration": ["tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "integration": ["tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go"],
       "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/middleware/idempotency": {
@@ -389,7 +421,7 @@
       "static": ["cmd/lenny-gateway/..."],
       "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
-      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go"],
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go", "tests/tier4_integration/gateway_tenancy_mode_test.go", "tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/oidc_auth_test.go"],
       "security": ["tests/tier9_security/tenant_claim_spoofing_test.go", "tests/tier9_security/unauthenticated_tenant_access_test.go"]
     },
     "pkg/gateway/operability/health": {
@@ -404,7 +436,13 @@
     "pkg/auth": {
       "unit": ["pkg/auth/..."],
       "component": ["tests/tier2_component/auth/..."],
-      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
+      "contract": ["tests/tier3_contract/rest_auth/..."],
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go", "tests/tier4_integration/oidc_auth_test.go"]
+    },
+    "tests/testinfra/stubs/oidc/": {
+      "unit": ["tests/testinfra/stubs/oidc/...", "cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/rest_auth/..."],
+      "integration": ["tests/tier4_integration/oidc_auth_test.go"]
     },
     "pkg/admission/drain_readiness": {
       "unit": ["pkg/admission/drain_readiness/..."],
@@ -750,13 +788,19 @@
     },
     "cmd/lenny-token-service": {
       "unit": ["cmd/lenny-token-service/..."],
-      "contract": ["tests/tier3_contract/oauth_token/..."]
+      "contract": ["tests/tier3_contract/oauth_token/..."],
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
+    },
+    "tests/testinfra/tlsredis/": {
+      "unit": ["cmd/lenny-token-service/..."],
+      "integration": ["tests/tier4_integration/token_service_revocation_publish_test.go", "tests/tier4_integration/token_service_chart_datastores_test.go"]
     },
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
       "component": ["cmd/lenny-ops/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],
-      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"],
+      "security": ["tests/tier9_security/ops_platform_role_downgrade_test.go"]
     },
     "cmd/lenny-backup": {
       "unit": ["cmd/lenny-backup/..."],
@@ -772,8 +816,11 @@
         "tests/tier0_static/airgap_registry_render_test.go",
         "tests/tier0_static/upgrade_channel_key_render_test.go",
         "tests/tier0_static/ops_rbac_spec_sync_test.go",
-        "tests/tier0_static/gateway_multi_tenant_render_test.go"
+        "tests/tier0_static/gateway_multi_tenant_render_test.go",
+        "tests/tier0_static/self_managed_postgres_path_render_test.go"
       ],
+      "component": ["tests/tier2_component/pgbouncerchart/..."],
+      "integration": ["tests/tier4_integration/token_service_chart_datastores_test.go"],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
         "tests/tier5_e2e_kind/admission_inventory_test.go",
@@ -855,6 +902,10 @@
     },
     "PROPOSAL-QUEUE.md": {
       "docs": ["tests/tier11_docs/..."]
+    },
+    "pkg/gateway/environment/userstore": {
+      "unit": ["pkg/gateway/environment/userstore/...", "cmd/lenny-gateway/...", "cmd/lenny-ops/..."],
+      "security": ["tests/tier9_security/ops_platform_role_downgrade_test.go"]
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],

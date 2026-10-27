@@ -6,10 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"os"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
@@ -354,12 +354,13 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	// envProduction gates both alerts to production. F-16.4.9; F-16.4.10.
 	gwMetrics.SetAuditSIEMConfigured(*auditSIEMEndpoint != "")
 	gwMetrics.SetAuditRetentionDays(w.effectiveAuditRetentionDays)
-	gwMetrics.SetEnvProduction(os.Getenv("LENNY_ENV") == "production")
+	production := deployenv.IsProduction(f.kmsOpts.Environment)
+	gwMetrics.SetEnvProduction(production)
 	// spec: §12.3 — in production with T2 audit batching enabled
 	// but no SIEM endpoint, there is no external durable copy to recover
 	// buffered T2 events from on a crash. Warn at startup and emit the
 	// AuditBatchingNoSIEM counter. F-12.3.15.
-	if auditBatchingNoSIEM(os.Getenv("LENNY_ENV"), *auditBatchingEnabled, *auditSIEMEndpoint != "") {
+	if auditBatchingNoSIEM(production, *auditBatchingEnabled, *auditSIEMEndpoint != "") {
 		log.Printf("lenny-gateway: WARNING: Audit batching is enabled for T2 events but no SIEM is configured — buffered T2 audit events will be lost on gateway crash")
 		gwMetrics.IncAuditBatchingNoSIEM()
 	}

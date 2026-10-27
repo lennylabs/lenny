@@ -80,10 +80,8 @@ prefixes:
   - pkg/driftmonitor/
   - pkg/embedded/crds/
   - pkg/embedded/devauth/
-  - pkg/embedded/k3s/
   - pkg/embedded/localcli/
   - pkg/embedded/manifests/
-  - pkg/embedded/stack/
   - pkg/embedded/tlsgen/
   - pkg/events/
   - pkg/gateway/audit/auditretention/
@@ -150,8 +148,6 @@ prefixes:
   - pkg/gateway/environment/tenantstore/pgstore/
   - pkg/gateway/environment/transcriptstore/
   - pkg/gateway/environment/transcriptstore/pgstore/
-  - pkg/gateway/environment/userstore/
-  - pkg/gateway/environment/userstore/pgstore/
   - pkg/gateway/eventbuffer/
   - pkg/gateway/experiment/evalstore/
   - pkg/gateway/experiment/evalstore/pgstore/
@@ -391,7 +387,6 @@ prefixes:
   - tests/testinfra/stubs/kms/
   - tests/testinfra/stubs/llmprovider/
   - tests/testinfra/stubs/mcpserver/
-  - tests/testinfra/stubs/oidc/
   - tests/testinfra/stubs/runtime/
   - tests/testinfra/stubs/siem/
   - tests/testinfra/timectl/

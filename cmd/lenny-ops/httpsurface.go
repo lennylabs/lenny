@@ -75,18 +75,21 @@ func (w *opsWiring) buildHTTPSurface() {
 
 	// §25.4: build the authentication + role gate. Lenny-issued tokens
 	// verify against the §10.2 key set and meet the §25.4 revocation set;
-	// outside production the dev embedded-OIDC trust hook is accepted too.
-	// A production process always authenticates.
+	// in dev mode the dev embedded-OIDC trust hook is accepted too. A
+	// process outside dev mode, and a production process, always
+	// authenticates (§17.4 "Dev mode guard rails").
 	revocations := newOpsRevocation()
 	authCfg, err := buildAuthConfig(authInputs{
-		keySet:      w.jwtKeySet,
-		revocations: revocations,
-		hmacKeyFile: *w.f.bearerTrustHMACKeyFile,
-		issuer:      *w.f.oidcIssuerURL,
-		multiTenant: *w.f.authMultiTenant,
-		production:  *w.f.production,
-		rps:         *w.f.rateLimitRPS,
-		burst:       *w.f.rateLimitBurst,
+		keySet:        w.jwtKeySet,
+		revocations:   revocations,
+		platformRoles: opsPlatformRoles(w.pgPool),
+		hmacKeyFile:   *w.f.bearerTrustHMACKeyFile,
+		issuer:        *w.f.oidcIssuerURL,
+		multiTenant:   *w.f.authMultiTenant,
+		devMode:       *w.f.devMode,
+		production:    w.f.productionMode(),
+		rps:           *w.f.rateLimitRPS,
+		burst:         *w.f.rateLimitBurst,
 	})
 	if err != nil {
 		log.Fatalf("lenny-ops: %v", err)
@@ -160,20 +163,21 @@ func (w *opsWiring) buildHTTPSurface() {
 		EventStream:        w.eventStream,
 		EventSubscriptions: w.eventSubscriptions,
 		// §25.5: the subscription_cache_invalidate peer RPC.
-		CacheInvalidator:     w.subscriptionCache,
-		CacheInvalidateToken: w.delivery.InvalidateToken,
-		ReleaseChannel:       w.releaseChannelPub,
-		Upgrade:              w.upgradeSvc,
-		UpgradeChecker:       w.upgradeChecker,
-		UpgradePreflighter:   w.upgradePreflighter,
-		VersionAggregator:    w.versionAggregator,
-		PlatformConfig:       w.platformConfigSvc,
-		Registry:             w.registrySvc,
-		BuildVersion:         buildVersion,
-		PodLogs:              podLogs,
-		Production:           *w.f.production,
-		DiagnosticsAudit:     buildDiagnosticsAudit(*w.f.diagnosticsAuditRate, w.auditRecorder),
-		Auth:                 authCfg,
+		CacheInvalidator:       w.subscriptionCache,
+		CacheInvalidateToken:   w.delivery.InvalidateToken,
+		ReleaseChannel:         w.releaseChannelPub,
+		Upgrade:                w.upgradeSvc,
+		UpgradeChecker:         w.upgradeChecker,
+		UpgradePreflighter:     w.upgradePreflighter,
+		VersionAggregator:      w.versionAggregator,
+		PlatformConfig:         w.platformConfigSvc,
+		Registry:               w.registrySvc,
+		BuildVersion:           buildVersion,
+		PodLogs:                podLogs,
+		Production:             w.f.productionMode(),
+		IdempotencyKeyRequired: w.f.idempotencyKeyRequired(),
+		DiagnosticsAudit:       buildDiagnosticsAudit(*w.f.diagnosticsAuditRate, w.auditRecorder),
+		Auth:                   authCfg,
 		// §25.12: route gateway-owned MCP management tools through the same
 		// GatewayClient built for the config/drift/events fan-out. A nil
 		// gwClient (single-process degraded mode) leaves gateway-owned tools

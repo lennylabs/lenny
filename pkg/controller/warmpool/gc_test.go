@@ -12,8 +12,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
@@ -406,5 +409,64 @@ func TestGCNeedsLeaderElection(t *testing.T) {
 	g := &warmpool.ClaimGarbageCollector{}
 	if !g.NeedLeaderElection() {
 		t.Error("orphan-claim GC must run only on the elected leader")
+	}
+}
+
+// storeSessions is the orphan GC's session lookup over a session store
+// whose post-terminal cap is the orphan timeout, as the controller wires it.
+type storeSessions struct{ store *memstore.Store }
+
+func (s storeSessions) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
+	ids, err := s.store.GetActiveSlotsByPod(ctx, sandboxRef)
+	return len(ids) > 0, err
+}
+
+// diagnosis: a failure means the orphan GC drains the pod of a session
+// whose gateway has not recorded the pod release while the session is
+// inside claimOrphanTimeout of its terminal transition, which cuts a seal
+// still exporting; or it never drains the pod once the release is recorded
+// or claimOrphanTimeout has passed.
+// spec: 4.6.1 (Orphaned SandboxClaim detection), 7.1 (Post-terminal window)
+func TestGCKeepsAPodItsTerminalSessionStillHolds_spec_4_6_1(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		terminated time.Duration
+		released   bool
+		wantKept   bool
+	}{
+		{name: "terminal, unreleased, inside claimOrphanTimeout", terminated: 5 * time.Minute, wantKept: true},
+		{name: "release recorded", terminated: 5 * time.Minute, released: true, wantKept: false},
+		{name: "claimOrphanTimeout passed", terminated: 20 * time.Minute, wantKept: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newScheme(t)
+			c := newClient(t, s, claimedSandbox("pod-1"), claim("claim-1", "pod-1"))
+			// A bound claim whose binding transition is older than
+			// claimOrphanTimeout at the GC's clock.
+			seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+				Phase:                      string(claimstate.Bound),
+				BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
+			})
+			gcNow := time.Now().Add(time.Hour)
+			orphan := warmpool.ResolveClaimOrphanTimeout(0)
+			store := memstore.NewWithClock(func() time.Time { return gcNow }, memstore.WithPostTerminalCap(orphan))
+			row := sessionstore.Session{
+				ID: "sess-1", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-1",
+				TerminatedAt: gcNow.Add(-tc.terminated),
+			}
+			if tc.released {
+				row.PodReleasedAt = gcNow.Add(-time.Minute)
+			}
+			if err := store.Create(context.Background(), row); err != nil {
+				t.Fatal(err)
+			}
+			gcSweep(t, &warmpool.ClaimGarbageCollector{
+				Client: c, Sessions: storeSessions{store: store}, Namespaces: []string{testNS},
+				Now: func() time.Time { return gcNow },
+			})
+			if _, kept := getClaim(t, c, "claim-1"); kept != tc.wantKept {
+				t.Errorf("claim kept = %v, want %v", kept, tc.wantKept)
+			}
+		})
 	}
 }

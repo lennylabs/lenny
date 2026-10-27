@@ -207,12 +207,13 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 	if err := validateSlotReaperFlags(slotReaperSettings{
-		interval:             *f.slotReaperInterval,
-		rate:                 *f.slotReaperRate,
-		terminalAge:          *f.slotReaperTerminalAge,
-		maxFinalizingSeconds: *f.maxFinalizingTimeoutSeconds,
-		maxResumingSeconds:   *f.maxResumingSeconds,
-		sealSeconds:          *f.workspaceSealMaxDurationSeconds,
+		interval:                   *f.slotReaperInterval,
+		rate:                       *f.slotReaperRate,
+		terminalAge:                *f.slotReaperTerminalAge,
+		maxFinalizingSeconds:       *f.maxFinalizingTimeoutSeconds,
+		maxResumingSeconds:         *f.maxResumingSeconds,
+		sealSeconds:                *f.workspaceSealMaxDurationSeconds,
+		streamFailureReportTimeout: *f.streamFailureReportTimeout,
 	}); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -317,15 +318,17 @@ func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, ba
 }
 
 // slotReaperSettings is the configuration the stale-slot reaper gate reads:
-// the reaper's own flags and the three post-terminal deadlines its terminal
-// age must exceed.
+// the reaper's own flags, the launch and resuming deadlines its terminal age
+// must exceed, and the seal window and release allowance whose sum is the
+// terminal pipeline budget it must also exceed.
 type slotReaperSettings struct {
-	interval             time.Duration
-	rate                 int
-	terminalAge          time.Duration
-	maxFinalizingSeconds int
-	maxResumingSeconds   int
-	sealSeconds          int
+	interval                   time.Duration
+	rate                       int
+	terminalAge                time.Duration
+	maxFinalizingSeconds       int
+	maxResumingSeconds         int
+	sealSeconds                int
+	streamFailureReportTimeout time.Duration
 }
 
 // validateSlotReaperFlags rejects a non-positive reaper interval or rate,
@@ -333,13 +336,14 @@ type slotReaperSettings struct {
 // invariant: the terminal age (the gateway's copy of claimOrphanTimeout) must
 // be at least one second more than the largest of the launch bound
 // (--max-finalizing-state-timeout-seconds), the resuming deadline
-// (--max-resuming-seconds), and the seal window
-// (--workspace-seal-max-duration-seconds), each taken as the value in effect.
-// A value in effect is the flag's value, or its default when the flag is not
-// positive, as the watchdog and the session server resolve it. A shorter
-// terminal age lets the reaper free a slot that a launch, a resume restore,
-// or a seal still acts on.
-// spec: §5.2 (Slot assignment atomicity).
+// (--max-resuming-seconds), and the terminal pipeline budget, which is the
+// seal window (--workspace-seal-max-duration-seconds) plus the release
+// allowance (--stream-failure-report-timeout), each taken as the value in
+// effect. A value in effect is the flag's value, or its default when the flag
+// is not positive, as the watchdog and the session server resolve it. A
+// shorter terminal age lets the reaper free a slot that a launch, a resume
+// restore, or the terminal pipeline still acts on.
+// spec: §5.2 (Slot assignment atomicity), §7.1 (Terminal pipeline context)
 func validateSlotReaperFlags(c slotReaperSettings) error {
 	if c.interval <= 0 {
 		return fmt.Errorf("--slot-reaper-interval must be positive, got %s (§5.2)", c.interval)
@@ -349,13 +353,31 @@ func validateSlotReaperFlags(c slotReaperSettings) error {
 	}
 	finalizing := secondsInEffect(c.maxFinalizingSeconds, watchdog.DefaultMaxFinalizingStateSeconds)
 	resuming := secondsInEffect(c.maxResumingSeconds, watchdog.DefaultMaxResumingSeconds)
-	seal := secondsInEffect(c.sealSeconds, int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second))
-	floor := time.Duration(max(finalizing, resuming, seal))*time.Second + time.Second
+	seal := sealSecondsInEffect(c.sealSeconds)
+	budget := terminalPipelineBudgetInEffect(c.sealSeconds, c.streamFailureReportTimeout)
+	floor := max(time.Duration(finalizing)*time.Second, time.Duration(resuming)*time.Second, budget) + time.Second
 	if c.terminalAge < floor {
-		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and --workspace-seal-max-duration-seconds (%ds) (§5.2)",
-			c.terminalAge, floor, finalizing, resuming, seal)
+		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and the terminal pipeline budget (%s: --workspace-seal-max-duration-seconds %ds plus --stream-failure-report-timeout %s) (§5.2)",
+			c.terminalAge, floor, finalizing, resuming, budget, seal, budget-time.Duration(seal)*time.Second)
 	}
 	return nil
+}
+
+// sealSecondsInEffect is the seal window in seconds the session server runs
+// with for --workspace-seal-max-duration-seconds v.
+func sealSecondsInEffect(v int) int {
+	return secondsInEffect(v, int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second))
+}
+
+// terminalPipelineBudgetInEffect is the §7.1 terminal pipeline budget the
+// session server runs with for --workspace-seal-max-duration-seconds
+// sealSeconds and --stream-failure-report-timeout releaseAllowance, each
+// taken as the value in effect. The §5.2 startup gate and the post-terminal
+// window cap read it, so both take the server's budget.
+// spec: §7.1 (Terminal pipeline context), §7.1 (Post-terminal window)
+func terminalPipelineBudgetInEffect(sealSeconds int, releaseAllowance time.Duration) time.Duration {
+	seal := time.Duration(sealSecondsInEffect(sealSeconds)) * time.Second
+	return sessionserver.TerminalPipelineBudgetFor(seal, releaseAllowance)
 }
 
 // secondsInEffect is v when it is positive, and def otherwise.

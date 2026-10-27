@@ -4,6 +4,7 @@ package sessionserver
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -40,26 +41,38 @@ const (
 // sealOutcomeSuccess, sealOutcomeTimeout, and sealOutcomePermanent are
 // the §7.1 label values on
 // lenny_workspace_seal_duration_seconds. `permanent` records a seal that
-// failed on an export error the adapter reported as permanent and
+// ended on a condition the §7.1 Seal-and-export invariant classifies as
+// permanent (an export error the adapter reports as permanent, a binding
+// lost during the seal, or a session row absent on the primary) and
 // returned immediately without retrying; only the `timeout` arm fires
 // the WorkspaceSealStuck alert.
+//
+// spec: §7.1 (Seal-and-export invariant)
 const (
 	sealOutcomeSuccess   = "success"
 	sealOutcomeTimeout   = "timeout"
 	sealOutcomePermanent = "permanent"
 )
 
-// isPermanentSealError reports whether err is a gRPC status the seal
-// adapter reports as permanent: FailedPrecondition (the §4.4
+// isPermanentSealError reports whether err ends the seal window on its
+// first observation. Two conditions qualify. The first is a gRPC status the
+// seal adapter reports as permanent: FailedPrecondition (the §4.4
 // workspace-size probe rejection, which re-probes identically on every
-// retry), InvalidArgument, or Unimplemented. A permanent error
-// re-produces identically on each attempt, so retrying it for the full
-// §7.1 window only delays the identical terminal state.
+// retry), InvalidArgument, or Unimplemented. The second is
+// sessionstore.ErrNotFound, which the Checkpointer returns when the
+// session's row is absent on the primary: the gateway drives no export for a
+// session whose row no longer exists. Either condition re-produces
+// identically on each attempt, so retrying it for the full §7.1 window only
+// delays the identical terminal state. An adapter gRPC NotFound stays
+// transient, because its meaning at the adapter is ambiguous.
 //
-// spec: §7.1 — "an export failure the adapter reports as
-// permanent ends the window on its first observation with the same
-// terminal outcome".
+// spec: §7.1 (Seal-and-export invariant) — "an export failure the adapter
+// reports as permanent ends the window on its first observation with the
+// same terminal outcome".
 func isPermanentSealError(err error) bool {
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return true
+	}
 	switch status.Code(err) {
 	case codes.FailedPrecondition, codes.InvalidArgument, codes.Unimplemented:
 		return true
@@ -91,13 +104,20 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 // workspace_seal_timeout and terminates the pod anyway.
 //
 // The §7.1 invariant holds the pod in draining and retries the export
-// until it succeeds or the window closes; this loop is that retry. The
-// Sealer no-ops (returns nil) for a session with no live workspace, so a
-// session that never ran on a pod completes on the first attempt with no
-// delay.
+// until it succeeds or the window closes; this loop is that retry. A
+// session with no binding on this replica (or a server with no pod
+// registry) has no live workspace here, so sealWorkspace skips the Sealer
+// and returns nil with no delay. With a binding, it marks the binding
+// closing and evicts the cached Attach stream before the first attempt, so
+// no turn and no non-seal checkpoint runs while the export reads the
+// workspace; the export itself uses the separate Checkpoint RPC, which the
+// eviction does not disturb. An attempt that fails after the binding was
+// removed from the registry has not exported the workspace and ends the
+// window with the permanent outcome.
 //
-// spec: §7.1 — backoff initial 5s, factor 2×, cap 60s per
-// attempt, total window maxWorkspaceSealDurationSeconds.
+// spec: §7.1 (Seal-and-export invariant) — backoff initial 5s, factor 2×,
+// cap 60s per attempt, total window maxWorkspaceSealDurationSeconds; §7.1
+// (Delivery and checkpoints during the seal).
 func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (retErr error) {
 	// spec: §16.3 — the gateway-side `session.seal_and_export`
 	// span covers the whole bounded-backoff retry loop, so a trace shows
@@ -119,6 +139,13 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 	ctx, cancel := context.WithTimeout(ctx, s.sealMaxDuration)
 	defer cancel()
 	start := s.clock()
+	if !s.beginSealClosing(sess.ID) {
+		// spec: §7.1 (Seal-and-export invariant) — no binding on this
+		// replica, so there is no workspace here to export; the outcome is
+		// the one a no-op seal records.
+		s.observeWorkspaceSeal(sess, start, sealOutcomeSuccess)
+		return nil
+	}
 	deadline := start.Add(s.sealMaxDuration)
 	backoff := sealBackoffInitial
 	var lastErr error
@@ -129,6 +156,14 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 			return nil
 		}
 		lastErr = err
+		// spec: §7.1 (Seal-and-export invariant) — a seal whose binding on
+		// this replica was removed after the seal began has not exported
+		// the workspace, and no later attempt can, so the window ends on
+		// the first observation with the permanent outcome.
+		if _, bound := s.podRegistry.Get(sess.ID); !bound {
+			s.observeWorkspaceSeal(sess, start, sealOutcomePermanent)
+			return lastErr
+		}
 		// spec: §7.1 — an export failure the adapter reports as
 		// permanent ends the window on its first observation with the same
 		// terminal outcome. The workspace-size probe rejection re-produces
@@ -161,6 +196,30 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 	}
 }
 
+// beginSealClosing starts the terminal seal on this replica's binding for
+// the session. It reports false, touching nothing, when the server has no
+// pod registry or the registry holds no binding for the session. Otherwise
+// it marks the binding closing, so the executor opens no stream over it and
+// the Checkpointer starts no non-seal attempt on it, and then evicts the
+// session's cached Attach stream, so a stream opened before the mark ends.
+// The mark precedes the eviction: a Send that misses the cache after the
+// eviction reads the mark and refuses. spec: §7.1 (Delivery and checkpoints
+// during the seal), §28.5.1 (Gateway-to-pod).
+func (s *Server) beginSealClosing(sessionID string) bool {
+	if s.podRegistry == nil {
+		return false
+	}
+	bind, ok := s.podRegistry.Get(sessionID)
+	if !ok {
+		return false
+	}
+	bind.MarkClosing()
+	if se, ok := s.executor.(streamEvicter); ok {
+		se.EvictStream(sessionID)
+	}
+	return true
+}
+
 // observeWorkspaceSeal records the §7.1
 // lenny_workspace_seal_duration_seconds{pool,outcome} histogram for one
 // completed seal attempt. The pool label is the session's runtime
@@ -174,18 +233,18 @@ func (s *Server) observeWorkspaceSeal(sess sessionstore.Session, start time.Time
 }
 
 // failWorkspaceSeal applies the §7.1 seal-timeout terminal
-// override: it transitions the session to failed with reason
-// workspace_seal_timeout and emits the workspaceSealFailed audit event
-// recording the last export error. The pod is terminated anyway by the
-// caller's executor.Close, satisfying "terminates the pod anyway". It
-// returns the updated session so the caller's downstream side effects
-// (billing, archive) observe the corrected terminal state.
+// override: it relabels the session's committed terminal state as failed
+// with reason workspace_seal_timeout and emits the workspaceSealFailed
+// audit event recording the last export error. The hook's release then
+// terminates the pod, or runs the slot cleanup and release, with the failed
+// disposition. It returns the updated session so the caller's downstream
+// side effects (billing, archive) observe the corrected terminal state.
 //
-// The override is skipped when the session is already failed: a session
-// that reached failed for another reason keeps its original failure
-// class rather than being relabeled by a best-effort seal.
+// The relabel is skipped only when the session is already failed with
+// reason workspace_seal_timeout; any other terminal state, failed included,
+// is relabelled, as the §7.1 Seal-and-export invariant states.
 //
-// spec: §7.1; §7.1.
+// spec: §7.1 (Seal-and-export invariant)
 func (s *Server) failWorkspaceSeal(ctx context.Context, sess sessionstore.Session, lastErr error) sessionstore.Session {
 	detail := ""
 	if lastErr != nil {

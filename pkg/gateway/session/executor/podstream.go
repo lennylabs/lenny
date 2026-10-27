@@ -24,6 +24,16 @@ import (
 // branches on it; it is wrapped so the message names the session.
 var errStreamEnded = errors.New("attach stream ended")
 
+// errNotWritten marks a turn error returned before the turn's envelope
+// reached the stream: the stream ended while the Send waited for the turn
+// token, or the write itself failed and the stream's end handling has run.
+// Send branches on it, together with the gateway's eviction and the
+// binding's closing mark, to tell a message the terminal seal stopped from
+// one the runtime may have received. An error from awaiting the reply of a
+// written envelope never carries it. spec: §7.1 (Delivery and checkpoints
+// during the seal).
+var errNotWritten = errors.New("message not written")
+
 // approvalErrorReason is the deny reason the reader relays when the §7.2
 // approval gate itself fails. The gate fails closed: the runtime's tool call
 // receives a denial rather than executing or waiting forever.
@@ -146,6 +156,17 @@ func (c *attachConn) sealEpoch() int64 {
 	return c.bind.SealEpoch()
 }
 
+// stoppedByClosing reports whether err, returned by runTurn, is a turn the
+// terminal seal stopped before its message was written: the error carries
+// errNotWritten, the gateway's eviction ended the stream, and the binding is
+// marked closing. Every not-written error is returned only after done
+// closes, and EvictStream sets closedByGateway before it cancels the
+// stream, so the mark is settled when this reads it. spec: §7.1 (Delivery
+// and checkpoints during the seal).
+func (c *attachConn) stoppedByClosing(err error) bool {
+	return errors.Is(err, errNotWritten) && c.closedByGateway.Load() && c.bind != nil && c.bind.Closing()
+}
+
 // newAttachConn builds an unopened conn for bind. Its context is derived
 // from ctx with ctx's cancellation removed, so the stream outlives the
 // request that opened it while keeping the request's values.
@@ -184,21 +205,21 @@ func (c *attachConn) send(b []byte) error {
 }
 
 // acquireTurn takes the turn token. It returns an error when ctx ends or the
-// stream ends first.
+// stream ends first; the stream-end error carries errNotWritten.
 func (c *attachConn) acquireTurn(ctx context.Context) error {
 	select {
 	case c.token <- struct{}{}:
 	case <-ctx.Done():
 		return fmt.Errorf("podexec: wait for turn on session %s: %w", c.sessionID, ctx.Err())
 	case <-c.done:
-		return fmt.Errorf("podexec: session %s: %w", c.sessionID, errStreamEnded)
+		return fmt.Errorf("podexec: session %s: %w: %w", c.sessionID, errStreamEnded, errNotWritten)
 	}
 	// The token and done can both be ready; a closed stream wins so the
 	// Send does not write to it.
 	select {
 	case <-c.done:
 		<-c.token
-		return fmt.Errorf("podexec: session %s: %w", c.sessionID, errStreamEnded)
+		return fmt.Errorf("podexec: session %s: %w: %w", c.sessionID, errStreamEnded, errNotWritten)
 	default:
 		return nil
 	}
@@ -276,11 +297,14 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 // stream-failure handler is still reporting the end, so a caller that
 // re-reads the session after the error sees the state the report recorded,
 // and a retried delivery cannot open a new stream over a binding the report
-// is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
+// is about to release. The error returned once the end handling has run
+// carries errNotWritten, because the failed write put nothing on the stream.
+// spec: §28.5.1 (CH-ATTACH Timing.), §7.1 (Delivery and checkpoints during
+// the seal).
 func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, writeEpoch int64, sendErr error) error {
 	select {
 	case <-c.done:
-		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, c.endCause(writeEpoch), sendErr)
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w: %w", c.sessionID, c.endCause(writeEpoch), errNotWritten, sendErr)
 	case <-ctx.Done():
 		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, ctx.Err(), sendErr)
 	}

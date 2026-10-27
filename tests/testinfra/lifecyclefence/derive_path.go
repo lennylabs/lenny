@@ -93,7 +93,7 @@ func (w *World) deriveOutcome(ctx context.Context, o *CreateOutcome, p *pathStor
 	o.ReservationKept = p.reservationKept()
 	switch {
 	case p.failureRow:
-		o.Path, o.Err = PathDeriveFailure, p.failureRowErr
+		o.Path, o.Err = PathDeriveFailure, failureRowOutcome(p.failureRowErr)
 	case rr.Code == http.StatusCreated && p.inserted:
 		o.Err = nil
 	case rr.Code == http.StatusForbidden:
@@ -108,6 +108,20 @@ func (w *World) deriveOutcome(ctx context.Context, o *CreateOutcome, p *pathStor
 	default:
 		o.Err = fmt.Errorf("lifecyclefence: derive answered %d: %s", rr.Code, rr.Body.String())
 	}
+}
+
+// failureRowOutcome classifies the derive-failure row's insert error. The
+// insert's generation fence persists no row when the source row is gone,
+// because the owner's erasure deleted it, or when its coordination
+// generation advanced, because a drain ended it; both are the source-gone
+// outcome rather than a defect. Any other error, a fence refusal included,
+// is returned as it is.
+// spec: §7.1 (Derive session semantics), §12.8 (Lifecycle fence and drain)
+func failureRowOutcome(err error) error {
+	if errors.Is(err, sessionstore.ErrNotFound) || errors.Is(err, sessionstore.ErrGenerationAdvanced) {
+		return fmt.Errorf("%w: derive-failure row fenced: %w", ErrSourceGone, err)
+	}
+	return err
 }
 
 // refusalOf returns the fence's refusal when the store returned one, and

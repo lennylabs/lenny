@@ -387,6 +387,29 @@ func (c *Cluster) ProjectPhase(ctx context.Context, p *Pod, phase string) error 
 	return nil
 }
 
+// SeedAgentPod creates the agent Pod object behind the pod's Sandbox, which
+// the harness otherwise leaves out, carrying the pool label and labels. A
+// scenario uses it where a gateway path reads the Pod itself, such as the
+// within-hold rebind's runtime-process lifetime check, which skips a
+// reserved candidate whose Pod read is NotFound. An existing Pod is left as
+// it is.
+// spec: §4.6.1 (Reserved hold; within-hold rebind), §5.2 (Runtime-process
+// lifetime)
+func (c *Cluster) SeedAgentPod(ctx context.Context, p *Pod, labels map[string]string) error {
+	podLabels := map[string]string{warmpool.LabelPool: Pool}
+	for k, v := range labels {
+		podLabels[k] = v
+	}
+	err := c.Client.Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: Namespace, Labels: podLabels},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "echo"}}},
+	})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("seed agent pod %s: %w", p.Name, err)
+	}
+	return nil
+}
+
 // RemoveSandbox deletes the pod's Sandbox, so no claim can take it, and
 // deletes the pod's claim, as the WarmPoolController does when it completes
 // a pod's termination.

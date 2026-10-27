@@ -5,6 +5,7 @@ package ctlcli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,6 +218,21 @@ func TestValidateAnswersRejectsUnknownEnvironment(t *testing.T) {
 	errs := validateAnswers(a)
 	if len(errs) == 0 {
 		t.Error("unknown environment should be rejected")
+	}
+}
+
+// spec: 17.9.1 (Composition Dimensions)
+// The wizard answers reject an empty environment (which deployenv.Validate
+// accepts as unset) and the retired "production" spelling, with the
+// closed-set error text.
+func TestValidateAnswersRejectsEmptyAndRetiredEnvironment_spec_17_9_1(t *testing.T) {
+	for _, env := range []string{"", "production"} {
+		a := installAnswers{Environment: env, Tier: "tier1", Auth: installAuth{Mode: "dev"}}
+		joined := strings.Join(validateAnswers(a), " ")
+		want := fmt.Sprintf("environment %q is not one of local, dev, staging, or prod", env)
+		if !strings.Contains(joined, want) {
+			t.Errorf("environment %q: want error %q, got %q", env, want, joined)
+		}
 	}
 }
 

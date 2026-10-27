@@ -151,22 +151,42 @@ func tenantEraserFunc(erasers []namedTenantEraser, name string) tenantEraseFunc 
 // is returned as a drain error, which keeps the job at Phase 2 for the
 // next tick.
 //
-// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
+// After the drain verifies, it holds the job at Phase 2 while any session
+// of the tenant is in its §7.1 post-terminal window (admin.ReleasePending),
+// because Phase 3 returns the sessions' leases and Phase 3.5 copies their
+// artifacts while a seal may still be writing them.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain),
+// §7.1 (Post-terminal window).
 type tenantSessionTerminator struct {
 	sessions admin.DrainLister
 	term     admin.DrainTerminator
 	// budget bounds each drain. It is the operator-tunable
 	// --lifecycle-tick-budget, which the startup gate requires positive.
 	budget time.Duration
+	// cap is the post-terminal window cap, the terminal pipeline budget.
+	// A non-positive cap fails every pass with admin.ErrReleaseCapUnset.
+	cap time.Duration
+	// clock reads the instant the window is evaluated at.
+	clock func() time.Time
 }
 
 // TerminateTenantSessions drains every non-terminal session of tenantID
-// and returns the drain's error.
+// and returns the drain's error, then returns an error naming the count of
+// the tenant's sessions still in their post-terminal window, or the
+// release check's own error, so the reconciler pauses the job at Phase 2.
 func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
 	tctx, cancel := context.WithTimeout(ctx, t.budget)
 	defer cancel()
 	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, tenantID, ""); err != nil {
 		return fmt.Errorf("tenant deletion drain: %w", err)
+	}
+	pending, err := admin.ReleasePending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)
+	if err != nil {
+		return fmt.Errorf("tenant deletion post-terminal release check: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("tenant deletion waits for %d drained session(s) in the post-terminal window", len(pending))
 	}
 	return nil
 }

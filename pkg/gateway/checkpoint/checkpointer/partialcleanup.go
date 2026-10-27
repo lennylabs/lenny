@@ -484,7 +484,16 @@ type PartialCleaner struct {
 // surface. It looks up the latest active partial manifest for the
 // supplied (tenant, session) and runs the cleanup pipeline. A session
 // with no active manifest is a no-op (returns nil).
-func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error {
+//
+// resumedGen is the coordination generation the committed resume row
+// carries. A row at or above it was written by the live incarnation (a
+// periodic checkpoint that started after the resume, or a terminal seal's
+// intent row) and is left in place. A row below it is the residue of an
+// abandoned attempt and is cleaned whatever its manifest_reason, an
+// in_progress row included, because a crashed attempt's intent row also
+// carries in_progress.
+// spec: §10.1.7 (Cleanup.)
+func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessionID string, resumedGen int64) error {
 	if c == nil || c.Store == nil {
 		return nil
 	}
@@ -495,6 +504,9 @@ func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessi
 			return nil
 		}
 		return fmt.Errorf("checkpointer: read latest active partial manifest: %w", err)
+	}
+	if record.CoordinationGeneration >= resumedGen {
+		return nil
 	}
 	return CleanupPartialManifest(ctx, c.Store, c.Catalog, c.Objects, c.TombstoneRetention, record, c.Metrics, false)
 }

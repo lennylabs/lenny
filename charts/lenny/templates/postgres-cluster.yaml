@@ -10,9 +10,11 @@ Rendering is gated on `postgres.deploy` (default false) and
 `postgres.dsn` (the gateway's connection target). Cloud-managed and
 external self-managed deployments leave `deploy` false and point `dsn` at
 a provider endpoint or an out-of-band Postgres; a chart-managed
-self-managed deployment sets `deploy: true` and points `dsn` at the
-operator-minted `lenny-postgres-rw` Service using the `lenny-postgres-app`
-secret CloudNativePG generates.
+self-managed deployment sets `deploy: true` with `pgbouncer.deploy: true`
+and points `dsn` at the `lenny-pgbouncer` Service on port 5432, using the
+credentials of the `lenny-postgres-app` secret CloudNativePG generates.
+PgBouncer routes to the operator-minted `lenny-postgres-rw` Service; §13.2
+admits the Lenny clients to Postgres only through PgBouncer.
 
 The CloudNativePG operator (and its `postgresql.cnpg.io` CRDs) must already
 be installed in the cluster; this template renders only the `Cluster`

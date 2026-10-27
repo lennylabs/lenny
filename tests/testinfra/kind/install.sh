@@ -123,6 +123,19 @@ MINIO_BUCKET="lenny-artifacts"
 MINIO_ACCESS_KEY="lennyminio"
 MINIO_SECRET_KEY="lennyminio123"
 
+# The e2e data-store S3 server and client images. The community
+# minio/minio and minio/mc images are no longer distributed, so the
+# fixtures run the maintained forks pgsty/silo and pgsty/mc, each pinned by
+# release tag and by the digest of its multi-arch index. datastores.yaml,
+# the HA overlay, the tier-5 and tier-8 one-shot mc pods
+# (tests/testinfra/kind/kind.go), and the chart's bucket-lifecycle Job
+# default name the same references. The Kind nodes cannot pull, so Step 2
+# pulls each image on the host and loads it, and Step 2c registers its
+# digest-pinned name on every node.
+MINIO_SERVER_IMAGE="pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
+MINIO_CLIENT_IMAGE="pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+EXTERNAL_IMAGES=("${MINIO_SERVER_IMAGE}" "${MINIO_CLIENT_IMAGE}")
+
 # IMAGE_SPECS is the image inventory, one image per line, in the format
 # tests/testinfra/kind/imagetag parses:
 #
@@ -575,30 +588,27 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
     done
   fi
 
-  # External prebuilt images the chart references that install.sh does not
-  # build: the MinIO client the bucket lifecycle Job runs. Pull and load it
-  # so the offline cluster's pullPolicy: Never resolves.
-  #
+  # External prebuilt images: the S3 server and client the data-store
+  # fixtures and the chart's bucket-lifecycle Job run. Each is pulled by
+  # its digest-pinned reference, tagged locally as <repo>:<tag> (a pull by
+  # digest leaves the image untagged, and `kind load` loads by name), and
+  # loaded onto the nodes that lack it. Step 2c registers the
+  # digest-pinned name on every node.
+  for img in "${EXTERNAL_IMAGES[@]}"; do
+    if ! docker image inspect "${img}" >/dev/null 2>&1; then
+      log "pulling external image ${img}"
+      docker pull "${img}"
+    fi
+    docker tag "${img}" "${img%@*}"
+    kind load docker-image --name "${CLUSTER}" "${img%@*}"
+  done
+
   # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
   # deliberately absent: e2e-values sets coredns.deploy=false, so the chart
   # renders no agent-dns Deployment. The image bundles the coredns-ratelimit
   # plugin, which has no public Go module source (github.com/coredns/ratelimit
   # 404s on the module proxy), so build/coredns-plugins cannot build offline,
   # and the private ghcr image cannot be pulled by the air-gapped kubelet.
-  EXTERNAL_IMAGES=(
-    "minio/mc:latest"
-  )
-  for img in "${EXTERNAL_IMAGES[@]}"; do
-    if ! docker image inspect "${img}" >/dev/null 2>&1; then
-      log "pulling external image ${img}"
-      if ! docker pull "${img}"; then
-        log "WARNING: could not pull ${img}; relying on a pre-loaded image on ${CLUSTER}"
-        continue
-      fi
-    fi
-    kind load docker-image --name "${CLUSTER}" "${img}" || \
-      log "WARNING: could not load ${img} onto ${CLUSTER}; relying on a pre-loaded image"
-  done
 fi
 
 # ---------------------------------------------------------------------
@@ -680,6 +690,15 @@ RUNTIME_DIGEST_REFS=(
   "${SUPERVISE_PROBE_IMAGE}"
 )
 for node in $(kind get nodes --name "${CLUSTER}"); do
+  # The external images are loaded as docker.io/<repo>:<tag>, and the
+  # fixtures name them as <repo>:<tag>@sha256:<index digest>, which the
+  # kubelet looks up as docker.io/<repo>@sha256:<index digest>.
+  for ref in "${EXTERNAL_IMAGES[@]}"; do
+    docker exec "${node}" ctr -n k8s.io images tag --force \
+      "docker.io/${ref%@*}" \
+      "docker.io/${ref%%:*}@${ref#*@}" >/dev/null 2>&1 || \
+      log "WARNING: could not tag ${ref%%:*}@${ref#*@} on ${node}; the pod may ImagePullBackOff"
+  done
   for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
     # ref is `<repo>:<tag>@sha256:<id>`; the source tag is the part before
     # `@`, and the digest-pinned target containerd needs is
@@ -855,7 +874,7 @@ kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
 # verification). The gateway and the chart's bucket-lifecycle Job verify the
 # cert properly against the mounted CA; this throwaway bootstrap pod does not.
 kc -n lenny-system run lenny-e2e-minio-mb \
-  --image=minio/mc:RELEASE.2024-09-16T17-43-14Z \
+  --image="${MINIO_CLIENT_IMAGE}" \
   --image-pull-policy=IfNotPresent \
   --restart=Never \
   --attach \
@@ -1411,11 +1430,11 @@ bootstrap:
       dnsPolicy: cluster-default
 EOF
 
-# §25.4 — "No anonymous access except /healthz." lenny-ops only
-# wires its authentication gate when a bearer-trust key is configured;
-# without it cmd/lenny-ops/main.go buildAuthConfig returns a nil
-# AuthConfig outside production and the operability surface admits
-# anonymous callers. Create the bearer-trust key Secret named by
+# §25.4 — "No anonymous access except /healthz." In dev mode
+# (global.devMode renders --dev-mode on lenny-ops) lenny-ops only wires
+# its authentication gate when a bearer-trust key is configured; without
+# it cmd/lenny-ops/main.go buildAuthConfig returns a nil AuthConfig and
+# the operability surface admits anonymous callers. Create the bearer-trust key Secret named by
 # security.oidc.bearerTrustKeySecret in e2e-values.yaml so the deployed
 # lenny-ops runs with a RequireAuth AuthConfig and the §25.4 auth gate is
 # exercised end-to-end. The Secret holds a §17.4 HMAC key file (keyId +
@@ -1423,7 +1442,7 @@ EOF
 # jwt.LoadHMACKeyFile parses; the chart mounts it at /etc/lenny/oidc/key
 # and passes --bearer-trust-hmac-key-file. The key is a fixed dev value:
 # the e2e callers authenticate through the dev-mode identity headers
-# (global.devMode: true keeps production=false), so no test mints a bearer
+# (global.devMode: true renders --dev-mode on lenny-ops), so no test mints a bearer
 # against this key. It exists only so the auth gate is wired and anonymous
 # callers are rejected. create --dry-run | apply keeps the step
 # idempotent across re-runs.
@@ -1474,6 +1493,9 @@ poolScalingController:
 bootstrap:
   image:
     tag: $(image_tag lenny-ctl)
+minio:
+  lifecycle:
+    image: ${MINIO_CLIENT_IMAGE}
 EOF
 
 # --server-side=false forces client-side apply. Helm 4 defaults to

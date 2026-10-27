@@ -457,6 +457,18 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--feature-cosign-verify=true"
+      # §17.9.1 "Production mode": --environment is the one carrier; the
+      # chart sets no environment variable that names production mode.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
 
   # §12.4 (F-12.4.15): the BYO-Redis maxmemory-policy audit is opt-in.
   # At chart defaults no --redis-url flag is rendered.

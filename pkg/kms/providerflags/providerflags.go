@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/kms"
 	kmsaws "github.com/lennylabs/lenny/pkg/kms/aws"
 	kmsazure "github.com/lennylabs/lenny/pkg/kms/azure"
@@ -41,11 +42,14 @@ type Options struct {
 	// Provider names the §17.5 KEK seam: local | aws | gcp | azure.
 	Provider string
 
-	// Environment is "prod" when the binary is running a production
-	// install. When non-empty, Resolve rejects ProviderLocal (the
-	// in-process random KEK cannot decrypt a persisted ciphertext
-	// from a previous boot, so it is not safe in production).
-	// spec: F-4.3.11 / F-17.5.2 — reject local in prod.
+	// Environment is the §17.9.1 Environment value carried by
+	// --environment (LENNY_ENV as fallback). The finalizer Bind returns
+	// refuses a non-empty value outside the closed set, and
+	// deployenv.IsProduction is the only reader that derives production
+	// mode from it. In production mode Resolve rejects ProviderLocal: the
+	// in-process KEK cannot decrypt a persisted ciphertext from a
+	// previous boot.
+	// spec: §17.9.1 (Composition Dimensions) "Production mode"; §17.4.
 	Environment string
 
 	// MasterKeyFile is the §17.4 file-backed soft-HSM master key path.
@@ -76,14 +80,16 @@ type Options struct {
 }
 
 // Resolve constructs the kms.Provider the operator selected. Returns
-// ErrLocalForbidden when Environment names a production install and
-// Provider is "local".
+// ErrLocalForbidden when Environment is production mode and Provider is
+// "local" or empty.
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"
 func Resolve(ctx context.Context, opts Options) (kms.Provider, error) {
 	prov := strings.ToLower(strings.TrimSpace(opts.Provider))
 	if prov == "" {
 		prov = ProviderLocal
 	}
-	if prov == ProviderLocal && strings.EqualFold(opts.Environment, "prod") {
+	if prov == ProviderLocal && deployenv.IsProduction(opts.Environment) {
 		return nil, ErrLocalForbidden
 	}
 	if prov != ProviderLocal {
@@ -184,8 +190,9 @@ func resolveAzure(opts Options) (kms.Provider, error) {
 }
 
 // Bind registers the canonical `--kms-*` flag surface on fs and
-// returns a finalizer the caller invokes after flag.Parse so the
-// alias map is parsed from its comma-separated string into the
+// returns a finalizer the caller invokes after flag.Parse. The finalizer
+// validates --environment against the §17.9.1 closed set and parses the
+// alias map from its comma-separated string into the
 // returned Options.AliasToKey. The chart's gateway-deployment.yaml /
 // token-service-deployment.yaml templates render the same flag names
 // from `gateway.kms.*` / `tokenService.kms.*` values, so a Helm value
@@ -209,8 +216,9 @@ func Bind(fs *flag.FlagSet, env func(string) string, defaults Options) (*Options
 			"Rejected when --environment=prod. Override via LENNY_KMS_PROVIDER.")
 	fs.StringVar(&opts.Environment, "environment",
 		def("LENNY_ENV", defaults.Environment),
-		"Deployment environment (dev | staging | prod). Production refuses "+
-			"to start with --kms-provider=local. Override via LENNY_ENV.")
+		"Deployment environment (local | dev | staging | prod); prod is "+
+			"production mode (§17.9.1) and refuses --kms-provider=local. "+
+			"Override via LENNY_ENV.")
 	fs.StringVar(&opts.MasterKeyFile, "kms-master-key-file",
 		def("LENNY_KMS_MASTER_KEY_FILE", defaults.MasterKeyFile),
 		"§17.4 file-backed soft-HSM master key path for "+
@@ -234,6 +242,12 @@ func Bind(fs *flag.FlagSet, env func(string) string, defaults Options) (*Options
 			"On a cloud provider, platform:jwt-signing and platform:jwt-verify must name an immutable "+
 			"key version (AWS key ID or key ARN, GCP .../cryptoKeyVersions/<n>, Azure <keyName>@<version>).")
 	return opts, func() error {
+		// spec: §17.9.1 (Composition Dimensions) "Production mode": an
+		// off-set value refuses to start rather than run outside
+		// production mode silently.
+		if err := deployenv.Validate(opts.Environment); err != nil {
+			return fmt.Errorf("--environment: %w", err)
+		}
 		m, err := ParseAliases(aliasesRaw)
 		if err != nil {
 			return err

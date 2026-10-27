@@ -634,27 +634,22 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // profile; no workspace snapshot, pod, or credential lease is recorded
 // because none ever existed.
 //
-// The write is guarded by a §10.1 coordinator-handoff CAS fence: the
-// source's `coordination_generation` is re-read from the primary and
-// compared against the stamp captured at derive admission (the generation on
-// the `source` row the handler already holds). The fence skips the write
-// whenever the source's coordination_generation has advanced since
-// admission: a replacement coordinator's handoff (replica crash or Postgres
-// failover mid-copy), and a resume_pending → resuming write that started a
-// new resuming incarnation of the source. The row records the Terminated
-// fact in its own Create. spec: §7.1 (Normal Flow) derive rule 2 (CAS-fenced
-// INSERT); §15.1. F-15.1.14.
+// The write is guarded by a §10.1 coordinator-handoff CAS fence inside the
+// INSERT transaction (CreateIfGeneration): the store reads the source's
+// `coordination_generation` under a shared lock and compares it against the
+// stamp captured at derive admission (the generation on the `source` row the
+// handler already holds). The fence skips the write whenever the source's
+// coordination_generation has advanced since admission: a replacement
+// coordinator's handoff (replica crash or Postgres failover mid-copy), and a
+// resume_pending → resuming write that started a new resuming incarnation of
+// the source. Because the read and the INSERT share one transaction, a bump
+// racing the insert cannot leave a row at a stale generation. The write runs
+// on a context detached from the request's cancellation, so a client that
+// disconnects after the copy failed does not cut the audit row. The row
+// records the Terminated fact in its own Create. spec: §7.1 (Derive session
+// semantics) derive rule 2 (CAS-fenced INSERT); §15.1. F-15.1.14.
 func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
 	if !s.persistDeriveFailureRows {
-		return
-	}
-	// spec: §7.1 (Normal Flow) — CAS fence on the primary row: the write is
-	// skipped whenever the source's coordination_generation has advanced
-	// since admission, so a stale replica, or an admission an entry write
-	// overtook, persists no row.
-	cur, err := s.readPrimary(ctx, source.TenantID, source.ID)
-	if err != nil || cur.CoordinationGeneration != source.CoordinationGeneration {
-		s.recordDeriveFailureAudit("fenced")
 		return
 	}
 	now := s.clock()
@@ -672,11 +667,19 @@ func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.S
 		UpdatedAt:        now,
 	}
 	sessionstore.MarkTerminated(&row, "", now)
-	if err := s.store.Create(ctx, row); err != nil {
+	// spec: §7.1 (Derive session semantics) — the CAS fence runs in the
+	// INSERT transaction, so a stale replica, or an admission an entry
+	// write overtook, persists no row.
+	err := s.store.CreateIfGeneration(context.WithoutCancel(ctx), row,
+		source.TenantID, source.ID, source.CoordinationGeneration)
+	switch {
+	case err == nil:
+		s.recordDeriveFailureAudit("persisted")
+	case errors.Is(err, sessionstore.ErrGenerationAdvanced), errors.Is(err, sessionstore.ErrNotFound):
+		s.recordDeriveFailureAudit("fenced")
+	default:
 		s.recordDeriveFailureAudit("error")
-		return
 	}
-	s.recordDeriveFailureAudit("persisted")
 }
 
 // recordDeriveFailureAudit bumps the §16.1

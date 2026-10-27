@@ -59,6 +59,16 @@ type Session struct {
 	TerminatedAt     time.Time
 	TerminatedReason string
 
+	// PodReleasedAt is the §7.1 release marker: the wall-clock instant the
+	// gateway recorded that this terminal session's pod or slot was
+	// released. It is the zero time until the replica that released the
+	// session's binding, or reclaimed its pre-running claim, records the
+	// release with MarkPodReleased. A terminal row that names a pod and has
+	// no marker is in its post-terminal window until TerminatedAt plus the
+	// terminal pipeline budget (InPostTerminalWindow).
+	// spec: §7.1 (Post-terminal window).
+	PodReleasedAt time.Time
+
 	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
 	// session-condition fact, relocated off Sandbox.status.conditions
 	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
@@ -947,6 +957,18 @@ type Store interface {
 	// spec: §12.8 (Lifecycle fence and drain).
 	Create(ctx context.Context, s Session) error
 
+	// CreateIfGeneration is Create fenced on a source session's
+	// coordination generation: in the insert transaction it reads the
+	// source row (sourceTenantID, sourceID) under a shared lock and, when
+	// its coordination_generation differs from wantGen, returns
+	// ErrGenerationAdvanced and inserts nothing. A missing source row
+	// returns ErrNotFound and inserts nothing. A concurrent write that
+	// advances the generation either commits before the read and is seen,
+	// or waits on the shared lock until the insert commits, so no row is
+	// written at a stale generation. The derive-failure audit row uses it.
+	// spec: §7.1 (Derive session semantics).
+	CreateIfGeneration(ctx context.Context, s Session, sourceTenantID, sourceID string, wantGen int64) error
+
 	// Reserve runs the creation fence for a row that ownerUserID will own
 	// and records sessionID for that owner, in one transaction. It returns
 	// *CreationRefusal when the fence refuses, and records nothing. An
@@ -1050,8 +1072,12 @@ type Store interface {
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// GetActiveSlotsByPod returns the identifiers of the pod's slot
-	// holders across every tenant: the sessions whose row is non-terminal
-	// and whose pod_assignment names podID (the slot-holder predicate). It
+	// holders across every tenant: the sessions whose pod_assignment names
+	// podID and whose row is non-terminal or in its §7.1 post-terminal
+	// window under the store's cap (HoldsPod; the Postgres store reads the
+	// non-terminal arm through the migration 0080 index and the terminal arm
+	// through the migration 0191 index). A store built without a cap counts
+	// no terminal row. It
 	// is the §5.2 "Post-recovery rehydration atomicity" seed source: the
 	// gateway adds these identifiers to lenny:pod:{pod_id}:active_slots,
 	// keeping the members the set already holds. The failure funnel clears
@@ -1061,17 +1087,17 @@ type Store interface {
 	// holds only the pod identity; §5.2 tenant pinning guarantees the rows
 	// all belong to one tenant. An empty podID or a pod with no slot holder
 	// returns (nil, nil).
-	// spec: §5.2 (Post-recovery rehydration atomicity).
+	// spec: §5.2 (Post-recovery rehydration atomicity), §7.1 (Post-terminal window).
 	GetActiveSlotsByPod(ctx context.Context, podID string) ([]string, error)
 
-	// ListPodsWithActiveSlots returns, once each, the pods that a
-	// non-terminal session row whose scrub_policy is best-effort-per-slot
-	// names in pod_assignment, across tenants. The slot counter's recovery
+	// ListPodsWithActiveSlots returns, once each, the pods that a session
+	// row whose scrub_policy is best-effort-per-slot holds by the two arms
+	// GetActiveSlotsByPod reads, across tenants. The slot counter's recovery
 	// rebuild deletes each listed pod's rehydrated flag when a Redis outage
 	// ends, so the pod's next reservation or release rehydrates its set. An
 	// empty pod_assignment is never returned.
 	// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery
-	// rehydration atomicity).
+	// rehydration atomicity), §7.1 (Post-terminal window).
 	ListPodsWithActiveSlots(ctx context.Context) ([]string, error)
 
 	// ListStaleTerminalSessions returns the identifiers in ids whose row is
@@ -1090,16 +1116,17 @@ type Store interface {
 	// per-pod session-mode slot counter. It serializes the slot-admission
 	// decision for podID under a per-pod Postgres advisory lock so two
 	// concurrent admissions during a Redis outage cannot both observe the
-	// same free slot: under the lock it counts live (non-terminal) sessions
-	// bound to podID (the same source GetActiveSlotsByPod reads) and admits
+	// same free slot: under the lock it counts the sessions that hold podID,
+	// non-terminal or in their §7.1 post-terminal window (the same source
+	// GetActiveSlotsByPod reads), and admits
 	// only when that count is below maxConcurrent. It returns the
 	// post-admission slot count on success (the observed count plus one) and
 	// ErrSlotsExhausted-equivalent semantics via admitted=false when the pod
 	// is already at its bound. The lock is held only for the duration of the
 	// count-and-decide; the §12.4 posture documents the fallback as a
 	// degraded Postgres-latency path bounded by slotCounterPostgresFallbackMaxSeconds.
-	// spec: §12.4;
-	// §5.2.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment
+	// atomicity), §7.1 (Post-terminal window).
 	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
 
 	// PoolDrainStats returns the §15.1 pool-drain accounting for
@@ -1213,6 +1240,11 @@ type ListFilter struct {
 var (
 	ErrNotFound      = errors.New("sessionstore: session not found")
 	ErrAlreadyExists = errors.New("sessionstore: session already exists")
+	// ErrGenerationAdvanced is returned by CreateIfGeneration when the
+	// source row's coordination generation is no longer the one the caller
+	// admitted against; nothing was inserted. spec: §7.1 (Derive session
+	// semantics).
+	ErrGenerationAdvanced = errors.New("sessionstore: source coordination generation advanced")
 )
 
 // SessionAgeCounts reports whether the §6.2 maxSessionAge timer runs in st.

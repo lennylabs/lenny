@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/lennylabs/lenny/pkg/deployenv"
 )
 
 // MinKubernetesMinor is the §17.6 minimum supported Kubernetes
@@ -90,15 +92,17 @@ func leadingDigits(s string) string {
 }
 
 // SIEMEndpointCheck is the §17.6 SIEM-endpoint advisory. When
-// the deployment runs in production with no audit.siem.endpoint
+// the deployment runs in production mode with no audit.siem.endpoint
 // configured it emits a non-blocking warning: audit logs are stored in
 // Postgres only, which does not meet compliance-grade audit-integrity
 // requirements. The check always passes (it never blocks an install).
 //
-// spec: §17.6.
+// spec: §17.6, §17.9.1 (Composition Dimensions) "Production mode".
 type SIEMEndpointCheck struct {
-	// Environment is the chart `environment` value (dev | staging |
-	// prod | production).
+	// Environment is the chart `environment` value. Production mode is
+	// the exact value prod, read through deployenv.IsProduction.
+	//
+	// spec: §17.9.1 (Composition Dimensions) "Production mode"
 	Environment string
 	// SIEMEndpoint is the audit.siem.endpoint value. Empty triggers the
 	// warning in a production environment.
@@ -107,24 +111,13 @@ type SIEMEndpointCheck struct {
 
 // Decide evaluates the §17.6 SIEM advisory.
 func (c SIEMEndpointCheck) Decide() Decision {
-	if !isProductionEnvironment(c.Environment) || strings.TrimSpace(c.SIEMEndpoint) != "" {
+	if !deployenv.IsProduction(c.Environment) || strings.TrimSpace(c.SIEMEndpoint) != "" {
 		return Decision{Passed: true}
 	}
 	return Decision{
 		Passed: true,
 		Reason: "WARNING: audit.siem.endpoint is not configured. Audit logs will be stored in Postgres only. A database superuser can bypass INSERT-only grants. This deployment does not meet compliance-grade audit integrity requirements (SOC2 CC7.2, FedRAMP AU-9, HIPAA §164.312(b)). Configure audit.siem.endpoint before using for regulated workloads (Section 11.7).",
 	}
-}
-
-// isProductionEnvironment reports whether the chart environment value
-// names a production posture. §17.6 keys on LENNY_ENV=production;
-// the chart `environment` value uses `prod`, so both spellings match.
-func isProductionEnvironment(env string) bool {
-	switch strings.ToLower(strings.TrimSpace(env)) {
-	case "prod", "production":
-		return true
-	}
-	return false
 }
 
 // StorageRouterRegion names one data-residency region the chart declares

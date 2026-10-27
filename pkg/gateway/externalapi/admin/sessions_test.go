@@ -339,3 +339,71 @@ func TestAdminSessionRoutesUnregisteredWhenNil_spec_24_11(t *testing.T) {
 		t.Fatalf("status %d, want 404 (route unregistered)", rr.Code)
 	}
 }
+
+// cancellingSessionAdmin wraps fakeSessionAdmin and cancels the admin
+// request's context inside ForceTerminate, after the forced write commits,
+// as a client that disconnects while the synchronous terminal pipeline runs.
+type cancellingSessionAdmin struct {
+	*fakeSessionAdmin
+	cancel context.CancelFunc
+}
+
+func (c *cancellingSessionAdmin) ForceTerminate(ctx context.Context, tenantID, id string) (sessionstore.Session, session.State, bool, error) {
+	sess, prev, transitioned, err := c.fakeSessionAdmin.ForceTerminate(ctx, tenantID, id)
+	c.cancel()
+	return sess, prev, transitioned, err
+}
+
+// ctxRespectingAudit appends an event only when the context it is handed is
+// live, as a durable audit write on a cancelled context fails.
+type ctxRespectingAudit struct {
+	recordingAudit
+	dropped int
+}
+
+func (a *ctxRespectingAudit) EmitAdminEvent(ctx context.Context, ev admin.AuditEvent) {
+	if ctx.Err() != nil {
+		a.mu.Lock()
+		a.dropped++
+		a.mu.Unlock()
+		return
+	}
+	a.recordingAudit.EmitAdminEvent(ctx, ev)
+}
+
+// TestAdminForceTerminateAuditSurvivesCancelledRequest_spec_7_1 asserts that
+// the session.force_terminated audit row is appended when the admin request
+// context is cancelled during the synchronous force-terminate: the gateway
+// emits the audit event of a committed forced write on a context it owns.
+// Against a handler that emits on the request context, the row is dropped.
+//
+// spec: 7.1 (Gateway-owned terminal writes), 11.7 (Audit Logging), 24.11
+func TestAdminForceTerminateAuditSurvivesCancelledRequest_spec_7_1(t *testing.T) {
+	inner := &fakeSessionAdmin{rows: map[string]sessionstore.Session{
+		"sess_1": {ID: "sess_1", TenantID: "acme", State: session.StateRunning},
+	}}
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/sessions/sess_1/force-terminate", nil))
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	req = req.WithContext(ctx)
+	sa := &cancellingSessionAdmin{fakeSessionAdmin: inner, cancel: cancel}
+	audit := &ctxRespectingAudit{}
+	h := newSessionAdminRouter(t, sa, audit).Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if req.Context().Err() == nil {
+		t.Fatal("the request context was not cancelled during ForceTerminate; the test does not exercise the cancelled path")
+	}
+	events := audit.snapshot()
+	if len(events) != 1 || events[0].Type != "session.force_terminated" {
+		t.Fatalf("audit events = %+v (dropped %d), want one session.force_terminated", events, audit.dropped)
+	}
+	if events[0].ActorSubject == "" {
+		t.Error("the detached emit lost the request principal")
+	}
+}

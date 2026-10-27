@@ -309,6 +309,11 @@ sites:
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
+    - path: pkg/gateway/sessionserver/terminal_context_internal_test.go
+      function: TestTerminalPipelineContextEveryWriter_spec_7_1
+      site: 1
+      call: Skipf
+      reason: 'no post-terminal hook: %s'
     - path: pkg/gateway/sessionserver/treerecovery_internal_test.go
       function: TestNodeNeedsRecoveryNilRegistry
       site: 1

@@ -119,10 +119,10 @@ func loadE2EBearerTrustSigner(t *testing.T, c *kind.Cluster) *jwt.HMACSigner {
 // from every user row this e2e install's bootstrap seeds
 // (tests/testinfra/kind/e2e-values.yaml bootstrap.users lists only
 // alice@acme.com), so the gateway's PlatformRoles override
-// (userstorePlatformRoles.ResolveRoles) finds no stored assignment for
+// (userstore.PlatformRoles.ResolveRoles) finds no stored assignment for
 // (tenant, subject) and leaves the JWT's own `roles` claim — not a
-// stored row — authoritative (cmd/lenny-gateway/main.go
-// userstorePlatformRoles.ResolveRoles returns found=false on a missing
+// stored row — authoritative (pkg/gateway/environment/userstore
+// userstore.PlatformRoles.ResolveRoles returns found=false on a missing
 // row).
 func mintScopedBearer(t *testing.T, signer *jwt.HMACSigner, scope string) string {
 	t.Helper()

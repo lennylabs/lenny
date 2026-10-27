@@ -31,18 +31,26 @@ import (
 // TestOpsServiceRemediationLockPersistenceE2E boots cmd/lenny-ops against
 // real Postgres and Redis and walks the §25.4 watchdog journey, asserting
 // that a remediation lock acquired through POST /v1/admin/remediation-locks
-// persists to the Postgres Tier-1 store and that a DELETE releases it.
+// persists to the Postgres Tier-1 store and that a DELETE releases it. It
+// also asserts that --platform-tier=tier2, with no --environment, makes the
+// live process require Idempotency-Key on a §25.4 required endpoint.
 //
 // spec: §25.4 (the mandatory lenny-ops service hosts the remediation
 // surface; Tier 1 Postgres acquire is a distributed mutex over the shared
-// ops_remediation_locks table; a released lock leaves no row).
+// ops_remediation_locks table; a released lock leaves no row; the
+// non-convergent endpoints require Idempotency-Key at Tier 2/3); §17.9.1
+// "Production mode" (the required-key posture is keyed on tier rather than
+// on production mode).
 // diagnosis: a failure means the cmd/lenny-ops composition root did not
 // thread the live Postgres Tier-1 store through to the remediation-lock
 // surface. Either POST /v1/admin/remediation-locks did not persist a row
 // to ops_remediation_locks, a duplicate acquire did not return the 409
 // distributed-mutex conflict, or DELETE did not remove the row — any of
 // which shows the §25.4 remediation endpoints diverged from the spec when
-// driven against a real store rather than an httptest stub.
+// driven against a real store rather than an httptest stub. A key-less
+// upgrade start that does not answer 400 IDEMPOTENCY_KEY_REQUIRED means the
+// composition root fed the required-key posture from something other than
+// --platform-tier, such as production mode, which is off here.
 func TestOpsServiceRemediationLockPersistenceE2E(t *testing.T) {
 	opsprocess.SkipUnlessAvailable(t)
 
@@ -136,6 +144,16 @@ func TestOpsServiceRemediationLockPersistenceE2E(t *testing.T) {
 	links, _ := me["links"].(map[string]any)
 	if got, _ := links["myOperations"].(string); got != "/v1/admin/me/operations" {
 		t.Errorf("links.myOperations = %q, want /v1/admin/me/operations", got)
+	}
+
+	// ---- §25.4: tier2 requires Idempotency-Key outside production mode ----
+	code, idem := do(http.MethodPost, "/v1/admin/platform/upgrade/start", map[string]any{"version": "1.6.0"})
+	if code != http.StatusBadRequest {
+		t.Errorf("key-less POST /v1/admin/platform/upgrade/start at tier2: status %d, want 400; body %v", code, idem)
+	}
+	idemErr, _ := idem["error"].(map[string]any)
+	if got, _ := idemErr["code"].(string); got != "IDEMPOTENCY_KEY_REQUIRED" {
+		t.Errorf("key-less upgrade start at tier2: code = %q, want IDEMPOTENCY_KEY_REQUIRED; body %v", got, idem)
 	}
 
 	// ---- inventory: the caller's in-flight operations (empty so far) ----

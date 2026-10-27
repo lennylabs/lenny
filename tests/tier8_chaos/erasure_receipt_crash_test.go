@@ -71,6 +71,7 @@ func erasureExecutor(pool *pgxpool.Pool, sink func(context.Context, erasurejob.J
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
 		WithSessionDrain(func(context.Context, string, string) error { return nil }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
+		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithCompletionReceipt(sink)
 }
 

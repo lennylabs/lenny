@@ -62,10 +62,13 @@ func SkipUnlessAvailable(t testing.TB) {
 // working directory at the repo root so the default --runbook-dir
 // (docs/runbooks) resolves; a missing dir is non-fatal.
 //
-// The binary is started outside production posture, so the operability
-// surface is unauthenticated and honours the X-Lenny-* dev headers for
-// identity and role — the same convention the gateway integration
-// harness uses.
+// The binary is started in dev mode (LENNY_DEV_MODE=true) and outside
+// production posture, so the operability surface is unauthenticated and
+// honours the X-Lenny-* dev headers for identity and role, the same
+// convention the gateway integration harness uses. §17.4 "Dev mode guard
+// rails" makes LENNY_DEV_MODE the single gate for those relaxations; a
+// test that needs the non-dev posture passes LENNY_DEV_MODE=false in
+// Options.Env.
 func StartWith(t testing.TB, extraArgs ...string) *Process {
 	t.Helper()
 	return StartOpts(t, Options{Args: extraArgs})
@@ -130,7 +133,10 @@ func StartOpts(t testing.TB, opts Options) *Process {
 	// auth-less and plaintext (the dev/local posture the opt-out exists
 	// for), so default the env flag; a caller that passes an explicit
 	// --redis-allow-insecure flag is unaffected because the later value wins.
-	cmd.Env = append(append(os.Environ(), "LENNY_REDIS_ALLOW_INSECURE=true", stackkey.Env(t)), opts.Env...)
+	// §17.4: LENNY_DEV_MODE=true admits the dev headers, the dev trust
+	// hook (AuthArgs), and the unauthenticated surface the integration
+	// tests rely on. An Options.Env entry overrides it.
+	cmd.Env = append(append(os.Environ(), "LENNY_REDIS_ALLOW_INSECURE=true", "LENNY_DEV_MODE=true", stackkey.Env(t)), opts.Env...)
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause the
 	// process to exit within this window, the runtime sends SIGKILL and
 	// closes the inherited stdio pipes so cmd.Wait can return.
