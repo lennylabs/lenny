@@ -93,18 +93,21 @@ func newFixture(t *testing.T) *fixture {
 		f.principal <- p
 		return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "terminated"}}}, nil
 	})
+	// The recorder wraps the production listener so it captures the request
+	// exactly as the serving replica sent it, before the listener consumes
+	// and strips the calling-session header.
+	listener := sessionserver.NewHolderForwardHandler(tools.Handler(), authmw.Options{RequireAuth: true, Verifier: signer}, f.sessions)
 	record := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		f.requests <- wireRequest{method: r.Method, path: r.URL.RequestURI(), header: r.Header.Clone(), body: string(b)}
 		r.Body = io.NopCloser(bytes.NewReader(b))
-		tools.Handler().ServeHTTP(w, r)
+		listener.ServeHTTP(w, r)
 	})
-	listener := sessionserver.NewHolderForwardHandler(record, authmw.Options{RequireAuth: true, Verifier: signer}, f.sessions)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := &http.Server{Handler: listener, TLSConfig: sessionserver.HolderForwardServerTLS(reloader, m.CAPool), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: record, TLSConfig: sessionserver.HolderForwardServerTLS(reloader, m.CAPool), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ServeTLS(lis, "", "") }()
 	t.Cleanup(func() { _ = srv.Close() })
 
