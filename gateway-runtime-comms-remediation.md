@@ -3641,14 +3641,20 @@ other test in that binary.
     464.3 s in a scoped unit-tier run), now the slowest measured unit-tier package. Fixed in `229f9d829`: the
     package shares one control plane, and each test gets its own namespace and a `Runtime` named after it.
     The package fell from 378.4 s to 18.7 s.
-  - [ ] **T-17.4.28** (Medium): `pkg/gateway/session/recycle` starts a control plane in each of its 21
+  - [x] **T-17.4.28** (Medium): `pkg/gateway/session/recycle` starts a control plane in each of its 21
     envtest-backed tests and, at 251.5 s in a scoped unit-tier run, is now the slowest measured unit-tier
-    package. Filed from the T-17.4.26 fix (2026-10-27).
+    package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
+    plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
+    unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
   - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
-  - [ ] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
+  - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
+    Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
+    the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
+    one owning test. The package fell from 151.7 s to 25.9 s.
   - [ ] **T-17.4.24** (Low): `tests/tier2_component/controllers` starts one in 17 tests (146.3 s).
-  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s).
+  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
