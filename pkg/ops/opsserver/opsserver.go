@@ -590,9 +590,9 @@ func degradedHealthDeps(results map[string]probe.Result) []string {
 // handleReadyz serves the §25.4 /readyz dependency report. It returns
 // 200 while the process is serving and reports each dependency probe
 // result in the body, so an operator or agent reading the endpoint sees
-// which dependency is down. The chart probes it for readiness outside
-// production mode (environment: prod); in production mode it probes the
-// permissive /healthz.
+// which dependency is down. It is a diagnostic report that no probe
+// uses: the chart's readiness, startup, and liveness probes use the
+// permissive /healthz in every environment (spec: §25.4 "Probes").
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
 	body := map[string]any{
