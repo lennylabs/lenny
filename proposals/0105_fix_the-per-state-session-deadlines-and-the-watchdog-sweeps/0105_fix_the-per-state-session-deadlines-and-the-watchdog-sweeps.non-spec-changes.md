@@ -141,6 +141,8 @@ Targets: `pkg/gateway/sessionserver/start.go` (`handleStart`, `commitStart`, and
 
 ### CODE-7 · `lenny/request_input` persists `input_required`
 
+> **Pending redesign (summary D13).** Items 1 to 3 are being redesigned to carry the newest wait's request ID on the row, apply the exit write only to its own wait, and recover at the `LNK-GWCONTROL` connection boundary. Their text below is replaced by the redesign pass.
+
 Targets: `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` (the `lenny/request_input` handler around the `InputWaits` registration and its wait `select`) and the gates listed in item 4.
 
 1. **Entry write.** After `InputWaits.Register` succeeds and before `elicitation_request` is published, the handler updates the session row on the request context. The mutator sets `State` to `input_required` when the locked row is `running`, and returns `sessionstore.ErrSuperseded` for any other state. Cite §7.2 **Session state machine:** (`running → input_required`).
