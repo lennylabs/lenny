@@ -3089,6 +3089,7 @@
         "tests/tier4_integration/session_suspension_delivery_integration_test.go::TestTerminalWriteOnAPeerReleasesThroughTheCoordinator_spec_7_2",
         "tests/tier4_integration/delegation_tree_resume_peer_child_test.go::TestTreeRecoveryLeavesAPeerBoundChildRunning_spec_8_10",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestCrossReplicaTerminalWriteRecordsTheReleaseOnTheBindingReplica_spec_7_1",
+        "tests/tier4_integration/concurrent_slot_release_test.go::TestSupersededCoordinatorForwardsTheDeleteAndTheAdopterReleasesOnce_spec_10_1_5",
         "charts/lenny/tests/holder-forward_test.yaml",
         "tests/tier5_e2e_kind/holder_forward_chart_test.go::TestGatewayDeploymentAdvertisesHolderForwardAddress_spec_10_1_1"
       ],
