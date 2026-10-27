@@ -88,6 +88,8 @@ func execTenant(ctx context.Context, pg *containers.Postgres, tenant, sql string
 //
 //	apply, or did not roll back cleanly. Check that every .up.sql
 //	has a matching .down.sql and that DROP order respects FKs.
+//	A missing idx_issued_tokens_impersonation means migration 0190
+//	did not apply the §12.2 impersonation partial index.
 func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
@@ -107,6 +109,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHaveIndex(t, ctx, pg, "sessions", "idx_sessions_tenant_created")
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_tenant_sub")
 	mustHaveIndex(t, ctx, pg, "agent_pod_state", "idx_agent_pod_state_pool_state")
+	// 0190 adds the §13.3 impersonation partial index.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")
 
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)
