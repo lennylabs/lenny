@@ -513,17 +513,32 @@ func (s *opsRevStack) startedEventsBy(t *testing.T, sub string) int {
 	return n
 }
 
-// requireExchangeRefused asserts a self-rotation of bearer through the
-// gateway's POST /v1/oauth/token answers 400 invalid_grant with reason and
-// returns no access_token.
-func (s *opsRevStack) requireExchangeRefused(t *testing.T, bearer, reason string) {
+// requireExchangeRefused asserts an exchange through the gateway's
+// POST /v1/oauth/token, presenting caller as the HTTP caller and subject as
+// subject_token, answers 400 invalid_grant with reason and returns no
+// access_token. A self-rotation passes the same bearer as both.
+func (s *opsRevStack) requireExchangeRefused(t *testing.T, caller, subject, reason string) {
 	t.Helper()
-	code, body := forgeryExchange(t, s.gw.BaseURL(), bearer, bearer)
+	code, body := forgeryExchange(t, s.gw.BaseURL(), caller, subject)
 	if code != http.StatusBadRequest || body["error"] != "invalid_grant" || body["error_description"] != reason {
-		t.Errorf("self-rotation of the impersonation bearer: status %d body %v, want 400 invalid_grant %s", code, body, reason)
+		t.Errorf("exchange of the impersonation bearer: status %d body %v, want 400 invalid_grant %s", code, body, reason)
 	}
 	if _, ok := body["access_token"]; ok {
-		t.Errorf("self-rotation of the impersonation bearer returned an access_token")
+		t.Errorf("exchange of the impersonation bearer returned an access_token")
+	}
+}
+
+// requireCallerRevoked asserts a self-rotation of an ended bearer through
+// the gateway's POST /v1/oauth/token is refused at caller authentication
+// with 401 TOKEN_REVOKED and returns no access_token.
+func (s *opsRevStack) requireCallerRevoked(t *testing.T, bearer string) {
+	t.Helper()
+	code, body := forgeryExchange(t, s.gw.BaseURL(), bearer, bearer)
+	if code != http.StatusUnauthorized || spoofErrorCode(body) != "TOKEN_REVOKED" {
+		t.Errorf("self-rotation of the ended impersonation bearer: status %d body %v, want 401 TOKEN_REVOKED", code, body)
+	}
+	if _, ok := body["access_token"]; ok {
+		t.Errorf("self-rotation of the ended impersonation bearer returned an access_token")
 	}
 }
 
@@ -533,9 +548,11 @@ func (s *opsRevStack) requireExchangeRefused(t *testing.T, bearer, reason string
 // lenny-ops does not load that row. An access_token from the self-rotation,
 // or a reason other than subject_token_impersonation while the session is
 // listed, means step (1a) does not refuse a live impersonation row, so a
-// token minted from the bearer outlives the session's end; a reason other
-// than subject_token_revoked after the end means the revoked check does not
-// run first. A playground mint from the bearer means the playground mint
+// token minted from the bearer outlives the session's end. After the end,
+// a self-rotation other than 401 TOKEN_REVOKED means caller authentication
+// admits an ended bearer, and a reason other than subject_token_revoked
+// when a live caller presents the ended bearer as subject_token means the
+// revoked check does not run before the impersonation check. A playground mint from the bearer means the playground mint
 // skips step (1a). A nested POST that succeeds, lists a second session, or
 // writes an admin.impersonation_started naming the impersonated user means
 // the rule 1 caller check is missing or runs after the started event; a
@@ -561,15 +578,20 @@ func TestImpersonationBearerRefusals_spec_13_3(t *testing.T) {
 	})
 
 	t.Run("self-rotation", func(t *testing.T) {
-		a, _ := s.tenantAdmin(t, "acme", "dave@acme.com")
+		a, b := s.tenantAdmin(t, "acme", "dave@acme.com")
 		jti := tokenJTI(t, a)
-		s.requireExchangeRefused(t, a, "subject_token_impersonation")
+		s.requireExchangeRefused(t, a, a, "subject_token_impersonation")
 		listed := impersonationItems(s.admin(t, http.MethodGet, "/v1/admin/impersonation", nil, http.StatusOK))
 		if _, ok := listed[jti]; !ok {
 			t.Fatalf("GET /v1/admin/impersonation no longer lists %s after the refused exchange", jti)
 		}
 		s.admin(t, http.MethodDelete, "/v1/admin/impersonation/"+jti, nil, http.StatusOK)
-		s.requireExchangeRefused(t, a, "subject_token_revoked")
+		// Caller authentication refuses the ended bearer before the
+		// exchange reaches step (1a), so the revoked reason is pinned with
+		// dave's live user bearer as the caller and the ended bearer as
+		// subject_token.
+		s.requireCallerRevoked(t, a)
+		s.requireExchangeRefused(t, b, a, "subject_token_revoked")
 	})
 
 	t.Run("playground paste", func(t *testing.T) {
