@@ -2,13 +2,13 @@
 proposal: 0106_fix_the-delegation-tree-s-membership-and-lifecycle-are-under
 title: Delegation tree membership and lifecycle are under-specified and mis-implemented
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-27
 drafted-by: change-proposal
 reviewed-date: 2026-10-27
-reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+reviewed-by: jaf
+approved-date: 2026-10-27
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
