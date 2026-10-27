@@ -219,13 +219,14 @@ Targets: `docs/reference/error-catalog.md`, the `STARTING_FAILED` row of the TRA
 
 - Error catalog: replace "Retryable for the same reason as `SESSION_CREATION_FAILED`: a retry rebinds a fresh pod. | Retry after the `Retry-After` window." with "The session is `failed`, so a retry creates a new session, which binds a fresh pod. | Create a new session after the `Retry-After` window." The row stays one physical line.
 - SDK pages: in the paragraph that begins "The client retries a retryable error on its own", directly before its closing sentence that begins "Override the policy" and introduces the code block, add one sentence using the page's method name (`Start` or `start`): the method sends its request once and is not retried, because a start can fail after the session has left `ready`, and the caller reads the session and creates a new session when it is `failed`. Link `docs/reference/state-machines.md` and give no spec section number.
+- `starting → failed` (SPEC-2 Edit (a)): after the existing `starting -->` lines, insert `starting --> failed : Start fails or times out` in the session diagram of `docs/reference/state-machines.md` and `starting --> failed : start fails or times out` in the session diagram of `docs/client-guide/session-lifecycle.md`. Directly after the `starting` to `running` row of the `docs/reference/state-machines.md` transition table, insert the row ``| `starting` | `failed` | Start fails or times out | `POST /v1/sessions/{id}/start`, or internal timer |``, which stays one physical line.
 - `input_required` edges (SPEC-2 Edit (l)): add `input_required → completed` (terminate) to the session diagram and the transition table of `docs/reference/state-machines.md`, to the session diagram of `docs/getting-started/concepts.md`, and to the sentence listing the transitions out of `input_required` in `docs/client-guide/session-lifecycle.md`. Add `input_required → completed` to the canonical task diagram of `docs/reference/state-machines.md`. Insert new diagram lines and leave the existing `input_required -->` lines unedited.
 
 ## Testing
 
 ### TEST-1 · Tests across the reached tiers
 
-Every test carries a `// spec:` annotation, and every test at tier 2 and above carries a `// diagnosis:` comment. Add each new test to `tests/spec-map.json` under the section its `// spec:` names (§6.2, §7.1, §7.2, §7.3, §8.2, §10.1.1, §10.1.4, §10.5, §15.1, §15.6, §28.3).
+Every test carries a `// spec:` annotation, and every test at tier 2 and above carries a `// diagnosis:` comment. Add each new test to `tests/spec-map.json` under the section its `// spec:` names.
 
 **Tier 1**
 1. Store state-entry table (memstore, `pkg/gateway/session/sessionstore/memstore`): create, through `Create` and through `CreateIfGeneration`, sets `StateEnteredAt == CreatedAt`; a same-state write leaves it unchanged; a state-changing write sets it to the store's `now`; a mutator-written value is discarded on both kinds of write. `tests/tier1_unit/lifecycle/stepped_store_test.go`: a row read through `SteppedClockStore` after a state-changing write carries the stepped `StateEnteredAt`. `// spec: §6.2`.
@@ -259,14 +260,14 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 
 **Wiring and gate tests**
 21. Leader wiring (`cmd/lenny-gateway`), modeled on `slot_reaper_test.go`: `addOrphanSessionReconciler` registers `"orphan-session-reconciler"` through the add-func hook; `leader_sweeps.go` contains the `leaderGate.Add` registration before `leaderGate.Run`; `reconciler_workers.go` no longer contains `go orphanSessionReconciler.Run`; losing the lease clears the published lag series. `// spec: §10.1.4, §12.5`.
-22. One test per row of the CODE-7 item 4 table, asserting that row's decision for an `input_required` session. `// spec: §7.2, §15.1`.
+22. One test per row of the CODE-7 item 4 table, asserting that row's decision for an `input_required` session. For the interrupt row, the `input_required` case inverts in `TestValidateInterruptAdmitsRunningAndInputRequired_spec_7_2` (renamed to drop `AndInputRequired`) and in `interruptPrimaryCases`, and the tier-3 `TestResumeAndInterruptToolsMatchREST_spec_15_2_1` case asserts that `POST /interrupt` and `lenny/interrupt_session` both refuse with `INVALID_STATE_TRANSITION` and leave the row `input_required`. `// spec: §7.2, §15.1`.
 23. One test per existing any-state writer, such as `ForceTerminate` from `resume_pending` and from `awaiting_client_action`, and the budget terminator from `resuming`. `// spec: §7.2 (Terminal writes from any non-terminal state)`.
 
 **Tier 9**
 24. `tests/tier9_security/input_wait_recovery_pod_scope_test.go`: item 8's server with `clientCA` set and `trustDomain` empty, so the handshake does not check the URI SAN and every case reaches CODE-7 item 2 R1, over stale `input_required` rows of pods A and B whose waits no registry on the server holds. A call naming pod A's session leaves pod A's row `input_required` with its `InputWaitID` and publishes no `status_change` on a connection whose certificate carries pod B's agent SPIFFE URI, on one whose verified certificate carries an interceptor SPIFFE URI, on one whose certificate carries no URI SAN, and on a plaintext server. After the cross-pod call, that connection's next call naming pod B's session restores pod B's row; this is the assertion that catches a denied run marking the connection recovered. `// spec: §7.2, §28.3`.
 
 **Tier 11**
-25. `tests/tier11_docs/session_transition_doc_reconciliation_test.go`: the `STARTING_FAILED` row of `docs/reference/error-catalog.md` carries DOC-1's replacement text and no longer carries "a retry rebinds a fresh pod" (scope the check to that row, because the `SESSION_CREATION_FAILED` row keeps the phrase). The **Retries** paragraph of each of go.md, python.md, and typescript.md carries the DOC-1 sentence that `Start`/`start` sends its request once. The transition table of `docs/reference/state-machines.md` carries an `input_required` row to `completed`. `// spec: §7.2, §15.1, §15.6`.
+25. `tests/tier11_docs/session_transition_doc_reconciliation_test.go`: the `STARTING_FAILED` row of `docs/reference/error-catalog.md` carries DOC-1's replacement text and no longer carries "a retry rebinds a fresh pod" (scope the check to that row, because the `SESSION_CREATION_FAILED` row keeps the phrase). The **Retries** paragraph of each of go.md, python.md, and typescript.md carries the DOC-1 sentence that `Start`/`start` sends its request once. The transition table of `docs/reference/state-machines.md` carries an `input_required` row to `completed` and a `starting` row to `failed`. `// spec: §7.2, §15.1, §15.6`.
 
 ## Edge cases and accepted failure modes
 
@@ -296,7 +297,7 @@ Every test carries a `// spec:` annotation, and every test at tier 2 and above c
 - cmd/lenny-gateway/gwcontrol_server.go, controlserver.go, shutdown.go
 - pkg/gateway/checkpoint/checkpointer/freshness.go
 - pkg/gateway/environment/translator/open_responses.go
-- pkg/api/v1/session/session.go, session_test.go; pkg/gateway/sessionserver/interrupt_primary_row_test.go
+- pkg/api/v1/session/session.go, session_test.go; pkg/gateway/sessionserver/interrupt_primary_row_test.go; tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go
 - pkg/gateway/mcpfabric/delegation/service.go
 - pkg/gateway/metrics/gatewaymetrics/ (the `ClearAgentPodStateMirrorLag` emitter)
 - cmd/lenny-gateway/reconciler_workers.go, leader_sweeps.go
