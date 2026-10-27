@@ -60,6 +60,13 @@ const opsStartBound = 30 * time.Second
 // subject's audience.
 const keySetAudiences = "lenny-gateway,lenny-ops"
 
+// keySetAudienceList returns keySetAudiences as the audience list a
+// stack-signed user bearer carries, so an exchange that narrows it to
+// either audience passes the §13.3 audience rule.
+func keySetAudienceList() []string {
+	return strings.Split(keySetAudiences, ",")
+}
+
 // adminTokenNamespace is the envtest namespace the §17.6 provisioner of
 // every cluster-backed gateway writes the lenny-admin-token Secret to.
 const adminTokenNamespace = "default"
@@ -346,7 +353,7 @@ func TestLennyIssuedTokensVerifyAcrossProcesses_spec_10_2(t *testing.T) {
 	// a user bearer for alice signed with the stack's platform:jwt-signing
 	// key; the impersonation bearers stay the callers.
 	_, stackSigner := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)
-	aliceSubject := stackkey.UserBearer(t, stackSigner, "acme", "alice@acme.com", auth.RoleUser)
+	aliceSubject := stackkey.UserBearer(t, stackSigner, "acme", "alice@acme.com", keySetAudienceList(), auth.RoleUser)
 	dave := mintImpersonationBearer(t, gwB.BaseURL(), "acme", "dave@acme.com")
 
 	t.Run("gateway-minted bearers verify on every gateway replica", func(t *testing.T) {
@@ -504,8 +511,8 @@ func TestOpsRevocationSetThroughPostgresOutage_spec_25_4(t *testing.T) {
 	// The subjects are user bearers for dave signed with the stack's key,
 	// because step (1a) refuses an impersonation bearer as a subject_token.
 	_, stackSigner := stackkey.Signer(t, stackkey.MasterKeyFile(t), refs)
-	revoked := mintExchanged(t, gw.BaseURL(), daveA, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", auth.RoleUser), "lenny-ops")
-	kept := mintExchanged(t, gw.BaseURL(), daveB, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", auth.RoleUser), "lenny-ops")
+	revoked := mintExchanged(t, gw.BaseURL(), daveA, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", keySetAudienceList(), auth.RoleUser), "lenny-ops")
+	kept := mintExchanged(t, gw.BaseURL(), daveB, stackkey.UserBearer(t, stackSigner, "acme", "dave@acme.com", keySetAudienceList(), auth.RoleUser), "lenny-ops")
 	// A self-rotation of revoked revokes it in issued_tokens (§13.3).
 	mintExchanged(t, gw.BaseURL(), revoked, revoked, "lenny-ops")
 	// Both tokens are POST /v1/oauth/token tokens, which carry no roles

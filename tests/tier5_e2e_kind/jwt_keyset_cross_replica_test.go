@@ -179,7 +179,7 @@ func installedUserBearer(t *testing.T, c *kind.Cluster) string {
 		refs = nil
 	}
 	_, signer := stackkey.Signer(t, keyFile, refs)
-	return stackkey.UserBearer(t, signer, "acme", "alice@acme.com", auth.RoleTenantAdmin)
+	return stackkey.UserBearer(t, signer, "acme", "alice@acme.com", nil, auth.RoleTenantAdmin)
 }
 
 // gatewayAliasArg returns the value of the --kms-alias flag in the

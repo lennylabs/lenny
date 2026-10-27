@@ -184,7 +184,7 @@ func (s *opsRevStack) tenantAdmin(t *testing.T, tenant, subject string) (string,
 		}
 		return tok
 	}
-	return mint(), stackkey.UserBearer(t, s.subjects, tenant, subject, auth.RoleTenantAdmin)
+	return mint(), stackkey.UserBearer(t, s.subjects, tenant, subject, nil, auth.RoleTenantAdmin)
 }
 
 // exchange mints a Token Service token through the gateway's

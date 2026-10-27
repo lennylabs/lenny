@@ -503,7 +503,7 @@ func lennyIssuedProbes(t *testing.T, tenant, subject string, replicas []string) 
 	for i, base := range replicas {
 		// The subject is a distinct bearer, so the exchange is not a
 		// self-rotation and revokes nothing.
-		subjectToken := stackkey.UserBearer(t, signer, tenant, subject, auth.RoleUser)
+		subjectToken := stackkey.UserBearer(t, signer, tenant, subject, nil, auth.RoleUser)
 		out = append(out, bearerProbe{
 			name:     fmt.Sprintf("%s Token Service (requested through replica %d)", tenant, i),
 			bearer:   mintExchanged(t, base, impersonation[i], subjectToken, ""),
