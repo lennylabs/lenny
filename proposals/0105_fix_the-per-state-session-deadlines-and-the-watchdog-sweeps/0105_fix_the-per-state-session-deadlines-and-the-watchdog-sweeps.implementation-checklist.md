@@ -26,8 +26,8 @@
       Tiers 0, 1, 2, 3, 4, 7a, 9. Depends on: S1, S2, S5
 - [ ] **S12 · code** — CODE-8. Lands the leader-gated orphan-session reconciler and the lag-series clear.
       Tiers 0, 1, 8. Depends on: S9
-- [ ] **S13 · docs** — DOC-1. Lands the error-catalog row, the SDK **Retries** sentence, and the session-state docs edges.
-      Tiers 0, 11. Depends on: S2, S10
+- [ ] **S13 · docs** — DOC-1. Lands the error-catalog row, the SDK **Retries** sentence, the session-state docs edges, and the `input_required` status value and Task mapping row in `docs/api/mcp.md`.
+      Tiers 0, 11. Depends on: S2, S10, S11
 - [ ] **S14 · test** — TEST-1. Lands the tests not already landed with S5 to S12, item 25, and the `tests/spec-map.json` entries.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9, 11. Depends on: S5, S6, S7, S8, S9, S10, S11, S12, S13
 - [ ] **S15 · docs** — REC-1. Lands the BUILD-GAPS notes and entries and the P3 plan entry.
