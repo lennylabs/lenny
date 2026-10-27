@@ -14,7 +14,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
+
+// errHeldDeliveryPreempted is the error deliverBuffered returns when a
+// readable REG-COORDLEASE shows that this replica no longer coordinates the
+// session: the lease is absent or names another holder. The entries stay in
+// place for the coordinating replica, and a path-2 caller fails its own
+// message as it fails one the pod rejects on the coordination generation.
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §29.3
+// (Interactive message send) Forwarding rule 5
+var errHeldDeliveryPreempted = errors.New("sessionserver: another replica coordinates the session; held messages are left to it")
 
 // heldEntry is one held message the delivery of held messages takes: the
 // decoded inbox or DLQ entry and the handle that removes exactly it.
@@ -37,7 +47,13 @@ type heldEntry struct {
 //
 // Before it takes each entry the loop reads the row from the read pool; when
 // that row is terminal it returns nil and leaves the entry in place, and a
-// read error is logged and the loop continues. A Send, audit-record, or
+// read error is logged and the loop continues. It then reads the session's
+// REG-COORDLEASE; when the lease is absent or names another holder it returns
+// errHeldDeliveryPreempted and leaves the entry in place, because only the
+// coordinating replica delivers held messages, and a replica whose lease was
+// handed off mid-delivery would otherwise deliver an entry the new
+// coordinator's takeover delivery also takes. A lease read error is not
+// evidence of a new holder, and the loop continues. A Send, audit-record, or
 // removal error stops the loop and returns the error with that entry at the
 // head. A Peek or PeekOldest error is logged, stops the loop, and returns
 // nil, so a following path-2 message proceeds. An entry whose payload does
@@ -59,6 +75,9 @@ func (s *Server) deliverBuffered(ctx context.Context, row sessionstore.Session) 
 		}
 		if s.heldDeliveryStopped(ctx, row) {
 			return nil
+		}
+		if s.heldDeliveryPreempted(ctx, row) {
+			return errHeldDeliveryPreempted
 		}
 		entry, ok, err := s.oldestHeld(ctx, row)
 		if err != nil {
@@ -85,6 +104,30 @@ func (s *Server) heldDeliveryStopped(ctx context.Context, row sessionstore.Sessi
 		return false
 	}
 	return session.IsTerminal(cur.State)
+}
+
+// heldDeliveryPreempted reports whether a readable REG-COORDLEASE shows
+// that this replica no longer coordinates row's session: the lease is absent
+// or names another holder value. The single-gateway posture, which reads no
+// lease, is never preempted, and a lease read error reports false, so a
+// lease-store fault does not stop the coordinator's delivery.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6) Delivery of
+// held messages, §10.1.1 (Stateless Replicas and Per-Session Coordination)
+func (s *Server) heldDeliveryPreempted(ctx context.Context, row sessionstore.Session) bool {
+	if s.coordinatesEverySession() {
+		return false
+	}
+	lease, err := s.leaseStore.Get(ctx, row.TenantID, row.ID)
+	switch {
+	case errors.Is(err, leasestore.ErrNotFound):
+		return true
+	case err != nil:
+		slog.Warn("sessionserver: held-message delivery could not read the coordination lease; continuing",
+			"session_id", row.ID, "error", err)
+		return false
+	}
+	return lease.Holder != s.replicaID
 }
 
 // oldestHeld returns the held entry with the earliest EnqueuedAt across the
