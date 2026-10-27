@@ -3423,13 +3423,18 @@ re-confirm against the tree and are filed in BUILD-GAPS and routed below.
 
 - Direct-fix queue, after the post-0097 direct-fix queue above. Each lands after 0103's implementation,
   because each reads its production predicate or edits lines its CHART-1 and CODE-4 change.
-  - [ ] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
-    warning. Add both non-blocking checks in production mode, and correct T-17.6.13.
-  - [ ] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
-    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment.
-  - [ ] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
+  - [x] **F-17.6.25** (Low): no preflight check emits the §17.6 etcd Secret encryption or node disk encryption
+    warning. Add both non-blocking checks in production mode, and correct T-17.6.13. Fixed in `450ef8a47`:
+    `EtcdSecretEncryptionCheck` and `NodeDiskEncryptionCheck` warn in production mode and never block, and
+    T-17.6.13 is corrected.
+  - [x] **F-25.4.37** (Low): the chart sets the `lenny-ops` readinessProbe path to `/readyz` outside
+    production, while §25.4 gives `/healthz` unconditionally. Render `/healthz` in every environment. Fixed in
+    `42bb52ac1` and `a4fc41c0b`.
+  - [x] **F-25.4.38** (Low): `lenny-ops --platform-tier` and `global.deploymentTier` accept any string, so an
     off-set tier reaches 0103's `idempotencyKeyRequired()` fallback and drops the Tier 2/3 `Idempotency-Key`
     requirement. Refuse a value outside `tier1`, `tier2`, and `tier3` in the binary and the values schema.
+    Fixed in `0b66ec19c`: `lenny-ops` refuses an off-set tier at startup (unset defaults to `tier1`, the
+    chart default), and `global.deploymentTier` carries the enum.
 - Proposal routing.
   - [ ] **§11.7 startup compliance-check proposal** (not yet written): **F-11.7.25** (Medium). The gateway's
     SIEM and pgaudit startup checks, and the retention-floor and grant-check-cadence checks, continue when
