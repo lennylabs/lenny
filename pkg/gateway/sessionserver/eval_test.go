@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,6 +55,25 @@ func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ..
 
 func evalSession(id string, state session.State) sessionstore.Session {
 	return sessionstore.Session{ID: id, TenantID: "default", UserID: "alice", State: state}
+}
+
+// delegationChain returns running sessions from a depth-zero root down to
+// leafID at depth, each naming the one before it as its parent, in insert
+// order so the §12.8 creation fence admits every delegated child.
+func delegationChain(leafID string, depth uint32) []sessionstore.Session {
+	rootID := leafID + "_d0"
+	chain := []sessionstore.Session{evalSession(rootID, session.StateRunning)}
+	for d := uint32(1); d <= depth; d++ {
+		s := evalSession(fmt.Sprintf("%s_d%d", leafID, d), session.StateRunning)
+		if d == depth {
+			s.ID = leafID
+		}
+		s.ParentSessionID = chain[d-1].ID
+		s.RootSessionID = rootID
+		s.DelegationDepth = d
+		chain = append(chain, s)
+	}
+	return chain
 }
 
 // concludedExperiment seeds a valid §10.7 experiment in the given status.
@@ -498,13 +518,12 @@ func TestEvalResponseCarriesExperimentAttribution_spec_10_7(t *testing.T) {
 // TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7: the eval endpoint copies the session's stamped
 // delegation_depth onto the EvalResult so the Results API
 // `?delegation_depth=` filter and `?breakdown_by=delegation_depth`
-// operate on truthful data. F-10.7.5.
+// operate on truthful data. F-10.7.5. The session sits at the bottom of a
+// running delegation chain, because the §12.8 creation fence refuses a
+// delegated child whose parent row is absent.
 func TestEvalPopulatesDelegationDepth_spec_10_7_905(t *testing.T) {
-	deep := sessionstore.Session{
-		ID: "sess_deep", TenantID: "default", UserID: "alice",
-		State: session.StateRunning, DelegationDepth: 3,
-	}
-	h, evals := evalServer(t, 0, deep)
+	chain := delegationChain("sess_deep", 3)
+	h, evals := evalServer(t, 0, chain...)
 	rr := postEval(t, h, "sess_deep", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
