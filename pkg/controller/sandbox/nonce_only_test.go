@@ -29,7 +29,7 @@ const requireSoPeercredFalseFlag = "--require-so-peercred=false"
 func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *bool, acknowledge bool) client.Client {
 	t.Helper()
 	s := newScheme(t)
-	rt := runtimeCR()
+	rt := runtimeCR(t)
 	rt.Spec.DeploymentModel = deploymentModel
 	rt.Spec.RequireSoPeercred = requireSoPeercred
 	// spec: §5.1 (command) — command is required on a sidecar agent runtime
@@ -38,17 +38,17 @@ func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *b
 		rt.Spec.Command = nil
 	}
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:               "claude-code",
+			RuntimeRef:               testRuntime(t),
 			AcknowledgeNonceOnlyAuth: acknowledge,
 		},
 	}
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
 	}
-	return newClient(t, s, sandboxCR(""), rt, tmpl, pool)
+	return newClient(t, s, sandboxCR(t, ""), rt, tmpl, pool)
 }
 
 // adapterArgs returns the args of the pod's adapter container, failing the
@@ -56,7 +56,7 @@ func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *b
 func adapterArgs(t *testing.T, c client.Client) []string {
 	t.Helper()
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, ctr := range pod.Spec.Containers {
@@ -173,7 +173,7 @@ func TestReconcileSkipsNonceOnlyForEmbeddedRuntime_spec_4_7(t *testing.T) {
 	// The embedded pod has a single container and no adapter; assert no flag
 	// surfaces anywhere in its container args.
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, ctr := range pod.Spec.Containers {
@@ -241,7 +241,7 @@ func TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4(t *testing.T) {
 		fail:   &fail,
 	}
 	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName}}
 
 	// First reconcile: the carrier write fails before the pod is created.
 	if _, err := r.Reconcile(context.Background(), req); err == nil {
@@ -251,7 +251,7 @@ func TestReconcileRecoversNonceOnlyCarrierWriteFailure_spec_4_4(t *testing.T) {
 	// failure leaves the pod uncreated, so the next reconcile re-enters
 	// ActionCreatePod and the decision is recoverable.
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); !apierrors.IsNotFound(err) {
 		t.Fatalf("pod get after failed carrier write = %v, want NotFound (pod must not be created)", err)
 	}
 
@@ -320,7 +320,7 @@ func TestReconcileClearsStaleCarrierAfterRevert_spec_4_5(t *testing.T) {
 	fail := true
 	wrapped := &podCreateFailClient{Client: c, fail: &fail}
 	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName}}
 
 	// First reconcile: the carrier write succeeds, then the pod Create fails.
 	if _, err := r.Reconcile(context.Background(), req); err == nil {
@@ -332,14 +332,14 @@ func TestReconcileClearsStaleCarrierAfterRevert_spec_4_5(t *testing.T) {
 		t.Fatalf("after the create failure Sandbox.spec.requireSoPeercred = %v, want explicit false (stale carrier)", sb.Spec.RequireSoPeercred)
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); !apierrors.IsNotFound(err) {
 		t.Fatalf("pod get after failed create = %v, want NotFound", err)
 	}
 
 	// The operator reverts the Runtime field to the SO_PEERCRED-enforcing
 	// default before the create retry.
 	var rt lennyv1.Runtime
-	if err := c.Get(context.Background(), client.ObjectKey{Name: "claude-code"}, &rt); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Name: testRuntime(t)}, &rt); err != nil {
 		t.Fatalf("get runtime: %v", err)
 	}
 	rt.Spec.RequireSoPeercred = ptr.To(true)
@@ -391,8 +391,8 @@ func TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5(t *testing.T) {
 	s := newScheme(t)
 
 	// Persist the stale false carrier directly under the WPC field manager.
-	seed := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS}}
-	body := []byte(`{"apiVersion":"` + lennyv1.GroupVersion.String() + `","kind":"Sandbox","metadata":{"name":"` + testName + `","namespace":"` + testNS + `"},"spec":{"requireSoPeercred":false}}`)
+	seed := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace(t)}}
+	body := []byte(`{"apiVersion":"` + lennyv1.GroupVersion.String() + `","kind":"Sandbox","metadata":{"name":"` + testName + `","namespace":"` + testNamespace(t) + `"},"spec":{"requireSoPeercred":false}}`)
 	if err := c.Patch(context.Background(), seed, client.RawPatch(types.ApplyPatchType, body), client.FieldOwner("lenny-warm-pool-controller")); err != nil {
 		t.Fatalf("seed stale carrier: %v", err)
 	}
@@ -404,14 +404,14 @@ func TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5(t *testing.T) {
 		fail:   &fail,
 	}
 	r := &sandbox.Reconciler{Client: wrapped, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName}}
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName}}
 
 	// First reconcile: the carrier-clear apply fails before the pod is created.
 	if _, err := r.Reconcile(context.Background(), req); err == nil {
 		t.Fatal("expected the carrier-clear failure to surface as a reconcile error")
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); !apierrors.IsNotFound(err) {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); !apierrors.IsNotFound(err) {
 		t.Fatalf("pod get after failed carrier clear = %v, want NotFound (pod must not be created)", err)
 	}
 

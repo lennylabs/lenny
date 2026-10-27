@@ -21,11 +21,11 @@ import (
 // lenny-egress-capture sidecar and the shared capture volume.
 func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 	s := newScheme(t)
-	sb := sandboxCR("")
+	sb := sandboxCR(t, "")
 	sb.Annotations = map[string]string{
 		sandbox.EgressCaptureUpstreamAnnotation: "api.openai.com:443",
 	}
-	c := newClient(t, s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR(t))
 
 	r := &sandbox.Reconciler{
 		Client:             c,
@@ -35,13 +35,13 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 		EgressCaptureImage: "ghcr.io/lennylabs/lenny-egress-capture:e2e",
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 // TESTING.md §12.9.8 sidecar is opt-in per Sandbox.
 func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 
 	r := &sandbox.Reconciler{
 		Client:             c,
@@ -87,13 +87,13 @@ func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 		EgressCaptureImage: "ghcr.io/lennylabs/lenny-egress-capture:e2e",
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, ct := range pod.Spec.Containers {
@@ -111,11 +111,11 @@ func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 // set the image so the sidecar is unreachable there.
 func TestReconcileOmitsEgressCaptureWithoutControllerImage(t *testing.T) {
 	s := newScheme(t)
-	sb := sandboxCR("")
+	sb := sandboxCR(t, "")
 	sb.Annotations = map[string]string{
 		sandbox.EgressCaptureUpstreamAnnotation: "api.openai.com:443",
 	}
-	c := newClient(t, s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR(t))
 
 	r := &sandbox.Reconciler{
 		Client:          c,
@@ -125,13 +125,13 @@ func TestReconcileOmitsEgressCaptureWithoutControllerImage(t *testing.T) {
 		// EgressCaptureImage left empty.
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, ct := range pod.Spec.Containers {

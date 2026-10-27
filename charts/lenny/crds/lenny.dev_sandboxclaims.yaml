@@ -4,7 +4,6 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10.5 — F-15.5.12.
     lenny.dev/schema-version: "1"
   name: sandboxclaims.lenny.dev
 spec:
@@ -65,7 +64,6 @@ spec:
               without reuse, orphan GC, or pod termination) rather than a cascade from
               pod deletion; the WarmPoolController garbage-collects orphaned claims.
               spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               sandboxRef:
                 description: |-
@@ -82,13 +80,13 @@ spec:
             required:
             - sandboxRef
             type: object
+            x-kubernetes-preserve-unknown-fields: true
           status:
             description: |-
               SandboxClaimStatus is the observed state of a SandboxClaim. Per §4.6.3
               the status carries the gateway-owned binding state of the pod-occupancy
               claim, distinct from the Sandbox pod lifecycle state machine (§6.2) that
               the WarmPoolController projects from this binding state.
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               bindingStateTransitionTime:
                 description: |-
@@ -214,6 +212,7 @@ spec:
                 format: date-time
                 type: string
             type: object
+            x-kubernetes-preserve-unknown-fields: true
         type: object
     served: true
     storage: true

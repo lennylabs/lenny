@@ -17,8 +17,8 @@ import (
 // diagnosis: the committed SandboxTemplate CRD no longer carries
 // sessionPolicy.recycle.runtimeProcess or its enum, so the API server prunes
 // the lifetime the PoolScalingController mirrors or admits a value the
-// WarmPoolController cannot render. Regenerate the CRD from the Go type and
-// re-apply the post-generation markers.
+// WarmPoolController cannot render. Regenerate the CRD from the Go type with
+// `make generate`.
 func TestSandboxTemplateServedSchemaCarriesRuntimeProcessEnum(t *testing.T) {
 	crd := loadChartCRD(t, "lenny.dev_sandboxtemplates.yaml")
 	sp := specProperty(t, crd, "sessionPolicy")

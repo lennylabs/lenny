@@ -20,8 +20,8 @@ import (
 // Sandbox-to-Pod reconciler routes the Sandbox through the SDK-warm path
 // (sdk_connecting with the §6.1 watchdog) rather than straight to
 // pod-warm idle.
-func preConnectRuntimeCR() *lennyv1.Runtime {
-	rt := runtimeCR()
+func preConnectRuntimeCR(t *testing.T) *lennyv1.Runtime {
+	rt := runtimeCR(t)
 	rt.Spec.Capabilities = &lennyv1.RuntimeCapabilitiesCRD{PreConnect: true}
 	return rt
 }
@@ -29,9 +29,9 @@ func preConnectRuntimeCR() *lennyv1.Runtime {
 // sdkWarmPoolCR is the §6.1 pool whose ScalePolicy sets the
 // sdkConnectTimeoutSeconds watchdog budget the Sandbox references through
 // PoolRef. The Sandbox-to-Pod reconciler resolves the budget from it.
-func sdkWarmPoolCR(timeoutSeconds int64) *lennyv1.SandboxWarmPool {
+func sdkWarmPoolCR(t *testing.T, timeoutSeconds int64) *lennyv1.SandboxWarmPool {
 	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxWarmPoolSpec{
 			TemplateRef: "claude-template",
 			MinWarm:     1,
@@ -51,7 +51,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 	t.Helper()
 	ctx := context.Background()
 	cl := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + testName, Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: testName, TenantID: "acme"},
 	}
 	if err := c.Create(ctx, cl); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -83,10 +83,10 @@ func TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, true),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, true),
 	)
 	// Re-warm started 5s ago, well within the 60s budget.
 	seedRecyclingClaim(t, c, time.Now().Add(-5*time.Second))
@@ -113,16 +113,16 @@ func TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting(t *testing.T) {
 // against the re-warm budget, retiring a healthy re-warming pod to failed.
 func TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp(t *testing.T) {
 	s := newScheme(t)
-	pod := podCR(corev1.PodRunning, false) // running but not ready: re-warm in progress
+	pod := podCR(t, corev1.PodRunning, false) // running but not ready: re-warm in progress
 	// The pod has been running for 10 minutes (far over the 60s budget),
 	// modeling a long prior occupancy episode plus the scrub.
 	started := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	pod.Status.StartTime = &started
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
 		pod,
 	)
 	// Re-warm started 5s ago: within the 60s budget despite the old pod.
@@ -149,10 +149,10 @@ func TestReconcileRecycleRewarmWatchdogRetiresOverBudget(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, false), // running but not ready: SDK still connecting
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, false), // running but not ready: SDK still connecting
 	)
 	// Re-warm started 90s ago: past the 60s budget.
 	seedRecyclingClaim(t, c, time.Now().Add(-90*time.Second))
@@ -180,10 +180,10 @@ func TestReconcileWarmFillReadyPodReachesIdle(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, true),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, true),
 	)
 	// No SandboxClaim: this is the warm-fill edge, not a recycle re-warm.
 

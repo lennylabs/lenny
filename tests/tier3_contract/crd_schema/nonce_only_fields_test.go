@@ -86,8 +86,8 @@ func assertBooleanField(t *testing.T, crd apiextensionsv1.CustomResourceDefiniti
 // diagnosis: The served Runtime CRD schema no longer exposes
 // spec.requireSoPeercred as a boolean. The §4.7 nonce-only activation
 // path is broken: a Runtime CR carrying requireSoPeercred is rejected or
-// pruned by the kube-apiserver. Regenerate the CRD from the Go type and
-// re-apply the post-generation markers.
+// pruned by the kube-apiserver. Regenerate the CRD from the Go type with
+// `make generate`.
 func TestRuntimeServedSchemaExposesRequireSoPeercred(t *testing.T) {
 	crd := loadChartCRD(t, "lenny.dev_runtimes.yaml")
 	assertBooleanField(t, crd, "requireSoPeercred")

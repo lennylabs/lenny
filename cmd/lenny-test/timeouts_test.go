@@ -56,12 +56,14 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 // exceed the slowest package's observed runtime, or a passing package is
 // reported as a tier failure for a timeout alone.
 func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 464.3s for pkg/controller/sandbox under the race detector,
-	// inside a scoped unit-tier run on 2026-10-27 (TEST-GAPS T-17.4.26).
-	// pkg/gateway/podlifecycle/podsession, which set the earlier figure,
-	// fell from 1776.6s to 46.0s once it shared one envtest control plane
-	// per test binary (TEST-GAPS T-17.4.22).
-	const observedSlowest = 465 * time.Second
+	// Observed: 251.5s for pkg/gateway/session/recycle under the race
+	// detector, inside a scoped run of 25 unit-tier package patterns on
+	// 2026-10-27 at load average 14 to 28 (TEST-GAPS T-17.4.28).
+	// pkg/controller/sandbox, which set the previous figure of 464.3s,
+	// took 19.8s in the same run once it shared one envtest control plane
+	// per test binary (TEST-GAPS T-17.4.26), as pkg/gateway/podlifecycle/
+	// podsession did before it (1776.6s to 46.0s, TEST-GAPS T-17.4.22).
+	const observedSlowest = 252 * time.Second
 	if tierUnitTimeout <= observedSlowest {
 		t.Errorf("tierUnitTimeout %s does not exceed observed unit runtime %s; a passing package will be aborted as a timeout",
 			tierUnitTimeout, observedSlowest)

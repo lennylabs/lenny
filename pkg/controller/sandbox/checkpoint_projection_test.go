@@ -35,17 +35,17 @@ func checkpointFixture(t *testing.T, sizeLimit *int64) client.Client {
 	t.Helper()
 	s := newScheme(t)
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxTemplateSpec{
-			RuntimeRef:              "claude-code",
+			RuntimeRef:              testRuntime(t),
 			WorkspaceSizeLimitBytes: sizeLimit,
 		},
 	}
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
 	}
-	return newClient(t, s, sandboxCR(""), runtimeCR(), tmpl, pool)
+	return newClient(t, s, sandboxCR(t, ""), runtimeCR(t), tmpl, pool)
 }
 
 // reconcileWithCA runs one Sandbox reconcile with the reconciler carrying the
@@ -60,7 +60,7 @@ func reconcileWithCA(t *testing.T, c client.Client, s *runtime.Scheme, caConfigM
 		ObjectStoreCAConfigMap: caConfigMap,
 	}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -69,7 +69,7 @@ func reconcileWithCA(t *testing.T, c client.Client, s *runtime.Scheme, caConfigM
 func adapterContainer(t *testing.T, c client.Client) corev1.Container {
 	t.Helper()
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, ctr := range pod.Spec.Containers {
@@ -152,7 +152,7 @@ func TestReconcileOmitsCheckpointProjectionWhenUnset_spec_13_2(t *testing.T) {
 		}
 	}
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, v := range pod.Spec.Volumes {
