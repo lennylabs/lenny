@@ -3899,7 +3899,10 @@
         "tests/testinfra/lifecyclefence/deletion_phases_test.go::TestFullRevokeCheckFlagsLiveSession_spec_11_4",
         "tests/tier7a_load_local/lifecycle_fence_scenarios_test.go::TestLifecycleFenceInterleavings_spec_12_8",
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestBindReleaseSubscriberReleasesOnlyTerminalBindings_spec_28_5_7",
+        "pkg/gateway/podlifecycle/bindrelease/propagator_test.go::TestSubscriberReleasesOnlyTerminalPrimaryBindings_spec_28_5_7"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -4456,7 +4459,10 @@
         "tests/tier9_security/tenant_deletion_isolation_test.go::TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8",
         "pkg/gateway/mcpfabric/playground/chainaudit_test.go::TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8"
+        "tests/tier11_docs/build_gaps_terminal_pipeline_records_currency_test.go::TestTerminalPipelineOpenFindingsKeepTheirNotes_spec_12_8",
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainReleasesABindingHeldOnThePeer_spec_12_8",
+        "tests/tier4_integration/drain_bind_release_two_replica_test.go::TestUserErasureDrainWithoutTheFanOutLeavesThePeerBinding_spec_12_8",
+        "pkg/gateway/podlifecycle/bindrelease/propagator_test.go::TestSubscriberReleasesOnlyTerminalPrimaryBindings_spec_28_5_7"
       ],
       "packages": [
         "pkg/store",
