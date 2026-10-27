@@ -3448,7 +3448,8 @@
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintAppliesStep1aToSubjectRow_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_subject_recheck_test.go::TestPlaygroundAPIKeyMintNilIssuedTokensSkipsRead_spec_10_2",
-        "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2"
+        "tests/tier3_contract/playground/playground_subject_recheck_test.go::TestAPIKeyModeRejectsImpersonationSubject_spec_10_2",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "pkg/auth",
@@ -3822,7 +3823,8 @@
         "tests/tier8_chaos/lifecycle_drain_fault_test.go::TestDeletionSilentLeaseFaultReturnedByTakeover_spec_12_8",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
         "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
-        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3"
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3"
       ],
       "packages": [
         "pkg/auth/invalidate"
@@ -4823,7 +4825,9 @@
         "tests/tier2_component/stores/issuedtokenstore_test.go::TestImpersonationIssuedTokensContract_spec_13_3",
         "cmd/lenny-gateway/release_wiring_test.go::TestImpersonationRoutesRequireEveryCollaborator_spec_13_3",
         "tests/tier4_integration/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsBearersOnEveryReplica_spec_13_3",
-        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3"
+        "tests/tier9_security/impersonation_admin_cascade_test.go::TestFullRevokeOfPlatformAdminRevokesItsImpersonationBearers_spec_13_3",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "pkg/credential",
@@ -5128,7 +5132,9 @@
         "tests/tier3_contract/playground/playground_kms_unavailable_test.go::TestPlaygroundHardSigningErrorReturns503RetryAfter1_spec_10_2",
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestImpersonationSigningErrorReturns503RetryAfter_spec_10_2",
         "pkg/gateway/externalapi/admin/signing_unavailable_test.go::TestRotateTokenSigningErrorReturns503RetryAfter_spec_10_2",
-        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery"
+        "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestJWTSigningKMSOutageBreakerAndRecovery",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -5694,7 +5700,9 @@
         "pkg/ops/configservice/configservice_test.go::TestApply_DryRunNoConfigChanged_spec_16_7",
         "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailureNoConfigChanged_spec_16_7",
         "pkg/ops/configservice/configservice_test.go::TestApply_GatewayErrorNoConfigChanged_spec_16_7",
-        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7"
+        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7",
+        "tests/tier4_integration/impersonation_revocation_cross_replica_test.go::TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "pkg/observability/audit",
@@ -6660,7 +6668,8 @@
         "tests/tier8_chaos/jwt_keyset_chaos_test.go::TestOpsRevocationSetUnderPostgresLoss",
         "tests/tier9_security/jwt_keyset_forgery_all_components_test.go::TestEveryVerifierRefusesForgedLennyTokens_spec_10_2",
         "tests/tier9_security/ops_revocation_enforcement_test.go::TestOpsRefusesRevokedLennyTokens_spec_25_4",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4",
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestImpersonationBearerRefusals_spec_13_3"
       ],
       "packages": [
         "cmd/lenny-ops",

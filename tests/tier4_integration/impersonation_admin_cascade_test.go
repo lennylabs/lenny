@@ -64,18 +64,25 @@ func mintImpersonationAs(t *testing.T, base, admin, tenant, subject string) stri
 }
 
 // awaitRefusedOnReplicas polls GET /v1/admin/me with bearer on every replica
-// until each answers 401 or the bound passes.
+// until each answers 401 or cascadeRefusalBound passes.
 func awaitRefusedOnReplicas(t *testing.T, name, bearer string, replicas []string) {
 	t.Helper()
+	awaitRefusedOnReplicasWithin(t, name, bearer, replicas, cascadeRefusalBound)
+}
+
+// awaitRefusedOnReplicasWithin polls GET /v1/admin/me with bearer on every
+// replica until each answers 401 or bound passes.
+func awaitRefusedOnReplicasWithin(t *testing.T, name, bearer string, replicas []string, bound time.Duration) {
+	t.Helper()
 	for _, base := range replicas {
-		deadline := time.Now().Add(cascadeRefusalBound)
+		deadline := time.Now().Add(bound)
 		for {
 			code, _ := tenancyCall(t, http.MethodGet, base+"/v1/admin/me", bearer, nil, nil)
 			if code == http.StatusUnauthorized {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Errorf("%s on %s answered %d %s after the cascade, want 401", name, base, code, cascadeRefusalBound)
+				t.Errorf("%s on %s answered %d %s after its revocation, want 401", name, base, code, bound)
 				break
 			}
 			time.Sleep(250 * time.Millisecond)

@@ -13,7 +13,11 @@
 // revocation must survive into a fresh lenny-ops process. A playground
 // bearer the gateway mints for a tenant-admin user must be refused on
 // lenny-ops (rule 7), and as a caller of
-// POST /v1/oauth/token through a gateway replica (§13.3).
+// POST /v1/oauth/token through a gateway replica (§13.3). A platform-admin
+// impersonation bearer must be refused on lenny-ops once its session is
+// ended, its target is fully revoked, or its jti is revoked, and must be
+// refused as a subject_token, as a pasted playground subject, and as the
+// caller of a nested impersonation (§13.3 Platform-admin impersonation).
 package tier9_security_test
 
 import (
@@ -181,18 +185,23 @@ func (s *opsRevStack) tenantAdmin(t *testing.T, tenant, subject string) (string,
 	s.admin(t, http.MethodPost, "/v1/admin/users", map[string]any{
 		"tenantId": tenant, "subject": subject, "roles": []string{"tenant-admin"},
 	}, http.StatusCreated)
-	mint := func() string {
-		body := s.admin(t, http.MethodPost, "/v1/admin/impersonation", map[string]any{
-			"targetTenantId": tenant, "targetUserId": subject,
-			"reason": "lenny-ops revocation probe", "ticketId": "ops-revocation", "durationSeconds": 600,
-		}, http.StatusOK)
-		tok, _ := body["bearerToken"].(string)
-		if tok == "" {
-			t.Fatalf("impersonation of %s/%s returned no bearer: %v", tenant, subject, body)
-		}
-		return tok
+	return s.mintImpersonation(t, tenant, subject), stackkey.UserBearer(t, s.subjects, tenant, subject, nil, auth.RoleTenantAdmin)
+}
+
+// mintImpersonation starts, as the default platform-admin caller, an
+// impersonation session for the existing user subject of tenant and
+// returns its bearer. It creates no user.
+func (s *opsRevStack) mintImpersonation(t *testing.T, tenant, subject string) string {
+	t.Helper()
+	body := s.admin(t, http.MethodPost, "/v1/admin/impersonation", map[string]any{
+		"targetTenantId": tenant, "targetUserId": subject,
+		"reason": "lenny-ops revocation probe", "ticketId": "ops-revocation", "durationSeconds": 600,
+	}, http.StatusOK)
+	tok, _ := body["bearerToken"].(string)
+	if tok == "" {
+		t.Fatalf("impersonation of %s/%s returned no bearer: %v", tenant, subject, body)
 	}
-	return mint(), stackkey.UserBearer(t, s.subjects, tenant, subject, nil, auth.RoleTenantAdmin)
+	return tok
 }
 
 // exchange mints a Token Service token through the gateway's
@@ -280,13 +289,14 @@ func tokenJTI(t *testing.T, tok string) string {
 }
 
 // revocationPaths revokes a token through each path and asserts lenny-ops
-// refuses it. Each revoked token is a POST /v1/oauth/token token, which
+// refuses it. Each exchanged token is a POST /v1/oauth/token token, which
 // carries no roles claim, so before its revocation lenny-ops admits it
 // through authentication and the revocation set and its role gate answers
 // 403; afterwards the revocation set refuses it with the gateway's
-// revoked-token response. users names the acme users this pass creates and tenant the
-// tenant it deletes.
-func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant, tenantUser string) {
+// revoked-token response. The impersonation bearers carry the target's
+// tenant-admin role. rotUser, invalidUser, and impUser name the acme users
+// this pass creates, and tenant the tenant it deletes.
+func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, impUser, tenant, tenantUser string) {
 	t.Helper()
 	t.Run("rotation", func(t *testing.T) {
 		a, b := s.tenantAdmin(t, "acme", rotUser)
@@ -297,12 +307,25 @@ func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant
 	})
 	t.Run("user invalidation", func(t *testing.T) {
 		a, b := s.tenantAdmin(t, "acme", invalidUser)
+		second := s.mintImpersonation(t, "acme", invalidUser)
 		tok := s.exchange(t, a, b)
-		s.ops.WaitAuthenticated(t, tok, opsRevBound)
+		for _, bearer := range []string{tok, a, second} {
+			s.ops.WaitAuthenticated(t, bearer, opsRevBound)
+		}
 		s.admin(t, http.MethodPost, "/v1/admin/users/"+invalidUser+"/invalidate", map[string]any{
 			"tenantId": "acme", "mode": "full_revoke", "reason": "lenny-ops revocation probe",
 		}, http.StatusOK)
-		s.requireRevokedOnOps(t, tok)
+		// §11.4 step 5 reaches the impersonation rows through the target's
+		// tenant_id and sub (§13.3 Platform-admin impersonation, rule 4).
+		for _, bearer := range []string{tok, a, second} {
+			s.requireRevokedOnOps(t, bearer)
+		}
+	})
+	t.Run("impersonation end", func(t *testing.T) {
+		a, _ := s.tenantAdmin(t, "acme", impUser)
+		s.ops.WaitAuthenticated(t, a, opsRevBound)
+		s.admin(t, http.MethodDelete, "/v1/admin/impersonation/"+tokenJTI(t, a), nil, http.StatusOK)
+		s.requireRevokedOnOps(t, a)
 	})
 	t.Run("tenant deletion", func(t *testing.T) {
 		a, b := s.tenantAdmin(t, tenant, tenantUser)
@@ -319,20 +342,23 @@ func (s *opsRevStack) revocationPaths(t *testing.T, rotUser, invalidUser, tenant
 	})
 }
 
-// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow), 11.4 (User Invalidation), 12.8 (Compliance Interfaces)
+// spec: 25.4 (The lenny-ops Service), 13.3 (Credential Flow; Platform-admin impersonation), 11.4 (User Invalidation), 12.8 (Compliance Interfaces)
 // diagnosis: a revoked token admitted on lenny-ops past the 35 s bound
 // means lenny-ops does not load the revoked issued_tokens rows on its 30 s
 // read, so a Lenny-issued token revoked through rotation or §11.4 user
 // invalidation stays usable on the operability surface. A failure only
 // with the Redis link cut means lenny-ops relies on the event path and its
 // read loop is not running. A deleted tenant's token admitted after the
-// restart means the read omits tombstoned tenants.
+// restart means the read omits tombstoned tenants. An impersonation bearer
+// admitted after DELETE /v1/admin/impersonation/{id} or after the target's
+// full revoke means the end or §11.4 step 5 did not revoke the bearer's
+// issued_tokens row (§13.3 Platform-admin impersonation, rules 3 to 5).
 func TestOpsRefusesRevokedLennyTokens_spec_25_4(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	s := startOpsRevStack(t)
 
 	t.Run("Redis up", func(t *testing.T) {
-		s.revocationPaths(t, "bob@acme.com", "dave@acme.com", "globex", "erin@globex.com")
+		s.revocationPaths(t, "bob@acme.com", "dave@acme.com", "ivan@acme.com", "globex", "erin@globex.com")
 	})
 	s.redisLink.Cut()
 	t.Run("Redis stopped", func(t *testing.T) {
@@ -343,7 +369,7 @@ func TestOpsRefusesRevokedLennyTokens_spec_25_4(t *testing.T) {
 			t.Fatalf("lenny-ops restarted by the first pass is not serving: %v", err)
 		}
 		_ = resp.Body.Close()
-		s.revocationPaths(t, "frank@acme.com", "grace@acme.com", "initech", "heidi@initech.com")
+		s.revocationPaths(t, "frank@acme.com", "grace@acme.com", "judy@acme.com", "initech", "heidi@initech.com")
 	})
 }
 
@@ -445,4 +471,150 @@ func TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4(t *testing.T) {
 			t.Errorf("playground bearer as the %s through the gateway returned an access_token", name)
 		}
 	}
+}
+
+// listedImpersonations returns the GET /v1/admin/impersonation items the
+// caller presenting bearer sees on the gateway, keyed by session id, with
+// each item's adminSub as the value. It fails the test unless the listing
+// answers 200.
+func (s *opsRevStack) listedImpersonations(t *testing.T, bearer string) map[string]string {
+	t.Helper()
+	code, body := spoofCall(t, http.MethodGet, s.gw.BaseURL()+"/v1/admin/impersonation", bearer, nil, nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /v1/admin/impersonation: status %d body %v, want 200", code, body)
+	}
+	return impersonationItems(body)
+}
+
+// impersonationItems maps each item of a GET /v1/admin/impersonation body
+// to its adminSub, keyed by session id.
+func impersonationItems(body map[string]any) map[string]string {
+	items, _ := body["items"].([]any)
+	out := make(map[string]string, len(items))
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		id, _ := m["impersonationSessionId"].(string)
+		admin, _ := m["adminSub"].(string)
+		out[id] = admin
+	}
+	return out
+}
+
+// startedEventsBy counts the admin.impersonation_started rows whose
+// admin_sub is sub.
+func (s *opsRevStack) startedEventsBy(t *testing.T, sub string) int {
+	t.Helper()
+	var n int
+	if err := s.pg.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log
+		 WHERE event_type = 'admin.impersonation_started' AND payload->>'admin_sub' = $1`, sub).Scan(&n); err != nil {
+		t.Fatalf("count admin.impersonation_started rows by %s: %v", sub, err)
+	}
+	return n
+}
+
+// requireExchangeRefused asserts a self-rotation of bearer through the
+// gateway's POST /v1/oauth/token answers 400 invalid_grant with reason and
+// returns no access_token.
+func (s *opsRevStack) requireExchangeRefused(t *testing.T, bearer, reason string) {
+	t.Helper()
+	code, body := forgeryExchange(t, s.gw.BaseURL(), bearer, bearer)
+	if code != http.StatusBadRequest || body["error"] != "invalid_grant" || body["error_description"] != reason {
+		t.Errorf("self-rotation of the impersonation bearer: status %d body %v, want 400 invalid_grant %s", code, body, reason)
+	}
+	if _, ok := body["access_token"]; ok {
+		t.Errorf("self-rotation of the impersonation bearer returned an access_token")
+	}
+}
+
+// spec: 13.3 (Platform-admin impersonation; Credential Flow: Write-before-issue ordering), 15.1 (REST API), 10.2 (Playground mint invariants), 25.4 (The lenny-ops Service), 16.7 (Section 25 Audit Events)
+// diagnosis: an impersonation bearer admitted after the single-token revoke
+// means it has no issued_tokens row the revoke endpoint can reach, or
+// lenny-ops does not load that row. An access_token from the self-rotation,
+// or a reason other than subject_token_impersonation while the session is
+// listed, means step (1a) does not refuse a live impersonation row, so a
+// token minted from the bearer outlives the session's end; a reason other
+// than subject_token_revoked after the end means the revoked check does not
+// run first. A playground mint from the bearer means the playground mint
+// skips step (1a). A nested POST that succeeds, lists a second session, or
+// writes an admin.impersonation_started naming the impersonated user means
+// the rule 1 caller check is missing or runs after the started event; a
+// refused GET with the same bearer means the 403 came from the role check
+// rather than the caller check.
+func TestImpersonationBearerRefusals_spec_13_3(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	s := startOpsRevStack(t)
+
+	t.Run("single-token revoke", func(t *testing.T) {
+		a, _ := s.tenantAdmin(t, "acme", "bob@acme.com")
+		s.ops.WaitAuthenticated(t, a, opsRevBound)
+		if code := s.gatewayMeStatus(t, a); code != http.StatusOK {
+			t.Fatalf("gateway answered %d for the live impersonation bearer, want 200", code)
+		}
+		s.admin(t, http.MethodPost, "/v1/admin/issued-tokens/"+tokenJTI(t, a)+"/revoke", map[string]any{
+			"tenantId": "acme", "reason": "impersonation single-token revoke probe",
+		}, http.StatusOK)
+		if code := s.gatewayMeStatus(t, a); code != http.StatusUnauthorized {
+			t.Errorf("gateway answered %d after the single-token revoke, want 401", code)
+		}
+		s.requireRevokedOnOps(t, a)
+	})
+
+	t.Run("self-rotation", func(t *testing.T) {
+		a, _ := s.tenantAdmin(t, "acme", "dave@acme.com")
+		jti := tokenJTI(t, a)
+		s.requireExchangeRefused(t, a, "subject_token_impersonation")
+		listed := impersonationItems(s.admin(t, http.MethodGet, "/v1/admin/impersonation", nil, http.StatusOK))
+		if _, ok := listed[jti]; !ok {
+			t.Fatalf("GET /v1/admin/impersonation no longer lists %s after the refused exchange", jti)
+		}
+		s.admin(t, http.MethodDelete, "/v1/admin/impersonation/"+jti, nil, http.StatusOK)
+		s.requireExchangeRefused(t, a, "subject_token_revoked")
+	})
+
+	t.Run("playground paste", func(t *testing.T) {
+		a, _ := s.tenantAdmin(t, "acme", "erin@acme.com")
+		code, body := spoofCall(t, http.MethodPost, s.gw.BaseURL()+"/v1/playground/token", a, nil, map[string]any{})
+		if code != http.StatusUnauthorized || spoofErrorCode(body) != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
+			t.Errorf("playground mint from the impersonation bearer: status %d body %v, want 401 LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", code, body)
+		}
+		if _, ok := body["bearerToken"]; ok {
+			t.Errorf("playground mint from the impersonation bearer returned a bearer")
+		}
+	})
+
+	t.Run("nested impersonation", func(t *testing.T) {
+		const target = "mallory@acme.com"
+		s.admin(t, http.MethodPost, "/v1/admin/users", map[string]any{
+			"tenantId": "acme", "subject": target, "roles": []string{string(auth.RolePlatformAdmin)},
+		}, http.StatusCreated)
+		s.admin(t, http.MethodPost, "/v1/admin/users", map[string]any{
+			"tenantId": "acme", "subject": "peggy@acme.com", "roles": []string{"user"},
+		}, http.StatusCreated)
+		outer := s.mintImpersonation(t, "acme", target)
+		s.listedImpersonations(t, outer)
+
+		code, body := spoofCall(t, http.MethodPost, s.gw.BaseURL()+"/v1/admin/impersonation", outer, nil, map[string]any{
+			"targetTenantId": "acme", "targetUserId": "peggy@acme.com",
+			"reason": "nested impersonation probe", "ticketId": "nested", "durationSeconds": 600,
+		})
+		if code != http.StatusForbidden || spoofErrorCode(body) != "FORBIDDEN" {
+			t.Errorf("nested POST /v1/admin/impersonation: status %d body %v, want 403 FORBIDDEN", code, body)
+		}
+		if _, ok := body["bearerToken"]; ok {
+			t.Errorf("nested POST /v1/admin/impersonation returned a bearer")
+		}
+		listed := s.listedImpersonations(t, outer)
+		if _, ok := listed[tokenJTI(t, outer)]; !ok {
+			t.Errorf("GET /v1/admin/impersonation does not list the outer session: %v", listed)
+		}
+		for id, admin := range listed {
+			if admin == target {
+				t.Errorf("GET /v1/admin/impersonation lists session %s started by the impersonated user", id)
+			}
+		}
+		if n := s.startedEventsBy(t, target); n != 0 {
+			t.Errorf("admin.impersonation_started rows with admin_sub %s = %d, want 0", target, n)
+		}
+	})
 }
