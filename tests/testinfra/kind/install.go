@@ -58,7 +58,43 @@ func InstallLenny(t testing.TB) *Cluster {
 	if !controlPlaneReady(c) {
 		t.Skip(installHint + " (Helm release present but control-plane pods are not Ready)")
 	}
+	if version, dirty := dirtySchemaVersion(c); dirty {
+		t.Skipf("blocked: schema_migrations on the in-cluster lenny-postgres is dirty at version %s, so the "+
+			"deployed release runs against a partly applied schema; repair the schema, clear the dirty flag, "+
+			"delete the failed lenny-e2e-migrate Job, and re-run tests/testinfra/kind/install.sh", version)
+	}
 	return c
+}
+
+// schemaMigrationsQuery reads the golang-migrate version row the
+// lenny-migrate Job records in the e2e database.
+const schemaMigrationsQuery = `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version, dirty FROM schema_migrations"`
+
+// dirtySchemaVersion reports whether the in-cluster lenny-postgres that
+// install.sh deploys records a dirty migration, and at which version. A
+// failed migration leaves the Helm release of the previous install
+// deployed and its pods Ready, so the release and readiness gates pass
+// while the schema is half applied and the images predate the tree. When
+// the row cannot be read (no in-cluster Postgres, or no migration has run
+// yet) the gate reports clean and the readiness gate above stands alone.
+func dirtySchemaVersion(c *Cluster) (string, bool) {
+	out, err := c.Kubectl("-n", lennySystemNamespace, "exec", "deploy/lenny-postgres", "--",
+		"sh", "-c", schemaMigrationsQuery).Output()
+	if err != nil {
+		return "", false
+	}
+	return parseDirtySchemaVersion(string(out))
+}
+
+// parseDirtySchemaVersion parses the unaligned `version|dirty` output of
+// schemaMigrationsQuery. It is separated from the kubectl call so the
+// parse can be exercised in-process.
+func parseDirtySchemaVersion(out string) (string, bool) {
+	version, dirty, ok := strings.Cut(strings.TrimSpace(out), "|")
+	if !ok || strings.TrimSpace(dirty) != "t" {
+		return "", false
+	}
+	return strings.TrimSpace(version), true
 }
 
 // AgentPod identifies one managed agent pod and the warm pool that
